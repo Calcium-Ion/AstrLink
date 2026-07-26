@@ -1,0 +1,171 @@
+package sqlite
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/astrlink/core/contract"
+	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
+)
+
+func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "astrlink.db")
+	store := openTestStore(t, databasePath)
+	defer store.Close()
+	ctx := context.Background()
+
+	start := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	model := "public-alias"
+	statusOK := 200
+	latency := 15
+	endpointID := contract.EndpointID("endpoint_a")
+	records := []contract.RequestRecord{
+		{
+			ID: "request_a", StartedAt: start, CompletedAt: ptrTime(start.Add(time.Second)),
+			Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
+			RequestedModel: &model, Streaming: false, EndpointID: &endpointID,
+			HTTPStatus: &statusOK, LatencyMs: &latency, Audit: contract.NotCapturedAuditSummary(),
+			Usage: &contract.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+		},
+		{
+			ID: "request_b", StartedAt: start.Add(time.Minute), CompletedAt: ptrTime(start.Add(2 * time.Minute)),
+			Status: contract.RequestStatusFailed, InputProtocol: contract.ProtocolOpenAIChat,
+			Streaming: true, Audit: contract.NotCapturedAuditSummary(),
+			Error: &contract.ErrorSummary{Category: "upstream", Code: "upstream_unavailable", Message: "unavailable", Retryable: true},
+		},
+		{
+			ID: "request_c", StartedAt: start.Add(2 * time.Minute), CompletedAt: ptrTime(start.Add(3 * time.Minute)),
+			Status: contract.RequestStatusBlocked, InputProtocol: contract.ProtocolOpenAIResponses,
+			RequestedModel: &model, Audit: contract.NotCapturedAuditSummary(),
+			Error: &contract.ErrorSummary{Category: "privacy", Code: "policy_blocked", Message: "blocked", Retryable: false},
+		},
+	}
+	for _, record := range records {
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatalf("InsertRequestRecord(%s): %v", record.ID, err)
+		}
+	}
+
+	page, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || page.Items[0].ID != "request_c" || page.Items[1].ID != "request_b" || page.NextCursor == "" {
+		t.Fatalf("page = %#v", page)
+	}
+	page, err = store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{Limit: 2, Cursor: page.NextCursor})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != "request_a" || page.NextCursor != "" {
+		t.Fatalf("second page = %#v err=%v", page, err)
+	}
+
+	status := contract.RequestStatusSucceeded
+	protocol := contract.ProtocolOpenAIResponses
+	from := start
+	to := start.Add(90 * time.Second)
+	filtered, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{
+		Status: &status, Protocol: &protocol, EndpointID: &endpointID, From: &from, To: &to,
+	})
+	if err != nil || len(filtered.Items) != 1 || filtered.Items[0].ID != "request_a" {
+		t.Fatalf("filtered = %#v err=%v", filtered, err)
+	}
+	if filtered.Items[0].Usage == nil || filtered.Items[0].Usage.TotalTokens != 3 {
+		t.Fatalf("usage = %#v", filtered.Items[0].Usage)
+	}
+
+	got, err := store.GetRequestRecord(ctx, "request_a")
+	if err != nil || got.ID != "request_a" {
+		t.Fatalf("GetRequestRecord: %#v %v", got, err)
+	}
+	if err := store.DeleteRequestRecord(ctx, "request_b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetRequestRecord(ctx, "request_b"); !errors.Is(err, storagecontract.ErrNotFound) {
+		t.Fatalf("deleted get error = %v", err)
+	}
+
+	before := start.Add(90 * time.Second)
+	result, err := store.PurgeRequestRecords(ctx, contract.PurgeRequest{
+		Scope: contract.PurgeScopeBefore, Before: &before, Confirm: true,
+	})
+	if err != nil || result.DeletedRecords != 1 || result.DeletedAuditBlobs != 0 {
+		t.Fatalf("purge before = %#v err=%v", result, err)
+	}
+	result, err = store.PurgeRequestRecords(ctx, contract.PurgeRequest{Scope: contract.PurgeScopeAll, Confirm: true})
+	if err != nil || result.DeletedRecords != 1 {
+		t.Fatalf("purge all = %#v err=%v", result, err)
+	}
+
+	reopened, err := Open(ctx, databasePath)
+	if err != nil {
+		t.Fatalf("reopen after migration: %v", err)
+	}
+	defer reopened.Close()
+	var tableCount int
+	if err := reopened.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='request_records'`).Scan(&tableCount); err != nil || tableCount != 1 {
+		t.Fatalf("request_records missing after reopen: count=%d err=%v", tableCount, err)
+	}
+}
+
+func TestRequestRecordStoreLiveUpsertAndStartupRecovery(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ctx := context.Background()
+	started := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	model := "gpt-live"
+	pending := contract.RequestRecord{
+		ID:             "request_live",
+		StartedAt:      started,
+		Status:         contract.RequestStatusPending,
+		InputProtocol:  contract.ProtocolOpenAIResponses,
+		RequestedModel: &model,
+		Streaming:      true,
+		Audit:          contract.NotCapturedAuditSummary(),
+	}
+	if err := store.UpsertRequestRecord(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetRequestRecord(ctx, pending.ID)
+	if err != nil || got.Status != contract.RequestStatusPending || got.CompletedAt != nil {
+		t.Fatalf("pending=%#v err=%v", got, err)
+	}
+
+	completed := started.Add(2 * time.Second)
+	latency := 2000
+	status := http.StatusOK
+	terminal := pending
+	terminal.Status = contract.RequestStatusSucceeded
+	terminal.CompletedAt = &completed
+	terminal.LatencyMs = &latency
+	terminal.HTTPStatus = &status
+	if err := store.UpsertRequestRecord(ctx, terminal); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRequestRecord(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.GetRequestRecord(ctx, pending.ID)
+	if err != nil || got.Status != contract.RequestStatusSucceeded || got.CompletedAt == nil {
+		t.Fatalf("late pending downgraded terminal=%#v err=%v", got, err)
+	}
+
+	interrupted := pending
+	interrupted.ID = "request_interrupted"
+	if err := store.UpsertRequestRecord(ctx, interrupted); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.RecoverPendingRequestRecords(ctx)
+	if err != nil || recovered != 1 {
+		t.Fatalf("recover count=%d err=%v", recovered, err)
+	}
+	got, err = store.GetRequestRecord(ctx, interrupted.ID)
+	if err != nil || got.Status != contract.RequestStatusFailed || got.Error == nil ||
+		got.Error.Code != "core_interrupted" || got.CompletedAt == nil {
+		t.Fatalf("recovered=%#v err=%v", got, err)
+	}
+}
+
+func ptrTime(value time.Time) *time.Time { return &value }

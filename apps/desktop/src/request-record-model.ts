@@ -1,0 +1,305 @@
+export type RequestStatus =
+  | "pending"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "blocked";
+
+export interface RequestUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cached_input_tokens?: number;
+}
+
+export interface RequestErrorSummary {
+  category: string;
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface RequestAuditSummary {
+  request_body_captured: boolean;
+  response_content_captured: boolean;
+  request_body_truncated: boolean;
+  response_content_truncated: boolean;
+}
+
+export interface RequestRecord {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  status: RequestStatus;
+  input_protocol: string;
+  requested_model: string | null;
+  streaming: boolean;
+  route_id: string | null;
+  endpoint_id: string | null;
+  local_access_token_id: string | null;
+  http_status: number | null;
+  latency_ms: number | null;
+  usage: RequestUsage | null;
+  error: RequestErrorSummary | null;
+  audit: RequestAuditSummary;
+}
+
+export interface RequestRecordPage {
+  items: RequestRecord[];
+  next_cursor: string | null;
+}
+
+export interface RequestRecordListQuery {
+  limit?: number;
+  cursor?: string;
+  from?: string;
+  to?: string;
+  protocol?: string;
+  endpoint_id?: string;
+  status?: RequestStatus;
+}
+
+export interface AuditContentPart {
+  media_type: string;
+  content: string;
+  truncated: boolean;
+  captured_bytes: number;
+}
+
+export interface AuditContent {
+  request_id: string;
+  request_body: AuditContentPart | null;
+  response_content: AuditContentPart | null;
+}
+
+export interface PurgeResult {
+  deleted_records: number;
+  deleted_audit_blobs: number;
+}
+
+type JsonObject = Record<string, unknown>;
+
+const statuses = new Set<RequestStatus>([
+  "pending",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "blocked",
+]);
+
+function invalid(path: string, message: string): never {
+  throw new Error(`请求记录数据无效（${path}）：${message}`);
+}
+
+function objectAt(value: unknown, path: string): JsonObject {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return invalid(path, "应为对象");
+  }
+  return value as JsonObject;
+}
+
+function stringAt(value: unknown, path: string): string {
+  if (typeof value !== "string") {
+    return invalid(path, "应为字符串");
+  }
+  return value;
+}
+
+function nullableStringAt(value: unknown, path: string): string | null {
+  if (value === null) return null;
+  return stringAt(value, path);
+}
+
+function intAt(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return invalid(path, "应为整数");
+  }
+  return value;
+}
+
+function nullableIntAt(value: unknown, path: string): number | null {
+  if (value === null) return null;
+  return intAt(value, path);
+}
+
+function boolAt(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") {
+    return invalid(path, "应为布尔值");
+  }
+  return value;
+}
+
+function parseUsage(value: unknown, path: string): RequestUsage | null {
+  if (value === null) return null;
+  const usage = objectAt(value, path);
+  const result: RequestUsage = {
+    input_tokens: intAt(usage.input_tokens, `${path}.input_tokens`),
+    output_tokens: intAt(usage.output_tokens, `${path}.output_tokens`),
+    total_tokens: intAt(usage.total_tokens, `${path}.total_tokens`),
+  };
+  if (Object.hasOwn(usage, "cached_input_tokens")) {
+    result.cached_input_tokens = intAt(
+      usage.cached_input_tokens,
+      `${path}.cached_input_tokens`,
+    );
+  }
+  return result;
+}
+
+function parseError(
+  value: unknown,
+  path: string,
+): RequestErrorSummary | null {
+  if (value === null) return null;
+  const error = objectAt(value, path);
+  return {
+    category: stringAt(error.category, `${path}.category`),
+    code: stringAt(error.code, `${path}.code`),
+    message: stringAt(error.message, `${path}.message`),
+    retryable: boolAt(error.retryable, `${path}.retryable`),
+  };
+}
+
+function parseAuditSummary(value: unknown, path: string): RequestAuditSummary {
+  const audit = objectAt(value, path);
+  return {
+    request_body_captured: boolAt(
+      audit.request_body_captured,
+      `${path}.request_body_captured`,
+    ),
+    response_content_captured: boolAt(
+      audit.response_content_captured,
+      `${path}.response_content_captured`,
+    ),
+    request_body_truncated: boolAt(
+      audit.request_body_truncated,
+      `${path}.request_body_truncated`,
+    ),
+    response_content_truncated: boolAt(
+      audit.response_content_truncated,
+      `${path}.response_content_truncated`,
+    ),
+  };
+}
+
+export function parseRequestRecord(value: unknown): RequestRecord {
+  return parseRequestRecordAt(value, "$");
+}
+
+function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
+  const record = objectAt(value, path);
+  if (!Object.hasOwn(record, "id")) invalid(`${path}.id`, "缺少字段");
+  if (
+    typeof record.status !== "string" ||
+    !statuses.has(record.status as RequestStatus)
+  ) {
+    invalid(`${path}.status`, "状态枚举无效");
+  }
+
+  return {
+    id: stringAt(record.id, `${path}.id`),
+    started_at: stringAt(record.started_at, `${path}.started_at`),
+    completed_at: nullableStringAt(record.completed_at, `${path}.completed_at`),
+    status: record.status as RequestStatus,
+    input_protocol: stringAt(record.input_protocol, `${path}.input_protocol`),
+    requested_model: nullableStringAt(
+      record.requested_model,
+      `${path}.requested_model`,
+    ),
+    streaming: boolAt(record.streaming, `${path}.streaming`),
+    route_id: nullableStringAt(record.route_id, `${path}.route_id`),
+    endpoint_id: nullableStringAt(record.endpoint_id, `${path}.endpoint_id`),
+    local_access_token_id: nullableStringAt(
+      record.local_access_token_id,
+      `${path}.local_access_token_id`,
+    ),
+    http_status: nullableIntAt(record.http_status, `${path}.http_status`),
+    latency_ms: nullableIntAt(record.latency_ms, `${path}.latency_ms`),
+    usage: parseUsage(record.usage, `${path}.usage`),
+    error: parseError(record.error, `${path}.error`),
+    audit: parseAuditSummary(record.audit, `${path}.audit`),
+  };
+}
+
+export function parseRequestRecordPage(value: unknown): RequestRecordPage {
+  const page = objectAt(value, "$");
+  if (!Array.isArray(page.items)) invalid("$.items", "应为数组");
+  const nextCursor =
+    page.next_cursor === null
+      ? null
+      : stringAt(page.next_cursor, "$.next_cursor");
+  return {
+    items: page.items.map((item, index) =>
+      parseRequestRecordAt(item, `$.items[${index}]`),
+    ),
+    next_cursor: nextCursor,
+  };
+}
+
+function parseAuditContentPart(
+  value: unknown,
+  path: string,
+): AuditContentPart | null {
+  if (value === null) return null;
+  const part = objectAt(value, path);
+  return {
+    media_type: stringAt(part.media_type, `${path}.media_type`),
+    content: stringAt(part.content, `${path}.content`),
+    truncated: boolAt(part.truncated, `${path}.truncated`),
+    captured_bytes: intAt(part.captured_bytes, `${path}.captured_bytes`),
+  };
+}
+
+export function parseAuditContent(value: unknown): AuditContent {
+  const content = objectAt(value, "$");
+  return {
+    request_id: stringAt(content.request_id, "$.request_id"),
+    request_body: parseAuditContentPart(content.request_body, "$.request_body"),
+    response_content: parseAuditContentPart(
+      content.response_content,
+      "$.response_content",
+    ),
+  };
+}
+
+export function parsePurgeResult(value: unknown): PurgeResult {
+  const result = objectAt(value, "$");
+  return {
+    deleted_records: intAt(result.deleted_records, "$.deleted_records"),
+    deleted_audit_blobs: intAt(
+      result.deleted_audit_blobs,
+      "$.deleted_audit_blobs",
+    ),
+  };
+}
+
+export function statusLabel(status: RequestStatus): string {
+  switch (status) {
+    case "pending":
+      return "进行中";
+    case "succeeded":
+      return "成功";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    case "blocked":
+      return "已拦截";
+  }
+}
+
+export function statusTone(
+  status: RequestStatus,
+): "positive" | "negative" | "neutral" | "pending" {
+  switch (status) {
+    case "succeeded":
+      return "positive";
+    case "failed":
+      return "negative";
+    case "pending":
+      return "pending";
+    case "cancelled":
+    case "blocked":
+      return "pending";
+  }
+}

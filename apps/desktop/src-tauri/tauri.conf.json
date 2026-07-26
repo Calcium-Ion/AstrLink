@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AstrLink",
+  "version": "0.1.0",
+  "identifier": "com.astrlink.desktop",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AstrLink",
+        "width": 1120,
+        "height": 780,
+        "minWidth": 760,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "externalBin": [
+      "binaries/astrlink-core",
+      "binaries/astrlink-privacy-worker"
+    ],
+    "resources": {
+      "binaries/onnxruntime-1.23.2-LICENSE.txt": "notices/onnxruntime-1.23.2/LICENSE.txt",
+      "binaries/onnxruntime-1.23.2-ThirdPartyNotices.txt": "notices/onnxruntime-1.23.2/ThirdPartyNotices.txt"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "frameworks": ["binaries/libonnxruntime.1.23.2.dylib"],
+      "minimumSystemVersion": "13.4"
+    },
+    "targets": "all"
+  }
+}

@@ -1,0 +1,225 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ASTRLINK_CI_NO_REMOTE_MODELS: "1"
+  ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  core:
+    name: Core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.mod
+      - name: Test Core
+        run: go test ./...
+      - name: Build Core
+        run: go build -trimpath -o astrlink-core${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/astrlink-core
+      - name: Archive Core executable
+        if: runner.os != 'Windows'
+        run: tar -czf astrlink-core-${{ runner.arch }}.tar.gz astrlink-core
+      - name: Archive Core executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path astrlink-core.exe -DestinationPath astrlink-core-${{ runner.arch }}.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: astrlink-core-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            core/astrlink-core-*.tar.gz
+            core/astrlink-core-*.zip
+          if-no-files-found: error
+
+  contracts:
+    name: Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: contracts/go.mod
+          cache-dependency-path: |
+            contracts/go.mod
+            contracts/go.sum
+      - name: Validate frozen contracts
+        run: make contracts-check
+
+  go-race:
+    name: Go race tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.mod
+            contracts/go.mod
+            contracts/go.sum
+      - name: Test Core and contracts with race detector
+        run: make core-race contracts-race
+
+  desktop-checks:
+    name: Desktop checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Reject production model artifacts
+        run: bun ../../scripts/check-no-production-models.mjs
+      - name: Check frontend
+        run: bun run check
+
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    needs: [core, contracts, go-race, desktop-checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+            bundle: deb
+          - name: macOS
+            os: macos-latest
+            bundle: app
+          - name: macOS x64
+            os: macos-15-intel
+            bundle: app
+          - name: Windows x64
+            os: windows-latest
+            bundle: nsis
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev
+          libayatana-appindicator3-dev
+          librsvg2-dev
+          patchelf
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/desktop/src-tauri
+            apps/privacy-worker
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Check frontend on target platform
+        run: bun run check
+      - name: Stage Core and privacy sidecars
+        run: bun run sidecar:build
+      - name: Reject model artifacts from staged application inputs
+        run: >-
+          bun ../../scripts/check-no-production-models.mjs --packaged
+          dist
+          src-tauri/binaries
+      - name: Check privacy worker formatting
+        run: cargo fmt --manifest-path ../privacy-worker/Cargo.toml --all -- --check
+      - name: Lint privacy worker
+        run: cargo clippy --locked --manifest-path ../privacy-worker/Cargo.toml --all-targets -- -D warnings
+      - name: Test privacy worker
+        run: cargo test --locked --manifest-path ../privacy-worker/Cargo.toml --all-targets
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - name: Lint Rust
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Test Rust lifecycle
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - name: Build Tauri bundle
+        run: bun run tauri build --ci --bundles ${{ matrix.bundle }}
+      - name: Inspect packaged macOS application contents
+        if: runner.os == 'macOS'
+        run: >-
+          bun ../../scripts/check-no-production-models.mjs --packaged
+          src-tauri/target/release/bundle/macos
+      - name: Extract and inspect packaged Linux application contents
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bundle_scan_dir="$RUNNER_TEMP/astrlink-bundle-scan"
+          mkdir -p "$bundle_scan_dir"
+          for archive in src-tauri/target/release/bundle/deb/*.deb; do
+            dpkg-deb -x "$archive" "$bundle_scan_dir"
+          done
+          bun ../../scripts/check-no-production-models.mjs --packaged "$bundle_scan_dir"
+      - name: Extract and inspect packaged Windows application contents
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bundleScanDir = Join-Path $env:RUNNER_TEMP "astrlink-bundle-scan"
+          New-Item -ItemType Directory -Force -Path $bundleScanDir | Out-Null
+          Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | ForEach-Object {
+            & 7z x $_.FullName "-o$bundleScanDir" -y | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to inspect $($_.FullName)"
+            }
+          }
+          $innerIndex = 0
+          Get-ChildItem $bundleScanDir -Recurse -Filter "*.7z" | ForEach-Object {
+            $innerDirectory = Join-Path $bundleScanDir "inner-$innerIndex"
+            New-Item -ItemType Directory -Force -Path $innerDirectory | Out-Null
+            & 7z x $_.FullName "-o$innerDirectory" -y | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to inspect embedded archive $($_.FullName)"
+            }
+            $innerIndex += 1
+          }
+          bun ../../scripts/check-no-production-models.mjs --packaged $bundleScanDir
+      - name: Archive macOS app with executable modes
+        if: runner.os == 'macOS'
+        run: tar -czf astrlink-desktop-${{ runner.arch }}.tar.gz -C src-tauri/target/release/bundle/macos AstrLink.app
+      - uses: actions/upload-artifact@v7
+        with:
+          name: astrlink-desktop-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            apps/desktop/astrlink-desktop-*.tar.gz
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

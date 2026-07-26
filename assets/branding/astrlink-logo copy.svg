@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>AstrLink 星澜</title>
+  <desc>由星座节点构成字母 A，一道渐变星澜穿过中央，象征连接万物的网关。</desc>
+
+  <defs>
+    <linearGradient id="astrlink-background" x1="96" y1="84" x2="416" y2="430" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F1FBFF"/>
+      <stop offset=".55" stop-color="#F7F7FF"/>
+      <stop offset="1" stop-color="#FFF2FA"/>
+    </linearGradient>
+    <linearGradient id="astrlink-structure" x1="256" y1="118" x2="256" y2="392" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#26336F"/>
+      <stop offset="1" stop-color="#4656A6"/>
+    </linearGradient>
+    <linearGradient id="astrlink-tide" x1="108" y1="338" x2="400" y2="188" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1AEBF0"/>
+      <stop offset=".52" stop-color="#768DF6"/>
+      <stop offset="1" stop-color="#F85DAE"/>
+    </linearGradient>
+    <filter id="astrlink-plate-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#1a2233" flood-opacity=".18"/>
+    </filter>
+  </defs>
+
+  <!-- ~10% macOS icon margin so the plate matches neighboring dock icons -->
+  <g filter="url(#astrlink-plate-shadow)">
+    <rect x="52" y="52" width="408" height="408" rx="92" fill="url(#astrlink-background)"/>
+  </g>
+
+  <g
+    stroke="url(#astrlink-structure)"
+    stroke-width="18"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="M128 372 256 128l128 244"/>
+    <path d="M128 372h56l54-82"/>
+    <path d="m274 290 54 82h56"/>
+  </g>
+
+  <path
+    d="M108 332c64-10 110-38 160-82 46-40 84-60 132-68"
+    stroke="url(#astrlink-tide)"
+    stroke-width="18"
+    stroke-linecap="round"
+  />
+
+  <path
+    d="m164 304-24 52"
+    stroke="url(#astrlink-structure)"
+    stroke-width="18"
+    stroke-linecap="round"
+  />
+
+  <g fill="#FFFFFF" stroke="url(#astrlink-structure)" stroke-width="6">
+    <circle cx="256" cy="128" r="14"/>
+    <circle cx="128" cy="372" r="12"/>
+    <circle cx="384" cy="372" r="12"/>
+  </g>
+</svg>

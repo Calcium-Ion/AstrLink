@@ -1,0 +1,55 @@
+.DS_Store
+.idea/
+.vscode/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Go
+core/bin/
+core/coverage.out
+
+# Desktop frontend
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/icons/.branding-hash
+
+# Tauri / Rust
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/binaries/astrlink-core-*
+apps/desktop/src-tauri/binaries/astrlink-privacy-worker-*
+apps/desktop/src-tauri/binaries/libonnxruntime.*.dylib
+apps/desktop/src-tauri/binaries/onnxruntime-*-LICENSE.txt
+apps/desktop/src-tauri/binaries/onnxruntime-*-ThirdPartyNotices.txt
+apps/privacy-worker/target/
+
+# Local runtime data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+logs/
+
+# Production model artifacts (tests may generate micro fixtures at runtime)
+*.onnx
+*.onnx_data
+*.onnx_data_*
+!**/testdata/*.onnx
+!**/testdata/**/*.onnx
+!**/testdata/*.onnx_data
+!**/testdata/**/*.onnx_data
+*.safetensors
+*.gguf
+*.ggml
+*.pt
+*.pth
+*.ckpt
+pytorch_model*.bin
+tf_model*.h5
+flax_model*.msgpack

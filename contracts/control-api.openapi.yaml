@@ -1,0 +1,2692 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: AstrLink Local Control API
+  version: 1.0.0
+  summary: Stable local contract between the AstrLink desktop application and Core.
+  description: |
+    This API is a local control plane; it is not part of the public inference API.
+    Core binds the inference plane to `127.0.0.1:8317` by default and binds this
+    control plane to the ephemeral address `127.0.0.1:0`. On startup Core writes
+    exactly one ready JSON line to stdout containing the selected `control_url`.
+    Launchers must use that value rather than guessing a port.
+
+    The bootstrap health, version, and capability operations are intentionally
+    unauthenticated and disclose no configuration. Every operation that reads or
+    mutates user configuration, events, or request records requires the per-start
+    local control token. The token must be delivered through an inherited pipe or
+    equivalent protected IPC; it must not be placed in process arguments or the
+    environment.
+
+    Request and response bodies are excluded from ordinary request records. The two
+    audit-body switches are independent, default to false, and can only be enabled
+    through this authenticated control API after explicit risk acknowledgement.
+
+    The three bootstrap GET operations are always available. Authenticated Endpoint
+    CRUD, persistent local access-token operations, the fixed privacy policy, and
+    selectable privacy-model catalog/installation management are available when
+    Core is launched with its persistent data directory and a per-start control
+    token delivered over stdin.
+    Remaining paths freeze the forward control contract and stay marked
+    `x-astrlink-implementation-status: planned`; their presence is not a runtime
+    capability claim.
+servers:
+  - url: http://127.0.0.1:{control_port}
+    description: Runtime loopback control address announced by Core on stdout.
+    variables:
+      control_port:
+        default: "0"
+        description: Ephemeral port; replace 0 with the value from the ready announcement.
+security:
+  - controlToken: []
+x-astrlink-implementation:
+  milestone: M3-endpoint-slice
+  implemented_operations:
+    - GET /control/v1/health
+    - GET /control/v1/version
+    - GET /control/v1/capabilities
+    - GET /control/v1/endpoints
+    - POST /control/v1/endpoints
+    - GET /control/v1/endpoints/{endpoint_id}
+    - PATCH /control/v1/endpoints/{endpoint_id}
+    - DELETE /control/v1/endpoints/{endpoint_id}
+    - GET /control/v1/access-tokens
+    - POST /control/v1/access-tokens
+    - GET /control/v1/access-tokens/{token_id}/secret
+    - DELETE /control/v1/access-tokens/{token_id}
+    - GET /control/v1/policies
+    - GET /control/v1/policies/{policy_id}
+    - PATCH /control/v1/policies/{policy_id}
+    - POST /control/v1/policies/{policy_id}/dry-run
+    - GET /control/v1/privacy-model-catalog
+    - POST /control/v1/privacy-models/probe
+    - GET /control/v1/privacy-models
+    - POST /control/v1/privacy-models
+    - GET /control/v1/privacy-models/{installation_id}
+    - DELETE /control/v1/privacy-models/{installation_id}
+    - GET /control/v1/requests
+    - GET /control/v1/requests/{request_id}
+    - DELETE /control/v1/requests/{request_id}
+    - POST /control/v1/requests/purge
+    - GET /control/v1/requests/{request_id}/audit
+    - GET /control/v1/audit-settings
+    - PATCH /control/v1/audit-settings
+  planned_operations: all other operations in this document
+x-astrlink-ready-announcement:
+  transport: single JSON line on stdout after both listeners bind
+  schema:
+    $ref: "#/components/schemas/ReadyEvent"
+tags:
+  - name: Bootstrap
+    description: Non-sensitive process bootstrap and compatibility handshake.
+  - name: Endpoints
+    description: Upstream connection configuration. Credentials are write-only and stored separately behind CredentialStore.
+  - name: Access Tokens
+    description: Persistent local inference credentials. Secrets are returned only by explicit create and reveal operations.
+  - name: Routes
+    description: Deterministic protocol- and model-aware routing configuration.
+  - name: Policies
+    description: Content safety policies and privileged encrypted body-audit settings.
+  - name: Privacy Model
+    description: Integrity-checked catalog and lifecycle for selectable local privacy-model installations.
+  - name: Events
+    description: Sanitized operational events.
+  - name: Requests
+    description: Request metadata and explicitly enabled encrypted audit content.
+paths:
+  /control/v1/health:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Bootstrap]
+      operationId: getHealth
+      summary: Check whether Core is ready to serve the control API.
+      security: []
+      responses:
+        "200":
+          description: Core is ready.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              example:
+                status: ok
+        "503":
+          description: Core is alive but not ready.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              example:
+                status: starting
+  /control/v1/version:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Bootstrap]
+      operationId: getVersion
+      summary: Read Core and contract versions for desktop compatibility checks.
+      security: []
+      responses:
+        "200":
+          description: Version handshake information.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Version"
+              example:
+                core_version: 0.1.0-dev
+                control_api_version: v1
+                protocol_contract_version: v1
+                build_commit: unknown
+  /control/v1/capabilities:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Bootstrap]
+      operationId: getCapabilities
+      summary: Read the protocol registry and execution-mode capabilities.
+      description: |
+        The Alpha response always declares native and delegated as available in
+        Alpha. RelayKit remains visible as a future plan type, but
+        `available_in_alpha` is false. Until RelayKit is integrated,
+        `conversion_engine.available` is false, `version` is null, and `edges` is
+        empty.
+      security: []
+      responses:
+        "200":
+          description: Protocol and planning capabilities.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: ./protocol-capabilities.schema.json
+              example:
+                protocol_contract_version: v1
+                protocols:
+                  - id: openai.responses
+                    phase: alpha
+                    primary: true
+                    streaming: true
+                  - id: openai.responses.compact
+                    phase: alpha
+                    primary: false
+                    streaming: false
+                  - id: anthropic.messages
+                    phase: alpha
+                    primary: false
+                    streaming: true
+                  - id: google.generate_content
+                    phase: alpha
+                    primary: false
+                    streaming: true
+                  - id: openai.chat
+                    phase: alpha
+                    primary: false
+                    streaming: true
+                  - id: openai.completions
+                    phase: alpha
+                    primary: false
+                    streaming: true
+                  - id: openai.models
+                    phase: alpha
+                    primary: false
+                    streaming: false
+                  - id: google.models
+                    phase: alpha
+                    primary: false
+                    streaming: false
+                plan_types:
+                  - id: native
+                    available_in_alpha: true
+                    uses_local_conversion: false
+                  - id: delegated
+                    available_in_alpha: true
+                    uses_local_conversion: false
+                  - id: relaykit
+                    available_in_alpha: false
+                    uses_local_conversion: true
+                conversion_engine:
+                  name: relaykit
+                  version: null
+                  available: false
+                  edges: []
+  /control/v1/endpoints:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Endpoints]
+      operationId: listEndpoints
+      summary: List configured upstream endpoints.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+        - name: kind
+          in: query
+          schema:
+            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
+      responses:
+        "200":
+          description: Endpoint page. Credential secrets are never returned; an opaque credential reference may be present.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndpointPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Endpoints]
+      operationId: createEndpoint
+      summary: Create an endpoint and optionally store its credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EndpointCreate"
+      responses:
+        "201":
+          description: Endpoint created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Endpoint"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/endpoints/{endpoint_id}:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/EndpointId"
+    get:
+      tags: [Endpoints]
+      operationId: getEndpoint
+      summary: Read one endpoint without exposing credential material.
+      responses:
+        "200":
+          description: Endpoint details.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Endpoint"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Endpoints]
+      operationId: updateEndpoint
+      summary: Update an endpoint or rotate its write-only credential.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/EndpointPatch"
+      responses:
+        "200":
+          description: Updated endpoint.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Endpoint"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      tags: [Endpoints]
+      operationId: deleteEndpoint
+      summary: Delete an endpoint after reference checks.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Endpoint and its CredentialStore value were deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+  /control/v1/endpoints/{endpoint_id}/test:
+    x-astrlink-implementation-status: planned
+    parameters:
+      - $ref: "#/components/parameters/EndpointId"
+    post:
+      tags: [Endpoints]
+      operationId: testEndpoint
+      summary: Probe connectivity and protocol capabilities.
+      description: A completed probe returns HTTP 200 even when the endpoint test fails; inspect `status`.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EndpointTestRequest"
+      responses:
+        "200":
+          description: Completed endpoint probe.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndpointTestResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /control/v1/access-tokens:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Access Tokens]
+      operationId: listAccessTokens
+      summary: List persistent local inference access-token metadata.
+      responses:
+        "200":
+          description: Access-token metadata. Secret values and hashes are never included.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Access Tokens]
+      operationId: createAccessToken
+      summary: Create a persistent local inference access token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessTokenCreate"
+      responses:
+        "201":
+          description: Token created. The complete secret is returned only by this explicit operation and the reveal operation.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenSecret"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/access-tokens/{token_id}:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/AccessTokenId"
+    delete:
+      tags: [Access Tokens]
+      operationId: deleteAccessToken
+      summary: Permanently delete a local inference access token.
+      responses:
+        "204":
+          description: Token metadata and secret were deleted. New inference requests using it are rejected immediately.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /control/v1/access-tokens/{token_id}/secret:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/AccessTokenId"
+    get:
+      tags: [Access Tokens]
+      operationId: revealAccessToken
+      summary: Explicitly reveal one persistent local inference access-token secret.
+      responses:
+        "200":
+          description: Complete token secret. This response must not be logged or included in diagnostics.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenReveal"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /control/v1/routes:
+    x-astrlink-implementation-status: planned
+    get:
+      tags: [Routes]
+      operationId: listRoutes
+      summary: List routes in deterministic evaluation order.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Route page.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Routes]
+      operationId: createRoute
+      summary: Create a route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteCreate"
+      responses:
+        "201":
+          description: Route created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/routes/{route_id}:
+    x-astrlink-implementation-status: planned
+    parameters:
+      - $ref: "#/components/parameters/RouteId"
+    get:
+      tags: [Routes]
+      operationId: getRoute
+      summary: Read one route.
+      responses:
+        "200":
+          description: Route details.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Routes]
+      operationId: updateRoute
+      summary: Update a route.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/RoutePatch"
+      responses:
+        "200":
+          description: Updated route.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Route"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      tags: [Routes]
+      operationId: deleteRoute
+      summary: Delete a route.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Route deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+  /control/v1/policies:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Policies]
+      operationId: listPolicies
+      summary: List the fixed MVP privacy policy.
+      responses:
+        "200":
+          description: Policy page.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      x-astrlink-implementation-status: planned
+      tags: [Policies]
+      operationId: createPolicy
+      summary: Create a policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyCreate"
+      responses:
+        "201":
+          description: Policy created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/policies/{policy_id}:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Policies]
+      operationId: getPolicy
+      summary: Read one policy.
+      responses:
+        "200":
+          description: Policy details.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      x-astrlink-implementation-status: implemented
+      tags: [Policies]
+      operationId: updatePolicy
+      summary: Update a policy.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/PolicyPatch"
+      responses:
+        "200":
+          description: Updated policy.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      x-astrlink-implementation-status: planned
+      tags: [Policies]
+      operationId: deletePolicy
+      summary: Delete a policy.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Policy deleted. Existing audit records are not implicitly deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+  /control/v1/policies/{policy_id}/dry-run:
+    parameters:
+      - $ref: "#/components/parameters/PolicyId"
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Policies]
+      operationId: dryRunPolicy
+      summary: Preview privacy-policy evaluation against sample text.
+      description: |
+        Wraps sample_text into a minimal request body for the selected protocol,
+        evaluates the effective policy (stored values merged with optional
+        patchable overrides), and returns the decision plus finding locations.
+        Matched plaintext is never returned. Does not forward upstream or mutate
+        stored policy state. Only policy_privacy_default is supported.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyDryRunRequest"
+      responses:
+        "200":
+          description: Dry-run completed.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyDryRunResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /control/v1/privacy-model-catalog:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: listPrivacyModelCatalog
+      summary: List versioned built-in model choices and their CPU variants.
+      responses:
+        "200":
+          description: Built-in catalog metadata. Model weights are not bundled.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelCatalog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/privacy-models/probe:
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: probePrivacyModel
+      summary: Inspect a public Hugging Face repository without loading model weights.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacyModelProbeRequest"
+      responses:
+        "200":
+          description: Immutable revision, detected ONNX variants, and label-mapping requirements.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelProbe"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+  /control/v1/privacy-models:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: listPrivacyModelInstallations
+      summary: List persistent model-and-variant installations and current progress.
+      responses:
+        "200":
+          description: Installed, downloading, or failed model variants.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelInstallationList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: installPrivacyModel
+      summary: Start or retry one immutable model-and-variant installation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacyModelInstallRequest"
+      responses:
+        "202":
+          description: Download accepted.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelInstallation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+  /control/v1/privacy-models/{installation_id}:
+    parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/PrivacyModelInstallationId"
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: getPrivacyModelInstallation
+      summary: Read one installation and its current progress.
+      responses:
+        "200":
+          description: Installation status.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelInstallation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: deletePrivacyModelInstallation
+      summary: Cancel a download or remove one installed model variant.
+      description: Deletion is rejected while the privacy policy references the installation.
+      responses:
+        "204":
+          description: Download cancelled or installation removed.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/audit-settings:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Policies]
+      operationId: getAuditSettings
+      summary: Read the privileged global body-audit settings.
+      description: M0 does not implement this planned operation. Both body switches default to false on installation and upgrade.
+      responses:
+        "200":
+          description: Current audit settings. This response contains settings only, never captured content or encryption keys.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: ./protocol-capabilities.schema.json#/$defs/AuditSettings
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Policies]
+      operationId: updateAuditSettings
+      summary: Update the privileged global body-audit settings.
+      description: |
+        M0 does not implement this planned operation. Enabling request-body or
+        response-content capture requires `audit_risk_acknowledged=true` in the
+        same request. Disabling capture immediately stops new body records and does
+        not delete existing encrypted records.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/AuditSettingsPatch"
+      responses:
+        "200":
+          description: Updated audit settings.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: ./protocol-capabilities.schema.json#/$defs/AuditSettings
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/events:
+    x-astrlink-implementation-status: planned
+    get:
+      tags: [Events]
+      operationId: listEvents
+      summary: List sanitized operational events.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: severity
+          in: query
+          schema:
+            $ref: "#/components/schemas/EventSeverity"
+        - name: type
+          in: query
+          schema:
+            type: string
+            maxLength: 96
+            pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+      responses:
+        "200":
+          description: Event page. Attributes are sanitized and never contain credentials or bodies.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/requests:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Requests]
+      operationId: listRequestRecords
+      summary: List request metadata records.
+      description: This operation never returns request or response body content.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: protocol
+          in: query
+          schema:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        - name: endpoint_id
+          in: query
+          schema:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/RequestStatus"
+      responses:
+        "200":
+          description: Request-record page.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestRecordPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/requests/{request_id}:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      tags: [Requests]
+      operationId: getRequestRecord
+      summary: Read one request metadata record.
+      responses:
+        "200":
+          description: Request metadata without body content.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Requests]
+      operationId: deleteRequestRecord
+      summary: Delete one metadata record and its encrypted audit content, if any.
+      responses:
+        "204":
+          description: Record and associated encrypted audit blobs deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /control/v1/requests/{request_id}/audit:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      tags: [Requests]
+      operationId: getRequestAuditContent
+      summary: Decrypt and read explicitly captured audit content.
+      description: |
+        Available only through the authenticated local control plane. A null part
+        means that direction was disabled or no content was captured. This response
+        must not be logged, cached, included in diagnostics, or exported as ordinary
+        configuration.
+      responses:
+        "200":
+          description: Decrypted audit content.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditContent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /control/v1/requests/purge:
+    x-astrlink-implementation-status: implemented
+    post:
+      tags: [Requests]
+      operationId: purgeRequestRecords
+      summary: Explicitly delete request records and associated encrypted audit content.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurgeRequest"
+      responses:
+        "200":
+          description: Purge result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurgeResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    controlToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-local-control-token
+      description: Per-start local token delivered over protected IPC; never persist it in configuration or logs.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor returned by the previous page. It must not be parsed by clients.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    From:
+      name: from
+      in: query
+      description: Inclusive lower timestamp bound.
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      description: Exclusive upper timestamp bound.
+      schema:
+        type: string
+        format: date-time
+    EndpointId:
+      name: endpoint_id
+      in: path
+      required: true
+      schema:
+        $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    AccessTokenId:
+      name: token_id
+      in: path
+      required: true
+      schema:
+        $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    RouteId:
+      name: route_id
+      in: path
+      required: true
+      schema:
+        $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    PolicyId:
+      name: policy_id
+      in: path
+      required: true
+      schema:
+        $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    RequestId:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: ETag from the latest GET; prevents lost updates.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 128
+  headers:
+    NoStore:
+      description: Sensitive local-control responses must not be cached.
+      schema:
+        type: string
+        examples: [no-store]
+    Location:
+      description: Relative path of the created resource.
+      schema:
+        type: string
+        format: uri-reference
+    ETag:
+      description: Strong entity tag for the current resource representation.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Malformed request, query, or cursor.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid local control token.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: The operation conflicts with current state or references.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PreconditionFailed:
+      description: If-Match does not match the current resource representation.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnprocessableEntity:
+      description: The request is well-formed but violates a contract or safety invariant.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Local privacy policy or safety engine is temporarily unavailable.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalServerError:
+      description: The local privacy-model operation or persistent state failed.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadGateway:
+      description: Public model metadata could not be fetched or verified.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    ReadyEvent:
+      type: object
+      required:
+        - event
+        - core_version
+        - control_api_version
+        - protocol_contract_version
+        - inference_url
+        - control_url
+      properties:
+        event:
+          type: string
+          const: ready
+        core_version:
+          type: string
+          minLength: 1
+          maxLength: 64
+        control_api_version:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ContractVersion
+        protocol_contract_version:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ContractVersion
+        inference_url:
+          type: string
+          format: uri
+          pattern: "^http://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?![\\s\\S])"
+        control_url:
+          type: string
+          format: uri
+          pattern: "^http://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?![\\s\\S])"
+      additionalProperties: false
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, starting]
+      additionalProperties: false
+    AccessToken:
+      type: object
+      required: [id, name, hint, source, created_at]
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        hint:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Non-secret display hint that cannot be used to authenticate.
+        source:
+          type: string
+          enum: [system_default, user]
+        created_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+    AccessTokenCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+      additionalProperties: false
+    AccessTokenSecret:
+      type: object
+      required: [token, access_token]
+      properties:
+        token:
+          $ref: "#/components/schemas/AccessToken"
+        access_token:
+          type: string
+          minLength: 48
+          maxLength: 48
+          pattern: "^astr_[A-Za-z0-9_-]{43}$"
+      additionalProperties: false
+    AccessTokenList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/AccessToken"
+        next_cursor:
+          type: "null"
+          description: Reserved for a future paginated contract; v1 currently returns the complete bounded list.
+      additionalProperties: false
+    AccessTokenReveal:
+      type: object
+      required: [access_token]
+      properties:
+        access_token:
+          type: string
+          minLength: 48
+          maxLength: 48
+          pattern: "^astr_[A-Za-z0-9_-]{43}$"
+      additionalProperties: false
+    Version:
+      type: object
+      required:
+        - core_version
+        - control_api_version
+        - protocol_contract_version
+        - build_commit
+      properties:
+        core_version:
+          type: string
+          minLength: 1
+          maxLength: 64
+        control_api_version:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ContractVersion
+        protocol_contract_version:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ContractVersion
+        build_commit:
+          type: string
+          minLength: 7
+          maxLength: 64
+          pattern: "^(?:[0-9a-f]{7,64}|unknown)$"
+      additionalProperties: false
+    Endpoint:
+      type: object
+      required:
+        - id
+        - name
+        - kind
+        - base_url
+        - auth
+        - enabled
+        - capabilities
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        kind:
+          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
+        base_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: "^https?://[^?#]+$"
+          not:
+            pattern: "^https?://[^/]*@"
+          description: HTTP(S) origin or reverse-proxy path prefix. Userinfo and URL query credentials are forbidden. If the prefix ends in the same /v1 or /v1beta segment as the selected protocol path, Core folds exactly one duplicate version segment.
+        auth:
+          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointAuth
+        enabled:
+          type: boolean
+        credential_ref:
+          $ref: ./protocol-capabilities.schema.json#/$defs/CredentialRef
+          readOnly: true
+          description: Opaque reference only; local is the default backend, keyring is optional, and neither form contains credential material.
+        capabilities:
+          type: array
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
+      additionalProperties: false
+    EndpointCreate:
+      type: object
+      required: [name, kind, base_url, auth, capabilities]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        kind:
+          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
+        base_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: "^https?://[^?#]+$"
+          not:
+            pattern: "^https?://[^/]*@"
+        enabled:
+          type: boolean
+          default: true
+        auth:
+          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointAuth
+        credential:
+          $ref: "#/components/schemas/CredentialInput"
+        capabilities:
+          type: array
+          default: []
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
+      additionalProperties: false
+    EndpointPatch:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        kind:
+          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
+        base_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: "^https?://[^?#]+$"
+          not:
+            pattern: "^https?://[^/]*@"
+        enabled:
+          type: boolean
+        auth:
+          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointAuth
+        credential:
+          oneOf:
+            - $ref: "#/components/schemas/CredentialInput"
+            - type: "null"
+              description: Remove the stored credential.
+        capabilities:
+          type: array
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
+      additionalProperties: false
+    CredentialInput:
+      type: object
+      required: [secret]
+      properties:
+        secret:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          writeOnly: true
+          description: Stored through CredentialStore and never returned or logged.
+      additionalProperties: false
+    EndpointHealth:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [unknown, healthy, unhealthy, testing, disabled]
+        checked_at:
+          type: [string, "null"]
+          format: date-time
+        latency_ms:
+          type: [integer, "null"]
+          minimum: 0
+        error_category:
+          type: [string, "null"]
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_]*$"
+      additionalProperties: false
+    EndpointTestRequest:
+      type: object
+      properties:
+        protocols:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        timeout_ms:
+          type: integer
+          minimum: 100
+          maximum: 60000
+          default: 10000
+      additionalProperties: false
+    EndpointTestResult:
+      type: object
+      required: [status, checked_at, latency_ms, capabilities, error]
+      properties:
+        status:
+          type: string
+          enum: [succeeded, failed]
+        checked_at:
+          type: string
+          format: date-time
+        latency_ms:
+          type: integer
+          minimum: 0
+        capabilities:
+          type: array
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ErrorSummary"
+            - type: "null"
+      additionalProperties: false
+    Route:
+      type: object
+      required:
+        - id
+        - name
+        - enabled
+        - priority
+        - match
+        - targets
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        match:
+          $ref: "#/components/schemas/RouteMatch"
+        targets:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/RouteTarget"
+      additionalProperties: false
+    RouteCreate:
+      type: object
+      required: [name, priority, match, targets]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        enabled:
+          type: boolean
+          default: true
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        match:
+          $ref: "#/components/schemas/RouteMatch"
+        targets:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/RouteTarget"
+      additionalProperties: false
+    RoutePatch:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        match:
+          $ref: "#/components/schemas/RouteMatch"
+        targets:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/RouteTarget"
+      additionalProperties: false
+    RouteMatch:
+      type: object
+      required: [protocol]
+      properties:
+        protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        model:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Exact public model or alias. Omission matches any model.
+      additionalProperties: false
+    RouteTarget:
+      type: object
+      required:
+        - endpoint_id
+        - plan_type
+        - upstream_protocol
+        - priority
+      properties:
+        endpoint_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        plan_type:
+          $ref: ./protocol-capabilities.schema.json#/$defs/PlanType
+          description: RelayKit is a stable future value but is rejected while capabilities report it unavailable in Alpha.
+        upstream_protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        upstream_model:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Rewrite the public model to this upstream model for this target. Requires a non-empty match.model on the route. Omission preserves the public model bytes.
+      additionalProperties: false
+    Policy:
+      type: object
+      required:
+        - id
+        - name
+        - enabled
+        - priority
+        - detector
+        - local_model_id
+        - match
+        - request_action
+        - response_action
+        - response_restore
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        enabled:
+          type: boolean
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        detector:
+          $ref: "#/components/schemas/PolicyDetector"
+        local_model_id:
+          oneOf:
+            - $ref: "#/components/schemas/PrivacyModelInstallationId"
+            - type: "null"
+          description: Required to reference a ready installation when detector is local_model; null for regex.
+        match:
+          $ref: "#/components/schemas/PolicyMatch"
+        request_action:
+          $ref: "#/components/schemas/PolicyAction"
+        response_action:
+          type: string
+          const: allow
+          readOnly: true
+        response_restore:
+          type: boolean
+          default: true
+          description: >
+            When request_action is redact, restore this request's placeholders in
+            the upstream response before returning to the client. Default true.
+      additionalProperties: false
+    PolicyCreate:
+      type: object
+      required: [name, priority, detector, match, request_action]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        enabled:
+          type: boolean
+          default: true
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        detector:
+          $ref: "#/components/schemas/PolicyDetector"
+        local_model_id:
+          oneOf:
+            - $ref: "#/components/schemas/PrivacyModelInstallationId"
+            - type: "null"
+        match:
+          $ref: "#/components/schemas/PolicyMatch"
+        request_action:
+          $ref: "#/components/schemas/PolicyAction"
+        response_restore:
+          type: boolean
+          default: true
+      additionalProperties: false
+    PolicyPatch:
+      type: object
+      minProperties: 1
+      properties:
+        enabled:
+          type: boolean
+        detector:
+          $ref: "#/components/schemas/PolicyDetector"
+        local_model_id:
+          oneOf:
+            - $ref: "#/components/schemas/PrivacyModelInstallationId"
+            - type: "null"
+        request_action:
+          $ref: "#/components/schemas/PolicyAction"
+        response_restore:
+          type: boolean
+      additionalProperties: false
+    PolicyDryRunRequest:
+      type: object
+      required: [protocol, sample_text]
+      properties:
+        protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+          description: Must be a protocol with inspectable request-body roots.
+        sample_text:
+          type: string
+          minLength: 1
+          maxLength: 262144
+        policy:
+          $ref: "#/components/schemas/PolicyPatch"
+          description: Optional patchable overrides applied only for this evaluation.
+      additionalProperties: false
+    PolicyDryRunFinding:
+      type: object
+      required: [kind, path, start, end]
+      description: >
+        Matched span metadata only. Never includes matched plaintext; sample
+        plaintext for placeholders appears solely on redactions for local dry-run.
+      properties:
+        kind:
+          $ref: "#/components/schemas/PrivacyCanonicalKind"
+        path:
+          type: string
+          minLength: 1
+          description: JSON Pointer path of the inspected string segment.
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    PolicyDryRunRedaction:
+      type: object
+      required: [placeholder, kind, value]
+      properties:
+        placeholder:
+          type: string
+          minLength: 1
+        kind:
+          $ref: "#/components/schemas/PrivacyCanonicalKind"
+        value:
+          type: string
+          description: Original sample text for this placeholder; dry-run only.
+      additionalProperties: false
+    PolicyDryRunResponse:
+      type: object
+      required: [decision, findings_summary, findings, inspected_body]
+      properties:
+        decision:
+          $ref: "#/components/schemas/PolicyAction"
+        findings_summary:
+          type: string
+          description: Stable kind=count summary; never includes matched plaintext.
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyDryRunFinding"
+        redactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyDryRunRedaction"
+          description: Placeholder-to-sample mapping for local preview; never used on the live inference plane.
+        redacted_body:
+          type: string
+          description: Present only when decision is redact.
+        inspected_body:
+          type: string
+          description: Minimal request JSON that was actually inspected.
+      additionalProperties: false
+    PolicyMatch:
+      type: object
+      properties:
+        protocols:
+          type: array
+          uniqueItems: true
+          default: []
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+          description: Empty means all protocols.
+        models:
+          type: array
+          uniqueItems: true
+          default: []
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Empty means all public models and aliases.
+        endpoint_ids:
+          type: array
+          uniqueItems: true
+          default: []
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: Empty means all endpoints.
+      additionalProperties: false
+    PolicyAction:
+      type: string
+      enum: [allow, warn, block, redact]
+    PolicyDetector:
+      type: string
+      enum: [regex, local_model]
+    PrivacyModelAdapter:
+      type: string
+      enum: [openai_bioes_viterbi, hf_token_classification]
+    PrivacyModelInstallationId:
+      type: string
+      pattern: "^model_[0-9a-f]{32}$"
+    PrivacyModelCatalogId:
+      type: string
+      pattern: "^catalog_[a-z0-9_]{3,80}$"
+    PrivacyCanonicalKind:
+      type: string
+      enum:
+        - email
+        - phone
+        - account
+        - payment_card
+        - ip_address
+        - url
+        - common_secret
+        - private_address
+        - private_date
+        - private_person
+    PrivacyModelVariant:
+      type: object
+      required:
+        - id
+        - name
+        - quantization
+        - bytes_total
+        - estimated_ram_bytes
+        - recommended
+        - supported
+        - unsupported_reason
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{1,63}$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Trimmed display name; control characters are not allowed.
+        quantization:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Trimmed quantization identifier; control characters are not allowed.
+        bytes_total:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        estimated_ram_bytes:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        recommended:
+          type: boolean
+        supported:
+          type: boolean
+        unsupported_reason:
+          oneOf:
+            - type: string
+              enum: [cpu_only]
+            - type: "null"
+      additionalProperties: false
+    PrivacyModelCatalogItem:
+      type: object
+      required:
+        - id
+        - name
+        - summary
+        - source
+        - repo_id
+        - revision
+        - license
+        - languages
+        - adapter
+        - variants
+      properties:
+        id:
+          $ref: "#/components/schemas/PrivacyModelCatalogId"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Trimmed model display name; control characters are not allowed.
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 512
+        source:
+          type: string
+          enum: [official, community]
+        repo_id:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        license:
+          type: string
+          minLength: 1
+          maxLength: 64
+        languages:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        adapter:
+          $ref: "#/components/schemas/PrivacyModelAdapter"
+        variants:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/PrivacyModelVariant"
+      additionalProperties: false
+    PrivacyModelCatalog:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/PrivacyModelCatalogItem"
+      additionalProperties: false
+    PrivacyModelProbeRequest:
+      type: object
+      required: [repo_id, revision]
+      properties:
+        repo_id:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+        revision:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+      additionalProperties: false
+    PrivacyModelProbeLabel:
+      type: object
+      required: [label, suggested_kind]
+      properties:
+        label:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        suggested_kind:
+          oneOf:
+            - $ref: "#/components/schemas/PrivacyCanonicalKind"
+            - type: "null"
+      additionalProperties: false
+    PrivacyModelProbe:
+      type: object
+      required:
+        - repo_id
+        - requested_revision
+        - revision
+        - name
+        - license
+        - languages
+        - adapter
+        - variants
+        - labels
+        - requires_label_mapping
+      properties:
+        repo_id:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+        requested_revision:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Trimmed model display name; control characters are not allowed.
+        license:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 64
+            - type: "null"
+        languages:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        adapter:
+          $ref: "#/components/schemas/PrivacyModelAdapter"
+        variants:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/PrivacyModelVariant"
+        labels:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/PrivacyModelProbeLabel"
+        requires_label_mapping:
+          type: boolean
+      additionalProperties: false
+    PrivacyModelLabelMapping:
+      type: object
+      maxProperties: 256
+      propertyNames:
+        pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      additionalProperties:
+        oneOf:
+          - $ref: "#/components/schemas/PrivacyCanonicalKind"
+          - type: "null"
+    PrivacyModelInstallRequest:
+      type: object
+      required: [repo_id, revision, variant_id, label_mapping]
+      properties:
+        repo_id:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        variant_id:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{1,63}$"
+        label_mapping:
+          $ref: "#/components/schemas/PrivacyModelLabelMapping"
+      additionalProperties: false
+    PrivacyModelInstallation:
+      type: object
+      required:
+        - id
+        - source
+        - catalog_id
+        - catalog_source
+        - name
+        - license
+        - languages
+        - repo_id
+        - revision
+        - variant_id
+        - variant_name
+        - quantization
+        - adapter
+        - status
+        - bytes_downloaded
+        - bytes_total
+        - estimated_ram_bytes
+        - error
+        - label_mapping
+        - installed_at
+      properties:
+        id:
+          $ref: "#/components/schemas/PrivacyModelInstallationId"
+        source:
+          type: string
+          enum: [catalog, custom]
+        catalog_id:
+          oneOf:
+            - $ref: "#/components/schemas/PrivacyModelCatalogId"
+            - type: "null"
+        catalog_source:
+          oneOf:
+            - type: string
+              enum: [official, community]
+            - type: "null"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Trimmed model display name; control characters are not allowed.
+        license:
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 64
+            - type: "null"
+        languages:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        repo_id:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        variant_id:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{1,63}$"
+        variant_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Trimmed variant display name; control characters are not allowed.
+        quantization:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Trimmed quantization identifier; control characters are not allowed.
+        adapter:
+          $ref: "#/components/schemas/PrivacyModelAdapter"
+        status:
+          type: string
+          enum: [downloading, ready, error]
+        bytes_downloaded:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        bytes_total:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        estimated_ram_bytes:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        error:
+          oneOf:
+            - type: string
+              enum: [download_failed, integrity_failed, incompatible_model]
+            - type: "null"
+        label_mapping:
+          $ref: "#/components/schemas/PrivacyModelLabelMapping"
+        installed_at:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+      additionalProperties: false
+    PrivacyModelInstallationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/PrivacyModelInstallation"
+      additionalProperties: false
+    AuditSettingsPatch:
+      type: object
+      minProperties: 1
+      properties:
+        request_body_enabled:
+          type: boolean
+        response_content_enabled:
+          type: boolean
+        request_body_max_bytes:
+          type: integer
+          minimum: 1024
+          maximum: 16777216
+        response_content_max_bytes:
+          type: integer
+          minimum: 1024
+          maximum: 67108864
+        metadata_retention_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+        content_retention_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+        audit_risk_acknowledged:
+          type: boolean
+          writeOnly: true
+          description: Must be true when enabling either capture switch; the acknowledgement is not persisted.
+        extensions:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/Extensions
+            - type: "null"
+          description: Namespaced extensions to replace, or null to delete them under RFC 7386 merge-patch semantics.
+      additionalProperties: false
+      allOf:
+        - $ref: "#/components/schemas/AuditAcknowledgementInvariant"
+    AuditAcknowledgementInvariant:
+      if:
+        anyOf:
+          - required: [request_body_enabled]
+            properties:
+              request_body_enabled:
+                const: true
+          - required: [response_content_enabled]
+            properties:
+              response_content_enabled:
+                const: true
+      then:
+        required: [audit_risk_acknowledged]
+        properties:
+          audit_risk_acknowledged:
+            const: true
+    EventSeverity:
+      type: string
+      enum: [debug, info, warning, error, critical]
+    Event:
+      type: object
+      required: [id, occurred_at, type, severity, summary, subject, attributes]
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        occurred_at:
+          type: string
+          format: date-time
+        type:
+          type: string
+          minLength: 3
+          maxLength: 96
+          pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+          examples: [endpoint.health_changed, core.started, policy.blocked]
+        severity:
+          $ref: "#/components/schemas/EventSeverity"
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Sanitized human-readable text without upstream URLs, IPs, credentials, or body content.
+        subject:
+          $ref: "#/components/schemas/EventSubject"
+        attributes:
+          $ref: "#/components/schemas/SanitizedAttributes"
+      additionalProperties: false
+    EventSubject:
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [core, endpoint, route, policy, request]
+        id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+      additionalProperties: false
+    SanitizedAttributes:
+      type: object
+      maxProperties: 32
+      propertyNames:
+        pattern: "^[a-z][a-z0-9_]{0,63}$"
+      additionalProperties:
+        oneOf:
+          - type: string
+            maxLength: 512
+          - type: number
+          - type: boolean
+          - type: "null"
+      description: Bounded scalar metadata only. Bodies, headers, credentials, URLs with userinfo, and unsanitized upstream errors are forbidden.
+    RequestStatus:
+      type: string
+      enum: [pending, succeeded, failed, cancelled, blocked]
+    RequestRecord:
+      type: object
+      required:
+        - id
+        - started_at
+        - completed_at
+        - status
+        - input_protocol
+        - requested_model
+        - streaming
+        - route_id
+        - endpoint_id
+        - local_access_token_id
+        - plan
+        - http_status
+        - latency_ms
+        - usage
+        - error
+        - audit
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+        status:
+          $ref: "#/components/schemas/RequestStatus"
+        input_protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        requested_model:
+          type: [string, "null"]
+          maxLength: 256
+        streaming:
+          type: boolean
+        route_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+        endpoint_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+        local_access_token_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+          description: Stable local access-token attribution. The historical identifier remains after the token is deleted.
+        plan:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ExecutionPlan
+            - type: "null"
+        http_status:
+          type: [integer, "null"]
+          minimum: 100
+          maximum: 599
+        latency_ms:
+          type: [integer, "null"]
+          minimum: 0
+        usage:
+          oneOf:
+            - $ref: "#/components/schemas/Usage"
+            - type: "null"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ErrorSummary"
+            - type: "null"
+        audit:
+          $ref: "#/components/schemas/AuditRecordSummary"
+        extensions:
+          $ref: ./protocol-capabilities.schema.json#/$defs/Extensions
+      additionalProperties: false
+    Usage:
+      type: object
+      required: [input_tokens, output_tokens, total_tokens]
+      properties:
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
+        cached_input_tokens:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    ErrorSummary:
+      type: object
+      required: [category, code, message, retryable]
+      properties:
+        category:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_]*$"
+        code:
+          type: string
+          minLength: 1
+          maxLength: 96
+          pattern: "^[a-z][a-z0-9_]*$"
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Sanitized message without endpoint identity, URL, IP, organization, project, headers, or body content.
+        retryable:
+          type: boolean
+      additionalProperties: false
+    AuditRecordSummary:
+      type: object
+      required:
+        - request_body_captured
+        - response_content_captured
+        - request_body_truncated
+        - response_content_truncated
+      properties:
+        request_body_captured:
+          type: boolean
+        response_content_captured:
+          type: boolean
+        request_body_truncated:
+          type: boolean
+        response_content_truncated:
+          type: boolean
+      additionalProperties: false
+    AuditContent:
+      type: object
+      required: [request_id, request_body, response_content]
+      properties:
+        request_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        request_body:
+          oneOf:
+            - $ref: "#/components/schemas/AuditContentPart"
+            - type: "null"
+        response_content:
+          oneOf:
+            - $ref: "#/components/schemas/AuditContentPart"
+            - type: "null"
+      additionalProperties: false
+    AuditContentPart:
+      type: object
+      required: [media_type, content, truncated, captured_bytes]
+      properties:
+        media_type:
+          type: string
+          minLength: 1
+          maxLength: 128
+        content:
+          type: string
+          description: Decrypted content; never log, cache, diagnose, or include in ordinary exports.
+        truncated:
+          type: boolean
+        captured_bytes:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    PurgeRequest:
+      type: object
+      required: [scope, confirm]
+      properties:
+        scope:
+          type: string
+          enum: [all, before]
+        before:
+          type: string
+          format: date-time
+          description: Required when scope is before.
+        confirm:
+          type: boolean
+          const: true
+          description: Explicit destructive-action confirmation.
+      additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              scope:
+                const: before
+            required: [scope]
+          then:
+            required: [before]
+        - if:
+            properties:
+              scope:
+                const: all
+            required: [scope]
+          then:
+            not:
+              required: [before]
+    PurgeResult:
+      type: object
+      required: [deleted_records, deleted_audit_blobs]
+      properties:
+        deleted_records:
+          type: integer
+          minimum: 0
+        deleted_audit_blobs:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    EndpointPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Endpoint"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 512
+      additionalProperties: false
+    RoutePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Route"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 512
+      additionalProperties: false
+    PolicyPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/Policy"
+        next_cursor:
+          type: "null"
+      additionalProperties: false
+    EventPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Event"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 512
+      additionalProperties: false
+    RequestRecordPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestRecord"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 512
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          $ref: "#/components/schemas/ControlError"
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 96
+      additionalProperties: false
+    ControlError:
+      type: object
+      required: [code, message, retryable, details]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 96
+          pattern: "^[a-z][a-z0-9_]*$"
+          examples: [missing_protocol_capability, validation_failed]
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Sanitized user-facing message.
+        retryable:
+          type: boolean
+        details:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+      additionalProperties: false
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+          maxLength: 256
+        reason:
+          type: string
+          maxLength: 512
+        protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        endpoint_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        required_plan_types:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/PlanType
+      additionalProperties: false

@@ -1,0 +1,39 @@
+<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg" fill="none">
+ <title>AstrLink 星澜</title>
+ <desc>由星座节点构成字母 A，一道渐变星澜穿过中央，象征连接万物的网关。</desc>
+ <defs>
+  <filter height="140%" width="140%" y="-20%" x="-20%" id="astrlink-plate-shadow"/>
+  <linearGradient y2="0.92647" x2="0.89216" y1="0.07843" x1="0.10784" id="astrlink-background">
+   <stop stop-color="#F1FBFF"/>
+   <stop stop-color="#F7F7FF" offset="0.55"/>
+   <stop stop-color="#FFF2FA" offset="1"/>
+  </linearGradient>
+  <linearGradient y2="1.08197" x2="0.5" y1="-0.04098" x1="0.5" id="astrlink-structure">
+   <stop stop-color="#26336F"/>
+   <stop stop-color="#4656A6" offset="1"/>
+  </linearGradient>
+  <linearGradient y2="0.04" x2="1" y1="1.04" x1="0" id="astrlink-tide">
+   <stop stop-color="#1AEBF0"/>
+   <stop stop-color="#768DF6" offset="0.52"/>
+   <stop stop-color="#F85DAE" offset="1"/>
+  </linearGradient>
+ </defs>
+ <!-- ~10% macOS icon margin so the plate matches neighboring dock icons -->
+ <g>
+  <title>Layer 1</title>
+  <g stroke="null" id="svg_1" filter="url(#astrlink-plate-shadow)">
+   <rect stroke="null" id="svg_2" fill="url(#astrlink-background)" rx="92" height="408" width="408" y="52" x="52"/>
+  </g>
+  <g id="svg_3" stroke-linejoin="round" stroke-linecap="round" stroke-width="18" stroke="url(#astrlink-structure)">
+   <path id="svg_4" d="m128,372l128,-244l128,244"/>
+   <path id="svg_5" d="m128,372l56,0l54,-82"/>
+   <path id="svg_6" d="m274,290l54,82l56,0"/>
+  </g>
+  <path transform="rotate(11.9518 254.238 271.857)" stroke="url(#astrlink-tide)" id="svg_7" stroke-linecap="round" stroke-width="18" d="m90.23811,377.85715c71.89041,-14.13334 123.56164,-53.70667 179.72602,-115.89335c51.67123,-56.53334 94.35616,-84.80001 148.27397,-96.10668"/>
+  <g id="svg_9" stroke-width="6" stroke="url(#astrlink-structure)" fill="#FFFFFF">
+   <circle id="svg_10" r="14" cy="128" cx="256"/>
+   <circle id="svg_11" r="12" cy="372" cx="128"/>
+   <circle id="svg_12" r="12" cy="372" cx="384"/>
+  </g>
+ </g>
+</svg>
