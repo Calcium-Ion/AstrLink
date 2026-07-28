@@ -66,14 +66,14 @@ func TestRestorePlaceholdersNestedToolArgsJSONEscape(t *testing.T) {
 
 func TestShouldRestoreContentType(t *testing.T) {
 	cases := map[string]bool{
-		"application/json":                         true,
-		"application/json; charset=utf-8":          true,
-		"text/event-stream":                        true,
-		"text/plain":                               true,
-		"application/json-seq":                     true,
-		"application/vnd.google.api+json":          true,
-		"application/octet-stream":                 false,
-		"image/png":                                false,
+		"application/json":                true,
+		"application/json; charset=utf-8": true,
+		"text/event-stream":               true,
+		"text/plain":                      true,
+		"application/json-seq":            true,
+		"application/vnd.google.api+json": true,
+		"application/octet-stream":        false,
+		"image/png":                       false,
 	}
 	for contentType, want := range cases {
 		if got := ShouldRestoreContentType(contentType); got != want {

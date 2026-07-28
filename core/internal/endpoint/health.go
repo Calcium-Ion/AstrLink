@@ -34,7 +34,7 @@ type circuitBreakerConfig struct {
 
 type circuitBreaker struct {
 	mu               sync.Mutex
-	states           map[contract.EndpointID]circuitState
+	states           map[contract.ServiceID]circuitState
 	failureThreshold int
 	cooldown         time.Duration
 	now              func() time.Time
@@ -51,7 +51,7 @@ func newCircuitBreaker(config circuitBreakerConfig) *circuitBreaker {
 		config.Now = time.Now
 	}
 	return &circuitBreaker{
-		states:           make(map[contract.EndpointID]circuitState),
+		states:           make(map[contract.ServiceID]circuitState),
 		failureThreshold: config.FailureThreshold,
 		cooldown:         config.Cooldown,
 		now:              config.Now,
@@ -62,13 +62,13 @@ func newCircuitBreaker(config circuitBreakerConfig) *circuitBreaker {
 // half-open transition immediately before I/O, but automatic resolution can
 // already exclude circuits that are still open or have a probe in flight.
 func (breaker *circuitBreaker) available(candidate Resolved) bool {
-	if breaker == nil || candidate.Endpoint.ID == "" {
+	if breaker == nil || candidate.CanonicalService().ID == "" {
 		return false
 	}
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
-	state := breaker.states[candidate.Endpoint.ID]
+	state := breaker.states[candidate.CanonicalService().ID]
 	switch state.phase {
 	case circuitClosed:
 		return true
@@ -86,13 +86,13 @@ func (breaker *circuitBreaker) available(candidate Resolved) bool {
 // probe after the cooldown, and all explicitly pinned attempts. Pinned bypass
 // attempts do not consume or replace the single automatic probe.
 func (breaker *circuitBreaker) begin(candidate Resolved) bool {
-	if breaker == nil || candidate.Endpoint.ID == "" {
+	if breaker == nil || candidate.CanonicalService().ID == "" {
 		return false
 	}
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
-	state := breaker.states[candidate.Endpoint.ID]
+	state := breaker.states[candidate.CanonicalService().ID]
 	switch state.phase {
 	case circuitClosed:
 		return true
@@ -104,7 +104,7 @@ func (breaker *circuitBreaker) begin(candidate Resolved) bool {
 			return false
 		}
 		state.phase = circuitHalfOpen
-		breaker.states[candidate.Endpoint.ID] = state
+		breaker.states[candidate.CanonicalService().ID] = state
 		return true
 	case circuitHalfOpen:
 		return candidate.Pinned
@@ -114,13 +114,13 @@ func (breaker *circuitBreaker) begin(candidate Resolved) bool {
 }
 
 func (breaker *circuitBreaker) success(candidate Resolved) {
-	if breaker == nil || candidate.Endpoint.ID == "" {
+	if breaker == nil || candidate.CanonicalService().ID == "" {
 		return
 	}
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
-	state, exists := breaker.states[candidate.Endpoint.ID]
+	state, exists := breaker.states[candidate.CanonicalService().ID]
 	if !exists {
 		return
 	}
@@ -129,17 +129,17 @@ func (breaker *circuitBreaker) success(candidate Resolved) {
 	if candidate.Pinned && state.phase != circuitClosed {
 		return
 	}
-	delete(breaker.states, candidate.Endpoint.ID)
+	delete(breaker.states, candidate.CanonicalService().ID)
 }
 
 func (breaker *circuitBreaker) failure(candidate Resolved) {
-	if breaker == nil || candidate.Endpoint.ID == "" {
+	if breaker == nil || candidate.CanonicalService().ID == "" {
 		return
 	}
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
-	state := breaker.states[candidate.Endpoint.ID]
+	state := breaker.states[candidate.CanonicalService().ID]
 	if candidate.Pinned && state.phase != circuitClosed {
 		return
 	}
@@ -157,22 +157,22 @@ func (breaker *circuitBreaker) failure(candidate Resolved) {
 	default:
 		return
 	}
-	breaker.states[candidate.Endpoint.ID] = state
+	breaker.states[candidate.CanonicalService().ID] = state
 }
 
 func (breaker *circuitBreaker) abandon(candidate Resolved) {
-	if breaker == nil || candidate.Endpoint.ID == "" || candidate.Pinned {
+	if breaker == nil || candidate.CanonicalService().ID == "" || candidate.Pinned {
 		return
 	}
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
-	state, exists := breaker.states[candidate.Endpoint.ID]
+	state, exists := breaker.states[candidate.CanonicalService().ID]
 	if !exists || state.phase != circuitHalfOpen {
 		return
 	}
 	// Preserve the already-expired opening time so the next request may claim
 	// the abandoned probe immediately.
 	state.phase = circuitOpen
-	breaker.states[candidate.Endpoint.ID] = state
+	breaker.states[candidate.CanonicalService().ID] = state
 }

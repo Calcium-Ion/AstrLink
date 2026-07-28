@@ -3,6 +3,7 @@ package contract
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"unicode/utf8"
 )
 
@@ -41,12 +42,42 @@ const (
 	DefaultPrivacyPolicyID       PolicyID = "policy_privacy_default"
 	DefaultPrivacyPolicyName              = "隐私保护"
 	DefaultPrivacyPolicyPriority          = 0
+	DefaultPrivacyMinConfidence           = 0.80
 )
 
 type PolicyMatch struct {
-	Protocols   []ProtocolID `json:"protocols,omitempty"`
-	Models      []string     `json:"models,omitempty"`
-	EndpointIDs []EndpointID `json:"endpoint_ids,omitempty"`
+	Protocols  []ProtocolID `json:"protocols,omitempty"`
+	Models     []string     `json:"models,omitempty"`
+	ServiceIDs []ServiceID  `json:"service_ids,omitempty"`
+}
+
+// UnmarshalJSON accepts the legacy endpoint_ids key from pre-v12 persisted
+// policies. Marshaling always emits service_ids.
+func (match *PolicyMatch) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Protocols   []ProtocolID `json:"protocols,omitempty"`
+		Models      []string     `json:"models,omitempty"`
+		ServiceIDs  *[]ServiceID `json:"service_ids,omitempty"`
+		EndpointIDs *[]ServiceID `json:"endpoint_ids,omitempty"`
+	}
+	if err := decodeStrictContractJSON(data, &wire); err != nil {
+		return err
+	}
+	if wire.ServiceIDs != nil && wire.EndpointIDs != nil {
+		return fmt.Errorf("policy match cannot contain both service_ids and endpoint_ids")
+	}
+	serviceIDs := []ServiceID(nil)
+	if wire.ServiceIDs != nil {
+		serviceIDs = *wire.ServiceIDs
+	} else if wire.EndpointIDs != nil {
+		serviceIDs = *wire.EndpointIDs
+	}
+	*match = PolicyMatch{
+		Protocols:  wire.Protocols,
+		Models:     wire.Models,
+		ServiceIDs: serviceIDs,
+	}
+	return nil
 }
 
 // Policy keeps request and response decisions explicit. Body-audit switches
@@ -59,6 +90,7 @@ type Policy struct {
 	Priority        int             `json:"priority"`
 	Detector        PolicyDetector  `json:"detector"`
 	LocalModelID    *PrivacyModelID `json:"local_model_id"`
+	MinConfidence   float64         `json:"min_confidence"`
 	Match           PolicyMatch     `json:"match"`
 	RequestAction   PolicyAction    `json:"request_action"`
 	ResponseAction  PolicyAction    `json:"response_action"`
@@ -77,6 +109,10 @@ func (policy Policy) Validate() error {
 	}
 	if !policy.Detector.Valid() {
 		return fmt.Errorf("unknown policy detector %q", policy.Detector)
+	}
+	if math.IsNaN(policy.MinConfidence) || math.IsInf(policy.MinConfidence, 0) ||
+		policy.MinConfidence < 0 || policy.MinConfidence > 1 {
+		return fmt.Errorf("min_confidence must be between 0 and 1")
 	}
 	switch policy.Detector {
 	case PolicyDetectorRegex:
@@ -117,13 +153,13 @@ func (policy Policy) Validate() error {
 		}
 		seenModels[model] = struct{}{}
 	}
-	seenEndpoints := make(map[EndpointID]struct{}, len(policy.Match.EndpointIDs))
-	for index, endpointID := range policy.Match.EndpointIDs {
+	seenEndpoints := make(map[ServiceID]struct{}, len(policy.Match.ServiceIDs))
+	for index, endpointID := range policy.Match.ServiceIDs {
 		if err := endpointID.Validate(); err != nil {
-			return fmt.Errorf("match.endpoint_ids[%d]: %w", index, err)
+			return fmt.Errorf("match.service_ids[%d]: %w", index, err)
 		}
 		if _, ok := seenEndpoints[endpointID]; ok {
-			return fmt.Errorf("match.endpoint_ids[%d]: duplicate endpoint id %q", index, endpointID)
+			return fmt.Errorf("match.service_ids[%d]: duplicate endpoint id %q", index, endpointID)
 		}
 		seenEndpoints[endpointID] = struct{}{}
 	}
@@ -138,6 +174,7 @@ func DefaultPrivacyPolicy() Policy {
 		Priority:        DefaultPrivacyPolicyPriority,
 		Detector:        PolicyDetectorRegex,
 		LocalModelID:    nil,
+		MinConfidence:   DefaultPrivacyMinConfidence,
 		Match:           PolicyMatch{},
 		RequestAction:   PolicyActionRedact,
 		ResponseAction:  PolicyActionAllow,
@@ -155,16 +192,17 @@ type PolicyDryRunRequest struct {
 	SampleText string     `json:"sample_text"`
 	// Policy optionally overrides patchable fields for this evaluation only.
 	// Keys match PolicyPatch: enabled, detector, local_model_id,
-	// request_action, response_restore.
+	// min_confidence, request_action, response_restore.
 	Policy map[string]json.RawMessage `json:"policy,omitempty"`
 }
 
 // PolicyDryRunFinding identifies a matched span without returning plaintext.
 type PolicyDryRunFinding struct {
-	Kind  string `json:"kind"`
-	Path  string `json:"path"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
+	Kind       string  `json:"kind"`
+	Path       string  `json:"path"`
+	Start      int     `json:"start"`
+	End        int     `json:"end"`
+	Confidence float64 `json:"confidence"`
 }
 
 // PolicyDryRunRedaction is returned only for dry-run of user-supplied samples.
@@ -177,12 +215,13 @@ type PolicyDryRunRedaction struct {
 
 // PolicyDryRunResponse is the local preview of a privacy-policy evaluation.
 type PolicyDryRunResponse struct {
-	Decision        string                  `json:"decision"`
-	FindingsSummary string                  `json:"findings_summary"`
-	Findings        []PolicyDryRunFinding   `json:"findings"`
-	Redactions     []PolicyDryRunRedaction `json:"redactions,omitempty"`
-	RedactedBody  *string                 `json:"redacted_body,omitempty"`
-	InspectedBody string                  `json:"inspected_body"`
+	Decision           string                  `json:"decision"`
+	FindingsSummary    string                  `json:"findings_summary"`
+	Findings           []PolicyDryRunFinding   `json:"findings"`
+	SuppressedFindings []PolicyDryRunFinding   `json:"suppressed_findings"`
+	Redactions         []PolicyDryRunRedaction `json:"redactions,omitempty"`
+	RedactedBody       *string                 `json:"redacted_body,omitempty"`
+	InspectedBody      string                  `json:"inspected_body"`
 }
 
 // ValidatePrivacyDefault keeps the MVP policy identity and global match scope
@@ -204,7 +243,7 @@ func ValidatePrivacyDefault(policy Policy) error {
 	if policy.ResponseAction != PolicyActionAllow {
 		return fmt.Errorf("privacy policy response action must remain %q", PolicyActionAllow)
 	}
-	if len(policy.Match.Protocols) != 0 || len(policy.Match.Models) != 0 || len(policy.Match.EndpointIDs) != 0 {
+	if len(policy.Match.Protocols) != 0 || len(policy.Match.Models) != 0 || len(policy.Match.ServiceIDs) != 0 {
 		return fmt.Errorf("privacy policy match must remain global")
 	}
 	return nil

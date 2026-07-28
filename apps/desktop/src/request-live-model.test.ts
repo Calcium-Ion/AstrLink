@@ -23,7 +23,7 @@ function record(
     requested_model: "gpt-test",
     streaming: true,
     route_id: null,
-    endpoint_id: "endpoint_01",
+    service_id: "service_01",
     local_access_token_id: null,
     http_status: null,
     latency_ms: null,
@@ -89,14 +89,14 @@ describe("request live merge model", () => {
     expect(
       recordMatchesFilters(value, {
         status: "failed",
-        endpointId: "endpoint_01",
+        serviceId: "service_01",
         protocol: "openai.responses",
       }),
     ).toBe(true);
     expect(
       recordMatchesFilters(value, {
         status: "pending",
-        endpointId: "",
+        serviceId: "",
         protocol: "",
       }),
     ).toBe(false);
@@ -113,4 +113,3 @@ describe("request live merge model", () => {
     ).toBe(220);
   });
 });
-

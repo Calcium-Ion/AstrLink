@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -444,6 +445,132 @@ func TestModelModeNeverFallsBackToRegex(t *testing.T) {
 	}
 	if !called || result.Decision != DecisionAllow {
 		t.Fatalf("model result = %#v, called=%t", result, called)
+	}
+}
+
+func TestModelConfidenceThresholdIsInclusiveAndReportsSuppressedFindings(t *testing.T) {
+	const sample = "画一张猫的图片"
+	body := []byte(`{"input":"` + sample + `"}`)
+	for _, test := range []struct {
+		name           string
+		score          float64
+		wantDecision   Decision
+		wantAccepted   int
+		wantSuppressed int
+	}{
+		{
+			name: "below default threshold", score: 0.696717,
+			wantDecision: DecisionAllow, wantSuppressed: 1,
+		},
+		{
+			name: "equal to threshold", score: 0.80,
+			wantDecision: DecisionBlock, wantAccepted: 1,
+		},
+		{
+			name: "above threshold", score: 0.91,
+			wantDecision: DecisionBlock, wantAccepted: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := DetectorFunc(func(_ context.Context, input DetectInput) ([]Finding, error) {
+				if len(input.Segments) != 1 || input.Segments[0].Value != sample {
+					t.Fatalf("model input = %#v", input)
+				}
+				return []Finding{{
+					Segment: 0, Start: 0, End: len(sample),
+					Kind: KindPerson, Confidence: test.score,
+				}}, nil
+			})
+			result, err := newTestEngine(t, model).Inspect(
+				context.Background(),
+				Policy{
+					Enabled: true, Mode: ModeLocalModel,
+					LocalModelID:  testLocalModelID,
+					MinConfidence: contract.DefaultPrivacyMinConfidence,
+					Action:        ActionBlock,
+				},
+				contract.ProtocolOpenAIResponses,
+				body,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != test.wantDecision ||
+				len(result.Findings) != test.wantAccepted ||
+				len(result.SuppressedFindings) != test.wantSuppressed {
+				t.Fatalf("result = %#v", result)
+			}
+			all := append(append([]Finding{}, result.Findings...), result.SuppressedFindings...)
+			if len(all) != 1 || all[0].Confidence != test.score {
+				t.Fatalf("confidence was not preserved: %#v", result)
+			}
+		})
+	}
+}
+
+func TestModelDuplicateCandidatesKeepHighestConfidenceBeforeThreshold(t *testing.T) {
+	model := DetectorFunc(func(_ context.Context, input DetectInput) ([]Finding, error) {
+		end := len(input.Segments[0].Value)
+		return []Finding{
+			{Segment: 0, Start: 0, End: end, Kind: KindPerson, Confidence: 0.70},
+			{Segment: 0, Start: 0, End: end, Kind: KindPerson, Confidence: 0.85},
+		}, nil
+	})
+	result, err := newTestEngine(t, model).Inspect(
+		context.Background(),
+		Policy{
+			Enabled: true, Mode: ModeLocalModel,
+			LocalModelID: testLocalModelID, MinConfidence: 0.80,
+			Action: ActionBlock,
+		},
+		contract.ProtocolOpenAIResponses,
+		[]byte(`{"input":"candidate"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != DecisionBlock || len(result.Findings) != 1 ||
+		result.Findings[0].Confidence != 0.85 ||
+		len(result.SuppressedFindings) != 0 {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestEngineRejectsInvalidModelConfidenceAndLeavesRegexUnaffected(t *testing.T) {
+	for _, score := range []float64{-0.01, 1.01, math.NaN()} {
+		model := DetectorFunc(func(_ context.Context, input DetectInput) ([]Finding, error) {
+			return []Finding{{
+				Segment: 0, Start: 0, End: len(input.Segments[0].Value),
+				Kind: KindPerson, Confidence: score,
+			}}, nil
+		})
+		_, err := newTestEngine(t, model).Inspect(
+			context.Background(),
+			Policy{
+				Enabled: true, Mode: ModeLocalModel,
+				LocalModelID: testLocalModelID, MinConfidence: 0.8,
+				Action: ActionBlock,
+			},
+			contract.ProtocolOpenAIResponses,
+			[]byte(`{"input":"candidate"}`),
+		)
+		if !errors.Is(err, ErrDetectorUnavailable) {
+			t.Fatalf("score %v error = %v", score, err)
+		}
+	}
+
+	result, err := newTestEngine(t, nil).Inspect(
+		context.Background(),
+		Policy{
+			Enabled: true, Mode: ModeRegex,
+			MinConfidence: 1, Action: ActionBlock,
+		},
+		contract.ProtocolOpenAIResponses,
+		[]byte(`{"input":"alice@example.com"}`),
+	)
+	if err != nil || result.Decision != DecisionBlock ||
+		len(result.Findings) != 1 || result.Findings[0].Confidence != 1 {
+		t.Fatalf("regex result = %#v, error = %v", result, err)
 	}
 }
 

@@ -20,7 +20,7 @@ import (
 )
 
 func discoveryEndpoint(
-	id contract.EndpointID,
+	id contract.ServiceID,
 	protocol contract.ProtocolID,
 	mode contract.CapabilityMode,
 ) contract.Endpoint {
@@ -35,7 +35,7 @@ func discoveryEndpoint(
 	}
 }
 
-func discoveryHostEndpointID(host string) string {
+func discoveryHostServiceID(host string) string {
 	return strings.ReplaceAll(strings.TrimSuffix(host, ".example"), "-", "_")
 }
 
@@ -110,7 +110,7 @@ func TestModelDiscoveryAggregatesDeterministicallyWithRoutingOrderConflictWins(t
 					if request.URL.String() != wantURL {
 						t.Errorf("upstream URL = %q, want %q", request.URL.String(), wantURL)
 					}
-					wantAuthorization := "Bearer secret-for-" + discoveryHostEndpointID(host)
+					wantAuthorization := "Bearer secret-for-" + discoveryHostServiceID(host)
 					if got := request.Header.Get("Authorization"); got != wantAuthorization {
 						t.Errorf("upstream Authorization = %q, want %q", got, wantAuthorization)
 					}
@@ -170,7 +170,7 @@ func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
 							Model:    "shared-model",
 						},
 						Targets: []contract.RouteTarget{{
-							EndpointID: "endpoint_b", PlanType: contract.PlanTypeNative,
+							ServiceID: "endpoint_b", PlanType: contract.PlanTypeNative,
 							UpstreamProtocol: contract.ProtocolOpenAIResponses,
 							UpstreamModel:    "provider/secret-upstream",
 						}},
@@ -185,7 +185,7 @@ func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
 							Model:    "zeta-alias",
 						},
 						Targets: []contract.RouteTarget{{
-							EndpointID: "endpoint_b", PlanType: contract.PlanTypeNative,
+							ServiceID: "endpoint_b", PlanType: contract.PlanTypeNative,
 							UpstreamProtocol: contract.ProtocolOpenAIChat,
 							UpstreamModel:    "provider/zeta-real",
 						}},
@@ -208,7 +208,7 @@ func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
 						Model:    "public-gemini",
 					},
 					Targets: []contract.RouteTarget{{
-						EndpointID: "endpoint_b", PlanType: contract.PlanTypeNative,
+						ServiceID: "endpoint_b", PlanType: contract.PlanTypeNative,
 						UpstreamProtocol: contract.ProtocolGoogleGenerateContent,
 						UpstreamModel:    "gemini-secret",
 					}},
@@ -345,9 +345,9 @@ func TestModelDiscoveryServesPartialAggregateAndRecordsCircuitOutcomes(t *testin
 	}
 	resolver.mu.Lock()
 	defer resolver.mu.Unlock()
-	failures := append([]contract.EndpointID(nil), resolver.failures...)
+	failures := append([]contract.ServiceID(nil), resolver.failures...)
 	sort.Slice(failures, func(left, right int) bool { return failures[left] < failures[right] })
-	wantFailures := []contract.EndpointID{"endpoint_dial", "endpoint_garbled", "endpoint_status"}
+	wantFailures := []contract.ServiceID{"endpoint_dial", "endpoint_garbled", "endpoint_status"}
 	if len(resolver.successes) != 1 || resolver.successes[0] != "endpoint_ok" {
 		t.Fatalf("successes = %v, want [endpoint_ok]", resolver.successes)
 	}
@@ -516,25 +516,25 @@ func TestModelDiscoveryEnforcesUpstreamResponseByteBound(t *testing.T) {
 	protocol := contract.ProtocolOpenAIModels
 	tests := []struct {
 		name         string
-		candidates   []contract.EndpointID
+		candidates   []contract.ServiceID
 		wantStatus   int
 		wantBody     string
 		wantCode     string
-		wantFailures []contract.EndpointID
+		wantFailures []contract.ServiceID
 	}{
 		{
 			name:         "oversized endpoint fails cleanly while the aggregate survives",
-			candidates:   []contract.EndpointID{"endpoint_big", "endpoint_small"},
+			candidates:   []contract.ServiceID{"endpoint_big", "endpoint_small"},
 			wantStatus:   http.StatusOK,
 			wantBody:     `{"object":"list","data":[{"id":"tiny-model"}],"first_id":"tiny-model","has_more":false,"last_id":"tiny-model"}`,
-			wantFailures: []contract.EndpointID{"endpoint_big"},
+			wantFailures: []contract.ServiceID{"endpoint_big"},
 		},
 		{
 			name:         "only an oversized endpoint fails the aggregate",
-			candidates:   []contract.EndpointID{"endpoint_big"},
+			candidates:   []contract.ServiceID{"endpoint_big"},
 			wantStatus:   http.StatusBadGateway,
 			wantCode:     "upstream_unavailable",
-			wantFailures: []contract.EndpointID{"endpoint_big"},
+			wantFailures: []contract.ServiceID{"endpoint_big"},
 		},
 	}
 
@@ -583,7 +583,7 @@ func TestModelDiscoveryEnforcesUpstreamResponseByteBound(t *testing.T) {
 
 type admissionRefusingResolver struct {
 	*healthTrackingCandidateResolver
-	refuse map[contract.EndpointID]bool
+	refuse map[contract.ServiceID]bool
 }
 
 func (resolver admissionRefusingResolver) BeginAttempt(candidate endpoint.Resolved) bool {
@@ -594,7 +594,7 @@ func TestModelDiscoverySkipsCandidatesRefusedByCircuitAdmission(t *testing.T) {
 	protocol := contract.ProtocolOpenAIModels
 	tests := []struct {
 		name       string
-		refuse     map[contract.EndpointID]bool
+		refuse     map[contract.ServiceID]bool
 		wantStatus int
 		wantBody   string
 		wantCode   string
@@ -602,14 +602,14 @@ func TestModelDiscoverySkipsCandidatesRefusedByCircuitAdmission(t *testing.T) {
 	}{
 		{
 			name:       "refused candidate is skipped without upstream io",
-			refuse:     map[contract.EndpointID]bool{"endpoint_a": true},
+			refuse:     map[contract.ServiceID]bool{"endpoint_a": true},
 			wantStatus: http.StatusOK,
 			wantBody:   `{"object":"list","data":[{"id":"endpoint_b-model"}],"first_id":"endpoint_b-model","has_more":false,"last_id":"endpoint_b-model"}`,
 			wantHosts:  []string{"endpoint-b.example"},
 		},
 		{
 			name:       "all candidates refused",
-			refuse:     map[contract.EndpointID]bool{"endpoint_a": true, "endpoint_b": true},
+			refuse:     map[contract.ServiceID]bool{"endpoint_a": true, "endpoint_b": true},
 			wantStatus: http.StatusServiceUnavailable,
 			wantCode:   "upstream_unavailable",
 			wantHosts:  nil,
@@ -633,7 +633,7 @@ func TestModelDiscoverySkipsCandidatesRefusedByCircuitAdmission(t *testing.T) {
 					mu.Lock()
 					hosts = append(hosts, request.URL.Host)
 					mu.Unlock()
-					model := discoveryHostEndpointID(request.URL.Host) + "-model"
+					model := discoveryHostServiceID(request.URL.Host) + "-model"
 					return &http.Response{
 						StatusCode: http.StatusOK,
 						Header:     http.Header{"Content-Type": {"application/json"}},
@@ -662,7 +662,7 @@ func TestModelDiscoveryBoundsConcurrentFanOut(t *testing.T) {
 	const capableEndpoints = maxConcurrentDiscoveryFetches + 2
 	candidates := make([]endpoint.Resolved, 0, capableEndpoints)
 	for index := range capableEndpoints {
-		id := contract.EndpointID("endpoint_" + string(rune('a'+index)))
+		id := contract.ServiceID("endpoint_" + string(rune('a'+index)))
 		candidates = append(candidates, endpoint.Resolved{
 			Endpoint: discoveryEndpoint(id, contract.ProtocolOpenAIModels, contract.CapabilityModeNative),
 		})

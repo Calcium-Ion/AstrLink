@@ -7,20 +7,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridgeMocks = vi.hoisted(() => ({
   cancelPrivacyModelInstallation: vi.fn(),
   createAccessToken: vi.fn(),
-  createEndpoint: vi.fn(),
+  createService: vi.fn(),
+  createRoute: vi.fn(),
   deleteAccessToken: vi.fn(),
-  deleteEndpoint: vi.fn(),
+  deleteService: vi.fn(),
+  deleteRoute: vi.fn(),
   deletePrivacyModelInstallation: vi.fn(),
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
-  getEndpoint: vi.fn(),
+  getService: vi.fn(),
+  getServiceAuthorization: vi.fn(),
+  getRoute: vi.fn(),
   getPrivacyModelCatalog: vi.fn(),
   getPrivacyModelInstallation: vi.fn(),
   getPrivacyPolicy: vi.fn(),
   getRequestAuditContent: vi.fn(),
   installPrivacyModel: vi.fn(),
   listAccessTokens: vi.fn(),
-  listEndpoints: vi.fn(),
+  listServices: vi.fn(),
+  listRoutes: vi.fn(),
   listPrivacyModelInstallations: vi.fn(),
   listPrivacyPolicies: vi.fn(),
   listRequestRecords: vi.fn(),
@@ -29,10 +34,15 @@ const bridgeMocks = vi.hoisted(() => ({
   revealAccessToken: vi.fn(),
   restartCore: vi.fn(),
   updateAuditSettings: vi.fn(),
-  updateEndpoint: vi.fn(),
+  updateService: vi.fn(),
+  updateRoute: vi.fn(),
   updatePrivacyPolicy: vi.fn(),
   deleteRequestRecord: vi.fn(),
   getRequestRecord: vi.fn(),
+  beginServiceAuthorization: vi.fn(),
+  cancelServiceAuthorization: vi.fn(),
+  logoutService: vi.fn(),
+  openAuthorizationURL: vi.fn(),
 }));
 
 vi.mock("./bridge", () => bridgeMocks);
@@ -96,6 +106,16 @@ function button(label: string): HTMLButtonElement {
   return match;
 }
 
+function workspaceHeading(): HTMLHeadingElement {
+  const headings = [
+    ...document.querySelectorAll<HTMLHeadingElement>(".workspace h1"),
+  ];
+  if (headings.length !== 1) {
+    throw new Error(`Expected one workspace heading, found ${headings.length}`);
+  }
+  return headings[0];
+}
+
 async function setInput(selector: string, value: string): Promise<void> {
   const input = document.querySelector<HTMLInputElement>(selector);
   if (!input) throw new Error(`Missing input: ${selector}`);
@@ -122,15 +142,12 @@ describe("App workspace navigation", () => {
     ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
     bridgeMocks.getCoreStatus.mockResolvedValue(readySnapshot);
-    bridgeMocks.listEndpoints.mockResolvedValue({
+    bridgeMocks.listServices.mockResolvedValue({
       items: [
         {
-          id: "endpoint_01",
+          id: "service_gateway_01",
           name: "Primary gateway",
           kind: "newapi",
-          base_url: "https://gateway.example",
-          auth: { scheme: "bearer" },
-          credential_ref: "local://endpoint/endpoint_01",
           enabled: true,
           capabilities: [
             {
@@ -139,6 +156,32 @@ describe("App workspace navigation", () => {
               streaming: true,
             },
           ],
+          http: {
+            base_url: "https://gateway.example",
+            auth: { scheme: "bearer" },
+            credential_ref: "local://service/service_gateway_01",
+          },
+          created_at: "2026-07-28T08:00:00Z",
+          updated_at: "2026-07-28T08:00:00Z",
+        },
+        {
+          id: "service_codex_01",
+          name: "Codex 订阅",
+          kind: "codex_subscription",
+          enabled: true,
+          capabilities: [
+            {
+              protocol: "openai.responses",
+              mode: "native",
+              streaming: true,
+            },
+          ],
+          subscription: {
+            provider: "openai_codex",
+            status: "disconnected",
+          },
+          created_at: "2026-07-28T08:00:00Z",
+          updated_at: "2026-07-28T08:00:00Z",
         },
       ],
       next_cursor: null,
@@ -163,6 +206,7 @@ describe("App workspace navigation", () => {
         priority: 0,
         detector: "regex",
         local_model_id: null,
+        min_confidence: 0.8,
         request_action: "redact",
         response_action: "allow",
         response_restore: true,
@@ -202,6 +246,13 @@ describe("App workspace navigation", () => {
       items: [],
       next_cursor: null,
     });
+    bridgeMocks.listRoutes.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    bridgeMocks.getServiceAuthorization.mockRejectedValue(
+      new Error("no active authorization session"),
+    );
     bridgeMocks.getAuditSettings.mockResolvedValue({
       request_body_enabled: false,
       response_content_enabled: false,
@@ -210,7 +261,6 @@ describe("App workspace navigation", () => {
       metadata_retention_days: 30,
       content_retention_days: 7,
     });
-    window.confirm = vi.fn(() => true);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -241,6 +291,8 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("概览");
+    expect(container.querySelector(".workspace-header")).toBeNull();
+    expect(workspaceHeading().textContent).toBe("概览");
     expect(container.textContent).toContain("连接 AstrLink");
     expect(container.textContent).toContain("今日用量");
 
@@ -251,6 +303,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("访问令牌");
+    expect(workspaceHeading().textContent).toBe("管理访问令牌");
     expect(container.textContent).toContain("VS Code");
 
     await act(async () => {
@@ -260,6 +313,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("安全策略");
+    expect(workspaceHeading().textContent).toBe("隐私保护");
     expect(container.textContent).toContain("全局隐私保护");
     expect(container.textContent).toContain("Regex 覆盖限制");
 
@@ -269,15 +323,17 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("API 服务");
+    expect(workspaceHeading().textContent).toBe("管理 API 服务");
     expect(container.textContent).toContain("Primary gateway");
+    expect(container.textContent).toContain("Codex 订阅");
+    expect(container.textContent).toContain("等待 OAuth 登录");
+    expect(container.textContent).not.toContain("ADR 0009");
 
     await act(async () => {
       button("添加服务").click();
     });
-    expect(container.querySelector(".workspace-header h1")?.textContent).toBe(
-      "添加服务",
-    );
-    expect(container.querySelector("form.endpoint-form")).not.toBeNull();
+    expect(workspaceHeading().textContent).toBe("添加服务");
+    expect(container.querySelector("form.service-form")).not.toBeNull();
 
     const back = container.querySelector<HTMLButtonElement>(
       'button[aria-label="返回服务列表"]',
@@ -286,18 +342,61 @@ describe("App workspace navigation", () => {
     await act(async () => {
       back?.click();
     });
-    expect(container.querySelector(".workspace-header h1")?.textContent).toBe(
-      "API 服务",
+    expect(workspaceHeading().textContent).toBe("管理 API 服务");
+  });
+
+  it("keeps Codex subscription inside API services instead of the sidebar", async () => {
+    await renderApp();
+
+    expect(container.querySelector(".sidebar__nav")?.textContent).not.toContain(
+      "Codex 订阅",
     );
+
+    await act(async () => {
+      button("API 服务").click();
+      await Promise.resolve();
+    });
+
+    expect(
+      document.querySelector('[aria-current="page"]')?.textContent,
+    ).toContain("API 服务");
+    expect(workspaceHeading().textContent).toBe("管理 API 服务");
+    expect(container.textContent).toContain("Codex 订阅");
+    expect(container.textContent).toContain("等待 OAuth 登录");
+    expect(container.textContent).not.toContain("ADR 0009");
+    expect(bridgeMocks.listServices).toHaveBeenCalled();
   });
 
   it("keeps future navigation visibly disabled", async () => {
     await renderApp();
 
-    expect(button("路由与模型即将推出").disabled).toBe(true);
+    expect(button("路由与模型").disabled).toBe(false);
     expect(button("安全策略").disabled).toBe(false);
     expect(button("请求记录").disabled).toBe(false);
     expect(button("设置即将推出").disabled).toBe(true);
+  });
+
+  it("navigates to route management while keeping astrlink/auto gated", async () => {
+    await renderApp();
+    const serviceCalls = bridgeMocks.listServices.mock.calls.length;
+    const requestCalls = bridgeMocks.listRequestRecords.mock.calls.length;
+
+    await act(async () => {
+      button("路由与模型").click();
+      await Promise.resolve();
+    });
+
+    expect(
+      document.querySelector('[aria-current="page"]')?.textContent,
+    ).toContain("路由与模型");
+    expect(workspaceHeading().textContent).toBe("路由与模型");
+    expect(container.querySelector('[data-testid="route-auto-gate"]')).not.toBeNull();
+    expect(container.textContent).toContain("分类器正在训练与验收");
+    expect(container.textContent).toContain("训练中 · 不可启用");
+    expect(container.textContent).toContain("还没有路由");
+    expect(bridgeMocks.listRoutes).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
+    expect(bridgeMocks.listRequestRecords).toHaveBeenCalledTimes(requestCalls);
   });
 
   it("navigates to the request records page", async () => {
@@ -310,9 +409,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("请求记录");
-    expect(container.querySelector(".workspace-header h1")?.textContent).toBe(
-      "请求记录",
-    );
+    expect(workspaceHeading().textContent).toBe("请求记录");
   });
 
   it("ignores an access-token catalog response from an old Core session", async () => {
@@ -386,7 +483,7 @@ describe("App workspace navigation", () => {
     expect(container.textContent).not.toContain("Old session token");
   });
 
-  it("confirms before leaving an editor with unsaved changes", async () => {
+  it("uses an in-app dialog before leaving an editor with unsaved changes", async () => {
     await renderApp();
 
     await act(async () => {
@@ -395,10 +492,8 @@ describe("App workspace navigation", () => {
     await act(async () => {
       button("添加服务").click();
     });
-    await setInput("#endpoint-name", "Unfinished service");
+    await setInput("#service-name", "Unfinished service");
 
-    const confirm = vi.mocked(window.confirm);
-    confirm.mockReturnValue(false);
     const back = container.querySelector<HTMLButtonElement>(
       'button[aria-label="返回服务列表"]',
     );
@@ -406,17 +501,25 @@ describe("App workspace navigation", () => {
       back?.click();
     });
 
-    expect(confirm).toHaveBeenCalledWith("当前修改尚未保存，确定要离开吗？");
-    expect(container.querySelector(".workspace-header h1")?.textContent).toBe(
-      "添加服务",
-    );
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(container.textContent).toContain("放弃未保存的修改？");
+    expect(workspaceHeading().textContent).toBe("添加服务");
 
-    confirm.mockReturnValue(true);
     await act(async () => {
-      back?.click();
+      button("继续编辑").click();
     });
-    expect(container.querySelector(".workspace-header h1")?.textContent).toBe(
-      "API 服务",
-    );
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(workspaceHeading().textContent).toBe("添加服务");
+
+    await act(async () => {
+      button("路由与模型").click();
+    });
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+
+    await act(async () => {
+      button("放弃修改并离开").click();
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(workspaceHeading().textContent).toBe("路由与模型");
   });
 });

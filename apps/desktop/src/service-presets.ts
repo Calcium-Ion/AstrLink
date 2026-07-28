@@ -1,14 +1,11 @@
 import type {
-  AuthScheme,
-  EndpointCapability,
-  EndpointKind,
-} from "./endpoint-model";
+  HTTPServiceKind,
+  ServiceAuthScheme,
+  ServiceCapability,
+} from "./service-model";
 
-export type EndpointProfileID =
+export type HTTPServicePresetID =
   | "newapi"
-  | "subscription_openai"
-  | "subscription_anthropic"
-  | "subscription_gemini"
   | "openai_compatible"
   | "openai"
   | "anthropic"
@@ -22,17 +19,17 @@ export interface ProtocolDescriptor {
   streaming: boolean;
 }
 
-export interface EndpointPreset {
-  id: EndpointProfileID;
+export interface HTTPServicePreset {
+  id: HTTPServicePresetID;
   label: string;
   description: string;
   defaultName: string;
-  kind: EndpointKind;
+  kind: HTTPServiceKind;
   baseURL: string;
   baseURLPlaceholder: string;
-  authScheme: AuthScheme;
+  authScheme: ServiceAuthScheme;
   headerName: string;
-  capabilities: EndpointCapability[];
+  capabilities: ServiceCapability[];
   advancedOnStart: boolean;
 }
 
@@ -82,17 +79,18 @@ const allProtocolIDs = alphaProtocolDescriptors.map(({ id }) => id);
 
 const profileDefinitions: Readonly<
   Record<
-    EndpointProfileID,
-    Omit<EndpointPreset, "capabilities"> & {
+    HTTPServicePresetID,
+    Omit<HTTPServicePreset, "capabilities"> & {
       capabilityIDs: readonly string[];
-      capabilityMode: EndpointCapability["mode"];
+      capabilityMode: ServiceCapability["mode"];
     }
   >
 > = {
   newapi: {
     id: "newapi",
     label: "new-api",
-    description: "推荐。适用于 new-api 生态面板，自动启用全部兼容协议。",
+    description:
+      "外部网关首选。适用于 new-api 生态面板，自动启用全部兼容协议。",
     defaultName: "new-api",
     kind: "newapi",
     baseURL: "",
@@ -100,51 +98,6 @@ const profileDefinitions: Readonly<
     authScheme: "bearer",
     headerName: "",
     capabilityIDs: allProtocolIDs,
-    capabilityMode: "delegated",
-    advancedOnStart: false,
-  },
-  subscription_openai: {
-    id: "subscription_openai",
-    label: "OpenAI / Codex 订阅",
-    description:
-      "适用于 Sub2API 等平台提供的 OpenAI 或 Codex 订阅，自动启用 Responses、Chat 与模型列表。",
-    defaultName: "Codex 订阅",
-    kind: "custom",
-    baseURL: "",
-    baseURLPlaceholder: "https://api.example.com",
-    authScheme: "bearer",
-    headerName: "",
-    capabilityIDs: ["openai.responses", "openai.chat", "openai.models"],
-    capabilityMode: "delegated",
-    advancedOnStart: false,
-  },
-  subscription_anthropic: {
-    id: "subscription_anthropic",
-    label: "Claude 订阅",
-    description:
-      "适用于 Claude Code 或 Anthropic 订阅，自动启用 Messages 与模型列表。",
-    defaultName: "Claude 订阅",
-    kind: "custom",
-    baseURL: "",
-    baseURLPlaceholder: "https://api.example.com",
-    authScheme: "bearer",
-    headerName: "",
-    capabilityIDs: ["anthropic.messages", "openai.models"],
-    capabilityMode: "delegated",
-    advancedOnStart: false,
-  },
-  subscription_gemini: {
-    id: "subscription_gemini",
-    label: "Gemini 订阅",
-    description:
-      "适用于 Gemini CLI 或 Gemini API 订阅，自动启用 Gemini 原生生成与模型列表。",
-    defaultName: "Gemini 订阅",
-    kind: "custom",
-    baseURL: "",
-    baseURLPlaceholder: "https://api.example.com",
-    authScheme: "bearer",
-    headerName: "",
-    capabilityIDs: ["google.generate_content", "google.models"],
     capabilityMode: "delegated",
     advancedOnStart: false,
   },
@@ -164,9 +117,9 @@ const profileDefinitions: Readonly<
   },
   openai: {
     id: "openai",
-    label: "OpenAI 官方",
+    label: "OpenAI 官方 API",
     description: "直连 OpenAI 官方 API。",
-    defaultName: "OpenAI",
+    defaultName: "OpenAI API",
     kind: "openai",
     baseURL: "https://api.openai.com/v1",
     baseURLPlaceholder: "https://api.openai.com/v1",
@@ -184,9 +137,9 @@ const profileDefinitions: Readonly<
   },
   anthropic: {
     id: "anthropic",
-    label: "Anthropic 官方",
+    label: "Anthropic 官方 API",
     description: "直连 Anthropic Messages API。",
-    defaultName: "Anthropic",
+    defaultName: "Anthropic API",
     kind: "anthropic",
     baseURL: "https://api.anthropic.com",
     baseURLPlaceholder: "https://api.anthropic.com",
@@ -198,9 +151,9 @@ const profileDefinitions: Readonly<
   },
   gemini: {
     id: "gemini",
-    label: "Google Gemini 官方",
+    label: "Google Gemini 官方 API",
     description: "直连 Gemini Generate Content 与 Models API。",
-    defaultName: "Gemini",
+    defaultName: "Gemini API",
     kind: "gemini",
     baseURL: "https://generativelanguage.googleapis.com",
     baseURLPlaceholder: "https://generativelanguage.googleapis.com",
@@ -226,9 +179,9 @@ const profileDefinitions: Readonly<
   },
 };
 
-export const endpointProfileIDs = Object.keys(
+export const httpServicePresetIDs = Object.keys(
   profileDefinitions,
-) as EndpointProfileID[];
+) as HTTPServicePresetID[];
 
 export function protocolDescriptors(
   discovered: readonly ProtocolDescriptor[],
@@ -244,10 +197,10 @@ export function protocolLabel(protocolID: string): string {
   return protocolLabels[protocolID] ?? protocolID;
 }
 
-export function endpointPreset(
-  profileID: EndpointProfileID,
+export function httpServicePreset(
+  profileID: HTTPServicePresetID,
   discovered: readonly ProtocolDescriptor[] = [],
-): EndpointPreset {
+): HTTPServicePreset {
   const definition = profileDefinitions[profileID];
   const descriptors = new Map(
     protocolDescriptors(discovered).map((protocol) => [protocol.id, protocol]),
@@ -264,11 +217,13 @@ export function endpointPreset(
   };
 }
 
-export function endpointProfileLabel(profileID: EndpointProfileID): string {
+export function httpServicePresetLabel(
+  profileID: HTTPServicePresetID,
+): string {
   return profileDefinitions[profileID].label;
 }
 
-export function endpointKindLabel(kind: EndpointKind): string {
+export function httpServiceKindLabel(kind: HTTPServiceKind): string {
   return (
     {
       newapi: "new-api",
@@ -276,7 +231,7 @@ export function endpointKindLabel(kind: EndpointKind): string {
       anthropic: "Anthropic",
       gemini: "Gemini",
       openai_compatible: "OpenAI 兼容",
-      custom: "自定义 / 订阅",
-    } satisfies Record<EndpointKind, string>
+      custom: "自定义 API",
+    } satisfies Record<HTTPServiceKind, string>
   )[kind];
 }

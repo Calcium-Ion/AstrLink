@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -416,8 +415,8 @@ func TestStoreResolverRejectsAlphaIneligibleRouteAndRouteReadFailure(t *testing.
 	}
 	if _, err := resolver.ResolveCandidates(context.Background(), ResolveRequest{
 		Protocol: contract.ProtocolOpenAIResponses,
-	}); err == nil || !strings.Contains(err.Error(), "not available in Alpha") {
-		t.Fatalf("RelayKit route error = %v", err)
+	}); !errors.Is(err, ErrNoEndpoint) {
+		t.Fatalf("unavailable RelayKit route error = %v, want no endpoint", err)
 	}
 
 	privateErr := errors.New("route database unavailable")
@@ -449,12 +448,12 @@ func resolverRoute(
 }
 
 func resolverTarget(
-	id contract.EndpointID,
+	id contract.ServiceID,
 	planType contract.PlanType,
 	priority int,
 ) contract.RouteTarget {
 	return contract.RouteTarget{
-		EndpointID:       id,
+		ServiceID:        id,
 		PlanType:         planType,
 		UpstreamProtocol: contract.ProtocolOpenAIResponses,
 		Priority:         priority,

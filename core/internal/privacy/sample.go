@@ -70,10 +70,11 @@ func LocateFindings(protocol contract.ProtocolID, body []byte, findings []Findin
 			return nil, ErrDetectorUnavailable
 		}
 		locations = append(locations, contract.PolicyDryRunFinding{
-			Kind:  string(finding.Kind),
-			Path:  extracted[finding.Segment].Path,
-			Start: finding.Start,
-			End:   finding.End,
+			Kind:       string(finding.Kind),
+			Path:       extracted[finding.Segment].Path,
+			Start:      finding.Start,
+			End:        finding.End,
+			Confidence: finding.Confidence,
 		})
 	}
 	return locations, nil

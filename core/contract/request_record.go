@@ -34,10 +34,10 @@ func (status RequestStatus) Valid() bool {
 }
 
 type Usage struct {
-	InputTokens        int  `json:"input_tokens"`
-	OutputTokens       int  `json:"output_tokens"`
-	TotalTokens        int  `json:"total_tokens"`
-	CachedInputTokens  *int `json:"cached_input_tokens,omitempty"`
+	InputTokens       int  `json:"input_tokens"`
+	OutputTokens      int  `json:"output_tokens"`
+	TotalTokens       int  `json:"total_tokens"`
+	CachedInputTokens *int `json:"cached_input_tokens,omitempty"`
 }
 
 func (usage Usage) Validate() error {
@@ -95,7 +95,7 @@ type RequestRecord struct {
 	RequestedModel     *string            `json:"requested_model"`
 	Streaming          bool               `json:"streaming"`
 	RouteID            *RouteID           `json:"route_id"`
-	EndpointID         *EndpointID        `json:"endpoint_id"`
+	ServiceID          *ServiceID         `json:"service_id"`
 	LocalAccessTokenID *AccessTokenID     `json:"local_access_token_id"`
 	Plan               *ExecutionPlan     `json:"plan"`
 	HTTPStatus         *int               `json:"http_status"`
@@ -129,9 +129,9 @@ func (record RequestRecord) Validate() error {
 			return fmt.Errorf("route_id: %w", err)
 		}
 	}
-	if record.EndpointID != nil {
-		if err := record.EndpointID.Validate(); err != nil {
-			return fmt.Errorf("endpoint_id: %w", err)
+	if record.ServiceID != nil {
+		if err := record.ServiceID.Validate(); err != nil {
+			return fmt.Errorf("service_id: %w", err)
 		}
 	}
 	if record.LocalAccessTokenID != nil {

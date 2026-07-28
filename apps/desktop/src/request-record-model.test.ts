@@ -18,7 +18,7 @@ const fullRecord = {
   requested_model: "gpt-4.1",
   streaming: true,
   route_id: "route_01",
-  endpoint_id: "endpoint_01",
+  service_id: "service_01",
   local_access_token_id: "token_01",
   plan: { kind: "native" },
   http_status: 200,
@@ -48,7 +48,7 @@ const nullOptionalRecord = {
   requested_model: null,
   streaming: false,
   route_id: null,
-  endpoint_id: null,
+  service_id: null,
   local_access_token_id: null,
   http_status: null,
   latency_ms: null,
@@ -74,7 +74,7 @@ describe("request-record IPC contract", () => {
       requested_model: fullRecord.requested_model,
       streaming: true,
       route_id: fullRecord.route_id,
-      endpoint_id: fullRecord.endpoint_id,
+      service_id: fullRecord.service_id,
       local_access_token_id: fullRecord.local_access_token_id,
       http_status: 200,
       latency_ms: 120,
@@ -127,6 +127,8 @@ describe("request-record IPC contract", () => {
       }),
     ).toEqual({
       request_id: fullRecord.id,
+      // An older core sidecar that omits the key entirely maps to null.
+      http_meta: null,
       request_body: null,
       response_content: {
         media_type: "text/plain",
@@ -138,6 +140,51 @@ describe("request-record IPC contract", () => {
     expect(
       parsePurgeResult({ deleted_records: 3, deleted_audit_blobs: 1 }),
     ).toEqual({ deleted_records: 3, deleted_audit_blobs: 1 });
+  });
+
+  it("parses http metadata with ordered redacted headers", () => {
+    const meta = {
+      method: "POST",
+      url: "/v1/responses?key=<redacted>",
+      http_version: "HTTP/1.1",
+      request_headers: [
+        {
+          name: "authorization",
+          value: "Bearer <redacted:51 chars>",
+          redacted: true,
+        },
+        { name: "content-type", value: "application/json", redacted: false },
+      ],
+      response_status: 200,
+      response_headers: [
+        { name: "x-request-id", value: "req_1", redacted: false },
+      ],
+    };
+    const parsed = parseAuditContent({
+      request_id: fullRecord.id,
+      http_meta: meta,
+      request_body: null,
+      response_content: null,
+    });
+    expect(parsed.http_meta).toEqual(meta);
+
+    expect(
+      parseAuditContent({
+        request_id: fullRecord.id,
+        http_meta: null,
+        request_body: null,
+        response_content: null,
+      }).http_meta,
+    ).toBeNull();
+
+    expect(() =>
+      parseAuditContent({
+        request_id: fullRecord.id,
+        http_meta: { ...meta, request_headers: "not-an-array" },
+        request_body: null,
+        response_content: null,
+      }),
+    ).toThrow("应为数组");
   });
 
   it("maps status labels and tones", () => {

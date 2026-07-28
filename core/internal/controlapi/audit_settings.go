@@ -71,7 +71,7 @@ func (handler *Handler) patchAuditSettings(writer http.ResponseWriter, request *
 		handler.writeAuditSettingsStoreError(writer, err)
 		return
 	}
-	if (updated.RequestBodyEnabled || updated.ResponseContentEnabled) && handler.auditKeys != nil {
+	if (updated.RequestBodyEnabled || updated.ResponseContentEnabled || updated.HTTPMetaEnabled) && handler.auditKeys != nil {
 		if _, err := handler.auditKeys.GetOrCreateAuditKey(request.Context()); err != nil {
 			writeError(writer, http.StatusInternalServerError, "audit_key_unavailable", "audit encryption key could not be prepared")
 			return
@@ -120,6 +120,17 @@ func applyAuditSettingsPatch(
 				enablingCapture = true
 			}
 			settings.ResponseContentEnabled = value
+		case "http_meta_enabled":
+			if isJSONNull(raw) {
+				return settings, errors.New("http_meta_enabled cannot be deleted")
+			}
+			var value bool
+			if err := strictUnmarshal(raw, &value); err != nil {
+				return settings, err
+			}
+			// No risk acknowledgement: values are redacted before storage
+			// and encrypted at rest (ADR 0008).
+			settings.HTTPMetaEnabled = value
 		case "request_body_max_bytes":
 			if isJSONNull(raw) {
 				return settings, errors.New("request_body_max_bytes cannot be deleted")

@@ -14,8 +14,8 @@ func validateResourceID(kind, value string) error {
 	return nil
 }
 
-func (id EndpointID) Validate() error {
-	return validateResourceID("endpoint", string(id))
+func (id ServiceID) Validate() error {
+	return validateResourceID("service", string(id))
 }
 
 func (id RouteID) Validate() error {

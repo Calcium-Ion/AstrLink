@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
+	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -28,12 +30,14 @@ const (
 	executionFailureCredential
 	executionFailureConfiguration
 	executionFailureUpstream
+	executionFailureConversionUnsupported
+	executionFailureConversionFailed
 )
 
 type executionFailure struct {
 	kind       executionFailureKind
 	err        error
-	endpointID contract.EndpointID
+	endpointID contract.ServiceID
 	capability *planner.CapabilityUnavailableError
 }
 
@@ -102,6 +106,8 @@ func (handler *Handler) executeCandidates(
 	attempts := 0
 	var last executionFailure
 	for _, candidate := range candidates {
+		candidate.Service = candidate.CanonicalService()
+		candidate.BaseURL = candidate.EffectiveBaseURL()
 		if attempts >= attemptLimit {
 			break
 		}
@@ -110,12 +116,31 @@ func (handler *Handler) executeCandidates(
 			// Preserve the original M1 seam: an omitted mode is native.
 			mode = contract.CapabilityModeNative
 		}
-		plan, planErr := planner.BuildAlpha(planner.AlphaInput{
-			Endpoint:  candidate.Endpoint,
-			Protocol:  classified.Protocol,
-			Mode:      mode,
-			Streaming: classified.Streaming,
-		})
+		planType := candidate.PlanType
+		if planType == "" {
+			if mode == contract.CapabilityModeDelegated {
+				planType = contract.PlanTypeDelegated
+			} else {
+				planType = contract.PlanTypeNative
+			}
+		}
+		var plan contract.ExecutionPlan
+		var planErr error
+		if planType == contract.PlanTypeRelayKit {
+			if handler.conversionEngine == nil {
+				last = executionFailure{kind: executionFailureCapability, endpointID: candidate.Service.ID}
+				continue
+			}
+			plan, planErr = planner.BuildRelayKit(planner.RelayKitInput{
+				Service: candidate.Service, InputProtocol: classified.Protocol,
+				UpstreamProtocol: candidate.UpstreamProtocol, Streaming: classified.Streaming,
+				Edges: handler.conversionEngine.Edges(),
+			})
+		} else {
+			plan, planErr = planner.BuildAlpha(planner.AlphaInput{
+				Service: candidate.Service, Protocol: classified.Protocol, Mode: mode, Streaming: classified.Streaming,
+			})
+		}
 		if planErr != nil {
 			var capabilityErr *planner.CapabilityUnavailableError
 			if errors.As(planErr, &capabilityErr) ||
@@ -130,7 +155,7 @@ func (handler *Handler) executeCandidates(
 				last = executionFailure{
 					kind:       executionFailureCapability,
 					err:        planErr,
-					endpointID: candidate.Endpoint.ID,
+					endpointID: candidate.Service.ID,
 					capability: capabilityErr,
 				}
 				continue
@@ -138,7 +163,7 @@ func (handler *Handler) executeCandidates(
 			last = executionFailure{
 				kind:       executionFailureConfiguration,
 				err:        planErr,
-				endpointID: candidate.Endpoint.ID,
+				endpointID: candidate.Service.ID,
 			}
 			continue
 		}
@@ -159,7 +184,7 @@ func (handler *Handler) executeCandidates(
 			return
 		}
 
-		if candidate.UpstreamModel != "" {
+		if candidate.UpstreamModel != "" && plan.Type != contract.PlanTypeRelayKit {
 			rewritten, rewriteErr := rewriteRequestModel(
 				attemptRequest,
 				classified,
@@ -170,7 +195,7 @@ func (handler *Handler) executeCandidates(
 				last = executionFailure{
 					kind:       executionFailureConfiguration,
 					err:        rewriteErr,
-					endpointID: candidate.Endpoint.ID,
+					endpointID: candidate.Service.ID,
 				}
 				_ = attemptRequest.Body.Close()
 				continue
@@ -183,7 +208,7 @@ func (handler *Handler) executeCandidates(
 			downstream,
 			attemptRequest,
 			classified,
-			candidate.Endpoint.ID,
+			candidate.Service.ID,
 		)
 		if request.Context().Err() != nil {
 			finishPrivacy()
@@ -196,8 +221,37 @@ func (handler *Handler) executeCandidates(
 			handler.writePrivacyError(downstream, request, privacyErr)
 			return
 		}
+		if plan.Type == contract.PlanTypeRelayKit {
+			convertedInput, readErr := io.ReadAll(attemptRequest.Body)
+			if readErr != nil {
+				finishPrivacy()
+				_ = attemptRequest.Body.Close()
+				last = executionFailure{kind: executionFailureConversionUnsupported, err: readErr, endpointID: candidate.Service.ID}
+				continue
+			}
+			_ = attemptRequest.Body.Close()
+			upstreamModel := candidate.UpstreamModel
+			if upstreamModel == "" {
+				upstreamModel = classified.Model
+			}
+			converted, convertErr := handler.conversionEngine.ConvertRequest(request.Context(), relaykitbridge.ConvertRequestInput{
+				From: plan.InputProtocol, To: plan.UpstreamProtocol, ContentType: attemptRequest.Header.Get("Content-Type"),
+				Body: convertedInput, PublicModel: classified.Model, UpstreamModel: upstreamModel, Streaming: classified.Streaming,
+			})
+			if convertErr != nil || adaptRelayKitRequest(attemptRequest, plan.UpstreamProtocol, classified.Streaming, upstreamModel, converted.Body) != nil {
+				finishPrivacy()
+				last = executionFailure{kind: executionFailureConversionUnsupported, err: convertErr, endpointID: candidate.Service.ID}
+				continue
+			}
+		}
 
-		headers, authorizeErr := handler.authorizer.Headers(request.Context(), candidate.Endpoint)
+		var headers http.Header
+		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
+		if authorizeErr == nil {
+			var headersErr error
+			headers, headersErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint)
+			authorizeErr = headersErr
+		}
 		if authorizeErr != nil {
 			finishPrivacy()
 			_ = attemptRequest.Body.Close()
@@ -207,26 +261,32 @@ func (handler *Handler) executeCandidates(
 			last = executionFailure{
 				kind:       executionFailureCredential,
 				err:        authorizeErr,
-				endpointID: candidate.Endpoint.ID,
+				endpointID: candidate.Service.ID,
 			}
 			if !body.Replayable() {
 				break
 			}
 			continue
 		}
-		baseURL, parseErr := url.Parse(candidate.Endpoint.BaseURL)
+		baseURL, parseErr := url.Parse(candidate.BaseURL)
 		if parseErr != nil {
 			finishPrivacy()
 			_ = attemptRequest.Body.Close()
 			last = executionFailure{
 				kind:       executionFailureConfiguration,
 				err:        parseErr,
-				endpointID: candidate.Endpoint.ID,
+				endpointID: candidate.Service.ID,
 			}
 			if !body.Replayable() {
 				break
 			}
 			continue
+		}
+		if candidate.Service.Kind.IsSubscription() {
+			attemptRequest.URL.Path = strings.TrimPrefix(attemptRequest.URL.Path, "/v1")
+			if attemptRequest.URL.RawPath != "" {
+				attemptRequest.URL.RawPath = strings.TrimPrefix(attemptRequest.URL.RawPath, "/v1")
+			}
 		}
 
 		if healthAware && !controller.BeginAttempt(candidate) {
@@ -252,13 +312,17 @@ func (handler *Handler) executeCandidates(
 		outWriter := http.ResponseWriter(downstream)
 		var aliasWriter *aliasRestoringWriter
 		var restoring *restoringResponseWriter
+		var relayWriter *relayKitResponseWriter
 		if session := recordSessionFromContext(request.Context()); session.responseCaptureEnabled() {
 			attemptRequest.Header.Del("Accept-Encoding")
 		}
-		if candidate.UpstreamModel != "" && classified.Model != "" {
+		// Writer onion (outermost receives upstream bytes first):
+		// Native/Delegated: upstream -> privacy restore -> alias restore -> client
+		// RelayKit: upstream -> convert -> privacy restore -> client
+		if plan.Type != contract.PlanTypeRelayKit && candidate.UpstreamModel != "" && classified.Model != "" {
 			attemptRequest.Header.Del("Accept-Encoding")
 			aliasWriter = newAliasRestoringWriter(
-				downstream,
+				outWriter,
 				classified.Model,
 				candidate.UpstreamModel,
 				classified.Streaming,
@@ -271,7 +335,24 @@ func (handler *Handler) executeCandidates(
 			restoring = newRestoringResponseWriter(outWriter, redactions, classified.Streaming)
 			outWriter = restoring
 		}
-		deferHealthStatus := (restoring != nil || aliasWriter != nil) && !classified.Streaming
+		if plan.Type == contract.PlanTypeRelayKit {
+			attemptRequest.Header.Del("Accept-Encoding")
+			upstreamModel := candidate.UpstreamModel
+			if upstreamModel == "" {
+				upstreamModel = classified.Model
+			}
+			relayWriter, planErr = newRelayKitResponseWriter(
+				outWriter, handler.conversionEngine, plan, classified.Model, upstreamModel,
+			)
+			if planErr != nil {
+				finishPrivacy()
+				_ = attemptRequest.Body.Close()
+				last = executionFailure{kind: executionFailureConversionUnsupported, err: planErr, endpointID: candidate.Service.ID}
+				continue
+			}
+			outWriter = relayWriter
+		}
+		deferHealthStatus := (restoring != nil || aliasWriter != nil || relayWriter != nil) && !classified.Streaming
 		var upstreamStatus atomic.Int32
 
 		attemptContext := newResponseStartContext(
@@ -293,6 +374,13 @@ func (handler *Handler) executeCandidates(
 		})
 		attemptContext.Stop()
 		timedOut := attemptContext.TimedOut()
+		relayConversionFailed := false
+		if relayWriter != nil && forwardErr == nil {
+			if finishErr := relayWriter.Finish(); finishErr != nil {
+				forwardErr = transport.NewResponseError(finishErr)
+				relayConversionFailed = !downstream.Committed()
+			}
+		}
 		if restoring != nil && forwardErr == nil {
 			if finishErr := restoring.Finish(); finishErr != nil {
 				forwardErr = transport.NewResponseError(finishErr)
@@ -302,6 +390,9 @@ func (handler *Handler) executeCandidates(
 			if finishErr := aliasWriter.Finish(); finishErr != nil {
 				forwardErr = transport.NewResponseError(finishErr)
 			}
+		}
+		if relayWriter != nil && forwardErr != nil && !downstream.Committed() {
+			_ = relayWriter.streamClose()
 		}
 		finishPrivacy()
 		_ = attemptRequest.Body.Close()
@@ -372,7 +463,18 @@ func (handler *Handler) executeCandidates(
 			last = executionFailure{
 				kind:       executionFailureConfiguration,
 				err:        forwardErr,
-				endpointID: candidate.Endpoint.ID,
+				endpointID: candidate.Service.ID,
+			}
+			continue
+		}
+		if relayConversionFailed {
+			last = executionFailure{
+				kind:       executionFailureConversionFailed,
+				err:        forwardErr,
+				endpointID: candidate.Service.ID,
+			}
+			if !body.Replayable() {
+				break
 			}
 			continue
 		}
@@ -380,7 +482,7 @@ func (handler *Handler) executeCandidates(
 		last = executionFailure{
 			kind:       executionFailureUpstream,
 			err:        forwardErr,
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}
 		if !safeRetryFailure || !body.Replayable() {
 			break
@@ -426,8 +528,8 @@ func (handler *Handler) writeExecutionFailure(
 			"selected endpoint credential is unavailable",
 			true,
 			[]errorDetail{{
-				Protocol:   string(classified.Protocol),
-				EndpointID: string(failure.endpointID),
+				Protocol:  string(classified.Protocol),
+				ServiceID: string(failure.endpointID),
 			}},
 		)
 		session.noteFailed(errorSummaryFromInference(
@@ -449,6 +551,14 @@ func (handler *Handler) writeExecutionFailure(
 			"selected endpoint configuration is invalid",
 			false,
 		))
+	case executionFailureConversionUnsupported:
+		writeInferenceError(writer, http.StatusUnprocessableEntity, "relaykit_conversion_unsupported",
+			"selected protocol conversion is unsupported", false, nil)
+		session.noteFailed(errorSummaryFromInference("relaykit_conversion_unsupported", "selected protocol conversion is unsupported", false))
+	case executionFailureConversionFailed:
+		writeInferenceError(writer, http.StatusBadGateway, "relaykit_conversion_failed",
+			"upstream response could not be converted", true, nil)
+		session.noteFailed(errorSummaryFromInference("relaykit_conversion_failed", "upstream response could not be converted", true))
 	default:
 		status := http.StatusBadGateway
 		code := "upstream_unavailable"
@@ -459,8 +569,8 @@ func (handler *Handler) writeExecutionFailure(
 			message = "upstream request timed out before its response started"
 		}
 		writeInferenceError(writer, status, code, message, true, []errorDetail{{
-			Protocol:   string(classified.Protocol),
-			EndpointID: string(failure.endpointID),
+			Protocol:  string(classified.Protocol),
+			ServiceID: string(failure.endpointID),
 		}})
 		session.noteFailed(errorSummaryFromInference(code, message, true))
 	}

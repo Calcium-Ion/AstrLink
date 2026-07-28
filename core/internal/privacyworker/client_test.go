@@ -78,7 +78,8 @@ func TestClientUsesFramedWorkerAndMapsCanonicalLabels(t *testing.T) {
 	}
 	if len(findings) != 1 || findings[0].Segment != 0 ||
 		findings[0].Kind != privacy.KindEmail ||
-		findings[0].Start != 0 || findings[0].End != len("person@example.test") {
+		findings[0].Start != 0 || findings[0].End != len("person@example.test") ||
+		findings[0].Confidence != 0.99 {
 		t.Fatalf("findings = %#v", findings)
 	}
 }
@@ -457,6 +458,21 @@ func TestClientRejectsMalformedWorkerResponse(t *testing.T) {
 
 func TestClientRejectsMissingOrNullWorkerSpans(t *testing.T) {
 	for _, mode := range []string{"missing_spans", "null_spans"} {
+		t.Run(mode, func(t *testing.T) {
+			client := newTestClient(t, mode, 5*time.Second)
+			_, err := client.Detect(
+				context.Background(),
+				testDetectInput(testInstallationID),
+			)
+			if !errors.Is(err, privacy.ErrDetectorUnavailable) {
+				t.Fatalf("Detect error = %v", err)
+			}
+		})
+	}
+}
+
+func TestClientRejectsMissingOrInvalidWorkerScore(t *testing.T) {
+	for _, mode := range []string{"missing_score", "invalid_score"} {
 		t.Run(mode, func(t *testing.T) {
 			client := newTestClient(t, mode, 5*time.Second)
 			_, err := client.Detect(
@@ -1136,12 +1152,29 @@ func TestPrivacyWorkerHelper(t *testing.T) {
 			}
 			continue
 		}
+		if mode == "missing_score" {
+			payload := []byte(fmt.Sprintf(
+				`{"version":%d,"id":%d,"spans":[{"text_id":%d,"label":"email","start":0,"end":%d}]}`,
+				protocolVersion,
+				request.ID,
+				request.Texts[0].ID,
+				len(request.Texts[0].Text),
+			))
+			if writeFrame(os.Stdout, payload) != nil {
+				os.Exit(4)
+			}
+			continue
+		}
+		score := 0.99
+		if mode == "invalid_score" {
+			score = 1.01
+		}
 		responseSpans := []workerSpan{{
 			TextID: request.Texts[0].ID,
 			Label:  label,
 			Start:  0,
 			End:    len(request.Texts[0].Text),
-			Score:  0.99,
+			Score:  &score,
 		}}
 		response := workerResponse{
 			Version: protocolVersion,

@@ -16,17 +16,17 @@ import (
 
 func (store *Store) GetAuditSettings(ctx context.Context) (contract.AuditSettings, error) {
 	row := store.db.QueryRowContext(ctx, `SELECT
-    request_body_enabled, response_content_enabled,
+    request_body_enabled, response_content_enabled, http_meta_enabled,
     request_body_max_bytes, response_content_max_bytes,
     metadata_retention_days, content_retention_days, extensions_json
 FROM audit_settings WHERE id = 1`)
 	var (
-		requestEnabled, responseEnabled                         int
-		requestMax, responseMax, metadataDays, contentDays      int
-		extensionsJSON                                          sql.NullString
+		requestEnabled, responseEnabled, httpMetaEnabled   int
+		requestMax, responseMax, metadataDays, contentDays int
+		extensionsJSON                                     sql.NullString
 	)
 	if err := row.Scan(
-		&requestEnabled, &responseEnabled, &requestMax, &responseMax,
+		&requestEnabled, &responseEnabled, &httpMetaEnabled, &requestMax, &responseMax,
 		&metadataDays, &contentDays, &extensionsJSON,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -37,6 +37,7 @@ FROM audit_settings WHERE id = 1`)
 	settings := contract.AuditSettings{
 		RequestBodyEnabled:      requestEnabled != 0,
 		ResponseContentEnabled:  responseEnabled != 0,
+		HTTPMetaEnabled:         httpMetaEnabled != 0,
 		RequestBodyMaxBytes:     requestMax,
 		ResponseContentMaxBytes: responseMax,
 		MetadataRetentionDays:   metadataDays,
@@ -68,6 +69,7 @@ func (store *Store) UpdateAuditSettings(ctx context.Context, settings contract.A
 	result, err := store.db.ExecContext(ctx, `UPDATE audit_settings SET
     request_body_enabled = ?,
     response_content_enabled = ?,
+    http_meta_enabled = ?,
     request_body_max_bytes = ?,
     response_content_max_bytes = ?,
     metadata_retention_days = ?,
@@ -77,6 +79,7 @@ func (store *Store) UpdateAuditSettings(ctx context.Context, settings contract.A
 WHERE id = 1`,
 		boolToInt(settings.RequestBodyEnabled),
 		boolToInt(settings.ResponseContentEnabled),
+		boolToInt(settings.HTTPMetaEnabled),
 		settings.RequestBodyMaxBytes,
 		settings.ResponseContentMaxBytes,
 		settings.MetadataRetentionDays,
@@ -318,8 +321,8 @@ func scanAuditBlob(row scannable) (storagecontract.AuditBlob, error) {
 }
 
 var (
-	_ storagecontract.AuditSettingsStore = (*Store)(nil)
-	_ storagecontract.AuditKeyStore      = (*Store)(nil)
-	_ storagecontract.AuditBlobStore     = (*Store)(nil)
+	_ storagecontract.AuditSettingsStore  = (*Store)(nil)
+	_ storagecontract.AuditKeyStore       = (*Store)(nil)
+	_ storagecontract.AuditBlobStore      = (*Store)(nil)
 	_ storagecontract.AuditRetentionStore = (*Store)(nil)
 )

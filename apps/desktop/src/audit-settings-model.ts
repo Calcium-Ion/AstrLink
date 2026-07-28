@@ -1,6 +1,7 @@
 export interface AuditSettings {
   request_body_enabled: boolean;
   response_content_enabled: boolean;
+  http_meta_enabled: boolean;
   request_body_max_bytes: number;
   response_content_max_bytes: number;
   metadata_retention_days: number;
@@ -10,6 +11,7 @@ export interface AuditSettings {
 export interface AuditSettingsPatch {
   request_body_enabled?: boolean;
   response_content_enabled?: boolean;
+  http_meta_enabled?: boolean;
   request_body_max_bytes?: number;
   response_content_max_bytes?: number;
   metadata_retention_days?: number;
@@ -54,6 +56,10 @@ export function parseAuditSettings(value: unknown): AuditSettings {
     response_content_enabled: boolAt(
       settings.response_content_enabled,
       "$.response_content_enabled",
+    ),
+    http_meta_enabled: boolAt(
+      settings.http_meta_enabled,
+      "$.http_meta_enabled",
     ),
     request_body_max_bytes: intAt(
       settings.request_body_max_bytes,

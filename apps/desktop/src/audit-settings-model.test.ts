@@ -5,6 +5,7 @@ import { parseAuditSettings } from "./audit-settings-model";
 const settings = {
   request_body_enabled: false,
   response_content_enabled: true,
+  http_meta_enabled: true,
   request_body_max_bytes: 4096,
   response_content_max_bytes: 8192,
   metadata_retention_days: 30,

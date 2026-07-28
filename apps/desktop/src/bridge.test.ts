@@ -11,24 +11,36 @@ vi.mock("@tauri-apps/api/core", () => ({
 import {
   cancelPrivacyModelInstallation,
   createAccessToken,
-  createEndpoint,
+  createRoute,
+  createService,
   deleteAccessToken,
   deletePrivacyModelInstallation,
+  deleteRoute,
+  deleteService,
   dryRunPrivacyPolicy,
   getCoreStatus,
   getPrivacyModelCatalog,
   getPrivacyModelInstallation,
   getPrivacyPolicy,
+  getRoute,
+  getService,
+  getServiceAuthorization,
   installPrivacyModel,
-  listEndpoints,
+  listRoutes,
+  listServices,
   listAccessTokens,
   listPrivacyModelInstallations,
   listPrivacyPolicies,
   probePrivacyModel,
   revealAccessToken,
   restartCore,
-  updateEndpoint,
+  updateRoute,
+  updateService,
   updatePrivacyPolicy,
+  beginServiceAuthorization,
+  cancelServiceAuthorization,
+  logoutService,
+  openAuthorizationURL,
 } from "./bridge";
 
 function validSnapshot(): Record<string, unknown> {
@@ -143,58 +155,124 @@ describe("desktop bridge contract", () => {
   });
 
   it.each([
-    ["RelayKit availability", (snapshot: any) => (snapshot.capabilities.conversion_engine.available = true)],
-    ["RelayKit version", (snapshot: any) => (snapshot.capabilities.conversion_engine.version = "0.1.0")],
-    ["RelayKit edges", (snapshot: any) => snapshot.capabilities.conversion_engine.edges.push({})],
-    ["native conversion", (snapshot: any) => (snapshot.capabilities.plan_types[0].uses_local_conversion = true)],
-  ])("rejects invalid Alpha capability semantics: %s", async (_name, mutate) => {
+    [
+      "RelayKit available without version",
+      (snapshot: any) => (snapshot.capabilities.conversion_engine.available = true),
+      "non-empty string when available",
+    ],
+    [
+      "RelayKit version while unavailable",
+      (snapshot: any) => (snapshot.capabilities.conversion_engine.version = "0.1.0"),
+      "must be null when unavailable",
+    ],
+    [
+      "RelayKit edges while unavailable",
+      (snapshot: any) => snapshot.capabilities.conversion_engine.edges.push({}),
+      "must be empty when unavailable",
+    ],
+    [
+      "native conversion",
+      (snapshot: any) => (snapshot.capabilities.plan_types[0].uses_local_conversion = true),
+      "Alpha",
+    ],
+  ])("rejects invalid capability semantics: %s", async (_name, mutate, detail) => {
     const wireSnapshot = validSnapshot();
     mutate(wireSnapshot);
     invokeMock.mockResolvedValueOnce(wireSnapshot);
 
-    await expect(getCoreStatus()).rejects.toThrow("Alpha");
+    await expect(getCoreStatus()).rejects.toThrow(detail);
   });
 
-  it("proxies endpoint operations through fixed native commands and parses responses", async () => {
-    const endpoint = {
-      id: "endpoint_01",
-      name: "Primary",
-      kind: "openai",
-      base_url: "https://api.example/v1",
-      auth: { scheme: "bearer" },
-      credential_ref: "local://endpoint/endpoint_01",
-      enabled: true,
-      capabilities: [
-        { protocol: "openai.responses", mode: "native", streaming: true },
+  it("accepts an available RelayKit conversion engine descriptor", async () => {
+    const wireSnapshot = validSnapshot();
+    (wireSnapshot.capabilities as any).conversion_engine = {
+      name: "relaykit",
+      version: "v0.1.1",
+      available: true,
+      edges: [
+        {
+          from: "openai.chat",
+          to: "openai.responses",
+          quality: "good",
+          streaming: true,
+        },
       ],
     };
-    invokeMock.mockResolvedValueOnce({ items: [endpoint], next_cursor: null });
-    await expect(listEndpoints()).resolves.toMatchObject({ items: [{ id: "endpoint_01" }] });
-    expect(invokeMock).toHaveBeenLastCalledWith("list_endpoints");
+    invokeMock.mockResolvedValueOnce(wireSnapshot);
 
-    const record = { endpoint, etag: `"sha256:${"a".repeat(64)}"` };
-    const input = {
-      name: "Primary",
-      kind: "openai" as const,
-      base_url: "https://api.example/v1",
-      auth: { scheme: "bearer" as const },
-      credential: { secret: "write-only" },
-      capabilities: endpoint.capabilities as [{
-        protocol: string;
-        mode: "native";
-        streaming: boolean;
-      }],
+    await expect(getCoreStatus()).resolves.toMatchObject({
+      capabilities: {
+        conversion_engine: {
+          name: "relaykit",
+          version: "v0.1.1",
+          available: true,
+          edges: [
+            {
+              from: "openai.chat",
+              to: "openai.responses",
+              quality: "good",
+              streaming: true,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("proxies priority route CRUD through fixed native commands", async () => {
+    const route = {
+      id: "route_01",
+      name: "Code alias",
+      enabled: true,
+      priority: 10,
+      match: { protocol: "openai.responses", model: "team/code" },
+      selection: { mode: "priority" as const },
+      targets: [
+        {
+          service_id: "service_01",
+          plan_type: "native" as const,
+          upstream_protocol: "openai.responses",
+          priority: 0,
+          upstream_model: "gpt-5.2",
+        },
+      ],
     };
-    invokeMock.mockResolvedValueOnce(record);
-    await expect(createEndpoint(input)).resolves.toMatchObject({ endpoint: { id: "endpoint_01" } });
-    expect(invokeMock).toHaveBeenLastCalledWith("create_endpoint", { input });
+    const etag = `"sha256:${"c".repeat(64)}"`;
+    invokeMock.mockResolvedValueOnce({ items: [route], next_cursor: null });
+    await expect(listRoutes()).resolves.toEqual({
+      items: [route],
+      next_cursor: null,
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith("list_routes");
 
-    invokeMock.mockResolvedValueOnce(record);
-    await updateEndpoint(endpoint.id, record.etag, { name: "Renamed" });
-    expect(invokeMock).toHaveBeenLastCalledWith("update_endpoint", {
-      endpointId: endpoint.id,
-      etag: record.etag,
-      patch: { name: "Renamed" },
+    invokeMock.mockResolvedValueOnce({ route, etag });
+    await expect(getRoute(route.id)).resolves.toEqual({ route, etag });
+    expect(invokeMock).toHaveBeenLastCalledWith("get_route", {
+      routeId: route.id,
+    });
+
+    const { id: _id, enabled: _enabled, ...baseInput } = route;
+    const input = { ...baseInput, enabled: true };
+    invokeMock.mockResolvedValueOnce({ route, etag });
+    await expect(createRoute(input)).resolves.toEqual({ route, etag });
+    expect(invokeMock).toHaveBeenLastCalledWith("create_route", { input });
+
+    invokeMock.mockResolvedValueOnce({
+      route: { ...route, enabled: false },
+      etag,
+    });
+    await updateRoute(route.id, etag, { enabled: false });
+    expect(invokeMock).toHaveBeenLastCalledWith("update_route", {
+      routeId: route.id,
+      etag,
+      patch: { enabled: false },
+    });
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await deleteRoute(route.id, etag);
+    expect(invokeMock).toHaveBeenLastCalledWith("delete_route", {
+      routeId: route.id,
+      etag,
     });
   });
 
@@ -256,6 +334,7 @@ describe("desktop bridge contract", () => {
       priority: 0,
       detector: "regex",
       local_model_id: null,
+      min_confidence: 0.8,
       request_action: "redact",
       response_action: "allow",
       response_restore: true,
@@ -338,8 +417,10 @@ describe("desktop bridge contract", () => {
           path: "/messages/0/content",
           start: 6,
           end: 23,
+          confidence: 1,
         },
       ],
+      suppressed_findings: [],
       redacted_body:
         '{"messages":[{"content":"email [REDACTED]","role":"user"}]}',
       inspected_body:
@@ -354,6 +435,7 @@ describe("desktop bridge contract", () => {
           enabled: true,
           detector: "regex",
           local_model_id: null,
+          min_confidence: 0.8,
           request_action: "redact",
         },
       }),
@@ -366,6 +448,7 @@ describe("desktop bridge contract", () => {
           enabled: true,
           detector: "regex",
           local_model_id: null,
+          min_confidence: 0.8,
           request_action: "redact",
         },
       },
@@ -444,5 +527,106 @@ describe("desktop bridge contract", () => {
       "delete_privacy_model_installation",
       { installationId: installation.id },
     );
+  });
+
+  it("uses one service IPC surface for Codex and gateway services", async () => {
+    const service = {
+      id: "service_codex_01",
+      name: "Codex subscription",
+      kind: "codex_subscription",
+      enabled: true,
+      capabilities: [
+        { protocol: "openai.responses", mode: "native", streaming: true },
+        {
+          protocol: "openai.responses.compact",
+          mode: "native",
+          streaming: false,
+        },
+      ],
+      subscription: {
+        provider: "openai_codex",
+        status: "disconnected",
+      },
+      created_at: "2026-07-28T08:00:00Z",
+      updated_at: "2026-07-28T08:05:00Z",
+    };
+    const etag = `"sha256:${"d".repeat(64)}"`;
+    invokeMock.mockResolvedValueOnce({ items: [service], next_cursor: null });
+    await expect(listServices()).resolves.toEqual({
+      items: [service],
+      next_cursor: null,
+    });
+
+    invokeMock.mockResolvedValueOnce({ service, etag });
+    await expect(getService(service.id)).resolves.toEqual({ service, etag });
+
+    invokeMock.mockResolvedValueOnce({ service, etag });
+    await expect(
+      createService({
+        name: "Codex subscription",
+        kind: "codex_subscription",
+      }),
+    ).resolves.toEqual({ service, etag });
+
+    invokeMock.mockResolvedValueOnce({ service, etag });
+    await expect(
+      updateService(service.id, etag, { name: "Codex personal" }),
+    ).resolves.toEqual({ service, etag });
+
+    const session = {
+      id: "authorization_01",
+      provider: "openai_codex",
+      status: "pending",
+      flow: "browser",
+      service_id: "service_codex_01",
+      authorization_url: "https://auth.example/oauth/authorize",
+      expires_at: "2026-07-28T08:10:00Z",
+      created_at: "2026-07-28T08:00:00Z",
+      updated_at: "2026-07-28T08:00:00Z",
+    };
+    invokeMock.mockResolvedValueOnce({ kind: "session", session });
+    await expect(
+      beginServiceAuthorization(service.id, "browser"),
+    ).resolves.toEqual({
+      kind: "session",
+      session,
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith("begin_service_authorization", {
+      serviceId: service.id,
+      flow: "browser",
+    });
+
+    invokeMock.mockResolvedValueOnce(session);
+    await expect(getServiceAuthorization(service.id)).resolves.toEqual(session);
+
+    const { authorization_url: _authorizationURL, ...terminalSession } = session;
+    invokeMock.mockResolvedValueOnce({
+      ...terminalSession,
+      status: "cancelled",
+    });
+    await expect(cancelServiceAuthorization(service.id)).resolves.toMatchObject({
+      status: "cancelled",
+    });
+
+    invokeMock.mockResolvedValueOnce({
+      service,
+      etag,
+    });
+    await expect(logoutService(service.id)).resolves.toMatchObject({
+      service: { id: service.id },
+    });
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await deleteService(service.id, etag);
+    expect(invokeMock).toHaveBeenLastCalledWith("delete_service", {
+      serviceId: service.id,
+      etag,
+    });
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await openAuthorizationURL("https://auth.openai.com/codex/device");
+    expect(invokeMock).toHaveBeenLastCalledWith("open_authorization_url", {
+      url: "https://auth.openai.com/codex/device",
+    });
   });
 });

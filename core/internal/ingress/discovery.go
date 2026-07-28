@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -171,6 +172,8 @@ func (handler *Handler) fetchModelDiscovery(
 	classified Request,
 	candidate endpoint.Resolved,
 ) discoveryResult {
+	candidate.Service = candidate.CanonicalService()
+	candidate.BaseURL = candidate.EffectiveBaseURL()
 	if request.Context().Err() != nil {
 		return discoveryResult{outcome: discoveryOutcomeAborted}
 	}
@@ -180,7 +183,7 @@ func (handler *Handler) fetchModelDiscovery(
 		mode = contract.CapabilityModeNative
 	}
 	if _, planErr := planner.BuildAlpha(planner.AlphaInput{
-		Endpoint:  candidate.Endpoint,
+		Service:   candidate.Service,
 		Protocol:  classified.Protocol,
 		Mode:      mode,
 		Streaming: classified.Streaming,
@@ -198,14 +201,14 @@ func (handler *Handler) fetchModelDiscovery(
 			return discoveryResult{outcome: discoveryOutcomeExcluded, failure: executionFailure{
 				kind:       executionFailureCapability,
 				err:        planErr,
-				endpointID: candidate.Endpoint.ID,
+				endpointID: candidate.Service.ID,
 				capability: capabilityErr,
 			}}
 		}
 		return discoveryResult{outcome: discoveryOutcomeExcluded, failure: executionFailure{
 			kind:       executionFailureConfiguration,
 			err:        planErr,
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}}
 	}
 
@@ -229,7 +232,7 @@ func (handler *Handler) fetchModelDiscovery(
 		recorder,
 		fetchRequest,
 		classified,
-		candidate.Endpoint.ID,
+		candidate.Service.ID,
 	)
 	finishPrivacy()
 	if request.Context().Err() != nil {
@@ -239,7 +242,11 @@ func (handler *Handler) fetchModelDiscovery(
 		return discoveryResult{outcome: discoveryOutcomeExcluded, privacyErr: privacyErr}
 	}
 
-	headers, authorizeErr := handler.authorizer.Headers(request.Context(), candidate.Endpoint)
+	authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
+	var headers http.Header
+	if authorizeErr == nil {
+		headers, authorizeErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint)
+	}
 	if authorizeErr != nil {
 		if request.Context().Err() != nil {
 			return discoveryResult{outcome: discoveryOutcomeAborted}
@@ -247,16 +254,22 @@ func (handler *Handler) fetchModelDiscovery(
 		return discoveryResult{outcome: discoveryOutcomeExcluded, failure: executionFailure{
 			kind:       executionFailureCredential,
 			err:        authorizeErr,
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}}
 	}
-	baseURL, parseErr := url.Parse(candidate.Endpoint.BaseURL)
+	baseURL, parseErr := url.Parse(candidate.BaseURL)
 	if parseErr != nil {
 		return discoveryResult{outcome: discoveryOutcomeExcluded, failure: executionFailure{
 			kind:       executionFailureConfiguration,
 			err:        parseErr,
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}}
+	}
+	if candidate.Service.Kind.IsSubscription() {
+		fetchRequest.URL.Path = strings.TrimPrefix(fetchRequest.URL.Path, "/v1")
+		if fetchRequest.URL.RawPath != "" {
+			fetchRequest.URL.RawPath = strings.TrimPrefix(fetchRequest.URL.RawPath, "/v1")
+		}
 	}
 
 	controller, healthAware := handler.resolver.(endpoint.AttemptController)
@@ -280,7 +293,7 @@ func (handler *Handler) fetchModelDiscovery(
 		return discoveryResult{outcome: discoveryOutcomeExcluded, failure: executionFailure{
 			kind:       executionFailureConfiguration,
 			err:        forwardErr,
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}}
 	}
 	if forwardErr != nil {
@@ -293,7 +306,7 @@ func (handler *Handler) fetchModelDiscovery(
 		return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
 			kind:       executionFailureUpstream,
 			err:        failureErr,
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}}
 	}
 	if recorder.status < http.StatusOK || recorder.status >= http.StatusMultipleChoices {
@@ -301,7 +314,7 @@ func (handler *Handler) fetchModelDiscovery(
 		return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
 			kind:       executionFailureUpstream,
 			err:        fmt.Errorf("upstream model discovery returned status %d", recorder.status),
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}}
 	}
 	entries, entriesErr := parseDiscoveryEntries(classified.Protocol, recorder.body.Bytes())
@@ -310,7 +323,7 @@ func (handler *Handler) fetchModelDiscovery(
 		return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
 			kind:       executionFailureUpstream,
 			err:        entriesErr,
-			endpointID: candidate.Endpoint.ID,
+			endpointID: candidate.Service.ID,
 		}}
 	}
 	health.Success()

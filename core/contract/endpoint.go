@@ -9,31 +9,22 @@ import (
 	"unicode/utf8"
 )
 
-type EndpointID string
-
-type EndpointKind string
+// ServiceID and EndpointKind remain source-compatible views while callers
+// migrate to the product-level Service model.
+type EndpointID = ServiceID
+type EndpointKind = ServiceKind
 
 const (
-	EndpointKindNewAPI           EndpointKind = "newapi"
-	EndpointKindOpenAI           EndpointKind = "openai"
-	EndpointKindAnthropic        EndpointKind = "anthropic"
-	EndpointKindGemini           EndpointKind = "gemini"
-	EndpointKindOpenAICompatible EndpointKind = "openai_compatible"
-	EndpointKindCustom           EndpointKind = "custom"
+	EndpointKindNewAPI           = ServiceKindNewAPI
+	EndpointKindOpenAI           = ServiceKindOpenAI
+	EndpointKindAnthropic        = ServiceKindAnthropic
+	EndpointKindGemini           = ServiceKindGemini
+	EndpointKindOpenAICompatible = ServiceKindOpenAICompatible
+	EndpointKindCustom           = ServiceKindCustom
 )
 
-func (kind EndpointKind) Valid() bool {
-	switch kind {
-	case EndpointKindNewAPI, EndpointKindOpenAI, EndpointKindAnthropic,
-		EndpointKindGemini, EndpointKindOpenAICompatible, EndpointKindCustom:
-		return true
-	default:
-		return false
-	}
-}
-
-// CapabilityMode states how an Endpoint accepts the original ingress
-// protocol. RelayKit is intentionally not an Endpoint mode; it is a local
+// CapabilityMode states how a Service accepts the original ingress
+// protocol. RelayKit is intentionally not a Service mode; it is a local
 // execution-plan type.
 type CapabilityMode string
 
@@ -83,14 +74,14 @@ var forbiddenCustomAuthHeaders = map[string]struct{}{
 var credentialNamespacePattern = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 var credentialPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._~!$&'()*+,;=:@/-]*[A-Za-z0-9._~!$&'()*+,;=:@-]$`)
 
-// EndpointAuth is non-secret authentication configuration. Credential bytes
+// ServiceAuth is non-secret authentication configuration. Credential bytes
 // remain in SecretStore and are referenced separately by CredentialRef.
-type EndpointAuth struct {
+type ServiceAuth struct {
 	Scheme     AuthScheme `json:"scheme"`
 	HeaderName string     `json:"header_name,omitempty"`
 }
 
-func (auth EndpointAuth) Validate() error {
+func (auth ServiceAuth) Validate() error {
 	if !auth.Scheme.Valid() {
 		return fmt.Errorf("unknown auth scheme %q", auth.Scheme)
 	}
@@ -108,6 +99,10 @@ func (auth EndpointAuth) Validate() error {
 	}
 	return nil
 }
+
+// EndpointAuth remains a source-compatible alias for legacy HTTP-only
+// adapters. New Service code uses ServiceAuth.
+type EndpointAuth = ServiceAuth
 
 type Capability struct {
 	Protocol  ProtocolID     `json:"protocol"`
@@ -140,9 +135,9 @@ func (capability Capability) Validate() error {
 }
 
 // ValidateCredentialRef applies the same storage-neutral contract used by
-// SecretStore. Local references identify the Endpoint row whose credential is
+// SecretStore. Local references identify the Service row whose credential is
 // stored in the dedicated local table; keyring references remain available for
-// optional future adapters.
+// subscription adapters.
 func ValidateCredentialRef(value string) error {
 	if len(value) > 512 {
 		return fmt.Errorf("credential_ref exceeds 512 characters")
@@ -155,18 +150,19 @@ func ValidateCredentialRef(value string) error {
 		return fmt.Errorf("credential_ref must not contain credentials, query, or fragment")
 	}
 	if !credentialNamespacePattern.MatchString(parsed.Host) || !credentialPathPattern.MatchString(parsed.Path) || strings.HasSuffix(parsed.Path, "/") {
-		return fmt.Errorf("credential_ref must use local://endpoint/<id> or keyring://<namespace>/<id>")
+		return fmt.Errorf("credential_ref must use local://service/<id> or keyring://<namespace>/<id>")
 	}
 	switch parsed.Scheme {
 	case "local":
 		identifier := strings.TrimPrefix(parsed.Path, "/")
-		if parsed.Host != "endpoint" || strings.Contains(identifier, "/") || EndpointID(identifier).Validate() != nil {
-			return fmt.Errorf("credential_ref must use local://endpoint/<id> or keyring://<namespace>/<id>")
+		if (parsed.Host != "service" && parsed.Host != "endpoint") ||
+			strings.Contains(identifier, "/") || ServiceID(identifier).Validate() != nil {
+			return fmt.Errorf("credential_ref must use local://service/<id> or keyring://<namespace>/<id>")
 		}
 	case "keyring":
 		// Keyring namespaces and nested adapter-specific paths remain opaque.
 	default:
-		return fmt.Errorf("credential_ref must use local://endpoint/<id> or keyring://<namespace>/<id>")
+		return fmt.Errorf("credential_ref must use local://service/<id> or keyring://<namespace>/<id>")
 	}
 	return nil
 }
@@ -174,7 +170,7 @@ func ValidateCredentialRef(value string) error {
 // Endpoint contains only a credential reference. Secret material must be read
 // through secretstore.SecretStore and must never be embedded in this contract.
 type Endpoint struct {
-	ID            EndpointID   `json:"id"`
+	ID            ServiceID    `json:"id"`
 	Name          string       `json:"name"`
 	Kind          EndpointKind `json:"kind"`
 	BaseURL       string       `json:"base_url"`

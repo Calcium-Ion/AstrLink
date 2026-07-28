@@ -15,17 +15,13 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock("./bridge", () => bridgeMocks);
 
-import type { Endpoint } from "./endpoint-model";
 import { RequestRecords } from "./RequestRecords";
 import type { RequestRecord } from "./request-record-model";
+import type { RoutableService } from "./service-model";
 
-const endpoint: Endpoint = {
-  id: "endpoint_01",
+const service: RoutableService = {
+  id: "service_01",
   name: "Primary gateway",
-  kind: "newapi",
-  base_url: "https://gateway.example",
-  auth: { scheme: "bearer" },
-  credential_ref: "local://endpoint/endpoint_01",
   enabled: true,
   capabilities: [
     {
@@ -45,7 +41,7 @@ const firstRecord: RequestRecord = {
   requested_model: "gpt-4.1",
   streaming: true,
   route_id: "route_primary",
-  endpoint_id: "endpoint_01",
+  service_id: "service_01",
   local_access_token_id: "token_01",
   http_status: 200,
   latency_ms: 120,
@@ -131,6 +127,7 @@ describe("RequestRecords", () => {
     bridgeMocks.getAuditSettings.mockResolvedValue({
       request_body_enabled: false,
       response_content_enabled: false,
+      http_meta_enabled: true,
       request_body_max_bytes: 4096,
       response_content_max_bytes: 8192,
       metadata_retention_days: 30,
@@ -139,6 +136,7 @@ describe("RequestRecords", () => {
     bridgeMocks.updateAuditSettings.mockImplementation(async (patch) => ({
       request_body_enabled: false,
       response_content_enabled: false,
+      http_meta_enabled: true,
       request_body_max_bytes: 4096,
       response_content_max_bytes: 8192,
       metadata_retention_days: 30,
@@ -152,6 +150,23 @@ describe("RequestRecords", () => {
     bridgeMocks.deleteRequestRecord.mockResolvedValue(undefined);
     bridgeMocks.getRequestAuditContent.mockResolvedValue({
       request_id: firstRecord.id,
+      http_meta: {
+        method: "POST",
+        url: "/v1/responses?stream=true",
+        http_version: "HTTP/1.1",
+        request_headers: [
+          {
+            name: "authorization",
+            value: "Bearer <redacted:51 chars>",
+            redacted: true,
+          },
+          { name: "content-type", value: "application/json", redacted: false },
+        ],
+        response_status: 200,
+        response_headers: [
+          { name: "x-request-id", value: "req_upstream_1", redacted: false },
+        ],
+      },
       request_body: {
         media_type: "application/json",
         content: '{"prompt":"secret"}',
@@ -182,7 +197,7 @@ describe("RequestRecords", () => {
       reactRoot.render(
         <RequestRecords
           coreSessionKey={session}
-          endpoints={[endpoint]}
+          services={[service]}
           isReady
         />,
       );
@@ -196,6 +211,8 @@ describe("RequestRecords", () => {
   it("renders a full-width two-line log stream instead of a wide table", async () => {
     await renderRecords();
 
+    expect(container.querySelector("h1")?.textContent).toBe("请求记录");
+    expect(container.querySelector(".workspace-card .page-header")).toBeNull();
     expect(container.querySelector(".records-table")).toBeNull();
     expect(container.querySelectorAll(".record-row")).toHaveLength(2);
     expect(container.textContent).toContain("gpt-4.1");
@@ -246,7 +263,7 @@ describe("RequestRecords", () => {
     });
   });
 
-  it("drills into detail and audit, then clears decrypted memory on monitor return", async () => {
+  it("auto-decrypts on detail open, shows everything on one page, and caches across back-navigation", async () => {
     await renderRecords();
 
     await act(async () => {
@@ -256,36 +273,75 @@ describe("RequestRecords", () => {
         ) as HTMLButtonElement
       ).click();
     });
-    expect(container.textContent).toContain("记录详情");
-    expect(container.textContent).toContain("身份");
-    expect(container.textContent).toContain("指标");
-    expect(container.textContent).toContain("内容不会自动解密");
-
-    await act(async () => {
-      exactButton("解密并审查内容").click();
-      await Promise.resolve();
-    });
+    await act(async () => await Promise.resolve());
     await act(async () => await Promise.resolve());
 
-    expect(container.textContent).toContain("内容审查");
-    expect(container.textContent).toContain("hello");
-    await act(async () => {
-      exactButton("请求体").click();
-    });
+    // One page: metadata, HTTP envelope, request body and response together.
+    expect(container.querySelector("h1")?.textContent).toBe("记录详情");
+    expect(container.textContent).toContain("身份");
+    expect(container.textContent).toContain("指标");
+    expect(container.textContent).toContain("POST /v1/responses?stream=true");
+    expect(container.textContent).toContain("Bearer <redacted:51 chars>");
     expect(container.textContent).toContain('"prompt": "secret"');
+    expect(container.textContent).toContain("hello");
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(1);
+    // The manual-decrypt gate is gone.
+    expect(container.textContent).not.toContain("解密并审查内容");
+    expect(container.textContent).not.toContain("内容不会自动解密");
 
-    await act(async () => {
-      buttonContaining("记录详情").click();
-    });
+    // Back to monitor and reopen: served from cache, no second decrypt.
     await act(async () => {
       buttonContaining("实时监控").click();
     });
+    expect(container.querySelector("h1")?.textContent).toBe("请求记录");
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-record-id="${firstRecord.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => await Promise.resolve());
+    expect(container.textContent).toContain('"prompt": "secret"');
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(1);
 
-    expect(container.textContent).not.toContain("secret");
-    expect(container.querySelector(".audit-reviewer")).toBeNull();
-    expect(container.querySelector(".records-monitor")?.hasAttribute("hidden")).toBe(
-      false,
-    );
+    // Explicit clear drops the cache and returns to the monitor.
+    await act(async () => {
+      exactButton("清除已解密内容").click();
+    });
+    expect(container.querySelector("h1")?.textContent).toBe("请求记录");
+    bridgeMocks.getRequestAuditContent.mockClear();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-record-id="${firstRecord.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => await Promise.resolve());
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a friendly message for records without http metadata", async () => {
+    bridgeMocks.getRequestAuditContent.mockResolvedValue({
+      request_id: firstRecord.id,
+      http_meta: null,
+      request_body: null,
+      response_content: null,
+    });
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-record-id="${firstRecord.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+
+    expect(container.textContent).toContain("此记录未捕获 HTTP 元数据");
+    expect(container.textContent).toContain("未捕获");
   });
 
   it("preserves filters, scroll offset, selection and focus across drill-down", async () => {

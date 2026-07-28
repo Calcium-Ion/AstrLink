@@ -3,7 +3,9 @@ mod sidecar;
 use std::sync::Arc;
 
 use serde::Serialize;
-use sidecar::{CoreManager, CoreSnapshot, EndpointRecordResponse, PolicyRecordResponse};
+use sidecar::{
+    CoreManager, CoreSnapshot, PolicyRecordResponse, RouteRecordResponse, ServiceRecordResponse,
+};
 use tauri::{Manager, RunEvent, State};
 
 #[derive(Debug, Serialize)]
@@ -11,6 +13,12 @@ struct AppSnapshot {
     app_version: String,
     #[serde(flatten)]
     core: CoreSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct WindowChromePreferences {
+    platform: &'static str,
+    decoration_layout: Option<String>,
 }
 
 impl AppSnapshot {
@@ -27,6 +35,30 @@ fn core_status(app: tauri::AppHandle, manager: State<'_, Arc<CoreManager>>) -> A
     AppSnapshot::capture(&app, &manager)
 }
 
+#[cfg(target_os = "linux")]
+fn linux_decoration_layout() -> Option<String> {
+    use gtk::prelude::*;
+
+    let settings = gtk::Settings::default()?;
+    settings
+        .property_value("gtk-decoration-layout")
+        .get::<String>()
+        .ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_decoration_layout() -> Option<String> {
+    None
+}
+
+#[tauri::command]
+fn window_chrome_preferences() -> WindowChromePreferences {
+    WindowChromePreferences {
+        platform: std::env::consts::OS,
+        decoration_layout: linux_decoration_layout(),
+    }
+}
+
 #[tauri::command]
 async fn restart_core(
     app: tauri::AppHandle,
@@ -38,43 +70,123 @@ async fn restart_core(
 }
 
 #[tauri::command]
-async fn list_endpoints(manager: State<'_, Arc<CoreManager>>) -> Result<serde_json::Value, String> {
-    manager.list_endpoints().await
+async fn list_services(manager: State<'_, Arc<CoreManager>>) -> Result<serde_json::Value, String> {
+    manager.list_services().await
 }
 
 #[tauri::command]
-async fn get_endpoint(
-    endpoint_id: String,
+async fn get_service(
+    service_id: String,
     manager: State<'_, Arc<CoreManager>>,
-) -> Result<EndpointRecordResponse, String> {
-    manager.get_endpoint(&endpoint_id).await
+) -> Result<ServiceRecordResponse, String> {
+    manager.get_service(&service_id).await
 }
 
 #[tauri::command]
-async fn create_endpoint(
+async fn create_service(
     input: serde_json::Value,
     manager: State<'_, Arc<CoreManager>>,
-) -> Result<EndpointRecordResponse, String> {
-    manager.create_endpoint(input).await
+) -> Result<ServiceRecordResponse, String> {
+    manager.create_service(input).await
 }
 
 #[tauri::command]
-async fn update_endpoint(
-    endpoint_id: String,
+async fn update_service(
+    service_id: String,
     etag: String,
     patch: serde_json::Value,
     manager: State<'_, Arc<CoreManager>>,
-) -> Result<EndpointRecordResponse, String> {
-    manager.update_endpoint(&endpoint_id, &etag, patch).await
+) -> Result<ServiceRecordResponse, String> {
+    manager.update_service(&service_id, &etag, patch).await
 }
 
 #[tauri::command]
-async fn delete_endpoint(
-    endpoint_id: String,
+async fn delete_service(
+    service_id: String,
     etag: String,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<(), String> {
-    manager.delete_endpoint(&endpoint_id, &etag).await
+    manager.delete_service(&service_id, &etag).await
+}
+
+#[tauri::command]
+async fn begin_service_authorization(
+    service_id: String,
+    flow: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .begin_service_authorization(&service_id, &flow)
+        .await
+}
+
+#[tauri::command]
+fn open_authorization_url(url: String) -> Result<(), String> {
+    sidecar::open_authorization_url(Some(&url))
+}
+
+#[tauri::command]
+async fn get_service_authorization(
+    service_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_service_authorization(&service_id).await
+}
+
+#[tauri::command]
+async fn cancel_service_authorization(
+    service_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.cancel_service_authorization(&service_id).await
+}
+
+#[tauri::command]
+async fn logout_service(
+    service_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<ServiceRecordResponse, String> {
+    manager.logout_service(&service_id).await
+}
+
+#[tauri::command]
+async fn list_routes(manager: State<'_, Arc<CoreManager>>) -> Result<serde_json::Value, String> {
+    manager.list_routes().await
+}
+
+#[tauri::command]
+async fn get_route(
+    route_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<RouteRecordResponse, String> {
+    manager.get_route(&route_id).await
+}
+
+#[tauri::command]
+async fn create_route(
+    input: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<RouteRecordResponse, String> {
+    manager.create_route(input).await
+}
+
+#[tauri::command]
+async fn update_route(
+    route_id: String,
+    etag: String,
+    patch: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<RouteRecordResponse, String> {
+    manager.update_route(&route_id, &etag, patch).await
+}
+
+#[tauri::command]
+async fn delete_route(
+    route_id: String,
+    etag: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<(), String> {
+    manager.delete_route(&route_id, &etag).await
 }
 
 #[tauri::command]
@@ -244,22 +356,39 @@ async fn delete_privacy_model_installation(
         .await
 }
 
+fn platform_initialization_script(platform: &str) -> String {
+    let encoded = serde_json::to_string(platform).expect("desktop platform should serialize");
+    format!("window.__ASTRLINK_DESKTOP_PLATFORM__ = {encoded};")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(CoreManager::new());
     let setup_manager = Arc::clone(&manager);
 
     let app = tauri::Builder::default()
+        .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
         .plugin(tauri_plugin_shell::init())
         .manage(manager)
         .invoke_handler(tauri::generate_handler![
             core_status,
+            window_chrome_preferences,
             restart_core,
-            list_endpoints,
-            get_endpoint,
-            create_endpoint,
-            update_endpoint,
-            delete_endpoint,
+            list_services,
+            get_service,
+            create_service,
+            update_service,
+            delete_service,
+            begin_service_authorization,
+            open_authorization_url,
+            get_service_authorization,
+            cancel_service_authorization,
+            logout_service,
+            list_routes,
+            get_route,
+            create_route,
+            update_route,
+            delete_route,
             list_request_records,
             get_request_record,
             delete_request_record,
@@ -327,5 +456,25 @@ mod tests {
         assert_eq!(value["app_version"], "0.1.0");
         assert_eq!(value["phase"], "stopped");
         assert!(value.get("core").is_none());
+    }
+
+    #[test]
+    fn window_chrome_preferences_keep_platform_metadata_internal() {
+        let preferences = WindowChromePreferences {
+            platform: "linux",
+            decoration_layout: Some("close:minimize,maximize".to_string()),
+        };
+
+        let value = serde_json::to_value(preferences).expect("preferences should serialize");
+        assert_eq!(value["platform"], "linux");
+        assert_eq!(value["decoration_layout"], "close:minimize,maximize");
+    }
+
+    #[test]
+    fn platform_initialization_script_uses_a_quoted_literal() {
+        assert_eq!(
+            platform_initialization_script("macos"),
+            "window.__ASTRLINK_DESKTOP_PLATFORM__ = \"macos\";"
+        );
     }
 }

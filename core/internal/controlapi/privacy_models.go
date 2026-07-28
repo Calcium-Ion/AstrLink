@@ -135,7 +135,7 @@ func (handler *Handler) privacyModelItem(
 	}
 	rawID := strings.TrimPrefix(request.URL.Path, PrivacyModelsPath+"/")
 	if rawID == "" || strings.Contains(rawID, "/") {
-		writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	decodedID, err := url.PathUnescape(rawID)

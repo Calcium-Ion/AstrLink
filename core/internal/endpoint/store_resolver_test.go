@@ -104,7 +104,7 @@ func TestStoreResolverPaginatesAndFailsClosed(t *testing.T) {
 	}
 }
 
-func resolverEndpoint(id contract.EndpointID, mode contract.CapabilityMode, streaming bool, models []string) contract.Endpoint {
+func resolverEndpoint(id contract.ServiceID, mode contract.CapabilityMode, streaming bool, models []string) contract.Endpoint {
 	return contract.Endpoint{
 		ID: id, Name: string(id), Kind: contract.EndpointKindOpenAI,
 		BaseURL: "https://api.example/v1", Auth: contract.EndpointAuth{Scheme: contract.AuthSchemeNone}, Enabled: true,

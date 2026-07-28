@@ -291,207 +291,84 @@ func restrictDatabaseFiles(path string) error {
 }
 
 func (store *Store) CreateEndpoint(ctx context.Context, endpoint contract.Endpoint, credential storagecontract.CredentialMutation) (record storagecontract.EndpointRecord, err error) {
-	endpoint, err = applyCredentialMutation(endpoint, credential)
+	created, err := store.CreateService(ctx, contract.ServiceFromEndpoint(endpoint), credential)
 	if err != nil {
-		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+		return record, err
 	}
-	if err := validateStoredEndpoint(endpoint); err != nil {
-		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
-	}
-	document, err := json.Marshal(endpoint)
+	view, err := created.Service.EndpointView()
 	if err != nil {
-		return record, fmt.Errorf("encode endpoint: %w", err)
+		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidRecord, err)
 	}
-	now := store.now().UTC().Format(time.RFC3339Nano)
-	transaction, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return record, fmt.Errorf("begin endpoint create: %w", err)
-	}
-	defer rollbackOnError(transaction, &err)
-	if _, err = transaction.ExecContext(ctx,
-		`INSERT INTO endpoints (id, document_json, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-		endpoint.ID, string(document), now, now,
-	); err != nil {
-		var exists int
-		if scanErr := transaction.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoints WHERE id = ?)`, endpoint.ID).Scan(&exists); scanErr == nil && exists == 1 {
-			return record, fmt.Errorf("%w: endpoint %q", storagecontract.ErrConflict, endpoint.ID)
-		}
-		return record, fmt.Errorf("insert endpoint: %w", err)
-	}
-	if credential.Present && len(credential.Secret) > 0 {
-		if err = putCredentialTx(ctx, transaction, endpoint.ID, credential.Secret, now); err != nil {
-			return record, err
-		}
-	}
-	if err = transaction.Commit(); err != nil {
-		return record, fmt.Errorf("commit endpoint create: %w", err)
-	}
-	return storagecontract.EndpointRecord{Endpoint: endpoint, ETag: entityTag(document)}, nil
+	return storagecontract.EndpointRecord{Endpoint: view, ETag: created.ETag}, nil
 }
 
-func (store *Store) GetEndpoint(ctx context.Context, id contract.EndpointID) (storagecontract.EndpointRecord, error) {
-	if err := id.Validate(); err != nil {
+func (store *Store) GetEndpoint(ctx context.Context, id contract.ServiceID) (storagecontract.EndpointRecord, error) {
+	service, err := store.GetService(ctx, id)
+	if err != nil {
 		return storagecontract.EndpointRecord{}, err
 	}
-	var document string
-	if err := store.db.QueryRowContext(ctx, `SELECT document_json FROM endpoints WHERE id = ?`, id).Scan(&document); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return storagecontract.EndpointRecord{}, fmt.Errorf("%w: endpoint %q", storagecontract.ErrNotFound, id)
-		}
-		return storagecontract.EndpointRecord{}, fmt.Errorf("read endpoint: %w", err)
+	view, err := service.Service.EndpointView()
+	if err != nil {
+		return storagecontract.EndpointRecord{}, fmt.Errorf("%w: %v", storagecontract.ErrNotFound, err)
 	}
-	return decodeEndpointRecord(string(id), []byte(document))
+	return storagecontract.EndpointRecord{Endpoint: view, ETag: service.ETag}, nil
 }
 
 func (store *Store) ListEndpoints(ctx context.Context, options storagecontract.EndpointListOptions) (storagecontract.EndpointPage, error) {
-	limit := options.Limit
-	if limit == 0 {
-		limit = defaultListLimit
+	serviceOptions := storagecontract.ServiceListOptions{
+		Limit: options.Limit, Cursor: options.Cursor, Enabled: options.Enabled,
 	}
-	if limit < 1 || limit > maxListLimit {
-		return storagecontract.EndpointPage{}, fmt.Errorf("%w: limit must be between 1 and %d", storagecontract.ErrInvalidArgument, maxListLimit)
+	if options.Kind != nil {
+		kind := contract.ServiceKind(*options.Kind)
+		serviceOptions.Kind = &kind
 	}
-	after, err := decodeCursor(options.Cursor)
+	services, err := store.ListServices(ctx, serviceOptions)
 	if err != nil {
 		return storagecontract.EndpointPage{}, err
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT id, document_json FROM endpoints WHERE id > ? ORDER BY id`, after)
-	if err != nil {
-		return storagecontract.EndpointPage{}, fmt.Errorf("list endpoints: %w", err)
-	}
-	defer rows.Close()
-	matched := make([]storagecontract.EndpointRecord, 0, limit+1)
-	for rows.Next() {
-		var id, document string
-		if err := rows.Scan(&id, &document); err != nil {
-			return storagecontract.EndpointPage{}, fmt.Errorf("scan endpoint: %w", err)
+	items := make([]storagecontract.EndpointRecord, 0, len(services.Items))
+	for _, service := range services.Items {
+		if !service.Service.Kind.IsHTTP() {
+			continue
 		}
-		record, err := decodeEndpointRecord(id, []byte(document))
+		view, err := service.Service.EndpointView()
 		if err != nil {
-			return storagecontract.EndpointPage{}, err
+			return storagecontract.EndpointPage{}, fmt.Errorf("%w: %v", storagecontract.ErrInvalidRecord, err)
 		}
-		if options.Enabled != nil && record.Endpoint.Enabled != *options.Enabled {
-			continue
-		}
-		if options.Kind != nil && record.Endpoint.Kind != *options.Kind {
-			continue
-		}
-		matched = append(matched, record)
-		if len(matched) == limit+1 {
-			break
-		}
+		items = append(items, storagecontract.EndpointRecord{Endpoint: view, ETag: service.ETag})
 	}
-	if err := rows.Err(); err != nil {
-		return storagecontract.EndpointPage{}, fmt.Errorf("iterate endpoints: %w", err)
-	}
-	page := storagecontract.EndpointPage{Items: matched}
-	if len(matched) > limit {
-		page.Items = matched[:limit]
-		page.NextCursor = encodeCursor(page.Items[len(page.Items)-1].Endpoint.ID)
-	}
-	return page, nil
+	return storagecontract.EndpointPage{Items: items, NextCursor: services.NextCursor}, nil
 }
 
 func (store *Store) UpdateEndpoint(ctx context.Context, endpoint contract.Endpoint, credential storagecontract.CredentialMutation, expectedETag string) (record storagecontract.EndpointRecord, err error) {
-	if expectedETag == "" {
-		return record, fmt.Errorf("%w: expected ETag is required", storagecontract.ErrInvalidArgument)
-	}
-	endpoint, err = applyCredentialMutation(endpoint, credential)
+	current, err := store.GetService(ctx, endpoint.ID)
 	if err != nil {
-		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
-	}
-	if err := validateStoredEndpoint(endpoint); err != nil {
-		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
-	}
-	document, err := json.Marshal(endpoint)
-	if err != nil {
-		return record, fmt.Errorf("encode endpoint: %w", err)
-	}
-	transaction, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return record, fmt.Errorf("begin endpoint update: %w", err)
-	}
-	defer rollbackOnError(transaction, &err)
-	var currentDocument string
-	if err = transaction.QueryRowContext(ctx, `SELECT document_json FROM endpoints WHERE id = ?`, endpoint.ID).Scan(&currentDocument); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return record, fmt.Errorf("%w: endpoint %q", storagecontract.ErrNotFound, endpoint.ID)
-		}
-		return record, fmt.Errorf("read endpoint for update: %w", err)
-	}
-	if _, err = decodeEndpointRecord(string(endpoint.ID), []byte(currentDocument)); err != nil {
 		return record, err
 	}
-	if entityTag([]byte(currentDocument)) != expectedETag {
-		return record, fmt.Errorf("%w: endpoint %q", storagecontract.ErrPrecondition, endpoint.ID)
+	service := contract.ServiceFromEndpoint(endpoint)
+	service.CreatedAt = current.Service.CreatedAt
+	updated, err := store.UpdateService(ctx, service, credential, expectedETag)
+	if err != nil {
+		return record, err
 	}
-	now := store.now().UTC().Format(time.RFC3339Nano)
-	if _, err = transaction.ExecContext(ctx, `UPDATE endpoints SET document_json = ?, updated_at = ? WHERE id = ?`, string(document), now, endpoint.ID); err != nil {
-		return record, fmt.Errorf("update endpoint: %w", err)
+	view, err := updated.Service.EndpointView()
+	if err != nil {
+		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidRecord, err)
 	}
-	if credential.Present {
-		if len(credential.Secret) == 0 {
-			if _, err = transaction.ExecContext(ctx, `DELETE FROM endpoint_credentials WHERE endpoint_id = ?`, endpoint.ID); err != nil {
-				return record, fmt.Errorf("delete endpoint credential: %w", err)
-			}
-		} else if err = putCredentialTx(ctx, transaction, endpoint.ID, credential.Secret, now); err != nil {
-			return record, err
-		}
-	}
-	if err = transaction.Commit(); err != nil {
-		return record, fmt.Errorf("commit endpoint update: %w", err)
-	}
-	return storagecontract.EndpointRecord{Endpoint: endpoint, ETag: entityTag(document)}, nil
+	return storagecontract.EndpointRecord{Endpoint: view, ETag: updated.ETag}, nil
 }
 
-func (store *Store) DeleteEndpoint(ctx context.Context, id contract.EndpointID, expectedETag string) (err error) {
-	if err := id.Validate(); err != nil {
-		return err
-	}
-	if expectedETag == "" {
-		return fmt.Errorf("%w: expected ETag is required", storagecontract.ErrInvalidArgument)
-	}
-	transaction, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin endpoint delete: %w", err)
-	}
-	defer rollbackOnError(transaction, &err)
-	var document string
-	if err = transaction.QueryRowContext(ctx, `SELECT document_json FROM endpoints WHERE id = ?`, id).Scan(&document); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: endpoint %q", storagecontract.ErrNotFound, id)
-		}
-		return fmt.Errorf("read endpoint for delete: %w", err)
-	}
-	if _, err = decodeEndpointRecord(string(id), []byte(document)); err != nil {
-		return err
-	}
-	if entityTag([]byte(document)) != expectedETag {
-		return fmt.Errorf("%w: endpoint %q", storagecontract.ErrPrecondition, id)
-	}
-	referenced, referenceErr := routeReferencesEndpoint(ctx, transaction, id)
-	if referenceErr != nil {
-		return referenceErr
-	}
-	if referenced {
-		return fmt.Errorf("%w: endpoint %q is referenced by a route", storagecontract.ErrConflict, id)
-	}
-	if _, err = transaction.ExecContext(ctx, `DELETE FROM endpoints WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete endpoint: %w", err)
-	}
-	if err = transaction.Commit(); err != nil {
-		return fmt.Errorf("commit endpoint delete: %w", err)
-	}
-	return nil
+func (store *Store) DeleteEndpoint(ctx context.Context, id contract.ServiceID, expectedETag string) (err error) {
+	return store.DeleteService(ctx, id, expectedETag)
 }
 
 func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error) {
-	id, err := localEndpointID(ref)
+	id, err := localServiceID(ref)
 	if err != nil {
 		return nil, err
 	}
 	var secret []byte
-	if err := store.db.QueryRowContext(ctx, `SELECT credential_value FROM endpoint_credentials WHERE endpoint_id = ?`, id).Scan(&secret); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT credential_value FROM service_credentials WHERE service_id = ?`, id).Scan(&secret); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("%w: %s", secretstore.ErrNotFound, ref)
 		}
@@ -507,7 +384,7 @@ func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error
 }
 
 func (store *Store) Put(ctx context.Context, ref secretstore.Ref, secret []byte) (err error) {
-	id, err := localEndpointID(ref)
+	id, err := localServiceID(ref)
 	if err != nil {
 		return err
 	}
@@ -520,7 +397,7 @@ func (store *Store) Put(ctx context.Context, ref secretstore.Ref, secret []byte)
 	}
 	defer rollbackOnError(transaction, &err)
 	now := store.now().UTC().Format(time.RFC3339Nano)
-	if err = putCredentialTx(ctx, transaction, id, secret, now); err != nil {
+	if err = putServiceCredentialTx(ctx, transaction, id, secret, now); err != nil {
 		return err
 	}
 	if err = transaction.Commit(); err != nil {
@@ -530,11 +407,11 @@ func (store *Store) Put(ctx context.Context, ref secretstore.Ref, secret []byte)
 }
 
 func (store *Store) Delete(ctx context.Context, ref secretstore.Ref) error {
-	id, err := localEndpointID(ref)
+	id, err := localServiceID(ref)
 	if err != nil {
 		return err
 	}
-	result, err := store.db.ExecContext(ctx, `DELETE FROM endpoint_credentials WHERE endpoint_id = ?`, id)
+	result, err := store.db.ExecContext(ctx, `DELETE FROM service_credentials WHERE service_id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete endpoint credential: %w", err)
 	}
@@ -591,40 +468,27 @@ func validateCredential(secret []byte) error {
 	return nil
 }
 
-func localRef(id contract.EndpointID) string {
-	return "local://endpoint/" + string(id)
+func localRef(id contract.ServiceID) string {
+	return localServiceRef(id)
 }
 
-func localEndpointID(ref secretstore.Ref) (contract.EndpointID, error) {
+func localServiceID(ref secretstore.Ref) (contract.ServiceID, error) {
 	if err := contract.ValidateCredentialRef(string(ref)); err != nil {
 		return "", err
 	}
-	const prefix = "local://endpoint/"
+	const prefix = "local://service/"
 	if !strings.HasPrefix(string(ref), prefix) {
 		return "", fmt.Errorf("%w: %s", storagecontract.ErrUnsupportedRef, ref)
 	}
-	id := contract.EndpointID(strings.TrimPrefix(string(ref), prefix))
+	id := contract.ServiceID(strings.TrimPrefix(string(ref), prefix))
 	if err := id.Validate(); err != nil {
 		return "", err
 	}
 	return id, nil
 }
 
-func putCredentialTx(ctx context.Context, transaction *sql.Tx, id contract.EndpointID, secret []byte, now string) error {
-	if err := validateCredential(secret); err != nil {
-		return err
-	}
-	secretCopy := append([]byte(nil), secret...)
-	defer clear(secretCopy)
-	_, err := transaction.ExecContext(ctx, `INSERT INTO endpoint_credentials (endpoint_id, credential_value, created_at, updated_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(endpoint_id) DO UPDATE SET credential_value = excluded.credential_value, updated_at = excluded.updated_at`,
-		id, secretCopy, now, now,
-	)
-	if err != nil {
-		return fmt.Errorf("write endpoint credential: %w", err)
-	}
-	return nil
+func putCredentialTx(ctx context.Context, transaction *sql.Tx, id contract.ServiceID, secret []byte, now string) error {
+	return putServiceCredentialTx(ctx, transaction, id, secret, now)
 }
 
 func insertAccessTokenTx(ctx context.Context, transaction *sql.Tx, candidate storagecontract.NewAccessToken, now time.Time) (storagecontract.AccessTokenMetadata, error) {
@@ -873,7 +737,7 @@ func entityTag(document []byte) string {
 	return fmt.Sprintf(`"sha256:%x"`, sum)
 }
 
-func encodeCursor(id contract.EndpointID) string {
+func encodeCursor(id contract.ServiceID) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(id))
 }
 
@@ -885,14 +749,14 @@ func decodeCursor(cursor string) (string, error) {
 	if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != cursor {
 		return "", fmt.Errorf("%w: endpoint cursor encoding", storagecontract.ErrInvalidCursor)
 	}
-	id := contract.EndpointID(decoded)
+	id := contract.ServiceID(decoded)
 	if err := id.Validate(); err != nil {
 		return "", fmt.Errorf("%w: endpoint cursor id", storagecontract.ErrInvalidCursor)
 	}
 	return string(id), nil
 }
 
-func routeReferencesEndpoint(ctx context.Context, transaction *sql.Tx, id contract.EndpointID) (bool, error) {
+func routeReferencesEndpoint(ctx context.Context, transaction *sql.Tx, id contract.ServiceID) (bool, error) {
 	rows, err := transaction.QueryContext(ctx, `SELECT id, document_json FROM routes ORDER BY id`)
 	if err != nil {
 		return false, fmt.Errorf("read route references: %w", err)
@@ -908,8 +772,15 @@ func routeReferencesEndpoint(ctx context.Context, transaction *sql.Tx, id contra
 			return false, err
 		}
 		for _, target := range record.Route.Targets {
-			if target.EndpointID == id {
+			if target.ServiceID == id {
 				return true, nil
+			}
+		}
+		for _, category := range record.Route.Categories {
+			for _, target := range category.Targets {
+				if target.ServiceID == id {
+					return true, nil
+				}
 			}
 		}
 	}

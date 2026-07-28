@@ -2,7 +2,7 @@ import type { RequestRecord, RequestStatus } from "./request-record-model";
 
 export interface RecordFilters {
   status: RequestStatus | "";
-  endpointId: string;
+  serviceId: string;
   protocol: string;
 }
 
@@ -18,7 +18,7 @@ export function recordMatchesFilters(
 ): boolean {
   return (
     (!filters.status || record.status === filters.status) &&
-    (!filters.endpointId || record.endpoint_id === filters.endpointId) &&
+    (!filters.serviceId || record.service_id === filters.serviceId) &&
     (!filters.protocol || record.input_protocol === filters.protocol)
   );
 }
@@ -141,4 +141,3 @@ export function formatDuration(milliseconds: number): string {
   const seconds = Math.floor((milliseconds % 60_000) / 1000);
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
-

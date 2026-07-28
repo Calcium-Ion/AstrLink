@@ -24,7 +24,7 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, endpoint_id, local_access_token_id, plan_json, http_status, latency_ms,
+    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
     usage_json, error_json, audit_json, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.id, row.startedAt, row.completedAt, row.status, row.inputProtocol, row.requestedModel,
@@ -51,7 +51,7 @@ func (store *Store) UpsertRequestRecord(ctx context.Context, record contract.Req
 	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, endpoint_id, local_access_token_id, plan_json, http_status, latency_ms,
+    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
     usage_json, error_json, audit_json, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
@@ -62,7 +62,7 @@ ON CONFLICT(id) DO UPDATE SET
     requested_model = excluded.requested_model,
     streaming = excluded.streaming,
     route_id = excluded.route_id,
-    endpoint_id = excluded.endpoint_id,
+    service_id = excluded.service_id,
     local_access_token_id = excluded.local_access_token_id,
     plan_json = excluded.plan_json,
     http_status = excluded.http_status,
@@ -117,7 +117,7 @@ func (store *Store) GetRequestRecord(ctx context.Context, id contract.RequestID)
 	}
 	row := store.db.QueryRowContext(ctx, `SELECT
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, endpoint_id, local_access_token_id, plan_json, http_status, latency_ms,
+    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
     usage_json, error_json, audit_json, created_at
 FROM request_records WHERE id = ?`, id)
 	record, err := scanRequestRecord(row)
@@ -183,7 +183,7 @@ func (store *Store) ListRequestRecords(
 	query := strings.Builder{}
 	query.WriteString(`SELECT
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, endpoint_id, local_access_token_id, plan_json, http_status, latency_ms,
+    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
     usage_json, error_json, audit_json, created_at
 FROM request_records WHERE 1 = 1`)
 	args := make([]any, 0, 8)
@@ -199,9 +199,9 @@ FROM request_records WHERE 1 = 1`)
 		query.WriteString(` AND input_protocol = ?`)
 		args = append(args, string(*options.Protocol))
 	}
-	if options.EndpointID != nil {
-		query.WriteString(` AND endpoint_id = ?`)
-		args = append(args, string(*options.EndpointID))
+	if options.ServiceID != nil {
+		query.WriteString(` AND service_id = ?`)
+		args = append(args, string(*options.ServiceID))
 	}
 	if options.Status != nil {
 		query.WriteString(` AND status = ?`)
@@ -355,8 +355,8 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 	if record.RouteID != nil {
 		row.routeID = string(*record.RouteID)
 	}
-	if record.EndpointID != nil {
-		row.endpointID = string(*record.EndpointID)
+	if record.ServiceID != nil {
+		row.endpointID = string(*record.ServiceID)
 	}
 	if record.LocalAccessTokenID != nil {
 		row.localAccessTokenID = string(*record.LocalAccessTokenID)
@@ -438,8 +438,8 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		record.RouteID = &value
 	}
 	if endpointID.Valid {
-		value := contract.EndpointID(endpointID.String)
-		record.EndpointID = &value
+		value := contract.ServiceID(endpointID.String)
+		record.ServiceID = &value
 	}
 	if localAccessTokenID.Valid {
 		value := contract.AccessTokenID(localAccessTokenID.String)

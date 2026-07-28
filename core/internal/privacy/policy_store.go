@@ -33,6 +33,7 @@ func FromContractPolicy(policy contract.Policy) (Policy, error) {
 	}
 	result := Policy{
 		Enabled:         policy.Enabled,
+		MinConfidence:   policy.MinConfidence,
 		ResponseRestore: policy.ResponseRestore,
 	}
 	if policy.LocalModelID != nil {

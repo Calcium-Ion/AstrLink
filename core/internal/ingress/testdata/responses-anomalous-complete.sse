@@ -1,0 +1,25 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_fixture","object":"response","status":"in_progress"},"sequence_number":0}
+
+event: codex.rate_limits
+data: {"type":"codex.rate_limits","plan_type":"test","remaining":null}
+
+: keep-alive
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_fixture","type":"message","status":"in_progress","role":"assistant","content":[]},"sequence_number":4}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_fixture","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_fixture","output_index":0,"content_index":0,"delta":"Preparing ","sequence_number":7}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_fixture","output_index":0,"content_index":0,"delta":"ASCII cat\n"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_fixture","output_index":0,"content_index":0,"delta":" /\\_/\\\\\n( o.o )\n > ^ <","sequence_number":11}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_fixture","object":"response","status":"completed","output":[{"id":"msg_fixture","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Preparing ASCII cat\n /\\_/\\\\\n( o.o )\n > ^ <","annotations":[]}]}],"usage":{"input_tokens":7,"output_tokens":18,"total_tokens":25}},"sequence_number":12}

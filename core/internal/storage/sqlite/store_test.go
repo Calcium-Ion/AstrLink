@@ -45,7 +45,7 @@ func TestOpenMigratesDatabaseAndUsesRestrictiveFileModes(t *testing.T) {
 	}
 
 	var tableCount int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('endpoints', 'endpoint_credentials')`).Scan(&tableCount); err != nil {
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('services', 'service_credentials')`).Scan(&tableCount); err != nil {
 		t.Fatal(err)
 	}
 	if tableCount != 2 {
@@ -64,14 +64,14 @@ func TestEndpointAndCredentialRoundTripKeepsSecretOutOfDocumentJSON(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateEndpoint: %v", err)
 	}
-	if record.Endpoint.CredentialRef != "local://endpoint/endpoint_01" || record.ETag == "" {
+	if record.Endpoint.CredentialRef != "local://service/endpoint_01" || record.ETag == "" {
 		t.Fatalf("created endpoint = %#v", record)
 	}
 	var document string
-	if err := store.db.QueryRow(`SELECT document_json FROM endpoints WHERE id = ?`, endpoint.ID).Scan(&document); err != nil {
+	if err := store.db.QueryRow(`SELECT document_json FROM services WHERE id = ?`, endpoint.ID).Scan(&document); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(document, string(secret)) || !strings.Contains(document, `"credential_ref":"local://endpoint/endpoint_01"`) {
+	if strings.Contains(document, string(secret)) || !strings.Contains(document, `"credential_ref":"local://service/endpoint_01"`) {
 		t.Fatalf("credential storage boundary violated: %s", document)
 	}
 	loaded, err := store.GetEndpoint(ctx, endpoint.ID)
@@ -154,7 +154,7 @@ func TestEndpointDeleteChecksETagRouteReferencesAndCredentialCascade(t *testing.
 		ID: "route_01", Name: "default", Enabled: true,
 		Match: contract.RouteMatch{Protocol: contract.ProtocolOpenAIResponses},
 		Targets: []contract.RouteTarget{{
-			EndpointID: created.Endpoint.ID, PlanType: contract.PlanTypeNative,
+			ServiceID: created.Endpoint.ID, PlanType: contract.PlanTypeNative,
 			UpstreamProtocol: contract.ProtocolOpenAIResponses,
 		}},
 	}
@@ -186,7 +186,7 @@ func TestListEndpointsPaginatesFiltersAndRejectsCorruptDocuments(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
 	defer store.Close()
 	ctx := context.Background()
-	for _, id := range []contract.EndpointID{"endpoint_01", "endpoint_02", "endpoint_03"} {
+	for _, id := range []contract.ServiceID{"endpoint_01", "endpoint_02", "endpoint_03"} {
 		endpoint := testEndpoint(id)
 		if id == "endpoint_02" {
 			endpoint.Enabled = false
@@ -215,7 +215,7 @@ func TestListEndpointsPaginatesFiltersAndRejectsCorruptDocuments(t *testing.T) {
 		t.Fatal("invalid cursor was accepted")
 	}
 
-	if _, err := store.db.Exec(`UPDATE endpoints SET document_json = '{"id":"endpoint_02","unexpected":true}' WHERE id = 'endpoint_02'`); err != nil {
+	if _, err := store.db.Exec(`UPDATE services SET document_json = '{"id":"endpoint_02","unexpected":true}' WHERE id = 'endpoint_02'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.GetEndpoint(ctx, "endpoint_02"); !errors.Is(err, storagecontract.ErrInvalidRecord) {
@@ -233,7 +233,7 @@ func TestLocalCredentialStoreRejectsOptionalKeyringBackendAndInvalidSecrets(t *t
 	if _, err := store.Get(ctx, "keyring://endpoint/endpoint_01"); !errors.Is(err, storagecontract.ErrUnsupportedRef) {
 		t.Fatalf("keyring Get error = %v", err)
 	}
-	if err := store.Put(ctx, "local://endpoint/endpoint_01", []byte("line\nbreak")); err == nil {
+	if err := store.Put(ctx, "local://service/endpoint_01", []byte("line\nbreak")); err == nil {
 		t.Fatal("credential with HTTP control character was accepted")
 	}
 }
@@ -573,7 +573,7 @@ func openTestStore(t *testing.T, path string) *Store {
 	return store
 }
 
-func testEndpoint(id contract.EndpointID) contract.Endpoint {
+func testEndpoint(id contract.ServiceID) contract.Endpoint {
 	return contract.Endpoint{
 		ID: id, Name: string(id), Kind: contract.EndpointKindOpenAI,
 		BaseURL: "https://api.example/v1", Auth: contract.EndpointAuth{Scheme: contract.AuthSchemeBearer},

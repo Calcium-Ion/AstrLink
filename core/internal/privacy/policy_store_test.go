@@ -47,6 +47,7 @@ func TestStorePolicyProviderMapsFrozenContract(t *testing.T) {
 	}
 	if !resolved.Enabled || resolved.Mode != ModeOpenAIPrivacyFilter ||
 		resolved.LocalModelID != modelID || resolved.Action != ActionWarn ||
+		resolved.MinConfidence != contract.DefaultPrivacyMinConfidence ||
 		!resolved.ResponseRestore {
 		t.Fatalf("resolved policy = %#v", resolved)
 	}

@@ -52,8 +52,16 @@ type ResolveRequest struct {
 }
 
 type Resolved struct {
-	Endpoint contract.Endpoint
+	Service  contract.Service
+	Endpoint contract.Endpoint // compatibility view for legacy callers
+	BaseURL  string
 	Mode     contract.CapabilityMode
+	// PlanType is explicit for routed candidates. An empty value retains the
+	// historical Mode-derived native/delegated behavior.
+	PlanType contract.PlanType
+	// UpstreamProtocol is the protocol the selected endpoint receives. Empty
+	// retains the ingress protocol.
+	UpstreamProtocol contract.ProtocolID
 	// RouteID is set when an explicit persisted Route produced this candidate.
 	RouteID contract.RouteID
 	// Pinned marks a Route that names exactly one distinct Endpoint. A pinned
@@ -63,6 +71,49 @@ type Resolved struct {
 	// UpstreamModel is the per-target model rewrite from an explicit Route
 	// (ADR 0006). Empty means no rewrite.
 	UpstreamModel string
+}
+
+func (resolved Resolved) CanonicalService() contract.Service {
+	if resolved.Service.ID != "" {
+		return resolved.Service
+	}
+	if resolved.Endpoint.ID != "" {
+		return contract.ServiceFromEndpoint(resolved.Endpoint)
+	}
+	return contract.Service{}
+}
+
+func (resolved Resolved) EffectiveBaseURL() string {
+	if resolved.BaseURL != "" {
+		return resolved.BaseURL
+	}
+	if resolved.Endpoint.BaseURL != "" {
+		return resolved.Endpoint.BaseURL
+	}
+	service := resolved.CanonicalService()
+	if service.HTTP != nil {
+		return service.HTTP.BaseURL
+	}
+	return ""
+}
+
+func (resolved Resolved) AuthorizationEndpoint() (contract.Endpoint, error) {
+	service := resolved.CanonicalService()
+	if service.ID == "" {
+		return contract.Endpoint{}, fmt.Errorf("resolved service is empty")
+	}
+	if service.Kind.IsHTTP() {
+		return service.EndpointView()
+	}
+	if service.Subscription == nil {
+		return contract.Endpoint{}, fmt.Errorf("subscription service %q has no connection", service.ID)
+	}
+	return contract.Endpoint{
+		ID: service.ID, Name: service.Name, Kind: service.Kind, BaseURL: resolved.BaseURL,
+		Auth:          contract.EndpointAuth{Scheme: contract.AuthSchemeBearer},
+		CredentialRef: service.Subscription.CredentialRef, Enabled: service.Enabled,
+		Capabilities: append([]contract.Capability(nil), service.Capabilities...),
+	}, nil
 }
 
 type Resolver interface {

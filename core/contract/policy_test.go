@@ -2,6 +2,7 @@ package contract
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 )
@@ -13,11 +14,12 @@ func TestDefaultPrivacyPolicyIsFrozenAndValid(t *testing.T) {
 	}
 	if policy.ID != "policy_privacy_default" || policy.Name != "隐私保护" ||
 		policy.Enabled || policy.Priority != 0 || policy.Detector != PolicyDetectorRegex ||
+		policy.MinConfidence != DefaultPrivacyMinConfidence ||
 		policy.RequestAction != PolicyActionRedact || policy.ResponseAction != PolicyActionAllow ||
 		!policy.ResponseRestore {
 		t.Fatalf("default privacy policy drifted: %#v", policy)
 	}
-	if len(policy.Match.Protocols) != 0 || len(policy.Match.Models) != 0 || len(policy.Match.EndpointIDs) != 0 {
+	if len(policy.Match.Protocols) != 0 || len(policy.Match.Models) != 0 || len(policy.Match.ServiceIDs) != 0 {
 		t.Fatalf("default match is not global: %#v", policy.Match)
 	}
 	document, err := json.Marshal(policy)
@@ -26,9 +28,28 @@ func TestDefaultPrivacyPolicyIsFrozenAndValid(t *testing.T) {
 	}
 	if !strings.Contains(string(document), `"match":{}`) ||
 		!strings.Contains(string(document), `"detector":"regex"`) ||
+		!strings.Contains(string(document), `"min_confidence":0.8`) ||
 		!strings.Contains(string(document), `"request_action":"redact"`) ||
 		!strings.Contains(string(document), `"response_restore":true`) {
 		t.Fatalf("default policy wire shape = %s", document)
+	}
+}
+
+func TestPolicyMinConfidenceValidation(t *testing.T) {
+	for _, value := range []float64{0, 0.8, 1} {
+		policy := DefaultPrivacyPolicy()
+		policy.MinConfidence = value
+		if err := policy.Validate(); err != nil {
+			t.Fatalf("min_confidence %v rejected: %v", value, err)
+		}
+	}
+	for _, value := range []float64{-0.01, 1.01, math.NaN(), math.Inf(1)} {
+		policy := DefaultPrivacyPolicy()
+		policy.MinConfidence = value
+		if err := policy.Validate(); err == nil ||
+			!strings.Contains(err.Error(), "min_confidence") {
+			t.Fatalf("min_confidence %v error = %v", value, err)
+		}
 	}
 }
 
@@ -68,7 +89,7 @@ func TestPrivacyDefaultRejectsMutableIdentityScopeAndResponseAction(t *testing.T
 		}},
 		{name: "model scope", mutate: func(policy *Policy) { policy.Match.Models = []string{"gpt-5"} }},
 		{name: "endpoint scope", mutate: func(policy *Policy) {
-			policy.Match.EndpointIDs = []EndpointID{"endpoint_01"}
+			policy.Match.ServiceIDs = []ServiceID{"endpoint_01"}
 		}},
 	}
 	for _, test := range tests {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  buildSemanticTimeline,
   parseSSEIncremental,
   parseSSESynchronously,
   SSEParseCancelledError,
@@ -25,61 +24,6 @@ describe("SSE review model", () => {
     expect(result.events[2].invalidJson).toBe(true);
     expect(result.events[3].incomplete).toBe(true);
     expect(result.incompleteLastEvent).toBe(true);
-  });
-
-  it("aggregates Responses output, reasoning and tool argument deltas", () => {
-    const parsed = parseSSESynchronously(
-      [
-        'data: {"type":"response.in_progress","status":"in_progress"}',
-        "",
-        'data: {"type":"response.output_text.delta","delta":"Hel"}',
-        "",
-        'data: {"type":"response.output_text.delta","delta":"lo"}',
-        "",
-        'data: {"type":"response.reasoning_summary_text.delta","delta":"Think"}',
-        "",
-        'data: {"type":"response.function_call_arguments.delta","item_id":"call_1","delta":"{\\"q\\":"}',
-        "",
-        'data: {"type":"response.function_call_arguments.delta","item_id":"call_1","delta":"1}"}',
-        "",
-      ].join("\n"),
-    );
-    const timeline = buildSemanticTimeline(
-      "openai.responses",
-      parsed.events,
-    );
-
-    expect(timeline.find((item) => item.kind === "text")?.text).toBe("Hello");
-    expect(timeline.find((item) => item.kind === "reasoning")?.text).toBe(
-      "Think",
-    );
-    expect(timeline.find((item) => item.kind === "tool")?.text).toBe('{"q":1}');
-    expect(timeline.every((item) => item.firstEvent >= 1)).toBe(true);
-  });
-
-  it("extracts Chat, Anthropic and Gemini protocol semantics", () => {
-    const chat = parseSSESynchronously(
-      'data: {"choices":[{"delta":{"content":"chat"}}]}\n\n',
-    );
-    const anthropic = parseSSESynchronously(
-      'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"reason"}}\n\n',
-    );
-    const gemini = parseSSESynchronously(
-      'data: {"candidates":[{"content":{"parts":[{"text":"gemini"},{"functionCall":{"name":"lookup","args":{"q":1}}}]}}]}\n\n',
-    );
-
-    expect(buildSemanticTimeline("openai.chat", chat.events)[0].text).toBe(
-      "chat",
-    );
-    expect(
-      buildSemanticTimeline("anthropic.messages", anthropic.events)[0],
-    ).toMatchObject({ kind: "reasoning", text: "reason" });
-    expect(buildSemanticTimeline("google.generate_content", gemini.events)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "text", text: "gemini" }),
-        expect.objectContaining({ kind: "tool" }),
-      ]),
-    );
   });
 
   it("parses incrementally and honours cancellation between batches", async () => {

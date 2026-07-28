@@ -49,7 +49,7 @@ func (handler *Handler) policyCollection(writer http.ResponseWriter, request *ht
 func (handler *Handler) policyItem(writer http.ResponseWriter, request *http.Request) {
 	rawID := strings.TrimPrefix(request.URL.Path, PoliciesPath+"/")
 	if rawID == "" || strings.Contains(rawID, "/") {
-		writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	decodedID, err := url.PathUnescape(rawID)
@@ -201,12 +201,25 @@ func (handler *Handler) policyDryRun(writer http.ResponseWriter, request *http.R
 	if locations == nil {
 		locations = []contract.PolicyDryRunFinding{}
 	}
+	suppressed := result.SuppressedFindings
+	if suppressed == nil {
+		suppressed = []privacy.Finding{}
+	}
+	suppressedLocations, err := privacy.LocateFindings(input.Protocol, body, suppressed)
+	if err != nil {
+		handler.writePrivacyDryRunError(writer, err)
+		return
+	}
+	if suppressedLocations == nil {
+		suppressedLocations = []contract.PolicyDryRunFinding{}
+	}
 	response := contract.PolicyDryRunResponse{
-		Decision:        string(result.Decision),
-		FindingsSummary: privacy.WarningSummary(findings),
-		Findings:        locations,
-		InspectedBody:   string(body),
-		Redactions:      make([]contract.PolicyDryRunRedaction, 0, len(result.Redactions)),
+		Decision:           string(result.Decision),
+		FindingsSummary:    privacy.WarningSummary(findings),
+		Findings:           locations,
+		SuppressedFindings: suppressedLocations,
+		InspectedBody:      string(body),
+		Redactions:         make([]contract.PolicyDryRunRedaction, 0, len(result.Redactions)),
 	}
 	for _, redaction := range result.Redactions {
 		response.Redactions = append(response.Redactions, contract.PolicyDryRunRedaction{
@@ -240,7 +253,8 @@ func (handler *Handler) requireReadyLocalModel(writer http.ResponseWriter, polic
 func applyPolicyPatch(policy contract.Policy, patch map[string]json.RawMessage) (contract.Policy, error) {
 	for name, raw := range patch {
 		if name != "enabled" && name != "detector" &&
-			name != "local_model_id" && name != "request_action" &&
+			name != "local_model_id" && name != "min_confidence" &&
+			name != "request_action" &&
 			name != "response_restore" {
 			return policy, errors.New("unknown or immutable policy field")
 		}
@@ -258,6 +272,10 @@ func applyPolicyPatch(policy contract.Policy, patch map[string]json.RawMessage) 
 			}
 		case "local_model_id":
 			if err := strictUnmarshal(raw, &policy.LocalModelID); err != nil {
+				return policy, err
+			}
+		case "min_confidence":
+			if err := strictUnmarshal(raw, &policy.MinConfidence); err != nil {
 				return policy, err
 			}
 		case "request_action":

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 )
 
@@ -27,8 +28,44 @@ type SecretAuthorizer struct {
 	store secretstore.SecretStore
 }
 
+type SubscriptionTokenSource interface {
+	AccessToken(context.Context, contract.ServiceID) (accountauth.AccountTokens, error)
+}
+
+type ServiceAuthorizer struct {
+	http          *SecretAuthorizer
+	subscriptions SubscriptionTokenSource
+}
+
 func NewSecretAuthorizer(store secretstore.SecretStore) *SecretAuthorizer {
 	return &SecretAuthorizer{store: store}
+}
+
+func NewServiceAuthorizer(store secretstore.SecretStore, subscriptions SubscriptionTokenSource) *ServiceAuthorizer {
+	return &ServiceAuthorizer{http: NewSecretAuthorizer(store), subscriptions: subscriptions}
+}
+
+func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contract.Endpoint) (http.Header, error) {
+	if endpoint.Kind.IsHTTP() {
+		return authorizer.http.Headers(ctx, endpoint)
+	}
+	if endpoint.Kind.IsSubscription() {
+		if authorizer == nil || authorizer.subscriptions == nil {
+			return nil, secretstore.ErrUnavailable
+		}
+		tokens, err := authorizer.subscriptions.AccessToken(ctx, endpoint.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load subscription credential: %w", err)
+		}
+		headers := make(http.Header)
+		headers.Set("Authorization", "Bearer "+tokens.AccessToken)
+		if tokens.AccountID != "" {
+			headers.Set("ChatGPT-Account-ID", tokens.AccountID)
+		}
+		headers.Set("OAI-Product-Sku", "codex")
+		return headers, nil
+	}
+	return nil, fmt.Errorf("unsupported service kind %q", endpoint.Kind)
 }
 
 func (authorizer *SecretAuthorizer) Headers(ctx context.Context, endpoint contract.Endpoint) (http.Header, error) {

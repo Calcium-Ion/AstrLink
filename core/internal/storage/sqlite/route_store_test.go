@@ -118,6 +118,112 @@ func TestListRoutesFailsClosedOnInvalidPersistedDocument(t *testing.T) {
 	}
 }
 
+func TestRouteCRUDValidatesReferencesETagsAndEvaluationOrder(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ctx := context.Background()
+	for _, id := range []contract.ServiceID{"endpoint_01", "endpoint_02"} {
+		if _, err := store.CreateEndpoint(
+			ctx,
+			testEndpoint(id),
+			storagecontract.CredentialMutation{},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	late := sqliteTestRoute("route_late", true)
+	late.Priority = 20
+	first := sqliteTestRoute("route_first", true)
+	first.Priority = 10
+	first.Match.Model = "public-model"
+	first.Targets[0].UpstreamModel = "upstream-model"
+	first.Targets[0].ServiceID = "endpoint_02"
+	disabled := sqliteTestRoute("route_disabled", false)
+	disabled.Priority = 0
+	for _, route := range []contract.Route{late, first, disabled} {
+		if _, err := store.CreateRoute(ctx, route); err != nil {
+			t.Fatalf("CreateRoute(%s): %v", route.ID, err)
+		}
+	}
+
+	enabled := true
+	page, err := store.ListRoutePage(
+		ctx,
+		storagecontract.RouteListOptions{Limit: 1, Enabled: &enabled},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Route.ID != first.ID || page.NextCursor == "" {
+		t.Fatalf("first page=%#v", page)
+	}
+	page, err = store.ListRoutePage(
+		ctx,
+		storagecontract.RouteListOptions{
+			Limit:   1,
+			Cursor:  page.NextCursor,
+			Enabled: &enabled,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Route.ID != late.ID || page.NextCursor != "" {
+		t.Fatalf("second page=%#v", page)
+	}
+
+	record, err := store.GetRoute(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := record.Route
+	updated.Name = "updated"
+	if _, err := store.UpdateRoute(ctx, updated, `"stale"`); !errors.Is(err, storagecontract.ErrPrecondition) {
+		t.Fatalf("stale UpdateRoute error=%v", err)
+	}
+	updatedRecord, err := store.UpdateRoute(ctx, updated, record.ETag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedRecord.Route.Name != "updated" || updatedRecord.ETag == record.ETag {
+		t.Fatalf("updated record=%#v", updatedRecord)
+	}
+	if err := store.DeleteRoute(ctx, first.ID, record.ETag); !errors.Is(err, storagecontract.ErrPrecondition) {
+		t.Fatalf("stale DeleteRoute error=%v", err)
+	}
+	if err := store.DeleteRoute(ctx, first.ID, updatedRecord.ETag); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetRoute(ctx, first.ID); !errors.Is(err, storagecontract.ErrNotFound) {
+		t.Fatalf("deleted GetRoute error=%v", err)
+	}
+}
+
+func TestRouteCreateRejectsMissingOrIncompatibleEndpoint(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.CreateEndpoint(
+		ctx,
+		testEndpoint("endpoint_01"),
+		storagecontract.CredentialMutation{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	missing := sqliteTestRoute("route_missing", true)
+	missing.Targets[0].ServiceID = "endpoint_missing"
+	if _, err := store.CreateRoute(ctx, missing); !errors.Is(err, storagecontract.ErrInvalidArgument) {
+		t.Fatalf("missing endpoint CreateRoute error=%v", err)
+	}
+	incompatible := sqliteTestRoute("route_incompatible", true)
+	incompatible.Targets[0].PlanType = contract.PlanTypeDelegated
+	if _, err := store.CreateRoute(ctx, incompatible); !errors.Is(err, storagecontract.ErrInvalidArgument) {
+		t.Fatalf("incompatible endpoint CreateRoute error=%v", err)
+	}
+}
+
 func sqliteTestRoute(id contract.RouteID, enabled bool) contract.Route {
 	return contract.Route{
 		ID:       id,
@@ -128,7 +234,7 @@ func sqliteTestRoute(id contract.RouteID, enabled bool) contract.Route {
 			Protocol: contract.ProtocolOpenAIResponses,
 		},
 		Targets: []contract.RouteTarget{{
-			EndpointID:       "endpoint_01",
+			ServiceID:        "endpoint_01",
 			PlanType:         contract.PlanTypeNative,
 			UpstreamProtocol: contract.ProtocolOpenAIResponses,
 			Priority:         10,

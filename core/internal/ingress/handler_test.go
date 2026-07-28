@@ -89,9 +89,9 @@ func (resolver *healthRecordingResolver) AbandonAttempt(endpoint.Resolved) {
 type healthTrackingCandidateResolver struct {
 	candidateResolver
 	mu        sync.Mutex
-	successes []contract.EndpointID
-	failures  []contract.EndpointID
-	abandons  []contract.EndpointID
+	successes []contract.ServiceID
+	failures  []contract.ServiceID
+	abandons  []contract.ServiceID
 }
 
 func (resolver *healthTrackingCandidateResolver) BeginAttempt(endpoint.Resolved) bool {
@@ -695,24 +695,24 @@ func TestInferencePlaneFailsOverInDeterministicOrderWithExactBodyAndAuthorizatio
 	const originalBody = " {\n \"model\":\"gpt-5\", \"input\":\"preserve me\"\n} "
 	tests := []struct {
 		name         string
-		endpointIDs  []contract.EndpointID
+		endpointIDs  []contract.ServiceID
 		succeedAt    int
-		wantAttempts []contract.EndpointID
+		wantAttempts []contract.ServiceID
 		wantStatus   int
 		wantCode     string
 	}{
 		{
 			name:         "first failure switches to second",
-			endpointIDs:  []contract.EndpointID{"endpoint_a", "endpoint_b"},
+			endpointIDs:  []contract.ServiceID{"endpoint_a", "endpoint_b"},
 			succeedAt:    1,
-			wantAttempts: []contract.EndpointID{"endpoint_a", "endpoint_b"},
+			wantAttempts: []contract.ServiceID{"endpoint_a", "endpoint_b"},
 			wantStatus:   http.StatusOK,
 		},
 		{
 			name:         "attempts are bounded at three",
-			endpointIDs:  []contract.EndpointID{"endpoint_a", "endpoint_b", "endpoint_c", "endpoint_d"},
+			endpointIDs:  []contract.ServiceID{"endpoint_a", "endpoint_b", "endpoint_c", "endpoint_d"},
 			succeedAt:    -1,
-			wantAttempts: []contract.EndpointID{"endpoint_a", "endpoint_b", "endpoint_c"},
+			wantAttempts: []contract.ServiceID{"endpoint_a", "endpoint_b", "endpoint_c"},
 			wantStatus:   http.StatusBadGateway,
 			wantCode:     "upstream_unavailable",
 		},
@@ -720,7 +720,7 @@ func TestInferencePlaneFailsOverInDeterministicOrderWithExactBodyAndAuthorizatio
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			candidates := make([]endpoint.Resolved, 0, len(test.endpointIDs))
-			hostToID := make(map[string]contract.EndpointID, len(test.endpointIDs))
+			hostToID := make(map[string]contract.ServiceID, len(test.endpointIDs))
 			for _, id := range test.endpointIDs {
 				candidate := validEndpoint(contract.ProtocolOpenAIResponses, false)
 				candidate.ID = id
@@ -730,7 +730,7 @@ func TestInferencePlaneFailsOverInDeterministicOrderWithExactBodyAndAuthorizatio
 				hostToID[string(id)+".example"] = id
 			}
 
-			var attempts []contract.EndpointID
+			var attempts []contract.ServiceID
 			var bodies []string
 			var authorizations []string
 			handler := NewWithDependencies(Dependencies{
@@ -924,7 +924,7 @@ func TestInferencePlanePublishesPendingThenUpdatesSameRecord(t *testing.T) {
 		t.Fatalf("pending records=%#v", store.records)
 	}
 	requestID := store.records[0].ID
-	if store.records[0].EndpointID == nil {
+	if store.records[0].ServiceID == nil {
 		t.Fatalf("pending record should expose selected endpoint: %#v", store.records[0])
 	}
 	if store.records[0].CompletedAt != nil {
@@ -1713,8 +1713,8 @@ func TestInferencePlaneRecordsInterruptedStreamAsFailed(t *testing.T) {
 		!record.Error.Retryable {
 		t.Fatalf("error=%#v", record.Error)
 	}
-	if record.EndpointID == nil || *record.EndpointID != upstream.ID {
-		t.Fatalf("endpoint_id=%v", record.EndpointID)
+	if record.ServiceID == nil || *record.ServiceID != upstream.ID {
+		t.Fatalf("service_id=%v", record.ServiceID)
 	}
 	if record.RouteID == nil || *record.RouteID != "route_stream" {
 		t.Fatalf("route_id=%v", record.RouteID)

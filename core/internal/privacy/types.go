@@ -43,6 +43,7 @@ type Policy struct {
 	Enabled         bool
 	Mode            Mode
 	LocalModelID    contract.PrivacyModelID
+	MinConfidence   float64
 	Action          Action
 	ResponseRestore bool
 }
@@ -50,7 +51,7 @@ type Policy struct {
 type Scope struct {
 	Protocol      contract.ProtocolID
 	Model         string
-	EndpointID    contract.EndpointID
+	ServiceID     contract.ServiceID
 	AccessTokenID contract.AccessTokenID
 }
 
@@ -95,10 +96,11 @@ type DetectInput struct {
 // Plaintext for local restoration is carried only on Result.Redactions after a
 // successful DecisionRedact and must never be logged, persisted, or sent upstream.
 type Finding struct {
-	Segment int
-	Start   int
-	End     int
-	Kind    Kind
+	Segment    int
+	Start      int
+	End        int
+	Kind       Kind
+	Confidence float64
 }
 
 // Redaction maps a request-scoped placeholder to the original plaintext for
@@ -139,10 +141,11 @@ const (
 )
 
 type Result struct {
-	Decision  Decision
-	Body      []byte
-	Findings  []Finding
-	Redactions []Redaction
+	Decision           Decision
+	Body               []byte
+	Findings           []Finding
+	SuppressedFindings []Finding
+	Redactions         []Redaction
 }
 
 type Filter interface {

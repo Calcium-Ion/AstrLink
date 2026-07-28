@@ -1,12 +1,14 @@
 package controlapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 )
 
 func TestReadOnlyControlContract(t *testing.T) {
@@ -68,6 +70,27 @@ func TestControlContractRejectsMutationAndUnknownPaths(t *testing.T) {
 	}
 	if envelope.RequestID == "" || envelope.Error.Retryable || envelope.Error.Details == nil {
 		t.Fatalf("error envelope does not match frozen contract: %#v", envelope)
+	}
+}
+
+func TestNewWithDependenciesRequiresServiceStoreAndStrongToken(t *testing.T) {
+	version := contract.DefaultVersionResponse("", "")
+	if _, err := NewWithDependencies(version, Dependencies{}); err == nil {
+		t.Fatal("missing service store was accepted")
+	}
+	store, err := sqlite.Open(
+		context.Background(),
+		t.TempDir()+"/astrlink.db",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := NewWithDependencies(version, Dependencies{
+		ServiceStore: store,
+		ControlToken: "short",
+	}); err == nil {
+		t.Fatal("weak control token was accepted")
 	}
 }
 

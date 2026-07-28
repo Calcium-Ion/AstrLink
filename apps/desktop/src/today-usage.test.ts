@@ -15,7 +15,7 @@ function record(
     requested_model: null,
     streaming: false,
     route_id: null,
-    endpoint_id: null,
+    service_id: null,
     local_access_token_id: null,
     http_status: 200,
     latency_ms: 10,

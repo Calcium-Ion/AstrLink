@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
@@ -25,7 +26,9 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/privacymodel"
 	"github.com/QuantumNous/astrlink/core/internal/privacyworker"
+	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
+	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
 
 func main() {
@@ -129,8 +132,16 @@ func main() {
 			logger.Printf("configure local privacy filter: %v", err)
 			os.Exit(1)
 		}
+		conversionEngine := relaykitbridge.NewEngine()
+		subscriptionManager, err := newSubscriptionManager(store)
+		if err != nil {
+			_ = store.Close()
+			logger.Printf("configure subscription manager: %v", err)
+			os.Exit(1)
+		}
 		handler, err := controlapi.NewWithDependencies(config.Version, controlapi.Dependencies{
-			EndpointStore:      store,
+			ServiceStore:       store,
+			RouteStore:         store,
 			AccessTokenManager: accessTokenManager,
 			PolicyStore:        store,
 			PrivacyModels:      privacyModel,
@@ -140,7 +151,9 @@ func main() {
 			AuditSettings:      store,
 			AuditKeys:          store,
 			AuditBlobs:         store,
+			Subscriptions:      subscriptionManager,
 			ControlToken:       controlToken,
+			ConversionEngine:   conversionEngine,
 		})
 		if err != nil {
 			_ = store.Close()
@@ -158,9 +171,11 @@ func main() {
 			logger.Printf("configure persistent endpoint resolver: %v", err)
 			os.Exit(1)
 		}
+		resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
+		resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
 		inferenceHandler, err := ingress.NewProduction(ingress.Dependencies{
 			Resolver:   resolver,
-			Authorizer: endpoint.NewSecretAuthorizer(store),
+			Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager),
 			AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
 				func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
 					return accessTokenManager.Authenticate(ctx, raw)
@@ -168,20 +183,21 @@ func main() {
 			),
 			PrivacyFilter: privacyFilter,
 			PolicyWarningReporter: ingress.PolicyWarningReporterFunc(
-				func(protocol contract.ProtocolID, endpointID contract.EndpointID, summary string) {
+				func(protocol contract.ProtocolID, endpointID contract.ServiceID, summary string) {
 					logger.Printf(
-						"privacy policy warning: protocol=%s endpoint_id=%s findings=%s",
+						"privacy policy warning: protocol=%s service_id=%s findings=%s",
 						protocol,
 						endpointID,
 						summary,
 					)
 				},
 			),
-			RequestRecords: store,
-			AuditSettings:  store,
-			AuditBlobs:     store,
-			RecordLogger:   logger.Printf,
-			AllowedHost:    config.InferenceListen,
+			RequestRecords:   store,
+			AuditSettings:    store,
+			AuditBlobs:       store,
+			RecordLogger:     logger.Printf,
+			AllowedHost:      config.InferenceListen,
+			ConversionEngine: conversionEngine,
 		})
 		if err != nil {
 			_ = store.Close()
@@ -229,4 +245,24 @@ func readTokenLine(reader *bufio.Reader) (string, error) {
 		}
 	}
 	return token, nil
+}
+
+func newSubscriptionManager(store *sqlite.Store) (*subscription.Manager, error) {
+	oauth := accountauth.OAuthConfig{
+		ClientID: accountauth.DefaultCodexOAuthClientID,
+	}
+	if clientID := strings.TrimSpace(os.Getenv("ASTRLINK_CODEX_OAUTH_CLIENT_ID")); clientID != "" {
+		oauth.ClientID = clientID
+	}
+	if issuer := strings.TrimSpace(os.Getenv("ASTRLINK_CODEX_OAUTH_ISSUER")); issuer != "" {
+		oauth.Issuer = issuer
+	}
+	if apiBase := strings.TrimSpace(os.Getenv("ASTRLINK_CODEX_API_BASE_URL")); apiBase != "" {
+		oauth.APIBaseURL = apiBase
+	}
+	return subscription.NewManager(
+		subscription.StorageAccountStore{Store: store},
+		accountauth.NewKeyringCredentialStore(),
+		oauth,
+	)
 }

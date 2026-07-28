@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -23,7 +24,7 @@ func TestAuditSettingsGETDefaultsAndPATCHAckMatrix(t *testing.T) {
 	handler, err := NewWithDependencies(contract.VersionResponse{
 		CoreVersion: "0.0.0-test", ControlAPIVersion: "v1", ProtocolContractVersion: "v1",
 	}, Dependencies{
-		EndpointStore:  store,
+		ServiceStore:   store,
 		RequestRecords: store,
 		AuditSettings:  store,
 		AuditKeys:      store,
@@ -43,8 +44,31 @@ func TestAuditSettingsGETDefaultsAndPATCHAckMatrix(t *testing.T) {
 	if settings.RequestBodyEnabled || settings.ResponseContentEnabled {
 		t.Fatalf("defaults enabled: %#v", settings)
 	}
+	if !settings.HTTPMetaEnabled {
+		t.Fatalf("http_meta_enabled must default to true: %#v", settings)
+	}
 	if strings.Contains(response.Body.String(), "audit_risk_acknowledged") {
 		t.Fatal("ack must never be echoed")
+	}
+
+	// http_meta_enabled toggles without any risk acknowledgement (ADR 0008).
+	response = auditSettingsHTTP(
+		t, handler, http.MethodPatch, "application/merge-patch+json",
+		`{"http_meta_enabled":false}`,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("http_meta toggle status=%d body=%s", response.Code, response.Body.String())
+	}
+	decode(t, response, &settings)
+	if settings.HTTPMetaEnabled {
+		t.Fatalf("http_meta_enabled not disabled: %#v", settings)
+	}
+	response = auditSettingsHTTP(
+		t, handler, http.MethodPatch, "application/merge-patch+json",
+		`{"http_meta_enabled":true}`,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("http_meta re-enable status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	response = auditSettingsHTTP(
@@ -110,7 +134,7 @@ func TestAuditContentRoundTripAndLeakBoundary(t *testing.T) {
 	handler, err := NewWithDependencies(contract.VersionResponse{
 		CoreVersion: "0.0.0-test", ControlAPIVersion: "v1", ProtocolContractVersion: "v1",
 	}, Dependencies{
-		EndpointStore:  store,
+		ServiceStore:   store,
 		RequestRecords: store,
 		AuditSettings:  store,
 		AuditKeys:      store,
@@ -157,6 +181,29 @@ func TestAuditContentRoundTripAndLeakBoundary(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	status := http.StatusOK
+	metaPayload, err := json.Marshal(contract.AuditHTTPMeta{
+		Method: "POST", URL: "/v1/responses", HTTPVersion: "HTTP/1.1",
+		RequestHeaders: []contract.AuditHeader{
+			{Name: "authorization", Value: "Bearer <redacted:20 chars>", Redacted: true},
+		},
+		ResponseStatus:  &status,
+		ResponseHeaders: []contract.AuditHeader{{Name: "x-request-id", Value: "req_1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metaNonce, metaCiphertext, err := storage.SealAuditBlob(key, metaPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertAuditBlob(ctx, storage.AuditBlob{
+		RequestID: "request_audit", Direction: storage.AuditDirectionHTTPMeta,
+		MediaType: "application/json", Nonce: metaNonce, Ciphertext: metaCiphertext,
+		CapturedBytes: len(metaPayload),
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	response := requestRecordHTTP(t, handler, http.MethodGet, RequestsPath+"/request_audit/audit", "", "")
 	if response.Code != http.StatusOK {
@@ -169,6 +216,13 @@ func TestAuditContentRoundTripAndLeakBoundary(t *testing.T) {
 	}
 	if content.ResponseContent == nil || content.ResponseContent.Content != responseBody {
 		t.Fatalf("response part=%#v", content.ResponseContent)
+	}
+	if content.HTTPMeta == nil || content.HTTPMeta.Method != "POST" ||
+		len(content.HTTPMeta.RequestHeaders) != 1 || !content.HTTPMeta.RequestHeaders[0].Redacted {
+		t.Fatalf("http_meta=%#v", content.HTTPMeta)
+	}
+	if content.HTTPMeta.ResponseStatus == nil || *content.HTTPMeta.ResponseStatus != http.StatusOK {
+		t.Fatalf("http_meta response_status=%v", content.HTTPMeta.ResponseStatus)
 	}
 
 	list := requestRecordHTTP(t, handler, http.MethodGet, RequestsPath, "", "")
@@ -205,10 +259,17 @@ func TestAuditContentRoundTripAndLeakBoundary(t *testing.T) {
 	if empty.Code != http.StatusOK {
 		t.Fatalf("empty audit status=%d", empty.Code)
 	}
+	emptyBody := empty.Body.String()
 	var emptyContent contract.AuditContent
 	decode(t, empty, &emptyContent)
 	if emptyContent.RequestBody != nil || emptyContent.ResponseContent != nil {
 		t.Fatalf("expected null parts: %#v", emptyContent)
+	}
+	if emptyContent.HTTPMeta != nil {
+		t.Fatalf("expected null http_meta for legacy record: %#v", emptyContent.HTTPMeta)
+	}
+	if !strings.Contains(emptyBody, `"http_meta":null`) {
+		t.Fatalf("http_meta must serialize as explicit null: %s", emptyBody)
 	}
 }
 
@@ -221,7 +282,7 @@ func TestAuditContentConflictWhenKeyMissing(t *testing.T) {
 	handler, err := NewWithDependencies(contract.VersionResponse{
 		CoreVersion: "0.0.0-test", ControlAPIVersion: "v1", ProtocolContractVersion: "v1",
 	}, Dependencies{
-		EndpointStore:  store,
+		ServiceStore:   store,
 		RequestRecords: store,
 		AuditSettings:  store,
 		AuditKeys:      store,

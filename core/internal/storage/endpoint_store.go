@@ -47,8 +47,8 @@ type CredentialMutation struct {
 
 type EndpointStore interface {
 	CreateEndpoint(context.Context, contract.Endpoint, CredentialMutation) (EndpointRecord, error)
-	GetEndpoint(context.Context, contract.EndpointID) (EndpointRecord, error)
+	GetEndpoint(context.Context, contract.ServiceID) (EndpointRecord, error)
 	ListEndpoints(context.Context, EndpointListOptions) (EndpointPage, error)
 	UpdateEndpoint(context.Context, contract.Endpoint, CredentialMutation, string) (EndpointRecord, error)
-	DeleteEndpoint(context.Context, contract.EndpointID, string) error
+	DeleteEndpoint(context.Context, contract.ServiceID, string) error
 }

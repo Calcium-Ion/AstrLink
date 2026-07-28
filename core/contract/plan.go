@@ -51,6 +51,13 @@ type ConversionEdge struct {
 	Streaming bool              `json:"streaming"`
 }
 
+// RuntimeProfile describes execution features supplied by the current Core
+// composition. It deliberately does not change Alpha compatibility.
+type RuntimeProfile struct {
+	RelayKitAvailable bool
+	Edges             []ConversionEdge
+}
+
 func (edge ConversionEdge) Validate() error {
 	if err := edge.From.Validate(); err != nil {
 		return fmt.Errorf("from: %w", err)
@@ -72,7 +79,7 @@ func (edge ConversionEdge) Validate() error {
 // Only relaykit plans may contain a local conversion path.
 type ExecutionPlan struct {
 	Type              PlanType          `json:"plan_type"`
-	EndpointID        EndpointID        `json:"endpoint_id"`
+	ServiceID         ServiceID         `json:"service_id"`
 	InputProtocol     ProtocolID        `json:"input_protocol"`
 	UpstreamProtocol  ProtocolID        `json:"upstream_protocol"`
 	ConversionPath    []ConversionEdge  `json:"conversion_path"`
@@ -80,11 +87,48 @@ type ExecutionPlan struct {
 	Streaming         bool              `json:"streaming"`
 }
 
+// UnmarshalJSON accepts endpoint_id in historical request records while
+// preserving service_id as the only current wire representation.
+func (plan *ExecutionPlan) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Type              PlanType          `json:"plan_type"`
+		ServiceID         *ServiceID        `json:"service_id"`
+		EndpointID        *ServiceID        `json:"endpoint_id"`
+		InputProtocol     ProtocolID        `json:"input_protocol"`
+		UpstreamProtocol  ProtocolID        `json:"upstream_protocol"`
+		ConversionPath    []ConversionEdge  `json:"conversion_path"`
+		ConversionQuality ConversionQuality `json:"conversion_quality,omitempty"`
+		Streaming         bool              `json:"streaming"`
+	}
+	if err := decodeStrictContractJSON(data, &wire); err != nil {
+		return err
+	}
+	if wire.ServiceID != nil && wire.EndpointID != nil {
+		return fmt.Errorf("execution plan cannot contain both service_id and endpoint_id")
+	}
+	serviceID := ServiceID("")
+	if wire.ServiceID != nil {
+		serviceID = *wire.ServiceID
+	} else if wire.EndpointID != nil {
+		serviceID = *wire.EndpointID
+	}
+	*plan = ExecutionPlan{
+		Type:              wire.Type,
+		ServiceID:         serviceID,
+		InputProtocol:     wire.InputProtocol,
+		UpstreamProtocol:  wire.UpstreamProtocol,
+		ConversionPath:    wire.ConversionPath,
+		ConversionQuality: wire.ConversionQuality,
+		Streaming:         wire.Streaming,
+	}
+	return nil
+}
+
 func (plan ExecutionPlan) Validate() error {
 	if !plan.Type.Valid() {
 		return fmt.Errorf("unknown plan type %q", plan.Type)
 	}
-	if err := plan.EndpointID.Validate(); err != nil {
+	if err := plan.ServiceID.Validate(); err != nil {
 		return err
 	}
 	if err := plan.InputProtocol.Validate(); err != nil {
@@ -144,6 +188,37 @@ func (plan ExecutionPlan) ValidateForAlpha() error {
 	}
 	if !plan.UpstreamProtocol.AvailableInAlpha() {
 		return fmt.Errorf("upstream protocol %q is not available in Alpha", plan.UpstreamProtocol)
+	}
+	return nil
+}
+
+func (plan ExecutionPlan) ValidateForRuntime(profile RuntimeProfile) error {
+	if err := plan.Validate(); err != nil {
+		return err
+	}
+	if plan.Type == PlanTypeRelayKit && !profile.RelayKitAvailable {
+		return fmt.Errorf("plan type %q is not available in this runtime", plan.Type)
+	}
+	if !plan.InputProtocol.AvailableInAlpha() {
+		return fmt.Errorf("input protocol %q is not available in Alpha", plan.InputProtocol)
+	}
+	if !plan.UpstreamProtocol.AvailableInAlpha() {
+		return fmt.Errorf("upstream protocol %q is not available in Alpha", plan.UpstreamProtocol)
+	}
+	if len(profile.Edges) == 0 || plan.Type != PlanTypeRelayKit {
+		return nil
+	}
+	for index, edge := range plan.ConversionPath {
+		found := false
+		for _, available := range profile.Edges {
+			if available.From == edge.From && available.To == edge.To {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("conversion_path[%d] is unavailable in this runtime", index)
+		}
 	}
 	return nil
 }

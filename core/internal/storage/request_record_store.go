@@ -8,13 +8,13 @@ import (
 )
 
 type RequestRecordListOptions struct {
-	Limit      int
-	Cursor     string
-	From       *time.Time
-	To         *time.Time
-	Protocol   *contract.ProtocolID
-	EndpointID *contract.EndpointID
-	Status     *contract.RequestStatus
+	Limit     int
+	Cursor    string
+	From      *time.Time
+	To        *time.Time
+	Protocol  *contract.ProtocolID
+	ServiceID *contract.ServiceID
+	Status    *contract.RequestStatus
 }
 
 type RequestRecordPage struct {

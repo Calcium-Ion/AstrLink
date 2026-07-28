@@ -11,6 +11,7 @@ import {
   revealAccessToken,
 } from "./bridge";
 import type { AccessTokenSummary } from "./access-token-model";
+import { PageHeader } from "./PageHeader";
 
 export type AccessTokenCatalogStatus =
   | "blocked"
@@ -65,6 +66,8 @@ export function AccessTokenManager({
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [deletingID, setDeletingID] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] =
+    useState<AccessTokenSummary | null>(null);
   const [revealingID, setRevealingID] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<RevealedToken | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +84,7 @@ export function AccessTokenManager({
     setName("");
     setCreating(false);
     setDeletingID(null);
+    setPendingDelete(null);
     setRevealingID(null);
     setRevealed(null);
     setError(null);
@@ -192,13 +196,9 @@ export function AccessTokenManager({
     onRefresh();
   };
 
-  const remove = async (token: AccessTokenSummary) => {
-    const lastToken = catalog.items.length === 1;
-    const warning = lastToken
-      ? `“${token.name}”是最后一个访问令牌。删除后，所有客户端都将无法连接，直到创建新令牌。\n\n确定永久删除吗？`
-      : `删除“${token.name}”后，使用它的客户端将立即无法连接。此操作无法撤销。\n\n确定删除吗？`;
-    if (!window.confirm(warning)) return;
-
+  const remove = async () => {
+    if (pendingDelete === null || deletingID !== null) return;
+    const token = pendingDelete;
     const generation = sessionGeneration.current;
     revealGeneration.current += 1;
     setRevealed(null);
@@ -211,6 +211,7 @@ export function AccessTokenManager({
       await deleteAccessToken(token.id);
       if (sessionGeneration.current !== generation) return;
       onTokenDeleted(token.id);
+      setPendingDelete(null);
       setNotice(`已删除“${token.name}”。`);
     } catch (requestError) {
       if (sessionGeneration.current === generation) {
@@ -229,37 +230,38 @@ export function AccessTokenManager({
 
   return (
     <section className="token-manager" aria-labelledby="token-manager-heading">
-      <div className="token-manager__header">
-        <div>
-          <span className="section-kicker">本地接入</span>
-          <h2 id="token-manager-heading">管理访问令牌</h2>
-          <p>为 IDE、CLI 或其他本机客户端分配独立令牌。</p>
-        </div>
-        <div className="token-manager__actions">
-          <button
-            className="btn-primary"
-            disabled={!isReady || catalogBusy}
-            onClick={() => {
-              setCreateOpen(true);
-              setError(null);
-            }}
-            type="button"
-          >
-            创建令牌
-          </button>
-          <button
-            className="btn-secondary"
-            disabled={!isReady || catalogBusy}
-            onClick={refresh}
-            type="button"
-          >
-            {catalog.status === "loading" ? "刷新中…" : "刷新"}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        actions={
+          <>
+            <button
+              className="btn-primary"
+              disabled={!isReady || catalogBusy}
+              onClick={() => {
+                setCreateOpen(true);
+                setError(null);
+              }}
+              type="button"
+            >
+              创建令牌
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={!isReady || catalogBusy}
+              onClick={refresh}
+              type="button"
+            >
+              {catalog.status === "loading" ? "刷新中…" : "刷新"}
+            </button>
+          </>
+        }
+        description="为 IDE、CLI 或其他本机客户端分配独立令牌。"
+        eyebrow="本地接入"
+        title="管理访问令牌"
+        titleId="token-manager-heading"
+      />
 
       {(!isReady || catalog.status === "blocked") && (
-        <div className="endpoint-manager__unavailable">
+        <div className="service-manager__unavailable">
           {catalog.items.length
             ? "Core 尚未就绪，当前显示上次读取的令牌。"
             : "Core 就绪后才能管理访问令牌。"}
@@ -372,7 +374,15 @@ export function AccessTokenManager({
                     <button
                       className="danger-link"
                       disabled={!isReady || deletingID !== null}
-                      onClick={() => void remove(token)}
+                      onClick={() => {
+                        revealGeneration.current += 1;
+                        setRevealed(null);
+                        setRevealingID(null);
+                        setCopyNotice(null);
+                        setPendingDelete(token);
+                        setError(null);
+                        setNotice(null);
+                      }}
                       type="button"
                     >
                       {deletingID === token.id ? "删除中…" : "删除"}
@@ -442,6 +452,54 @@ export function AccessTokenManager({
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      ) : null}
+      {pendingDelete ? (
+        <div
+          className="token-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.currentTarget === event.target &&
+              deletingID === null
+            ) {
+              setPendingDelete(null);
+            }
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="delete-token-heading"
+            aria-modal="true"
+            className="token-dialog"
+            role="dialog"
+          >
+            <h3 id="delete-token-heading">删除访问令牌？</h3>
+            <p>
+              {catalog.items.length === 1
+                ? `“${pendingDelete.name}”是最后一个访问令牌。删除后，所有客户端都将无法连接，直到创建新令牌。`
+                : `删除“${pendingDelete.name}”后，使用它的客户端将立即无法连接。`}
+            </p>
+            <p>此操作无法撤销。</p>
+            <div className="token-dialog__actions">
+              <button
+                autoFocus
+                className="btn-secondary"
+                disabled={deletingID !== null}
+                onClick={() => setPendingDelete(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="btn-danger"
+                disabled={deletingID !== null}
+                onClick={() => void remove()}
+                type="button"
+              >
+                {deletingID === pendingDelete.id ? "删除中…" : "确认删除"}
+              </button>
+            </div>
           </section>
         </div>
       ) : null}

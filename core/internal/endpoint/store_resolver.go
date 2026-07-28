@@ -6,11 +6,44 @@ import (
 	"sort"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
+type serviceReader interface {
+	ListServices(context.Context, storage.ServiceListOptions) (storage.ServicePage, error)
+}
+
 type endpointReader interface {
 	ListEndpoints(context.Context, storage.EndpointListOptions) (storage.EndpointPage, error)
+}
+
+type endpointReaderAdapter struct {
+	legacy endpointReader
+}
+
+func (adapter endpointReaderAdapter) ListServices(
+	ctx context.Context,
+	options storage.ServiceListOptions,
+) (storage.ServicePage, error) {
+	legacyOptions := storage.EndpointListOptions{
+		Limit: options.Limit, Cursor: options.Cursor, Enabled: options.Enabled,
+	}
+	if options.Kind != nil && options.Kind.IsHTTP() {
+		kind := contract.EndpointKind(*options.Kind)
+		legacyOptions.Kind = &kind
+	}
+	page, err := adapter.legacy.ListEndpoints(ctx, legacyOptions)
+	if err != nil {
+		return storage.ServicePage{}, err
+	}
+	items := make([]storage.ServiceRecord, 0, len(page.Items))
+	for _, record := range page.Items {
+		items = append(items, storage.ServiceRecord{
+			Service: contract.ServiceFromEndpoint(record.Endpoint), ETag: record.ETag,
+		})
+	}
+	return storage.ServicePage{Items: items, NextCursor: page.NextCursor}, nil
 }
 
 // StoreResolver builds a deterministic candidate sequence from persisted
@@ -19,20 +52,49 @@ type endpointReader interface {
 // matches. Transient circuit state is kept in memory and exposed through
 // AttemptController.
 type StoreResolver struct {
-	reader  endpointReader
-	routes  storage.RouteReader
-	breaker *circuitBreaker
+	reader              serviceReader
+	routes              storage.RouteReader
+	breaker             *circuitBreaker
+	runtime             contract.RuntimeProfile
+	subscriptionBaseURL string
 }
 
-func NewStoreResolver(reader endpointReader) (*StoreResolver, error) {
-	if reader == nil {
-		return nil, fmt.Errorf("endpoint reader is required")
+// WithRuntimeProfile enables candidates backed by optional local runtimes.
+// Persisted RelayKit documents remain readable when disabled so mixed routes
+// can continue serving their native/delegated targets.
+func (resolver *StoreResolver) WithRuntimeProfile(profile contract.RuntimeProfile) *StoreResolver {
+	if resolver != nil {
+		resolver.runtime = profile
 	}
-	routeReader, _ := reader.(storage.RouteReader)
+	return resolver
+}
+
+func (resolver *StoreResolver) WithSubscriptionBaseURL(baseURL string) *StoreResolver {
+	if resolver != nil && baseURL != "" {
+		resolver.subscriptionBaseURL = baseURL
+	}
+	return resolver
+}
+
+func NewStoreResolver(source any) (*StoreResolver, error) {
+	var reader serviceReader
+	switch candidate := source.(type) {
+	case serviceReader:
+		reader = candidate
+	case endpointReader:
+		reader = endpointReaderAdapter{legacy: candidate}
+	default:
+		return nil, fmt.Errorf("service reader is required")
+	}
+	if reader == nil {
+		return nil, fmt.Errorf("service reader is required")
+	}
+	routeReader, _ := source.(storage.RouteReader)
 	return &StoreResolver{
-		reader:  reader,
-		routes:  routeReader,
-		breaker: newCircuitBreaker(circuitBreakerConfig{}),
+		reader:              reader,
+		routes:              routeReader,
+		breaker:             newCircuitBreaker(circuitBreakerConfig{}),
+		subscriptionBaseURL: accountauth.DefaultCodexAPIBaseURL,
 	}, nil
 }
 
@@ -56,7 +118,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 		return nil, fmt.Errorf("resolve protocol: %w", err)
 	}
 
-	endpoints, err := resolver.readEnabledEndpoints(ctx)
+	endpoints, err := resolver.readEnabledServices(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +127,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 		return nil, err
 	}
 	if selected := selectMatchingRoute(routes, request); selected != nil {
-		candidates := routeCandidates(*selected, endpoints, request)
+		candidates := routeCandidates(*selected, endpoints, request, resolver.runtime, resolver.subscriptionBaseURL)
 		if len(candidates) == 0 {
 			return nil, &CapabilityUnavailableError{
 				Protocol:  request.Protocol,
@@ -76,7 +138,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 		return resolver.availableCandidates(candidates)
 	}
 
-	candidates := defaultCandidates(endpoints, request)
+	candidates := defaultCandidates(endpoints, request, resolver.subscriptionBaseURL)
 	if len(candidates) == 0 {
 		return nil, &CapabilityUnavailableError{
 			Protocol: request.Protocol,
@@ -103,22 +165,26 @@ func (resolver *StoreResolver) availableCandidates(candidates []Resolved) ([]Res
 	return available, nil
 }
 
-func (resolver *StoreResolver) readEnabledEndpoints(ctx context.Context) ([]contract.Endpoint, error) {
+func (resolver *StoreResolver) readEnabledServices(ctx context.Context) ([]contract.Service, error) {
 	enabled := true
-	options := storage.EndpointListOptions{Limit: 200, Enabled: &enabled}
-	byID := make(map[contract.EndpointID]contract.Endpoint)
+	options := storage.ServiceListOptions{Limit: 200, Enabled: &enabled}
+	byID := make(map[contract.ServiceID]contract.Service)
 	seenCursors := make(map[string]struct{})
 	for {
-		page, err := resolver.reader.ListEndpoints(ctx, options)
+		page, err := resolver.reader.ListServices(ctx, options)
 		if err != nil {
 			return nil, fmt.Errorf("read persisted endpoints: %w", err)
 		}
 		for _, record := range page.Items {
-			candidate := record.Endpoint
+			candidate := record.Service
 			if err := candidate.Validate(); err != nil {
 				return nil, fmt.Errorf("persisted endpoint failed validation: %w", err)
 			}
 			if !candidate.Enabled {
+				continue
+			}
+			if candidate.Kind.IsSubscription() &&
+				(candidate.Subscription == nil || candidate.Subscription.Status != contract.SubscriptionStatusConnected) {
 				continue
 			}
 			if _, duplicate := byID[candidate.ID]; duplicate {
@@ -139,7 +205,7 @@ func (resolver *StoreResolver) readEnabledEndpoints(ctx context.Context) ([]cont
 		options.Cursor = page.NextCursor
 	}
 
-	endpoints := make([]contract.Endpoint, 0, len(byID))
+	endpoints := make([]contract.Service, 0, len(byID))
 	for _, candidate := range byID {
 		endpoints = append(endpoints, candidate)
 	}
@@ -161,7 +227,7 @@ func (resolver *StoreResolver) readRoutes(ctx context.Context) ([]contract.Route
 	seen := make(map[contract.RouteID]struct{}, len(records))
 	for _, record := range records {
 		route := record.Route
-		if err := route.ValidateForAlpha(); err != nil {
+		if err := validateRouteDocument(route); err != nil {
 			return nil, fmt.Errorf("persisted route failed validation: %w", err)
 		}
 		if _, duplicate := seen[route.ID]; duplicate {
@@ -203,7 +269,13 @@ func selectMatchingRoute(routes []contract.Route, request ResolveRequest) *contr
 	return &selected
 }
 
-func routeCandidates(route contract.Route, endpoints []contract.Endpoint, request ResolveRequest) []Resolved {
+func routeCandidates(
+	route contract.Route,
+	endpoints []contract.Service,
+	request ResolveRequest,
+	runtime contract.RuntimeProfile,
+	subscriptionBaseURL string,
+) []Resolved {
 	targets := append([]contract.RouteTarget(nil), route.Targets...)
 	sort.Slice(targets, func(left, right int) bool {
 		a, b := targets[left], targets[right]
@@ -213,53 +285,74 @@ func routeCandidates(route contract.Route, endpoints []contract.Endpoint, reques
 		if rankA, rankB := planTypeRank(a.PlanType), planTypeRank(b.PlanType); rankA != rankB {
 			return rankA < rankB
 		}
-		if a.EndpointID != b.EndpointID {
-			return a.EndpointID < b.EndpointID
+		if a.ServiceID != b.ServiceID {
+			return a.ServiceID < b.ServiceID
 		}
 		return a.UpstreamProtocol < b.UpstreamProtocol
 	})
 
-	byID := make(map[contract.EndpointID]contract.Endpoint, len(endpoints))
+	byID := make(map[contract.ServiceID]contract.Service, len(endpoints))
 	for _, candidate := range endpoints {
 		byID[candidate.ID] = candidate
 	}
-	distinctTargets := make(map[contract.EndpointID]struct{}, len(route.Targets))
+	distinctTargets := make(map[contract.ServiceID]struct{}, len(route.Targets))
 	for _, target := range route.Targets {
-		distinctTargets[target.EndpointID] = struct{}{}
+		distinctTargets[target.ServiceID] = struct{}{}
 	}
 	pinned := len(distinctTargets) == 1
 
 	result := make([]Resolved, 0, len(targets))
-	added := make(map[contract.EndpointID]struct{}, len(targets))
+	type candidateKey struct {
+		endpoint contract.ServiceID
+		plan     contract.PlanType
+		protocol contract.ProtocolID
+	}
+	added := make(map[candidateKey]struct{}, len(targets))
 	for _, target := range targets {
-		candidate, exists := byID[target.EndpointID]
+		candidate, exists := byID[target.ServiceID]
 		if !exists {
 			continue
 		}
 		mode, ok := capabilityMode(target.PlanType)
-		if !ok || !supportsRequest(candidate, request, mode) {
+		upstreamProtocol := target.UpstreamProtocol
+		if target.PlanType == contract.PlanTypeRelayKit {
+			if !runtime.RelayKitAvailable ||
+				!supportsProtocol(candidate, upstreamProtocol, request.Model, request.Streaming, contract.CapabilityModeNative) {
+				continue
+			}
+			mode = contract.CapabilityModeNative
+		} else if !ok || !supportsRequest(candidate, request, mode) {
 			continue
 		}
-		if _, duplicate := added[candidate.ID]; duplicate {
+		key := candidateKey{endpoint: candidate.ID}
+		if target.PlanType == contract.PlanTypeRelayKit {
+			key.plan, key.protocol = target.PlanType, upstreamProtocol
+		}
+		if _, duplicate := added[key]; duplicate {
 			// When two targets name the same endpoint, the first target in
 			// sorted order wins — including its UpstreamModel rewrite.
 			continue
 		}
-		added[candidate.ID] = struct{}{}
+		added[key] = struct{}{}
+		legacy, _ := candidate.EndpointView()
 		result = append(result, Resolved{
-			Endpoint:      candidate,
-			Mode:          mode,
-			RouteID:       route.ID,
-			Pinned:        pinned,
-			UpstreamModel: target.UpstreamModel,
+			Service:          candidate,
+			Endpoint:         legacy,
+			BaseURL:          baseURLForService(candidate, subscriptionBaseURL),
+			Mode:             mode,
+			PlanType:         target.PlanType,
+			UpstreamProtocol: upstreamProtocol,
+			RouteID:          route.ID,
+			Pinned:           pinned,
+			UpstreamModel:    target.UpstreamModel,
 		})
 	}
 	return result
 }
 
-func defaultCandidates(endpoints []contract.Endpoint, request ResolveRequest) []Resolved {
+func defaultCandidates(endpoints []contract.Service, request ResolveRequest, subscriptionBaseURL string) []Resolved {
 	result := make([]Resolved, 0, len(endpoints))
-	added := make(map[contract.EndpointID]struct{}, len(endpoints))
+	added := make(map[contract.ServiceID]struct{}, len(endpoints))
 	for _, mode := range []contract.CapabilityMode{
 		contract.CapabilityModeNative,
 		contract.CapabilityModeDelegated,
@@ -272,10 +365,24 @@ func defaultCandidates(endpoints []contract.Endpoint, request ResolveRequest) []
 				continue
 			}
 			added[candidate.ID] = struct{}{}
-			result = append(result, Resolved{Endpoint: candidate, Mode: mode})
+			legacy, _ := candidate.EndpointView()
+			result = append(result, Resolved{
+				Service: candidate, Endpoint: legacy,
+				BaseURL: baseURLForService(candidate, subscriptionBaseURL), Mode: mode,
+			})
 		}
 	}
 	return result
+}
+
+func baseURLForService(service contract.Service, subscriptionBaseURL string) string {
+	if service.Kind.IsSubscription() {
+		return subscriptionBaseURL
+	}
+	if service.HTTP == nil {
+		return ""
+	}
+	return service.HTTP.BaseURL
 }
 
 func routeCapabilityModes(route contract.Route) []contract.CapabilityMode {
@@ -319,19 +426,47 @@ func planTypeRank(planType contract.PlanType) int {
 	}
 }
 
-func supportsRequest(endpoint contract.Endpoint, request ResolveRequest, mode contract.CapabilityMode) bool {
+func supportsRequest(endpoint contract.Service, request ResolveRequest, mode contract.CapabilityMode) bool {
+	return supportsProtocol(endpoint, request.Protocol, request.Model, request.Streaming, mode)
+}
+
+func supportsProtocol(
+	endpoint contract.Service,
+	protocol contract.ProtocolID,
+	model string,
+	streaming bool,
+	mode contract.CapabilityMode,
+) bool {
 	for _, capability := range endpoint.Capabilities {
-		if capability.Protocol != request.Protocol || capability.Mode != mode {
+		if capability.Protocol != protocol || capability.Mode != mode {
 			continue
 		}
-		if request.Streaming && !capability.Streaming {
+		if streaming && !capability.Streaming {
 			continue
 		}
-		if len(capability.Models) == 0 || containsModel(capability.Models, request.Model) {
+		if len(capability.Models) == 0 || containsModel(capability.Models, model) {
 			return true
 		}
 	}
 	return false
+}
+
+func validateRouteDocument(route contract.Route) error {
+	if err := route.Validate(); err != nil {
+		return err
+	}
+	if route.Selection != nil && route.Selection.Mode == contract.RouteSelectionModeAuto {
+		return fmt.Errorf("route selection mode %q is not implemented in this build", contract.RouteSelectionModeAuto)
+	}
+	if !route.Match.Protocol.AvailableInAlpha() {
+		return fmt.Errorf("match protocol %q is not available in Alpha", route.Match.Protocol)
+	}
+	for index, target := range route.Targets {
+		if !target.UpstreamProtocol.AvailableInAlpha() {
+			return fmt.Errorf("targets[%d]: upstream protocol %q is not available in Alpha", index, target.UpstreamProtocol)
+		}
+	}
+	return nil
 }
 
 func containsModel(models []string, requested string) bool {

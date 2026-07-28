@@ -56,12 +56,16 @@ func TestLocateFindingsMapsPathsWithoutPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	findings := []Finding{{Segment: 0, Start: 0, End: len("alice@example.com"), Kind: KindEmail}}
+	findings := []Finding{{
+		Segment: 0, Start: 0, End: len("alice@example.com"),
+		Kind: KindEmail, Confidence: 0.91,
+	}}
 	locations, err := LocateFindings(contract.ProtocolOpenAIChat, body, findings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(locations) != 1 || locations[0].Kind != "email" || locations[0].Path == "" {
+	if len(locations) != 1 || locations[0].Kind != "email" ||
+		locations[0].Path == "" || locations[0].Confidence != 0.91 {
 		t.Fatalf("locations=%#v", locations)
 	}
 	encoded, _ := json.Marshal(locations)

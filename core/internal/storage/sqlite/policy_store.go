@@ -119,6 +119,22 @@ func (store *Store) UpdatePolicy(
 }
 
 func decodePolicyRecord(rowID string, document []byte) (storagecontract.PolicyRecord, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(document, &fields); err != nil {
+		return storagecontract.PolicyRecord{}, fmt.Errorf(
+			"%w: decode policy %q",
+			storagecontract.ErrInvalidRecord,
+			rowID,
+		)
+	}
+	minConfidence, present := fields["min_confidence"]
+	if !present || bytes.Equal(bytes.TrimSpace(minConfidence), []byte("null")) {
+		return storagecontract.PolicyRecord{}, fmt.Errorf(
+			"%w: policy %q omitted min_confidence",
+			storagecontract.ErrInvalidRecord,
+			rowID,
+		)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(document))
 	decoder.DisallowUnknownFields()
 	var policy contract.Policy

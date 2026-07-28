@@ -10,10 +10,13 @@ import (
 )
 
 type ConvertRequestInput struct {
-	From        contract.ProtocolID
-	To          contract.ProtocolID
-	ContentType string
-	Body        []byte
+	From          contract.ProtocolID
+	To            contract.ProtocolID
+	ContentType   string
+	Body          []byte
+	PublicModel   string
+	UpstreamModel string
+	Streaming     bool
 }
 
 type ConvertRequestOutput struct {
@@ -27,6 +30,7 @@ type ConvertResponseInput struct {
 	StatusCode  int
 	ContentType string
 	Body        []byte
+	PublicModel string
 }
 
 type ConvertResponseOutput struct {
@@ -36,8 +40,13 @@ type ConvertResponseOutput struct {
 }
 
 type StreamOptions struct {
-	From contract.ProtocolID
-	To   contract.ProtocolID
+	From          contract.ProtocolID
+	To            contract.ProtocolID
+	PublicModel   string
+	UpstreamModel string
+	ID            string
+	Created       int64
+	IncludeUsage  bool
 }
 
 // ResponseEvent is an engine-neutral, stateful stream unit. Adapters decide
@@ -49,6 +58,7 @@ type ResponseEvent struct {
 
 type ResponseStream interface {
 	Convert(context.Context, ResponseEvent) ([]ResponseEvent, error)
+	Finalize(context.Context) ([]ResponseEvent, error)
 	Close() error
 }
 

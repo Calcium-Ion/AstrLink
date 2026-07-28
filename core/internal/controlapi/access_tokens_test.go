@@ -206,7 +206,7 @@ func newAccessTokenHandler(t *testing.T, manager AccessTokenManager) *Handler {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	handler, err := NewWithDependencies(contract.DefaultVersionResponse("0.1.0-test", "abc1234"), Dependencies{
-		EndpointStore: store, AccessTokenManager: manager, ControlToken: testControlToken,
+		ServiceStore: store, AccessTokenManager: manager, ControlToken: testControlToken,
 	})
 	if err != nil {
 		t.Fatalf("NewWithDependencies: %v", err)

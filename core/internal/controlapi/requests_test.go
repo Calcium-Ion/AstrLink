@@ -22,7 +22,7 @@ func TestRequestRecordControlAPI(t *testing.T) {
 	handler, err := NewWithDependencies(contract.VersionResponse{
 		CoreVersion: "0.0.0-test", ControlAPIVersion: "v1", ProtocolContractVersion: "v1",
 	}, Dependencies{
-		EndpointStore:  store,
+		ServiceStore:   store,
 		RequestRecords: store,
 		ControlToken:   "control-token-123456",
 	})

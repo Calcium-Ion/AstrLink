@@ -10,8 +10,8 @@ import {
 import {
   getCoreStatus,
   listAccessTokens,
-  listEndpoints,
   listRequestRecords,
+  listServices,
   restartCore,
 } from "./bridge";
 import {
@@ -19,12 +19,6 @@ import {
   type AccessTokenCatalog,
 } from "./AccessTokenManager";
 import type { AccessTokenSummary } from "./access-token-model";
-import {
-  EndpointManager,
-  type EndpointCatalogStatus,
-  type EndpointManagerView,
-} from "./EndpointManager";
-import type { Endpoint } from "./endpoint-model";
 import astrlinkLogo from "./assets/astrlink-logo.svg";
 import {
   failedSnapshot,
@@ -32,9 +26,17 @@ import {
   phaseTone,
   type AppSnapshot,
 } from "./core-model";
+import { PageHeader } from "./PageHeader";
 import { RequestGate } from "./request-gate";
 import { RequestRecords } from "./RequestRecords";
+import { RouteManager } from "./RouteManager";
 import { SafetyPolicy } from "./SafetyPolicy";
+import {
+  ServiceManager,
+  type ServiceCatalogStatus,
+  type ServiceManagerView,
+} from "./ServiceManager";
+import type { Service } from "./service-model";
 import type { RequestRecord } from "./request-record-model";
 import {
   aggregateTodayUsage,
@@ -47,7 +49,8 @@ type WorkspacePage =
   | { kind: "tokens" }
   | { kind: "safety" }
   | { kind: "records" }
-  | EndpointManagerView;
+  | { kind: "routing" }
+  | ServiceManagerView;
 
 type TodayUsageState = {
   status: "blocked" | "loading" | "ready" | "error";
@@ -56,7 +59,6 @@ type TodayUsageState = {
 };
 type IconName =
   | "activity"
-  | "chevron-left"
   | "copy"
   | "home"
   | "key"
@@ -66,14 +68,14 @@ type IconName =
   | "settings"
   | "shield";
 
-interface EndpointCatalog {
-  status: EndpointCatalogStatus;
-  items: Endpoint[];
+interface ServiceCatalog {
+  status: ServiceCatalogStatus;
+  items: Service[];
   error: string | null;
   stale: boolean;
 }
 
-const emptyCatalog: EndpointCatalog = {
+const emptyCatalog: ServiceCatalog = {
   status: "blocked",
   items: [],
   error: null,
@@ -102,7 +104,6 @@ function Icon({ name }: { name: IconName }) {
     activity: (
       <path d="M3 12h4l2.2-5 4.1 10 2.2-5H21" />
     ),
-    "chevron-left": <path d="m15 18-6-6 6-6" />,
     copy: (
       <>
         <rect width="13" height="13" x="9" y="9" rx="2" />
@@ -207,14 +208,14 @@ function Overview({
   onCopy,
   onManageServices,
   onManageTokens,
-  onRefreshEndpoints,
+  onRefreshServices,
   onRefreshTodayUsage,
   onRestart,
   snapshot,
   todayUsage,
   tokenCatalog,
 }: {
-  catalog: EndpointCatalog;
+  catalog: ServiceCatalog;
   copyError: string | null;
   copyFeedback: string | null;
   isNativeApp: boolean;
@@ -224,7 +225,7 @@ function Overview({
   onCopy: (value: string, label: string) => void;
   onManageServices: () => void;
   onManageTokens: () => void;
-  onRefreshEndpoints: () => void;
+  onRefreshServices: () => void;
   onRefreshTodayUsage: () => void;
   onRestart: () => void;
   snapshot: AppSnapshot | null;
@@ -235,7 +236,7 @@ function Overview({
   const conversionEngine = capabilities?.conversion_engine;
   const statusTone = snapshot ? phaseTone(snapshot.phase) : "neutral";
   const statusLabel = snapshot ? phaseLabel(snapshot.phase) : "连接中";
-  const enabledCount = catalog.items.filter((endpoint) => endpoint.enabled).length;
+  const enabledCount = catalog.items.filter((service) => service.enabled).length;
   const catalogUnknown =
     catalog.status === "blocked" && catalog.items.length === 0;
   const tokensUnknown =
@@ -244,6 +245,11 @@ function Overview({
 
   return (
     <div className="overview-page">
+      <PageHeader
+        description="查看本地网关状态、今日用量与接入配置。"
+        eyebrow="工作区"
+        title="概览"
+      />
       <section className={`core-strip core-strip--${statusTone}`}>
         <div className="core-strip__status">
           <span className={`dot dot--${statusTone}`} aria-hidden="true" />
@@ -433,7 +439,7 @@ function Overview({
           ) : catalog.status === "error" && catalog.items.length === 0 ? (
             <div className="compact-empty compact-empty--error">
               <p>{catalog.error ?? "无法读取 API 服务。"}</p>
-              <button className="btn-secondary" onClick={onRefreshEndpoints} type="button">
+              <button className="btn-secondary" onClick={onRefreshServices} type="button">
                 重试
               </button>
             </div>
@@ -451,19 +457,24 @@ function Overview({
             </div>
           ) : (
             <div className="service-preview-list">
-              {catalog.items.slice(0, 3).map((endpoint) => (
+              {catalog.items.slice(0, 3).map((service) => (
                 <button
                   className="service-preview"
-                  key={endpoint.id}
+                  key={service.id}
                   onClick={onManageServices}
                   type="button"
                 >
-                  <span className={`dot dot--${endpoint.enabled ? "positive" : "neutral"}`} />
+                  <span className={`dot dot--${service.enabled ? "positive" : "neutral"}`} />
                   <span>
-                    <strong>{endpoint.name}</strong>
-                    <code>{endpoint.base_url}</code>
+                    <strong>{service.name}</strong>
+                    <code>
+                      {service.http?.base_url ??
+                        (service.subscription?.account_hint
+                          ? `OpenAI 账户 ${service.subscription.account_hint}`
+                          : "OpenAI Codex OAuth")}
+                    </code>
                   </span>
-                  <span>{endpoint.capabilities.length} 项能力</span>
+                  <span>{service.capabilities.length} 项能力</span>
                 </button>
               ))}
             </div>
@@ -538,11 +549,12 @@ function Overview({
 export default function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
-  const [catalog, setCatalog] = useState<EndpointCatalog>(emptyCatalog);
+  const [catalog, setCatalog] = useState<ServiceCatalog>(emptyCatalog);
   const [tokenCatalog, setTokenCatalog] =
     useState<AccessTokenCatalog>(emptyTokenCatalog);
   const [todayUsage, setTodayUsage] = useState<TodayUsageState>(emptyTodayUsage);
   const [page, setPage] = useState<WorkspacePage>({ kind: "overview" });
+  const [pendingPage, setPendingPage] = useState<WorkspacePage | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -611,7 +623,7 @@ export default function App() {
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
       : null;
 
-  const refreshEndpoints = useCallback(async () => {
+  const refreshServices = useCallback(async () => {
     const generation = catalogGeneration.current + 1;
     catalogGeneration.current = generation;
     if (!isReady) {
@@ -631,7 +643,7 @@ export default function App() {
       stale: current.items.length > 0,
     }));
     try {
-      const result = await listEndpoints();
+      const result = await listServices();
       if (catalogGeneration.current === generation) {
         setCatalog({
           status: "ready",
@@ -663,8 +675,8 @@ export default function App() {
       }));
       return;
     }
-    void refreshEndpoints();
-  }, [coreSessionKey, isReady, refreshEndpoints]);
+    void refreshServices();
+  }, [coreSessionKey, isReady, refreshServices]);
 
   const refreshAccessTokens = useCallback(async () => {
     const generation = tokenCatalogGeneration.current + 1;
@@ -806,42 +818,50 @@ export default function App() {
 
   const navigate = useCallback(
     (next: WorkspacePage) => {
-      const leavingEditor =
+      const leavingServiceEditor =
         (page.kind === "create" || page.kind === "edit") &&
         (next.kind !== page.kind ||
           (page.kind === "edit" &&
             next.kind === "edit" &&
-            next.endpointId !== page.endpointId));
-      if (
-        leavingEditor &&
-        editorDirty &&
-        !window.confirm("当前修改尚未保存，确定要离开吗？")
-      ) {
+            next.serviceId !== page.serviceId));
+      const leavingRouteEditor =
+        page.kind === "routing" && next.kind !== "routing";
+      const leavingEditor = leavingServiceEditor || leavingRouteEditor;
+      if (leavingEditor && editorDirty) {
+        setPendingPage(next);
         return;
       }
       if (leavingEditor) setEditorDirty(false);
+      setPendingPage(null);
       setPage(next);
     },
     [editorDirty, page],
   );
 
-  const handleEndpointSaved = (endpoint: Endpoint) => {
+  const confirmPendingNavigation = () => {
+    if (pendingPage === null) return;
+    setPage(pendingPage);
+    setPendingPage(null);
+    setEditorDirty(false);
+  };
+
+  const handleServiceSaved = (service: Service) => {
     setCatalog((current) => {
-      const existingIndex = current.items.findIndex((item) => item.id === endpoint.id);
+      const existingIndex = current.items.findIndex((item) => item.id === service.id);
       const items =
         existingIndex === -1
-          ? [...current.items, endpoint]
-          : current.items.map((item) => (item.id === endpoint.id ? endpoint : item));
+          ? [...current.items, service]
+          : current.items.map((item) => (item.id === service.id ? service : item));
       return { status: "ready", items, error: null, stale: false };
     });
     setEditorDirty(false);
     setPage({ kind: "list" });
   };
 
-  const handleEndpointRemoved = (endpointId: string) => {
+  const handleServiceRemoved = (serviceId: string) => {
     setCatalog((current) => ({
       status: "ready",
-      items: current.items.filter((endpoint) => endpoint.id !== endpointId),
+      items: current.items.filter((service) => service.id !== serviceId),
       error: null,
       stale: false,
     }));
@@ -868,20 +888,6 @@ export default function App() {
     }));
   };
 
-  const pageTitle =
-    page.kind === "overview"
-      ? "概览"
-      : page.kind === "tokens"
-        ? "访问令牌"
-        : page.kind === "safety"
-          ? "安全策略"
-          : page.kind === "records"
-            ? "请求记录"
-            : page.kind === "list"
-              ? "API 服务"
-              : page.kind === "create"
-                ? "添加服务"
-                : "编辑服务";
   const serviceSectionActive =
     page.kind === "list" || page.kind === "create" || page.kind === "edit";
   const statusTone = snapshot ? phaseTone(snapshot.phase) : "neutral";
@@ -938,13 +944,22 @@ export default function App() {
             label="请求记录"
             onClick={() => navigate({ kind: "records" })}
           />
+          <NavButton
+            active={page.kind === "routing"}
+            icon="route"
+            label="路由与模型"
+            onClick={() => navigate({ kind: "routing" })}
+          />
 
           <span className="nav-group-label nav-group-label--secondary">即将提供</span>
-          <NavButton disabled icon="route" label="路由与模型" />
           <NavButton disabled icon="settings" label="设置" />
         </nav>
 
-        <div className={`sidebar-status sidebar-status--${statusTone}`}>
+        <div
+          aria-label={`Core ${statusLabel}`}
+          className={`sidebar-status sidebar-status--${statusTone}`}
+          title={`Core ${statusLabel}`}
+        >
           <span className={`dot dot--${statusTone}`} aria-hidden="true" />
           <span>
             <strong>Core</strong>
@@ -954,26 +969,6 @@ export default function App() {
       </aside>
 
       <div className="app-surface">
-        <header className="workspace-header">
-          <div>
-            {page.kind === "create" || page.kind === "edit" ? (
-              <button
-                aria-label="返回服务列表"
-                className="workspace-header__back"
-                onClick={() => navigate({ kind: "list" })}
-                type="button"
-              >
-                <Icon name="chevron-left" />
-              </button>
-            ) : null}
-            <h1>{pageTitle}</h1>
-          </div>
-          <div className={`status-pill status-pill--${statusTone}`}>
-            <span className={`dot dot--${statusTone}`} aria-hidden="true" />
-            {statusLabel}
-          </div>
-        </header>
-
         <main className={`workspace workspace--${page.kind}`}>
           {page.kind === "overview" ? (
             <Overview
@@ -987,7 +982,7 @@ export default function App() {
               onCopy={(value, label) => void copyValue(value, label)}
               onManageServices={() => navigate({ kind: "list" })}
               onManageTokens={() => navigate({ kind: "tokens" })}
-              onRefreshEndpoints={() => void refreshEndpoints()}
+              onRefreshServices={() => void refreshServices()}
               onRefreshTodayUsage={() => void refreshTodayUsage()}
               onRestart={() => void handleRestart()}
               snapshot={snapshot}
@@ -1011,26 +1006,67 @@ export default function App() {
           ) : page.kind === "records" ? (
             <RequestRecords
               coreSessionKey={coreSessionKey}
-              endpoints={catalog.items}
+              services={catalog.items}
               isReady={isReady}
             />
-          ) : (
-            <EndpointManager
-              catalogError={catalog.error}
-              catalogStatus={catalog.status}
-              endpoints={catalog.items}
+          ) : page.kind === "routing" ? (
+            <RouteManager
+              coreSessionKey={coreSessionKey}
+              services={catalog.items}
               isReady={isReady}
               onDirtyChange={setEditorDirty}
-              onEndpointRemoved={handleEndpointRemoved}
-              onEndpointSaved={handleEndpointSaved}
-              onRefresh={() => void refreshEndpoints()}
+              onManageServices={() => navigate({ kind: "list" })}
+              protocols={protocols}
+            />
+          ) : (
+            <ServiceManager
+              catalogError={catalog.error}
+              catalogStatus={catalog.status}
+              isReady={isReady}
+              onDirtyChange={setEditorDirty}
+              onRefresh={() => void refreshServices()}
+              onServiceRemoved={handleServiceRemoved}
+              onServiceSaved={handleServiceSaved}
               onViewChange={(next) => navigate(next)}
               protocols={protocols}
+              services={catalog.items}
               view={page}
             />
           )}
         </main>
       </div>
+      {pendingPage ? (
+        <div className="token-dialog-backdrop" role="presentation">
+          <section
+            aria-describedby="leave-editor-description"
+            aria-labelledby="leave-editor-title"
+            aria-modal="true"
+            className="token-dialog"
+            role="dialog"
+          >
+            <h3 id="leave-editor-title">放弃未保存的修改？</h3>
+            <p id="leave-editor-description">
+              当前配置尚未保存。离开此页面后，本次修改将会丢失。
+            </p>
+            <div className="token-dialog__actions">
+              <button
+                className="btn-secondary"
+                onClick={() => setPendingPage(null)}
+                type="button"
+              >
+                继续编辑
+              </button>
+              <button
+                className="btn-primary"
+                onClick={confirmPendingNavigation}
+                type="button"
+              >
+                放弃修改并离开
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,0 +1,487 @@
+import type {
+  SubscriptionError,
+  SubscriptionProvider,
+  SubscriptionStatus,
+} from "./subscription-model";
+
+export type HTTPServiceKind =
+  | "newapi"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "openai_compatible"
+  | "custom";
+
+export type ServiceAuthScheme =
+  | "none"
+  | "bearer"
+  | "anthropic_api_key"
+  | "google_api_key"
+  | "custom_header";
+
+export interface ServiceAuth {
+  scheme: ServiceAuthScheme;
+  header_name?: string;
+}
+
+export interface ServiceCapability {
+  protocol: string;
+  mode: "native" | "delegated";
+  streaming: boolean;
+  models?: string[];
+}
+
+export type ServiceKind = "codex_subscription" | HTTPServiceKind;
+
+export interface HTTPServiceConnection {
+  base_url: string;
+  auth: ServiceAuth;
+  credential_ref?: string;
+}
+
+export interface SubscriptionServiceConnection {
+  provider: SubscriptionProvider;
+  status: SubscriptionStatus;
+  account_hint?: string;
+  provider_account_id?: string;
+  credential_ref?: string;
+  authorization_boundary?: string;
+  token_expires_at?: string;
+  last_refresh_at?: string;
+  last_error?: SubscriptionError;
+}
+
+export interface Service {
+  id: string;
+  name: string;
+  kind: ServiceKind;
+  enabled: boolean;
+  capabilities: ServiceCapability[];
+  http?: HTTPServiceConnection;
+  subscription?: SubscriptionServiceConnection;
+  created_at: string;
+  updated_at: string;
+}
+
+export type RoutableService = Pick<
+  Service,
+  "id" | "name" | "enabled" | "capabilities"
+>;
+
+export interface ServicePage {
+  items: Service[];
+  next_cursor: string | null;
+}
+
+export interface ServiceRecord {
+  service: Service;
+  etag: string;
+}
+
+export type SubscriptionServiceCreateInput = {
+  name: string;
+  kind: "codex_subscription";
+  enabled?: boolean;
+};
+
+export type HTTPServiceCreateInput = {
+  name: string;
+  kind: HTTPServiceKind;
+  enabled?: boolean;
+  http: {
+    base_url: string;
+    auth: ServiceAuth;
+    credential?: { secret: string };
+  };
+  capabilities: ServiceCapability[];
+};
+
+export type ServiceCreateInput =
+  | SubscriptionServiceCreateInput
+  | HTTPServiceCreateInput;
+
+export type ServicePatchInput = {
+  name?: string;
+  enabled?: boolean;
+  http?: {
+    base_url?: string;
+    auth?: ServiceAuth;
+    credential?: { secret: string } | null;
+  };
+  capabilities?: ServiceCapability[];
+};
+
+type JsonObject = Record<string, unknown>;
+
+const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
+const protocolIDPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
+const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const localCredentialRefPattern =
+  /^local:\/\/service\/[a-z][a-z0-9_-]{2,95}$/;
+const keyringCredentialRefPattern =
+  /^keyring:\/\/[A-Za-z0-9._~-]+\/[A-Za-z0-9._~!$&'()*+,;=:@/-]*[A-Za-z0-9._~!$&'()*+,;=:@-]$/;
+const rfc3339Pattern =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const etagPattern = /^"sha256:[0-9a-f]{64}"$/;
+const errorCodePattern = /^[a-z][a-z0-9_]{1,63}$/;
+const credentialLeakPattern =
+  /(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|code_verifier=[A-Za-z0-9._~-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i;
+
+const httpKinds = new Set<HTTPServiceKind>([
+  "newapi",
+  "openai",
+  "anthropic",
+  "gemini",
+  "openai_compatible",
+  "custom",
+]);
+const authSchemes = new Set<ServiceAuthScheme>([
+  "none",
+  "bearer",
+  "anthropic_api_key",
+  "google_api_key",
+  "custom_header",
+]);
+const subscriptionStatuses = new Set<SubscriptionStatus>([
+  "disconnected",
+  "authorizing",
+  "connected",
+  "needs_reauth",
+  "error",
+]);
+
+function invalid(path: string, message: string): never {
+  throw new Error(`Invalid Service IPC response at ${path}: ${message}`);
+}
+
+function objectAt(value: unknown, path: string): JsonObject {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return invalid(path, "expected an object");
+  }
+  return value as JsonObject;
+}
+
+function keysAt(
+  object: JsonObject,
+  required: readonly string[],
+  optional: readonly string[],
+  path: string,
+): void {
+  const allowed = new Set([...required, ...optional]);
+  for (const key of Object.keys(object)) {
+    if (!allowed.has(key)) invalid(`${path}.${key}`, "unexpected field");
+  }
+  for (const key of required) {
+    if (!Object.hasOwn(object, key)) invalid(`${path}.${key}`, "missing field");
+  }
+}
+
+function stringAt(value: unknown, path: string, min: number, max: number): string {
+  if (typeof value !== "string") {
+    return invalid(path, `expected ${min} to ${max} characters`);
+  }
+  const length = [...value].length;
+  if (length < min || length > max) {
+    return invalid(path, `expected ${min} to ${max} characters`);
+  }
+  return value;
+}
+
+function timestampAt(value: unknown, path: string): string {
+  const timestamp = stringAt(value, path, 20, 64);
+  if (!rfc3339Pattern.test(timestamp) || Number.isNaN(Date.parse(timestamp))) {
+    invalid(path, "expected an RFC 3339 timestamp");
+  }
+  return timestamp;
+}
+
+function parseAuth(value: unknown, path: string): ServiceAuth {
+  const auth = objectAt(value, path);
+  keysAt(auth, ["scheme"], ["header_name"], path);
+  if (
+    typeof auth.scheme !== "string" ||
+    !authSchemes.has(auth.scheme as ServiceAuthScheme)
+  ) {
+    invalid(`${path}.scheme`, "unknown authentication scheme");
+  }
+  const scheme = auth.scheme as ServiceAuthScheme;
+  if (scheme === "custom_header") {
+    const headerName = stringAt(auth.header_name, `${path}.header_name`, 1, 128);
+    if (!headerNamePattern.test(headerName)) {
+      invalid(`${path}.header_name`, "invalid header name");
+    }
+    return { scheme, header_name: headerName };
+  }
+  if (Object.hasOwn(auth, "header_name")) {
+    invalid(`${path}.header_name`, "only custom_header may set header_name");
+  }
+  return { scheme };
+}
+
+function parseCapability(value: unknown, path: string): ServiceCapability {
+  const capability = objectAt(value, path);
+  keysAt(capability, ["protocol", "mode", "streaming"], ["models"], path);
+  const protocol = stringAt(capability.protocol, `${path}.protocol`, 3, 96);
+  if (!protocolIDPattern.test(protocol)) invalid(`${path}.protocol`, "invalid protocol ID");
+  if (capability.mode !== "native" && capability.mode !== "delegated") {
+    invalid(`${path}.mode`, "unknown capability mode");
+  }
+  if (typeof capability.streaming !== "boolean") {
+    invalid(`${path}.streaming`, "expected a boolean");
+  }
+  let models: string[] | undefined;
+  if (Object.hasOwn(capability, "models")) {
+    if (!Array.isArray(capability.models)) invalid(`${path}.models`, "expected an array");
+    models = capability.models.map((model, index) =>
+      stringAt(model, `${path}.models[${index}]`, 1, 256),
+    );
+    if (new Set(models).size !== models.length) {
+      invalid(`${path}.models`, "duplicate model");
+    }
+  }
+  return {
+    protocol,
+    mode: capability.mode,
+    streaming: capability.streaming,
+    ...(models ? { models } : {}),
+  };
+}
+
+function parseHTTPConnection(value: unknown, path: string): HTTPServiceConnection {
+  const connection = objectAt(value, path);
+  keysAt(connection, ["base_url", "auth"], ["credential_ref"], path);
+  const baseURL = stringAt(connection.base_url, `${path}.base_url`, 1, 2048);
+  let parsed: URL;
+  try {
+    parsed = new URL(baseURL);
+  } catch {
+    return invalid(`${path}.base_url`, "invalid URL");
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    invalid(`${path}.base_url`, "unsafe upstream URL");
+  }
+  let credentialRef: string | undefined;
+  if (Object.hasOwn(connection, "credential_ref")) {
+    credentialRef = stringAt(connection.credential_ref, `${path}.credential_ref`, 1, 512);
+    if (!localCredentialRefPattern.test(credentialRef)) {
+      invalid(`${path}.credential_ref`, "must use local://service/<id>");
+    }
+  }
+  return {
+    base_url: baseURL,
+    auth: parseAuth(connection.auth, `${path}.auth`),
+    ...(credentialRef ? { credential_ref: credentialRef } : {}),
+  };
+}
+
+function parseSubscriptionError(value: unknown, path: string): SubscriptionError {
+  const error = objectAt(value, path);
+  keysAt(error, ["code", "message"], [], path);
+  const code = stringAt(error.code, `${path}.code`, 2, 64);
+  const message = stringAt(error.message, `${path}.message`, 1, 240);
+  if (!errorCodePattern.test(code)) invalid(`${path}.code`, "invalid error code");
+  if (credentialLeakPattern.test(message)) {
+    invalid(`${path}.message`, "must not contain credential material");
+  }
+  return { code, message };
+}
+
+function parseSubscriptionConnection(
+  value: unknown,
+  path: string,
+): SubscriptionServiceConnection {
+  const subscription = objectAt(value, path);
+  keysAt(
+    subscription,
+    ["provider", "status"],
+    [
+      "account_hint",
+      "provider_account_id",
+      "credential_ref",
+      "authorization_boundary",
+      "token_expires_at",
+      "last_refresh_at",
+      "last_error",
+    ],
+    path,
+  );
+  if (subscription.provider !== "openai_codex") {
+    invalid(`${path}.provider`, "unknown subscription provider");
+  }
+  if (
+    typeof subscription.status !== "string" ||
+    !subscriptionStatuses.has(subscription.status as SubscriptionStatus)
+  ) {
+    invalid(`${path}.status`, "unknown subscription status");
+  }
+  const status = subscription.status as SubscriptionStatus;
+  const result: SubscriptionServiceConnection = {
+    provider: "openai_codex",
+    status,
+  };
+  for (const [field, max] of [
+    ["account_hint", 128],
+    ["provider_account_id", 256],
+    ["authorization_boundary", 240],
+  ] as const) {
+    if (!Object.hasOwn(subscription, field)) continue;
+    const text = stringAt(subscription[field], `${path}.${field}`, 1, max);
+    if (credentialLeakPattern.test(text)) {
+      invalid(`${path}.${field}`, "must not contain credential material");
+    }
+    result[field] = text;
+  }
+  if (Object.hasOwn(subscription, "credential_ref")) {
+    const credentialRef = stringAt(
+      subscription.credential_ref,
+      `${path}.credential_ref`,
+      1,
+      512,
+    );
+    if (!keyringCredentialRefPattern.test(credentialRef)) {
+      invalid(`${path}.credential_ref`, "must use keyring://");
+    }
+    result.credential_ref = credentialRef;
+  }
+  if (Object.hasOwn(subscription, "token_expires_at")) {
+    result.token_expires_at = timestampAt(
+      subscription.token_expires_at,
+      `${path}.token_expires_at`,
+    );
+  }
+  if (Object.hasOwn(subscription, "last_refresh_at")) {
+    result.last_refresh_at = timestampAt(
+      subscription.last_refresh_at,
+      `${path}.last_refresh_at`,
+    );
+  }
+  if (Object.hasOwn(subscription, "last_error")) {
+    result.last_error = parseSubscriptionError(
+      subscription.last_error,
+      `${path}.last_error`,
+    );
+  }
+  return result;
+}
+
+export function parseService(value: unknown, path = "$"): Service {
+  const service = objectAt(value, path);
+  keysAt(
+    service,
+    ["id", "name", "kind", "enabled", "capabilities", "created_at", "updated_at"],
+    ["http", "subscription"],
+    path,
+  );
+  const id = stringAt(service.id, `${path}.id`, 3, 96);
+  if (!resourceIDPattern.test(id)) invalid(`${path}.id`, "invalid service ID");
+  const name = stringAt(service.name, `${path}.name`, 1, 128);
+  if (
+    service.kind !== "codex_subscription" &&
+    (typeof service.kind !== "string" ||
+      !httpKinds.has(service.kind as HTTPServiceKind))
+  ) {
+    invalid(`${path}.kind`, "unknown service kind");
+  }
+  if (typeof service.enabled !== "boolean") invalid(`${path}.enabled`, "expected a boolean");
+  if (!Array.isArray(service.capabilities)) {
+    invalid(`${path}.capabilities`, "expected an array");
+  }
+  const capabilities = service.capabilities.map((capability, index) =>
+    parseCapability(capability, `${path}.capabilities[${index}]`),
+  );
+  const createdAt = timestampAt(service.created_at, `${path}.created_at`);
+  const updatedAt = timestampAt(service.updated_at, `${path}.updated_at`);
+  if (Date.parse(updatedAt) < Date.parse(createdAt)) {
+    invalid(`${path}.updated_at`, "must not precede created_at");
+  }
+
+  if (service.kind === "codex_subscription") {
+    if (!Object.hasOwn(service, "subscription") || Object.hasOwn(service, "http")) {
+      invalid(path, "subscription service requires only subscription");
+    }
+    return {
+      id,
+      name,
+      kind: "codex_subscription",
+      enabled: service.enabled,
+      capabilities,
+      subscription: parseSubscriptionConnection(
+        service.subscription,
+        `${path}.subscription`,
+      ),
+      created_at: createdAt,
+      updated_at: updatedAt,
+    };
+  }
+  if (!Object.hasOwn(service, "http") || Object.hasOwn(service, "subscription")) {
+    invalid(path, "HTTP service requires only http");
+  }
+  return {
+    id,
+    name,
+    kind: service.kind as HTTPServiceKind,
+    enabled: service.enabled,
+    capabilities,
+    http: parseHTTPConnection(service.http, `${path}.http`),
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
+export function parseServicePage(value: unknown): ServicePage {
+  const page = objectAt(value, "$");
+  keysAt(page, ["items", "next_cursor"], [], "$");
+  if (!Array.isArray(page.items)) invalid("$.items", "expected an array");
+  const nextCursor =
+    page.next_cursor === null
+      ? null
+      : stringAt(page.next_cursor, "$.next_cursor", 1, 512);
+  return {
+    items: page.items.map((service, index) =>
+      parseService(service, `$.items[${index}]`),
+    ),
+    next_cursor: nextCursor,
+  };
+}
+
+export function parseServiceRecord(value: unknown): ServiceRecord {
+  const record = objectAt(value, "$");
+  keysAt(record, ["service", "etag"], [], "$");
+  const etag = stringAt(record.etag, "$.etag", 3, 128);
+  if (!etagPattern.test(etag)) invalid("$.etag", "invalid strong entity tag");
+  return { service: parseService(record.service, "$.service"), etag };
+}
+
+export function serviceKindLabel(kind: ServiceKind): string {
+  return (
+    {
+      codex_subscription: "Codex 订阅",
+      newapi: "new-api",
+      openai: "OpenAI API",
+      anthropic: "Anthropic API",
+      gemini: "Gemini API",
+      openai_compatible: "OpenAI 兼容",
+      custom: "自定义 API",
+    } satisfies Record<ServiceKind, string>
+  )[kind];
+}
+
+export function serviceStatusLabel(service: Service): string {
+  if (!service.enabled) return "已停用";
+  if (!service.subscription) return "已启用";
+  return (
+    {
+      disconnected: "待登录",
+      authorizing: "正在登录",
+      connected: "已连接",
+      needs_reauth: "需要重新登录",
+      error: "连接异常",
+    } satisfies Record<SubscriptionStatus, string>
+  )[service.subscription.status];
+}

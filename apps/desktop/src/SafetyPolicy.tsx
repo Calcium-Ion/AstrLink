@@ -23,11 +23,13 @@ import {
   type PrivacyDryRunResult,
   type PrivacyLabelMapping,
   type PrivacyModelInstallation,
+  type PrivacyModelInstallInput,
   type PrivacyModelProbe,
   type PrivacyModelVariant,
   type PrivacyPolicyPatch,
   type PrivacyPolicyRecord,
 } from "./privacy-policy-model";
+import { PageHeader } from "./PageHeader";
 
 type SafetyPolicyStatus = "blocked" | "loading" | "ready" | "error";
 type ModelView = "catalog" | "installed" | "custom";
@@ -38,6 +40,13 @@ interface CatalogPreparation {
   variant: PrivacyModelVariant;
   labelMapping: PrivacyLabelMapping;
   touchedLabels: string[];
+}
+
+interface PendingInstallation {
+  key: string;
+  name: string;
+  variant: PrivacyModelVariant;
+  input: PrivacyModelInstallInput;
 }
 
 type PendingModelAction =
@@ -371,6 +380,58 @@ function ModelActionDialog({
   );
 }
 
+function InstallationResourceDialog({
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  pending: PendingInstallation;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="token-dialog-backdrop" role="presentation">
+      <section
+        aria-labelledby="privacy-install-resource-title"
+        aria-modal="true"
+        className="token-dialog model-action-dialog"
+        role="dialog"
+      >
+        <h3 id="privacy-install-resource-title">确认安装本地模型</h3>
+        <p>
+          {pending.name} · {pending.variant.name} 资源占用较高。
+        </p>
+        <dl className="model-action-dialog__resources">
+          <div>
+            <dt>下载大小</dt>
+            <dd>{formatBytes(pending.variant.bytes_total)}</dd>
+          </div>
+          <div>
+            <dt>预计内存</dt>
+            <dd>{formatBytes(pending.variant.estimated_ram_bytes)}</dd>
+          </div>
+        </dl>
+        <p className="model-action-dialog__note">
+          性能较低的设备可能明显变慢。
+        </p>
+        <div className="token-dialog__actions">
+          <button
+            autoFocus
+            className="btn-secondary"
+            onClick={onCancel}
+            type="button"
+          >
+            返回
+          </button>
+          <button className="btn-primary" onClick={onConfirm} type="button">
+            继续安装
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function SafetyPolicy({
   coreSessionKey,
   isReady,
@@ -408,13 +469,25 @@ export function SafetyPolicy({
   const [dryRunResult, setDryRunResult] = useState<PrivacyDryRunResult | null>(
     null,
   );
+  const [minConfidenceDraft, setMinConfidenceDraft] = useState("");
   const [pendingModelAction, setPendingModelAction] =
     useState<PendingModelAction | null>(null);
+  const [pendingInstallation, setPendingInstallation] =
+    useState<PendingInstallation | null>(null);
   const generationRef = useRef(0);
   const operationRequestRef = useRef(0);
   const probeRequestRef = useRef(0);
   const pollRequestRef = useRef(0);
   const dryRunRequestRef = useRef(0);
+  const persistedMinConfidence = record?.policy.min_confidence;
+
+  useEffect(() => {
+    setMinConfidenceDraft(
+      persistedMinConfidence === undefined
+        ? ""
+        : persistedMinConfidence.toFixed(2),
+    );
+  }, [persistedMinConfidence]);
 
   const load = async (generation: number) => {
     try {
@@ -460,6 +533,7 @@ export function SafetyPolicy({
     setDryRunError(null);
     setDryRunResult(null);
     setPendingModelAction(null);
+    setPendingInstallation(null);
     setProbe(null);
     setCustomMappingOpen(false);
     setLabelMapping({});
@@ -600,6 +674,8 @@ export function SafetyPolicy({
     setSaving(true);
     setError(null);
     setNotice(null);
+    setDryRunResult(null);
+    setDryRunError(null);
 
     try {
       const next = await updatePrivacyPolicy(record.etag, patch);
@@ -704,6 +780,25 @@ export function SafetyPolicy({
     }
   };
 
+  const commitMinConfidence = () => {
+    if (record === null) return;
+    const minConfidence = Number(minConfidenceDraft);
+    if (
+      minConfidenceDraft.trim() === "" ||
+      !Number.isFinite(minConfidence) ||
+      minConfidence < 0 ||
+      minConfidence > 1
+    ) {
+      setMinConfidenceDraft(record.policy.min_confidence.toFixed(2));
+      setError("模型最低置信度必须是 0 到 1 之间的数字。");
+      return;
+    }
+    setMinConfidenceDraft(minConfidence.toFixed(2));
+    if (minConfidence !== record.policy.min_confidence) {
+      void patchPolicy({ min_confidence: minConfidence });
+    }
+  };
+
   const dryRunSampleBytes = utf8ByteLength(dryRunSample);
   const dryRunSampleOverLimit =
     dryRunSampleBytes > MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES;
@@ -714,6 +809,7 @@ export function SafetyPolicy({
       coreSessionKey === null ||
       record === null ||
       dryRunBusy ||
+      saving ||
       status !== "ready"
     ) {
       return;
@@ -754,6 +850,7 @@ export function SafetyPolicy({
           enabled: record.policy.enabled,
           detector: record.policy.detector,
           local_model_id: record.policy.local_model_id,
+          min_confidence: record.policy.min_confidence,
           request_action: record.policy.request_action,
         },
       });
@@ -787,37 +884,16 @@ export function SafetyPolicy({
     }
   };
 
-  const confirmResources = (
-    name: string,
-    variant: PrivacyModelVariant,
-  ): boolean => {
-    if (!isResourceHeavyVariant(variant)) return true;
-    return window.confirm(
-      `${name} · ${variant.name} 需要下载约 ${formatBytes(
-        variant.bytes_total,
-      )}，预计占用 ${formatBytes(
-        variant.estimated_ram_bytes,
-      )} 内存。性能较低的设备可能明显变慢，仍要继续吗？`,
-    );
-  };
-
-  const startInstallation = async (
-    key: string,
-    name: string,
-    variant: PrivacyModelVariant,
-    input: {
-      repo_id: string;
-      revision: string;
-      variant_id: string;
-      label_mapping: PrivacyLabelMapping;
-    },
-  ) => {
+  const performInstallation = async ({
+    key,
+    variant,
+    input,
+  }: PendingInstallation) => {
     if (
       !isReady ||
       coreSessionKey === null ||
       operationBusy !== null ||
-      !variant.supported ||
-      !confirmResources(name, variant)
+      !variant.supported
     ) {
       return;
     }
@@ -858,6 +934,29 @@ export function SafetyPolicy({
         setOperationBusy(null);
       }
     }
+  };
+
+  const startInstallation = (
+    key: string,
+    name: string,
+    variant: PrivacyModelVariant,
+    input: PrivacyModelInstallInput,
+  ) => {
+    if (
+      !isReady ||
+      coreSessionKey === null ||
+      operationBusy !== null ||
+      pendingInstallation !== null ||
+      !variant.supported
+    ) {
+      return;
+    }
+    const pending = { key, name, variant, input };
+    if (isResourceHeavyVariant(variant)) {
+      setPendingInstallation(pending);
+      return;
+    }
+    void performInstallation(pending);
   };
 
   const prepareCatalogInstallation = async (
@@ -1131,27 +1230,28 @@ export function SafetyPolicy({
 
   return (
     <div className="safety-policy">
-      <header className="safety-policy__header">
-        <div>
-          <span className="eyebrow">本地执行 · 全局策略</span>
-          <h2>隐私保护</h2>
-          <p>在请求发送到上游前使用规则或所选本地模型检测敏感内容。</p>
-        </div>
-        <button
-          className="btn-secondary"
-          disabled={
-            status === "loading" ||
-            saving ||
-            operationBusy !== null ||
-            probing ||
-            catalogProbeBusy !== null
-          }
-          onClick={refresh}
-          type="button"
-        >
-          {status === "loading" ? "刷新中…" : "刷新"}
-        </button>
-      </header>
+      <PageHeader
+        actions={
+          <button
+            className="btn-secondary"
+            disabled={
+              status === "loading" ||
+              saving ||
+              operationBusy !== null ||
+              probing ||
+              catalogProbeBusy !== null
+            }
+            onClick={refresh}
+            type="button"
+          >
+            {status === "loading" ? "刷新中…" : "刷新"}
+          </button>
+        }
+        description="在请求发送到上游前使用规则或所选本地模型检测敏感内容。"
+        eyebrow="本地执行 · 全局策略"
+        title="隐私保护"
+        titleId="safety-policy-heading"
+      />
 
       {error ? (
         <div className="inline-alert inline-alert--error" role="alert">
@@ -1267,6 +1367,37 @@ export function SafetyPolicy({
               </div>
             </fieldset>
 
+            <label className="safety-action" htmlFor="privacy-min-confidence">
+              <span>
+                <strong>模型最低置信度</strong>
+                <small>
+                  低于此分数的模型候选会被抑制；Regex 不受此门槛影响
+                </small>
+              </span>
+              <input
+                aria-label="模型最低置信度"
+                disabled={saving}
+                id="privacy-min-confidence"
+                max="1"
+                min="0"
+                onBlur={commitMinConfidence}
+                onChange={(event) =>
+                  setMinConfidenceDraft(event.currentTarget.value)
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    setMinConfidenceDraft(policy.min_confidence.toFixed(2));
+                  }
+                }}
+                step="0.01"
+                type="number"
+                value={minConfidenceDraft}
+              />
+            </label>
+
             <label className="safety-action" htmlFor="privacy-request-action">
               <span>
                 <strong>命中后的请求动作</strong>
@@ -1380,6 +1511,7 @@ export function SafetyPolicy({
                   className="btn-primary"
                   disabled={
                     dryRunBusy ||
+                    saving ||
                     dryRunSample.trim() === "" ||
                     dryRunSampleOverLimit ||
                     (policy.enabled &&
@@ -1424,6 +1556,69 @@ export function SafetyPolicy({
                     <span>命中类别</span>
                     <strong>{summarizeDryRunFindings(dryRunResult)}</strong>
                   </div>
+                  {dryRunResult.findings.length > 0 ? (
+                    <div className="safety-dry-run__findings">
+                      <span>通过判定（会执行策略）</span>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th scope="col">类别</th>
+                            <th scope="col">位置</th>
+                            <th scope="col">命中原因</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dryRunResult.findings.map((finding, index) => (
+                            <tr
+                              key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
+                            >
+                              <td>{dryRunKindLabel(finding.kind)}</td>
+                              <td>
+                                <code>{finding.path}</code>
+                              </td>
+                              <td>
+                                {policy.detector === "regex"
+                                  ? "Regex 命中（置信度门槛不适用）"
+                                  : `${finding.confidence.toFixed(6)} ≥ ${policy.min_confidence.toFixed(2)}`}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                  {dryRunResult.suppressed_findings.length > 0 ? (
+                    <div className="safety-dry-run__findings safety-dry-run__findings--suppressed">
+                      <span>低于门槛（已抑制，不执行策略）</span>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th scope="col">类别</th>
+                            <th scope="col">位置</th>
+                            <th scope="col">抑制原因</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dryRunResult.suppressed_findings.map(
+                            (finding, index) => (
+                              <tr
+                                key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
+                              >
+                                <td>{dryRunKindLabel(finding.kind)}</td>
+                                <td>
+                                  <code>{finding.path}</code>
+                                </td>
+                                <td>
+                                  {finding.confidence.toFixed(6)} &lt;{" "}
+                                  {policy.min_confidence.toFixed(2)}
+                                </td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
                   {dryRunResult.redactions !== undefined &&
                   dryRunResult.redactions.length > 0 ? (
                     <div className="safety-dry-run__redactions">
@@ -2043,6 +2238,17 @@ export function SafetyPolicy({
           installation={pendingActionInstallation}
           onCancel={() => setPendingModelAction(null)}
           onConfirm={confirmPendingModelAction}
+        />
+      ) : null}
+      {pendingInstallation !== null ? (
+        <InstallationResourceDialog
+          onCancel={() => setPendingInstallation(null)}
+          onConfirm={() => {
+            const pending = pendingInstallation;
+            setPendingInstallation(null);
+            void performInstallation(pending);
+          }}
+          pending={pendingInstallation}
         />
       ) : null}
     </div>

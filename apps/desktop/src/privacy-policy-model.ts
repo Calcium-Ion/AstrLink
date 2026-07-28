@@ -36,6 +36,7 @@ export interface PrivacyPolicy {
   priority: number;
   detector: PrivacyDetector;
   local_model_id: string | null;
+  min_confidence: number;
   request_action: PrivacyAction;
   response_action: PrivacyAction;
   response_restore: boolean;
@@ -58,6 +59,7 @@ export type PrivacyPolicyPatch = Partial<
     | "enabled"
     | "detector"
     | "local_model_id"
+    | "min_confidence"
     | "request_action"
     | "response_restore"
   >
@@ -86,6 +88,7 @@ export interface PrivacyDryRunFinding {
   path: string;
   start: number;
   end: number;
+  confidence: number;
 }
 
 export interface PrivacyDryRunRedaction {
@@ -98,6 +101,7 @@ export interface PrivacyDryRunResult {
   decision: PrivacyAction;
   findings_summary: string;
   findings: PrivacyDryRunFinding[];
+  suppressed_findings: PrivacyDryRunFinding[];
   redactions?: PrivacyDryRunRedaction[];
   redacted_body?: string;
   inspected_body: string;
@@ -307,6 +311,18 @@ function safeIntegerAt(
     invalid(path, `expected a safe integer greater than or equal to ${minimum}`);
   }
   return value as number;
+}
+
+function unitIntervalAt(value: unknown, path: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 1
+  ) {
+    invalid(path, "expected a number between 0 and 1");
+  }
+  return value;
 }
 
 function rfc3339At(value: unknown, path: string): string {
@@ -561,6 +577,7 @@ export function parsePrivacyPolicy(
       "priority",
       "detector",
       "local_model_id",
+      "min_confidence",
       "request_action",
       "response_action",
       "response_restore",
@@ -623,6 +640,10 @@ export function parsePrivacyPolicy(
     priority,
     detector,
     local_model_id: localModelID,
+    min_confidence: unitIntervalAt(
+      policy.min_confidence,
+      `${path}.min_confidence`,
+    ),
     request_action: policy.request_action as PrivacyAction,
     response_action: policy.response_action as PrivacyAction,
     response_restore: booleanAt(policy.response_restore, `${path}.response_restore`),
@@ -662,7 +683,12 @@ function parsePrivacyDryRunFinding(
   path: string,
 ): PrivacyDryRunFinding {
   const finding = objectAt(value, path);
-  keysAt(finding, ["kind", "path", "start", "end"], [], path);
+  keysAt(
+    finding,
+    ["kind", "path", "start", "end", "confidence"],
+    [],
+    path,
+  );
   if (
     typeof finding.kind !== "string" ||
     !canonicalKinds.has(finding.kind as CanonicalPrivacyKind)
@@ -679,6 +705,7 @@ function parsePrivacyDryRunFinding(
     path: stringAt(finding.path, `${path}.path`, 1, 512),
     start,
     end,
+    confidence: unitIntervalAt(finding.confidence, `${path}.confidence`),
   };
 }
 
@@ -688,7 +715,13 @@ export function parsePrivacyDryRunResult(
   const result = objectAt(value, "$");
   keysAt(
     result,
-    ["decision", "findings_summary", "findings", "inspected_body"],
+    [
+      "decision",
+      "findings_summary",
+      "findings",
+      "suppressed_findings",
+      "inspected_body",
+    ],
     ["redacted_body", "redactions"],
     "$",
   );
@@ -704,10 +737,24 @@ export function parsePrivacyDryRunResult(
   const findings = result.findings.map((finding, index) =>
     parsePrivacyDryRunFinding(finding, `$.findings[${index}]`),
   );
+  if (
+    !Array.isArray(result.suppressed_findings) ||
+    result.suppressed_findings.length > 4_096
+  ) {
+    invalid("$.suppressed_findings", "expected at most 4096 findings");
+  }
+  const suppressedFindings = result.suppressed_findings.map(
+    (finding, index) =>
+      parsePrivacyDryRunFinding(
+        finding,
+        `$.suppressed_findings[${index}]`,
+      ),
+  );
   const parsed: PrivacyDryRunResult = {
     decision: result.decision as PrivacyAction,
     findings_summary: stringAt(result.findings_summary, "$.findings_summary", 0, 4_096),
     findings,
+    suppressed_findings: suppressedFindings,
     inspected_body: stringAt(
       result.inspected_body,
       "$.inspected_body",
@@ -797,6 +844,7 @@ function validatePrivacyPolicyPatch(
       "enabled",
       "detector",
       "local_model_id",
+      "min_confidence",
       "request_action",
       "response_restore",
     ],
@@ -823,6 +871,12 @@ function validatePrivacyPolicyPatch(
       object.local_model_id === null
         ? null
         : installationIDAt(object.local_model_id, "$.policy.local_model_id");
+  }
+  if (Object.hasOwn(object, "min_confidence")) {
+    validated.min_confidence = unitIntervalAt(
+      object.min_confidence,
+      "$.policy.min_confidence",
+    );
   }
   if (Object.hasOwn(object, "request_action")) {
     if (

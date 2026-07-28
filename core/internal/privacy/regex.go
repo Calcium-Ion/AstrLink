@@ -109,10 +109,11 @@ func (detector *RegexDetector) Detect(ctx context.Context, input DetectInput) ([
 					continue
 				}
 				candidates = append(candidates, Finding{
-					Segment: segmentIndex,
-					Start:   location[0],
-					End:     location[1],
-					Kind:    spec.kind,
+					Segment:    segmentIndex,
+					Start:      location[0],
+					End:        location[1],
+					Kind:       spec.kind,
+					Confidence: 1,
 				})
 			}
 		}

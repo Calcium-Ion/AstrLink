@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://astrlink.dev/contracts/protocol-capabilities.schema.json",
   "title": "AstrLink Protocol Capabilities",
-  "description": "The strict response contract for GET /control/v1/capabilities plus reusable protocol, endpoint-capability, execution-plan, and audit-setting definitions. Protocol IDs remain open strings so later protocol families do not require a persistence migration.",
+  "description": "The strict response contract for GET /control/v1/capabilities plus reusable protocol, service-capability, execution-plan, and audit-setting definitions. Protocol IDs remain open strings so later protocol families do not require a persistence migration.",
   "type": "object",
   "required": [
     "protocol_contract_version",
@@ -325,7 +325,7 @@
         }
       ]
     },
-    "EndpointKind": {
+    "HTTPServiceKind": {
       "type": "string",
       "enum": [
         "newapi",
@@ -335,18 +335,18 @@
         "openai_compatible",
         "custom"
       ],
-      "description": "Connection/authentication adapter ID. `custom` is the extension adapter; routing must use capabilities, never infer protocol support from endpoint kind."
+      "description": "HTTP service adapter ID. `custom` is the extension adapter; routing must use capabilities, never infer protocol support from service kind."
     },
     "CredentialRef": {
       "type": "string",
       "minLength": 1,
       "maxLength": 512,
-      "pattern": "^(?:local://endpoint/[a-z][a-z0-9_-]{2,95}|keyring://[A-Za-z0-9._~-]+/[A-Za-z0-9._~!$&'()*+,;=:@/-]*[A-Za-z0-9._~!$&'()*+,;=:@-])$",
+      "pattern": "^(?:local://service/[a-z][a-z0-9_-]{2,95}|keyring://[A-Za-z0-9._~-]+/[A-Za-z0-9._~!$&'()*+,;=:@/-]*[A-Za-z0-9._~!$&'()*+,;=:@-])$",
       "examples": [
-        "local://endpoint/endpoint_01",
-        "keyring://endpoint/endpoint_01"
+        "local://service/service_01",
+        "keyring://astrlink/subscription/service_codex_01"
       ],
-      "description": "Opaque, non-secret credential locator. local://endpoint/<id> is the Alpha default; keyring:// is reserved for optional adapters."
+      "description": "Opaque, non-secret credential locator. local://service/<id> is the HTTP-service default; keyring:// is used by secure subscription adapters."
     },
     "AuthScheme": {
       "type": "string",
@@ -358,7 +358,7 @@
         "custom_header"
       ]
     },
-    "EndpointAuth": {
+    "ServiceAuth": {
       "type": "object",
       "required": [
         "scheme"
@@ -405,7 +405,7 @@
       ],
       "description": "Non-secret authentication configuration. Credential bytes are stored separately behind CredentialStore."
     },
-    "EndpointCapability": {
+    "ServiceCapability": {
       "type": "object",
       "required": [
         "protocol",
@@ -422,7 +422,7 @@
             "native",
             "delegated"
           ],
-          "description": "RelayKit is intentionally absent: it is a local execution engine rather than an upstream endpoint capability."
+          "description": "RelayKit is intentionally absent: it is a local execution engine rather than an upstream service capability."
         },
         "streaming": {
           "type": "boolean",
@@ -477,7 +477,7 @@
         "plan_type",
         "input_protocol",
         "upstream_protocol",
-        "endpoint_id",
+        "service_id",
         "streaming",
         "conversion_path"
       ],
@@ -491,7 +491,7 @@
         "upstream_protocol": {
           "$ref": "#/$defs/ProtocolId"
         },
-        "endpoint_id": {
+        "service_id": {
           "$ref": "#/$defs/ResourceId"
         },
         "streaming": {
@@ -549,6 +549,7 @@
       "required": [
         "request_body_enabled",
         "response_content_enabled",
+        "http_meta_enabled",
         "request_body_max_bytes",
         "response_content_max_bytes",
         "metadata_retention_days",
@@ -564,6 +565,11 @@
           "type": "boolean",
           "default": false,
           "description": "Independent response-content audit switch. New installations and upgrades default to false."
+        },
+        "http_meta_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "HTTP metadata capture switch (ADR 0008). Values are redacted at capture time and encrypted at rest; defaults to true."
         },
         "request_body_max_bytes": {
           "type": "integer",
@@ -602,7 +608,7 @@
       "maxLength": 96,
       "pattern": "^[a-z][a-z0-9_-]*$",
       "examples": [
-        "endpoint_01",
+        "service_01",
         "route_default"
       ]
     },

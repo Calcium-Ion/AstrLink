@@ -22,11 +22,13 @@ info:
     audit-body switches are independent, default to false, and can only be enabled
     through this authenticated control API after explicit risk acknowledgement.
 
-    The three bootstrap GET operations are always available. Authenticated Endpoint
-    CRUD, persistent local access-token operations, the fixed privacy policy, and
-    selectable privacy-model catalog/installation management are available when
-    Core is launched with its persistent data directory and a per-start control
-    token delivered over stdin.
+    The three bootstrap GET operations are always available. Authenticated Service
+    CRUD, service-scoped subscription OAuth, priority Route CRUD, persistent local
+    access-token operations, the fixed
+    privacy policy, and selectable privacy-model catalog/installation management
+    are available when Core is launched with its persistent data directory and a
+    per-start control token delivered over stdin. The stable auto Route shape is
+    rejected with 422 until the classifier runtime reaches its activation gates.
     Remaining paths freeze the forward control contract and stay marked
     `x-astrlink-implementation-status: planned`; their presence is not a runtime
     capability claim.
@@ -40,16 +42,22 @@ servers:
 security:
   - controlToken: []
 x-astrlink-implementation:
-  milestone: M3-endpoint-slice
+  milestone: M3-unified-service-slice
   implemented_operations:
     - GET /control/v1/health
     - GET /control/v1/version
     - GET /control/v1/capabilities
-    - GET /control/v1/endpoints
-    - POST /control/v1/endpoints
-    - GET /control/v1/endpoints/{endpoint_id}
-    - PATCH /control/v1/endpoints/{endpoint_id}
-    - DELETE /control/v1/endpoints/{endpoint_id}
+    - GET /control/v1/services
+    - POST /control/v1/services
+    - GET /control/v1/services/{service_id}
+    - PATCH /control/v1/services/{service_id}
+    - DELETE /control/v1/services/{service_id}
+    - POST /control/v1/services/{service_id}/authorization
+    - GET /control/v1/services/{service_id}/authorization
+    - DELETE /control/v1/services/{service_id}/authorization
+    - POST /control/v1/services/{service_id}/logout
+    - POST /control/v1/services/{service_id}/probe-models
+    - POST /control/v1/services/{service_id}/probe-responses
     - GET /control/v1/access-tokens
     - POST /control/v1/access-tokens
     - GET /control/v1/access-tokens/{token_id}/secret
@@ -79,12 +87,14 @@ x-astrlink-ready-announcement:
 tags:
   - name: Bootstrap
     description: Non-sensitive process bootstrap and compatibility handshake.
-  - name: Endpoints
-    description: Upstream connection configuration. Credentials are write-only and stored separately behind CredentialStore.
+  - name: Services
+    description: |
+      The sole top-level API-service aggregate. Codex subscriptions and HTTP
+      providers/gateways are service variants with independent IDs.
   - name: Access Tokens
     description: Persistent local inference credentials. Secrets are returned only by explicit create and reveal operations.
   - name: Routes
-    description: Deterministic protocol- and model-aware routing configuration.
+    description: Priority routing plus the reserved `astrlink/auto` virtual-model candidate pool.
   - name: Policies
     description: Content safety policies and privileged encrypted body-audit settings.
   - name: Privacy Model
@@ -219,12 +229,12 @@ paths:
                   version: null
                   available: false
                   edges: []
-  /control/v1/endpoints:
+  /control/v1/services:
     x-astrlink-implementation-status: implemented
     get:
-      tags: [Endpoints]
-      operationId: listEndpoints
-      summary: List configured upstream endpoints.
+      tags: [Services]
+      operationId: listServices
+      summary: List every configured API service, including subscription and HTTP variants.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -235,32 +245,36 @@ paths:
         - name: kind
           in: query
           schema:
-            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
+            $ref: "#/components/schemas/ServiceKind"
       responses:
         "200":
-          description: Endpoint page. Credential secrets are never returned; an opaque credential reference may be present.
+          description: Service page. Credential secrets and OAuth tokens are never returned.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EndpointPage"
+                $ref: "#/components/schemas/ServicePage"
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
-      tags: [Endpoints]
-      operationId: createEndpoint
-      summary: Create an endpoint and optionally store its credential.
+      tags: [Services]
+      operationId: createService
+      summary: Create one independently addressable API service.
+      description: |
+        `codex_subscription` creates a disconnected service that is authorized
+        through its service-scoped OAuth operation. HTTP kinds such as `newapi`
+        carry an `http` connection and optional write-only credential.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EndpointCreate"
+              $ref: "#/components/schemas/ServiceCreate"
       responses:
         "201":
-          description: Endpoint created.
+          description: Service created.
           headers:
             Location:
               $ref: "#/components/headers/Location"
@@ -271,7 +285,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Endpoint"
+                $ref: "#/components/schemas/Service"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -280,17 +294,19 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
-  /control/v1/endpoints/{endpoint_id}:
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /control/v1/services/{service_id}:
     x-astrlink-implementation-status: implemented
     parameters:
-      - $ref: "#/components/parameters/EndpointId"
+      - $ref: "#/components/parameters/ServiceId"
     get:
-      tags: [Endpoints]
-      operationId: getEndpoint
-      summary: Read one endpoint without exposing credential material.
+      tags: [Services]
+      operationId: getService
+      summary: Read one service without exposing credential material.
       responses:
         "200":
-          description: Endpoint details.
+          description: Service details.
           headers:
             ETag:
               $ref: "#/components/headers/ETag"
@@ -299,15 +315,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Endpoint"
+                $ref: "#/components/schemas/Service"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
-      tags: [Endpoints]
-      operationId: updateEndpoint
-      summary: Update an endpoint or rotate its write-only credential.
+      tags: [Services]
+      operationId: updateService
+      summary: Update service metadata or an HTTP service connection.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -315,10 +331,10 @@ paths:
         content:
           application/merge-patch+json:
             schema:
-              $ref: "#/components/schemas/EndpointPatch"
+              $ref: "#/components/schemas/ServicePatch"
       responses:
         "200":
-          description: Updated endpoint.
+          description: Updated service.
           headers:
             ETag:
               $ref: "#/components/headers/ETag"
@@ -327,7 +343,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Endpoint"
+                $ref: "#/components/schemas/Service"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -339,14 +355,14 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
     delete:
-      tags: [Endpoints]
-      operationId: deleteEndpoint
-      summary: Delete an endpoint after reference checks.
+      tags: [Services]
+      operationId: deleteService
+      summary: Delete one service after route-reference checks.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       responses:
         "204":
-          description: Endpoint and its CredentialStore value were deleted.
+          description: Service and its local credential material were deleted.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -355,37 +371,169 @@ paths:
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
-  /control/v1/endpoints/{endpoint_id}/test:
-    x-astrlink-implementation-status: planned
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /control/v1/services/{service_id}/authorization:
+    x-astrlink-implementation-status: implemented
     parameters:
-      - $ref: "#/components/parameters/EndpointId"
+      - $ref: "#/components/parameters/ServiceId"
     post:
-      tags: [Endpoints]
-      operationId: testEndpoint
-      summary: Probe connectivity and protocol capabilities.
-      description: A completed probe returns HTTP 200 even when the endpoint test fails; inspect `status`.
+      tags: [Services]
+      operationId: beginServiceAuthorization
+      summary: Start browser or Device Code OAuth for this subscription service only.
       requestBody:
         required: false
+        description: Omit the body only for legacy browser-flow callers; JSON bodies must include an explicit flow.
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EndpointTestRequest"
+              $ref: "#/components/schemas/AuthorizationStartRequest"
       responses:
-        "200":
-          description: Completed endpoint probe.
+        "202":
+          description: Service-scoped authorization session started.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EndpointTestResult"
+                $ref: "#/components/schemas/AuthorizationSession"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    get:
+      tags: [Services]
+      operationId: getServiceAuthorization
+      summary: Read the current OAuth session for this service.
+      responses:
+        "200":
+          description: Authorization session without codes, verifiers, or tokens.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Services]
+      operationId: cancelServiceAuthorization
+      summary: Cancel the pending OAuth session for this service.
+      responses:
+        "200":
+          description: Cancelled authorization session.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /control/v1/services/{service_id}/logout:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    post:
+      tags: [Services]
+      operationId: logoutService
+      summary: Delete OAuth credentials while retaining the subscription service.
+      responses:
+        "200":
+          description: Disconnected service.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /control/v1/services/{service_id}/probe-models:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    post:
+      tags: [Services]
+      operationId: probeServiceModels
+      summary: Discover models through a connected subscription service.
+      responses:
+        "200":
+          description: Provider model list summary.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceModelProbe"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /control/v1/services/{service_id}/probe-responses:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    post:
+      tags: [Services]
+      operationId: probeServiceResponses
+      summary: Execute one non-streaming Responses probe through a connected subscription service.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                model:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+      responses:
+        "200":
+          description: Probe summary without upstream credential material.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponsesProbe"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
   /control/v1/access-tokens:
     x-astrlink-implementation-status: implemented
     get:
@@ -475,7 +623,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
   /control/v1/routes:
-    x-astrlink-implementation-status: planned
+    x-astrlink-implementation-status: implemented
     get:
       tags: [Routes]
       operationId: listRoutes
@@ -532,7 +680,7 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
   /control/v1/routes/{route_id}:
-    x-astrlink-implementation-status: planned
+    x-astrlink-implementation-status: implemented
     parameters:
       - $ref: "#/components/parameters/RouteId"
     get:
@@ -1018,7 +1166,7 @@ paths:
           in: query
           schema:
             $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        - name: endpoint_id
+        - name: service_id
           in: query
           schema:
             $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -1164,8 +1312,8 @@ components:
       schema:
         type: string
         format: date-time
-    EndpointId:
-      name: endpoint_id
+    ServiceId:
+      name: service_id
       in: path
       required: true
       schema:
@@ -1427,16 +1575,76 @@ components:
           maxLength: 64
           pattern: "^(?:[0-9a-f]{7,64}|unknown)$"
       additionalProperties: false
-    Endpoint:
+    ServiceKind:
+      type: string
+      enum:
+        - codex_subscription
+        - newapi
+        - openai
+        - anthropic
+        - gemini
+        - openai_compatible
+        - custom
+      description: >
+        Product-level service type. `codex_subscription` is browser-authorized;
+        every other current value is an HTTP API service.
+    HTTPServiceConnection:
       type: object
-      required:
-        - id
-        - name
-        - kind
-        - base_url
-        - auth
-        - enabled
-        - capabilities
+      required: [base_url, auth]
+      properties:
+        base_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: "^https?://[^?#]+$"
+          not:
+            pattern: "^https?://[^/]*@"
+          description: HTTP(S) origin or reverse-proxy path prefix without userinfo, query, or fragment.
+        auth:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ServiceAuth
+        credential_ref:
+          type: string
+          pattern: "^local://service/[a-z][a-z0-9_-]{2,95}$"
+          readOnly: true
+          description: Opaque local credential reference; never contains credential bytes.
+      additionalProperties: false
+    SubscriptionServiceConnection:
+      type: object
+      required: [provider, status]
+      properties:
+        provider:
+          type: string
+          enum: [openai_codex]
+        status:
+          type: string
+          enum: [disconnected, authorizing, connected, needs_reauth, error]
+        account_hint:
+          type: string
+          maxLength: 128
+        provider_account_id:
+          type: string
+          maxLength: 256
+        credential_ref:
+          type: string
+          maxLength: 512
+          pattern: "^keyring://"
+          readOnly: true
+          description: Opaque keyring reference; OAuth token bytes never cross the control API.
+        authorization_boundary:
+          type: string
+          maxLength: 240
+        token_expires_at:
+          type: string
+          format: date-time
+        last_refresh_at:
+          type: string
+          format: date-time
+        last_error:
+          $ref: "#/components/schemas/SubscriptionError"
+      additionalProperties: false
+    Service:
+      type: object
+      required: [id, name, kind, enabled, capabilities, created_at, updated_at]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -1445,7 +1653,41 @@ components:
           minLength: 1
           maxLength: 128
         kind:
-          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
+          $ref: "#/components/schemas/ServiceKind"
+        enabled:
+          type: boolean
+        capabilities:
+          type: array
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ServiceCapability
+        http:
+          $ref: "#/components/schemas/HTTPServiceConnection"
+        subscription:
+          $ref: "#/components/schemas/SubscriptionServiceConnection"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+      oneOf:
+        - properties:
+            kind:
+              const: codex_subscription
+          required: [subscription]
+          not:
+            required: [http]
+        - properties:
+            kind:
+              $ref: ./protocol-capabilities.schema.json#/$defs/HTTPServiceKind
+          required: [http]
+          not:
+            required: [subscription]
+    HTTPServiceConnectionInput:
+      type: object
+      required: [base_url, auth]
+      properties:
         base_url:
           type: string
           format: uri
@@ -1453,30 +1695,47 @@ components:
           pattern: "^https?://[^?#]+$"
           not:
             pattern: "^https?://[^/]*@"
-          description: HTTP(S) origin or reverse-proxy path prefix. Userinfo and URL query credentials are forbidden. If the prefix ends in the same /v1 or /v1beta segment as the selected protocol path, Core folds exactly one duplicate version segment.
         auth:
-          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointAuth
-        enabled:
-          type: boolean
-        credential_ref:
-          $ref: ./protocol-capabilities.schema.json#/$defs/CredentialRef
-          readOnly: true
-          description: Opaque reference only; local is the default backend, keyring is optional, and neither form contains credential material.
-        capabilities:
-          type: array
-          items:
-            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
+          $ref: ./protocol-capabilities.schema.json#/$defs/ServiceAuth
+        credential:
+          $ref: "#/components/schemas/CredentialInput"
       additionalProperties: false
-    EndpointCreate:
+    ServiceCreate:
       type: object
-      required: [name, kind, base_url, auth, capabilities]
+      required: [name, kind]
       properties:
         name:
           type: string
           minLength: 1
           maxLength: 128
         kind:
-          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
+          $ref: "#/components/schemas/ServiceKind"
+        enabled:
+          type: boolean
+          default: true
+        http:
+          $ref: "#/components/schemas/HTTPServiceConnectionInput"
+        capabilities:
+          type: array
+          items:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ServiceCapability
+      additionalProperties: false
+      oneOf:
+        - properties:
+            kind:
+              const: codex_subscription
+          not:
+            anyOf:
+              - required: [http]
+              - required: [capabilities]
+        - properties:
+            kind:
+              $ref: ./protocol-capabilities.schema.json#/$defs/HTTPServiceKind
+          required: [http, capabilities]
+    HTTPServiceConnectionPatch:
+      type: object
+      minProperties: 1
+      properties:
         base_url:
           type: string
           format: uri
@@ -1484,20 +1743,15 @@ components:
           pattern: "^https?://[^?#]+$"
           not:
             pattern: "^https?://[^/]*@"
-        enabled:
-          type: boolean
-          default: true
         auth:
-          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointAuth
+          $ref: ./protocol-capabilities.schema.json#/$defs/ServiceAuth
         credential:
-          $ref: "#/components/schemas/CredentialInput"
-        capabilities:
-          type: array
-          default: []
-          items:
-            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
+          oneOf:
+            - $ref: "#/components/schemas/CredentialInput"
+            - type: "null"
+              description: Remove the stored HTTP credential.
       additionalProperties: false
-    EndpointPatch:
+    ServicePatch:
       type: object
       minProperties: 1
       properties:
@@ -1505,28 +1759,14 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-        kind:
-          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointKind
-        base_url:
-          type: string
-          format: uri
-          maxLength: 2048
-          pattern: "^https?://[^?#]+$"
-          not:
-            pattern: "^https?://[^/]*@"
         enabled:
           type: boolean
-        auth:
-          $ref: ./protocol-capabilities.schema.json#/$defs/EndpointAuth
-        credential:
-          oneOf:
-            - $ref: "#/components/schemas/CredentialInput"
-            - type: "null"
-              description: Remove the stored credential.
+        http:
+          $ref: "#/components/schemas/HTTPServiceConnectionPatch"
         capabilities:
           type: array
           items:
-            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
+            $ref: ./protocol-capabilities.schema.json#/$defs/ServiceCapability
       additionalProperties: false
     CredentialInput:
       type: object
@@ -1539,60 +1779,61 @@ components:
           writeOnly: true
           description: Stored through CredentialStore and never returned or logged.
       additionalProperties: false
-    EndpointHealth:
+    AstrLinkAutoModel:
+      type: string
+      const: astrlink/auto
+      description: >
+        Reserved public virtual-model identifier. It is never an ordinary
+        alias: requests using this exact model require a Route whose
+        selection.mode is auto.
+    RouteSelectionMode:
+      type: string
+      enum: [priority, auto]
+      description: >
+        priority chooses targets in deterministic target-priority order. auto
+        applies hard capability constraints, classifies the bounded request into
+        one category in a versioned taxonomy, keeps the targets configured under
+        that category_id, and then uses target priority as the deterministic
+        selection and fallback order. The classifier never predicts a target or
+        upstream model identifier.
+    RouteSelection:
       type: object
-      required: [status]
+      required: [mode]
       properties:
-        status:
+        mode:
+          $ref: "#/components/schemas/RouteSelectionMode"
+        taxonomy_id:
           type: string
-          enum: [unknown, healthy, unhealthy, testing, disabled]
-        checked_at:
-          type: [string, "null"]
-          format: date-time
-        latency_ms:
-          type: [integer, "null"]
-          minimum: 0
-        error_category:
-          type: [string, "null"]
+          minLength: 1
           maxLength: 64
-          pattern: "^[a-z][a-z0-9_]*$"
+          pattern: '^[a-z][a-z0-9._-]{0,63}$'
+          example: astrlink-text-v1
+          description: >
+            Versioned task-classification taxonomy used by auto selection.
+            Required when mode is auto and forbidden when mode is priority.
+            It identifies label semantics, not a classifier implementation.
+      allOf:
+        - if:
+            properties:
+              mode:
+                const: auto
+            required: [mode]
+          then:
+            required: [taxonomy_id]
+          else:
+            not:
+              required: [taxonomy_id]
       additionalProperties: false
-    EndpointTestRequest:
-      type: object
-      properties:
-        protocols:
-          type: array
-          uniqueItems: true
-          items:
-            $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        timeout_ms:
-          type: integer
-          minimum: 100
-          maximum: 60000
-          default: 10000
-      additionalProperties: false
-    EndpointTestResult:
-      type: object
-      required: [status, checked_at, latency_ms, capabilities, error]
-      properties:
-        status:
-          type: string
-          enum: [succeeded, failed]
-        checked_at:
-          type: string
-          format: date-time
-        latency_ms:
-          type: integer
-          minimum: 0
-        capabilities:
-          type: array
-          items:
-            $ref: ./protocol-capabilities.schema.json#/$defs/EndpointCapability
-        error:
-          oneOf:
-            - $ref: "#/components/schemas/ErrorSummary"
-            - type: "null"
-      additionalProperties: false
+      description: >
+        Optional target-selection strategy. Omission is exactly equivalent to
+        mode priority, preserving existing Route behavior. Mode auto requires
+        match.model to equal astrlink/auto and replaces the ordinary top-level
+        targets array with at least two RouteCategory objects. Every category
+        owns one or more targets, every target has a concrete upstream_model,
+        and the complete Route contains at least two distinct upstream model
+        names. The taxonomy ID and category-owned model pools are stable
+        configuration; classifier weights, confidence values, and model-ranking
+        predictions are not.
     Route:
       type: object
       required:
@@ -1601,7 +1842,6 @@ components:
         - enabled
         - priority
         - match
-        - targets
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -1617,15 +1857,52 @@ components:
           maximum: 1000000
         match:
           $ref: "#/components/schemas/RouteMatch"
+        selection:
+          $ref: "#/components/schemas/RouteSelection"
         targets:
           type: array
           minItems: 1
           items:
             $ref: "#/components/schemas/RouteTarget"
+        categories:
+          type: array
+          minItems: 2
+          items:
+            $ref: "#/components/schemas/RouteCategory"
+      allOf:
+        - if:
+            properties:
+              selection:
+                properties:
+                  mode:
+                    const: auto
+                required: [mode]
+            required: [selection]
+          then:
+            required: [categories]
+            properties:
+              match:
+                properties:
+                  model:
+                    $ref: "#/components/schemas/AstrLinkAutoModel"
+                required: [model]
+            not:
+              required: [targets]
+          else:
+            required: [targets]
+            properties:
+              match:
+                not:
+                  properties:
+                    model:
+                      $ref: "#/components/schemas/AstrLinkAutoModel"
+                  required: [model]
+            not:
+              required: [categories]
       additionalProperties: false
     RouteCreate:
       type: object
-      required: [name, priority, match, targets]
+      required: [name, priority, match]
       properties:
         name:
           type: string
@@ -1640,11 +1917,48 @@ components:
           maximum: 1000000
         match:
           $ref: "#/components/schemas/RouteMatch"
+        selection:
+          $ref: "#/components/schemas/RouteSelection"
         targets:
           type: array
           minItems: 1
           items:
             $ref: "#/components/schemas/RouteTarget"
+        categories:
+          type: array
+          minItems: 2
+          items:
+            $ref: "#/components/schemas/RouteCategory"
+      allOf:
+        - if:
+            properties:
+              selection:
+                properties:
+                  mode:
+                    const: auto
+                required: [mode]
+            required: [selection]
+          then:
+            required: [categories]
+            properties:
+              match:
+                properties:
+                  model:
+                    $ref: "#/components/schemas/AstrLinkAutoModel"
+                required: [model]
+            not:
+              required: [targets]
+          else:
+            required: [targets]
+            properties:
+              match:
+                not:
+                  properties:
+                    model:
+                      $ref: "#/components/schemas/AstrLinkAutoModel"
+                  required: [model]
+            not:
+              required: [categories]
       additionalProperties: false
     RoutePatch:
       type: object
@@ -1662,11 +1976,30 @@ components:
           maximum: 1000000
         match:
           $ref: "#/components/schemas/RouteMatch"
+        selection:
+          oneOf:
+            - $ref: "#/components/schemas/RouteSelection"
+            - type: "null"
+              description: Restore the backward-compatible priority selection mode.
         targets:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/RouteTarget"
+          oneOf:
+            - type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/RouteTarget"
+            - type: "null"
+              description: Remove top-level priority targets when switching to auto.
+        categories:
+          oneOf:
+            - type: array
+              minItems: 2
+              items:
+                $ref: "#/components/schemas/RouteCategory"
+            - type: "null"
+              description: Remove category pools when switching to priority.
+          description: >
+            After applying a merge patch, the resulting Route must satisfy the
+            priority/auto conditional shape and full cross-field validation.
       additionalProperties: false
     RouteMatch:
       type: object
@@ -1678,17 +2011,20 @@ components:
           type: string
           minLength: 1
           maxLength: 256
-          description: Exact public model or alias. Omission matches any model.
+          description: >
+            Exact public model or alias. Omission matches any model.
+            astrlink/auto is reserved and is valid only with
+            selection.mode=auto.
       additionalProperties: false
     RouteTarget:
       type: object
       required:
-        - endpoint_id
+        - service_id
         - plan_type
         - upstream_protocol
         - priority
       properties:
-        endpoint_id:
+        service_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         plan_type:
           $ref: ./protocol-capabilities.schema.json#/$defs/PlanType
@@ -1703,7 +2039,36 @@ components:
           type: string
           minLength: 1
           maxLength: 256
-          description: Rewrite the public model to this upstream model for this target. Requires a non-empty match.model on the route. Omission preserves the public model bytes.
+          description: >
+            Rewrite the public model to this upstream model for this target.
+            Requires a non-empty match.model on the route. Omission preserves
+            the public model bytes. Every auto-selection target requires this
+            field; target priority remains its deterministic low-confidence and
+            transport-failure fallback order.
+      additionalProperties: false
+    RouteCategory:
+      type: object
+      required: [category_id, targets]
+      properties:
+        category_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9._-]{0,63}$'
+          description: >
+            One classifier output from selection.taxonomy_id. Category IDs are
+            supplied by AstrLink's versioned taxonomy, not inferred from model
+            names.
+        targets:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/RouteTarget"
+          description: >
+            Ordered concrete model candidates configured under this category.
+            Multiple models are allowed and target priority determines the
+            category-local selection and transport-fallback order. The same
+            concrete model may appear in another category explicitly.
       additionalProperties: false
     Policy:
       type: object
@@ -1714,6 +2079,7 @@ components:
         - priority
         - detector
         - local_model_id
+        - min_confidence
         - match
         - request_action
         - response_action
@@ -1738,6 +2104,15 @@ components:
             - $ref: "#/components/schemas/PrivacyModelInstallationId"
             - type: "null"
           description: Required to reference a ready installation when detector is local_model; null for regex.
+        min_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.8
+          description: >
+            Inclusive confidence threshold for local-model findings. Candidates
+            below this value are suppressed before the request action is chosen.
+            Regex findings do not use this threshold.
         match:
           $ref: "#/components/schemas/PolicyMatch"
         request_action:
@@ -1774,6 +2149,11 @@ components:
           oneOf:
             - $ref: "#/components/schemas/PrivacyModelInstallationId"
             - type: "null"
+        min_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.8
         match:
           $ref: "#/components/schemas/PolicyMatch"
         request_action:
@@ -1794,6 +2174,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/PrivacyModelInstallationId"
             - type: "null"
+        min_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
         request_action:
           $ref: "#/components/schemas/PolicyAction"
         response_restore:
@@ -1816,7 +2200,7 @@ components:
       additionalProperties: false
     PolicyDryRunFinding:
       type: object
-      required: [kind, path, start, end]
+      required: [kind, path, start, end, confidence]
       description: >
         Matched span metadata only. Never includes matched plaintext; sample
         plaintext for placeholders appears solely on redactions for local dry-run.
@@ -1833,6 +2217,11 @@ components:
         end:
           type: integer
           minimum: 1
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Detector confidence retained from the local worker; Regex findings use 1.
       additionalProperties: false
     PolicyDryRunRedaction:
       type: object
@@ -1849,7 +2238,7 @@ components:
       additionalProperties: false
     PolicyDryRunResponse:
       type: object
-      required: [decision, findings_summary, findings, inspected_body]
+      required: [decision, findings_summary, findings, suppressed_findings, inspected_body]
       properties:
         decision:
           $ref: "#/components/schemas/PolicyAction"
@@ -1860,6 +2249,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PolicyDryRunFinding"
+          description: Findings that passed the configured threshold and drive the decision.
+        suppressed_findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyDryRunFinding"
+          description: Local-model candidates rejected for being below min_confidence.
         redactions:
           type: array
           items:
@@ -1891,13 +2286,13 @@ components:
             minLength: 1
             maxLength: 256
           description: Empty means all public models and aliases.
-        endpoint_ids:
+        service_ids:
           type: array
           uniqueItems: true
           default: []
           items:
             $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-          description: Empty means all endpoints.
+          description: Empty means all services.
       additionalProperties: false
     PolicyAction:
       type: string
@@ -2270,6 +2665,8 @@ components:
           type: boolean
         response_content_enabled:
           type: boolean
+        http_meta_enabled:
+          type: boolean
         request_body_max_bytes:
           type: integer
           minimum: 1024
@@ -2331,7 +2728,7 @@ components:
           minLength: 3
           maxLength: 96
           pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
-          examples: [endpoint.health_changed, core.started, policy.blocked]
+          examples: [service.health_changed, core.started, policy.blocked]
         severity:
           $ref: "#/components/schemas/EventSeverity"
         summary:
@@ -2350,7 +2747,7 @@ components:
       properties:
         type:
           type: string
-          enum: [core, endpoint, route, policy, request]
+          enum: [core, service, route, policy, request]
         id:
           oneOf:
             - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -2383,7 +2780,7 @@ components:
         - requested_model
         - streaming
         - route_id
-        - endpoint_id
+        - service_id
         - local_access_token_id
         - plan
         - http_status
@@ -2413,7 +2810,7 @@ components:
           oneOf:
             - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
             - type: "null"
-        endpoint_id:
+        service_id:
           oneOf:
             - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
             - type: "null"
@@ -2481,7 +2878,7 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
-          description: Sanitized message without endpoint identity, URL, IP, organization, project, headers, or body content.
+          description: Sanitized message without service identity, URL, IP, organization, project, headers, or body content.
         retryable:
           type: boolean
       additionalProperties: false
@@ -2504,10 +2901,15 @@ components:
       additionalProperties: false
     AuditContent:
       type: object
-      required: [request_id, request_body, response_content]
+      required: [request_id, http_meta, request_body, response_content]
       properties:
         request_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        http_meta:
+          oneOf:
+            - $ref: "#/components/schemas/AuditHTTPMeta"
+            - type: "null"
+          description: Redacted HTTP envelope (ADR 0008); null when http_meta capture was disabled or the record predates it.
         request_body:
           oneOf:
             - $ref: "#/components/schemas/AuditContentPart"
@@ -2516,6 +2918,53 @@ components:
           oneOf:
             - $ref: "#/components/schemas/AuditContentPart"
             - type: "null"
+      additionalProperties: false
+    AuditHeader:
+      type: object
+      required: [name, value, redacted]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        value:
+          type: string
+          maxLength: 2048
+          description: Redacted entries carry a masked placeholder, never the original bytes.
+        redacted:
+          type: boolean
+      additionalProperties: false
+    AuditHTTPMeta:
+      type: object
+      required: [method, url, http_version, request_headers, response_status, response_headers]
+      properties:
+        method:
+          type: string
+          minLength: 1
+          maxLength: 32
+        url:
+          type: string
+          maxLength: 4096
+          description: Userinfo stripped and sensitive query parameter values masked at capture time.
+        http_version:
+          type: string
+          maxLength: 16
+        request_headers:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/AuditHeader"
+        response_status:
+          oneOf:
+            - type: integer
+              minimum: 100
+              maximum: 599
+            - type: "null"
+        response_headers:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/AuditHeader"
       additionalProperties: false
     AuditContentPart:
       type: object
@@ -2577,14 +3026,14 @@ components:
           type: integer
           minimum: 0
       additionalProperties: false
-    EndpointPage:
+    ServicePage:
       type: object
       required: [items, next_cursor]
       properties:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/Endpoint"
+            $ref: "#/components/schemas/Service"
         next_cursor:
           type: [string, "null"]
           maxLength: 512
@@ -2682,11 +3131,140 @@ components:
           maxLength: 512
         protocol:
           $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        endpoint_id:
+        service_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         required_plan_types:
           type: array
           uniqueItems: true
           items:
             $ref: ./protocol-capabilities.schema.json#/$defs/PlanType
+      additionalProperties: false
+    SubscriptionError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,63}$
+        message:
+          type: string
+          minLength: 1
+          maxLength: 240
+      additionalProperties: false
+    AuthorizationFlow:
+      type: string
+      enum: [browser, device_code]
+    AuthorizationStartRequest:
+      type: object
+      required: [flow]
+      properties:
+        flow:
+          $ref: "#/components/schemas/AuthorizationFlow"
+      additionalProperties: false
+    AuthorizationDeviceCode:
+      type: object
+      required: [verification_url, user_code]
+      properties:
+        verification_url:
+          type: string
+          maxLength: 4096
+        user_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+      additionalProperties: false
+    AuthorizationSession:
+      type: object
+      required: [id, provider, status, flow, service_id, expires_at, created_at, updated_at]
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        provider:
+          type: string
+          enum: [openai_codex]
+        status:
+          type: string
+          enum: [pending, completed, cancelled, expired, failed]
+        flow:
+          $ref: "#/components/schemas/AuthorizationFlow"
+        authorization_url:
+          type: string
+          maxLength: 4096
+        device_code:
+          $ref: "#/components/schemas/AuthorizationDeviceCode"
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        expires_at:
+          type: string
+          format: date-time
+        error:
+          $ref: "#/components/schemas/SubscriptionError"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      allOf:
+        - if:
+            properties:
+              status:
+                const: pending
+              flow:
+                const: browser
+            required: [status, flow]
+          then:
+            required: [authorization_url]
+            not:
+              required: [device_code]
+        - if:
+            properties:
+              status:
+                const: pending
+              flow:
+                const: device_code
+            required: [status, flow]
+          then:
+            required: [device_code]
+            not:
+              required: [authorization_url]
+        - if:
+            properties:
+              status:
+                enum: [completed, cancelled, expired, failed]
+            required: [status]
+          then:
+            not:
+              anyOf:
+                - required: [authorization_url]
+                - required: [device_code]
+      additionalProperties: false
+    ServiceModelProbe:
+      type: object
+      required: [service_id, model_ids]
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        model_ids:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+      additionalProperties: false
+    ServiceResponsesProbe:
+      type: object
+      required: [service_id, status_code, ok]
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        status_code:
+          type: integer
+          minimum: 100
+          maximum: 599
+        ok:
+          type: boolean
+        response_id:
+          type: string
+          maxLength: 256
       additionalProperties: false

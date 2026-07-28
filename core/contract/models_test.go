@@ -208,7 +208,7 @@ func TestRouteAlphaContractRejectsRelayKitTarget(t *testing.T) {
 		ID: "route_01", Name: "responses", Enabled: true,
 		Match: RouteMatch{Protocol: ProtocolOpenAIResponses},
 		Targets: []RouteTarget{{
-			EndpointID: "endpoint_01", PlanType: PlanTypeRelayKit,
+			ServiceID: "endpoint_01", PlanType: PlanTypeRelayKit,
 			UpstreamProtocol: ProtocolAnthropicMessages,
 		}},
 	}
@@ -226,7 +226,7 @@ func TestRouteProtocolPreservingTargetsRejectProtocolChanges(t *testing.T) {
 			ID: "route_01", Name: "responses", Enabled: true,
 			Match: RouteMatch{Protocol: ProtocolOpenAIResponses},
 			Targets: []RouteTarget{{
-				EndpointID: "endpoint_01", PlanType: planType,
+				ServiceID: "endpoint_01", PlanType: planType,
 				UpstreamProtocol: ProtocolAnthropicMessages,
 			}},
 		}

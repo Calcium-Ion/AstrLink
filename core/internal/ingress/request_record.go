@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -78,21 +79,25 @@ func (buffer *captureBuffer) observe(chunk []byte) {
 }
 
 type recordSession struct {
-	id              contract.RequestID
-	startedAt       time.Time
-	classified      Request
-	accessTokenID   *contract.AccessTokenID
-	scanner         *usageScanner
-	status          contract.RequestStatus
-	httpStatus      int
-	hasHTTPStatus   bool
-	endpointID      *contract.EndpointID
-	routeID         *contract.RouteID
-	plan            *contract.ExecutionPlan
-	errorSummary    *contract.ErrorSummary
-	responseWriter  *recordStatusWriter
-	requestCapture  captureBuffer
-	responseCapture captureBuffer
+	id                   contract.RequestID
+	startedAt            time.Time
+	classified           Request
+	accessTokenID        *contract.AccessTokenID
+	scanner              *usageScanner
+	status               contract.RequestStatus
+	httpStatus           int
+	hasHTTPStatus        bool
+	endpointID           *contract.ServiceID
+	routeID              *contract.RouteID
+	plan                 *contract.ExecutionPlan
+	errorSummary         *contract.ErrorSummary
+	responseWriter       *recordStatusWriter
+	requestCapture       captureBuffer
+	responseCapture      captureBuffer
+	httpMetaEnabled      bool
+	httpMetaCaptured     bool
+	httpMetaResponseDone bool
+	httpMeta             contract.AuditHTTPMeta
 }
 
 func newRecordSession(
@@ -114,6 +119,7 @@ func newRecordSession(
 			enabled:  settings.ResponseContentEnabled,
 			maxBytes: settings.ResponseContentMaxBytes,
 		},
+		httpMetaEnabled: settings.HTTPMetaEnabled,
 	}
 	if accessTokenID != "" {
 		session.accessTokenID = &accessTokenID
@@ -159,7 +165,7 @@ func (session *recordSession) recordSnapshot(
 		RequestedModel:     requestedModel,
 		Streaming:          session.classified.Streaming,
 		RouteID:            session.routeID,
-		EndpointID:         session.endpointID,
+		ServiceID:          session.endpointID,
 		LocalAccessTokenID: session.accessTokenID,
 		Plan:               session.plan,
 		HTTPStatus:         httpStatus,
@@ -172,6 +178,32 @@ func (session *recordSession) recordSnapshot(
 
 func (session *recordSession) responseCaptureEnabled() bool {
 	return session != nil && session.responseCapture.enabled
+}
+
+// captureHTTPRequestMeta snapshots the redacted request envelope (ADR 0008).
+// It must run before privacy rewrites, alias rewriting, and header mutation
+// so the capture reflects the bytes the client actually sent. It never sees
+// transport.Target.RequestHeaders, which carry the upstream credential.
+func (session *recordSession) captureHTTPRequestMeta(request *http.Request) {
+	if session == nil || !session.httpMetaEnabled || request == nil {
+		return
+	}
+	session.httpMeta = RedactRequestMeta(request)
+	session.httpMetaCaptured = true
+}
+
+// noteHTTPResponseMeta records the redacted local response status and headers
+// once, at first WriteHeader/Write. The forwarder has already stripped
+// hop-by-hop headers and never copies upstream credentials here.
+func (session *recordSession) noteHTTPResponseMeta(status int, headers http.Header) {
+	if session == nil || !session.httpMetaEnabled || session.httpMetaResponseDone {
+		return
+	}
+	statusCopy := status
+	session.httpMeta.ResponseStatus = &statusCopy
+	session.httpMeta.ResponseHeaders = RedactResponseHeaders(headers)
+	session.httpMetaCaptured = true
+	session.httpMetaResponseDone = true
 }
 
 func (session *recordSession) attachRequestCapture(request *http.Request) {
@@ -218,7 +250,7 @@ func (session *recordSession) noteServed(candidate endpoint.Resolved, plan contr
 }
 
 func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan contract.ExecutionPlan) {
-	endpointID := candidate.Endpoint.ID
+	endpointID := candidate.Service.ID
 	session.endpointID = &endpointID
 	if candidate.RouteID != "" {
 		routeID := candidate.RouteID
@@ -310,7 +342,7 @@ func (session *recordSession) finish(
 		latency = 0
 	}
 	audit := contract.NotCapturedAuditSummary()
-	pendingBlobs := make([]storage.AuditBlob, 0, 2)
+	pendingBlobs := make([]storage.AuditBlob, 0, 3)
 	if blobs != nil {
 		key, keyErr := session.prepareAuditKey(ctx, blobs, logf)
 		if keyErr == nil && key != nil {
@@ -323,6 +355,9 @@ func (session *recordSession) finish(
 				pendingBlobs = append(pendingBlobs, blob)
 				audit.ResponseContentCaptured = true
 				audit.ResponseContentTruncated = session.responseCapture.truncated
+			}
+			if blob, ok := session.sealHTTPMeta(key, completed, logf); ok {
+				pendingBlobs = append(pendingBlobs, blob)
 			}
 		}
 	}
@@ -353,11 +388,11 @@ func (session *recordSession) prepareAuditKey(
 	blobs AuditBlobPersister,
 	logf func(string, ...any),
 ) ([]byte, error) {
-	if !session.requestCapture.enabled && !session.responseCapture.enabled {
-		return nil, nil
-	}
-	if (!session.requestCapture.enabled || len(session.requestCapture.bytes) == 0) &&
-		(!session.responseCapture.enabled || len(session.responseCapture.bytes) == 0) {
+	requestHasBytes := session.requestCapture.enabled && len(session.requestCapture.bytes) > 0
+	responseHasBytes := session.responseCapture.enabled && len(session.responseCapture.bytes) > 0
+	// http meta needs the key too: it must persist even when both body
+	// captures are disabled (the common default configuration).
+	if !requestHasBytes && !responseHasBytes && !session.httpMetaCaptured {
 		return nil, nil
 	}
 	key, err := blobs.GetOrCreateAuditKey(ctx)
@@ -398,6 +433,38 @@ func (session *recordSession) sealCapture(
 	}, true
 }
 
+// sealHTTPMeta encrypts the redacted HTTP envelope as a third blob direction.
+// The payload is already redacted at capture time; encryption at rest matches
+// the body blobs so all audit data shares one lifecycle (ADR 0008).
+func (session *recordSession) sealHTTPMeta(
+	key []byte,
+	createdAt time.Time,
+	logf func(string, ...any),
+) (storage.AuditBlob, bool) {
+	if !session.httpMetaCaptured {
+		return storage.AuditBlob{}, false
+	}
+	payload, err := json.Marshal(session.httpMeta)
+	if err != nil {
+		logRequestRecordFailure(logf, "http_meta_encode", err)
+		return storage.AuditBlob{}, false
+	}
+	nonce, ciphertext, err := storage.SealAuditBlob(key, payload)
+	if err != nil {
+		logRequestRecordFailure(logf, "audit_encrypt", err)
+		return storage.AuditBlob{}, false
+	}
+	return storage.AuditBlob{
+		Direction:     storage.AuditDirectionHTTPMeta,
+		MediaType:     "application/json",
+		Nonce:         nonce,
+		Ciphertext:    ciphertext,
+		Truncated:     false,
+		CapturedBytes: len(payload),
+		CreatedAt:     createdAt,
+	}, true
+}
+
 func logRequestRecordFailure(logf func(string, ...any), op string, err error) {
 	if logf == nil {
 		logf = log.Printf
@@ -425,6 +492,7 @@ func (writer *recordStatusWriter) WriteHeader(status int) {
 			writer.session.httpStatus = status
 			writer.session.hasHTTPStatus = true
 		}
+		writer.session.noteHTTPResponseMeta(status, writer.Header())
 		if writer.session.responseCapture.enabled && writer.session.responseCapture.mediaType == "" {
 			mediaType := strings.TrimSpace(writer.Header().Get("Content-Type"))
 			if mediaType == "" {
@@ -442,6 +510,7 @@ func (writer *recordStatusWriter) Write(chunk []byte) (int, error) {
 			writer.session.httpStatus = http.StatusOK
 			writer.session.hasHTTPStatus = true
 		}
+		writer.session.noteHTTPResponseMeta(writer.session.httpStatus, writer.Header())
 		if writer.session.responseCapture.enabled {
 			if writer.session.responseCapture.mediaType == "" {
 				mediaType := strings.TrimSpace(writer.Header().Get("Content-Type"))

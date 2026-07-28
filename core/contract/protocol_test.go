@@ -51,14 +51,14 @@ func TestLookupProtocolDescriptor(t *testing.T) {
 	}
 }
 
-func TestEndpointCapabilitySchemaMatchesNonStreamingRegistry(t *testing.T) {
+func TestServiceCapabilitySchemaMatchesNonStreamingRegistry(t *testing.T) {
 	data, err := os.ReadFile("../../contracts/protocol-capabilities.schema.json")
 	if err != nil {
 		t.Fatalf("read capability schema: %v", err)
 	}
 	var document struct {
 		Definitions struct {
-			EndpointCapability struct {
+			ServiceCapability struct {
 				AllOf []struct {
 					If struct {
 						Properties struct {
@@ -68,17 +68,17 @@ func TestEndpointCapabilitySchemaMatchesNonStreamingRegistry(t *testing.T) {
 						} `json:"properties"`
 					} `json:"if"`
 				} `json:"allOf"`
-			} `json:"EndpointCapability"`
+			} `json:"ServiceCapability"`
 		} `json:"$defs"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode capability schema: %v", err)
 	}
-	if len(document.Definitions.EndpointCapability.AllOf) != 1 {
-		t.Fatalf("EndpointCapability allOf count = %d, want 1 registry condition", len(document.Definitions.EndpointCapability.AllOf))
+	if len(document.Definitions.ServiceCapability.AllOf) != 1 {
+		t.Fatalf("ServiceCapability allOf count = %d, want 1 registry condition", len(document.Definitions.ServiceCapability.AllOf))
 	}
 
-	got := append([]string(nil), document.Definitions.EndpointCapability.AllOf[0].If.Properties.Protocol.Enum...)
+	got := append([]string(nil), document.Definitions.ServiceCapability.AllOf[0].If.Properties.Protocol.Enum...)
 	want := make([]string, 0)
 	for _, descriptor := range ProtocolDescriptors() {
 		if !descriptor.Streaming {

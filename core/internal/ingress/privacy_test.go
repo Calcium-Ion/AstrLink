@@ -92,7 +92,7 @@ func TestPrivacyNoMatchAndWarnPreserveExactBytesAndWarningStaysLocal(t *testing.
 				}),
 				PrivacyFilter: filter,
 				PolicyWarningReporter: PolicyWarningReporterFunc(
-					func(_ contract.ProtocolID, _ contract.EndpointID, summary string) {
+					func(_ contract.ProtocolID, _ contract.ServiceID, summary string) {
 						warningReports = append(warningReports, summary)
 					},
 				),
@@ -399,11 +399,11 @@ func TestPrivacyBlockRunsBeforeCredentialLoadingAndDoesNotLeakMatch(t *testing.T
 
 func TestFallbackReevaluatesEndpointScopedPrivacyAgainstOriginalBody(t *testing.T) {
 	const original = `{"model":"gpt-5","input":"alice@example.com"}`
-	var scopes []contract.EndpointID
+	var scopes []contract.ServiceID
 	filter, err := privacy.New(
 		privacy.PolicyProviderFunc(func(_ context.Context, scope privacy.Scope) (privacy.Policy, error) {
-			scopes = append(scopes, scope.EndpointID)
-			if scope.EndpointID == "endpoint_second" {
+			scopes = append(scopes, scope.ServiceID)
+			if scope.ServiceID == "endpoint_second" {
 				return privacy.Policy{
 					Enabled: true,
 					Mode:    privacy.ModeRegex,
@@ -423,7 +423,7 @@ func TestFallbackReevaluatesEndpointScopedPrivacyAgainstOriginalBody(t *testing.
 	second := first
 	second.ID = "endpoint_second"
 	second.BaseURL = "https://second.example"
-	var forwarded []contract.EndpointID
+	var forwarded []contract.ServiceID
 	handler := NewWithDependencies(Dependencies{
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{
 			{Endpoint: first},

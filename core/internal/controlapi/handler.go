@@ -16,14 +16,17 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
+	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
 
 const (
 	HealthPath              = "/control/v1/health"
 	VersionPath             = "/control/v1/version"
 	CapabilitiesPath        = "/control/v1/capabilities"
-	EndpointsPath           = "/control/v1/endpoints"
+	ServicesPath            = "/control/v1/services"
+	RoutesPath              = "/control/v1/routes"
 	AccessTokensPath        = "/control/v1/access-tokens"
 	PoliciesPath            = "/control/v1/policies"
 	PolicyDryRunPath        = PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID) + "/dry-run"
@@ -33,7 +36,8 @@ const (
 )
 
 type Dependencies struct {
-	EndpointStore      storage.EndpointStore
+	ServiceStore       storage.ServiceStore
+	RouteStore         storage.RouteStore
 	AccessTokenManager AccessTokenManager
 	PolicyStore        storage.PolicyStore
 	PrivacyModels      PrivacyModelRegistry
@@ -43,8 +47,11 @@ type Dependencies struct {
 	AuditSettings      storage.AuditSettingsStore
 	AuditKeys          storage.AuditKeyStore
 	AuditBlobs         storage.AuditBlobStore
+	Subscriptions      *subscription.Manager
 	ControlToken       string
-	NewEndpointID      func() (contract.EndpointID, error)
+	NewServiceID       func() (contract.ServiceID, error)
+	NewRouteID         func() (contract.RouteID, error)
+	ConversionEngine   relaykitbridge.ConversionEngine
 }
 
 type AccessTokenManager interface {
@@ -67,7 +74,8 @@ type PrivacyModelRegistry interface {
 type Handler struct {
 	version        contract.VersionResponse
 	capabilities   contract.CapabilitiesResponse
-	endpointStore  storage.EndpointStore
+	serviceStore   storage.ServiceStore
+	routeStore     storage.RouteStore
 	accessTokens   AccessTokenManager
 	policyStore    storage.PolicyStore
 	privacyModels  PrivacyModelRegistry
@@ -77,8 +85,10 @@ type Handler struct {
 	auditSettings  storage.AuditSettingsStore
 	auditKeys      storage.AuditKeyStore
 	auditBlobs     storage.AuditBlobStore
+	subscriptions  *subscription.Manager
 	controlToken   []byte
-	newEndpointID  func() (contract.EndpointID, error)
+	newServiceID   func() (contract.ServiceID, error)
+	newRouteID     func() (contract.RouteID, error)
 	mux            *http.ServeMux
 	privacyMu      sync.Mutex
 }
@@ -92,8 +102,8 @@ func New(version contract.VersionResponse) *Handler {
 }
 
 func NewWithDependencies(version contract.VersionResponse, dependencies Dependencies) (*Handler, error) {
-	if dependencies.EndpointStore == nil {
-		return nil, fmt.Errorf("endpoint store is required")
+	if dependencies.ServiceStore == nil {
+		return nil, fmt.Errorf("service store is required")
 	}
 	if len(dependencies.ControlToken) < 16 {
 		return nil, fmt.Errorf("control token must contain at least 16 bytes")
@@ -102,10 +112,15 @@ func NewWithDependencies(version contract.VersionResponse, dependencies Dependen
 }
 
 func newHandler(version contract.VersionResponse, dependencies Dependencies) (*Handler, error) {
+	capabilities := contract.DefaultCapabilitiesResponse()
+	if dependencies.ConversionEngine != nil {
+		capabilities.ConversionEngine = relaykitbridge.Descriptor(dependencies.ConversionEngine)
+	}
 	handler := &Handler{
 		version:        version,
-		capabilities:   contract.DefaultCapabilitiesResponse(),
-		endpointStore:  dependencies.EndpointStore,
+		capabilities:   capabilities,
+		serviceStore:   dependencies.ServiceStore,
+		routeStore:     dependencies.RouteStore,
 		accessTokens:   dependencies.AccessTokenManager,
 		policyStore:    dependencies.PolicyStore,
 		privacyModels:  dependencies.PrivacyModels,
@@ -115,8 +130,10 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		auditSettings:  dependencies.AuditSettings,
 		auditKeys:      dependencies.AuditKeys,
 		auditBlobs:     dependencies.AuditBlobs,
+		subscriptions:  dependencies.Subscriptions,
 		controlToken:   []byte(dependencies.ControlToken),
-		newEndpointID:  dependencies.NewEndpointID,
+		newServiceID:   dependencies.NewServiceID,
+		newRouteID:     dependencies.NewRouteID,
 		mux:            http.NewServeMux(),
 	}
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
@@ -128,11 +145,17 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	handler.mux.HandleFunc(CapabilitiesPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, handler.capabilities)
 	}))
-	if handler.endpointStore != nil {
-		if handler.newEndpointID == nil {
-			handler.newEndpointID = randomEndpointID
+	if handler.serviceStore != nil {
+		if handler.newServiceID == nil {
+			handler.newServiceID = randomServiceID
 		}
-		handler.registerEndpointRoutes()
+		handler.registerServiceRoutes()
+	}
+	if handler.routeStore != nil {
+		if handler.newRouteID == nil {
+			handler.newRouteID = randomRouteID
+		}
+		handler.registerRouteRoutes()
 	}
 	if handler.accessTokens != nil {
 		handler.registerAccessTokenRoutes()
@@ -150,7 +173,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		handler.registerAuditSettingsRoutes()
 	}
 	handler.mux.HandleFunc("/", func(writer http.ResponseWriter, _ *http.Request) {
-		writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 	})
 	return handler, nil
 }
@@ -198,7 +221,7 @@ type errorDetail struct {
 	Field             string   `json:"field,omitempty"`
 	Reason            string   `json:"reason,omitempty"`
 	Protocol          string   `json:"protocol,omitempty"`
-	EndpointID        string   `json:"endpoint_id,omitempty"`
+	ServiceID         string   `json:"service_id,omitempty"`
 	RequiredPlanTypes []string `json:"required_plan_types,omitempty"`
 }
 

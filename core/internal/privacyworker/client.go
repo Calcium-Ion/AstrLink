@@ -667,11 +667,11 @@ type workerResponse struct {
 }
 
 type workerSpan struct {
-	TextID uint32  `json:"text_id"`
-	Label  string  `json:"label"`
-	Start  int     `json:"start"`
-	End    int     `json:"end"`
-	Score  float64 `json:"score"`
+	TextID uint32   `json:"text_id"`
+	Label  string   `json:"label"`
+	Start  int      `json:"start"`
+	End    int      `json:"end"`
+	Score  *float64 `json:"score"`
 }
 
 type workerError struct {
@@ -704,8 +704,9 @@ func responseFindings(
 		kind, valid := workerKind(span.Label)
 		if !valid || uint64(span.TextID) >= uint64(len(segments)) ||
 			span.Start < 0 || span.End <= span.Start ||
-			math.IsNaN(span.Score) || math.IsInf(span.Score, 0) ||
-			span.Score < 0 || span.Score > 1 {
+			span.Score == nil ||
+			math.IsNaN(*span.Score) || math.IsInf(*span.Score, 0) ||
+			*span.Score < 0 || *span.Score > 1 {
 			return nil, privacy.ErrDetectorUnavailable
 		}
 		segment := int(span.TextID)
@@ -716,10 +717,11 @@ func responseFindings(
 			return nil, privacy.ErrDetectorUnavailable
 		}
 		findings = append(findings, privacy.Finding{
-			Segment: segment,
-			Start:   span.Start,
-			End:     span.End,
-			Kind:    kind,
+			Segment:    segment,
+			Start:      span.Start,
+			End:        span.End,
+			Kind:       kind,
+			Confidence: *span.Score,
 		})
 	}
 	return findings, nil

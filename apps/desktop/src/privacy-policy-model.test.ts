@@ -22,6 +22,7 @@ const policy = {
   priority: 0,
   detector: "regex",
   local_model_id: null,
+  min_confidence: 0.8,
   request_action: "redact",
   response_action: "allow",
   response_restore: true,
@@ -103,8 +104,10 @@ describe("privacy-policy IPC contract", () => {
           path: "/messages/0/content",
           start: 6,
           end: 23,
+          confidence: 0.93,
         },
       ],
+      suppressed_findings: [],
       redactions: [
         {
           placeholder: "<PRIVATE_EMAIL>",
@@ -120,12 +123,20 @@ describe("privacy-policy IPC contract", () => {
       validatePrivacyDryRunInput({
         protocol: "openai.chat",
         sample_text: "hello",
-        policy: { enabled: true, request_action: "warn" },
+        policy: {
+          enabled: true,
+          min_confidence: 0.75,
+          request_action: "warn",
+        },
       }),
     ).toEqual({
       protocol: "openai.chat",
       sample_text: "hello",
-      policy: { enabled: true, request_action: "warn" },
+      policy: {
+        enabled: true,
+        min_confidence: 0.75,
+        request_action: "warn",
+      },
     });
     expect(() =>
       validatePrivacyDryRunInput({
@@ -139,6 +150,19 @@ describe("privacy-policy IPC contract", () => {
         findings: [{ ...dryRun.findings[0], kind: "ssn" }],
       }),
     ).toThrow("unknown privacy kind");
+    expect(() =>
+      parsePrivacyDryRunResult({
+        ...dryRun,
+        findings: [{ ...dryRun.findings[0], confidence: 1.01 }],
+      }),
+    ).toThrow("between 0 and 1");
+    expect(() =>
+      validatePrivacyDryRunInput({
+        protocol: "openai.chat",
+        sample_text: "hello",
+        policy: { min_confidence: -0.01 },
+      }),
+    ).toThrow("between 0 and 1");
   });
 
   it("rejects policy drift and unknown detectors", () => {
@@ -160,6 +184,12 @@ describe("privacy-policy IPC contract", () => {
         next_cursor: null,
       }),
     ).toThrow("local_model_id");
+    expect(() =>
+      parsePrivacyPolicyPage({
+        items: [{ ...policy, min_confidence: 1.01 }],
+        next_cursor: null,
+      }),
+    ).toThrow("min_confidence");
   });
 
   it("strictly parses catalog variants and custom probe label suggestions", () => {

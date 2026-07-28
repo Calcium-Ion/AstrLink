@@ -22,12 +22,12 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 	model := "public-alias"
 	statusOK := 200
 	latency := 15
-	endpointID := contract.EndpointID("endpoint_a")
+	endpointID := contract.ServiceID("endpoint_a")
 	records := []contract.RequestRecord{
 		{
 			ID: "request_a", StartedAt: start, CompletedAt: ptrTime(start.Add(time.Second)),
 			Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
-			RequestedModel: &model, Streaming: false, EndpointID: &endpointID,
+			RequestedModel: &model, Streaming: false, ServiceID: &endpointID,
 			HTTPStatus: &statusOK, LatencyMs: &latency, Audit: contract.NotCapturedAuditSummary(),
 			Usage: &contract.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
 		},
@@ -67,7 +67,7 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 	from := start
 	to := start.Add(90 * time.Second)
 	filtered, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{
-		Status: &status, Protocol: &protocol, EndpointID: &endpointID, From: &from, To: &to,
+		Status: &status, Protocol: &protocol, ServiceID: &endpointID, From: &from, To: &to,
 	})
 	if err != nil || len(filtered.Items) != 1 || filtered.Items[0].ID != "request_a" {
 		t.Fatalf("filtered = %#v err=%v", filtered, err)

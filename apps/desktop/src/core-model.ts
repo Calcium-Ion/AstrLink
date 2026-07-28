@@ -45,11 +45,18 @@ export interface PlanTypeCapability {
   uses_local_conversion: boolean;
 }
 
+export interface ConversionEdgeCapability {
+  from: string;
+  to: string;
+  quality: "good" | "fair" | "discouraged";
+  streaming: boolean;
+}
+
 export interface ConversionEngineCapability {
   name: "relaykit";
   version: string | null;
   available: boolean;
-  edges: unknown[];
+  edges: ConversionEdgeCapability[];
 }
 
 export interface CapabilitiesResponse {
@@ -277,6 +284,24 @@ function parsePlan(value: unknown, path: string): PlanTypeCapability {
   };
 }
 
+function parseConversionEdge(
+  value: unknown,
+  path: string,
+): ConversionEdgeCapability {
+  const edge = objectAt(value, path);
+  exactKeys(edge, ["from", "to", "quality", "streaming"], path);
+  const quality = stringAt(edge.quality, `${path}.quality`);
+  if (quality !== "good" && quality !== "fair" && quality !== "discouraged") {
+    invalid(`${path}.quality`, 'expected "good", "fair", or "discouraged"');
+  }
+  return {
+    from: stringAt(edge.from, `${path}.from`),
+    to: stringAt(edge.to, `${path}.to`),
+    quality,
+    streaming: booleanAt(edge.streaming, `${path}.streaming`),
+  };
+}
+
 function parseConversionEngine(
   value: unknown,
   path: string,
@@ -284,11 +309,24 @@ function parseConversionEngine(
   const engine = objectAt(value, path);
   exactKeys(engine, ["name", "version", "available", "edges"], path);
   if (engine.name !== "relaykit") invalid(`${path}.name`, 'expected "relaykit"');
-  if (engine.version !== null) invalid(`${path}.version`, "must be null in Alpha");
-  if (engine.available !== false) invalid(`${path}.available`, "must be false in Alpha");
-  const edges = arrayAt(engine.edges, `${path}.edges`);
-  if (edges.length !== 0) invalid(`${path}.edges`, "must be empty in Alpha");
-  return { name: "relaykit", version: null, available: false, edges: [] };
+  const available = booleanAt(engine.available, `${path}.available`);
+  const rawEdges = arrayAt(engine.edges, `${path}.edges`);
+  if (!available) {
+    if (engine.version !== null) invalid(`${path}.version`, "must be null when unavailable");
+    if (rawEdges.length !== 0) invalid(`${path}.edges`, "must be empty when unavailable");
+    return { name: "relaykit", version: null, available: false, edges: [] };
+  }
+  if (typeof engine.version !== "string" || engine.version.length === 0) {
+    invalid(`${path}.version`, "must be a non-empty string when available");
+  }
+  return {
+    name: "relaykit",
+    version: engine.version,
+    available: true,
+    edges: rawEdges.map((edge, index) =>
+      parseConversionEdge(edge, `${path}.edges[${index}]`),
+    ),
+  };
 }
 
 function parseCapabilities(value: unknown, path: string): CapabilitiesResponse {

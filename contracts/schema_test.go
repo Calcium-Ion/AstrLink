@@ -159,10 +159,10 @@ func TestRootCapabilitySchemaRejectsContractDrift(t *testing.T) {
 	}
 }
 
-func TestEndpointCapabilityDefinitionEnforcesStreamingRegistry(t *testing.T) {
-	// EndpointCapability is a reusable $def that the root capability response
+func TestServiceCapabilityDefinitionEnforcesStreamingRegistry(t *testing.T) {
+	// ServiceCapability is a reusable $def that the root capability response
 	// does not reference. Compile it directly so this invariant is exercised.
-	schema := compileSchema(t, capabilitySchemaURL+"#/$defs/EndpointCapability")
+	schema := compileSchema(t, capabilitySchemaURL+"#/$defs/ServiceCapability")
 	nonStreaming := []string{
 		"openai.responses.compact",
 		"openai.models",
@@ -193,13 +193,13 @@ func TestEndpointCapabilityDefinitionEnforcesStreamingRegistry(t *testing.T) {
 	}
 	for _, instance := range valid {
 		if err := schema.Validate(instance); err != nil {
-			t.Errorf("valid endpoint capability %#v rejected: %v", instance, err)
+			t.Errorf("valid service capability %#v rejected: %v", instance, err)
 		}
 	}
 }
 
-func TestEndpointAuthDefinitionRejectsReservedCustomHeaders(t *testing.T) {
-	schema := compileSchema(t, capabilitySchemaURL+"#/$defs/EndpointAuth")
+func TestServiceAuthDefinitionRejectsReservedCustomHeaders(t *testing.T) {
+	schema := compileSchema(t, capabilitySchemaURL+"#/$defs/ServiceAuth")
 	for _, headerName := range []string{
 		"Host",
 		"content-length",

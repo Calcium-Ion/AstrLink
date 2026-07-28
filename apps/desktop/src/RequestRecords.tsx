@@ -6,7 +6,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { AuditReviewer } from "./AuditReviewer";
+import { AuditPartSection, HTTPMetaSection } from "./AuditReviewer";
+import { buildRecordBundle } from "./audit-bundle";
 import type { AuditSettings, AuditSettingsPatch } from "./audit-settings-model";
 import {
   deleteRequestRecord,
@@ -16,7 +17,9 @@ import {
   purgeRequestRecords,
   updateAuditSettings,
 } from "./bridge";
-import type { Endpoint } from "./endpoint-model";
+import { copyButtonLabel, useCopyFeedback, type CopyFeedback } from "./copy-feedback";
+import { PageHeader } from "./PageHeader";
+import type { RoutableService } from "./service-model";
 import {
   applyQueuedRecords,
   formatDuration,
@@ -37,6 +40,8 @@ import {
 
 const PAGE_LIMIT = 50;
 const POLL_INTERVAL_MS = 1000;
+const AUDIT_CACHE_MAX_RECORDS = 5;
+const AUDIT_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 const STATUSES: RequestStatus[] = [
   "pending",
   "succeeded",
@@ -46,11 +51,11 @@ const STATUSES: RequestStatus[] = [
 ];
 const EMPTY_FILTERS: RecordFilters = {
   status: "",
-  endpointId: "",
+  serviceId: "",
   protocol: "",
 };
 
-type RecordsView = "monitor" | "detail" | "audit";
+type RecordsView = "monitor" | "detail";
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
   | { kind: "delete"; requestId: string }
@@ -63,14 +68,21 @@ interface LiveState {
   nextCursor: string | null;
 }
 
+function auditContentBytes(content: AuditContent): number {
+  return (
+    (content.request_body?.captured_bytes ?? 0) +
+    (content.response_content?.captured_bytes ?? 0)
+  );
+}
+
 export function RequestRecords({
   coreSessionKey,
   isReady,
-  endpoints,
+  services,
 }: {
   coreSessionKey: string | null;
   isReady: boolean;
-  endpoints: Endpoint[];
+  services: RoutableService[];
 }) {
   const [view, setView] = useState<RecordsView>("monitor");
   const [live, setLive] = useState<LiveState>({
@@ -113,6 +125,7 @@ export function RequestRecords({
 
   const generationRef = useRef(0);
   const auditGenerationRef = useRef(0);
+  const auditCacheRef = useRef<Map<string, AuditContent>>(new Map());
   const pollInFlightRef = useRef(false);
   const pollFailureRef = useRef(0);
   const manualPollRef = useRef<(() => void) | null>(null);
@@ -143,14 +156,14 @@ export function RequestRecords({
   );
   const protocolOptions = useMemo(() => {
     const protocols = new Set<string>();
-    endpoints.forEach((endpoint) =>
-      endpoint.capabilities.forEach((capability) =>
+    services.forEach((service) =>
+      service.capabilities.forEach((capability) =>
         protocols.add(capability.protocol),
       ),
     );
     allRecords.forEach((record) => protocols.add(record.input_protocol));
     return [...protocols].sort();
-  }, [allRecords, endpoints]);
+  }, [allRecords, services]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -161,6 +174,7 @@ export function RequestRecords({
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     auditGenerationRef.current += 1;
+    auditCacheRef.current.clear();
     pollFailureRef.current = 0;
     pollInFlightRef.current = false;
     atTopRef.current = true;
@@ -273,26 +287,52 @@ export function RequestRecords({
     };
   }, [coreSessionKey, isReady]);
 
+  const selectedIndex = selectedId ? navigationIds.indexOf(selectedId) : -1;
+  const previousId =
+    selectedIndex > 0 ? navigationIds[selectedIndex - 1] : null;
+  const nextId =
+    selectedIndex >= 0 && selectedIndex < navigationIds.length - 1
+      ? navigationIds[selectedIndex + 1]
+      : null;
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (pendingConfirm) {
-        setPendingConfirm(null);
+      if (event.key === "Escape") {
+        if (pendingConfirm) {
+          setPendingConfirm(null);
+          return;
+        }
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          return;
+        }
+        if (purgeOpen) {
+          setPurgeOpen(false);
+          return;
+        }
+        if (viewRef.current === "detail") returnToMonitor();
         return;
       }
-      if (settingsOpen) {
-        setSettingsOpen(false);
+      if (
+        viewRef.current !== "detail" ||
+        pendingConfirm ||
+        settingsOpen ||
+        purgeOpen
+      ) {
         return;
       }
-      if (purgeOpen) {
-        setPurgeOpen(false);
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
         return;
       }
-      if (viewRef.current === "audit") {
-        setViewAndRef("detail");
-        return;
-      }
-      if (viewRef.current === "detail") returnToMonitor();
+      if (event.key === "[" && previousId) selectFromSnapshot(previousId);
+      if (event.key === "]" && nextId) selectFromSnapshot(nextId);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -301,6 +341,7 @@ export function RequestRecords({
   useEffect(
     () => () => {
       auditGenerationRef.current += 1;
+      auditCacheRef.current.clear();
     },
     [],
   );
@@ -310,18 +351,68 @@ export function RequestRecords({
     setView(next);
   };
 
-  const clearAudit = () => {
-    auditGenerationRef.current += 1;
-    setAuditContent(null);
-    setAuditError(null);
-    setAuditLoading(false);
+  const cacheInsert = (id: string, content: AuditContent) => {
+    const cache = auditCacheRef.current;
+    cache.delete(id);
+    cache.set(id, content);
+    let totalBytes = 0;
+    for (const value of cache.values()) totalBytes += auditContentBytes(value);
+    while (
+      cache.size > AUDIT_CACHE_MAX_RECORDS ||
+      (totalBytes > AUDIT_CACHE_MAX_BYTES && cache.size > 1)
+    ) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      const evicted = cache.get(oldest);
+      if (evicted) totalBytes -= auditContentBytes(evicted);
+      cache.delete(oldest);
+    }
   };
+
+  // Detail auto-decrypt: cached content shows instantly; a generation
+  // counter drops stale responses when the user pages quickly with
+  // 上一条/下一条. Pending records are never cached so the content refreshes
+  // once the record reaches a terminal status.
+  const selectedIsPending = selected?.status === "pending";
+  useEffect(() => {
+    if (view !== "detail" || !selected) return;
+    const cached = auditCacheRef.current.get(selected.id);
+    if (cached) {
+      setAuditContent(cached);
+      setAuditError(null);
+      setAuditLoading(false);
+      return;
+    }
+    const generation = ++auditGenerationRef.current;
+    const cacheable = !selectedIsPending;
+    setAuditLoading(true);
+    setAuditError(null);
+    setAuditContent(null);
+    void getRequestAuditContent(selected.id)
+      .then((content) => {
+        if (auditGenerationRef.current !== generation) return;
+        if (cacheable) cacheInsert(selected.id, content);
+        setAuditContent(content);
+      })
+      .catch((requestError: unknown) => {
+        if (auditGenerationRef.current !== generation) return;
+        const message = messageOf(requestError, "无法读取审计内容。");
+        setAuditError(
+          message.includes("409")
+            ? "审计密钥缺失或损坏，无法解密该记录。"
+            : message,
+        );
+      })
+      .finally(() => {
+        if (auditGenerationRef.current === generation) setAuditLoading(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selectedId, selectedIsPending]);
 
   const openDetail = (requestId: string) => {
     selectedFocusRef.current = requestId;
     setNavigationIds(visibleItems.map((record) => record.id));
     setSelectedId(requestId);
-    clearAudit();
     setViewAndRef("detail");
   };
 
@@ -329,11 +420,9 @@ export function RequestRecords({
     if (requestId === selectedId) return;
     selectedFocusRef.current = requestId;
     setSelectedId(requestId);
-    clearAudit();
   };
 
   const returnToMonitor = () => {
-    clearAudit();
     setViewAndRef("monitor");
     window.requestAnimationFrame(() => {
       const requestId = selectedFocusRef.current;
@@ -349,6 +438,16 @@ export function RequestRecords({
         target.focus({ preventScroll: true });
       }
     });
+  };
+
+  const clearDecrypted = () => {
+    auditCacheRef.current.clear();
+    auditGenerationRef.current += 1;
+    setAuditContent(null);
+    setAuditError(null);
+    setAuditLoading(false);
+    setNotice("已清除内存中的解密内容。");
+    returnToMonitor();
   };
 
   const applyQueue = () => {
@@ -393,35 +492,12 @@ export function RequestRecords({
     }
   };
 
-  const decryptAndReview = async () => {
-    if (!selected) return;
-    const generation = auditGenerationRef.current + 1;
-    auditGenerationRef.current = generation;
-    setAuditLoading(true);
-    setAuditError(null);
-    try {
-      const content = await getRequestAuditContent(selected.id);
-      if (auditGenerationRef.current !== generation) return;
-      setAuditContent(content);
-      setViewAndRef("audit");
-    } catch (requestError: unknown) {
-      if (auditGenerationRef.current !== generation) return;
-      const message = messageOf(requestError, "无法读取审计内容。");
-      setAuditError(
-        message.includes("409")
-          ? "审计密钥缺失或损坏，无法解密该记录。"
-          : message,
-      );
-    } finally {
-      if (auditGenerationRef.current === generation) setAuditLoading(false);
-    }
-  };
-
   const commitDelete = async (requestId: string) => {
     setDeleting(true);
     setError(null);
     try {
       await deleteRequestRecord(requestId);
+      auditCacheRef.current.delete(requestId);
       setLive((current) => ({
         ...current,
         items: current.items.filter((record) => record.id !== requestId),
@@ -443,6 +519,7 @@ export function RequestRecords({
     setError(null);
     try {
       const result = await purgeRequestRecords(input);
+      auditCacheRef.current.clear();
       setPurgeOpen(false);
       setNotice(
         `已删除 ${result.deleted_records} 条记录、${result.deleted_audit_blobs} 个加密内容块。`,
@@ -532,31 +609,14 @@ export function RequestRecords({
     }
   };
 
-  const selectedIndex = selectedId ? navigationIds.indexOf(selectedId) : -1;
-  const previousId =
-    selectedIndex > 0 ? navigationIds[selectedIndex - 1] : null;
-  const nextId =
-    selectedIndex >= 0 && selectedIndex < navigationIds.length - 1
-      ? navigationIds[selectedIndex + 1]
-      : null;
-
   return (
     <>
-      <div className="records-stack">
-        <section
-          aria-labelledby="request-records-heading"
-          className="workspace-card records-surface records-monitor"
-          hidden={view !== "monitor"}
-        >
-          <header className="records-page-header">
-            <div>
-              <span className="section-kicker">实时监控</span>
-              <h2 id="request-records-heading">请求记录</h2>
-              <p>已认证的推理请求会在开始后立即进入日志流。</p>
-            </div>
-            <div className="records-page-actions">
+      {view === "monitor" ? (
+        <PageHeader
+          actions={
+            <>
               <span className="records-live-indicator">
-                <span className="dot dot--positive" />
+                <span className="dot dot--positive" aria-hidden="true" />
                 每秒同步
               </span>
               <button
@@ -575,9 +635,20 @@ export function RequestRecords({
               >
                 审计设置
               </button>
-            </div>
-          </header>
-
+            </>
+          }
+          description="已认证的推理请求会在开始后立即进入日志流。"
+          eyebrow="实时监控"
+          title="请求记录"
+          titleId="request-records-heading"
+        />
+      ) : null}
+      <div className="records-stack">
+        <section
+          aria-labelledby="request-records-heading"
+          className="workspace-card records-surface records-monitor"
+          hidden={view !== "monitor"}
+        >
           {notice ? (
             <p className="inline-notice records-banner" role="status">
               {notice}
@@ -623,15 +694,15 @@ export function RequestRecords({
                 </FilterSelect>
                 <FilterSelect
                   label="服务"
-                  onChange={(endpointId) =>
-                    setFilters((current) => ({ ...current, endpointId }))
+                  onChange={(serviceId) =>
+                    setFilters((current) => ({ ...current, serviceId }))
                   }
-                  value={filters.endpointId}
+                  value={filters.serviceId}
                 >
                   <option value="">全部</option>
-                  {endpoints.map((endpoint) => (
-                    <option key={endpoint.id} value={endpoint.id}>
-                      {endpoint.name}
+                  {services.map((service) => (
+                    <option key={service.id} value={service.id}>
+                      {service.name}
                     </option>
                   ))}
                 </FilterSelect>
@@ -689,7 +760,7 @@ export function RequestRecords({
               </div>
             ) : (
               <RecordStream
-                endpoints={endpoints}
+                services={services}
                 nowMs={nowMs}
                 onOpen={openDetail}
                 records={visibleItems}
@@ -716,31 +787,19 @@ export function RequestRecords({
             auditError={auditError}
             auditLoading={auditLoading}
             deleting={deleting}
-            endpointName={endpointLabel(selected.endpoint_id, endpoints)}
+            serviceName={serviceLabel(selected.service_id, services)}
             index={selectedIndex}
             navigationCount={navigationIds.length}
             nextId={nextId}
             nowMs={nowMs}
             onBack={returnToMonitor}
+            onClearDecrypted={clearDecrypted}
             onDelete={() =>
               setPendingConfirm({ kind: "delete", requestId: selected.id })
             }
             onNext={() => nextId && selectFromSnapshot(nextId)}
             onPrevious={() => previousId && selectFromSnapshot(previousId)}
-            onReview={() => void decryptAndReview()}
             previousId={previousId}
-            record={selected}
-          />
-        ) : null}
-
-        {view === "audit" && selected && auditContent ? (
-          <AuditReviewer
-            content={auditContent}
-            onBack={() => setViewAndRef("detail")}
-            onClear={() => {
-              clearAudit();
-              setViewAndRef("detail");
-            }}
             record={selected}
           />
         ) : null}
@@ -822,13 +881,13 @@ export function RequestRecords({
 
 function RecordStream({
   records,
-  endpoints,
+  services,
   selectedId,
   nowMs,
   onOpen,
 }: {
   records: RequestRecord[];
-  endpoints: Endpoint[];
+  services: RoutableService[];
   selectedId: string | null;
   nowMs: number;
   onOpen: (requestId: string) => void;
@@ -844,7 +903,7 @@ function RecordStream({
           </div>
           {group.records.map((record) => (
             <RecordRow
-              endpointName={endpointLabel(record.endpoint_id, endpoints)}
+              serviceName={serviceLabel(record.service_id, services)}
               key={record.id}
               nowMs={nowMs}
               onOpen={() => onOpen(record.id)}
@@ -860,13 +919,13 @@ function RecordStream({
 
 function RecordRow({
   record,
-  endpointName,
+  serviceName,
   nowMs,
   selected,
   onOpen,
 }: {
   record: RequestRecord;
-  endpointName: string | null;
+  serviceName: string | null;
   nowMs: number;
   selected: boolean;
   onOpen: () => void;
@@ -895,7 +954,7 @@ function RecordRow({
         </time>
         <strong>{record.requested_model ?? "未指定模型"}</strong>
         <span className="record-row__service">
-          {endpointName ?? record.endpoint_id ?? "正在选择服务"}
+          {serviceName ?? record.service_id ?? "正在选择服务"}
         </span>
         <span className="record-row__duration">
           {formatDuration(liveDurationMs(record, nowMs))}
@@ -934,7 +993,7 @@ function StatusText({ record }: { record: RequestRecord }) {
 
 function RecordDetail({
   record,
-  endpointName,
+  serviceName,
   nowMs,
   auditContent,
   auditLoading,
@@ -948,10 +1007,10 @@ function RecordDetail({
   onPrevious,
   onNext,
   onDelete,
-  onReview,
+  onClearDecrypted,
 }: {
   record: RequestRecord;
-  endpointName: string | null;
+  serviceName: string | null;
   nowMs: number;
   auditContent: AuditContent | null;
   auditLoading: boolean;
@@ -965,61 +1024,98 @@ function RecordDetail({
   onPrevious: () => void;
   onNext: () => void;
   onDelete: () => void;
-  onReview: () => void;
+  onClearDecrypted: () => void;
 }) {
-  const captured =
-    record.audit.request_body_captured ||
-    record.audit.response_content_captured;
+  const copyFeedback = useCopyFeedback();
+  const [bundleSize, setBundleSize] = useState<number | null>(null);
   const requestPart = auditContent?.request_body ?? null;
   const responsePart = auditContent?.response_content ?? null;
+
+  const copyBundle = (includeBodies: boolean) => {
+    const bundle = buildRecordBundle(record, auditContent, {
+      includeBodies,
+      serviceLabel: serviceName,
+    });
+    setBundleSize(includeBodies ? bundle.length : null);
+    copyFeedback.copy(includeBodies ? "bundle" : "bundle-meta", bundle);
+  };
+
   return (
     <section
       aria-labelledby="request-detail-heading"
       className="workspace-card records-surface record-detail"
     >
-      <header className="records-page-header">
-        <div>
-          <button className="records-back" onClick={onBack} type="button">
-            <span aria-hidden="true">←</span>
-            实时监控
-          </button>
-          <span className="section-kicker">请求记录</span>
-          <h2 id="request-detail-heading">记录详情</h2>
-          <p>状态与指标会随实时监控中的同一条记录自动更新。</p>
-        </div>
-        <div className="records-page-actions">
-          <button
-            className="btn-secondary"
-            disabled={!previousId}
-            onClick={onPrevious}
-            type="button"
-          >
-            上一条
-          </button>
-          <span className="record-detail__position">
-            {index >= 0 ? index + 1 : "—"} / {navigationCount || "—"}
-          </span>
-          <button
-            className="btn-secondary"
-            disabled={!nextId}
-            onClick={onNext}
-            type="button"
-          >
-            下一条
-          </button>
-          <button
-            className="btn-secondary is-danger"
-            disabled={deleting || record.status === "pending"}
-            onClick={onDelete}
-            title={
-              record.status === "pending" ? "进行中的记录结束后才能删除" : undefined
-            }
-            type="button"
-          >
-            {deleting ? "删除中…" : "删除"}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        actions={
+          <>
+            <button
+              className="btn-secondary"
+              disabled={!previousId}
+              onClick={onPrevious}
+              title="快捷键 ["
+              type="button"
+            >
+              上一条
+            </button>
+            <span className="record-detail__position">
+              {index >= 0 ? index + 1 : "—"} / {navigationCount || "—"}
+            </span>
+            <button
+              className="btn-secondary"
+              disabled={!nextId}
+              onClick={onNext}
+              title="快捷键 ]"
+              type="button"
+            >
+              下一条
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => copyBundle(true)}
+              type="button"
+            >
+              {copyButtonLabel(
+                copyFeedback,
+                "bundle",
+                "一键复制全部",
+                bundleSize !== null
+                  ? `已复制 ${formatBytes(bundleSize)}`
+                  : "已复制",
+              )}
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={() => copyBundle(false)}
+              type="button"
+            >
+              {copyButtonLabel(
+                copyFeedback,
+                "bundle-meta",
+                "仅复制元数据 + HTTP",
+              )}
+            </button>
+            <button
+              className="btn-secondary is-danger"
+              disabled={deleting || record.status === "pending"}
+              onClick={onDelete}
+              title={
+                record.status === "pending"
+                  ? "进行中的记录结束后才能删除"
+                  : undefined
+              }
+              type="button"
+            >
+              {deleting ? "删除中…" : "删除"}
+            </button>
+          </>
+        }
+        back={{ label: "实时监控", onClick: onBack }}
+        description="状态与指标会随实时监控中的同一条记录自动更新。"
+        eyebrow="请求记录"
+        title="记录详情"
+        titleId="request-detail-heading"
+        variant="card"
+      />
 
       <div className="record-detail__scroll">
         <DetailSection title="身份">
@@ -1041,7 +1137,7 @@ function RecordDetail({
             />
             <DetailField
               label="服务"
-              value={endpointName ?? record.endpoint_id ?? "—"}
+              value={serviceName ?? record.service_id ?? "—"}
             />
             <DetailField label="开始" value={formatDateTime(record.started_at)} />
             <DetailField
@@ -1056,10 +1152,10 @@ function RecordDetail({
                 <code>{record.id}</code>
                 <button
                   className="text-button"
-                  onClick={() => void copyText(record.id)}
+                  onClick={() => copyFeedback.copy("record-id", record.id)}
                   type="button"
                 >
-                  复制
+                  {copyButtonLabel(copyFeedback, "record-id")}
                 </button>
               </dd>
             </div>
@@ -1111,12 +1207,46 @@ function RecordDetail({
           </DetailSection>
         ) : null}
 
+        {auditError ? (
+          <p className="inline-error" role="alert">
+            {auditError}
+          </p>
+        ) : null}
+        {auditLoading ? (
+          <DetailSection title="内容">
+            <p className="record-audit-loading" role="status">
+              正在解密内容…
+            </p>
+          </DetailSection>
+        ) : auditContent ? (
+          <>
+            <HTTPMetaSection
+              copyFeedback={copyFeedback}
+              meta={auditContent.http_meta}
+            />
+            <AuditPartSection
+              copyFeedback={copyFeedback}
+              part={requestPart}
+              protocol={record.input_protocol}
+              sectionKey="request-body"
+              title="请求体"
+            />
+            <AuditPartSection
+              copyFeedback={copyFeedback}
+              part={responsePart}
+              protocol={record.input_protocol}
+              sectionKey="response-content"
+              title="响应内容"
+            />
+          </>
+        ) : null}
+
         <DetailSection title="关联">
           <dl className="record-detail-grid">
             <DetailField label="路由" value={record.route_id ?? "—"} code />
             <DetailField
               label="服务"
-              value={endpointName ?? record.endpoint_id ?? "—"}
+              value={serviceName ?? record.service_id ?? "—"}
             />
             <DetailField
               label="访问令牌"
@@ -1141,25 +1271,16 @@ function RecordDetail({
               truncated={record.audit.response_content_truncated}
             />
           </div>
-          <div className="record-audit-action">
-            <div>
-              <strong>内容不会自动解密</strong>
-              <span>点击后在独立审查页中解密，离开监控会清除内存。</span>
-            </div>
+          <div className="record-audit-clear">
+            <span>解密内容仅保存在当前会话内存中。</span>
             <button
-              className="btn-primary"
-              disabled={!captured || auditLoading}
-              onClick={onReview}
+              className="btn-secondary"
+              onClick={onClearDecrypted}
               type="button"
             >
-              {auditLoading ? "正在解密…" : "解密并审查内容"}
+              清除已解密内容
             </button>
           </div>
-          {auditError ? (
-            <p className="inline-error" role="alert">
-              {auditError}
-            </p>
-          ) : null}
         </DetailSection>
       </div>
     </section>
@@ -1244,13 +1365,10 @@ function AuditSummaryCard({
         </span>
       </header>
       <dl>
-        <DetailField
-          label="类型"
-          value={part?.media_type ?? (captured ? "解密后可见" : "—")}
-        />
+        <DetailField label="类型" value={part?.media_type ?? "—"} />
         <DetailField
           label="大小"
-          value={part ? formatBytes(part.captured_bytes) : captured ? "解密后可见" : "—"}
+          value={part ? formatBytes(part.captured_bytes) : "—"}
         />
         <DetailField label="截断" value={truncated ? "是" : "否"} />
       </dl>
@@ -1320,6 +1438,11 @@ function SettingsDialog({
       {draft ? (
         <div className="audit-settings-form">
           <CheckField
+            checked={draft.http_meta_enabled}
+            label="HTTP 元数据捕获（方法 / URL / 请求头，敏感值已脱敏）"
+            onChange={(value) => onChange("http_meta_enabled", value)}
+          />
+          <CheckField
             checked={draft.request_body_enabled}
             label="请求体捕获"
             onChange={(value) => onChange("request_body_enabled", value)}
@@ -1358,7 +1481,8 @@ function SettingsDialog({
             value={draft.content_retention_days}
           />
           <p className="inline-notice audit-settings-form__hint">
-            开启后仅捕获新请求；正文以密文保存在本机。开启捕获需进行第二步风险确认。
+            开启后仅捕获新请求；正文以密文保存在本机。开启正文捕获需进行第二步风险确认；HTTP
+            元数据在捕获时即脱敏（Authorization 等敏感值不落盘），无需额外确认。
           </p>
         </div>
       ) : busy ? (
@@ -1600,12 +1724,12 @@ function diffSettings(
   return patch;
 }
 
-function endpointLabel(
-  endpointId: string | null,
-  endpoints: Endpoint[],
+function serviceLabel(
+  serviceId: string | null,
+  services: RoutableService[],
 ): string | null {
-  if (!endpointId) return null;
-  return endpoints.find((endpoint) => endpoint.id === endpointId)?.name ?? null;
+  if (!serviceId) return null;
+  return services.find((service) => service.id === serviceId)?.name ?? null;
 }
 
 function formatDateTime(value: string): string {
@@ -1622,12 +1746,4 @@ function formatBytes(bytes: number): string {
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-async function copyText(value: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    // The code remains selectable when clipboard permission is unavailable.
-  }
 }

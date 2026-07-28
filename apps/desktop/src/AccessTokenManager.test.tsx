@@ -229,6 +229,12 @@ describe("AccessTokenManager", () => {
 
     expect(container.textContent).not.toContain(firstSecret);
     expect(container.querySelector(".token-row__secret")).toBeNull();
+    expect(bridgeMocks.deleteAccessToken).not.toHaveBeenCalled();
+
+    await act(async () => {
+      button("确认删除").click();
+      await Promise.resolve();
+    });
     expect(bridgeMocks.deleteAccessToken).toHaveBeenCalledWith(firstToken.id);
 
     await act(async () => {
@@ -279,9 +285,12 @@ describe("AccessTokenManager", () => {
       button("删除", row(firstToken.name)).click();
       await Promise.resolve();
     });
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining("最后一个访问令牌"),
-    );
+    expect(container.textContent).toContain("最后一个访问令牌");
+    expect(window.confirm).not.toHaveBeenCalled();
+    await act(async () => {
+      button("确认删除").click();
+      await Promise.resolve();
+    });
     expect(bridgeMocks.deleteAccessToken).toHaveBeenCalledWith(firstToken.id);
     expect(container.querySelector(".token-row")).toBeNull();
   });

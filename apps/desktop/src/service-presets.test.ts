@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { endpointPreset } from "./endpoint-presets";
+import {
+  httpServicePreset,
+  httpServicePresetIDs,
+  httpServicePresetLabel,
+} from "./service-presets";
 
-describe("endpoint product presets", () => {
+describe("HTTP service product presets", () => {
   it("configures new-api as a bearer-authenticated delegated multi-protocol gateway", () => {
-    const preset = endpointPreset("newapi");
+    const preset = httpServicePreset("newapi");
 
     expect(preset.kind).toBe("newapi");
     expect(preset.authScheme).toBe("bearer");
@@ -25,42 +29,22 @@ describe("endpoint product presets", () => {
     ]);
   });
 
-  it("uses conservative per-key matrices for Sub2API-style subscriptions", () => {
-    expect(endpointPreset("subscription_openai")).toMatchObject({
-      kind: "custom",
-      authScheme: "bearer",
-      capabilities: [
-        { protocol: "openai.responses", mode: "delegated", streaming: true },
-        { protocol: "openai.chat", mode: "delegated", streaming: true },
-        { protocol: "openai.models", mode: "delegated", streaming: false },
-      ],
-    });
-    expect(endpointPreset("subscription_anthropic")).toMatchObject({
-      kind: "custom",
-      authScheme: "bearer",
-      capabilities: [
-        { protocol: "anthropic.messages", mode: "delegated", streaming: true },
-        // Sub2API returns this route for Anthropic groups, although its item
-        // shape is closer to Anthropic than strict OpenAI model metadata.
-        { protocol: "openai.models", mode: "delegated", streaming: false },
-      ],
-    });
-    expect(endpointPreset("subscription_gemini")).toMatchObject({
-      kind: "custom",
-      authScheme: "bearer",
-      capabilities: [
-        {
-          protocol: "google.generate_content",
-          mode: "delegated",
-          streaming: true,
-        },
-        { protocol: "google.models", mode: "delegated", streaming: false },
-      ],
-    });
+  it("does not expose API-key services as Codex, Claude, or Gemini subscriptions", () => {
+    expect(httpServicePresetIDs).toEqual([
+      "newapi",
+      "openai_compatible",
+      "openai",
+      "anthropic",
+      "gemini",
+      "custom",
+    ]);
+    expect(
+      httpServicePresetIDs.map(httpServicePresetLabel).join(" "),
+    ).not.toContain("订阅");
   });
 
-  it("keeps OpenAI-compatible subscriptions intentionally narrow and native", () => {
-    expect(endpointPreset("openai_compatible")).toMatchObject({
+  it("keeps OpenAI-compatible API services intentionally narrow and native", () => {
+    expect(httpServicePreset("openai_compatible")).toMatchObject({
       kind: "openai_compatible",
       baseURL: "",
       authScheme: "bearer",
@@ -77,7 +61,7 @@ describe("endpoint product presets", () => {
   });
 
   it("uses exact provider-specific auth and native capabilities for official services", () => {
-    expect(endpointPreset("openai")).toMatchObject({
+    expect(httpServicePreset("openai")).toMatchObject({
       baseURL: "https://api.openai.com/v1",
       authScheme: "bearer",
       capabilities: [
@@ -96,7 +80,7 @@ describe("endpoint product presets", () => {
         { protocol: "openai.models", mode: "native", streaming: false },
       ],
     });
-    expect(endpointPreset("anthropic")).toMatchObject({
+    expect(httpServicePreset("anthropic")).toMatchObject({
       baseURL: "https://api.anthropic.com",
       authScheme: "anthropic_api_key",
       capabilities: [
@@ -107,7 +91,7 @@ describe("endpoint product presets", () => {
         },
       ],
     });
-    expect(endpointPreset("gemini")).toMatchObject({
+    expect(httpServicePreset("gemini")).toMatchObject({
       baseURL: "https://generativelanguage.googleapis.com",
       authScheme: "google_api_key",
       capabilities: [
@@ -122,7 +106,7 @@ describe("endpoint product presets", () => {
   });
 
   it("opens advanced settings and requires an explicit capability for custom services", () => {
-    expect(endpointPreset("custom")).toMatchObject({
+    expect(httpServicePreset("custom")).toMatchObject({
       authScheme: "bearer",
       capabilities: [],
       advancedOnStart: true,

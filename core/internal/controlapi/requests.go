@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -60,20 +61,20 @@ func (handler *Handler) requestRecordCollection(writer http.ResponseWriter, requ
 func (handler *Handler) requestRecordItem(writer http.ResponseWriter, request *http.Request) {
 	rawID := strings.TrimPrefix(request.URL.Path, RequestsPath+"/")
 	if rawID == "" {
-		writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	if strings.HasSuffix(rawID, "/audit") {
 		idPart := strings.TrimSuffix(rawID, "/audit")
 		if idPart == "" || strings.Contains(idPart, "/") {
-			writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+			writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 			return
 		}
 		handler.getRequestAuditContent(writer, request, idPart)
 		return
 	}
 	if strings.Contains(rawID, "/") {
-		writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	decodedID, err := url.PathUnescape(rawID)
@@ -113,7 +114,7 @@ func (handler *Handler) getRequestAuditContent(writer http.ResponseWriter, reque
 		return
 	}
 	if handler.auditBlobs == nil {
-		writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	decodedID, err := url.PathUnescape(rawID)
@@ -154,6 +155,23 @@ func (handler *Handler) getRequestAuditContent(writer http.ResponseWriter, reque
 		return
 	}
 	for _, blob := range blobs {
+		if blob.Direction == storage.AuditDirectionHTTPMeta {
+			// A corrupt meta blob must not fail the whole detail view;
+			// http_meta simply stays null.
+			plaintext, err := storage.OpenAuditBlob(key, blob.Nonce, blob.Ciphertext)
+			if err != nil {
+				writeError(writer, http.StatusConflict, "audit_decrypt_failed", "audit content cannot be decrypted")
+				return
+			}
+			var meta contract.AuditHTTPMeta
+			if err := json.Unmarshal(plaintext, &meta); err != nil {
+				// A corrupt meta payload leaves http_meta null instead of
+				// failing the whole detail view.
+				continue
+			}
+			content.HTTPMeta = &meta
+			continue
+		}
 		part, err := decryptAuditContentPart(key, blob)
 		if err != nil {
 			writeError(writer, http.StatusConflict, "audit_decrypt_failed", "audit content cannot be decrypted")
@@ -217,7 +235,7 @@ func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecord
 	query := request.URL.Query()
 	for name := range query {
 		switch name {
-		case "limit", "cursor", "from", "to", "protocol", "endpoint_id", "status":
+		case "limit", "cursor", "from", "to", "protocol", "service_id", "status":
 		default:
 			return storage.RequestRecordListOptions{}, fmt.Errorf("unknown query parameter")
 		}
@@ -265,12 +283,12 @@ func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecord
 		}
 		options.Protocol = &protocol
 	}
-	if value := query.Get("endpoint_id"); value != "" {
-		endpointID := contract.EndpointID(value)
-		if err := endpointID.Validate(); err != nil {
-			return options, fmt.Errorf("invalid endpoint_id filter")
+	if value := query.Get("service_id"); value != "" {
+		serviceID := contract.ServiceID(value)
+		if err := serviceID.Validate(); err != nil {
+			return options, fmt.Errorf("invalid service_id filter")
 		}
-		options.EndpointID = &endpointID
+		options.ServiceID = &serviceID
 	}
 	if value := query.Get("status"); value != "" {
 		status := contract.RequestStatus(value)

@@ -74,7 +74,7 @@ func TestRequestRecordValidation(t *testing.T) {
 			name: "accepts null optional attribution fields",
 			mutate: func(record *RequestRecord) {
 				record.RouteID = nil
-				record.EndpointID = nil
+				record.ServiceID = nil
 				record.LocalAccessTokenID = nil
 				record.Plan = nil
 				record.Usage = nil

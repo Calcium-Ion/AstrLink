@@ -64,7 +64,7 @@ func (handler *Handler) accessTokenItem(writer http.ResponseWriter, request *htt
 	if strings.HasSuffix(suffix, "/secret") {
 		rawID := strings.TrimSuffix(suffix, "/secret")
 		if rawID == "" || strings.Contains(rawID, "/") {
-			writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+			writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 			return
 		}
 		id, ok := parseAccessTokenID(writer, rawID)
@@ -80,7 +80,7 @@ func (handler *Handler) accessTokenItem(writer http.ResponseWriter, request *htt
 		return
 	}
 	if suffix == "" || strings.Contains(suffix, "/") {
-		writeError(writer, http.StatusNotFound, "not_found", "control endpoint not found")
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	id, ok := parseAccessTokenID(writer, suffix)

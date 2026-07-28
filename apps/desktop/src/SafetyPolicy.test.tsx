@@ -66,6 +66,7 @@ function policyRecord(
       priority: 0,
       detector: "regex",
       local_model_id: null,
+      min_confidence: 0.8,
       request_action: "redact",
       response_action: "allow",
       response_restore: true,
@@ -516,9 +517,13 @@ describe("SafetyPolicy", () => {
       button("安装自定义模型").click();
       await Promise.resolve();
     });
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining("性能较低的设备"),
-    );
+    expect(container.textContent).toContain("性能较低的设备");
+    expect(bridgeMocks.installPrivacyModel).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+    await act(async () => {
+      button("继续安装").click();
+      await Promise.resolve();
+    });
     expect(bridgeMocks.installPrivacyModel).toHaveBeenCalledWith({
       repo_id: heavyProbe.repo_id,
       revision,
@@ -741,10 +746,49 @@ describe("SafetyPolicy", () => {
     ).toBe(false);
   });
 
-  it("runs a policy dry-run and shows the decision summary", async () => {
-    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
-      policyRecord({ enabled: true }),
+  it("patches the model confidence threshold", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({ min_confidence: 0.87 }),
     );
+    await renderPolicy();
+
+    const threshold = container.querySelector<HTMLInputElement>(
+      'input[aria-label="模型最低置信度"]',
+    );
+    expect(threshold?.min).toBe("0");
+    expect(threshold?.max).toBe("1");
+    expect(threshold?.step).toBe("0.01");
+
+    threshold?.focus();
+    await setInput('input[aria-label="模型最低置信度"]', "0.87");
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    await act(async () => threshold?.blur());
+    await flush();
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
+      min_confidence: 0.87,
+    });
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="模型最低置信度"]',
+      )?.value,
+    ).toBe("0.87");
+    expect(container.textContent).toContain("Regex 不受此门槛影响");
+  });
+
+  it("runs a policy dry-run and shows the decision summary", async () => {
+    const ready = readyInstallation();
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        enabled: true,
+        detector: "local_model",
+        local_model_id: ready.id,
+      }),
+    );
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({
+      items: [ready],
+    });
     bridgeMocks.dryRunPrivacyPolicy.mockResolvedValueOnce({
       decision: "redact",
       findings_summary: "email=1",
@@ -754,6 +798,16 @@ describe("SafetyPolicy", () => {
           path: "/messages/0/content",
           start: 6,
           end: 23,
+          confidence: 0.91,
+        },
+      ],
+      suppressed_findings: [
+        {
+          kind: "private_person",
+          path: "/messages/0/content",
+          start: 0,
+          end: 6,
+          confidence: 0.696717,
         },
       ],
       redactions: [
@@ -781,13 +835,17 @@ describe("SafetyPolicy", () => {
       sample_text: expect.stringContaining("alice@example.com"),
       policy: {
         enabled: true,
-        detector: "regex",
-        local_model_id: null,
+        detector: "local_model",
+        local_model_id: ready.id,
+        min_confidence: 0.8,
         request_action: "redact",
       },
     });
     expect(container.textContent).toContain("脱敏后继续");
     expect(container.textContent).toContain("邮箱 × 1");
+    expect(container.textContent).toContain("0.910000 ≥ 0.80");
+    expect(container.textContent).toContain("低于门槛（已抑制，不执行策略）");
+    expect(container.textContent).toContain("0.696717 < 0.80");
     expect(container.textContent).toContain("占位符对照（仅本地预览）");
     expect(container.textContent).toContain("<PRIVATE_EMAIL>");
     expect(container.textContent).toContain("alice@example.com");

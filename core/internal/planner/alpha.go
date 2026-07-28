@@ -39,7 +39,8 @@ func (err *CapabilityUnavailableError) Unwrap() error {
 }
 
 type AlphaInput struct {
-	Endpoint  contract.Endpoint
+	Service   contract.Service
+	Endpoint  contract.Endpoint // compatibility view for callers migrating to Service
 	Protocol  contract.ProtocolID
 	Mode      contract.CapabilityMode
 	Streaming bool
@@ -48,22 +49,26 @@ type AlphaInput struct {
 // BuildAlpha selects an explicitly declared Endpoint capability and returns a
 // protocol-preserving plan. RelayKit cannot be selected by this function.
 func BuildAlpha(input AlphaInput) (contract.ExecutionPlan, error) {
+	service := input.Service
+	if service.ID == "" && input.Endpoint.ID != "" {
+		service = contract.ServiceFromEndpoint(input.Endpoint)
+	}
 	if err := input.Protocol.Validate(); err != nil {
 		return contract.ExecutionPlan{}, fmt.Errorf("protocol: %w", err)
 	}
 	if !input.Mode.Valid() {
 		return contract.ExecutionPlan{}, fmt.Errorf("capability mode %q is not available in Alpha", input.Mode)
 	}
-	if err := input.Endpoint.Validate(); err != nil {
+	if err := service.Validate(); err != nil {
 		return contract.ExecutionPlan{}, fmt.Errorf("endpoint: %w", err)
 	}
-	if !input.Endpoint.Enabled {
+	if !service.Enabled {
 		return contract.ExecutionPlan{}, ErrEndpointDisabled
 	}
 
 	var selected *contract.Capability
-	for index := range input.Endpoint.Capabilities {
-		capability := &input.Endpoint.Capabilities[index]
+	for index := range service.Capabilities {
+		capability := &service.Capabilities[index]
 		if capability.Protocol == input.Protocol && capability.Mode == input.Mode {
 			selected = capability
 			break
@@ -83,7 +88,7 @@ func BuildAlpha(input AlphaInput) (contract.ExecutionPlan, error) {
 	}
 	plan := contract.ExecutionPlan{
 		Type:             planType,
-		EndpointID:       input.Endpoint.ID,
+		ServiceID:        service.ID,
 		InputProtocol:    input.Protocol,
 		UpstreamProtocol: input.Protocol,
 		ConversionPath:   []contract.ConversionEdge{},

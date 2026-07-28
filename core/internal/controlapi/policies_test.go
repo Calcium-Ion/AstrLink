@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -77,7 +78,7 @@ func TestPolicyControlAPIListsGetsAndPatchesFixedPrivacyPolicy(t *testing.T) {
 		t, handler, http.MethodPatch,
 		PoliciesPath+"/"+string(contract.DefaultPrivacyPolicyID),
 		"application/merge-patch+json",
-		`{"detector":"local_model","local_model_id":"model_de5ac42e03b4af887b31a7645d3ce111","request_action":"redact"}`,
+		`{"detector":"local_model","local_model_id":"model_de5ac42e03b4af887b31a7645d3ce111","min_confidence":0.9,"request_action":"redact"}`,
 		regexETag,
 	)
 	if response.Code != http.StatusOK {
@@ -88,6 +89,7 @@ func TestPolicyControlAPIListsGetsAndPatchesFixedPrivacyPolicy(t *testing.T) {
 	if modelPolicy.Detector != contract.PolicyDetectorLocalModel ||
 		modelPolicy.LocalModelID == nil ||
 		*modelPolicy.LocalModelID != contract.LegacyOpenAIPrivacyFilterInstallationID ||
+		modelPolicy.MinConfidence != 0.9 ||
 		!modelPolicy.Enabled {
 		t.Fatalf("model policy=%#v", modelPolicy)
 	}
@@ -115,6 +117,10 @@ func TestPolicyPatchRequiresETagAndRejectsMutableOrInvalidFields(t *testing.T) {
 		{name: "null", contentType: "application/merge-patch+json", body: `{"detector":null}`, etag: etag, status: http.StatusUnprocessableEntity},
 		{name: "invalid detector", contentType: "application/merge-patch+json", body: `{"detector":"remote"}`, etag: etag, status: http.StatusUnprocessableEntity},
 		{name: "invalid action", contentType: "application/merge-patch+json", body: `{"request_action":"drop"}`, etag: etag, status: http.StatusUnprocessableEntity},
+		{name: "null confidence", contentType: "application/merge-patch+json", body: `{"min_confidence":null}`, etag: etag, status: http.StatusUnprocessableEntity},
+		{name: "negative confidence", contentType: "application/merge-patch+json", body: `{"min_confidence":-0.01}`, etag: etag, status: http.StatusUnprocessableEntity},
+		{name: "confidence above one", contentType: "application/merge-patch+json", body: `{"min_confidence":1.01}`, etag: etag, status: http.StatusUnprocessableEntity},
+		{name: "string confidence", contentType: "application/merge-patch+json", body: `{"min_confidence":"0.8"}`, etag: etag, status: http.StatusUnprocessableEntity},
 		{name: "response restore off", contentType: "application/merge-patch+json", body: `{"response_restore":false}`, etag: etag, status: http.StatusOK},
 	}
 	for _, test := range tests {
@@ -185,7 +191,7 @@ func TestPolicyChangeHookRunsSynchronously(t *testing.T) {
 	handler, err := NewWithDependencies(
 		contract.DefaultVersionResponse("0.1.0-test", "abc1234"),
 		Dependencies{
-			EndpointStore: store,
+			ServiceStore:  store,
 			PolicyStore:   store,
 			PrivacyModels: newFakePrivacyModelRegistry(),
 			PolicyChanged: func(policy contract.Policy) {
@@ -245,6 +251,9 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 	if len(result.Findings) == 0 || result.Findings[0].Kind != "email" || result.Findings[0].Path == "" {
 		t.Fatalf("findings=%#v", result.Findings)
 	}
+	if result.Findings[0].Confidence != 1 || len(result.SuppressedFindings) != 0 {
+		t.Fatalf("confidence dry-run fields=%#v suppressed=%#v", result.Findings, result.SuppressedFindings)
+	}
 	for _, finding := range result.Findings {
 		encoded, _ := json.Marshal(finding)
 		if strings.Contains(string(encoded), "alice@example.com") {
@@ -300,6 +309,78 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 	_ = model
 }
 
+func TestPolicyDryRunSeparatesAcceptedAndSuppressedModelFindings(t *testing.T) {
+	_, handler, models := newPolicyHandler(t)
+	models.ready[contract.LegacyOpenAIPrivacyFilterInstallationID] = true
+	provider, err := privacy.NewStorePolicyProvider(handler.policyStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detector := privacy.DetectorFunc(func(_ context.Context, input privacy.DetectInput) ([]privacy.Finding, error) {
+		if len(input.Segments) != 1 || input.Segments[0].Value != "画一张猫的图片" {
+			t.Fatalf("detector input=%#v", input)
+		}
+		return []privacy.Finding{{
+			Segment: 0, Start: 0, End: len(input.Segments[0].Value),
+			Kind: privacy.KindPerson, Confidence: 0.696717,
+		}}, nil
+	})
+	filter, err := privacy.New(provider, detector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.privacyFilter = filter
+
+	for _, test := range []struct {
+		name           string
+		minConfidence  float64
+		wantDecision   string
+		wantFindings   int
+		wantSuppressed int
+	}{
+		{
+			name: "default threshold suppresses", minConfidence: 0.80,
+			wantDecision: "allow", wantSuppressed: 1,
+		},
+		{
+			name: "lower threshold accepts", minConfidence: 0.69,
+			wantDecision: "block", wantFindings: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(
+				`{"protocol":"openai.responses","sample_text":"画一张猫的图片","policy":{"enabled":true,"detector":"local_model","local_model_id":"%s","min_confidence":%.2f,"request_action":"block"}}`,
+				contract.LegacyOpenAIPrivacyFilterInstallationID,
+				test.minConfidence,
+			)
+			response := policyRequest(
+				t, handler, http.MethodPost, PolicyDryRunPath,
+				"application/json", body, "",
+			)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			var result contract.PolicyDryRunResponse
+			decode(t, response, &result)
+			if result.Decision != test.wantDecision ||
+				len(result.Findings) != test.wantFindings ||
+				len(result.SuppressedFindings) != test.wantSuppressed {
+				t.Fatalf("result=%#v", result)
+			}
+			candidates := append(
+				append([]contract.PolicyDryRunFinding{}, result.Findings...),
+				result.SuppressedFindings...,
+			)
+			if len(candidates) != 1 ||
+				candidates[0].Confidence != 0.696717 ||
+				candidates[0].Kind != "private_person" ||
+				candidates[0].Path == "" {
+				t.Fatalf("candidates=%#v", candidates)
+			}
+		})
+	}
+}
+
 func newPolicyHandler(t *testing.T) (*sqlite.Store, *Handler, *fakePrivacyModelRegistry) {
 	t.Helper()
 	store, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "astrlink.db"))
@@ -309,7 +390,7 @@ func newPolicyHandler(t *testing.T) (*sqlite.Store, *Handler, *fakePrivacyModelR
 	t.Cleanup(func() { _ = store.Close() })
 	model := newFakePrivacyModelRegistry()
 	handler, err := NewWithDependencies(contract.DefaultVersionResponse("0.1.0-test", "abc1234"), Dependencies{
-		EndpointStore: store, PolicyStore: store, PrivacyModels: model,
+		ServiceStore: store, PolicyStore: store, PrivacyModels: model,
 		ControlToken: testControlToken,
 	})
 	if err != nil {

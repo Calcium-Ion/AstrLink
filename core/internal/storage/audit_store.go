@@ -12,10 +12,15 @@ type AuditDirection string
 const (
 	AuditDirectionRequest  AuditDirection = "request"
 	AuditDirectionResponse AuditDirection = "response"
+	// AuditDirectionHTTPMeta stores the redacted HTTP envelope (method, URL,
+	// headers, response status) as encrypted JSON (ADR 0008).
+	AuditDirectionHTTPMeta AuditDirection = "http_meta"
 )
 
 func (direction AuditDirection) Valid() bool {
-	return direction == AuditDirectionRequest || direction == AuditDirectionResponse
+	return direction == AuditDirectionRequest ||
+		direction == AuditDirectionResponse ||
+		direction == AuditDirectionHTTPMeta
 }
 
 type AuditBlob struct {

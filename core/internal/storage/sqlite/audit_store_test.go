@@ -23,18 +23,25 @@ func TestAuditSettingsDefaultsAndKeyOnce(t *testing.T) {
 	if settings.RequestBodyEnabled || settings.ResponseContentEnabled {
 		t.Fatalf("defaults enabled: %#v", settings)
 	}
+	if !settings.HTTPMetaEnabled {
+		t.Fatalf("http_meta_enabled must default to true: %#v", settings)
+	}
 	if settings.RequestBodyMaxBytes != contract.DefaultRequestBodyMaxBytes {
 		t.Fatalf("request max = %d", settings.RequestBodyMaxBytes)
 	}
 
 	settings.RequestBodyEnabled = true
 	settings.ResponseContentEnabled = true
+	settings.HTTPMetaEnabled = false
 	if err := store.UpdateAuditSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := store.GetAuditSettings(ctx)
 	if err != nil || !loaded.RequestBodyEnabled || !loaded.ResponseContentEnabled {
 		t.Fatalf("loaded=%#v err=%v", loaded, err)
+	}
+	if loaded.HTTPMetaEnabled {
+		t.Fatalf("http_meta_enabled did not round-trip false: %#v", loaded)
 	}
 
 	key1, err := store.GetOrCreateAuditKey(ctx)
@@ -84,6 +91,17 @@ func TestAuditBlobCascadeDeletePurgeAndSweep(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		metaNonce, metaCiphertext, err := storagecontract.SealAuditBlob(key, []byte(`{"method":"POST"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.InsertAuditBlob(ctx, storagecontract.AuditBlob{
+			RequestID: id, Direction: storagecontract.AuditDirectionHTTPMeta,
+			MediaType: "application/json", Nonce: metaNonce, Ciphertext: metaCiphertext,
+			CapturedBytes: 17, CreatedAt: start,
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if err := store.DeleteRequestRecord(ctx, "request_new"); err != nil {
@@ -92,6 +110,10 @@ func TestAuditBlobCascadeDeletePurgeAndSweep(t *testing.T) {
 	blobs, err := store.GetAuditBlobsByRequest(ctx, "request_new")
 	if err != nil || len(blobs) != 0 {
 		t.Fatalf("cascade delete failed: %#v err=%v", blobs, err)
+	}
+	remaining, err := store.GetAuditBlobsByRequest(ctx, "request_old")
+	if err != nil || len(remaining) != 2 {
+		t.Fatalf("request_old blobs=%d err=%v, want body + http_meta", len(remaining), err)
 	}
 
 	settings := contract.DefaultAuditSettings()

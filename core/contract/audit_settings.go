@@ -29,6 +29,7 @@ var extensionNamePattern = regexp.MustCompile(`^x-[a-z0-9][a-z0-9._-]{0,62}$`)
 type AuditSettings struct {
 	RequestBodyEnabled      bool           `json:"request_body_enabled"`
 	ResponseContentEnabled  bool           `json:"response_content_enabled"`
+	HTTPMetaEnabled         bool           `json:"http_meta_enabled"`
 	RequestBodyMaxBytes     int            `json:"request_body_max_bytes"`
 	ResponseContentMaxBytes int            `json:"response_content_max_bytes"`
 	MetadataRetentionDays   int            `json:"metadata_retention_days"`
@@ -37,10 +38,13 @@ type AuditSettings struct {
 }
 
 // DefaultAuditSettings returns the frozen install/upgrade defaults.
+// http_meta_enabled defaults to true (ADR 0008): captured values are redacted
+// before storage and encrypted at rest, unlike opt-in body capture.
 func DefaultAuditSettings() AuditSettings {
 	return AuditSettings{
 		RequestBodyEnabled:      false,
 		ResponseContentEnabled:  false,
+		HTTPMetaEnabled:         true,
 		RequestBodyMaxBytes:     DefaultRequestBodyMaxBytes,
 		ResponseContentMaxBytes: DefaultResponseContentMaxBytes,
 		MetadataRetentionDays:   DefaultMetadataRetentionDays,
@@ -80,6 +84,7 @@ func (settings AuditSettings) Validate() error {
 type AuditSettingsPatch struct {
 	RequestBodyEnabled      *bool          `json:"request_body_enabled,omitempty"`
 	ResponseContentEnabled  *bool          `json:"response_content_enabled,omitempty"`
+	HTTPMetaEnabled         *bool          `json:"http_meta_enabled,omitempty"`
 	RequestBodyMaxBytes     *int           `json:"request_body_max_bytes,omitempty"`
 	ResponseContentMaxBytes *int           `json:"response_content_max_bytes,omitempty"`
 	MetadataRetentionDays   *int           `json:"metadata_retention_days,omitempty"`
@@ -95,6 +100,9 @@ func (patch AuditSettingsPatch) Validate() error {
 		present++
 	}
 	if patch.ResponseContentEnabled != nil {
+		present++
+	}
+	if patch.HTTPMetaEnabled != nil {
 		present++
 	}
 	if patch.RequestBodyMaxBytes != nil {
@@ -146,7 +154,9 @@ func (patch AuditSettingsPatch) Validate() error {
 	return nil
 }
 
-// EnablesCapture reports whether the patch turns either capture switch on.
+// EnablesCapture reports whether the patch turns either body capture switch on.
+// http_meta_enabled is deliberately excluded: HTTP metadata is redacted before
+// storage and does not require the body-audit risk acknowledgement (ADR 0008).
 func (patch AuditSettingsPatch) EnablesCapture() bool {
 	return (patch.RequestBodyEnabled != nil && *patch.RequestBodyEnabled) ||
 		(patch.ResponseContentEnabled != nil && *patch.ResponseContentEnabled)
@@ -159,6 +169,7 @@ func (patch AuditSettingsPatch) Acknowledged() bool {
 // AuditContent is the decrypted privileged audit payload for one request.
 type AuditContent struct {
 	RequestID       RequestID         `json:"request_id"`
+	HTTPMeta        *AuditHTTPMeta    `json:"http_meta"`
 	RequestBody     *AuditContentPart `json:"request_body"`
 	ResponseContent *AuditContentPart `json:"response_content"`
 }
@@ -166,6 +177,11 @@ type AuditContent struct {
 func (content AuditContent) Validate() error {
 	if err := content.RequestID.Validate(); err != nil {
 		return err
+	}
+	if content.HTTPMeta != nil {
+		if err := content.HTTPMeta.Validate(); err != nil {
+			return fmt.Errorf("http_meta: %w", err)
+		}
 	}
 	if content.RequestBody != nil {
 		if err := content.RequestBody.Validate(); err != nil {
@@ -175,6 +191,51 @@ func (content AuditContent) Validate() error {
 	if content.ResponseContent != nil {
 		if err := content.ResponseContent.Validate(); err != nil {
 			return fmt.Errorf("response_content: %w", err)
+		}
+	}
+	return nil
+}
+
+// AuditHeader is one redacted header line captured at the ingress boundary.
+// Redacted values carry a masked placeholder, never the original bytes.
+type AuditHeader struct {
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Redacted bool   `json:"redacted"`
+}
+
+func (header AuditHeader) Validate() error {
+	if header.Name == "" {
+		return fmt.Errorf("header name must not be empty")
+	}
+	return nil
+}
+
+// AuditHTTPMeta is the redacted HTTP envelope for one recorded request:
+// method, URL, and headers as the client sent them, plus the response
+// status and headers as they were returned (ADR 0008). Header order and
+// duplicates are preserved, hence ordered slices instead of maps.
+type AuditHTTPMeta struct {
+	Method          string        `json:"method"`
+	URL             string        `json:"url"`
+	HTTPVersion     string        `json:"http_version"`
+	RequestHeaders  []AuditHeader `json:"request_headers"`
+	ResponseStatus  *int          `json:"response_status"`
+	ResponseHeaders []AuditHeader `json:"response_headers"`
+}
+
+func (meta AuditHTTPMeta) Validate() error {
+	if meta.Method == "" {
+		return fmt.Errorf("method must not be empty")
+	}
+	for _, header := range meta.RequestHeaders {
+		if err := header.Validate(); err != nil {
+			return fmt.Errorf("request_headers: %w", err)
+		}
+	}
+	for _, header := range meta.ResponseHeaders {
+		if err := header.Validate(); err != nil {
+			return fmt.Errorf("response_headers: %w", err)
 		}
 	}
 	return nil

@@ -35,7 +35,7 @@ export interface RequestRecord {
   requested_model: string | null;
   streaming: boolean;
   route_id: string | null;
-  endpoint_id: string | null;
+  service_id: string | null;
   local_access_token_id: string | null;
   http_status: number | null;
   latency_ms: number | null;
@@ -55,7 +55,7 @@ export interface RequestRecordListQuery {
   from?: string;
   to?: string;
   protocol?: string;
-  endpoint_id?: string;
+  service_id?: string;
   status?: RequestStatus;
 }
 
@@ -66,8 +66,24 @@ export interface AuditContentPart {
   captured_bytes: number;
 }
 
+export interface AuditHeader {
+  name: string;
+  value: string;
+  redacted: boolean;
+}
+
+export interface AuditHTTPMeta {
+  method: string;
+  url: string;
+  http_version: string;
+  request_headers: AuditHeader[];
+  response_status: number | null;
+  response_headers: AuditHeader[];
+}
+
 export interface AuditContent {
   request_id: string;
+  http_meta: AuditHTTPMeta | null;
   request_body: AuditContentPart | null;
   response_content: AuditContentPart | null;
 }
@@ -208,7 +224,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     ),
     streaming: boolAt(record.streaming, `${path}.streaming`),
     route_id: nullableStringAt(record.route_id, `${path}.route_id`),
-    endpoint_id: nullableStringAt(record.endpoint_id, `${path}.endpoint_id`),
+    service_id: nullableStringAt(record.service_id, `${path}.service_id`),
     local_access_token_id: nullableStringAt(
       record.local_access_token_id,
       `${path}.local_access_token_id`,
@@ -250,10 +266,53 @@ function parseAuditContentPart(
   };
 }
 
+function parseAuditHeader(value: unknown, path: string): AuditHeader {
+  const header = objectAt(value, path);
+  return {
+    name: stringAt(header.name, `${path}.name`),
+    value: stringAt(header.value, `${path}.value`),
+    redacted: boolAt(header.redacted, `${path}.redacted`),
+  };
+}
+
+function parseAuditHTTPMeta(
+  value: unknown,
+  path: string,
+): AuditHTTPMeta | null {
+  if (value === null) return null;
+  const meta = objectAt(value, path);
+  if (!Array.isArray(meta.request_headers)) {
+    invalid(`${path}.request_headers`, "应为数组");
+  }
+  if (!Array.isArray(meta.response_headers)) {
+    invalid(`${path}.response_headers`, "应为数组");
+  }
+  return {
+    method: stringAt(meta.method, `${path}.method`),
+    url: stringAt(meta.url, `${path}.url`),
+    http_version: stringAt(meta.http_version, `${path}.http_version`),
+    request_headers: meta.request_headers.map((header, index) =>
+      parseAuditHeader(header, `${path}.request_headers[${index}]`),
+    ),
+    response_status: nullableIntAt(
+      meta.response_status,
+      `${path}.response_status`,
+    ),
+    response_headers: meta.response_headers.map((header, index) =>
+      parseAuditHeader(header, `${path}.response_headers[${index}]`),
+    ),
+  };
+}
+
 export function parseAuditContent(value: unknown): AuditContent {
   const content = objectAt(value, "$");
   return {
     request_id: stringAt(content.request_id, "$.request_id"),
+    // Tolerate an absent key for compatibility with a core sidecar that
+    // predates http_meta capture.
+    http_meta: Object.hasOwn(content, "http_meta")
+      ? parseAuditHTTPMeta(content.http_meta, "$.http_meta")
+      : null,
     request_body: parseAuditContentPart(content.request_body, "$.request_body"),
     response_content: parseAuditContentPart(
       content.response_content,

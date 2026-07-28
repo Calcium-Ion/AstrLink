@@ -190,9 +190,9 @@ func TestDefaultMigrationsIsolateCredentialsFromGenericDocuments(t *testing.T) {
 	for _, migration := range migrations {
 		for _, statement := range migration.Statements {
 			lower := strings.ToLower(statement)
-			if strings.Contains(lower, "create table endpoint_credentials") {
+			if strings.Contains(lower, "create table service_credentials") {
 				foundCredentialTable = true
-				if !strings.Contains(lower, "credential_value blob not null") || !strings.Contains(lower, "references endpoints(id) on delete cascade") {
+				if !strings.Contains(lower, "credential_value blob not null") || !strings.Contains(lower, "references services(id) on delete cascade") {
 					t.Fatalf("credential table lacks required isolation/cascade contract: %s", statement)
 				}
 				continue
@@ -238,7 +238,7 @@ func TestDefaultMigrationsIsolateCredentialsFromGenericDocuments(t *testing.T) {
 		}
 	}
 	if !foundCredentialTable {
-		t.Fatal("default migrations do not create endpoint_credentials")
+		t.Fatal("default migrations do not create service_credentials")
 	}
 	if !foundAccessTokenTable || !foundAccessTokenSecretTable || !foundAccessTokenBootstrapState {
 		t.Fatalf(
@@ -298,14 +298,20 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	if err := database.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 {
-		t.Fatalf("schema version = %d, want 9", version)
+	if version != 12 {
+		t.Fatalf("schema version = %d, want 12", version)
 	}
 	var requestRecordsTable int
 	if err := database.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='request_records'`,
 	).Scan(&requestRecordsTable); err != nil || requestRecordsTable != 1 {
 		t.Fatalf("request_records missing after upgrade: count=%d err=%v", requestRecordsTable, err)
+	}
+	var servicesTable int
+	if err := database.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='services'`,
+	).Scan(&servicesTable); err != nil || servicesTable != 1 {
+		t.Fatalf("services missing after upgrade: count=%d err=%v", servicesTable, err)
 	}
 	var auditTables int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master
@@ -314,7 +320,7 @@ WHERE type='table' AND name IN ('audit_settings', 'audit_keys', 'audit_blobs')`)
 	}
 	var credential []byte
 	if err := database.QueryRow(
-		`SELECT credential_value FROM endpoint_credentials WHERE endpoint_id = 'endpoint_existing'`,
+		`SELECT credential_value FROM service_credentials WHERE service_id = 'endpoint_existing'`,
 	).Scan(&credential); err != nil {
 		t.Fatal(err)
 	}
@@ -347,6 +353,7 @@ WHERE type = 'table'
 		`"enabled":false`,
 		`"detector":"regex"`,
 		`"local_model_id":null`,
+		`"min_confidence":0.8`,
 		`"match":{}`,
 		`"request_action":"redact"`,
 		`"response_action":"allow"`,
@@ -508,5 +515,96 @@ WHERE id = 'model_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'`).Scan(
 			customLicense,
 			languages,
 		)
+	}
+}
+
+func TestHTTPMetaMigrationPreservesAuditBlobsAndWidensDirection(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	if _, err := database.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatal(err)
+	}
+	migrations := DefaultMigrations()
+	versionNine, err := New(SQLDatabase{DB: database}, migrations[:9])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := versionNine.Up(context.Background()); err != nil {
+		t.Fatalf("migrate to version 9: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO request_records (
+    id, started_at, status, input_protocol, streaming, audit_json, created_at
+) VALUES ('request_v9', '2026-07-20T00:00:00Z', 'succeeded', 'openai.responses', 0, '{}', '2026-07-20T00:00:00Z')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	ciphertext := []byte("ciphertext-v9")
+	if _, err := database.Exec(
+		`INSERT INTO audit_blobs (
+    request_id, direction, media_type, nonce, ciphertext, truncated, captured_bytes, created_at
+) VALUES ('request_v9', 'request', 'application/json', ?, ?, 0, 13, '2026-07-20T00:00:00Z')`,
+		[]byte("nonce-000000"), ciphertext,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	full, err := New(SQLDatabase{DB: database}, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := full.Up(context.Background()); err != nil {
+		t.Fatalf("upgrade to version 10: %v", err)
+	}
+
+	var count int
+	var preserved []byte
+	if err := database.QueryRow(
+		`SELECT COUNT(*) FROM audit_blobs WHERE request_id = 'request_v9'`,
+	).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("blob count=%d err=%v", count, err)
+	}
+	if err := database.QueryRow(
+		`SELECT ciphertext FROM audit_blobs WHERE request_id = 'request_v9'`,
+	).Scan(&preserved); err != nil {
+		t.Fatal(err)
+	}
+	if string(preserved) != string(ciphertext) {
+		t.Fatalf("ciphertext altered: %q", preserved)
+	}
+
+	// The rebuilt CHECK must accept the new direction and the FK must survive.
+	if _, err := database.Exec(
+		`INSERT INTO audit_blobs (
+    request_id, direction, media_type, nonce, ciphertext, truncated, captured_bytes, created_at
+) VALUES ('request_v9', 'http_meta', 'application/json', ?, ?, 0, 2, '2026-07-20T00:00:00Z')`,
+		[]byte("nonce-000001"), []byte("{}"),
+	); err != nil {
+		t.Fatalf("http_meta direction rejected after migration: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO audit_blobs (
+    request_id, direction, media_type, nonce, ciphertext, truncated, captured_bytes, created_at
+) VALUES ('request_v9', 'bogus', 'application/json', ?, ?, 0, 2, '2026-07-20T00:00:00Z')`,
+		[]byte("nonce-000002"), []byte("{}"),
+	); err == nil {
+		t.Fatal("bogus direction accepted after migration")
+	}
+	if _, err := database.Exec(`DELETE FROM request_records WHERE id = 'request_v9'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_blobs`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("cascade delete broken after rebuild: count=%d err=%v", count, err)
+	}
+
+	var httpMetaEnabled int
+	if err := database.QueryRow(
+		`SELECT http_meta_enabled FROM audit_settings WHERE id = 1`,
+	).Scan(&httpMetaEnabled); err != nil || httpMetaEnabled != 1 {
+		t.Fatalf("http_meta_enabled=%d err=%v, want backfilled 1", httpMetaEnabled, err)
 	}
 }

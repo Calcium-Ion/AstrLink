@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"unicode/utf8"
 
@@ -38,7 +39,8 @@ func (engine *Engine) ResolvePolicy(ctx context.Context, scope Scope) (Policy, e
 	if !policy.Enabled {
 		return Policy{}, nil
 	}
-	if !policy.Mode.Valid() || !policy.Action.Valid() {
+	if !policy.Mode.Valid() || !policy.Action.Valid() ||
+		!validMinConfidence(policy.MinConfidence) {
 		return Policy{}, ErrPolicyUnavailable
 	}
 	if policy.Mode == ModeLocalModel && policy.LocalModelID.Validate() != nil {
@@ -54,7 +56,8 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 	if !policy.Enabled || policy.Action == ActionAllow {
 		return Result{Decision: DecisionAllow}, nil
 	}
-	if !policy.Mode.Valid() || !policy.Action.Valid() {
+	if !policy.Mode.Valid() || !policy.Action.Valid() ||
+		!validMinConfidence(policy.MinConfidence) {
 		return Result{}, ErrPolicyUnavailable
 	}
 	if policy.Mode == ModeLocalModel && policy.LocalModelID.Validate() != nil {
@@ -94,28 +97,61 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 		}
 		return Result{}, ErrDetectorUnavailable
 	}
-	if len(findings) == 0 {
-		return Result{Decision: DecisionAllow}, nil
+	accepted := findings
+	var suppressed []Finding
+	if policy.Mode == ModeLocalModel {
+		accepted = make([]Finding, 0, len(findings))
+		suppressed = make([]Finding, 0, len(findings))
+		for _, finding := range findings {
+			if finding.Confidence >= policy.MinConfidence {
+				accepted = append(accepted, finding)
+			} else {
+				suppressed = append(suppressed, finding)
+			}
+		}
+	}
+	if len(accepted) == 0 {
+		return Result{
+			Decision:           DecisionAllow,
+			SuppressedFindings: suppressed,
+		}, nil
 	}
 
 	switch policy.Action {
 	case ActionWarn:
-		return Result{Decision: DecisionWarn, Findings: findings}, nil
+		return Result{
+			Decision:           DecisionWarn,
+			Findings:           accepted,
+			SuppressedFindings: suppressed,
+		}, nil
 	case ActionBlock:
-		return Result{Decision: DecisionBlock, Findings: findings}, nil
+		return Result{
+			Decision:           DecisionBlock,
+			Findings:           accepted,
+			SuppressedFindings: suppressed,
+		}, nil
 	case ActionRedact:
 		if !utf8.Valid(body) || document.duplicateKeys {
-			return Result{Decision: DecisionBlock, Findings: findings}, ErrUnsafeRewrite
+			return Result{
+				Decision:           DecisionBlock,
+				Findings:           accepted,
+				SuppressedFindings: suppressed,
+			}, ErrUnsafeRewrite
 		}
-		redacted, redactions, err := rewriteDocument(document, extracted, findings)
+		redacted, redactions, err := rewriteDocument(document, extracted, accepted)
 		if err != nil {
-			return Result{Decision: DecisionBlock, Findings: findings}, ErrUnsafeRewrite
+			return Result{
+				Decision:           DecisionBlock,
+				Findings:           accepted,
+				SuppressedFindings: suppressed,
+			}, ErrUnsafeRewrite
 		}
 		return Result{
-			Decision:  DecisionRedact,
-			Body:      redacted,
-			Findings:  findings,
-			Redactions: redactions,
+			Decision:           DecisionRedact,
+			Body:               redacted,
+			Findings:           accepted,
+			SuppressedFindings: suppressed,
+			Redactions:         redactions,
 		}, nil
 	default:
 		return Result{}, ErrPolicyUnavailable
@@ -143,21 +179,36 @@ func normalizeFindings(findings []Finding, segments []Segment) ([]Finding, error
 	if len(findings) > maxDetectorFindings {
 		return nil, ErrDetectorLimit
 	}
-	unique := make(map[Finding]struct{}, len(findings))
-	normalized := make([]Finding, 0, len(findings))
+	type findingIdentity struct {
+		Segment int
+		Start   int
+		End     int
+		Kind    Kind
+	}
+	unique := make(map[findingIdentity]Finding, len(findings))
 	for _, finding := range findings {
 		if finding.Segment < 0 || finding.Segment >= len(segments) ||
 			finding.Start < 0 || finding.End <= finding.Start ||
 			finding.End > len(segments[finding.Segment].Value) ||
 			!validKind(finding.Kind) ||
+			!validMinConfidence(finding.Confidence) ||
 			!utf8.ValidString(segments[finding.Segment].Value[:finding.Start]) ||
 			!utf8.ValidString(segments[finding.Segment].Value[:finding.End]) {
 			return nil, ErrDetectorUnavailable
 		}
-		if _, exists := unique[finding]; exists {
-			continue
+		identity := findingIdentity{
+			Segment: finding.Segment,
+			Start:   finding.Start,
+			End:     finding.End,
+			Kind:    finding.Kind,
 		}
-		unique[finding] = struct{}{}
+		if previous, exists := unique[identity]; !exists ||
+			finding.Confidence > previous.Confidence {
+			unique[identity] = finding
+		}
+	}
+	normalized := make([]Finding, 0, len(unique))
+	for _, finding := range unique {
 		normalized = append(normalized, finding)
 	}
 	sort.Slice(normalized, func(left, right int) bool {
@@ -174,6 +225,10 @@ func normalizeFindings(findings []Finding, segments []Segment) ([]Finding, error
 		return a.Kind < b.Kind
 	})
 	return normalized, nil
+}
+
+func validMinConfidence(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
 }
 
 func validKind(kind Kind) bool {

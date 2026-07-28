@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -81,6 +82,25 @@ func TestPolicyStoreRejectsMutableIdentityMissingAndCorruptState(t *testing.T) {
 	}
 	if _, err := store.GetPolicy(ctx, "policy_missing"); !errors.Is(err, storagecontract.ErrNotFound) {
 		t.Fatalf("missing policy error = %v", err)
+	}
+	if _, err := store.db.Exec(
+		`UPDATE policies SET document_json = json_remove(document_json, '$.min_confidence')
+WHERE id = 'policy_privacy_default'`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetPolicy(ctx, contract.DefaultPrivacyPolicyID); !errors.Is(err, storagecontract.ErrInvalidRecord) {
+		t.Fatalf("missing min_confidence error = %v", err)
+	}
+	originalDocument, err := json.Marshal(record.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(
+		`UPDATE policies SET document_json = ? WHERE id = 'policy_privacy_default'`,
+		string(originalDocument),
+	); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(
 		`UPDATE policies SET document_json = '{"id":"policy_privacy_default","enabled":true,"secret":"must-not-leak"}'

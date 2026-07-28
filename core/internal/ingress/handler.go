@@ -24,6 +24,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
+	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -57,17 +58,18 @@ type Dependencies struct {
 	RecordLogger             func(string, ...any)
 	AllowedHost              string
 	ResponseStartTimeout     time.Duration
+	ConversionEngine         relaykitbridge.ConversionEngine
 }
 
 type PolicyWarningReporter interface {
-	ReportPolicyWarning(contract.ProtocolID, contract.EndpointID, string)
+	ReportPolicyWarning(contract.ProtocolID, contract.ServiceID, string)
 }
 
-type PolicyWarningReporterFunc func(contract.ProtocolID, contract.EndpointID, string)
+type PolicyWarningReporterFunc func(contract.ProtocolID, contract.ServiceID, string)
 
 func (function PolicyWarningReporterFunc) ReportPolicyWarning(
 	protocol contract.ProtocolID,
-	endpointID contract.EndpointID,
+	endpointID contract.ServiceID,
 	summary string,
 ) {
 	function(protocol, endpointID, summary)
@@ -87,6 +89,7 @@ type Handler struct {
 	allowedHost              string
 	responseStartTimeout     time.Duration
 	metadataSlots            chan struct{}
+	conversionEngine         relaykitbridge.ConversionEngine
 }
 
 const maxConcurrentMetadataInspections = 4
@@ -153,6 +156,7 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		allowedHost:           dependencies.AllowedHost,
 		responseStartTimeout:  dependencies.ResponseStartTimeout,
 		metadataSlots:         make(chan struct{}, maxConcurrentMetadataInspections),
+		conversionEngine:      dependencies.ConversionEngine,
 	}
 }
 
@@ -203,6 +207,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		}
 	}
 	session := newRecordSession(classified, accessTokenID, auditSettings)
+	// Snapshot the redacted HTTP envelope before any privacy or routing
+	// rewrite mutates the request (ADR 0008).
+	session.captureHTTPRequestMeta(request)
 	session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
 	session.attachRequestCapture(request)
 	outWriter := session.wrap(writer)
@@ -235,7 +242,7 @@ func (handler *Handler) applyPrivacy(
 	writer http.ResponseWriter,
 	request *http.Request,
 	classified Request,
-	endpointID contract.EndpointID,
+	endpointID contract.ServiceID,
 ) (func(), []privacy.Redaction, error) {
 	if handler.privacyFilter == nil {
 		return func() {}, nil, nil
@@ -244,7 +251,7 @@ func (handler *Handler) applyPrivacy(
 	policy, err := handler.privacyFilter.ResolvePolicy(request.Context(), privacy.Scope{
 		Protocol:      classified.Protocol,
 		Model:         classified.Model,
-		EndpointID:    endpointID,
+		ServiceID:     endpointID,
 		AccessTokenID: accessTokenID,
 	})
 	if err != nil {
@@ -711,7 +718,7 @@ type inferenceError struct {
 
 type errorDetail struct {
 	Protocol          string   `json:"protocol,omitempty"`
-	EndpointID        string   `json:"endpoint_id,omitempty"`
+	ServiceID         string   `json:"service_id,omitempty"`
 	Reason            string   `json:"reason,omitempty"`
 	RequiredPlanTypes []string `json:"required_plan_types,omitempty"`
 }

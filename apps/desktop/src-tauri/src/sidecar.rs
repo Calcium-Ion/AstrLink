@@ -42,6 +42,8 @@ const PRIVACY_MODEL_CATALOG_PATH: &str = "/control/v1/privacy-model-catalog";
 const PRIVACY_MODELS_PATH: &str = "/control/v1/privacy-models";
 const PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/probe";
 const POLICY_DRY_RUN_PATH: &str = "/control/v1/policies/policy_privacy_default/dry-run";
+const ROUTES_PATH: &str = "/control/v1/routes";
+const SERVICES_PATH: &str = "/control/v1/services";
 
 #[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -236,12 +238,21 @@ pub struct PlanTypeCapability {
     pub uses_local_conversion: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ConversionEdgeCapability {
+    pub from: String,
+    pub to: String,
+    pub quality: String,
+    pub streaming: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ConversionEngineCapability {
     pub name: String,
     pub version: Option<String>,
     pub available: bool,
-    pub edges: Vec<serde_json::Value>,
+    pub edges: Vec<ConversionEdgeCapability>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -334,8 +345,14 @@ pub struct CoreManager {
 }
 
 #[derive(Serialize)]
-pub struct EndpointRecordResponse {
-    pub endpoint: serde_json::Value,
+pub struct ServiceRecordResponse {
+    pub service: serde_json::Value,
+    pub etag: String,
+}
+
+#[derive(Serialize)]
+pub struct RouteRecordResponse {
+    pub route: serde_json::Value,
     pub etag: String,
 }
 
@@ -787,12 +804,81 @@ impl CoreManager {
             .map_err(|error| format!("GET {path} returned invalid JSON: {error}"))
     }
 
-    pub async fn list_endpoints(&self) -> Result<serde_json::Value, String> {
+    pub async fn list_services(&self) -> Result<serde_json::Value, String> {
         let (_, body) = self
-            .authenticated_control(Method::GET, "/control/v1/endpoints?limit=200", None, None)
+            .authenticated_control(
+                Method::GET,
+                &format!("{SERVICES_PATH}?limit=200"),
+                None,
+                None,
+            )
             .await?;
         serde_json::from_slice(&body)
-            .map_err(|error| format!("endpoint list returned invalid JSON: {error}"))
+            .map_err(|error| format!("service list returned invalid JSON: {error}"))
+    }
+
+    pub async fn list_routes(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, &format!("{ROUTES_PATH}?limit=200"), None, None)
+            .await?;
+        parse_route_page(&body)
+    }
+
+    pub async fn get_route(&self, route_id: &str) -> Result<RouteRecordResponse, String> {
+        validate_resource_id(route_id)?;
+        let (etag, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("{ROUTES_PATH}/{route_id}"),
+                None,
+                None,
+            )
+            .await?;
+        route_record(etag, &body)
+    }
+
+    pub async fn create_route(
+        &self,
+        input: serde_json::Value,
+    ) -> Result<RouteRecordResponse, String> {
+        validate_route_create_input(&input)?;
+        let (etag, body) = self
+            .authenticated_control(Method::POST, ROUTES_PATH, Some(input), None)
+            .await?;
+        route_record(etag, &body)
+    }
+
+    pub async fn update_route(
+        &self,
+        route_id: &str,
+        etag: &str,
+        patch: serde_json::Value,
+    ) -> Result<RouteRecordResponse, String> {
+        validate_resource_id(route_id)?;
+        validate_strong_etag(etag)?;
+        validate_route_patch(&patch)?;
+        let (etag, body) = self
+            .authenticated_control(
+                Method::PATCH,
+                &format!("{ROUTES_PATH}/{route_id}"),
+                Some(patch),
+                Some(etag),
+            )
+            .await?;
+        route_record(etag, &body)
+    }
+
+    pub async fn delete_route(&self, route_id: &str, etag: &str) -> Result<(), String> {
+        validate_resource_id(route_id)?;
+        validate_strong_etag(etag)?;
+        self.authenticated_control(
+            Method::DELETE,
+            &format!("{ROUTES_PATH}/{route_id}"),
+            None,
+            Some(etag),
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn list_access_tokens(&self) -> Result<serde_json::Value, String> {
@@ -957,59 +1043,137 @@ impl CoreManager {
         Ok(())
     }
 
-    pub async fn get_endpoint(&self, endpoint_id: &str) -> Result<EndpointRecordResponse, String> {
-        validate_resource_id(endpoint_id)?;
+    pub async fn get_service(&self, service_id: &str) -> Result<ServiceRecordResponse, String> {
+        validate_resource_id(service_id)?;
         let (etag, body) = self
             .authenticated_control(
                 Method::GET,
-                &format!("/control/v1/endpoints/{endpoint_id}"),
+                &format!("{SERVICES_PATH}/{service_id}"),
                 None,
                 None,
             )
             .await?;
-        endpoint_record(etag, &body)
+        service_record(etag, &body)
     }
 
-    pub async fn create_endpoint(
+    pub async fn create_service(
         &self,
         input: serde_json::Value,
-    ) -> Result<EndpointRecordResponse, String> {
+    ) -> Result<ServiceRecordResponse, String> {
         let (etag, body) = self
-            .authenticated_control(Method::POST, "/control/v1/endpoints", Some(input), None)
+            .authenticated_control(Method::POST, SERVICES_PATH, Some(input), None)
             .await?;
-        endpoint_record(etag, &body)
+        service_record(etag, &body)
     }
 
-    pub async fn update_endpoint(
+    pub async fn update_service(
         &self,
-        endpoint_id: &str,
+        service_id: &str,
         etag: &str,
         patch: serde_json::Value,
-    ) -> Result<EndpointRecordResponse, String> {
-        validate_resource_id(endpoint_id)?;
+    ) -> Result<ServiceRecordResponse, String> {
+        validate_resource_id(service_id)?;
         validate_etag(etag)?;
         let (etag, body) = self
             .authenticated_control(
                 Method::PATCH,
-                &format!("/control/v1/endpoints/{endpoint_id}"),
+                &format!("{SERVICES_PATH}/{service_id}"),
                 Some(patch),
                 Some(etag),
             )
             .await?;
-        endpoint_record(etag, &body)
+        service_record(etag, &body)
     }
 
-    pub async fn delete_endpoint(&self, endpoint_id: &str, etag: &str) -> Result<(), String> {
-        validate_resource_id(endpoint_id)?;
+    pub async fn delete_service(&self, service_id: &str, etag: &str) -> Result<(), String> {
+        validate_resource_id(service_id)?;
         validate_etag(etag)?;
         self.authenticated_control(
             Method::DELETE,
-            &format!("/control/v1/endpoints/{endpoint_id}"),
+            &format!("{SERVICES_PATH}/{service_id}"),
             None,
             Some(etag),
         )
         .await?;
         Ok(())
+    }
+
+    pub async fn begin_service_authorization(
+        &self,
+        service_id: &str,
+        flow: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        validate_authorization_flow(flow)?;
+        let path = format!("{SERVICES_PATH}/{service_id}/authorization");
+        let (status, body) = self
+            .authenticated_control_status(
+                Method::POST,
+                &path,
+                Some(serde_json::json!({ "flow": flow })),
+                None,
+            )
+            .await?;
+        if status != reqwest::StatusCode::ACCEPTED {
+            return Err(control_status_error(&Method::POST, &path, status, &body));
+        }
+        let session = parse_authorization_session(&body)?;
+        let authorization_url =
+            if session.get("flow").and_then(|value| value.as_str()) == Some("device_code") {
+                session
+                    .get("device_code")
+                    .and_then(|value| value.get("verification_url"))
+                    .and_then(|value| value.as_str())
+            } else {
+                session
+                    .get("authorization_url")
+                    .and_then(|value| value.as_str())
+            };
+        // Starting the Core session must still succeed when the OS refuses to
+        // open a browser. Device Code remains visible in-app and can be opened
+        // again explicitly.
+        let _ = open_authorization_url(authorization_url);
+        Ok(serde_json::json!({
+            "kind": "session",
+            "session": session,
+        }))
+    }
+
+    pub async fn get_service_authorization(
+        &self,
+        service_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let path = format!("{SERVICES_PATH}/{service_id}/authorization");
+        let (_, body) = self
+            .authenticated_control(Method::GET, &path, None, None)
+            .await?;
+        parse_authorization_session(&body)
+    }
+
+    pub async fn cancel_service_authorization(
+        &self,
+        service_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let path = format!("{SERVICES_PATH}/{service_id}/authorization");
+        let (_, body) = self
+            .authenticated_control(Method::DELETE, &path, None, None)
+            .await?;
+        parse_authorization_session(&body)
+    }
+
+    pub async fn logout_service(&self, service_id: &str) -> Result<ServiceRecordResponse, String> {
+        validate_resource_id(service_id)?;
+        let (etag, body) = self
+            .authenticated_control(
+                Method::POST,
+                &format!("{SERVICES_PATH}/{service_id}/logout"),
+                None,
+                None,
+            )
+            .await?;
+        service_record(etag, &body)
     }
 
     pub async fn list_request_records(
@@ -1121,6 +1285,35 @@ impl CoreManager {
         body: Option<serde_json::Value>,
         if_match: Option<&str>,
     ) -> Result<(Option<String>, Vec<u8>), String> {
+        let (status, etag, body) = self
+            .authenticated_control_response(method.clone(), path, body, if_match)
+            .await?;
+        if !status.is_success() {
+            return Err(control_status_error(&method, path, status, &body));
+        }
+        Ok((etag, body))
+    }
+
+    async fn authenticated_control_status(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+        if_match: Option<&str>,
+    ) -> Result<(reqwest::StatusCode, Vec<u8>), String> {
+        let (status, _etag, body) = self
+            .authenticated_control_response(method, path, body, if_match)
+            .await?;
+        Ok((status, body))
+    }
+
+    async fn authenticated_control_response(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+        if_match: Option<&str>,
+    ) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), String> {
         let (base_url, control_token) = {
             let inner = self.lock_inner();
             if inner.phase != CorePhase::Ready {
@@ -1149,7 +1342,7 @@ impl CoreManager {
         }
         if let Some(body) = body {
             let encoded = serde_json::to_vec(&body)
-                .map_err(|error| format!("unable to encode endpoint request: {error}"))?;
+                .map_err(|error| format!("unable to encode control request: {error}"))?;
             let content_type = if method == Method::PATCH {
                 "application/merge-patch+json"
             } else {
@@ -1188,15 +1381,7 @@ impl CoreManager {
         if body.len() > body_limit {
             return Err(format!("{} {path} response is too large", method.as_str()));
         }
-        if !status.is_success() {
-            let text = String::from_utf8_lossy(&body);
-            let preview: String = text.chars().take(MAX_ERROR_BODY).collect();
-            return Err(format!(
-                "{} {path} returned {status}: {preview}",
-                method.as_str()
-            ));
-        }
-        Ok((etag, body.to_vec()))
+        Ok((status, etag, body.to_vec()))
     }
 
     fn handle_terminated(&self, generation: u64, payload: TerminatedPayload) {
@@ -1336,12 +1521,319 @@ fn control_body_limit(path: &str) -> usize {
     }
 }
 
-fn endpoint_record(etag: Option<String>, body: &[u8]) -> Result<EndpointRecordResponse, String> {
-    let etag = etag.ok_or_else(|| "Core endpoint response omitted ETag".to_string())?;
+fn control_status_error(
+    method: &Method,
+    path: &str,
+    status: reqwest::StatusCode,
+    body: &[u8],
+) -> String {
+    let text = String::from_utf8_lossy(body);
+    let preview: String = text.chars().take(MAX_ERROR_BODY).collect();
+    format!("{} {path} returned {status}: {preview}", method.as_str())
+}
+
+pub(crate) fn open_authorization_url(url: Option<&str>) -> Result<(), String> {
+    let Some(url) = url else {
+        return Ok(());
+    };
+    validate_authorization_url(url)?;
+    tauri_plugin_opener::open_url(url, None::<&str>)
+        .map_err(|error| format!("unable to open authorization URL in the system browser: {error}"))
+}
+
+fn parse_authorization_session(body: &[u8]) -> Result<serde_json::Value, String> {
+    let session: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| format!("authorization session returned invalid JSON: {error}"))?;
+    parse_authorization_session_value(&session)
+}
+
+fn service_record(etag: Option<String>, body: &[u8]) -> Result<ServiceRecordResponse, String> {
+    let etag = etag.ok_or_else(|| "Core service response omitted ETag".to_string())?;
     validate_etag(&etag)?;
-    let endpoint = serde_json::from_slice(body)
-        .map_err(|error| format!("endpoint response returned invalid JSON: {error}"))?;
-    Ok(EndpointRecordResponse { endpoint, etag })
+    let service = serde_json::from_slice(body)
+        .map_err(|error| format!("service response returned invalid JSON: {error}"))?;
+    Ok(ServiceRecordResponse { service, etag })
+}
+
+fn route_record(etag: Option<String>, body: &[u8]) -> Result<RouteRecordResponse, String> {
+    let etag = etag.ok_or_else(|| "Core route response omitted ETag".to_string())?;
+    validate_strong_etag(&etag)?;
+    let route: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| format!("route response returned invalid JSON: {error}"))?;
+    validate_route_value(&route)?;
+    Ok(RouteRecordResponse { route, etag })
+}
+
+fn parse_route_page(body: &[u8]) -> Result<serde_json::Value, String> {
+    let page: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| format!("route list returned invalid JSON: {error}"))?;
+    validate_exact_object_keys(&page, &["items", "next_cursor"], "route list")?;
+    let object = page
+        .as_object()
+        .ok_or_else(|| "route list must be an object".to_string())?;
+    let items = object["items"]
+        .as_array()
+        .ok_or_else(|| "route list items must be an array".to_string())?;
+    if items.len() > 200 {
+        return Err("route list contains too many items".to_string());
+    }
+    for route in items {
+        validate_route_value(route)?;
+    }
+    if !object["next_cursor"].is_null() {
+        validate_string(&object["next_cursor"], 1, 512, "route list next_cursor")?;
+    }
+    Ok(page)
+}
+
+fn validate_route_value(route: &serde_json::Value) -> Result<(), String> {
+    let object = route
+        .as_object()
+        .ok_or_else(|| "route must be an object".to_string())?;
+    validate_allowed_object_keys(
+        object,
+        &[
+            "id",
+            "name",
+            "enabled",
+            "priority",
+            "match",
+            "selection",
+            "targets",
+        ],
+        &["id", "name", "enabled", "priority", "match", "targets"],
+        "route",
+    )?;
+    let id = validate_string(&object["id"], 3, 96, "route id")?;
+    validate_resource_id(id)?;
+    validate_route_common(object, true)
+}
+
+fn validate_route_create_input(input: &serde_json::Value) -> Result<(), String> {
+    let object = input
+        .as_object()
+        .ok_or_else(|| "route create input must be an object".to_string())?;
+    validate_allowed_object_keys(
+        object,
+        &[
+            "name",
+            "enabled",
+            "priority",
+            "match",
+            "selection",
+            "targets",
+        ],
+        &["name", "priority", "match", "targets"],
+        "route create input",
+    )?;
+    validate_route_common(object, false)
+}
+
+fn validate_route_common(
+    object: &serde_json::Map<String, serde_json::Value>,
+    require_enabled: bool,
+) -> Result<(), String> {
+    validate_metadata_string(&object["name"], 1, 128, "route name")?;
+    if let Some(enabled) = object.get("enabled") {
+        if !enabled.is_boolean() {
+            return Err("route enabled must be a boolean".to_string());
+        }
+    } else if require_enabled {
+        return Err("route omitted enabled".to_string());
+    }
+    validate_route_priority(&object["priority"], "route priority")?;
+    let public_model = validate_route_match(&object["match"])?;
+    if public_model == Some("astrlink/auto") {
+        return Err(
+            "astrlink/auto routes are unavailable until the classifier runtime is ready"
+                .to_string(),
+        );
+    }
+    if let Some(selection) = object.get("selection") {
+        validate_exact_object_keys(selection, &["mode"], "route selection")?;
+        if selection["mode"] != "priority" {
+            return Err("only priority route selection is available in this build".to_string());
+        }
+    }
+    let targets = object["targets"]
+        .as_array()
+        .ok_or_else(|| "route targets must be an array".to_string())?;
+    if targets.is_empty() || targets.len() > 200 {
+        return Err("route targets must contain 1 through 200 entries".to_string());
+    }
+    let ingress_protocol = object["match"]["protocol"]
+        .as_str()
+        .expect("validated route protocol");
+    for (index, target) in targets.iter().enumerate() {
+        validate_route_target(
+            target,
+            ingress_protocol,
+            public_model.is_some(),
+            &format!("route targets[{index}]"),
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_route_patch(patch: &serde_json::Value) -> Result<(), String> {
+    let object = patch
+        .as_object()
+        .ok_or_else(|| "route patch must be an object".to_string())?;
+    if object.is_empty() {
+        return Err("route patch must change at least one field".to_string());
+    }
+    for (field, value) in object {
+        match field.as_str() {
+            "name" => {
+                validate_metadata_string(value, 1, 128, "route patch name")?;
+            }
+            "enabled" if value.is_boolean() => {}
+            "priority" => {
+                validate_route_priority(value, "route patch priority")?;
+            }
+            "match" => {
+                if validate_route_match(value)? == Some("astrlink/auto") {
+                    return Err("astrlink/auto routes are unavailable until the classifier runtime is ready".to_string());
+                }
+            }
+            "selection" if value.is_null() => {}
+            "selection" => {
+                validate_exact_object_keys(value, &["mode"], "route patch selection")?;
+                if value["mode"] != "priority" {
+                    return Err(
+                        "only priority route selection is available in this build".to_string()
+                    );
+                }
+            }
+            "targets" if value.is_null() => {}
+            "targets" => {
+                let targets = value
+                    .as_array()
+                    .ok_or_else(|| "route patch targets must be an array or null".to_string())?;
+                if targets.is_empty() || targets.len() > 200 {
+                    return Err(
+                        "route patch targets must contain 1 through 200 entries".to_string()
+                    );
+                }
+                for (index, target) in targets.iter().enumerate() {
+                    validate_route_target(
+                        target,
+                        "",
+                        true,
+                        &format!("route patch targets[{index}]"),
+                    )?;
+                }
+            }
+            "categories" if value.is_null() => {}
+            "enabled" => return Err("route patch enabled must be a boolean".to_string()),
+            _ => return Err(format!("route patch contains unexpected field {field}")),
+        }
+    }
+    Ok(())
+}
+
+fn validate_route_match(value: &serde_json::Value) -> Result<Option<&str>, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "route match must be an object".to_string())?;
+    validate_allowed_object_keys(object, &["protocol", "model"], &["protocol"], "route match")?;
+    validate_protocol_id(&object["protocol"], "route match protocol")?;
+    object
+        .get("model")
+        .map(|model| validate_string(model, 1, 256, "route match model"))
+        .transpose()
+}
+
+fn validate_route_target(
+    value: &serde_json::Value,
+    ingress_protocol: &str,
+    exact_model: bool,
+    field: &str,
+) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("{field} must be an object"))?;
+    validate_allowed_object_keys(
+        object,
+        &[
+            "service_id",
+            "plan_type",
+            "upstream_protocol",
+            "priority",
+            "upstream_model",
+        ],
+        &["service_id", "plan_type", "upstream_protocol", "priority"],
+        field,
+    )?;
+    let service_id = validate_string(&object["service_id"], 3, 96, &format!("{field} service_id"))?;
+    validate_resource_id(service_id)?;
+    match object["plan_type"].as_str() {
+        Some("native" | "delegated") => {}
+        _ => return Err(format!("{field} plan_type is unavailable")),
+    }
+    let upstream_protocol = validate_protocol_id(
+        &object["upstream_protocol"],
+        &format!("{field} upstream_protocol"),
+    )?;
+    if !ingress_protocol.is_empty() && upstream_protocol != ingress_protocol {
+        return Err(format!("{field} must preserve the ingress protocol"));
+    }
+    validate_route_priority(&object["priority"], &format!("{field} priority"))?;
+    if let Some(upstream_model) = object.get("upstream_model") {
+        validate_string(upstream_model, 1, 256, &format!("{field} upstream_model"))?;
+        if !exact_model {
+            return Err(format!(
+                "{field} upstream_model requires an exact public model"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_route_priority(value: &serde_json::Value, field: &str) -> Result<u64, String> {
+    let priority = safe_json_integer(value, field)?;
+    if priority > 1_000_000 {
+        return Err(format!("{field} must be at most 1000000"));
+    }
+    Ok(priority)
+}
+
+fn validate_protocol_id<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str, String> {
+    let protocol = validate_string(value, 3, 96, field)?;
+    let mut previous_separator = false;
+    for (index, byte) in protocol.bytes().enumerate() {
+        let separator = matches!(byte, b'.' | b'_' | b'-');
+        let valid = byte.is_ascii_lowercase()
+            || (index > 0 && byte.is_ascii_digit())
+            || (index > 0 && separator && !previous_separator);
+        if !valid {
+            return Err(format!("{field} is invalid"));
+        }
+        previous_separator = separator;
+    }
+    if previous_separator {
+        return Err(format!("{field} is invalid"));
+    }
+    Ok(protocol)
+}
+
+fn validate_allowed_object_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+    required: &[&str],
+    context: &str,
+) -> Result<(), String> {
+    for key in object.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err(format!("{context} contains unexpected field {key}"));
+        }
+    }
+    for field in required {
+        if !object.contains_key(*field) {
+            return Err(format!("{context} omitted {field}"));
+        }
+    }
+    Ok(())
 }
 
 fn policy_record(etag: Option<String>, body: &[u8]) -> Result<PolicyRecordResponse, String> {
@@ -1390,6 +1882,7 @@ fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), Strin
             "priority",
             "detector",
             "local_model_id",
+            "min_confidence",
             "match",
             "request_action",
             "response_action",
@@ -1412,6 +1905,7 @@ fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), Strin
     if !object["response_restore"].is_boolean() {
         return Err("privacy policy response_restore must be a boolean".to_string());
     }
+    validate_privacy_confidence(&object["min_confidence"], "privacy policy min_confidence")?;
     validate_privacy_detector(&object["detector"])?;
     let local_model_id = if let Some(local_model_id) = object["local_model_id"].as_str() {
         validate_privacy_model_id(local_model_id)?;
@@ -1452,6 +1946,9 @@ fn validate_privacy_policy_patch(patch: serde_json::Value) -> Result<serde_json:
                         .to_string()
                 })?;
                 validate_privacy_model_id(local_model_id)?;
+            }
+            "min_confidence" => {
+                validate_privacy_confidence(value, "privacy policy min_confidence patch")?
             }
             "request_action" => validate_privacy_action(value)?,
             "response_restore" if value.is_boolean() => {}
@@ -1527,8 +2024,13 @@ fn parse_privacy_dry_run_result(body: &[u8]) -> Result<serde_json::Value, String
         .ok_or_else(|| "privacy policy dry-run result must be an object".to_string())?;
     for key in object.keys() {
         match key.as_str() {
-            "decision" | "findings_summary" | "findings" | "inspected_body" | "redacted_body"
-            | "redactions" => {}
+            "decision"
+            | "findings_summary"
+            | "findings"
+            | "inspected_body"
+            | "redacted_body"
+            | "redactions"
+            | "suppressed_findings" => {}
             other => {
                 return Err(format!(
                     "privacy policy dry-run result contains unexpected field {other}"
@@ -1536,7 +2038,13 @@ fn parse_privacy_dry_run_result(body: &[u8]) -> Result<serde_json::Value, String
             }
         }
     }
-    for required in ["decision", "findings_summary", "findings", "inspected_body"] {
+    for required in [
+        "decision",
+        "findings_summary",
+        "findings",
+        "suppressed_findings",
+        "inspected_body",
+    ] {
         if !object.contains_key(required) {
             return Err(format!("privacy policy dry-run result omitted {required}"));
         }
@@ -1588,44 +2096,50 @@ fn parse_privacy_dry_run_result(body: &[u8]) -> Result<serde_json::Value, String
             }
         }
     }
-    let findings = object["findings"]
-        .as_array()
-        .ok_or_else(|| "privacy policy dry-run findings must be an array".to_string())?;
-    if findings.len() > 4096 {
-        return Err("privacy policy dry-run findings exceed the limit".to_string());
-    }
-    for finding in findings {
-        validate_exact_object_keys(
-            finding,
-            &["kind", "path", "start", "end"],
-            "privacy policy dry-run finding",
-        )?;
-        let finding = finding
-            .as_object()
-            .ok_or_else(|| "privacy policy dry-run finding must be an object".to_string())?;
-        let kind = finding["kind"]
-            .as_str()
-            .ok_or_else(|| "privacy policy dry-run finding kind must be a string".to_string())?;
-        validate_privacy_dry_run_kind(kind)?;
-        if finding["path"]
-            .as_str()
-            .filter(|path| !path.is_empty())
-            .is_none()
-        {
-            return Err(
-                "privacy policy dry-run finding path must be a non-empty string".to_string(),
-            );
+    for field in ["findings", "suppressed_findings"] {
+        let findings = object[field]
+            .as_array()
+            .ok_or_else(|| format!("privacy policy dry-run {field} must be an array"))?;
+        if findings.len() > 4096 {
+            return Err(format!("privacy policy dry-run {field} exceed the limit"));
         }
-        let start = finding["start"]
-            .as_u64()
-            .ok_or_else(|| "privacy policy dry-run finding start must be an integer".to_string())?;
-        let end = finding["end"]
-            .as_u64()
-            .ok_or_else(|| "privacy policy dry-run finding end must be an integer".to_string())?;
-        if end <= start {
-            return Err(
-                "privacy policy dry-run finding end must be greater than start".to_string(),
-            );
+        for finding in findings {
+            validate_exact_object_keys(
+                finding,
+                &["kind", "path", "start", "end", "confidence"],
+                "privacy policy dry-run finding",
+            )?;
+            let finding = finding
+                .as_object()
+                .ok_or_else(|| "privacy policy dry-run finding must be an object".to_string())?;
+            let kind = finding["kind"].as_str().ok_or_else(|| {
+                "privacy policy dry-run finding kind must be a string".to_string()
+            })?;
+            validate_privacy_dry_run_kind(kind)?;
+            if finding["path"]
+                .as_str()
+                .filter(|path| !path.is_empty())
+                .is_none()
+            {
+                return Err(
+                    "privacy policy dry-run finding path must be a non-empty string".to_string(),
+                );
+            }
+            let start = finding["start"].as_u64().ok_or_else(|| {
+                "privacy policy dry-run finding start must be an integer".to_string()
+            })?;
+            let end = finding["end"].as_u64().ok_or_else(|| {
+                "privacy policy dry-run finding end must be an integer".to_string()
+            })?;
+            if end <= start {
+                return Err(
+                    "privacy policy dry-run finding end must be greater than start".to_string(),
+                );
+            }
+            validate_privacy_confidence(
+                &finding["confidence"],
+                "privacy policy dry-run finding confidence",
+            )?;
         }
     }
     Ok(result)
@@ -1637,6 +2151,16 @@ fn validate_privacy_dry_run_kind(kind: &str) -> Result<(), String> {
         | "private_address" | "private_date" | "private_person" => Ok(()),
         _ => Err("privacy policy dry-run kind is unknown".to_string()),
     }
+}
+
+fn validate_privacy_confidence(value: &serde_json::Value, label: &str) -> Result<(), String> {
+    let confidence = value
+        .as_f64()
+        .ok_or_else(|| format!("{label} must be a number"))?;
+    if !(0.0..=1.0).contains(&confidence) {
+        return Err(format!("{label} must be between 0 and 1"));
+    }
+    Ok(())
 }
 
 fn validate_privacy_detector(value: &serde_json::Value) -> Result<(), String> {
@@ -2349,9 +2873,271 @@ fn validate_resource_id(value: &str) -> Result<(), String> {
             _ => false,
         })
     {
-        return Err("endpoint id is invalid".to_string());
+        return Err("resource id is invalid".to_string());
     }
     Ok(())
+}
+
+const SUBSCRIPTION_PROVIDERS: &[&str] = &["openai_codex"];
+const AUTHORIZATION_SESSION_STATUSES: &[&str] =
+    &["pending", "completed", "cancelled", "expired", "failed"];
+const AUTHORIZATION_FLOWS: &[&str] = &["browser", "device_code"];
+
+fn validate_subscription_provider(value: &str) -> Result<(), String> {
+    if !SUBSCRIPTION_PROVIDERS.contains(&value) {
+        return Err("unknown subscription provider".to_string());
+    }
+    Ok(())
+}
+
+fn validate_authorization_session_status(value: &str) -> Result<(), String> {
+    if !AUTHORIZATION_SESSION_STATUSES.contains(&value) {
+        return Err("unknown authorization session status".to_string());
+    }
+    Ok(())
+}
+
+fn validate_authorization_flow(value: &str) -> Result<(), String> {
+    if !AUTHORIZATION_FLOWS.contains(&value) {
+        return Err("unknown authorization flow".to_string());
+    }
+    Ok(())
+}
+
+fn validate_subscription_error_code(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 64 {
+        return Err("subscription error code is invalid".to_string());
+    }
+    if !value.bytes().enumerate().all(|(index, byte)| match byte {
+        b'a'..=b'z' => true,
+        b'0'..=b'9' | b'_' => index > 0,
+        _ => false,
+    }) {
+        return Err("subscription error code is invalid".to_string());
+    }
+    Ok(())
+}
+
+fn validate_subscription_error_message(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.chars().count() > 240 {
+        return Err("subscription error message is invalid".to_string());
+    }
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("bearer ")
+        || lower.contains("access_token")
+        || lower.contains("refresh_token")
+        || lower.contains("id_token")
+        || lower.contains("device_auth_id")
+        || lower.contains("code_verifier")
+        || lower.contains("authorization_code")
+        || value.contains("eyJ")
+    {
+        return Err("subscription error message must not contain credential material".to_string());
+    }
+    Ok(())
+}
+
+fn validate_authorization_url(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 4096 {
+        return Err("authorization URL is invalid".to_string());
+    }
+    let parsed =
+        reqwest::Url::parse(value).map_err(|_| "authorization URL is invalid".to_string())?;
+    match parsed.scheme() {
+        "https" if !parsed.host_str().unwrap_or("").is_empty() => Ok(()),
+        "http" => {
+            let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+            if host == "127.0.0.1" || host == "localhost" {
+                Ok(())
+            } else {
+                Err("authorization URL http is only allowed on loopback".to_string())
+            }
+        }
+        _ => Err("authorization URL must use https".to_string()),
+    }
+}
+
+fn parse_subscription_error_value(value: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "subscription error must be an object".to_string())?;
+    if object.len() != 2 || !object.contains_key("code") || !object.contains_key("message") {
+        return Err("subscription error has missing or unexpected fields".to_string());
+    }
+    let code = object
+        .get("code")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "subscription error omitted code".to_string())?;
+    let message = object
+        .get("message")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "subscription error omitted message".to_string())?;
+    validate_subscription_error_code(code)?;
+    validate_subscription_error_message(message)?;
+    Ok(serde_json::json!({ "code": code, "message": message }))
+}
+
+fn parse_authorization_device_code_value(
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "authorization device_code must be an object".to_string())?;
+    if object.len() != 2
+        || !object.contains_key("verification_url")
+        || !object.contains_key("user_code")
+    {
+        return Err("authorization device_code has missing or unexpected fields".to_string());
+    }
+    let verification_url = object
+        .get("verification_url")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "authorization device_code omitted verification_url".to_string())?;
+    validate_authorization_url(verification_url)?;
+    let user_code = object
+        .get("user_code")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "authorization device_code omitted user_code".to_string())?;
+    if user_code.trim().is_empty()
+        || user_code.chars().count() > 128
+        || user_code
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n' | '\0'))
+    {
+        return Err("authorization device_code user_code is invalid".to_string());
+    }
+    Ok(serde_json::json!({
+        "verification_url": verification_url,
+        "user_code": user_code,
+    }))
+}
+
+fn parse_authorization_session_value(
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "authorization session must be an object".to_string())?;
+    let allowed = [
+        "id",
+        "provider",
+        "status",
+        "flow",
+        "authorization_url",
+        "device_code",
+        "service_id",
+        "expires_at",
+        "error",
+        "created_at",
+        "updated_at",
+    ];
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err("authorization session has unexpected fields".to_string());
+    }
+    for field in [
+        "id",
+        "provider",
+        "status",
+        "flow",
+        "service_id",
+        "expires_at",
+        "created_at",
+        "updated_at",
+    ] {
+        if !object.contains_key(field) {
+            return Err(format!("authorization session omitted {field}"));
+        }
+    }
+    let id = object
+        .get("id")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "authorization session omitted id".to_string())?;
+    validate_resource_id(id)?;
+    let provider = object
+        .get("provider")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "authorization session omitted provider".to_string())?;
+    validate_subscription_provider(provider)?;
+    let status = object
+        .get("status")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "authorization session omitted status".to_string())?;
+    validate_authorization_session_status(status)?;
+    let flow = object
+        .get("flow")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "authorization session omitted flow".to_string())?;
+    validate_authorization_flow(flow)?;
+    let service_id = object
+        .get("service_id")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "authorization session omitted service_id".to_string())?;
+    validate_resource_id(service_id)?;
+    let expires_at = object
+        .get("expires_at")
+        .ok_or_else(|| "authorization session omitted expires_at".to_string())?;
+    let created_at = object
+        .get("created_at")
+        .ok_or_else(|| "authorization session omitted created_at".to_string())?;
+    let updated_at = object
+        .get("updated_at")
+        .ok_or_else(|| "authorization session omitted updated_at".to_string())?;
+    validate_rfc3339_timestamp(expires_at, "authorization session expires_at")?;
+    validate_rfc3339_timestamp(created_at, "authorization session created_at")?;
+    validate_rfc3339_timestamp(updated_at, "authorization session updated_at")?;
+
+    let mut session = serde_json::json!({
+        "id": id,
+        "provider": provider,
+        "status": status,
+        "flow": flow,
+        "service_id": service_id,
+        "expires_at": expires_at,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    });
+    let authorization_url = object
+        .get("authorization_url")
+        .and_then(|item| item.as_str());
+    if let Some(authorization_url) = authorization_url {
+        validate_authorization_url(authorization_url)?;
+        session["authorization_url"] = serde_json::Value::String(authorization_url.to_string());
+    } else if object.contains_key("authorization_url") {
+        return Err("authorization_url must be a string".to_string());
+    }
+    let device_code = object.get("device_code");
+    if let Some(device_code) = device_code {
+        session["device_code"] = parse_authorization_device_code_value(device_code)?;
+    }
+    if status == "pending" && flow == "browser" {
+        if authorization_url.is_none() {
+            return Err(
+                "pending browser authorization session requires authorization_url".to_string(),
+            );
+        }
+        if device_code.is_some() {
+            return Err("browser authorization session must not include device_code".to_string());
+        }
+    } else if status == "pending" && flow == "device_code" {
+        if device_code.is_none() {
+            return Err(
+                "pending Device Code authorization session requires device_code".to_string(),
+            );
+        }
+        if authorization_url.is_some() {
+            return Err(
+                "Device Code authorization session must not include authorization_url".to_string(),
+            );
+        }
+    } else if authorization_url.is_some() || device_code.is_some() {
+        return Err(
+            "terminal authorization session must not include login instructions".to_string(),
+        );
+    }
+    if let Some(error) = object.get("error") {
+        session["error"] = parse_subscription_error_value(error)?;
+    }
+    Ok(session)
 }
 
 fn percent_encode_query(value: &str) -> String {
@@ -2393,7 +3179,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     let mut from: Option<&str> = None;
     let mut to: Option<&str> = None;
     let mut protocol: Option<&str> = None;
-    let mut endpoint_id: Option<&str> = None;
+    let mut service_id: Option<&str> = None;
     let mut status: Option<&str> = None;
 
     for (key, value) in object {
@@ -2456,12 +3242,12 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                 }
                 protocol = Some(text);
             }
-            "endpoint_id" => {
+            "service_id" => {
                 let text = value.as_str().ok_or_else(|| {
-                    "request record query endpoint_id must be a string".to_string()
+                    "request record query service_id must be a string".to_string()
                 })?;
                 validate_resource_id(text)?;
-                endpoint_id = Some(text);
+                service_id = Some(text);
             }
             "status" => {
                 let text = value
@@ -2496,8 +3282,8 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     if let Some(value) = protocol {
         pairs.push(format!("protocol={}", percent_encode_query(value)));
     }
-    if let Some(value) = endpoint_id {
-        pairs.push(format!("endpoint_id={}", percent_encode_query(value)));
+    if let Some(value) = service_id {
+        pairs.push(format!("service_id={}", percent_encode_query(value)));
     }
     if let Some(value) = status {
         pairs.push(format!("status={}", percent_encode_query(value)));
@@ -2652,7 +3438,7 @@ fn validate_audit_settings_patch(patch: &serde_json::Value) -> Result<(), String
 
 fn validate_etag(value: &str) -> Result<(), String> {
     if value.len() < 3 || value.len() > 128 || !value.starts_with('"') || !value.ends_with('"') {
-        return Err("endpoint ETag is invalid".to_string());
+        return Err("resource ETag is invalid".to_string());
     }
     Ok(())
 }
@@ -2750,18 +3536,37 @@ fn verify_contract(
     {
         return Err("protocol contract version mismatch during Core handshake".to_string());
     }
-    verify_alpha_capabilities(capabilities)?;
+    verify_capabilities(capabilities)?;
     Ok(())
 }
 
-fn verify_alpha_capabilities(capabilities: &CapabilitiesResponse) -> Result<(), String> {
+fn verify_capabilities(capabilities: &CapabilitiesResponse) -> Result<(), String> {
     let engine = &capabilities.conversion_engine;
-    if engine.name != "relaykit"
-        || engine.version.is_some()
-        || engine.available
-        || !engine.edges.is_empty()
-    {
-        return Err("Core advertised local conversion that is unavailable in Alpha".to_string());
+    if engine.name != "relaykit" {
+        return Err("Core returned an unsupported local conversion engine".to_string());
+    }
+    if engine.available {
+        let version_is_valid = engine
+            .version
+            .as_deref()
+            .is_some_and(|version| !version.trim().is_empty() && version.len() <= 128);
+        if !version_is_valid {
+            return Err("available RelayKit capability requires a non-empty version".to_string());
+        }
+        for edge in &engine.edges {
+            if edge.from.trim().is_empty()
+                || edge.to.trim().is_empty()
+                || edge.from == edge.to
+                || !matches!(edge.quality.as_str(), "good" | "fair" | "discouraged")
+            {
+                return Err("Core returned an invalid RelayKit conversion edge".to_string());
+            }
+        }
+    } else if engine.version.is_some() || !engine.edges.is_empty() {
+        return Err(
+            "unavailable RelayKit capability must not advertise a version or conversion edges"
+                .to_string(),
+        );
     }
 
     let expected_plans = [
@@ -2927,6 +3732,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn strictly_parses_browser_and_device_authorization_sessions() {
+        let common = serde_json::json!({
+            "id": "authorization_01",
+            "provider": "openai_codex",
+            "status": "pending",
+            "service_id": "service_codex_01",
+            "expires_at": "2026-07-28T08:15:00Z",
+            "created_at": "2026-07-28T08:00:00Z",
+            "updated_at": "2026-07-28T08:00:00Z"
+        });
+        let mut browser = common.clone();
+        browser["flow"] = serde_json::json!("browser");
+        browser["authorization_url"] = serde_json::json!("https://auth.openai.com/oauth/authorize");
+        assert!(parse_authorization_session_value(&browser).is_ok());
+
+        let mut device = common.clone();
+        device["flow"] = serde_json::json!("device_code");
+        device["device_code"] = serde_json::json!({
+            "verification_url": "https://auth.openai.com/codex/device",
+            "user_code": "ABCD-EFGH"
+        });
+        let parsed = parse_authorization_session_value(&device).expect("device session");
+        assert_eq!(parsed["device_code"]["user_code"], "ABCD-EFGH");
+
+        device["authorization_url"] = serde_json::json!("https://auth.openai.com/oauth/authorize");
+        assert!(parse_authorization_session_value(&device).is_err());
+        device.as_object_mut().unwrap().remove("authorization_url");
+        device["status"] = serde_json::json!("completed");
+        assert!(parse_authorization_session_value(&device).is_err());
+        device.as_object_mut().unwrap().remove("device_code");
+        assert!(parse_authorization_session_value(&device).is_ok());
+        device["error"] = serde_json::json!({
+            "code": "oauth_device_code_poll_failed",
+            "message": "device_auth_id=device-secret"
+        });
+        assert!(parse_authorization_session_value(&device).is_err());
+    }
+
+    #[test]
     fn privacy_mutations_use_extended_request_and_startup_timeouts() {
         assert_eq!(
             control_request_timeout(
@@ -2990,7 +3834,7 @@ mod tests {
         assert_eq!(
             build_request_record_query(&serde_json::json!({
                 "status": "succeeded",
-                "endpoint_id": "endpoint_01",
+                "service_id": "service_01",
                 "protocol": "openai_responses",
                 "to": "2026-07-25T12:00:00Z",
                 "from": "2026-07-24T00:00:00Z",
@@ -2998,7 +3842,7 @@ mod tests {
                 "limit": 50
             }))
             .unwrap(),
-            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&endpoint_id=endpoint_01&status=succeeded"
+            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&status=succeeded"
         );
         assert!(
             build_request_record_query(&serde_json::json!({"unknown": 1}))
@@ -3223,7 +4067,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_relaykit_or_invalid_alpha_capabilities() {
+    fn accepts_available_relaykit_capabilities() {
+        let ready = parse_ready_announcement(&ready_line("http://127.0.0.1:43210")).unwrap();
+        let version = VersionResponse {
+            core_version: ready.core_version.clone(),
+            control_api_version: ready.control_api_version.clone(),
+            protocol_contract_version: ready.protocol_contract_version.clone(),
+            build_commit: "unknown".to_string(),
+        };
+        let mut capabilities = alpha_capabilities();
+        capabilities.conversion_engine.available = true;
+        capabilities.conversion_engine.version = Some("v0.1.1".to_string());
+        capabilities
+            .conversion_engine
+            .edges
+            .push(ConversionEdgeCapability {
+                from: "openai.chat".to_string(),
+                to: "openai.responses".to_string(),
+                quality: "good".to_string(),
+                streaming: true,
+            });
+
+        verify_contract(&ready, &version, &capabilities)
+            .expect("desktop handshake must accept an available RelayKit runtime");
+    }
+
+    #[test]
+    fn rejects_inconsistent_relaykit_capabilities() {
         let ready = parse_ready_announcement(&ready_line("http://127.0.0.1:43210")).unwrap();
         let version = VersionResponse {
             core_version: ready.core_version.clone(),
@@ -3235,8 +4105,8 @@ mod tests {
         capabilities.conversion_engine.available = true;
 
         let error = verify_contract(&ready, &version, &capabilities)
-            .expect_err("Alpha must reject local conversion capability");
-        assert!(error.contains("local conversion"));
+            .expect_err("available RelayKit without a version must fail");
+        assert!(error.contains("non-empty version"));
     }
 
     fn privacy_policy_value() -> serde_json::Value {
@@ -3247,6 +4117,7 @@ mod tests {
             "priority": 0,
             "detector": "regex",
             "local_model_id": null,
+            "min_confidence": 0.8,
             "match": {},
             "request_action": "redact",
             "response_action": "allow",
@@ -3286,6 +4157,7 @@ mod tests {
             "enabled": true,
             "detector": "local_model",
             "local_model_id": "model_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "min_confidence": 0.91,
             "request_action": "block",
             "response_restore": false
         }))
@@ -3311,7 +4183,119 @@ mod tests {
             "response_restore": "yes"
         }))
         .is_err());
+        assert!(validate_privacy_policy_patch(serde_json::json!({
+            "min_confidence": -0.01
+        }))
+        .is_err());
+        assert!(validate_privacy_policy_patch(serde_json::json!({
+            "min_confidence": 1.01
+        }))
+        .is_err());
         assert!(validate_privacy_policy_patch(serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn strictly_validates_priority_route_control_values() {
+        let route = serde_json::json!({
+            "id": "route_code",
+            "name": "Code alias",
+            "enabled": true,
+            "priority": 10,
+            "match": {
+                "protocol": "openai.responses",
+                "model": "team/code"
+            },
+            "selection": { "mode": "priority" },
+            "targets": [{
+                "service_id": "service_primary",
+                "plan_type": "native",
+                "upstream_protocol": "openai.responses",
+                "priority": 0,
+                "upstream_model": "gpt-5.2"
+            }]
+        });
+        validate_route_value(&route).expect("valid priority route");
+        parse_route_page(
+            &serde_json::to_vec(&serde_json::json!({
+                "items": [route.clone()],
+                "next_cursor": null
+            }))
+            .unwrap(),
+        )
+        .expect("valid route page");
+
+        let mut create = route.clone();
+        create.as_object_mut().unwrap().remove("id");
+        validate_route_create_input(&create).expect("valid route create");
+        validate_route_patch(&serde_json::json!({
+            "enabled": false,
+            "priority": 20
+        }))
+        .expect("valid route patch");
+
+        let mut drifted = route.clone();
+        drifted["unexpected"] = serde_json::json!(true);
+        assert!(validate_route_value(&drifted)
+            .unwrap_err()
+            .contains("unexpected"));
+
+        let mut cross_protocol = route.clone();
+        cross_protocol["targets"][0]["upstream_protocol"] = serde_json::json!("openai.chat");
+        assert!(validate_route_value(&cross_protocol)
+            .unwrap_err()
+            .contains("preserve"));
+
+        let auto = serde_json::json!({
+            "name": "Automatic",
+            "priority": 0,
+            "match": {
+                "protocol": "openai.responses",
+                "model": "astrlink/auto"
+            },
+            "selection": {
+                "mode": "auto",
+                "taxonomy_id": "astrlink-text-v1"
+            },
+            "categories": []
+        });
+        assert!(validate_route_create_input(&auto)
+            .unwrap_err()
+            .contains("unexpected field categories"));
+    }
+
+    #[test]
+    fn strictly_parses_privacy_dry_run_confidence_results() {
+        let result = serde_json::json!({
+            "decision": "allow",
+            "findings_summary": "",
+            "findings": [],
+            "suppressed_findings": [{
+                "kind": "private_person",
+                "path": "/input",
+                "start": 0,
+                "end": 21,
+                "confidence": 0.696717
+            }],
+            "inspected_body": "{\"input\":\"画一张猫的图片\"}"
+        });
+        assert!(parse_privacy_dry_run_result(&serde_json::to_vec(&result).unwrap()).is_ok());
+
+        let mut missing_confidence = result.clone();
+        missing_confidence["suppressed_findings"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("confidence");
+        assert!(
+            parse_privacy_dry_run_result(&serde_json::to_vec(&missing_confidence).unwrap())
+                .is_err()
+        );
+
+        let mut invalid_confidence = result;
+        invalid_confidence["suppressed_findings"][0]["confidence"] = serde_json::json!(1.01);
+        assert!(
+            parse_privacy_dry_run_result(&serde_json::to_vec(&invalid_confidence).unwrap())
+                .is_err()
+        );
     }
 
     fn privacy_variant_value() -> serde_json::Value {

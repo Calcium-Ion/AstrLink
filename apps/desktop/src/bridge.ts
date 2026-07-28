@@ -6,13 +6,13 @@ import {
   type AppSnapshot,
 } from "./core-model";
 import {
-  parseEndpointPage,
-  parseEndpointRecord,
-  type EndpointCreateInput,
-  type EndpointPage,
-  type EndpointPatchInput,
-  type EndpointRecord,
-} from "./endpoint-model";
+  parseServicePage,
+  parseServiceRecord,
+  type ServiceCreateInput,
+  type ServicePage,
+  type ServicePatchInput,
+  type ServiceRecord,
+} from "./service-model";
 import {
   parseAccessTokenCreateResult,
   parseAccessTokenPage,
@@ -60,6 +60,21 @@ import {
   type AuditSettings,
   type AuditSettingsPatch,
 } from "./audit-settings-model";
+import {
+  parseRoutePage,
+  parseRouteRecord,
+  type RouteCreateInput,
+  type RoutePage,
+  type RoutePatchInput,
+  type RouteRecord,
+} from "./route-model";
+import {
+  parseAuthorizationSession,
+  parseBeginCodexAuthorizationResult,
+  type AuthorizationFlow,
+  type AuthorizationSession,
+  type BeginCodexAuthorizationResult,
+} from "./subscription-model";
 
 function hasNativeBridge(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -87,39 +102,112 @@ function requireNativeBridge(): void {
   }
 }
 
-export async function listEndpoints(): Promise<EndpointPage> {
+export async function listServices(): Promise<ServicePage> {
   requireNativeBridge();
-  return parseEndpointPage(await invoke<unknown>("list_endpoints"));
+  return parseServicePage(await invoke<unknown>("list_services"));
 }
 
-export async function getEndpoint(endpointId: string): Promise<EndpointRecord> {
+export async function getService(serviceId: string): Promise<ServiceRecord> {
   requireNativeBridge();
-  return parseEndpointRecord(
-    await invoke<unknown>("get_endpoint", { endpointId }),
+  return parseServiceRecord(
+    await invoke<unknown>("get_service", { serviceId }),
   );
 }
 
-export async function createEndpoint(
-  input: EndpointCreateInput,
-): Promise<EndpointRecord> {
+export async function createService(
+  input: ServiceCreateInput,
+): Promise<ServiceRecord> {
   requireNativeBridge();
-  return parseEndpointRecord(await invoke<unknown>("create_endpoint", { input }));
+  return parseServiceRecord(await invoke<unknown>("create_service", { input }));
 }
 
-export async function updateEndpoint(
-  endpointId: string,
+export async function updateService(
+  serviceId: string,
   etag: string,
-  patch: EndpointPatchInput,
-): Promise<EndpointRecord> {
+  patch: ServicePatchInput,
+): Promise<ServiceRecord> {
   requireNativeBridge();
-  return parseEndpointRecord(
-    await invoke<unknown>("update_endpoint", { endpointId, etag, patch }),
+  return parseServiceRecord(
+    await invoke<unknown>("update_service", { serviceId, etag, patch }),
   );
 }
 
-export async function deleteEndpoint(endpointId: string, etag: string): Promise<void> {
+export async function deleteService(serviceId: string, etag: string): Promise<void> {
   requireNativeBridge();
-  await invoke("delete_endpoint", { endpointId, etag });
+  await invoke("delete_service", { serviceId, etag });
+}
+
+export async function beginServiceAuthorization(
+  serviceId: string,
+  flow: AuthorizationFlow,
+): Promise<BeginCodexAuthorizationResult> {
+  requireNativeBridge();
+  return parseBeginCodexAuthorizationResult(
+    await invoke<unknown>("begin_service_authorization", { serviceId, flow }),
+  );
+}
+
+export async function openAuthorizationURL(url: string): Promise<void> {
+  requireNativeBridge();
+  await invoke("open_authorization_url", { url });
+}
+
+export async function getServiceAuthorization(
+  serviceId: string,
+): Promise<AuthorizationSession> {
+  requireNativeBridge();
+  return parseAuthorizationSession(
+    await invoke<unknown>("get_service_authorization", { serviceId }),
+  );
+}
+
+export async function cancelServiceAuthorization(
+  serviceId: string,
+): Promise<AuthorizationSession> {
+  requireNativeBridge();
+  return parseAuthorizationSession(
+    await invoke<unknown>("cancel_service_authorization", { serviceId }),
+  );
+}
+
+export async function logoutService(serviceId: string): Promise<ServiceRecord> {
+  requireNativeBridge();
+  return parseServiceRecord(
+    await invoke<unknown>("logout_service", { serviceId }),
+  );
+}
+
+export async function listRoutes(): Promise<RoutePage> {
+  requireNativeBridge();
+  return parseRoutePage(await invoke<unknown>("list_routes"));
+}
+
+export async function getRoute(routeId: string): Promise<RouteRecord> {
+  requireNativeBridge();
+  return parseRouteRecord(await invoke<unknown>("get_route", { routeId }));
+}
+
+export async function createRoute(
+  input: RouteCreateInput,
+): Promise<RouteRecord> {
+  requireNativeBridge();
+  return parseRouteRecord(await invoke<unknown>("create_route", { input }));
+}
+
+export async function updateRoute(
+  routeId: string,
+  etag: string,
+  patch: RoutePatchInput,
+): Promise<RouteRecord> {
+  requireNativeBridge();
+  return parseRouteRecord(
+    await invoke<unknown>("update_route", { routeId, etag, patch }),
+  );
+}
+
+export async function deleteRoute(routeId: string, etag: string): Promise<void> {
+  requireNativeBridge();
+  await invoke("delete_route", { routeId, etag });
 }
 
 function compactQuery(
@@ -131,7 +219,7 @@ function compactQuery(
   if (query.from !== undefined) compact.from = query.from;
   if (query.to !== undefined) compact.to = query.to;
   if (query.protocol !== undefined) compact.protocol = query.protocol;
-  if (query.endpoint_id !== undefined) compact.endpoint_id = query.endpoint_id;
+  if (query.service_id !== undefined) compact.service_id = query.service_id;
   if (query.status !== undefined) compact.status = query.status;
   return compact;
 }

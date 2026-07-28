@@ -1,125 +1,175 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { buildHeadersText } from "./audit-bundle";
+import { copyButtonLabel, type CopyFeedback } from "./copy-feedback";
 import type {
-  AuditContent,
   AuditContentPart,
-  RequestRecord,
+  AuditHTTPMeta,
 } from "./request-record-model";
 import {
-  buildSemanticTimeline,
   parseSSEIncremental,
   SSEParseCancelledError,
   type SSEEvent,
-  type TimelineItem,
 } from "./sse-review-model";
 
-const LARGE_STREAM_SIZE = 8 * 1024 * 1024;
 const RAW_SEGMENT_SIZE = 256 * 1024;
 const EVENT_RENDER_BATCH = 300;
 
-type AuditDirection = "request" | "response";
-type StreamViewMode = "timeline" | "events" | "raw";
+type StreamViewMode = "raw" | "events";
 type DocumentViewMode = "formatted" | "raw";
 
-export function AuditReviewer({
-  record,
-  content,
-  onBack,
-  onClear,
+export function HTTPMetaSection({
+  meta,
+  copyFeedback,
 }: {
-  record: RequestRecord;
-  content: AuditContent;
-  onBack: () => void;
-  onClear: () => void;
+  meta: AuditHTTPMeta | null;
+  copyFeedback: CopyFeedback;
 }) {
-  const initialDirection: AuditDirection = content.response_content
-    ? "response"
-    : "request";
-  const [direction, setDirection] =
-    useState<AuditDirection>(initialDirection);
-  const part =
-    direction === "request" ? content.request_body : content.response_content;
-
   return (
-    <section
-      aria-labelledby="audit-review-heading"
-      className="workspace-card records-surface audit-reviewer"
-    >
-      <header className="records-page-header">
-        <div>
-          <button className="records-back" onClick={onBack} type="button">
-            <span aria-hidden="true">←</span>
-            记录详情
+    <DetailBlock
+      actions={
+        meta ? (
+          <button
+            className="text-button"
+            onClick={() =>
+              copyFeedback.copy(
+                "http-meta",
+                [
+                  `${meta.method} ${meta.url} ${meta.http_version}`.trim(),
+                  "",
+                  buildHeadersText(meta.request_headers),
+                  "",
+                  meta.response_status !== null
+                    ? `HTTP ${meta.response_status}`
+                    : "",
+                  buildHeadersText(meta.response_headers),
+                ].join("\n"),
+              )
+            }
+            type="button"
+          >
+            {copyButtonLabel(copyFeedback, "http-meta")}
           </button>
-          <span className="section-kicker">本机解密 · 仅保存在内存</span>
-          <h2 id="audit-review-heading">内容审查</h2>
-          <p>
-            <code>{record.id}</code>
-          </p>
-        </div>
-        <button className="btn-secondary" onClick={onClear} type="button">
-          清除解密内容
-        </button>
-      </header>
-
-      <p className="audit-memory-warning" role="status">
-        已解密内容只存在于当前 Core 会话的内存中；切换记录或返回监控会立即清除。
-      </p>
-
-      <div className="audit-direction-tabs" role="tablist" aria-label="内容方向">
-        <DirectionTab
-          active={direction === "request"}
-          available={content.request_body !== null}
-          label="请求体"
-          onClick={() => setDirection("request")}
-        />
-        <DirectionTab
-          active={direction === "response"}
-          available={content.response_content !== null}
-          label="响应内容"
-          onClick={() => setDirection("response")}
-        />
-      </div>
-
-      {part ? (
-        <AuditPartView
-          key={`${record.id}:${direction}`}
-          part={part}
-          protocol={record.input_protocol}
-        />
+        ) : null
+      }
+      title="HTTP"
+    >
+      {meta === null ? (
+        <p className="record-http-meta__missing">
+          此记录未捕获 HTTP 元数据（记录创建时捕获未开启，或来自旧版本）。
+        </p>
       ) : (
-        <div className="records-empty">
-          <strong>这个方向没有已捕获内容</strong>
-          <span>返回详情可查看捕获状态和截断信息。</span>
+        <div className="record-http-meta">
+          <code className="record-http-meta__line">
+            {meta.method} {meta.url} {meta.http_version}
+          </code>
+          <HeaderList headers={meta.request_headers} title="请求头" />
+          <code className="record-http-meta__line">
+            {meta.response_status !== null
+              ? `HTTP ${meta.response_status}`
+              : "（无响应状态）"}
+          </code>
+          <HeaderList headers={meta.response_headers} title="响应头" />
         </div>
       )}
-    </section>
+    </DetailBlock>
   );
 }
 
-function DirectionTab({
-  active,
-  available,
-  label,
-  onClick,
+function HeaderList({
+  headers,
+  title,
 }: {
-  active: boolean;
-  available: boolean;
-  label: string;
-  onClick: () => void;
+  headers: AuditHTTPMeta["request_headers"];
+  title: string;
+}) {
+  if (headers.length === 0) {
+    return (
+      <div className="record-http-meta__group">
+        <h4>{title}</h4>
+        <p className="record-http-meta__missing">（无）</p>
+      </div>
+    );
+  }
+  return (
+    <div className="record-http-meta__group">
+      <h4>{title}</h4>
+      <ul className="record-http-meta__headers">
+        {headers.map((header, index) => (
+          <li key={`${header.name}:${index}`}>
+            <span className="record-http-meta__name">{header.name}:</span>{" "}
+            <span
+              className={
+                header.redacted
+                  ? "record-http-meta__value is-redacted"
+                  : "record-http-meta__value"
+              }
+            >
+              {header.value}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function AuditPartSection({
+  title,
+  part,
+  protocol,
+  sectionKey,
+  copyFeedback,
+}: {
+  title: string;
+  part: AuditContentPart | null;
+  protocol: string;
+  sectionKey: string;
+  copyFeedback: CopyFeedback;
 }) {
   return (
-    <button
-      aria-selected={active}
-      className={active ? "is-active" : ""}
-      disabled={!available}
-      onClick={onClick}
-      role="tab"
-      type="button"
+    <DetailBlock
+      actions={
+        part ? (
+          <button
+            className="text-button"
+            onClick={() => copyFeedback.copy(sectionKey, part.content)}
+            type="button"
+          >
+            {copyButtonLabel(copyFeedback, sectionKey)}
+          </button>
+        ) : null
+      }
+      title={title}
     >
-      {label}
-      {!available ? <span>未捕获</span> : null}
-    </button>
+      {part === null ? (
+        <p className="record-http-meta__missing">
+          未捕获（捕获未开启，或内容已按保留期清理）。
+        </p>
+      ) : (
+        <AuditPartView part={part} protocol={protocol} />
+      )}
+    </DetailBlock>
+  );
+}
+
+function DetailBlock({
+  title,
+  actions,
+  children,
+}: {
+  title: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="record-detail-section audit-inline-section">
+      <header className="audit-inline-section__header">
+        <h3>{title}</h3>
+        {actions}
+      </header>
+      {children}
+    </section>
   );
 }
 
@@ -149,29 +199,26 @@ function AuditPartView({
 
 function StreamInspector({
   part,
-  protocol,
 }: {
   part: AuditContentPart;
   protocol: string;
 }) {
+  const [mode, setMode] = useState<StreamViewMode>("raw");
   const [events, setEvents] = useState<SSEEvent[]>([]);
-  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [parseState, setParseState] = useState<
-    "parsing" | "ready" | "cancelled" | "error"
-  >("parsing");
+    "idle" | "parsing" | "ready" | "cancelled" | "error"
+  >("idle");
   const [parseProgress, setParseProgress] = useState(0);
   const [parseSummary, setParseSummary] = useState({
     invalidJsonCount: 0,
     incompleteLastEvent: false,
   });
-  const [mode, setMode] = useState<StreamViewMode>(
-    part.content.length > LARGE_STREAM_SIZE ? "events" : "timeline",
-  );
 
+  // Events parse lazily: the raw view is the default and must not pay the
+  // multi-MB parse cost, so parsing starts only when the tab is opened.
   useEffect(() => {
+    if (mode !== "events" || parseState !== "idle") return;
     const controller = new AbortController();
-    setEvents([]);
-    setTimeline([]);
     setParseState("parsing");
     setParseProgress(0);
     void parseSSEIncremental(part.content, {
@@ -189,7 +236,6 @@ function StreamInspector({
       .then((result) => {
         if (controller.signal.aborted) return;
         setEvents(result.events);
-        setTimeline(buildSemanticTimeline(protocol, result.events));
         setParseSummary({
           invalidJsonCount: result.invalidJsonCount,
           incompleteLastEvent: result.incompleteLastEvent,
@@ -205,44 +251,36 @@ function StreamInspector({
         setParseState("error");
       });
     return () => controller.abort();
-  }, [part.content, part.truncated, protocol]);
+  }, [mode, parseState, part.content, part.truncated]);
 
   return (
     <>
       <div className="audit-view-toolbar">
         <div className="audit-view-tabs" role="tablist" aria-label="流内容视图">
           <ModeTab
-            active={mode === "timeline"}
-            label="时间线"
-            onClick={() => setMode("timeline")}
-          />
-          <ModeTab
-            active={mode === "events"}
-            label={`事件 · ${events.length}`}
-            onClick={() => setMode("events")}
-          />
-          <ModeTab
             active={mode === "raw"}
             label="原文"
             onClick={() => setMode("raw")}
           />
+          <ModeTab
+            active={mode === "events"}
+            label={parseState === "idle" ? "事件" : `事件 · ${events.length}`}
+            onClick={() => setMode("events")}
+          />
         </div>
-        <ParseStatus
-          progress={parseProgress}
-          state={parseState}
-          summary={parseSummary}
-        />
+        {parseState !== "idle" ? (
+          <ParseStatus
+            progress={parseProgress}
+            state={parseState}
+            summary={parseSummary}
+          />
+        ) : null}
       </div>
 
-      {mode === "timeline" ? (
-        <TimelineView
-          parsing={parseState === "parsing"}
-          timeline={timeline}
-        />
-      ) : mode === "events" ? (
-        <EventsView events={events} parsing={parseState === "parsing"} />
-      ) : (
+      {mode === "raw" ? (
         <RawSegmentView content={part.content} />
+      ) : (
+        <EventsView events={events} parsing={parseState === "parsing"} />
       )}
     </>
   );
@@ -275,7 +313,7 @@ function ParseStatus({
   progress,
   summary,
 }: {
-  state: "parsing" | "ready" | "cancelled" | "error";
+  state: "idle" | "parsing" | "ready" | "cancelled" | "error";
   progress: number;
   summary: { invalidJsonCount: number; incompleteLastEvent: boolean };
 }) {
@@ -304,46 +342,6 @@ function ParseStatus({
     );
   }
   return <span className="audit-parse-status">解析完成</span>;
-}
-
-function TimelineView({
-  timeline,
-  parsing,
-}: {
-  timeline: TimelineItem[];
-  parsing: boolean;
-}) {
-  if (timeline.length === 0) {
-    return (
-      <div className="records-empty">
-        <strong>{parsing ? "正在生成语义时间线…" : "没有可聚合的事件"}</strong>
-        <span>{parsing ? "大内容会分批处理，期间可先查看事件或原文。" : "请切换到事件视图人工检查。"}</span>
-      </div>
-    );
-  }
-  return (
-    <ol className="audit-timeline">
-      {timeline.map((item) => (
-        <li className={`audit-timeline__item is-${item.kind}`} key={item.id}>
-          <span className="audit-timeline__marker" aria-hidden="true" />
-          <article>
-            <header>
-              <strong>{item.title}</strong>
-              <span>
-                #{item.firstEvent}
-                {item.lastEvent === item.firstEvent ? "" : `–#${item.lastEvent}`}
-              </span>
-            </header>
-            {item.text ? (
-              <div className="audit-timeline__content">{item.text}</div>
-            ) : (
-              <em>无内容</em>
-            )}
-          </article>
-        </li>
-      ))}
-    </ol>
-  );
 }
 
 function EventsView({
@@ -515,14 +513,16 @@ function RawSegmentView({ content }: { content: string }) {
         <span>
           完整原文 · {content.length.toLocaleString()} 字符 · {totalSegments} 段
         </span>
-        <span>每段最多 256KB，按需渲染</span>
+        {totalSegments > 1 ? <span>每段最多 256KB，按需渲染</span> : null}
       </div>
       {segments.map((segment) => (
         <section className="audit-raw__segment" key={segment.index}>
-          <header>
-            第 {segment.index + 1} 段 · 字符 {segment.start.toLocaleString()}–
-            {segment.end.toLocaleString()}
-          </header>
+          {totalSegments > 1 ? (
+            <header>
+              第 {segment.index + 1} 段 · 字符 {segment.start.toLocaleString()}–
+              {segment.end.toLocaleString()}
+            </header>
+          ) : null}
           <pre>{segment.text}</pre>
         </section>
       ))}

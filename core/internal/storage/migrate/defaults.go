@@ -71,7 +71,7 @@ func DefaultMigrations() []Migration {
 				`INSERT OR IGNORE INTO policies (id, document_json, created_at, updated_at)
 VALUES (
     'policy_privacy_default',
-    '{"id":"policy_privacy_default","name":"隐私保护","enabled":false,"priority":0,"detector":"regex","match":{},"request_action":"redact","response_action":"allow","response_restore":true}',
+    '{"id":"policy_privacy_default","name":"隐私保护","enabled":false,"priority":0,"detector":"regex","min_confidence":0.8,"match":{},"request_action":"redact","response_action":"allow","response_restore":true}',
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 )`,
@@ -222,6 +222,124 @@ WHERE id = 'policy_privacy_default'
     UNIQUE(request_id, direction)
 )`,
 				`CREATE INDEX audit_blobs_created_at_idx ON audit_blobs (created_at)`,
+			},
+		},
+		{
+			Version: 10,
+			Name:    "http_metadata_capture",
+			// SQLite cannot ALTER a CHECK constraint, so audit_blobs is
+			// rebuilt to accept the http_meta direction (ADR 0008). The
+			// runner executes migrations in one transaction, so a partial
+			// rebuild is never observable.
+			Statements: []string{
+				`CREATE TABLE audit_blobs_new (
+    request_id TEXT NOT NULL REFERENCES request_records(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK(direction IN ('request', 'response', 'http_meta')),
+    media_type TEXT NOT NULL,
+    nonce BLOB NOT NULL,
+    ciphertext BLOB NOT NULL,
+    truncated INTEGER NOT NULL CHECK(truncated IN (0, 1)),
+    captured_bytes INTEGER NOT NULL CHECK(captured_bytes >= 0),
+    created_at TEXT NOT NULL,
+    UNIQUE(request_id, direction)
+)`,
+				`INSERT INTO audit_blobs_new SELECT * FROM audit_blobs`,
+				`DROP TABLE audit_blobs`,
+				`ALTER TABLE audit_blobs_new RENAME TO audit_blobs`,
+				`CREATE INDEX audit_blobs_created_at_idx ON audit_blobs (created_at)`,
+				`ALTER TABLE audit_settings
+    ADD COLUMN http_meta_enabled INTEGER NOT NULL DEFAULT 1 CHECK(http_meta_enabled IN (0, 1))`,
+			},
+		},
+		{
+			Version: 11,
+			Name:    "subscription_accounts",
+			Statements: []string{
+				`CREATE TABLE subscription_accounts (
+    id TEXT PRIMARY KEY,
+    document_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)`,
+			},
+		},
+		{
+			Version: 12,
+			Name:    "unified_api_services",
+			Statements: []string{
+				`CREATE TABLE services (
+    id TEXT PRIMARY KEY,
+    document_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)`,
+				`INSERT INTO services (id, document_json, created_at, updated_at)
+SELECT
+    id,
+    json_object(
+        'id', id,
+        'name', json_extract(document_json, '$.name'),
+        'kind', json_extract(document_json, '$.kind'),
+        'enabled', json(CASE WHEN json_extract(document_json, '$.enabled') THEN 'true' ELSE 'false' END),
+        'capabilities', json(COALESCE(json_extract(document_json, '$.capabilities'), '[]')),
+        'http', json_object(
+            'base_url', json_extract(document_json, '$.base_url'),
+            'auth', json(COALESCE(json_extract(document_json, '$.auth'), '{}')),
+            'credential_ref', replace(
+                COALESCE(json_extract(document_json, '$.credential_ref'), ''),
+                'local://endpoint/',
+                'local://service/'
+            )
+        ),
+        'created_at', created_at,
+        'updated_at', updated_at
+    ),
+    created_at,
+    updated_at
+FROM endpoints`,
+				`INSERT INTO services (id, document_json, created_at, updated_at)
+SELECT
+    id,
+    json_object(
+        'id', id,
+        'name', json_extract(document_json, '$.display_name'),
+        'kind', 'codex_subscription',
+        'enabled', json('true'),
+        'capabilities', json(COALESCE(json_extract(document_json, '$.capabilities'), '[]')),
+        'subscription', json_object(
+            'provider', json_extract(document_json, '$.provider'),
+            'status', json_extract(document_json, '$.status'),
+            'account_hint', COALESCE(json_extract(document_json, '$.account_hint'), ''),
+            'provider_account_id', COALESCE(json_extract(document_json, '$.provider_account_id'), ''),
+            'credential_ref', COALESCE(json_extract(document_json, '$.credential_ref'), ''),
+            'authorization_boundary', COALESCE(json_extract(document_json, '$.authorization_boundary'), ''),
+            'token_expires_at', json_extract(document_json, '$.token_expires_at'),
+            'last_refresh_at', json_extract(document_json, '$.last_refresh_at'),
+            'last_error', json_extract(document_json, '$.last_error')
+        ),
+        'created_at', COALESCE(json_extract(document_json, '$.created_at'), created_at),
+        'updated_at', COALESCE(json_extract(document_json, '$.updated_at'), updated_at)
+    ),
+    created_at,
+    updated_at
+FROM subscription_accounts
+WHERE json_extract(document_json, '$.status') IN ('connected', 'needs_reauth')
+  AND COALESCE(json_extract(document_json, '$.credential_ref'), '') <> ''`,
+				`CREATE TABLE service_credentials (
+    service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+    credential_value BLOB NOT NULL CHECK(length(credential_value) BETWEEN 1 AND 16384),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)`,
+				`INSERT INTO service_credentials (service_id, credential_value, created_at, updated_at)
+SELECT endpoint_id, credential_value, created_at, updated_at
+FROM endpoint_credentials`,
+				`DROP TABLE endpoint_credentials`,
+				`DROP TABLE endpoints`,
+				`DROP TABLE subscription_accounts`,
+				`DROP INDEX request_records_endpoint_id_idx`,
+				`ALTER TABLE request_records RENAME COLUMN endpoint_id TO service_id`,
+				`CREATE INDEX request_records_service_id_idx ON request_records (service_id)`,
 			},
 		},
 	}

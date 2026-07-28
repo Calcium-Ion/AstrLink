@@ -9,7 +9,7 @@ func TestNativeAndDelegatedPlansPreserveProtocol(t *testing.T) {
 	for _, planType := range []PlanType{PlanTypeNative, PlanTypeDelegated} {
 		plan := ExecutionPlan{
 			Type:             planType,
-			EndpointID:       "endpoint_01",
+			ServiceID:        "endpoint_01",
 			InputProtocol:    ProtocolOpenAIResponses,
 			UpstreamProtocol: ProtocolOpenAIResponses,
 			ConversionPath:   []ConversionEdge{},
@@ -29,7 +29,7 @@ func TestNativeAndDelegatedPlansPreserveProtocol(t *testing.T) {
 func TestRelayKitPlanIsRepresentableButUnavailableInAlpha(t *testing.T) {
 	plan := ExecutionPlan{
 		Type:             PlanTypeRelayKit,
-		EndpointID:       "endpoint_01",
+		ServiceID:        "endpoint_01",
 		InputProtocol:    ProtocolOpenAIResponses,
 		UpstreamProtocol: ProtocolAnthropicMessages,
 		ConversionPath: []ConversionEdge{
@@ -54,7 +54,7 @@ func TestRelayKitPlanIsRepresentableButUnavailableInAlpha(t *testing.T) {
 func TestStreamingRelayKitPlanRejectsNonStreamingEdge(t *testing.T) {
 	plan := ExecutionPlan{
 		Type:              PlanTypeRelayKit,
-		EndpointID:        "endpoint_01",
+		ServiceID:         "endpoint_01",
 		InputProtocol:     ProtocolOpenAIResponses,
 		UpstreamProtocol:  ProtocolOpenAIChat,
 		ConversionQuality: ConversionQualityFair,
@@ -71,7 +71,7 @@ func TestStreamingRelayKitPlanRejectsNonStreamingEdge(t *testing.T) {
 
 func TestAlphaPlanRejectsPostAlphaProtocolAndNullPath(t *testing.T) {
 	plan := ExecutionPlan{
-		Type: PlanTypeNative, EndpointID: "endpoint_01",
+		Type: PlanTypeNative, ServiceID: "endpoint_01",
 		InputProtocol: ProtocolOpenAIRealtime, UpstreamProtocol: ProtocolOpenAIRealtime,
 		ConversionPath: []ConversionEdge{}, Streaming: true,
 	}
@@ -89,7 +89,7 @@ func TestAlphaPlanRejectsPostAlphaProtocolAndNullPath(t *testing.T) {
 func validRelayKitPlanForValidation() ExecutionPlan {
 	return ExecutionPlan{
 		Type:              PlanTypeRelayKit,
-		EndpointID:        "endpoint_01",
+		ServiceID:         "endpoint_01",
 		InputProtocol:     ProtocolOpenAIResponses,
 		UpstreamProtocol:  ProtocolAnthropicMessages,
 		ConversionQuality: ConversionQualityGood,
