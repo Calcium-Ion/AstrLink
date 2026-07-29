@@ -23,11 +23,13 @@ apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/binaries/astrlink-core-*
 apps/desktop/src-tauri/binaries/astrlink-privacy-worker-*
 apps/desktop/src-tauri/binaries/libonnxruntime.*.dylib
+apps/desktop/src-tauri/binaries/libonnxruntime.so.*
 apps/desktop/src-tauri/binaries/onnxruntime-*-LICENSE.txt
 apps/desktop/src-tauri/binaries/onnxruntime-*-ThirdPartyNotices.txt
 apps/privacy-worker/target/
 
 # Local runtime data
+/core.[0-9]*
 *.db
 *.db-shm
 *.db-wal

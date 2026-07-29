@@ -3,7 +3,6 @@ package accountauth
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -33,12 +32,15 @@ func NewKeyringCredentialStore() *KeyringCredentialStore {
 func (store *KeyringCredentialStore) Available(context.Context) error {
 	probeUser := "astrlink.availability.probe"
 	if err := store.set(store.service, probeUser, "probe"); err != nil {
-		return fmt.Errorf("%w: %v", ErrCredentialStoreUnavailable, err)
+		return ErrCredentialStoreUnavailable
 	}
 	if _, err := store.get(store.service, probeUser); err != nil {
-		return fmt.Errorf("%w: %v", ErrCredentialStoreUnavailable, err)
+		_ = store.delete(store.service, probeUser)
+		return ErrCredentialStoreUnavailable
 	}
-	_ = store.delete(store.service, probeUser)
+	if err := store.delete(store.service, probeUser); err != nil && !errorsIsNotFound(err) {
+		return ErrCredentialStoreUnavailable
+	}
 	return nil
 }
 
@@ -51,7 +53,7 @@ func (store *KeyringCredentialStore) Get(_ context.Context, id contract.Subscrip
 		if errorsIsNotFound(err) {
 			return AccountTokens{}, ErrCredentialNotFound
 		}
-		return AccountTokens{}, fmt.Errorf("%w: %v", ErrCredentialStoreUnavailable, err)
+		return AccountTokens{}, ErrCredentialStoreUnavailable
 	}
 	return UnmarshalAccountTokens([]byte(raw))
 }
@@ -65,7 +67,7 @@ func (store *KeyringCredentialStore) Put(_ context.Context, id contract.Subscrip
 		return err
 	}
 	if err := store.set(store.service, string(id), string(raw)); err != nil {
-		return fmt.Errorf("%w: %v", ErrCredentialStoreUnavailable, err)
+		return ErrCredentialStoreUnavailable
 	}
 	return nil
 }
@@ -78,7 +80,7 @@ func (store *KeyringCredentialStore) Delete(_ context.Context, id contract.Subsc
 		if errorsIsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("%w: %v", ErrCredentialStoreUnavailable, err)
+		return ErrCredentialStoreUnavailable
 	}
 	return nil
 }

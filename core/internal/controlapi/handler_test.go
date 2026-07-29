@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
@@ -70,6 +71,46 @@ func TestControlContractRejectsMutationAndUnknownPaths(t *testing.T) {
 	}
 	if envelope.RequestID == "" || envelope.Error.Retryable || envelope.Error.Details == nil {
 		t.Fatalf("error envelope does not match frozen contract: %#v", envelope)
+	}
+}
+
+func TestShutdownRequiresAuthenticationAndAcknowledgesBeforeCancellation(t *testing.T) {
+	store, err := sqlite.Open(context.Background(), t.TempDir()+"/astrlink.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	cancelled := make(chan struct{}, 1)
+	handler, err := NewWithDependencies(
+		contract.DefaultVersionResponse("0.1.0-test", "abc1234"),
+		Dependencies{
+			ServiceStore: store,
+			ControlToken: testControlToken,
+			Shutdown: func() {
+				cancelled <- struct{}{}
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unauthorized := serve(t, handler, http.MethodPost, ShutdownPath)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, ShutdownPath, nil)
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("shutdown status = %d, want 202", response.Code)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown was not requested")
 	}
 }
 

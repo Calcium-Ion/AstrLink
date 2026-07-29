@@ -15,6 +15,7 @@ const bridgeMocks = vi.hoisted(() => ({
   deletePrivacyModelInstallation: vi.fn(),
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
+  getPreferences: vi.fn(),
   getService: vi.fn(),
   getServiceAuthorization: vi.fn(),
   getRoute: vi.fn(),
@@ -33,6 +34,9 @@ const bridgeMocks = vi.hoisted(() => ({
   purgeRequestRecords: vi.fn(),
   revealAccessToken: vi.fn(),
   restartCore: vi.fn(),
+  startCore: vi.fn(),
+  stopCore: vi.fn(),
+  updatePreferences: vi.fn(),
   updateAuditSettings: vi.fn(),
   updateService: vi.fn(),
   updateRoute: vi.fn(),
@@ -94,6 +98,8 @@ const readySnapshot: AppSnapshot = {
     },
   },
   last_error: null,
+  recovery_attempt: 0,
+  recovery_scheduled_in_ms: null,
 };
 
 function button(label: string): HTMLButtonElement {
@@ -127,6 +133,20 @@ async function setInput(selector: string, value: string): Promise<void> {
   await act(async () => {
     valueSetter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function setSelect(selector: string, value: string): Promise<void> {
+  const select = document.querySelector<HTMLSelectElement>(selector);
+  if (!select) throw new Error(`Missing select: ${selector}`);
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    "value",
+  )?.set;
+  if (!valueSetter) throw new Error("Missing HTMLSelectElement value setter");
+  await act(async () => {
+    valueSetter.call(select, value);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
@@ -367,13 +387,64 @@ describe("App workspace navigation", () => {
     expect(bridgeMocks.listServices).toHaveBeenCalled();
   });
 
-  it("keeps future navigation visibly disabled", async () => {
+  it("opens the desktop settings center", async () => {
+    bridgeMocks.getPreferences.mockResolvedValue({
+      values: {
+        close_behavior: "hide_to_tray",
+        autostart: false,
+        core_auto_start: true,
+        core_auto_recover: true,
+        inference_port: 8317,
+      },
+      load_warning: null,
+      autostart_actual: false,
+      autostart_error: null,
+    });
     await renderApp();
 
     expect(button("路由与模型").disabled).toBe(false);
     expect(button("安全策略").disabled).toBe(false);
     expect(button("请求记录").disabled).toBe(false);
-    expect(button("设置即将推出").disabled).toBe(true);
+    await act(async () => {
+      button("设置").click();
+      await Promise.resolve();
+    });
+    expect(workspaceHeading().textContent).toBe("设置");
+    expect(container.textContent).toContain("本地推理端口");
+  });
+
+  it("protects unsaved desktop preferences during navigation", async () => {
+    bridgeMocks.getPreferences.mockResolvedValue({
+      values: {
+        close_behavior: "hide_to_tray",
+        autostart: false,
+        core_auto_start: true,
+        core_auto_recover: true,
+        inference_port: 8317,
+      },
+      load_warning: null,
+      autostart_actual: false,
+      autostart_error: null,
+    });
+    await renderApp();
+    await act(async () => {
+      button("设置").click();
+      await Promise.resolve();
+    });
+    const port = container.querySelector<HTMLInputElement>('input[type="number"]');
+    if (!port) throw new Error("missing settings port input");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(port, "9123");
+      port.dispatchEvent(new Event("input", { bubbles: true }));
+      port.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => button("概览").click());
+    expect(container.textContent).toContain("放弃未保存的修改？");
+    expect(workspaceHeading().textContent).toBe("设置");
   });
 
   it("navigates to route management while keeping astrlink/auto gated", async () => {
@@ -481,6 +552,49 @@ describe("App workspace navigation", () => {
 
     expect(container.textContent).toContain("New session token");
     expect(container.textContent).not.toContain("Old session token");
+  });
+
+  it("returns to the service list without an unsaved-changes dialog after saving", async () => {
+    bridgeMocks.createService.mockResolvedValue({
+      service: {
+        id: "service_newapi_saved",
+        name: "new-api",
+        kind: "newapi",
+        enabled: true,
+        capabilities: [
+          {
+            protocol: "openai.responses",
+            mode: "delegated",
+            streaming: true,
+          },
+        ],
+        http: {
+          base_url: "https://saved.example",
+          auth: { scheme: "bearer" },
+          credential_ref: "local://service/service_newapi_saved",
+        },
+        created_at: "2026-07-28T09:00:00Z",
+        updated_at: "2026-07-28T09:00:00Z",
+      },
+      etag: `"sha256:${"b".repeat(64)}"`,
+    });
+    await renderApp();
+
+    await act(async () => button("API 服务").click());
+    await act(async () => button("添加服务").click());
+    await setSelect(".service-form select", "newapi");
+    await setInput('.service-form input[type="url"]', "https://saved.example");
+    await setInput('.service-form input[type="password"]', "secret-key");
+    await act(async () => {
+      button("保存服务").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(bridgeMocks.createService).toHaveBeenCalledOnce();
+    expect(workspaceHeading().textContent).toBe("管理 API 服务");
+    expect(container.textContent).not.toContain("放弃未保存的修改？");
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("uses an in-app dialog before leaving an editor with unsaved changes", async () => {

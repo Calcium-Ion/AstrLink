@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const onnxRuntimeVersion = "1.23.2";
-const onnxRuntimeLibraryName = `libonnxruntime.${onnxRuntimeVersion}.dylib`;
+const macOSRuntimeLibraryName = `libonnxruntime.${onnxRuntimeVersion}.dylib`;
+const linuxRuntimeLibraryName = `libonnxruntime.so.${onnxRuntimeVersion}`;
 const onnxRuntimeNotices = [
   {
     source: "LICENSE",
@@ -42,6 +43,14 @@ const macOSRuntimeAssets = {
     directory: `onnxruntime-osx-x86_64-${onnxRuntimeVersion}`,
     sha256: "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
     size: 11_676_322,
+  },
+};
+const linuxRuntimeAssets = {
+  "x86_64-unknown-linux-gnu": {
+    archive: `onnxruntime-linux-x64-${onnxRuntimeVersion}.tgz`,
+    directory: `onnxruntime-linux-x64-${onnxRuntimeVersion}`,
+    sha256: "1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b",
+    size: 8_309_231,
   },
 };
 
@@ -184,11 +193,11 @@ async function stageMacOSRuntime() {
     extractionDirectory,
     asset.directory,
     "lib",
-    onnxRuntimeLibraryName,
+    macOSRuntimeLibraryName,
   );
   if (!existsSync(runtimeSource)) {
     throw new Error(
-      `Pinned ONNX Runtime archive is missing ${onnxRuntimeLibraryName}.`,
+      `Pinned ONNX Runtime archive is missing ${macOSRuntimeLibraryName}.`,
     );
   }
 
@@ -197,9 +206,90 @@ async function stageMacOSRuntime() {
       workerDirectory,
       "target",
       "release",
-      onnxRuntimeLibraryName,
+      macOSRuntimeLibraryName,
     ),
-    path.join(binariesDirectory, onnxRuntimeLibraryName),
+    path.join(binariesDirectory, macOSRuntimeLibraryName),
+  ];
+  return { runtimeSource, runtimeDestinations };
+}
+
+async function stageLinuxRuntime() {
+  const asset = linuxRuntimeAssets[target];
+  if (!asset) {
+    if (target.includes("-linux-")) {
+      throw new Error(`Unsupported Linux target for ONNX Runtime: ${target}`);
+    }
+    return;
+  }
+
+  const cacheDirectory = path.join(
+    workerDirectory,
+    "target",
+    "onnxruntime",
+    onnxRuntimeVersion,
+    target,
+  );
+  const archivePath = path.join(cacheDirectory, asset.archive);
+  const extractionDirectory = path.join(cacheDirectory, "extracted");
+  mkdirSync(cacheDirectory, { recursive: true });
+
+  if (
+    existsSync(archivePath) &&
+    !fileMatches(archivePath, asset.size, asset.sha256)
+  ) {
+    rmSync(archivePath, { force: true });
+  }
+  if (!existsSync(archivePath)) {
+    const url =
+      `https://github.com/microsoft/onnxruntime/releases/download/` +
+      `v${onnxRuntimeVersion}/${asset.archive}`;
+    const response = await fetch(url, { redirect: "follow" });
+    if (!response.ok) {
+      throw new Error(
+        `Unable to download pinned ONNX Runtime ${onnxRuntimeVersion}: HTTP ${response.status}`,
+      );
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (
+      bytes.byteLength !== asset.size ||
+      sha256(bytes) !== asset.sha256
+    ) {
+      throw new Error(
+        `Pinned ONNX Runtime ${onnxRuntimeVersion} archive failed integrity verification.`,
+      );
+    }
+    const temporaryArchive = `${archivePath}.download`;
+    writeFileSync(temporaryArchive, bytes, { mode: 0o600 });
+    renameSync(temporaryArchive, archivePath);
+  }
+
+  rmSync(extractionDirectory, { recursive: true, force: true });
+  mkdirSync(extractionDirectory, { recursive: true });
+  execFileSync(
+    "tar",
+    ["-xzf", archivePath, "-C", extractionDirectory],
+    { stdio: "inherit" },
+  );
+  const runtimeSource = path.join(
+    extractionDirectory,
+    asset.directory,
+    "lib",
+    linuxRuntimeLibraryName,
+  );
+  if (!existsSync(runtimeSource)) {
+    throw new Error(
+      `Pinned ONNX Runtime archive is missing ${linuxRuntimeLibraryName}.`,
+    );
+  }
+
+  const runtimeDestinations = [
+    path.join(
+      workerDirectory,
+      "target",
+      "release",
+      linuxRuntimeLibraryName,
+    ),
+    path.join(binariesDirectory, linuxRuntimeLibraryName),
   ];
   return { runtimeSource, runtimeDestinations };
 }
@@ -229,6 +319,7 @@ execFileSync(
 console.log(`Staged astrlink-core for Tauri: ${output}`);
 
 const macOSRuntime = await stageMacOSRuntime();
+const linuxRuntime = await stageLinuxRuntime();
 
 execFileSync(
   "cargo",
@@ -252,6 +343,16 @@ if (macOSRuntime) {
   }
   console.log(
     `Staged pinned ONNX Runtime ${onnxRuntimeVersion} for macOS.`,
+  );
+}
+
+if (linuxRuntime) {
+  for (const destination of linuxRuntime.runtimeDestinations) {
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(linuxRuntime.runtimeSource, destination);
+  }
+  console.log(
+    `Staged pinned ONNX Runtime ${onnxRuntimeVersion} for Linux x64.`,
   );
 }
 

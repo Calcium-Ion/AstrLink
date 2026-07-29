@@ -150,7 +150,12 @@ macOS, the arm64 and x64 release archives are accepted only after their pinned
 SHA-256 digest is verified, and the worker loads the fixed-version library only
 from its executable directory or the app's `Contents/Frameworks`. The pinned
 ONNX Runtime license and third-party notices are verified and included in
-every platform bundle. Core starts
+every platform bundle. On Linux x64, the official release archive is likewise
+verified before its versioned shared library is bundled as a Tauri resource.
+The desktop shell resolves that resource to an absolute path and supplies it
+through the internal `ASTRLINK_ONNX_RUNTIME_PATH` environment variable; Core
+inherits the value to the worker without placing it in process arguments.
+Windows keeps the `ort`-managed binary staging behavior. Core starts
 the worker lazily on the first protected request and keeps only the selected
 model hot. Inference is CPU-only and serialized, with bounded ONNX Runtime
 thread counts. The worker supports the constrained OpenAI

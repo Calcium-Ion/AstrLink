@@ -23,11 +23,12 @@ func TestSubscriptionAuthorizationUsesOfficialClientByDefault(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	preferred, fallback := controlAPITestPortPair(t)
+	testNow := time.Now().UTC().Add(time.Hour)
 	manager, err := subscription.NewManager(
 		subscription.StorageAccountStore{Store: store},
 		accountauth.NewMemoryCredentialStore(),
 		accountauth.OAuthConfig{
-			Now:           func() time.Time { return time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC) },
+			Now:           func() time.Time { return testNow },
 			PreferredPort: preferred,
 			FallbackPort:  fallback,
 		},
@@ -56,6 +57,11 @@ func TestSubscriptionAuthorizationUsesOfficialClientByDefault(t *testing.T) {
 	if err := json.Unmarshal(createRecorder.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
+	boundary := manager.AuthorizationBoundary()
+	if created.Subscription == nil ||
+		created.Subscription.AuthorizationBoundary != boundary {
+		t.Fatalf("created authorization_boundary = %#v", created.Subscription)
+	}
 
 	request := httptest.NewRequest(http.MethodPost, ServicesPath+"/"+string(created.ID)+"/authorization", nil)
 	request.Header.Set("Authorization", "Bearer "+testControlToken)
@@ -80,6 +86,15 @@ func TestSubscriptionAuthorizationUsesOfficialClientByDefault(t *testing.T) {
 		}
 	}
 
+	stored, err := store.GetSubscriptionAccount(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSubscriptionAccount() = %v", err)
+	}
+	stored.AuthorizationBoundary = ""
+	if err := store.PutSubscriptionAccount(context.Background(), stored); err != nil {
+		t.Fatalf("PutSubscriptionAccount() = %v", err)
+	}
+
 	listReq := httptest.NewRequest(http.MethodGet, ServicesPath, nil)
 	listReq.Header.Set("Authorization", "Bearer "+testControlToken)
 	listRec := httptest.NewRecorder()
@@ -96,11 +111,36 @@ func TestSubscriptionAuthorizationUsesOfficialClientByDefault(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Kind != contract.ServiceKindCodexSubscription {
 		t.Fatalf("items = %#v", page.Items)
 	}
-	if page.Items[0].Subscription == nil || page.Items[0].Subscription.AuthorizationBoundary != "" {
+	if boundary == "" {
+		t.Fatal("subscription manager returned an empty authorization boundary")
+	}
+	if page.Items[0].Subscription == nil ||
+		page.Items[0].Subscription.AuthorizationBoundary != boundary {
 		t.Fatalf("unexpected authorization_boundary: %#v", page.Items[0].Subscription)
 	}
 	if strings.Contains(listRec.Body.String(), "Bearer ") {
 		t.Fatalf("list leaked bearer material: %s", listRec.Body.String())
+	}
+
+	logoutReq := httptest.NewRequest(
+		http.MethodPost,
+		ServicesPath+"/"+string(created.ID)+"/logout",
+		nil,
+	)
+	logoutReq.Header.Set("Authorization", "Bearer "+testControlToken)
+	logoutRec := httptest.NewRecorder()
+	handler.ServeHTTP(logoutRec, logoutReq)
+	if logoutRec.Code != http.StatusOK {
+		t.Fatalf("logout status = %d body=%s", logoutRec.Code, logoutRec.Body.String())
+	}
+	var loggedOut contract.Service
+	if err := json.Unmarshal(logoutRec.Body.Bytes(), &loggedOut); err != nil {
+		t.Fatalf("decode logout: %v", err)
+	}
+	if loggedOut.Subscription == nil ||
+		loggedOut.Subscription.Status != contract.SubscriptionStatusDisconnected ||
+		loggedOut.Subscription.AuthorizationBoundary != boundary {
+		t.Fatalf("logout subscription = %#v", loggedOut.Subscription)
 	}
 }
 

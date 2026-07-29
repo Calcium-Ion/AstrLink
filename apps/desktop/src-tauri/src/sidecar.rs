@@ -1,10 +1,14 @@
 use std::{
     collections::HashSet,
     fmt::Write as _,
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 
 use reqwest::{header, Client, Method};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -29,6 +33,8 @@ const PRIVACY_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
 const PRIVACY_MODEL_METADATA_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const HEALTH_ATTEMPTS: usize = 8;
 const HEALTH_RETRY_DELAY: Duration = Duration::from_millis(250);
+const RECOVERY_STABILITY_THRESHOLD: Duration = Duration::from_secs(30);
+const MAX_RECOVERY_ATTEMPTS: u8 = 5;
 const MAX_ERROR_BODY: usize = 512;
 // A valid 100-installation model directory can exceed 2 MiB when every
 // installation carries the maximum 256-entry label mapping.
@@ -44,6 +50,10 @@ const PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/probe";
 const POLICY_DRY_RUN_PATH: &str = "/control/v1/policies/policy_privacy_default/dry-run";
 const ROUTES_PATH: &str = "/control/v1/routes";
 const SERVICES_PATH: &str = "/control/v1/services";
+#[cfg(target_os = "linux")]
+const LINUX_ONNX_RUNTIME_PATH_ENV: &str = "ASTRLINK_ONNX_RUNTIME_PATH";
+#[cfg(target_os = "linux")]
+const LINUX_ONNX_RUNTIME_RESOURCE: &str = "onnxruntime/libonnxruntime.so.1.23.2";
 
 #[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -176,7 +186,11 @@ fn start_allowed(state: &LifecycleState, has_child: bool) -> bool {
         )
 }
 
-fn sidecar_args(parent_pid: u32, data_directory: &Path) -> Result<Vec<String>, String> {
+fn sidecar_args(
+    parent_pid: u32,
+    data_directory: &Path,
+    inference_port: u16,
+) -> Result<Vec<String>, String> {
     let data_directory = data_directory
         .to_str()
         .ok_or_else(|| "AstrLink data directory is not valid UTF-8".to_string())?;
@@ -185,8 +199,32 @@ fn sidecar_args(parent_pid: u32, data_directory: &Path) -> Result<Vec<String>, S
         parent_pid.to_string(),
         "--data-dir".to_string(),
         data_directory.to_string(),
+        "--inference-listen".to_string(),
+        format!("127.0.0.1:{inference_port}"),
+        "--control-listen".to_string(),
+        "127.0.0.1:0".to_string(),
         "--control-token-stdin".to_string(),
     ])
+}
+
+fn ensure_inference_port_available(port: u16) -> Result<(), String> {
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    TcpListener::bind(address)
+        .map(drop)
+        .map_err(|error| inference_port_error(port, &error))
+}
+
+fn inference_port_error(port: u16, error: &std::io::Error) -> String {
+    format!("推理端口 {port} 已被占用或不可用：{error}")
+}
+
+fn recovery_delay(attempt: u8) -> Duration {
+    Duration::from_secs(1_u64 << attempt.saturating_sub(1).min(4))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_onnx_runtime_path(resource_directory: &Path) -> PathBuf {
+    resource_directory.join(LINUX_ONNX_RUNTIME_RESOURCE)
 }
 
 fn generate_control_token() -> Result<String, String> {
@@ -272,6 +310,8 @@ pub struct CoreSnapshot {
     pub version: Option<VersionResponse>,
     pub capabilities: Option<CapabilitiesResponse>,
     pub last_error: Option<String>,
+    pub recovery_attempt: u8,
+    pub recovery_scheduled_in_ms: Option<u64>,
 }
 
 struct CoreInner {
@@ -285,6 +325,11 @@ struct CoreInner {
     capabilities: Option<CapabilitiesResponse>,
     control_token: Option<String>,
     last_error: Option<String>,
+    app_handle: Option<AppHandle>,
+    inference_port: u16,
+    auto_recover: bool,
+    recovery_attempt: u8,
+    recovery_scheduled_at: Option<Instant>,
     #[cfg(windows)]
     job: Option<windows_job::JobObject>,
 }
@@ -302,6 +347,11 @@ impl Default for CoreInner {
             capabilities: None,
             control_token: None,
             last_error: None,
+            app_handle: None,
+            inference_port: 8317,
+            auto_recover: true,
+            recovery_attempt: 0,
+            recovery_scheduled_at: None,
             #[cfg(windows)]
             job: None,
         }
@@ -390,6 +440,8 @@ impl CoreManager {
             }
 
             inner.generation = inner.generation.wrapping_add(1);
+            inner.app_handle = Some(app.clone());
+            inner.recovery_scheduled_at = None;
             inner.phase = CorePhase::Spawning;
             inner.pid = None;
             inner.clear_handshake();
@@ -411,13 +463,18 @@ impl CoreManager {
                     return Err(message);
                 }
             };
-            let arguments = match sidecar_args(std::process::id(), &data_directory) {
-                Ok(arguments) => arguments,
-                Err(message) => {
-                    Self::fail_generation_locked(&mut inner, generation, message.clone());
-                    return Err(message);
-                }
-            };
+            let arguments =
+                match sidecar_args(std::process::id(), &data_directory, inner.inference_port) {
+                    Ok(arguments) => arguments,
+                    Err(message) => {
+                        Self::fail_generation_locked(&mut inner, generation, message.clone());
+                        return Err(message);
+                    }
+                };
+            if let Err(message) = ensure_inference_port_available(inner.inference_port) {
+                Self::fail_generation_locked(&mut inner, generation, message.clone());
+                return Err(message);
+            }
 
             let command = match app.shell().sidecar("astrlink-core") {
                 Ok(command) => command.args(arguments),
@@ -426,6 +483,25 @@ impl CoreManager {
                     Self::fail_generation_locked(&mut inner, generation, message.clone());
                     return Err(message);
                 }
+            };
+            #[cfg(target_os = "linux")]
+            let command = {
+                let resource_directory = match app.path().resource_dir() {
+                    Ok(path) => path,
+                    Err(error) => {
+                        let message =
+                            format!("unable to resolve AstrLink resource directory: {error}");
+                        Self::fail_generation_locked(&mut inner, generation, message.clone());
+                        return Err(message);
+                    }
+                };
+                let runtime = linux_onnx_runtime_path(&resource_directory);
+                if !runtime.is_absolute() || !runtime.is_file() {
+                    let message = "packaged Linux ONNX Runtime is missing or invalid".to_string();
+                    Self::fail_generation_locked(&mut inner, generation, message.clone());
+                    return Err(message);
+                }
+                command.env(LINUX_ONNX_RUNTIME_PATH_ENV, runtime)
             };
 
             let (receiver, mut child) = match command.spawn() {
@@ -530,16 +606,96 @@ impl CoreManager {
         Ok(())
     }
 
+    pub fn configure(&self, inference_port: u16, auto_recover: bool) {
+        let mut inner = self.lock_inner();
+        inner.inference_port = inference_port;
+        inner.auto_recover = auto_recover;
+        if !auto_recover {
+            inner.recovery_scheduled_at = None;
+            inner.recovery_attempt = 0;
+        }
+    }
+
     pub async fn restart(self: &Arc<Self>, app: &AppHandle) -> Result<(), String> {
         self.stop_and_wait().await?;
         self.start(app)
     }
 
     pub async fn stop_and_wait(&self) -> Result<(), String> {
+        if let Some(generation) = self.request_graceful_stop().await? {
+            if self.wait_until_stopped(generation).await.is_ok() {
+                return Ok(());
+            }
+            eprintln!("astrlink-core graceful shutdown timed out; using force-stop fallback");
+        }
         if let Some(generation) = self.request_stop()? {
             self.wait_until_stopped(generation).await?;
         }
         Ok(())
+    }
+
+    async fn request_graceful_stop(&self) -> Result<Option<u64>, String> {
+        let (generation, url, control_token) = {
+            let mut inner = self.lock_inner();
+            if inner.phase != CorePhase::Ready || inner.child.is_none() {
+                return Ok(None);
+            }
+            let Some(ready) = inner.ready.as_ref() else {
+                return Ok(None);
+            };
+            let Some(control_token) = inner.control_token.clone() else {
+                return Ok(None);
+            };
+            let url = format!(
+                "{}/control/v1/shutdown",
+                ready.control_url.trim_end_matches('/')
+            );
+            let generation = inner.generation;
+            inner.phase = CorePhase::Stopping;
+            inner.last_error = None;
+            (generation, url, control_token)
+        };
+        let result = self
+            .client
+            .post(url)
+            .timeout(REQUEST_TIMEOUT)
+            .header(header::AUTHORIZATION, format!("Bearer {control_token}"))
+            .send()
+            .await;
+        match result {
+            Ok(response) if response.status() == reqwest::StatusCode::ACCEPTED => {
+                let mut inner = self.lock_inner();
+                if inner.generation == generation && inner.phase == CorePhase::Stopping {
+                    inner.clear_handshake();
+                }
+                Ok(Some(generation))
+            }
+            Ok(response) => {
+                self.restore_after_graceful_stop_failure(generation);
+                eprintln!(
+                    "astrlink-core graceful shutdown returned {}; using force-stop fallback",
+                    response.status()
+                );
+                Ok(None)
+            }
+            Err(error) => {
+                self.restore_after_graceful_stop_failure(generation);
+                eprintln!(
+                    "astrlink-core graceful shutdown failed: {error}; using force-stop fallback"
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    fn restore_after_graceful_stop_failure(&self, generation: u64) {
+        let mut inner = self.lock_inner();
+        if inner.generation == generation
+            && inner.phase == CorePhase::Stopping
+            && inner.child.is_some()
+        {
+            inner.phase = CorePhase::Ready;
+        }
     }
 
     fn request_stop(&self) -> Result<Option<u64>, String> {
@@ -557,9 +713,12 @@ impl CoreManager {
                     )
                 }));
             }
+            inner.generation = inner.generation.wrapping_add(1);
             inner.phase = CorePhase::Stopped;
             inner.clear_handshake();
             inner.last_error = None;
+            inner.recovery_scheduled_at = None;
+            inner.recovery_attempt = 0;
             inner.clear_process_guard();
             return Ok(None);
         }
@@ -649,6 +808,13 @@ impl CoreManager {
             version: inner.version.clone(),
             capabilities: inner.capabilities.clone(),
             last_error: inner.last_error.clone(),
+            recovery_attempt: inner.recovery_attempt,
+            recovery_scheduled_in_ms: inner.recovery_scheduled_at.map(|deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis()
+                    .min(u64::MAX as u128) as u64
+            }),
         }
     }
 
@@ -687,7 +853,7 @@ impl CoreManager {
         }
     }
 
-    async fn handle_stdout(&self, generation: u64, line: &str) {
+    async fn handle_stdout(self: &Arc<Self>, generation: u64, line: &str) {
         let should_parse = {
             let inner = self.lock_inner();
             inner.generation == generation && inner.phase == CorePhase::WaitingForReady
@@ -727,6 +893,14 @@ impl CoreManager {
                 inner.capabilities = Some(capabilities);
                 inner.phase = CorePhase::Ready;
                 inner.last_error = None;
+                let stable = Arc::clone(self);
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(RECOVERY_STABILITY_THRESHOLD).await;
+                    let mut inner = stable.lock_inner();
+                    if inner.generation == generation && inner.phase == CorePhase::Ready {
+                        inner.recovery_attempt = 0;
+                    }
+                });
             }
             Ok(Err(error)) => self.fail_generation_and_stop(generation, error),
             Err(_) => self.fail_generation_and_stop(
@@ -1384,7 +1558,7 @@ impl CoreManager {
         Ok((status, etag, body.to_vec()))
     }
 
-    fn handle_terminated(&self, generation: u64, payload: TerminatedPayload) {
+    fn handle_terminated(self: &Arc<Self>, generation: u64, payload: TerminatedPayload) {
         let mut inner = self.lock_inner();
         if inner.generation != generation {
             return;
@@ -1404,6 +1578,56 @@ impl CoreManager {
         inner.apply_lifecycle(next);
         inner.clear_handshake();
         inner.clear_process_guard();
+        let should_recover = inner.phase != CorePhase::Stopped && inner.auto_recover;
+        drop(inner);
+        if should_recover {
+            self.schedule_recovery();
+        }
+    }
+
+    fn schedule_recovery(self: &Arc<Self>) {
+        let (app, generation, delay) = {
+            let mut inner = self.lock_inner();
+            if !inner.auto_recover || inner.child.is_some() || inner.pid.is_some() {
+                return;
+            }
+            if inner.recovery_attempt >= MAX_RECOVERY_ATTEMPTS {
+                inner.recovery_scheduled_at = None;
+                inner.last_error = Some(format!(
+                    "{}；自动恢复已在 {} 次尝试后停止。",
+                    inner.last_error.as_deref().unwrap_or("Core 异常退出"),
+                    MAX_RECOVERY_ATTEMPTS
+                ));
+                return;
+            }
+            let Some(app) = inner.app_handle.clone() else {
+                return;
+            };
+            inner.recovery_attempt += 1;
+            let delay = recovery_delay(inner.recovery_attempt);
+            inner.recovery_scheduled_at = Some(Instant::now() + delay);
+            (app, inner.generation, delay)
+        };
+        let manager = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(delay).await;
+            {
+                let inner = manager.lock_inner();
+                if inner.generation != generation
+                    || inner.recovery_scheduled_at.is_none()
+                    || !inner.auto_recover
+                {
+                    return;
+                }
+            }
+            if let Err(error) = manager.start(&app) {
+                {
+                    let mut inner = manager.lock_inner();
+                    inner.last_error = Some(format!("Core 自动恢复失败：{error}"));
+                }
+                manager.schedule_recovery();
+            }
+        });
     }
 
     fn handle_process_error(&self, generation: u64, message: String) {
@@ -4530,7 +4754,7 @@ mod tests {
 
     #[test]
     fn termination_clears_stale_handshake_and_distinguishes_requested_stop() {
-        let manager = CoreManager::new();
+        let manager = Arc::new(CoreManager::new());
         let ready = parse_ready_announcement(&ready_line("http://127.0.0.1:43210")).unwrap();
         {
             let mut inner = manager.lock_inner();
@@ -4599,7 +4823,7 @@ mod tests {
 
     #[test]
     fn sidecar_receives_pid_and_data_path_but_not_control_token_in_arguments() {
-        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"))
+        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317)
             .expect("test path should be valid UTF-8");
         assert_eq!(
             arguments,
@@ -4608,8 +4832,41 @@ mod tests {
                 "4242".to_string(),
                 "--data-dir".to_string(),
                 "/tmp/astrlink-data".to_string(),
+                "--inference-listen".to_string(),
+                "127.0.0.1:8317".to_string(),
+                "--control-listen".to_string(),
+                "127.0.0.1:0".to_string(),
                 "--control-token-stdin".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn recovery_backoff_is_bounded_and_exponential() {
+        assert_eq!(recovery_delay(1), Duration::from_secs(1));
+        assert_eq!(recovery_delay(2), Duration::from_secs(2));
+        assert_eq!(recovery_delay(3), Duration::from_secs(4));
+        assert_eq!(recovery_delay(4), Duration::from_secs(8));
+        assert_eq!(recovery_delay(5), Duration::from_secs(16));
+        assert_eq!(recovery_delay(99), Duration::from_secs(16));
+    }
+
+    #[test]
+    fn occupied_inference_port_has_a_clear_error() {
+        let error = inference_port_error(
+            8317,
+            &std::io::Error::new(std::io::ErrorKind::AddrInUse, "address in use"),
+        );
+        assert!(error.contains("8317"));
+        assert!(error.contains("占用或不可用"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_onnx_runtime_uses_the_tauri_resource_directory() {
+        assert_eq!(
+            linux_onnx_runtime_path(Path::new("/usr/lib/AstrLink")),
+            PathBuf::from("/usr/lib/AstrLink/onnxruntime/libonnxruntime.so.1.23.2")
         );
     }
 

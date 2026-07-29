@@ -1,10 +1,7 @@
-use std::{
-    collections::BTreeSet,
-    env,
-    ffi::OsStr,
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, env, ffi::OsStr, fs, io, path::Path};
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::path::PathBuf;
 
 use ort::{
     logging::LogLevel,
@@ -24,6 +21,8 @@ const INTER_OP_THREADS: usize = 1;
 // CI sets this explicitly so even the production-shaped worker binary refuses
 // catalog identities and assets larger than the bounded synthetic fixture.
 const CI_SYNTHETIC_MODELS_ONLY_ENV: &str = "ASTRLINK_CI_SYNTHETIC_MODELS_ONLY";
+#[cfg(target_os = "linux")]
+const LINUX_ONNX_RUNTIME_PATH_ENV: &str = "ASTRLINK_ONNX_RUNTIME_PATH";
 
 pub struct PrivacyEngine {
     tokenizer: Tokenizer,
@@ -350,19 +349,64 @@ fn initialize_onnx_runtime() -> Result<(), Box<dyn std::error::Error + Send + Sy
             .with_name("astrlink-privacy-worker")
             .commit();
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        const RUNTIME_NAME: &str = "libonnxruntime.so.1.23.2";
+        let executable = env::current_exe()?;
+        let configured = env::var_os(LINUX_ONNX_RUNTIME_PATH_ENV);
+        let runtime =
+            resolve_linux_runtime_library(&executable, configured.as_deref(), RUNTIME_NAME)?;
+        let _ = ort::init_from(runtime)?
+            .with_name("astrlink-privacy-worker")
+            .commit();
+    }
+    #[cfg(target_os = "windows")]
     {
         let _ = ort::init().with_name("astrlink-privacy-worker").commit();
     }
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_os = "linux")]
+fn resolve_linux_runtime_library(
+    executable: &Path,
+    configured: Option<&OsStr>,
+    runtime_name: &str,
+) -> io::Result<PathBuf> {
+    if let Some(configured) = configured {
+        let configured = PathBuf::from(configured);
+        if !configured.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "onnx_runtime_path_not_absolute",
+            ));
+        }
+        if !configured.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "onnx_runtime_not_installed",
+            ));
+        }
+        return Ok(configured);
+    }
+
+    runtime_library_candidates(executable, runtime_name)
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "onnx_runtime_not_installed"))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn runtime_library_candidates(executable: &Path, runtime_name: &str) -> Vec<PathBuf> {
     let Some(executable_directory) = executable.parent() else {
         return Vec::new();
     };
-    let mut candidates = vec![executable_directory.join(runtime_name)];
+    let candidates = vec![executable_directory.join(runtime_name)];
+    #[cfg(target_os = "macos")]
+    let mut candidates = candidates;
+    #[cfg(all(test, not(target_os = "macos")))]
+    let mut candidates = candidates;
+    #[cfg(target_os = "macos")]
     if let Some(contents_directory) = executable_directory.parent() {
         candidates.push(contents_directory.join("Frameworks").join(runtime_name));
     }
@@ -678,6 +722,73 @@ mod tests {
                 ),
                 PathBuf::from(
                     "/Applications/AstrLink.app/Contents/Frameworks/libonnxruntime.1.23.2.dylib"
+                ),
+            ]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolves_only_absolute_existing_configured_linux_runtime() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "astrlink-privacy-worker-runtime-fixture-{}-{unique}",
+            process::id()
+        ));
+        fs::create_dir_all(&directory).expect("create runtime fixture directory");
+        let runtime = directory.join("libonnxruntime.so.1.23.2");
+        fs::write(&runtime, b"fixture").expect("write runtime fixture");
+
+        assert_eq!(
+            resolve_linux_runtime_library(
+                Path::new("/opt/AstrLink/astrlink-privacy-worker"),
+                Some(runtime.as_os_str()),
+                "libonnxruntime.so.1.23.2",
+            )
+            .expect("absolute existing runtime"),
+            runtime
+        );
+        assert_eq!(
+            resolve_linux_runtime_library(
+                Path::new("/opt/AstrLink/astrlink-privacy-worker"),
+                Some(OsStr::new("libonnxruntime.so.1.23.2")),
+                "libonnxruntime.so.1.23.2",
+            )
+            .expect_err("relative runtime must fail")
+            .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            resolve_linux_runtime_library(
+                Path::new("/opt/AstrLink/astrlink-privacy-worker"),
+                Some(directory.join("missing.so").as_os_str()),
+                "libonnxruntime.so.1.23.2",
+            )
+            .expect_err("missing runtime must fail")
+            .kind(),
+            io::ErrorKind::NotFound
+        );
+
+        fs::remove_dir_all(directory).expect("remove runtime fixture directory");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn locates_sibling_and_release_linux_runtime_candidates() {
+        assert_eq!(
+            runtime_library_candidates(
+                Path::new("/workspace/apps/privacy-worker/target/debug/deps/privacy_worker_tests"),
+                "libonnxruntime.so.1.23.2",
+            ),
+            vec![
+                PathBuf::from(
+                    "/workspace/apps/privacy-worker/target/debug/deps/libonnxruntime.so.1.23.2"
+                ),
+                PathBuf::from(
+                    "/workspace/apps/privacy-worker/target/release/libonnxruntime.so.1.23.2"
                 ),
             ]
         );

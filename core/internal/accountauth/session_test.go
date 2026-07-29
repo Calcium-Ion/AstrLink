@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,6 +159,146 @@ func TestAuthorizationCallbackExchangesCodeAndPersistsTokens(t *testing.T) {
 	}
 	if tokens.AccessToken != "access-secret-token-value" || tokens.RefreshToken != "refresh-secret-token-value" {
 		t.Fatalf("unexpected tokens: %#v", tokens)
+	}
+}
+
+func TestSessionCompletionReleasesGlobalLockAndLogoutWaits(t *testing.T) {
+	t.Parallel()
+	issuer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/oauth/token" {
+			http.NotFound(writer, request)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"access_token":  "completion-access-marker",
+			"refresh_token": "completion-refresh-marker",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(issuer.Close)
+
+	const (
+		completingService contract.ServiceID = "service_completion_primary"
+		otherService      contract.ServiceID = "service_completion_other"
+	)
+	store := accountauth.NewMemoryCredentialStore()
+	completionStarted := make(chan struct{})
+	releaseCompletion := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(releaseCompletion) }) })
+
+	preferred, fallback := availablePortPair(t)
+	var manager *accountauth.SessionManager
+	manager = accountauth.NewSessionManager(accountauth.OAuthConfig{
+		ClientID:      "astrlink_test_client",
+		Issuer:        issuer.URL,
+		HTTPClient:    issuer.Client(),
+		PreferredPort: preferred,
+		FallbackPort:  fallback,
+	}, store, func(ctx context.Context, _ contract.AuthorizationSession, tokens accountauth.AccountTokens) error {
+		if _, ok := manager.Get(otherService); !ok {
+			return errors.New("other authorization session disappeared")
+		}
+		close(completionStarted)
+		<-releaseCompletion
+		return store.Put(ctx, completingService, tokens)
+	})
+
+	primary, err := manager.Begin(
+		context.Background(),
+		completingService,
+		contract.AuthorizationFlowBrowser,
+	)
+	if err != nil {
+		t.Fatalf("Begin(primary) = %v", err)
+	}
+	_, err = manager.Begin(
+		context.Background(),
+		otherService,
+		contract.AuthorizationFlowBrowser,
+	)
+	if err != nil {
+		t.Fatalf("Begin(other) = %v", err)
+	}
+	t.Cleanup(func() { _, _ = manager.Cancel(context.Background(), otherService) })
+
+	authURL, err := url.Parse(primary.AuthorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirect, err := url.Parse(authURL.Query().Get("redirect_uri"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbackURL := "http://127.0.0.1:" + redirect.Port() + redirect.Path +
+		"?code=completion-code&state=" + url.QueryEscape(authURL.Query().Get("state"))
+	callbackDone := make(chan error, 1)
+	go func() {
+		response, requestErr := http.Get(callbackURL)
+		if requestErr != nil {
+			callbackDone <- requestErr
+			return
+		}
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, response.Body)
+		if response.StatusCode != http.StatusOK {
+			callbackDone <- errors.New("authorization callback failed")
+			return
+		}
+		callbackDone <- nil
+	}()
+
+	select {
+	case <-completionStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("authorization completion did not start or callback re-entry deadlocked")
+	}
+
+	lookupDone := make(chan bool, 1)
+	go func() {
+		_, ok := manager.Get(otherService)
+		lookupDone <- ok
+	}()
+	select {
+	case ok := <-lookupDone:
+		if !ok {
+			t.Fatal("other authorization session disappeared during completion")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("another service was blocked by credential persistence")
+	}
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		manager.CancelAllForService(completingService)
+		close(cleanupDone)
+	}()
+	select {
+	case <-cleanupDone:
+		t.Fatal("same-service cleanup returned before credential persistence finished")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	releaseOnce.Do(func() { close(releaseCompletion) })
+	select {
+	case err := <-callbackDone:
+		if err != nil {
+			t.Fatalf("authorization callback = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("authorization callback did not finish")
+	}
+	select {
+	case <-cleanupDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("same-service cleanup did not resume after completion")
+	}
+	current, ok := manager.Get(completingService)
+	if !ok || current.Status != contract.AuthorizationSessionStatusCompleted {
+		t.Fatalf("completed session = %#v, present=%v", current, ok)
+	}
+	if _, err := store.Get(context.Background(), completingService); err != nil {
+		t.Fatalf("persisted completion credential = %v", err)
 	}
 }
 
@@ -636,7 +777,9 @@ func TestRefreshSingleflightAndInvalidGrant(t *testing.T) {
 		t.Fatalf("refresh calls = %d, want 1", calls.Load())
 	}
 
+	var invalidCalls atomic.Int32
 	invalid := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		invalidCalls.Add(1)
 		writer.WriteHeader(http.StatusBadRequest)
 		_, _ = writer.Write([]byte(`{"error":"invalid_grant"}`))
 	}))
@@ -648,9 +791,11 @@ func TestRefreshSingleflightAndInvalidGrant(t *testing.T) {
 		Now:        func() time.Time { return now },
 	})
 	var marked bool
+	var reentryErr error
 	source = accountauth.NewTokenSource(store, client, 5*time.Minute, func() time.Time { return now })
 	source.SetHooks(nil, func(context.Context, contract.SubscriptionAccountID, error) error {
 		marked = true
+		_, reentryErr = source.AccessToken(context.Background(), "subscription_01")
 		return nil
 	})
 	_ = store.Put(context.Background(), "subscription_01", accountauth.AccountTokens{
@@ -663,12 +808,376 @@ func TestRefreshSingleflightAndInvalidGrant(t *testing.T) {
 	if !marked {
 		t.Fatal("expected invalid_grant hook")
 	}
+	if !errors.Is(reentryErr, accountauth.ErrTokenSourceInvalidated) {
+		t.Fatalf("invalid_grant hook reentry = %v, want ErrTokenSourceInvalidated", reentryErr)
+	}
+	_, err = source.AccessToken(ctx, "subscription_01")
+	if !errors.Is(err, accountauth.ErrTokenSourceInvalidated) {
+		t.Fatalf("later AccessToken() = %v, want ErrTokenSourceInvalidated", err)
+	}
+	if invalidCalls.Load() != 1 {
+		t.Fatalf("invalid_grant refresh calls = %d, want 1", invalidCalls.Load())
+	}
+}
+
+func TestTokenSourceInvalidationFailsClosedUntilActivated(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := accountauth.NewMemoryCredentialStore()
+	const accountID contract.SubscriptionAccountID = "subscription_lifecycle"
+	tokens := accountauth.AccountTokens{
+		AccessToken:  "current-access",
+		RefreshToken: "current-refresh",
+		ExpiresAt:    now.Add(time.Hour),
+	}
+	if err := store.Put(context.Background(), accountID, tokens); err != nil {
+		t.Fatal(err)
+	}
+	source := accountauth.NewTokenSource(
+		store,
+		accountauth.NewTokenClient(accountauth.OAuthConfig{}),
+		5*time.Minute,
+		func() time.Time { return now },
+	)
+
+	source.Invalidate(accountID)
+	if _, err := source.AccessToken(context.Background(), accountID); !errors.Is(err, accountauth.ErrTokenSourceInvalidated) {
+		t.Fatalf("AccessToken() after Invalidate() = %v, want ErrTokenSourceInvalidated", err)
+	}
+
+	source.Activate(accountID)
+	got, err := source.AccessToken(context.Background(), accountID)
+	if err != nil {
+		t.Fatalf("AccessToken() after Activate() = %v", err)
+	}
+	if got.AccessToken != tokens.AccessToken || got.RefreshToken != tokens.RefreshToken {
+		t.Fatal("AccessToken() after Activate() did not return the stored credentials")
+	}
+}
+
+func TestTokenSourceInvalidationDuringRemoteRefreshPreventsPut(t *testing.T) {
+	t.Parallel()
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	var releaseOnce sync.Once
+	issuer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		close(refreshStarted)
+		<-releaseRefresh
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"access_token":  "rotated-access",
+			"refresh_token": "rotated-refresh",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(releaseRefresh) })
+		issuer.Close()
+	})
+
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := accountauth.NewMemoryCredentialStore()
+	const accountID contract.SubscriptionAccountID = "subscription_blocked_remote"
+	original := accountauth.AccountTokens{
+		AccessToken:  "original-access",
+		RefreshToken: "original-refresh",
+		ExpiresAt:    now,
+	}
+	if err := store.Put(context.Background(), accountID, original); err != nil {
+		t.Fatal(err)
+	}
+	source := accountauth.NewTokenSource(
+		store,
+		accountauth.NewTokenClient(accountauth.OAuthConfig{
+			Issuer:     issuer.URL,
+			HTTPClient: issuer.Client(),
+		}),
+		5*time.Minute,
+		func() time.Time { return now },
+	)
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := source.AccessToken(context.Background(), accountID)
+		refreshDone <- err
+	}()
+	select {
+	case <-refreshStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh request did not start")
+	}
+
+	invalidationDone := make(chan struct{})
+	go func() {
+		source.Invalidate(accountID)
+		close(invalidationDone)
+	}()
+	waitForTokenSourceInvalidation(t, source, accountID)
+	select {
+	case <-invalidationDone:
+		t.Fatal("Invalidate() returned while the remote refresh was blocked")
+	default:
+	}
+
+	releaseOnce.Do(func() { close(releaseRefresh) })
+	if err := <-refreshDone; !errors.Is(err, accountauth.ErrTokenSourceInvalidated) {
+		t.Fatalf("refresh AccessToken() = %v, want ErrTokenSourceInvalidated", err)
+	}
+	select {
+	case <-invalidationDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Invalidate() did not return after refresh finished")
+	}
+	got, err := store.Get(context.Background(), accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AccessToken != original.AccessToken || got.RefreshToken != original.RefreshToken {
+		t.Fatal("invalidated remote refresh persisted replacement credentials")
+	}
+}
+
+func TestTokenSourceInvalidationWaitsForPutBeforeCallerDeletes(t *testing.T) {
+	t.Parallel()
+	issuer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"access_token":  "rotated-access",
+			"refresh_token": "rotated-refresh",
+			"expires_in":    3600,
+		})
+	}))
+	t.Cleanup(issuer.Close)
+
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	const accountID contract.SubscriptionAccountID = "subscription_blocked_put"
+	inner := accountauth.NewMemoryCredentialStore()
+	if err := inner.Put(context.Background(), accountID, accountauth.AccountTokens{
+		AccessToken:  "original-access",
+		RefreshToken: "original-refresh",
+		ExpiresAt:    now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := &blockingPutCredentialStore{
+		inner:      inner,
+		putStarted: make(chan struct{}),
+		releasePut: make(chan struct{}),
+	}
+	store.block.Store(true)
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(store.releasePut) }) })
+	source := accountauth.NewTokenSource(
+		store,
+		accountauth.NewTokenClient(accountauth.OAuthConfig{
+			Issuer:     issuer.URL,
+			HTTPClient: issuer.Client(),
+		}),
+		5*time.Minute,
+		func() time.Time { return now },
+	)
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := source.AccessToken(context.Background(), accountID)
+		refreshDone <- err
+	}()
+	select {
+	case <-store.putStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not reach credential Put")
+	}
+
+	invalidationDone := make(chan struct{})
+	go func() {
+		source.Invalidate(accountID)
+		close(invalidationDone)
+	}()
+	waitForTokenSourceInvalidation(t, source, accountID)
+	select {
+	case <-invalidationDone:
+		t.Fatal("Invalidate() returned while credential Put was blocked")
+	default:
+	}
+
+	releaseOnce.Do(func() { close(store.releasePut) })
+	if err := <-refreshDone; !errors.Is(err, accountauth.ErrTokenSourceInvalidated) {
+		t.Fatalf("refresh AccessToken() = %v, want ErrTokenSourceInvalidated", err)
+	}
+	select {
+	case <-invalidationDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Invalidate() did not wait for credential Put")
+	}
+	persisted, err := inner.Get(context.Background(), accountID)
+	if err != nil || persisted.AccessToken != "rotated-access" {
+		t.Fatalf("credential Put did not finish before Invalidate(): %v", err)
+	}
+
+	if err := inner.Delete(context.Background(), accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inner.Get(context.Background(), accountID); !errors.Is(err, accountauth.ErrCredentialNotFound) {
+		t.Fatalf("credential after ordered Delete() = %v, want ErrCredentialNotFound", err)
+	}
+}
+
+func TestTokenClientTreatsParsedInvalidGrantAsTerminalRegardlessOfStatus(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{
+		http.StatusOK,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+	} {
+		status := status
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			t.Parallel()
+			issuer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(status)
+				_, _ = writer.Write([]byte(
+					`{"error":"invalid_grant","error_description":"private-response-marker"}`,
+				))
+			}))
+			t.Cleanup(issuer.Close)
+
+			client := accountauth.NewTokenClient(accountauth.OAuthConfig{
+				ClientID:   "astrlink_test_client",
+				Issuer:     issuer.URL,
+				HTTPClient: issuer.Client(),
+			})
+			_, err := client.Refresh(context.Background(), "refresh-input-marker")
+			if !errors.Is(err, accountauth.ErrInvalidGrant) {
+				t.Fatalf("Refresh() = %v, want ErrInvalidGrant", err)
+			}
+			for _, secret := range []string{"private-response-marker", "refresh-input-marker"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("Refresh() error leaked %q: %v", secret, err)
+				}
+			}
+		})
+	}
+}
+
+func TestTokenClientOAuthFailuresDoNotLeakResponseBodies(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "malformed invalid grant",
+			body: `{"error":"invalid_grant","error_description":"malformed-private-marker"`,
+		},
+		{
+			name: "other oauth error",
+			body: `{"error":"access_denied","error_description":"denied-private-marker"}`,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			issuer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusForbidden)
+				_, _ = writer.Write([]byte(test.body))
+			}))
+			t.Cleanup(issuer.Close)
+
+			client := accountauth.NewTokenClient(accountauth.OAuthConfig{
+				ClientID:   "astrlink_test_client",
+				Issuer:     issuer.URL,
+				HTTPClient: issuer.Client(),
+			})
+			_, err := client.Refresh(context.Background(), "refresh-input-marker")
+			if err == nil {
+				t.Fatal("Refresh() unexpectedly succeeded")
+			}
+			if errors.Is(err, accountauth.ErrInvalidGrant) {
+				t.Fatalf("Refresh() = %v, malformed or different OAuth error must not classify as invalid_grant", err)
+			}
+			for _, secret := range []string{
+				"malformed-private-marker",
+				"denied-private-marker",
+				"refresh-input-marker",
+			} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("Refresh() error leaked %q: %v", secret, err)
+				}
+			}
+		})
+	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (roundTrip roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return roundTrip(request)
+}
+
+type blockingPutCredentialStore struct {
+	inner      *accountauth.MemoryCredentialStore
+	block      atomic.Bool
+	putOnce    sync.Once
+	putStarted chan struct{}
+	releasePut chan struct{}
+}
+
+func (store *blockingPutCredentialStore) Available(ctx context.Context) error {
+	return store.inner.Available(ctx)
+}
+
+func (store *blockingPutCredentialStore) Get(
+	ctx context.Context,
+	id contract.SubscriptionAccountID,
+) (accountauth.AccountTokens, error) {
+	return store.inner.Get(ctx, id)
+}
+
+func (store *blockingPutCredentialStore) Put(
+	ctx context.Context,
+	id contract.SubscriptionAccountID,
+	tokens accountauth.AccountTokens,
+) error {
+	if store.block.Load() {
+		store.putOnce.Do(func() { close(store.putStarted) })
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-store.releasePut:
+		}
+	}
+	return store.inner.Put(ctx, id, tokens)
+}
+
+func (store *blockingPutCredentialStore) Delete(
+	ctx context.Context,
+	id contract.SubscriptionAccountID,
+) error {
+	return store.inner.Delete(ctx, id)
+}
+
+func waitForTokenSourceInvalidation(
+	t *testing.T,
+	source *accountauth.TokenSource,
+	accountID contract.SubscriptionAccountID,
+) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+		_, err := source.AccessToken(ctx, accountID)
+		cancel()
+		if errors.Is(err, accountauth.ErrTokenSourceInvalidated) {
+			return
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			t.Fatalf("AccessToken() while waiting for invalidation = %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("token source was not invalidated")
+		}
+	}
 }
 
 func tinyIDToken(accountID string) string {

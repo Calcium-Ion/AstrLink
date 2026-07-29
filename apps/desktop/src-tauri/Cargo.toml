@@ -18,8 +18,10 @@ getrandom = "=0.2.17"
 reqwest = { version = "=0.12.23", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
-tauri = { version = "=2.11.5", features = [] }
+tauri = { version = "=2.11.5", features = ["tray-icon"] }
+tauri-plugin-autostart = "=2.5.1"
 tauri-plugin-opener = "=2.5.4"
+tauri-plugin-single-instance = "=2.4.3"
 tauri-plugin-shell = "=2.3.5"
 tokio = { version = "=1.47.1", features = ["time"] }
 
@@ -27,6 +29,7 @@ tokio = { version = "=1.47.1", features = ["time"] }
 windows-sys = { version = "=0.61.2", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Storage_FileSystem",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
 ] }

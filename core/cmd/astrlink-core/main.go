@@ -154,6 +154,7 @@ func main() {
 			Subscriptions:      subscriptionManager,
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
+			Shutdown:           stopSignals,
 		})
 		if err != nil {
 			_ = store.Close()

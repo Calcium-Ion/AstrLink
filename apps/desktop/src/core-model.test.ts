@@ -89,6 +89,8 @@ describe("core status presentation", () => {
         },
       },
       last_error: null,
+      recovery_attempt: 0,
+      recovery_scheduled_in_ms: null,
     } as AppSnapshot;
 
     expect(failedSnapshot(previous, "bridge failed")).toEqual({
@@ -100,6 +102,8 @@ describe("core status presentation", () => {
       version: null,
       capabilities: null,
       last_error: "bridge failed",
+      recovery_attempt: 0,
+      recovery_scheduled_in_ms: null,
     });
     expect(failedSnapshot(null, "first query failed").app_version).toBe("Unknown");
   });

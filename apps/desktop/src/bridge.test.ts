@@ -57,6 +57,8 @@ function validSnapshot(): Record<string, unknown> {
       control_url: "http://127.0.0.1:49152",
     },
     last_error: null,
+    recovery_attempt: 0,
+    recovery_scheduled_in_ms: null,
     health: { status: "ok" },
     version: {
       core_version: "0.1.0-dev",

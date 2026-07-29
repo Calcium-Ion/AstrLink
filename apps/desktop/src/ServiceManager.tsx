@@ -262,6 +262,10 @@ export function ServiceManager({
     useState<AuthorizationDialog | null>(null);
   const copyFeedback = useCopyFeedback();
   const loadGeneration = useRef(0);
+  const protocolsRef = useRef(protocols);
+  protocolsRef.current = protocols;
+  const viewKind = view.kind;
+  const editingServiceID = view.kind === "edit" ? view.serviceId : null;
 
   const dirty =
     view.kind !== "list" &&
@@ -280,11 +284,10 @@ export function ServiceManager({
       setEditing(null);
       setBaseline(null);
       setLoadingRecord(false);
-      onDirtyChange(false);
       return;
     }
     if (view.kind === "create") {
-      const next = draftForKind("codex_subscription", protocols);
+      const next = draftForKind("codex_subscription", protocolsRef.current);
       setDraft(next);
       setEditing(null);
       setBaseline(draftSignature(next));
@@ -308,7 +311,7 @@ export function ServiceManager({
       .finally(() => {
         if (loadGeneration.current === generation) setLoadingRecord(false);
       });
-  }, [onDirtyChange, protocols, view]);
+  }, [editingServiceID, viewKind]);
 
   useEffect(() => {
     const authorizing = services.filter(

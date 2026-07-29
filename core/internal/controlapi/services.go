@@ -37,6 +37,16 @@ type servicePageResponse struct {
 	NextCursor *string            `json:"next_cursor"`
 }
 
+func (handler *Handler) publicService(service contract.Service) contract.Service {
+	if handler.subscriptions == nil || !service.Kind.IsSubscription() || service.Subscription == nil {
+		return service
+	}
+	connection := *service.Subscription
+	connection.AuthorizationBoundary = handler.subscriptions.AuthorizationBoundary()
+	service.Subscription = &connection
+	return service
+}
+
 type authorizationStartRequest struct {
 	Flow *contract.AuthorizationFlow `json:"flow"`
 }
@@ -122,7 +132,7 @@ func (handler *Handler) listServices(writer http.ResponseWriter, request *http.R
 	}
 	response := servicePageResponse{Items: make([]contract.Service, 0, len(page.Items))}
 	for _, item := range page.Items {
-		response.Items = append(response.Items, item.Service)
+		response.Items = append(response.Items, handler.publicService(item.Service))
 	}
 	if page.NextCursor != "" {
 		response.NextCursor = &page.NextCursor
@@ -197,7 +207,7 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 	}
 	writer.Header().Set("Location", ServicesPath+"/"+string(record.Service.ID))
 	writer.Header().Set("ETag", record.ETag)
-	writeJSON(writer, http.StatusCreated, record.Service)
+	writeJSON(writer, http.StatusCreated, handler.publicService(record.Service))
 }
 
 func (handler *Handler) getService(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
@@ -207,7 +217,7 @@ func (handler *Handler) getService(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	writer.Header().Set("ETag", record.ETag)
-	writeJSON(writer, http.StatusOK, record.Service)
+	writeJSON(writer, http.StatusOK, handler.publicService(record.Service))
 }
 
 func (handler *Handler) patchService(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
@@ -244,7 +254,7 @@ func (handler *Handler) patchService(writer http.ResponseWriter, request *http.R
 		return
 	}
 	writer.Header().Set("ETag", record.ETag)
-	writeJSON(writer, http.StatusOK, record.Service)
+	writeJSON(writer, http.StatusOK, handler.publicService(record.Service))
 }
 
 func (handler *Handler) deleteService(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
@@ -432,7 +442,7 @@ func (handler *Handler) logoutService(writer http.ResponseWriter, request *http.
 	}
 	_ = account
 	writer.Header().Set("ETag", record.ETag)
-	writeJSON(writer, http.StatusOK, record.Service)
+	writeJSON(writer, http.StatusOK, handler.publicService(record.Service))
 }
 
 type serviceModelProbeResponse struct {

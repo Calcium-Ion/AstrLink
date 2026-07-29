@@ -25,6 +25,7 @@ const (
 	HealthPath              = "/control/v1/health"
 	VersionPath             = "/control/v1/version"
 	CapabilitiesPath        = "/control/v1/capabilities"
+	ShutdownPath            = "/control/v1/shutdown"
 	ServicesPath            = "/control/v1/services"
 	RoutesPath              = "/control/v1/routes"
 	AccessTokensPath        = "/control/v1/access-tokens"
@@ -52,6 +53,7 @@ type Dependencies struct {
 	NewServiceID       func() (contract.ServiceID, error)
 	NewRouteID         func() (contract.RouteID, error)
 	ConversionEngine   relaykitbridge.ConversionEngine
+	Shutdown           context.CancelFunc
 }
 
 type AccessTokenManager interface {
@@ -91,6 +93,7 @@ type Handler struct {
 	newRouteID     func() (contract.RouteID, error)
 	mux            *http.ServeMux
 	privacyMu      sync.Mutex
+	shutdown       context.CancelFunc
 }
 
 func New(version contract.VersionResponse) *Handler {
@@ -134,6 +137,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		controlToken:   []byte(dependencies.ControlToken),
 		newServiceID:   dependencies.NewServiceID,
 		newRouteID:     dependencies.NewRouteID,
+		shutdown:       dependencies.Shutdown,
 		mux:            http.NewServeMux(),
 	}
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
@@ -145,6 +149,17 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	handler.mux.HandleFunc(CapabilitiesPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, handler.capabilities)
 	}))
+	if handler.shutdown != nil {
+		handler.mux.HandleFunc(ShutdownPath, handler.authenticated(func(writer http.ResponseWriter, request *http.Request) {
+			if request.Method != http.MethodPost {
+				writer.Header().Set("Allow", http.MethodPost)
+				writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
+				return
+			}
+			writeJSON(writer, http.StatusAccepted, map[string]string{"status": "shutting_down"})
+			go handler.shutdown()
+		}))
+	}
 	if handler.serviceStore != nil {
 		if handler.newServiceID == nil {
 			handler.newServiceID = randomServiceID
