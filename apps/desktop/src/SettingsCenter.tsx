@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   getPreferences,
@@ -7,9 +7,11 @@ import {
   stopCore,
   updatePreferences,
 } from "./bridge";
-import type { AppSnapshot } from "./core-model";
+import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
 import type { Preferences, SettingsSnapshot } from "./preferences-model";
 import { PageHeader } from "./PageHeader";
+
+type InstantPatch = Omit<Preferences, "inference_port">;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "设置操作失败。";
@@ -25,6 +27,67 @@ function activePort(snapshot: AppSnapshot | null): number | null {
   }
 }
 
+function SettingsIcon({ name }: { name: "window" | "core" | "port" }) {
+  const paths: Record<typeof name, ReactNode> = {
+    window: (
+      <>
+        <rect height="14" rx="2" width="18" x="3" y="5" />
+        <path d="M3 9h18" />
+        <circle cx="7" cy="7" r="0.8" />
+        <circle cx="10" cy="7" r="0.8" />
+      </>
+    ),
+    core: (
+      <>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" />
+      </>
+    ),
+    port: (
+      <>
+        <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <rect height="12" rx="2" width="14" x="5" y="7" />
+        <path d="M12 11v4" />
+      </>
+    ),
+  };
+
+  return (
+    <span aria-hidden="true" className="settings-card__icon">
+      <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24">
+        {paths[name]}
+      </svg>
+    </span>
+  );
+}
+
+function SettingsToggle({
+  checked,
+  disabled,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`settings-toggle${disabled ? " is-disabled" : ""}`}>
+      <input
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        type="checkbox"
+      />
+      <span className="settings-toggle__track" aria-hidden="true">
+        <span className="settings-toggle__thumb" />
+      </span>
+      <span className="settings-toggle__label">{label}</span>
+    </label>
+  );
+}
+
 export function SettingsCenter({
   snapshot,
   onCoreSnapshot,
@@ -35,13 +98,13 @@ export function SettingsCenter({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null);
-  const [draft, setDraft] = useState<Preferences | null>(null);
+  const [portDraft, setPortDraft] = useState<number | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"save" | "start" | "stop" | "restart" | null>(
-    null,
-  );
+  const [busy, setBusy] = useState<
+    "prefs" | "port" | "start" | "stop" | "restart" | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,7 +112,7 @@ export function SettingsCenter({
       .then((next) => {
         if (!cancelled) {
           setSettings(next);
-          setDraft(next.values);
+          setPortDraft(next.values.inference_port);
           setLoadingError(null);
         }
       })
@@ -62,14 +125,40 @@ export function SettingsCenter({
   }, []);
 
   const active = activePort(snapshot);
-  const dirty = useMemo(
-    () => draft !== null && settings !== null && JSON.stringify(draft) !== JSON.stringify(settings.values),
-    [draft, settings],
+  const portDirty = useMemo(
+    () =>
+      settings !== null &&
+      portDraft !== null &&
+      portDraft !== settings.values.inference_port,
+    [portDraft, settings],
   );
   useEffect(() => {
-    onDirtyChange(dirty);
+    onDirtyChange(portDirty);
     return () => onDirtyChange(false);
-  }, [dirty, onDirtyChange]);
+  }, [portDirty, onDirtyChange]);
+
+  const applyInstant = async (patch: Partial<InstantPatch>): Promise<void> => {
+    if (!settings || busy !== null) return;
+    const previous = settings;
+    const values: Preferences = {
+      ...settings.values,
+      ...patch,
+      inference_port: settings.values.inference_port,
+    };
+    setBusy("prefs");
+    setActionError(null);
+    setFeedback(null);
+    setSettings({ ...settings, values });
+    try {
+      const next = await updatePreferences(values);
+      setSettings(next);
+    } catch (error) {
+      setSettings(previous);
+      setActionError(messageOf(error));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const runCoreAction = async (
     action: "start" | "stop" | "restart",
@@ -99,19 +188,22 @@ export function SettingsCenter({
     }
   };
 
-  const save = async (): Promise<void> => {
-    if (!draft) return;
-    setBusy("save");
+  const savePort = async (): Promise<void> => {
+    if (!settings || portDraft === null || !portDirty) return;
+    setBusy("port");
     setActionError(null);
     setFeedback(null);
     try {
-      const next = await updatePreferences(draft);
+      const next = await updatePreferences({
+        ...settings.values,
+        inference_port: portDraft,
+      });
       setSettings(next);
-      setDraft(next.values);
+      setPortDraft(next.values.inference_port);
       setFeedback(
         active !== null && active !== next.values.inference_port
-          ? "设置已保存。新推理端口将在重启 Core 后生效。"
-          : "设置已保存并与系统状态核对。",
+          ? "端口已保存。重启 Core 后生效。"
+          : "端口已保存并与系统状态核对。",
       );
     } catch (error) {
       setActionError(messageOf(error));
@@ -134,7 +226,7 @@ export function SettingsCenter({
       </section>
     );
   }
-  if (!draft || !settings) {
+  if (!settings || portDraft === null) {
     return (
       <section className="settings-center">
         <PageHeader eyebrow="桌面偏好" title="设置" />
@@ -143,16 +235,28 @@ export function SettingsCenter({
     );
   }
 
+  const prefs = settings.values;
+  const prefsBusy = busy === "prefs";
   const phase = snapshot?.phase ?? "unavailable";
+  const tone = phaseTone(phase);
   const canStart = ["stopped", "exited", "error"].includes(phase);
   const canStop = !["stopped", "exited", "error", "unavailable"].includes(phase);
+  const recoveryHint =
+    snapshot?.recovery_scheduled_in_ms !== null &&
+    snapshot?.recovery_scheduled_in_ms !== undefined
+      ? `第 ${snapshot.recovery_attempt}/5 次恢复将在约 ${Math.ceil(snapshot.recovery_scheduled_in_ms / 1000)} 秒后进行`
+      : snapshot?.recovery_attempt
+        ? `已尝试恢复 ${snapshot.recovery_attempt}/5 次`
+        : null;
+  const portNeedsRestart =
+    active !== null && active !== settings.values.inference_port;
 
   return (
     <section className="settings-center">
       <PageHeader
         eyebrow="桌面偏好"
         title="设置"
-        description="管理窗口行为、系统启动与本地 Core 生命周期。"
+        description="窗口与 Core 偏好会立即生效；推理端口需单独保存。"
       />
 
       {settings.load_warning ? (
@@ -164,9 +268,9 @@ export function SettingsCenter({
         <div className="settings-notice settings-notice--warning" role="status">
           {settings.autostart_error}
         </div>
-      ) : settings.autostart_actual !== draft.autostart ? (
+      ) : settings.autostart_actual !== prefs.autostart ? (
         <div className="settings-notice settings-notice--warning" role="status">
-          保存值与系统开机启动状态不一致；保存后将尝试重新核对。
+          偏好与系统开机启动状态不一致；可再次切换以重新核对。
         </div>
       ) : null}
       {actionError ? (
@@ -180,105 +284,199 @@ export function SettingsCenter({
         </div>
       ) : null}
 
-      <div className="settings-grid">
+      <div className="settings-stack">
         <article className="settings-card">
-          <h3>桌面行为</h3>
-          <label>
-            <span>关闭主窗口时</span>
-            <select
-              value={draft.close_behavior}
-              onChange={(event) =>
-                setDraft({ ...draft, close_behavior: event.target.value as Preferences["close_behavior"] })
-              }
+          <header className="settings-card__header">
+            <SettingsIcon name="window" />
+            <div>
+              <span className="section-kicker">窗口与启动</span>
+              <h3>桌面行为</h3>
+              <p>更改后立即生效，无需手动保存。</p>
+            </div>
+          </header>
+
+          <div className="settings-field">
+            <span className="settings-field__label">关闭主窗口时</span>
+            <div
+              className={`settings-segmented${prefsBusy ? " is-disabled" : ""}`}
+              role="radiogroup"
+              aria-label="关闭主窗口时"
             >
-              <option value="hide_to_tray">隐藏到系统托盘</option>
-              <option value="quit">退出 AstrLink</option>
-            </select>
-          </label>
-          <label className="settings-check">
-            <input
-              checked={draft.autostart}
-              onChange={(event) => setDraft({ ...draft, autostart: event.target.checked })}
-              type="checkbox"
+              <label
+                className={
+                  prefs.close_behavior === "hide_to_tray"
+                    ? "settings-segmented__option is-active"
+                    : "settings-segmented__option"
+                }
+              >
+                <input
+                  checked={prefs.close_behavior === "hide_to_tray"}
+                  disabled={prefsBusy}
+                  name="close_behavior"
+                  onChange={() => void applyInstant({ close_behavior: "hide_to_tray" })}
+                  type="radio"
+                  value="hide_to_tray"
+                />
+                <strong>隐藏到托盘</strong>
+                <small>后台继续运行</small>
+              </label>
+              <label
+                className={
+                  prefs.close_behavior === "quit"
+                    ? "settings-segmented__option is-active"
+                    : "settings-segmented__option"
+                }
+              >
+                <input
+                  checked={prefs.close_behavior === "quit"}
+                  disabled={prefsBusy}
+                  name="close_behavior"
+                  onChange={() => void applyInstant({ close_behavior: "quit" })}
+                  type="radio"
+                  value="quit"
+                />
+                <strong>退出 AstrLink</strong>
+                <small>结束全部进程</small>
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-toggle-list">
+            <SettingsToggle
+              checked={prefs.autostart}
+              disabled={prefsBusy}
+              label="登录系统后自动启动 AstrLink"
+              onChange={(autostart) => void applyInstant({ autostart })}
             />
-            <span>登录系统后自动启动 AstrLink</span>
-          </label>
-          <small>系统托盘始终提供“显示 AstrLink”和“退出”。</small>
+          </div>
+
+          <p className="settings-hint">系统托盘始终提供“显示 AstrLink”和“退出”。</p>
         </article>
 
         <article className="settings-card">
-          <h3>Core 启动与恢复</h3>
-          <label className="settings-check">
-            <input
-              checked={draft.core_auto_start}
-              onChange={(event) => setDraft({ ...draft, core_auto_start: event.target.checked })}
-              type="checkbox"
+          <header className="settings-card__header">
+            <SettingsIcon name="core" />
+            <div>
+              <span className="section-kicker">本地运行时</span>
+              <h3>Core 启动与恢复</h3>
+              <p>更改后立即生效，无需手动保存。</p>
+            </div>
+          </header>
+
+          <div className="settings-toggle-list">
+            <SettingsToggle
+              checked={prefs.core_auto_start}
+              disabled={prefsBusy}
+              label="AstrLink 启动时自动启动 Core"
+              onChange={(core_auto_start) => void applyInstant({ core_auto_start })}
             />
-            <span>AstrLink 启动时自动启动 Core</span>
-          </label>
-          <label className="settings-check">
-            <input
-              checked={draft.core_auto_recover}
-              onChange={(event) => setDraft({ ...draft, core_auto_recover: event.target.checked })}
-              type="checkbox"
+            <SettingsToggle
+              checked={prefs.core_auto_recover}
+              disabled={prefsBusy}
+              label="Core 异常退出后自动恢复"
+              onChange={(core_auto_recover) => void applyInstant({ core_auto_recover })}
             />
-            <span>Core 异常退出后自动恢复</span>
-          </label>
-          <p>
-            当前状态：<strong>{phase}</strong>
-            {snapshot?.recovery_scheduled_in_ms !== null &&
-            snapshot?.recovery_scheduled_in_ms !== undefined
-              ? ` · 第 ${snapshot.recovery_attempt}/5 次恢复将在约 ${Math.ceil(snapshot.recovery_scheduled_in_ms / 1000)} 秒后进行`
-              : snapshot?.recovery_attempt
-                ? ` · 已尝试恢复 ${snapshot.recovery_attempt}/5 次`
-                : ""}
-          </p>
-          {snapshot?.last_error ? <code className="settings-error-detail">{snapshot.last_error}</code> : null}
+          </div>
+
+          <div className={`settings-core-status settings-core-status--${tone}`}>
+            <span className={tone === "neutral" ? "dot" : `dot dot--${tone}`} />
+            <div>
+              <strong>{phaseLabel(phase)}</strong>
+              <span>
+                当前状态：{phase}
+                {recoveryHint ? ` · ${recoveryHint}` : ""}
+              </span>
+            </div>
+          </div>
+
+          {snapshot?.last_error ? (
+            <code className="settings-error-detail">{snapshot.last_error}</code>
+          ) : null}
+
           <div className="settings-actions">
-            <button disabled={!canStart || busy !== null} onClick={() => void runCoreAction("start")} type="button">
-              启动
+            <button
+              className="btn-primary"
+              disabled={!canStart || busy !== null}
+              onClick={() => void runCoreAction("start")}
+              type="button"
+            >
+              {busy === "start" ? "启动中…" : "启动"}
             </button>
-            <button className="btn-secondary" disabled={!canStop || busy !== null} onClick={() => void runCoreAction("stop")} type="button">
-              停止
+            <button
+              className="btn-secondary"
+              disabled={!canStop || busy !== null}
+              onClick={() => void runCoreAction("stop")}
+              type="button"
+            >
+              {busy === "stop" ? "停止中…" : "停止"}
             </button>
-            <button className="btn-secondary" disabled={phase === "unavailable" || busy !== null} onClick={() => void runCoreAction("restart")} type="button">
-              重启
+            <button
+              className="btn-secondary"
+              disabled={phase === "unavailable" || busy !== null}
+              onClick={() => void runCoreAction("restart")}
+              type="button"
+            >
+              {busy === "restart" ? "重启中…" : "重启"}
             </button>
           </div>
         </article>
 
-        <article className="settings-card settings-card--wide">
-          <h3>本地推理端口</h3>
-          <label>
-            <span>已保存端口</span>
-            <input
-              max={65535}
-              min={1024}
-              onChange={(event) =>
-                setDraft({ ...draft, inference_port: Number(event.target.value) })
-              }
-              type="number"
-              value={draft.inference_port}
-            />
-          </label>
-          <p>
-            正在使用：<strong>{active ?? "Core 未就绪"}</strong>
-            {" · "}
-            已保存：<strong>{draft.inference_port}</strong>
-          </p>
-          {active !== null && active !== draft.inference_port ? (
-            <small className="settings-port-pending">端口修改尚未生效；保存后重启 Core。</small>
-          ) : (
-            <small>控制面始终使用仅桌面可知的 127.0.0.1 临时端口。</small>
-          )}
-        </article>
-      </div>
+        <article className={`settings-card settings-card--port${portDirty ? " is-dirty" : ""}`}>
+          <header className="settings-card__header">
+            <SettingsIcon name="port" />
+            <div>
+              <span className="section-kicker">网络入口</span>
+              <h3>本地推理端口</h3>
+              <p>修改后需保存；重启 Core 后才会切换到新端口。</p>
+            </div>
+          </header>
 
-      <div className="settings-savebar">
-        <span>{dirty ? "有未保存的修改" : "所有设置均已保存"}</span>
-        <button disabled={!dirty || busy !== null} onClick={() => void save()} type="button">
-          {busy === "save" ? "正在保存…" : "保存设置"}
-        </button>
+          <div className="settings-port-row">
+            <label className="settings-port-field">
+              <span className="settings-field__label">推理端口</span>
+              <input
+                max={65535}
+                min={1024}
+                onChange={(event) => setPortDraft(Number(event.target.value))}
+                type="number"
+                value={portDraft}
+              />
+            </label>
+
+            <dl className="settings-port-metrics">
+              <div>
+                <dt>正在使用</dt>
+                <dd>{active ?? "Core 未就绪"}</dd>
+              </div>
+              <div>
+                <dt>已保存</dt>
+                <dd>{settings.values.inference_port}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="settings-port-footer">
+            {portDirty ? (
+              <p className="settings-hint settings-port-pending">有未保存的端口修改。</p>
+            ) : portNeedsRestart ? (
+              <p className="settings-hint settings-port-pending">
+                端口修改尚未生效；重启 Core 后切换到已保存端口。
+              </p>
+            ) : (
+              <p className="settings-hint">
+                控制面始终使用仅桌面可知的 127.0.0.1 临时端口。
+              </p>
+            )}
+            <button
+              className="btn-primary"
+              disabled={!portDirty || busy !== null}
+              onClick={() => void savePort()}
+              type="button"
+            >
+              {busy === "port" ? "正在保存…" : "保存端口"}
+            </button>
+          </div>
+        </article>
       </div>
     </section>
   );

@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 
+import { AutoRoutingShowcase } from "./AutoRoutingShowcase";
 import {
   createRoute,
   deleteRoute,
@@ -23,7 +24,6 @@ import { protocolLabel, type ProtocolDescriptor } from "./service-presets";
 import type {
   Route,
   RouteCreateInput,
-  RoutePlanType,
   RouteRecord,
   RouteTarget,
 } from "./route-model";
@@ -610,50 +610,27 @@ export function RouteManager({
               onClick={() => (dirty ? setCancelPending(true) : closeEditor())}
               type="button"
             >
-              返回路由列表
+              返回
             </button>
           ) : (
-            <>
-              <button
-                className="btn-secondary"
-                disabled={!isReady || catalog.status === "loading"}
-                onClick={() => void refresh()}
-                type="button"
-              >
-                刷新
-              </button>
-              <button
-                className="btn-primary"
-                disabled={!isReady || loadingRecord}
-                onClick={beginCreate}
-                type="button"
-              >
-                新建路由
-              </button>
-            </>
+            <span className="routing-preview__state">训练中 · 不可启用</span>
           )
         }
-        description="用确定性优先级连接 API 服务、设置 fallback，或把公开模型别名映射到真实上游模型。"
+        description={
+          editor
+            ? "用确定性优先级连接 API 服务、设置 fallback，或把公开模型别名映射到真实上游模型。"
+            : "客户端使用 astrlink/auto，AstrLink 按任务分类从对应模型池中选择。"
+        }
         eyebrow="本地执行策略"
-        title={editor ? (editor.kind === "create" ? "新建路由" : "编辑路由") : "路由与模型"}
+        title={
+          editor
+            ? editor.kind === "create"
+              ? "新建固定路由"
+              : "编辑固定路由"
+            : "自动选择合适的模型"
+        }
         titleId="route-manager-title"
       />
-
-      <aside
-        className="route-auto-gate"
-        data-testid="route-auto-gate"
-        role="note"
-      >
-        <div>
-          <span>自动分类入口</span>
-          <code>astrlink/auto</code>
-        </div>
-        <p>
-          分类器正在训练与验收。taxonomy、分类模型池和运行时全部通过门槛后才会开放保存；
-          当前页面不会把未就绪配置写入 Core。
-        </p>
-        <strong>训练中 · 不可启用</strong>
-      </aside>
 
       {notice ? <p className="notice notice--success">{notice}</p> : null}
       {error || catalog.error ? (
@@ -920,121 +897,169 @@ export function RouteManager({
               disabled={saving || draft.targets.length === 0}
               type="submit"
             >
-              {saving ? "保存中…" : editor.kind === "create" ? "创建路由" : "保存修改"}
+              {saving
+                ? "保存中…"
+                : editor.kind === "create"
+                  ? "创建固定路由"
+                  : "保存修改"}
             </button>
           </div>
         </form>
       ) : (
-        <div className="route-list">
-          {!isReady && catalog.items.length === 0 ? (
-            <div className="route-list__empty">
-              <strong>等待 Core 就绪</strong>
-              <p>Core 就绪后会读取本机路由配置。</p>
+        <div className="route-manager__body">
+          <AutoRoutingShowcase />
+
+          <section
+            aria-labelledby="manual-routes-title"
+            className="route-manual-section"
+          >
+            <div className="route-manual-section__heading">
+              <div>
+                <span>高级</span>
+                <h3 id="manual-routes-title">固定路由与别名</h3>
+                <p>
+                  显式模型名与别名走确定性优先级，不经过任务分类。用于固定服务、fallback
+                  或公开模型别名映射。
+                </p>
+              </div>
+              <div className="route-manual-section__actions">
+                <button
+                  className="btn-secondary"
+                  disabled={!isReady || catalog.status === "loading"}
+                  onClick={() => void refresh()}
+                  type="button"
+                >
+                  刷新
+                </button>
+                <button
+                  className="btn-primary"
+                  disabled={!isReady || loadingRecord}
+                  onClick={beginCreate}
+                  type="button"
+                >
+                  新建固定路由
+                </button>
+              </div>
             </div>
-          ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-            <div className="route-list__empty">
-              <strong>正在读取路由</strong>
-            </div>
-          ) : catalog.items.length === 0 ? (
-            <div className="route-list__empty">
-              <strong>还没有路由</strong>
-              <p>
-                默认情况下 AstrLink 会按可用 API 服务选择；创建路由后可固定服务、安排
-                fallback 或建立模型别名。
-              </p>
-              <button
-                className="btn-primary"
-                disabled={!isReady}
-                onClick={beginCreate}
-                type="button"
-              >
-                创建第一条路由
-              </button>
-            </div>
-          ) : (
-            <ol className="route-card-list">
-              {catalog.items.map((route) => {
-                const targets = route.targets ?? [];
-                const aliasTarget = targets.find(
-                  (target) => target.upstream_model,
-                );
-                return (
-                  <li className="route-card" key={route.id}>
-                    <div className="route-card__priority">
-                      <span>优先级</span>
-                      <strong>{route.priority}</strong>
-                    </div>
-                    <div className="route-card__main">
-                      <header>
-                        <div>
-                          <strong>{route.name}</strong>
-                          <span
-                            className={`route-card__state${
-                              route.enabled ? "" : " route-card__state--off"
-                            }`}
-                          >
-                            {route.enabled ? "已启用" : "已停用"}
-                          </span>
+
+            <div className="route-list">
+              {!isReady && catalog.items.length === 0 ? (
+                <div className="route-list__empty">
+                  <strong>等待 Core 就绪</strong>
+                  <p>Core 就绪后会读取本机固定路由配置。</p>
+                </div>
+              ) : catalog.status === "loading" && catalog.items.length === 0 ? (
+                <div className="route-list__empty">
+                  <strong>正在读取路由</strong>
+                </div>
+              ) : catalog.items.length === 0 ? (
+                <div className="route-list__empty">
+                  <strong>还没有固定路由</strong>
+                  <p>
+                    默认请求走 astrlink/auto（就绪后）。创建固定路由可绕过任务分类，固定服务、安排
+                    fallback 或建立模型别名。
+                  </p>
+                  <button
+                    className="btn-primary"
+                    disabled={!isReady}
+                    onClick={beginCreate}
+                    type="button"
+                  >
+                    创建第一条固定路由
+                  </button>
+                </div>
+              ) : (
+                <ol className="route-card-list">
+                  {catalog.items.map((route) => {
+                    const targets = route.targets ?? [];
+                    const aliasTarget = targets.find(
+                      (target) => target.upstream_model,
+                    );
+                    return (
+                      <li className="route-card" key={route.id}>
+                        <div className="route-card__priority">
+                          <span>优先级</span>
+                          <strong>{route.priority}</strong>
                         </div>
-                        <code>{route.match.model ?? "全部模型"}</code>
-                      </header>
-                      <p>
-                        {protocolLabel(route.match.protocol)} · {targets.length} 个目标
-                        {aliasTarget
-                          ? ` · 别名映射至 ${aliasTarget.upstream_model}`
-                          : ""}
-                      </p>
-                      <div className="route-card__targets">
-                        {targets.map((target, index) => {
-                          const service = services.find(
-                            (candidate) =>
-                              candidate.id === target.service_id,
-                          );
-                          return (
-                            <span
-                              key={`${target.service_id}:${target.priority}:${index}`}
-                            >
-                              {index + 1}. {service?.name ?? target.service_id}
-                              <small>{modeLabels[target.plan_type as "native" | "delegated"] ?? target.plan_type}</small>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div className="route-card__actions">
-                      <button
-                        className="btn-secondary"
-                        disabled={mutatingID === route.id || loadingRecord}
-                        onClick={() => void beginEdit(route)}
-                        type="button"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        className="btn-secondary"
-                        disabled={mutatingID === route.id}
-                        onClick={() => void toggleRoute(route)}
-                        type="button"
-                      >
-                        {route.enabled ? "停用" : "启用"}
-                      </button>
-                      <button
-                        className="danger-link"
-                        disabled={mutatingID === route.id}
-                        onClick={() => void askDelete(route)}
-                        type="button"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-          {catalog.stale ? (
-            <p className="route-list__stale">当前显示上次读取的路由。</p>
-          ) : null}
+                        <div className="route-card__main">
+                          <header>
+                            <div>
+                              <strong>{route.name}</strong>
+                              <span
+                                className={`route-card__state${
+                                  route.enabled ? "" : " route-card__state--off"
+                                }`}
+                              >
+                                {route.enabled ? "已启用" : "已停用"}
+                              </span>
+                            </div>
+                            <code>{route.match.model ?? "全部模型"}</code>
+                          </header>
+                          <p>
+                            {protocolLabel(route.match.protocol)} ·{" "}
+                            {targets.length} 个目标
+                            {aliasTarget
+                              ? ` · 别名映射至 ${aliasTarget.upstream_model}`
+                              : ""}
+                          </p>
+                          <div className="route-card__targets">
+                            {targets.map((target, index) => {
+                              const service = services.find(
+                                (candidate) =>
+                                  candidate.id === target.service_id,
+                              );
+                              return (
+                                <span
+                                  key={`${target.service_id}:${target.priority}:${index}`}
+                                >
+                                  {index + 1}.{" "}
+                                  {service?.name ?? target.service_id}
+                                  <small>
+                                    {modeLabels[
+                                      target.plan_type as "native" | "delegated"
+                                    ] ?? target.plan_type}
+                                  </small>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="route-card__actions">
+                          <button
+                            className="btn-secondary"
+                            disabled={mutatingID === route.id || loadingRecord}
+                            onClick={() => void beginEdit(route)}
+                            type="button"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            disabled={mutatingID === route.id}
+                            onClick={() => void toggleRoute(route)}
+                            type="button"
+                          >
+                            {route.enabled ? "停用" : "启用"}
+                          </button>
+                          <button
+                            className="danger-link"
+                            disabled={mutatingID === route.id}
+                            onClick={() => void askDelete(route)}
+                            type="button"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+              {catalog.stale ? (
+                <p className="route-list__stale">当前显示上次读取的路由。</p>
+              ) : null}
+            </div>
+          </section>
         </div>
       )}
 

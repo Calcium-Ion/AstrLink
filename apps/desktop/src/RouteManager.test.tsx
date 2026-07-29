@@ -139,14 +139,21 @@ describe("RouteManager", () => {
     });
   }
 
-  it("renders persisted routes and keeps astrlink/auto gated", async () => {
+  it("renders auto showcase above persisted priority routes", async () => {
     await render();
 
+    expect(
+      container.querySelector('[data-testid="auto-routing-showcase"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("astrlink/auto");
+    expect(container.textContent).toContain("理解任务");
+    expect(container.textContent).toContain("固定路由与别名");
     expect(container.textContent).toContain("Code alias");
     expect(container.textContent).toContain("team/code");
     expect(container.textContent).toContain("gpt-5.2");
     expect(container.textContent).toContain("训练中 · 不可启用");
-    expect(container.querySelector('[data-testid="route-auto-gate"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("mmBERT");
+    expect(container.querySelector('[data-testid="route-auto-gate"]')).toBeNull();
   });
 
   it("creates a model-alias route from the priority editor", async () => {
@@ -158,14 +165,17 @@ describe("RouteManager", () => {
     await render();
 
     await act(async () => {
-      findButton("新建路由").click();
+      findButton("新建固定路由").click();
     });
+    expect(
+      container.querySelector('[data-testid="auto-routing-showcase"]'),
+    ).toBeNull();
     await setInput(labeledInput("路由名称"), "Code alias");
     await setInput(labeledInput("公开模型名"), "team/code");
     await setInput(labeledInput("上游模型"), "gpt-5.2");
 
     await act(async () => {
-      findButton("创建路由").click();
+      findButton("创建固定路由").click();
       await Promise.resolve();
     });
 

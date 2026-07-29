@@ -66,8 +66,8 @@ describe("SettingsCenter", () => {
       );
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("正在使用：8317");
-    expect(container.textContent).toContain("已保存：9000");
+    expect(container.textContent).toMatch(/正在使用[\s\S]*8317/);
+    expect(container.textContent).toMatch(/已保存[\s\S]*9000/);
     expect(container.textContent).toContain("端口修改尚未生效");
 
     const input = container.querySelector<HTMLInputElement>('input[type="number"]');
@@ -82,7 +82,7 @@ describe("SettingsCenter", () => {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存设置",
+      (button) => button.textContent === "保存端口",
     );
     if (!save) throw new Error("missing save button");
     await act(async () => {
@@ -93,5 +93,44 @@ describe("SettingsCenter", () => {
       expect.objectContaining({ inference_port: 9123 }),
     );
     expect(onDirtyChange).toHaveBeenCalledWith(true);
+  });
+
+  it("applies desktop and core preferences immediately", async () => {
+    const onDirtyChange = vi.fn();
+    bridge.updatePreferences.mockResolvedValue({
+      ...settings,
+      values: { ...settings.values, autostart: true },
+      autostart_actual: true,
+    });
+
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={onDirtyChange}
+          snapshot={snapshot}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const toggles = container.querySelectorAll<HTMLInputElement>(
+      '.settings-toggle input[type="checkbox"]',
+    );
+    const autostart = toggles[0];
+    if (!autostart) throw new Error("missing autostart toggle");
+
+    await act(async () => {
+      autostart.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.updatePreferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autostart: true,
+        inference_port: 9000,
+      }),
+    );
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
   });
 });

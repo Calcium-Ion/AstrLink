@@ -460,11 +460,16 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("路由与模型");
-    expect(workspaceHeading().textContent).toBe("路由与模型");
-    expect(container.querySelector('[data-testid="route-auto-gate"]')).not.toBeNull();
-    expect(container.textContent).toContain("分类器正在训练与验收");
+    expect(workspaceHeading().textContent).toBe("自动选择合适的模型");
+    expect(
+      container.querySelector('[data-testid="auto-routing-showcase"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("astrlink/auto");
+    expect(container.textContent).toContain("通过验收前不可启用");
     expect(container.textContent).toContain("训练中 · 不可启用");
-    expect(container.textContent).toContain("还没有路由");
+    expect(container.textContent).toContain("固定路由与别名");
+    expect(container.textContent).toContain("还没有固定路由");
+    expect(container.textContent).not.toContain("mmBERT");
     expect(bridgeMocks.listRoutes).toHaveBeenCalledTimes(1);
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
     expect(bridgeMocks.listRequestRecords).toHaveBeenCalledTimes(requestCalls);
@@ -634,6 +639,6 @@ describe("App workspace navigation", () => {
       button("放弃修改并离开").click();
     });
     expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(workspaceHeading().textContent).toBe("路由与模型");
+    expect(workspaceHeading().textContent).toBe("自动选择合适的模型");
   });
 });
