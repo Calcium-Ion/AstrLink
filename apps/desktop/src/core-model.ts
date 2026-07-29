@@ -74,6 +74,8 @@ export interface CoreSnapshot {
   version: VersionResponse | null;
   capabilities: CapabilitiesResponse | null;
   last_error: string | null;
+  recovery_attempt: number;
+  recovery_scheduled_in_ms: number | null;
 }
 
 export interface AppSnapshot extends CoreSnapshot {
@@ -427,6 +429,8 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
       "health",
       "version",
       "capabilities",
+      "recovery_attempt",
+      "recovery_scheduled_in_ms",
     ],
     path,
   );
@@ -443,6 +447,24 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
     health: nullable(snapshot.health, "$.health", parseHealth),
     version: nullable(snapshot.version, "$.version", parseVersion),
     capabilities: nullable(snapshot.capabilities, "$.capabilities", parseCapabilities),
+    recovery_attempt:
+      typeof snapshot.recovery_attempt === "number" &&
+      Number.isInteger(snapshot.recovery_attempt) &&
+      snapshot.recovery_attempt >= 0 &&
+      snapshot.recovery_attempt <= 5
+        ? snapshot.recovery_attempt
+        : invalid("$.recovery_attempt", "expected an integer from 0 through 5"),
+    recovery_scheduled_in_ms:
+      snapshot.recovery_scheduled_in_ms === null
+        ? null
+        : typeof snapshot.recovery_scheduled_in_ms === "number" &&
+            Number.isInteger(snapshot.recovery_scheduled_in_ms) &&
+            snapshot.recovery_scheduled_in_ms >= 0
+          ? snapshot.recovery_scheduled_in_ms
+          : invalid(
+              "$.recovery_scheduled_in_ms",
+              "expected null or a non-negative integer",
+            ),
   };
 
   if (parsed.ready && parsed.version && parsed.ready.core_version !== parsed.version.core_version) {
@@ -466,6 +488,8 @@ export const browserSnapshot = (): AppSnapshot => ({
   version: null,
   capabilities: null,
   last_error: "The native bridge is unavailable. Open this UI with Tauri.",
+  recovery_attempt: 0,
+  recovery_scheduled_in_ms: null,
 });
 
 export function failedSnapshot(
@@ -481,6 +505,8 @@ export function failedSnapshot(
     version: null,
     capabilities: null,
     last_error: message,
+    recovery_attempt: current?.recovery_attempt ?? 0,
+    recovery_scheduled_in_ms: null,
   };
 }
 

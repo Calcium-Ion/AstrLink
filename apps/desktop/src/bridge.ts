@@ -75,6 +75,11 @@ import {
   type AuthorizationSession,
   type BeginCodexAuthorizationResult,
 } from "./subscription-model";
+import {
+  parseSettingsSnapshot,
+  type Preferences,
+  type SettingsSnapshot,
+} from "./preferences-model";
 
 function hasNativeBridge(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -94,6 +99,30 @@ export async function restartCore(): Promise<AppSnapshot> {
   }
 
   return parseAppSnapshot(await invoke<unknown>("restart_core"));
+}
+
+export async function startCore(): Promise<AppSnapshot> {
+  requireNativeBridge();
+  return parseAppSnapshot(await invoke<unknown>("start_core"));
+}
+
+export async function stopCore(): Promise<AppSnapshot> {
+  requireNativeBridge();
+  return parseAppSnapshot(await invoke<unknown>("stop_core"));
+}
+
+export async function getPreferences(): Promise<SettingsSnapshot> {
+  requireNativeBridge();
+  return parseSettingsSnapshot(await invoke<unknown>("get_preferences"));
+}
+
+export async function updatePreferences(
+  input: Preferences,
+): Promise<SettingsSnapshot> {
+  requireNativeBridge();
+  return parseSettingsSnapshot(
+    await invoke<unknown>("update_preferences", { input }),
+  );
 }
 
 function requireNativeBridge(): void {

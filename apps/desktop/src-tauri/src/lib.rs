@@ -1,12 +1,22 @@
+mod preferences;
 mod sidecar;
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
-use serde::Serialize;
+use preferences::{CloseBehavior, Preferences, PreferencesSnapshot, PreferencesStore};
+use serde::{Deserialize, Serialize};
 use sidecar::{
     CoreManager, CoreSnapshot, PolicyRecordResponse, RouteRecordResponse, ServiceRecordResponse,
 };
-use tauri::{Manager, RunEvent, State};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    Manager, RunEvent, State, WindowEvent,
+};
+use tauri_plugin_autostart::ManagerExt;
 
 #[derive(Debug, Serialize)]
 struct AppSnapshot {
@@ -19,6 +29,36 @@ struct AppSnapshot {
 struct WindowChromePreferences {
     platform: &'static str,
     decoration_layout: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SettingsSnapshot {
+    #[serde(flatten)]
+    preferences: PreferencesSnapshot,
+    autostart_actual: Option<bool>,
+    autostart_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreferencesInput {
+    close_behavior: CloseBehavior,
+    autostart: bool,
+    core_auto_start: bool,
+    core_auto_recover: bool,
+    inference_port: u16,
+}
+
+impl From<PreferencesInput> for Preferences {
+    fn from(input: PreferencesInput) -> Self {
+        Self {
+            close_behavior: input.close_behavior,
+            autostart: input.autostart,
+            core_auto_start: input.core_auto_start,
+            core_auto_recover: input.core_auto_recover,
+            inference_port: input.inference_port,
+        }
+    }
 }
 
 impl AppSnapshot {
@@ -67,6 +107,109 @@ async fn restart_core(
     let manager = Arc::clone(manager.inner());
     manager.restart(&app).await?;
     Ok(AppSnapshot::capture(&app, &manager))
+}
+
+#[tauri::command]
+fn start_core(
+    app: tauri::AppHandle,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<AppSnapshot, String> {
+    let manager = Arc::clone(manager.inner());
+    manager.start(&app)?;
+    Ok(AppSnapshot::capture(&app, &manager))
+}
+
+#[tauri::command]
+async fn stop_core(
+    app: tauri::AppHandle,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<AppSnapshot, String> {
+    let manager = Arc::clone(manager.inner());
+    manager.stop_and_wait().await?;
+    Ok(AppSnapshot::capture(&app, &manager))
+}
+
+fn settings_snapshot(app: &tauri::AppHandle, store: &PreferencesStore) -> SettingsSnapshot {
+    match app.autolaunch().is_enabled() {
+        Ok(actual) => SettingsSnapshot {
+            preferences: store.snapshot(),
+            autostart_actual: Some(actual),
+            autostart_error: None,
+        },
+        Err(error) => SettingsSnapshot {
+            preferences: store.snapshot(),
+            autostart_actual: None,
+            autostart_error: Some(format!("无法读取系统开机启动状态：{error}")),
+        },
+    }
+}
+
+#[tauri::command]
+fn get_preferences(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<PreferencesStore>>,
+) -> SettingsSnapshot {
+    settings_snapshot(&app, store.inner())
+}
+
+#[tauri::command]
+fn update_preferences(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<PreferencesStore>>,
+    manager: State<'_, Arc<CoreManager>>,
+    input: PreferencesInput,
+) -> Result<SettingsSnapshot, String> {
+    let values = Preferences::from(input);
+    values.validate()?;
+    let autostart = app.autolaunch();
+    let actual = autostart
+        .is_enabled()
+        .map_err(|error| format!("无法读取系统开机启动状态，设置未保存：{error}"))?;
+    if values.autostart != actual {
+        if values.autostart {
+            autostart
+                .enable()
+                .map_err(|error| format!("无法启用系统开机启动，设置未保存：{error}"))?;
+        } else {
+            autostart
+                .disable()
+                .map_err(|error| format!("无法关闭系统开机启动，设置未保存：{error}"))?;
+        }
+        let reconciled = autostart
+            .is_enabled()
+            .map_err(|error| format!("无法验证系统开机启动状态，设置未保存：{error}"))?;
+        if reconciled != values.autostart {
+            return Err("系统开机启动状态与请求不一致，设置未保存。".to_string());
+        }
+    }
+    if let Err(persist_error) = store.replace(values.clone()) {
+        if values.autostart != actual {
+            let rollback = if actual {
+                autostart.enable()
+            } else {
+                autostart.disable()
+            };
+            return match rollback {
+                Ok(()) => Err(format!(
+                    "{persist_error}；系统开机启动状态已回滚，其他设置未生效。"
+                )),
+                Err(rollback_error) => Err(format!(
+                    "{persist_error}；系统开机启动状态回滚失败：{rollback_error}。请在系统设置中核对。"
+                )),
+            };
+        }
+        return Err(persist_error);
+    }
+    manager.configure(values.inference_port, values.core_auto_recover);
+    Ok(settings_snapshot(&app, store.inner()))
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }
 
 #[tauri::command]
@@ -365,14 +508,28 @@ fn platform_initialization_script(platform: &str) -> String {
 pub fn run() {
     let manager = Arc::new(CoreManager::new());
     let setup_manager = Arc::clone(&manager);
+    let explicit_quit = Arc::new(AtomicBool::new(false));
+    let quit_state = Arc::clone(&explicit_quit);
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
         .plugin(tauri_plugin_shell::init())
         .manage(manager)
+        .manage(explicit_quit)
         .invoke_handler(tauri::generate_handler![
             core_status,
             window_chrome_preferences,
+            get_preferences,
+            update_preferences,
+            start_core,
+            stop_core,
             restart_core,
             list_services,
             get_service,
@@ -412,8 +569,62 @@ pub fn run() {
             delete_privacy_model_installation
         ])
         .setup(move |app| {
-            if let Err(error) = setup_manager.start(app.handle()) {
-                eprintln!("failed to start astrlink-core: {error}");
+            let config_directory = app
+                .path()
+                .app_config_dir()
+                .map_err(|error| format!("unable to resolve AstrLink config directory: {error}"))?;
+            let preferences = Arc::new(PreferencesStore::load(&config_directory));
+            let values = preferences.snapshot().values;
+            setup_manager.configure(values.inference_port, values.core_auto_recover);
+            let autostart = app.autolaunch();
+            let reconciliation = autostart
+                .is_enabled()
+                .map_err(|error| error.to_string())
+                .and_then(|actual| {
+                    if actual == values.autostart {
+                        return Ok(());
+                    }
+                    if values.autostart {
+                        autostart.enable().map_err(|error| error.to_string())
+                    } else {
+                        autostart.disable().map_err(|error| error.to_string())
+                    }
+                });
+            if let Err(error) = reconciliation {
+                preferences.report_warning(format!("无法在启动时核对系统开机启动状态：{error}"));
+            }
+            app.manage(preferences);
+
+            let show = MenuItem::with_id(app, "show", "显示 AstrLink", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            TrayIconBuilder::new()
+                .icon(
+                    app.default_window_icon()
+                        .cloned()
+                        .ok_or("AstrLink tray icon is unavailable")?,
+                )
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(event, tauri::tray::TrayIconEvent::Click { .. }) {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .on_menu_event(move |app, event| match event.id().as_ref() {
+                    "show" => show_main_window(app),
+                    "quit" => {
+                        quit_state.store(true, Ordering::SeqCst);
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
+            if values.core_auto_start {
+                if let Err(error) = setup_manager.start(app.handle()) {
+                    eprintln!("failed to start astrlink-core: {error}");
+                }
             }
             Ok(())
         })
@@ -421,7 +632,31 @@ pub fn run() {
         .expect("failed to build AstrLink desktop app");
 
     app.run(|app_handle, event| {
-        if let RunEvent::Exit = event {
+        if let RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } = &event
+        {
+            if label == "main" && !app_handle.state::<Arc<AtomicBool>>().load(Ordering::SeqCst) {
+                let behavior = app_handle
+                    .state::<Arc<PreferencesStore>>()
+                    .snapshot()
+                    .values
+                    .close_behavior;
+                if behavior == CloseBehavior::HideToTray {
+                    api.prevent_close();
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                } else {
+                    app_handle
+                        .state::<Arc<AtomicBool>>()
+                        .store(true, Ordering::SeqCst);
+                }
+            }
+        }
+        if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
             if let Some(manager) = app_handle.try_state::<Arc<CoreManager>>() {
                 let manager = Arc::clone(manager.inner());
                 if let Err(error) = tauri::async_runtime::block_on(manager.stop_and_wait()) {
@@ -449,6 +684,8 @@ mod tests {
                 version: None,
                 capabilities: None,
                 last_error: None,
+                recovery_attempt: 0,
+                recovery_scheduled_in_ms: None,
             },
         };
 

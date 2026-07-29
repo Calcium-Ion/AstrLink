@@ -12,7 +12,7 @@ describe("desktop application shell", () => {
     expect(markup).toContain("API 服务");
     expect(markup).toContain("访问令牌");
     expect(markup).toContain("路由与模型");
-    expect(markup).toContain("即将推出");
+    expect(markup).toContain("设置");
     expect(markup).toContain("连接 AstrLink");
     expect(markup).toContain("今日用量");
     expect(markup).toContain("预估费用");

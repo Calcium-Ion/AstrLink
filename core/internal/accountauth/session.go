@@ -29,8 +29,10 @@ type sessionSecrets struct {
 }
 
 type trackedSession struct {
-	public  contract.AuthorizationSession
-	secrets *sessionSecrets
+	public         contract.AuthorizationSession
+	secrets        *sessionSecrets
+	completing     bool
+	completionDone chan struct{}
 }
 
 // SessionManager owns targeted interactive login windows. A service can have
@@ -239,7 +241,9 @@ func (manager *SessionManager) expireAfter(
 		manager.mu.Lock()
 		defer manager.mu.Unlock()
 		session := manager.sessions[sessionID]
-		if session == nil || session.public.Status != contract.AuthorizationSessionStatusPending {
+		if session == nil ||
+			session.public.Status != contract.AuthorizationSessionStatusPending ||
+			session.completing {
 			return
 		}
 		manager.shutdownLocked(session, contract.AuthorizationSessionStatusExpired, &contract.SubscriptionError{
@@ -278,26 +282,44 @@ func (manager *SessionManager) Cancel(_ context.Context, serviceID contract.Serv
 		return contract.AuthorizationSession{}, ErrSessionNotFound
 	}
 	if session.public.Status != contract.AuthorizationSessionStatusPending {
-		return session.public, ErrSessionNotPending
+		return cloneAuthorizationSession(session.public), ErrSessionNotPending
+	}
+	if session.completing {
+		return cloneAuthorizationSession(session.public), ErrSessionNotPending
 	}
 	manager.shutdownLocked(session, contract.AuthorizationSessionStatusCancelled, &contract.SubscriptionError{
 		Code: ErrCodeSessionCancelled, Message: "authorization cancelled",
 	})
-	return session.public, nil
+	return cloneAuthorizationSession(session.public), nil
 }
 
 func (manager *SessionManager) CancelAllForService(serviceID contract.ServiceID) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	sessionID, ok := manager.byService[serviceID]
-	if !ok {
+	for {
+		manager.mu.Lock()
+		sessionID, ok := manager.byService[serviceID]
+		if !ok {
+			manager.mu.Unlock()
+			return
+		}
+		session := manager.sessions[sessionID]
+		if session == nil {
+			delete(manager.byService, serviceID)
+			manager.mu.Unlock()
+			return
+		}
+		if session.completing {
+			done := session.completionDone
+			manager.mu.Unlock()
+			<-done
+			continue
+		}
+		if session.public.Status == contract.AuthorizationSessionStatusPending {
+			manager.shutdownLocked(session, contract.AuthorizationSessionStatusCancelled, &contract.SubscriptionError{
+				Code: ErrCodeSessionCancelled, Message: "authorization cancelled",
+			})
+		}
+		manager.mu.Unlock()
 		return
-	}
-	session := manager.sessions[sessionID]
-	if session != nil && session.public.Status == contract.AuthorizationSessionStatusPending {
-		manager.shutdownLocked(session, contract.AuthorizationSessionStatusCancelled, &contract.SubscriptionError{
-			Code: ErrCodeSessionCancelled, Message: "authorization cancelled",
-		})
 	}
 }
 
@@ -407,33 +429,59 @@ func (manager *SessionManager) callbackHandler(sessionID contract.AuthorizationS
 
 func (manager *SessionManager) completeSession(ctx context.Context, sessionID contract.AuthorizationSessionID, tokens AccountTokens) error {
 	manager.mu.Lock()
-	defer manager.mu.Unlock()
 	session := manager.sessions[sessionID]
-	if session == nil || session.public.Status != contract.AuthorizationSessionStatusPending {
+	if session == nil ||
+		session.public.Status != contract.AuthorizationSessionStatusPending ||
+		session.completing {
+		manager.mu.Unlock()
 		return ErrSessionNotPending
 	}
+	completionDone := make(chan struct{})
+	session.completing = true
+	session.completionDone = completionDone
 	public := cloneAuthorizationSession(session.public)
 	public.AuthorizationURL = ""
 	public.DeviceCode = nil
-	if manager.onComplete != nil {
-		if err := manager.onComplete(ctx, public, tokens); err != nil {
-			return err
+	onComplete := manager.onComplete
+	manager.mu.Unlock()
+
+	var completionErr error
+	if onComplete != nil {
+		completionErr = onComplete(ctx, public, tokens)
+	}
+
+	manager.mu.Lock()
+	current := manager.sessions[sessionID]
+	if current != session ||
+		!session.completing ||
+		session.completionDone != completionDone {
+		if completionErr == nil {
+			completionErr = ErrSessionNotPending
+		}
+	} else {
+		session.completing = false
+		session.completionDone = nil
+		if completionErr == nil {
+			session.public.Status = contract.AuthorizationSessionStatusCompleted
+			session.public.AuthorizationURL = ""
+			session.public.DeviceCode = nil
+			session.public.UpdatedAt = manager.config.Now().UTC()
+			session.public.Error = nil
+			manager.closeListenerLocked(session)
 		}
 	}
-	session.public.Status = contract.AuthorizationSessionStatusCompleted
-	session.public.AuthorizationURL = ""
-	session.public.DeviceCode = nil
-	session.public.UpdatedAt = manager.config.Now().UTC()
-	session.public.Error = nil
-	manager.closeListenerLocked(session)
-	return nil
+	close(completionDone)
+	manager.mu.Unlock()
+	return completionErr
 }
 
 func (manager *SessionManager) failSession(sessionID contract.AuthorizationSessionID, failure *contract.SubscriptionError) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	session := manager.sessions[sessionID]
-	if session == nil || session.public.Status != contract.AuthorizationSessionStatusPending {
+	if session == nil ||
+		session.public.Status != contract.AuthorizationSessionStatusPending ||
+		session.completing {
 		return
 	}
 	manager.shutdownLocked(session, contract.AuthorizationSessionStatusFailed, failure)
@@ -443,7 +491,9 @@ func (manager *SessionManager) cancelBySessionID(sessionID contract.Authorizatio
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	session := manager.sessions[sessionID]
-	if session == nil || session.public.Status != contract.AuthorizationSessionStatusPending {
+	if session == nil ||
+		session.public.Status != contract.AuthorizationSessionStatusPending ||
+		session.completing {
 		return
 	}
 	manager.shutdownLocked(session, contract.AuthorizationSessionStatusCancelled, &contract.SubscriptionError{
@@ -454,7 +504,9 @@ func (manager *SessionManager) cancelBySessionID(sessionID contract.Authorizatio
 func (manager *SessionManager) expirePendingLocked() {
 	now := manager.config.Now()
 	for _, session := range manager.sessions {
-		if session.public.Status == contract.AuthorizationSessionStatusPending && now.After(session.public.ExpiresAt) {
+		if session.public.Status == contract.AuthorizationSessionStatusPending &&
+			!session.completing &&
+			now.After(session.public.ExpiresAt) {
 			manager.shutdownLocked(session, contract.AuthorizationSessionStatusExpired, &contract.SubscriptionError{
 				Code: ErrCodeSessionExpired, Message: "authorization session expired",
 			})
@@ -477,7 +529,7 @@ func (manager *SessionManager) shutdownLocked(
 	status contract.AuthorizationSessionStatus,
 	failure *contract.SubscriptionError,
 ) {
-	if session == nil {
+	if session == nil || session.completing {
 		return
 	}
 	session.public.Status = status

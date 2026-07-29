@@ -18,7 +18,13 @@ ort = { version = "=2.0.0-rc.11", default-features = false, features = [
   "std",
 ] }
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
+ort = { version = "=2.0.0-rc.11", default-features = false, features = [
+  "load-dynamic",
+  "std",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
 ort = { version = "=2.0.0-rc.11", default-features = false, features = [
   "copy-dylibs",
   "download-binaries",

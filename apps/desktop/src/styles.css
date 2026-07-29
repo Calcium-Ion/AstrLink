@@ -4823,6 +4823,123 @@ textarea:focus {
   font-weight: 700;
 }
 
+.settings-center {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settings-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--border-color, #dce5ef);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 30px rgb(31 54 79 / 5%);
+}
+
+.settings-card--wide {
+  grid-column: 1 / -1;
+}
+
+.settings-card h3,
+.settings-card p {
+  margin: 0;
+}
+
+.settings-card > label:not(.settings-check) {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-card input[type="number"],
+.settings-card select {
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid #cbd8e6;
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-actions,
+.settings-savebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-savebar {
+  position: sticky;
+  bottom: 16px;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border: 1px solid #d8e3ee;
+  border-radius: 14px;
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 12px 32px rgb(31 54 79 / 12%);
+  backdrop-filter: blur(12px);
+}
+
+.settings-notice {
+  padding: 12px 15px;
+  border-radius: 11px;
+}
+
+.settings-notice--warning {
+  border: 1px solid #f2d291;
+  background: #fff8e7;
+  color: #78520a;
+}
+
+.settings-notice--error,
+.settings-card--error {
+  border-color: #f0b7b7;
+  background: #fff4f4;
+  color: #8e2525;
+}
+
+.settings-notice--success {
+  border: 1px solid #afdcc7;
+  background: #effbf5;
+  color: #176541;
+}
+
+.settings-error-detail {
+  overflow-wrap: anywhere;
+  padding: 10px;
+  border-radius: 9px;
+  background: #f5f7fa;
+  white-space: normal;
+}
+
+.settings-port-pending {
+  color: #9a5e00;
+}
+
+@media (max-width: 820px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-card--wide {
+    grid-column: auto;
+  }
+}
+
 .advanced-grid {
   display: grid;
   align-items: end;

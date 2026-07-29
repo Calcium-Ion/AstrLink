@@ -31,6 +31,7 @@ import { RequestGate } from "./request-gate";
 import { RequestRecords } from "./RequestRecords";
 import { RouteManager } from "./RouteManager";
 import { SafetyPolicy } from "./SafetyPolicy";
+import { SettingsCenter } from "./SettingsCenter";
 import {
   ServiceManager,
   type ServiceCatalogStatus,
@@ -50,6 +51,7 @@ type WorkspacePage =
   | { kind: "safety" }
   | { kind: "records" }
   | { kind: "routing" }
+  | { kind: "settings" }
   | ServiceManagerView;
 
 type TodayUsageState = {
@@ -555,9 +557,9 @@ export default function App() {
   const [todayUsage, setTodayUsage] = useState<TodayUsageState>(emptyTodayUsage);
   const [page, setPage] = useState<WorkspacePage>({ kind: "overview" });
   const [pendingPage, setPendingPage] = useState<WorkspacePage | null>(null);
-  const [editorDirty, setEditorDirty] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const editorDirtyRef = useRef(false);
   const requestGateRef = useRef<RequestGate | null>(null);
   const catalogGeneration = useRef(0);
   const tokenCatalogGeneration = useRef(0);
@@ -565,6 +567,9 @@ export default function App() {
   const copyFeedbackTimer = useRef<number | null>(null);
   requestGateRef.current ??= new RequestGate();
   const requestGate = requestGateRef.current;
+  const handleEditorDirtyChange = useCallback((dirty: boolean) => {
+    editorDirtyRef.current = dirty;
+  }, []);
 
   const refreshCore = useCallback(async () => {
     const generation = requestGate.begin();
@@ -826,23 +831,24 @@ export default function App() {
             next.serviceId !== page.serviceId));
       const leavingRouteEditor =
         page.kind === "routing" && next.kind !== "routing";
-      const leavingEditor = leavingServiceEditor || leavingRouteEditor;
-      if (leavingEditor && editorDirty) {
+      const leavingSettings = page.kind === "settings" && next.kind !== "settings";
+      const leavingEditor = leavingServiceEditor || leavingRouteEditor || leavingSettings;
+      if (leavingEditor && editorDirtyRef.current) {
         setPendingPage(next);
         return;
       }
-      if (leavingEditor) setEditorDirty(false);
+      if (leavingEditor) handleEditorDirtyChange(false);
       setPendingPage(null);
       setPage(next);
     },
-    [editorDirty, page],
+    [handleEditorDirtyChange, page],
   );
 
   const confirmPendingNavigation = () => {
     if (pendingPage === null) return;
     setPage(pendingPage);
     setPendingPage(null);
-    setEditorDirty(false);
+    handleEditorDirtyChange(false);
   };
 
   const handleServiceSaved = (service: Service) => {
@@ -854,7 +860,7 @@ export default function App() {
           : current.items.map((item) => (item.id === service.id ? service : item));
       return { status: "ready", items, error: null, stale: false };
     });
-    setEditorDirty(false);
+    handleEditorDirtyChange(false);
     setPage({ kind: "list" });
   };
 
@@ -951,8 +957,13 @@ export default function App() {
             onClick={() => navigate({ kind: "routing" })}
           />
 
-          <span className="nav-group-label nav-group-label--secondary">即将提供</span>
-          <NavButton disabled icon="settings" label="设置" />
+          <span className="nav-group-label nav-group-label--secondary">系统</span>
+          <NavButton
+            active={page.kind === "settings"}
+            icon="settings"
+            label="设置"
+            onClick={() => navigate({ kind: "settings" })}
+          />
         </nav>
 
         <div
@@ -1014,16 +1025,22 @@ export default function App() {
               coreSessionKey={coreSessionKey}
               services={catalog.items}
               isReady={isReady}
-              onDirtyChange={setEditorDirty}
+              onDirtyChange={handleEditorDirtyChange}
               onManageServices={() => navigate({ kind: "list" })}
               protocols={protocols}
+            />
+          ) : page.kind === "settings" ? (
+            <SettingsCenter
+              onCoreSnapshot={setSnapshot}
+              onDirtyChange={handleEditorDirtyChange}
+              snapshot={snapshot}
             />
           ) : (
             <ServiceManager
               catalogError={catalog.error}
               catalogStatus={catalog.status}
               isReady={isReady}
-              onDirtyChange={setEditorDirty}
+              onDirtyChange={handleEditorDirtyChange}
               onRefresh={() => void refreshServices()}
               onServiceRemoved={handleServiceRemoved}
               onServiceSaved={handleServiceSaved}

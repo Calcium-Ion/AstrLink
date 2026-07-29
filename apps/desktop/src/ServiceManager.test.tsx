@@ -190,6 +190,73 @@ describe("ServiceManager", () => {
     expect(changed).toHaveBeenCalledWith({ kind: "list" });
   });
 
+  it("keeps the selected service kind when Core protocol capabilities refresh", async () => {
+    const view = { kind: "create" } as const;
+    const onDirtyChange = vi.fn();
+    const onRefresh = vi.fn();
+    const onServiceRemoved = vi.fn();
+    const onServiceSaved = vi.fn();
+    const onViewChange = vi.fn();
+    const render = (
+      protocols: Array<{
+        id: string;
+        phase: "alpha" | "post_alpha";
+        primary: boolean;
+        streaming: boolean;
+      }>,
+    ) =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={onDirtyChange}
+          onRefresh={onRefresh}
+          onServiceRemoved={onServiceRemoved}
+          onServiceSaved={onServiceSaved}
+          onViewChange={onViewChange}
+          protocols={protocols}
+          services={[]}
+          view={view}
+        />,
+      );
+
+    await act(async () => render([]));
+    const kind = container.querySelector<HTMLSelectElement>(
+      ".service-form select",
+    );
+    if (!kind) throw new Error("missing service kind select");
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "value",
+    )?.set;
+    if (!valueSetter) throw new Error("missing select value setter");
+    await act(async () => {
+      valueSetter.call(kind, "anthropic");
+      kind.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(kind.value).toBe("anthropic");
+    expect(
+      container.querySelector<HTMLInputElement>("#service-name")?.value,
+    ).toBe("Anthropic API");
+
+    await act(async () =>
+      render([
+        {
+          id: "anthropic.messages",
+          phase: "alpha",
+          primary: false,
+          streaming: true,
+        },
+      ]),
+    );
+
+    expect(kind.value).toBe("anthropic");
+    expect(
+      container.querySelector<HTMLInputElement>("#service-name")?.value,
+    ).toBe("Anthropic API");
+  });
+
   it("keeps a newly created Codex service when login cannot start", async () => {
     bridgeMocks.createService.mockResolvedValue({
       service: codexService,

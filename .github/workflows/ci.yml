@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-22.04, macos-latest, macos-15-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -109,7 +109,7 @@ jobs:
       matrix:
         include:
           - name: Linux x64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             bundle: deb
           - name: macOS
             os: macos-latest
@@ -132,6 +132,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           libwebkit2gtk-4.1-dev
           libayatana-appindicator3-dev
+          binutils
           librsvg2-dev
           patchelf
       - uses: actions/setup-go@v6
@@ -189,6 +190,46 @@ jobs:
             dpkg-deb -x "$archive" "$bundle_scan_dir"
           done
           bun ../../scripts/check-no-production-models.mjs --packaged "$bundle_scan_dir"
+
+          mapfile -t runtimes < <(
+            find "$bundle_scan_dir" -type f \
+              -path "*/onnxruntime/libonnxruntime.so.1.23.2" -print
+          )
+          if [[ "${#runtimes[@]}" -ne 1 ]]; then
+            echo "Expected exactly one packaged Linux ONNX Runtime, found ${#runtimes[@]}." >&2
+            exit 1
+          fi
+
+          worker="$bundle_scan_dir/usr/bin/astrlink-privacy-worker"
+          core="$bundle_scan_dir/usr/bin/astrlink-core"
+          desktop="$bundle_scan_dir/usr/bin/astrlink-desktop"
+          for executable in "$worker" "$core" "$desktop"; do
+            if [[ ! -x "$executable" ]]; then
+              echo "Missing packaged executable: $executable" >&2
+              exit 1
+            fi
+          done
+
+          if readelf -d "$worker" | grep -Fq "libonnxruntime"; then
+            echo "Linux privacy worker must load ONNX Runtime dynamically." >&2
+            exit 1
+          fi
+
+          for executable in "$worker" "$core" "$desktop" "${runtimes[0]}"; do
+            maximum_glibc="$(
+              readelf --version-info "$executable" |
+                sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' |
+                sort -V |
+                tail -n 1
+            )"
+            if [[ -z "$maximum_glibc" ]]; then
+              continue
+            fi
+            if [[ "$(printf '%s\n' "$maximum_glibc" "2.36" | sort -V | tail -n 1)" != "2.36" ]]; then
+              echo "$executable requires GLIBC_$maximum_glibc, newer than Debian 12." >&2
+              exit 1
+            fi
+          done
       - name: Extract and inspect packaged Windows application contents
         if: runner.os == 'Windows'
         shell: pwsh

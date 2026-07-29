@@ -191,7 +191,7 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return AccountTokens{}, fmt.Errorf("decode token response: %w", err)
 	}
-	if response.StatusCode == http.StatusBadRequest && parsed.Error == "invalid_grant" {
+	if parsed.Error == "invalid_grant" {
 		return AccountTokens{}, ErrInvalidGrant
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || parsed.AccessToken == "" {
