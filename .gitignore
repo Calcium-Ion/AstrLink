@@ -55,3 +55,6 @@ logs/
 pytorch_model*.bin
 tf_model*.h5
 flax_model*.msgpack
+
+# local planning docs
+/plans/
