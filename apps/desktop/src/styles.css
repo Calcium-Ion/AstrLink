@@ -105,8 +105,7 @@ body,
 body {
   min-height: 100vh;
   background:
-    radial-gradient(760px 420px at 30% -10%, color-mix(in srgb, var(--accent-fill) 10%, transparent), transparent 64%),
-    radial-gradient(680px 380px at 96% 0%, color-mix(in srgb, var(--chart-2) 9%, transparent), transparent 62%),
+    radial-gradient(900px 500px at 50% -12%, color-mix(in srgb, var(--text) 3%, transparent), transparent 70%),
     var(--bg);
 }
 
@@ -243,7 +242,7 @@ code {
 
 .window-chrome--linux .window-chrome__button--close:hover {
   color: var(--danger-text);
-  background: color-mix(in srgb, var(--danger-fill) 13%, transparent);
+  background: var(--danger-wash);
 }
 
 .window-resize-handle {
@@ -398,7 +397,7 @@ code {
 
 .nav-item:hover:not(:disabled) {
   color: var(--text);
-  background: color-mix(in srgb, var(--accent-fill) 7%, transparent);
+  background: var(--accent-wash);
 }
 
 .nav-item--active {
@@ -435,7 +434,7 @@ code {
   padding: 10px 11px;
   border: 1px solid var(--line);
   border-radius: 11px;
-  background: color-mix(in srgb, var(--card) 76%, transparent);
+  background: var(--card);
   color: var(--text-secondary);
   gap: 9px;
 }
@@ -508,9 +507,7 @@ code {
   margin-bottom: 0;
   padding: 20px 22px 18px;
   border-bottom: 1px solid var(--line);
-  background:
-    linear-gradient(120deg, color-mix(in srgb, var(--accent-fill) 4%, transparent), transparent 38%),
-    color-mix(in srgb, var(--card) 90%, transparent);
+  background: var(--card);
 }
 
 .page-header__copy {
@@ -673,7 +670,7 @@ code {
   padding: 12px 16px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--card) 78%, transparent);
+  background: var(--card);
   box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 3%, transparent);
   gap: 14px;
 }
@@ -715,7 +712,7 @@ code {
   padding: 15px 18px 13px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--card) 88%, transparent);
+  background: var(--card);
   box-shadow: 0 8px 28px color-mix(in srgb, var(--text) 4%, transparent);
 }
 
@@ -1113,7 +1110,7 @@ code {
 
 .record-detail__scroll {
   padding: 18px 22px 28px;
-  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  background: var(--panel);
 }
 
 .record-detail-section {
@@ -1122,7 +1119,7 @@ code {
   padding: 17px 18px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--card) 92%, transparent);
+  background: var(--card);
 }
 
 .record-detail-section.is-error {
@@ -1444,7 +1441,7 @@ code {
 .audit-view-tabs button.is-active {
   border-color: color-mix(in srgb, var(--accent-fill) 17%, transparent);
   color: var(--accent-text);
-  background: color-mix(in srgb, var(--accent-fill) 7%, transparent);
+  background: var(--accent-wash);
 }
 
 .audit-view-tabs button:disabled {
@@ -1762,7 +1759,7 @@ code {
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--card) 88%, transparent);
+  background: var(--card);
   box-shadow: 0 8px 28px color-mix(in srgb, var(--text) 5%, transparent);
 }
 
@@ -2050,7 +2047,7 @@ code {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 13px;
-  background: color-mix(in srgb, var(--card) 76%, transparent);
+  background: var(--card);
 }
 
 .system-details > summary {
@@ -2172,7 +2169,7 @@ code {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 15px;
-  background: color-mix(in srgb, var(--card) 86%, transparent);
+  background: var(--card);
   box-shadow: 0 8px 28px color-mix(in srgb, var(--text) 4%, transparent);
 }
 
@@ -2461,13 +2458,7 @@ code {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent-fill) 18%, transparent);
   border-radius: 16px;
-  background:
-    radial-gradient(
-      520px 220px at 8% 10%,
-      color-mix(in srgb, var(--accent-fill) 12%, transparent),
-      transparent 68%
-    ),
-    color-mix(in srgb, var(--card) 90%, transparent);
+  background: var(--card);
   box-shadow: 0 10px 32px color-mix(in srgb, var(--text) 5%, transparent);
   grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
 }
@@ -2560,7 +2551,7 @@ code {
   padding: 11px;
   border: 1px solid var(--line);
   border-radius: 11px;
-  background: color-mix(in srgb, var(--card) 82%, transparent);
+  background: var(--card);
   gap: 9px;
 }
 
@@ -2638,7 +2629,7 @@ code {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 13px;
-  background: color-mix(in srgb, var(--card) 88%, transparent);
+  background: var(--card);
 }
 
 .routing-category-card header {
@@ -2776,7 +2767,7 @@ code {
   border: 1px dashed var(--line-strong);
   border-radius: 15px;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--card) 70%, transparent);
+  background: var(--card);
   flex-direction: column;
   text-align: center;
 }
@@ -2809,7 +2800,7 @@ code {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 13px;
-  background: color-mix(in srgb, var(--card) 90%, transparent);
+  background: var(--card);
   box-shadow: 0 5px 18px color-mix(in srgb, var(--text) 3%, transparent);
   grid-template-columns: 72px minmax(0, 1fr) max-content;
 }
@@ -2953,7 +2944,7 @@ code {
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 15px;
-  background: color-mix(in srgb, var(--card) 92%, transparent);
+  background: var(--card);
   box-shadow: 0 10px 34px color-mix(in srgb, var(--text) 5%, transparent);
 }
 
@@ -3184,7 +3175,7 @@ code {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 15px;
-  background: color-mix(in srgb, var(--card) 88%, transparent);
+  background: var(--card);
   box-shadow: 0 8px 28px color-mix(in srgb, var(--text) 4%, transparent);
   flex-direction: column;
 }
@@ -4102,7 +4093,7 @@ code {
   border: 1px solid var(--line);
   border-radius: 15px;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--card) 82%, transparent);
+  background: var(--card);
   flex-direction: column;
   text-align: center;
   gap: 6px;
@@ -4133,7 +4124,7 @@ code {
   padding: 28px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: color-mix(in srgb, var(--card) 92%, transparent);
+  background: var(--card);
   box-shadow: 0 18px 48px color-mix(in srgb, var(--text) 10%, transparent);
 }
 
@@ -4218,7 +4209,7 @@ code {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 15px;
-  background: color-mix(in srgb, var(--card) 86%, transparent);
+  background: var(--card);
   box-shadow: 0 8px 28px color-mix(in srgb, var(--text) 4%, transparent);
 }
 
@@ -4365,7 +4356,7 @@ code {
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 15px;
-  background: color-mix(in srgb, var(--card) 90%, transparent);
+  background: var(--card);
   box-shadow: 0 10px 34px color-mix(in srgb, var(--text) 5%, transparent);
 }
 
@@ -4568,7 +4559,7 @@ textarea:focus {
   border: 1px solid color-mix(in srgb, var(--success-fill) 18%, transparent);
   border-radius: 9px;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--success-fill) 6%, transparent);
+  background: var(--success-wash);
   gap: 9px;
 }
 
@@ -4713,17 +4704,13 @@ textarea:focus {
   padding: 20px 20px 18px;
   border: 1px solid var(--line);
   border-radius: 18px;
-  background:
-    linear-gradient(165deg, color-mix(in srgb, var(--accent-fill) 4%, transparent), transparent 42%),
-    color-mix(in srgb, var(--card) 90%, transparent);
+  background: var(--card);
   box-shadow: 0 10px 28px color-mix(in srgb, var(--text) 4%, transparent);
 }
 
 .settings-card--port {
   grid-column: 1 / -1;
-  background:
-    linear-gradient(120deg, color-mix(in srgb, var(--success-fill) 5%, transparent), transparent 40%),
-    color-mix(in srgb, var(--card) 90%, transparent);
+  background: var(--card);
 }
 
 .settings-card--port.is-dirty {
@@ -4821,7 +4808,7 @@ textarea:focus {
   padding: 12px 13px;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--card) 82%, transparent);
+  background: var(--card);
   cursor: pointer;
   transition:
     border-color 0.15s ease,
@@ -4870,7 +4857,7 @@ textarea:focus {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  background: var(--panel);
   cursor: pointer;
   transition:
     border-color 0.15s ease,
@@ -4879,7 +4866,7 @@ textarea:focus {
 
 .settings-toggle:hover:not(.is-disabled) {
   border-color: color-mix(in srgb, var(--accent-fill) 28%, transparent);
-  background: color-mix(in srgb, var(--card) 92%, transparent);
+  background: var(--card);
 }
 
 .settings-toggle.is-disabled {
@@ -4954,12 +4941,12 @@ textarea:focus {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  background: var(--panel);
 }
 
 .settings-core-status--positive {
   border-color: color-mix(in srgb, var(--success-fill) 22%, transparent);
-  background: color-mix(in srgb, var(--success-fill) 6%, transparent);
+  background: var(--success-wash);
 }
 
 .settings-core-status--pending {
@@ -4969,7 +4956,7 @@ textarea:focus {
 
 .settings-core-status--negative {
   border-color: color-mix(in srgb, var(--danger-fill) 24%, transparent);
-  background: color-mix(in srgb, var(--danger-fill) 7%, transparent);
+  background: var(--danger-wash);
 }
 
 .settings-core-status > div {
@@ -5050,7 +5037,7 @@ textarea:focus {
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  background: var(--panel);
 }
 
 .settings-port-metrics dt {
@@ -5313,7 +5300,7 @@ textarea:focus {
   padding: 9px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--card) 72%, transparent);
+  background: var(--card);
   gap: 7px;
 }
 
