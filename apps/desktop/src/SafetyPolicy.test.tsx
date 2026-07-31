@@ -746,6 +746,136 @@ describe("SafetyPolicy", () => {
     ).toBe(false);
   });
 
+  it("opens a local streaming restore demo without mutating policy", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        request_action: "block",
+        response_restore: false,
+      }),
+    );
+    await renderPolicy();
+    await flush();
+
+    const bridgeCallsBefore = Object.fromEntries(
+      Object.entries(bridgeMocks).map(([name, mock]) => [
+        name,
+        mock.mock.calls.length,
+      ]),
+    );
+
+    await act(async () => {
+      button("查看流式演示").click();
+      await Promise.resolve();
+    });
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    expect(
+      dialog?.querySelector("#streaming-restore-demo-title")?.textContent,
+    ).toBe("流式响应还原演示");
+    expect(dialog?.textContent).toContain("请求侧脱敏");
+    expect(dialog?.textContent).toContain("占位符还原");
+    expect(dialog?.textContent).toContain("不对响应正文或 SSE");
+    expect(dialog?.textContent).toContain("固定示例");
+    expect(dialog?.textContent).toContain("alice@example.com");
+    expect(dialog?.textContent).toContain("<PRIVATE_EMAIL>");
+    expect(dialog?.textContent).toContain("data: <PRIVATE_");
+    expect(dialog?.textContent).toContain("EMAIL>");
+    expect(dialog?.textContent).toContain("data: alice@example.com");
+    expect(dialog?.textContent).toContain("客户端");
+    expect(dialog?.textContent).toContain("AstrLink");
+    expect(dialog?.textContent).toContain("上游");
+    expect(dialog?.textContent).not.toContain("响应审核扫描");
+    expect(dialog?.textContent).not.toContain("SSE 审核");
+
+    const canvasBefore = dialog?.querySelector(
+      ".streaming-restore-demo__canvas",
+    );
+    const packetsBefore = [
+      ...container.querySelectorAll(".streaming-restore-demo__packet"),
+    ];
+    expect(canvasBefore).not.toBeNull();
+    expect(packetsBefore).toHaveLength(5);
+    expect(
+      container.querySelector(".streaming-restore-demo__lane--request"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(".streaming-restore-demo__lane--response"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(".streaming-restore-demo__packet--plain")
+        ?.textContent,
+    ).toContain("alice@example.com");
+    expect(
+      container.querySelector(".streaming-restore-demo__packet--redacted")
+        ?.textContent,
+    ).toContain("<PRIVATE_EMAIL>");
+    expect(
+      container.querySelector(".streaming-restore-demo__packet--chunk-a")
+        ?.textContent,
+    ).toContain("data: <PRIVATE_");
+    expect(
+      container.querySelector(".streaming-restore-demo__packet--chunk-b")
+        ?.textContent,
+    ).toContain("EMAIL>");
+    expect(
+      container.querySelector(".streaming-restore-demo__packet--restored")
+        ?.textContent,
+    ).toContain("data: alice@example.com");
+
+    await act(async () => {
+      button("重新播放").click();
+      await Promise.resolve();
+    });
+    const canvasAfter = container.querySelector(
+      ".streaming-restore-demo__canvas",
+    );
+    const packetsAfter = [
+      ...container.querySelectorAll(".streaming-restore-demo__packet"),
+    ];
+    expect(canvasAfter).not.toBeNull();
+    expect(canvasAfter).not.toBe(canvasBefore);
+    expect(packetsAfter).toHaveLength(5);
+    expect(packetsAfter[0]).not.toBe(packetsBefore[0]);
+
+    for (const [name, mock] of Object.entries(bridgeMocks)) {
+      expect(mock.mock.calls.length, name).toBe(bridgeCallsBefore[name]);
+    }
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="响应还原占位符"]',
+      )?.checked,
+    ).toBe(false);
+    expect(
+      container.querySelector<HTMLSelectElement>("#privacy-request-action")
+        ?.value,
+    ).toBe("block");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+
+    await act(async () => {
+      button("查看流式演示").click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () => {
+      button("关闭").click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+
+    for (const [name, mock] of Object.entries(bridgeMocks)) {
+      expect(mock.mock.calls.length, name).toBe(bridgeCallsBefore[name]);
+    }
+  });
+
   it("patches the model confidence threshold", async () => {
     bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
     bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(

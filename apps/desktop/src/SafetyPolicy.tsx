@@ -432,6 +432,146 @@ function InstallationResourceDialog({
   );
 }
 
+interface StreamingRestoreDemoDialogProps {
+  onClose: () => void;
+}
+
+function StreamingRestoreDemoDialog({
+  onClose,
+}: StreamingRestoreDemoDialogProps) {
+  const [replayKey, setReplayKey] = useState(0);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="token-dialog-backdrop" role="presentation">
+      <section
+        aria-labelledby="streaming-restore-demo-title"
+        aria-modal="true"
+        className="token-dialog streaming-restore-demo-dialog"
+        role="dialog"
+      >
+        <h3 id="streaming-restore-demo-title">流式响应还原演示</h3>
+        <p>
+          固定教学示例（OpenAI Responses · <code>stream: true</code>
+          ）：请求侧脱敏与占位符还原。不对响应正文或 SSE 事件做审核扫描。
+        </p>
+        <p className="streaming-restore-demo__example-note">
+          示例邮箱 <code>alice@example.com</code>
+          为固定示例，不代表当前策略状态。
+        </p>
+        <div
+          aria-label="请求脱敏与响应占位符还原数据流"
+          className="streaming-restore-demo__canvas"
+          key={replayKey}
+        >
+          <div className="streaming-restore-demo__nodes" aria-hidden="true">
+            <div
+              className="streaming-restore-demo__node streaming-restore-demo__node--client"
+            >
+              <strong>客户端</strong>
+              <span>OpenAI Responses</span>
+            </div>
+            <div
+              className="streaming-restore-demo__node streaming-restore-demo__node--gateway"
+            >
+              <span className="streaming-restore-demo__shield" />
+              <strong>AstrLink</strong>
+              <span>隐私网关</span>
+            </div>
+            <div
+              className="streaming-restore-demo__node streaming-restore-demo__node--upstream"
+            >
+              <strong>上游</strong>
+              <span>SSE 传输</span>
+            </div>
+          </div>
+
+          <div
+            aria-hidden="true"
+            className="streaming-restore-demo__lane streaming-restore-demo__lane--request"
+          >
+            <div className="streaming-restore-demo__track">
+              <span className="streaming-restore-demo__flow-dots" />
+              <span className="streaming-restore-demo__lane-label">
+                请求 →
+              </span>
+            </div>
+            <span className="streaming-restore-demo__packet streaming-restore-demo__packet--plain">
+              alice@example.com
+            </span>
+            <span className="streaming-restore-demo__packet streaming-restore-demo__packet--redacted">
+              &lt;PRIVATE_EMAIL&gt;
+            </span>
+          </div>
+
+          <div
+            aria-hidden="true"
+            className="streaming-restore-demo__lane streaming-restore-demo__lane--response"
+          >
+            <div className="streaming-restore-demo__track">
+              <span className="streaming-restore-demo__flow-dots" />
+              <span className="streaming-restore-demo__lane-label">
+                ← 响应
+              </span>
+            </div>
+            <span className="streaming-restore-demo__packet streaming-restore-demo__packet--chunk-a">
+              data: &lt;PRIVATE_
+            </span>
+            <span className="streaming-restore-demo__packet streaming-restore-demo__packet--chunk-b">
+              EMAIL&gt;
+            </span>
+            <span className="streaming-restore-demo__packet streaming-restore-demo__packet--restored">
+              data: alice@example.com
+            </span>
+          </div>
+
+          <ol className="streaming-restore-demo__legend">
+            <li>
+              <span className="streaming-restore-demo__swatch streaming-restore-demo__swatch--request" />
+              请求侧脱敏：原文 → <code>&lt;PRIVATE_EMAIL&gt;</code>
+            </li>
+            <li>
+              <span className="streaming-restore-demo__swatch streaming-restore-demo__swatch--sse" />
+              上游分片跨 chunk 保留不完整占位符
+            </li>
+            <li>
+              <span className="streaming-restore-demo__swatch streaming-restore-demo__swatch--restore" />
+              网关拼完整后还原给客户端
+            </li>
+          </ol>
+        </div>
+        <div className="token-dialog__actions">
+          <button
+            className="btn-secondary"
+            onClick={() => setReplayKey((current) => current + 1)}
+            type="button"
+          >
+            重新播放
+          </button>
+          <button
+            autoFocus
+            className="btn-primary"
+            onClick={onClose}
+            type="button"
+          >
+            关闭
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function SafetyPolicy({
   coreSessionKey,
   isReady,
@@ -474,6 +614,7 @@ export function SafetyPolicy({
     useState<PendingModelAction | null>(null);
   const [pendingInstallation, setPendingInstallation] =
     useState<PendingInstallation | null>(null);
+  const [streamingDemoOpen, setStreamingDemoOpen] = useState(false);
   const generationRef = useRef(0);
   const operationRequestRef = useRef(0);
   const probeRequestRef = useRef(0);
@@ -534,6 +675,7 @@ export function SafetyPolicy({
     setDryRunResult(null);
     setPendingModelAction(null);
     setPendingInstallation(null);
+    setStreamingDemoOpen(false);
     setProbe(null);
     setCustomMappingOpen(false);
     setLabelMapping({});
@@ -1442,6 +1584,14 @@ export function SafetyPolicy({
               />
             </label>
 
+            <button
+              className="btn-secondary safety-streaming-demo-trigger"
+              onClick={() => setStreamingDemoOpen(true)}
+              type="button"
+            >
+              查看流式演示
+            </button>
+
             <div className="safety-dry-run">
               <div className="safety-dry-run__title">
                 <strong>试运行</strong>
@@ -2249,6 +2399,11 @@ export function SafetyPolicy({
             void performInstallation(pending);
           }}
           pending={pendingInstallation}
+        />
+      ) : null}
+      {streamingDemoOpen ? (
+        <StreamingRestoreDemoDialog
+          onClose={() => setStreamingDemoOpen(false)}
         />
       ) : null}
     </div>
