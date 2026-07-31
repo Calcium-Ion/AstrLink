@@ -74,6 +74,9 @@ describe("request-record IPC contract", () => {
     const parsed = parseRequestRecord(fullRecord);
     expect(parsed).toEqual({
       id: fullRecord.id,
+      parent_request_id: null,
+      attempt_index: 1,
+      child_count: 0,
       started_at: fullRecord.started_at,
       completed_at: fullRecord.completed_at,
       status: "succeeded",
@@ -92,10 +95,28 @@ describe("request-record IPC contract", () => {
         cached_input_tokens: 2,
       },
       error: null,
-      audit: fullRecord.audit,
+      audit: {
+        ...fullRecord.audit,
+        upstream_request_body_captured: false,
+        upstream_response_content_captured: false,
+        upstream_request_body_truncated: false,
+        upstream_response_content_truncated: false,
+      },
       privacy_restore: fullRecord.privacy_restore,
     });
-    expect(parseRequestRecord(nullOptionalRecord)).toEqual(nullOptionalRecord);
+    expect(parseRequestRecord(nullOptionalRecord)).toEqual({
+      ...nullOptionalRecord,
+      parent_request_id: null,
+      attempt_index: 1,
+      child_count: 0,
+      audit: {
+        ...nullOptionalRecord.audit,
+        upstream_request_body_captured: false,
+        upstream_response_content_captured: false,
+        upstream_request_body_truncated: false,
+        upstream_response_content_truncated: false,
+      },
+    });
   });
 
   it("parses a page with a cursor", () => {
@@ -105,7 +126,21 @@ describe("request-record IPC contract", () => {
         next_cursor: "cursor-1",
       }),
     ).toEqual({
-      items: [nullOptionalRecord],
+      items: [
+        {
+          ...nullOptionalRecord,
+          parent_request_id: null,
+          attempt_index: 1,
+          child_count: 0,
+          audit: {
+            ...nullOptionalRecord.audit,
+            upstream_request_body_captured: false,
+            upstream_response_content_captured: false,
+            upstream_request_body_truncated: false,
+            upstream_response_content_truncated: false,
+          },
+        },
+      ],
       next_cursor: "cursor-1",
     });
   });
@@ -144,6 +179,9 @@ describe("request-record IPC contract", () => {
         truncated: true,
         captured_bytes: 5,
       },
+      upstream_http_meta: null,
+      upstream_request_body: null,
+      upstream_response_content: null,
     });
     expect(
       parsePurgeResult({ deleted_records: 3, deleted_audit_blobs: 1 }),

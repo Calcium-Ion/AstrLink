@@ -16,6 +16,9 @@ function record(
 ): RequestRecord {
   return {
     id,
+    parent_request_id: null,
+    attempt_index: 1,
+    child_count: 0,
     started_at: startedAt,
     completed_at: null,
     status,
@@ -34,6 +37,10 @@ function record(
       response_content_captured: false,
       request_body_truncated: false,
       response_content_truncated: false,
+      upstream_request_body_captured: false,
+      upstream_response_content_captured: false,
+      upstream_request_body_truncated: false,
+      upstream_response_content_truncated: false,
     },
     privacy_restore: null,
   };

@@ -28,6 +28,7 @@ type RequestRecordStore interface {
 	InsertRequestRecord(context.Context, contract.RequestRecord) error
 	UpsertRequestRecord(context.Context, contract.RequestRecord) error
 	ListRequestRecords(context.Context, RequestRecordListOptions) (RequestRecordPage, error)
+	ListRequestRecordChildren(context.Context, contract.RequestID) ([]contract.RequestRecord, error)
 	GetRequestRecord(context.Context, contract.RequestID) (contract.RequestRecord, error)
 	DeleteRequestRecord(context.Context, contract.RequestID) error
 	PurgeRequestRecords(context.Context, contract.PurgeRequest) (contract.PurgeResult, error)

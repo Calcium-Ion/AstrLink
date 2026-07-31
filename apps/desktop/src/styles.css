@@ -917,6 +917,53 @@ code {
   font-weight: 600;
 }
 
+.record-row-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.record-row-wrap.is-child {
+  margin-left: 1.25rem;
+  border-left: 2px solid color-mix(in srgb, var(--line) 80%, transparent);
+  padding-left: 0.65rem;
+}
+
+.record-row__retries {
+  align-self: center;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.record-row__retries:hover,
+.record-row__retries:focus-visible {
+  color: var(--text);
+}
+
+.record-row__attempt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.record-group__children {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.15rem;
+}
+
+.record-group__loading {
+  margin: 0 0 0 1.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .record-row {
   display: flex;
   width: 100%;

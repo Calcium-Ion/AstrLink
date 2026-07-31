@@ -15,12 +15,25 @@ const (
 	// AuditDirectionHTTPMeta stores the redacted HTTP envelope (method, URL,
 	// headers, response status) as encrypted JSON (ADR 0008).
 	AuditDirectionHTTPMeta AuditDirection = "http_meta"
+	// Per-attempt upstream capture directions. Each retry has its own
+	// request_id, so attempt index is not part of the blob key.
+	AuditDirectionUpstreamRequest  AuditDirection = "upstream_request"
+	AuditDirectionUpstreamResponse AuditDirection = "upstream_response"
+	AuditDirectionUpstreamHTTPMeta AuditDirection = "upstream_http_meta"
 )
 
 func (direction AuditDirection) Valid() bool {
-	return direction == AuditDirectionRequest ||
-		direction == AuditDirectionResponse ||
-		direction == AuditDirectionHTTPMeta
+	switch direction {
+	case AuditDirectionRequest,
+		AuditDirectionResponse,
+		AuditDirectionHTTPMeta,
+		AuditDirectionUpstreamRequest,
+		AuditDirectionUpstreamResponse,
+		AuditDirectionUpstreamHTTPMeta:
+		return true
+	default:
+		return false
+	}
 }
 
 type AuditBlob struct {

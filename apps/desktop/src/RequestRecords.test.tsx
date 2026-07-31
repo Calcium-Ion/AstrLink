@@ -8,6 +8,8 @@ const bridgeMocks = vi.hoisted(() => ({
   deleteRequestRecord: vi.fn(),
   getAuditSettings: vi.fn(),
   getRequestAuditContent: vi.fn(),
+  getRequestRecord: vi.fn(),
+  listRequestRecordChildren: vi.fn(),
   listRequestRecords: vi.fn(),
   purgeRequestRecords: vi.fn(),
   updateAuditSettings: vi.fn(),
@@ -32,8 +34,22 @@ const service: RoutableService = {
   ],
 };
 
+const emptyAudit = {
+  request_body_captured: false,
+  response_content_captured: false,
+  request_body_truncated: false,
+  response_content_truncated: false,
+  upstream_request_body_captured: false,
+  upstream_response_content_captured: false,
+  upstream_request_body_truncated: false,
+  upstream_response_content_truncated: false,
+};
+
 const firstRecord: RequestRecord = {
   id: "req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  parent_request_id: null,
+  attempt_index: 1,
+  child_count: 0,
   started_at: "2026-07-25T10:00:00Z",
   completed_at: "2026-07-25T10:00:01Z",
   status: "succeeded",
@@ -53,10 +69,9 @@ const firstRecord: RequestRecord = {
   },
   error: null,
   audit: {
+    ...emptyAudit,
     request_body_captured: true,
     response_content_captured: true,
-    request_body_truncated: false,
-    response_content_truncated: false,
   },
   privacy_restore: {
     enabled: true,
@@ -80,12 +95,7 @@ const secondRecord: RequestRecord = {
     message: "gateway unavailable",
     retryable: true,
   },
-  audit: {
-    request_body_captured: false,
-    response_content_captured: false,
-    request_body_truncated: false,
-    response_content_truncated: false,
-  },
+  audit: { ...emptyAudit },
 };
 
 function exactButton(
@@ -154,6 +164,10 @@ describe("RequestRecords", () => {
       deleted_audit_blobs: 1,
     });
     bridgeMocks.deleteRequestRecord.mockResolvedValue(undefined);
+    bridgeMocks.listRequestRecordChildren.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
     bridgeMocks.getRequestAuditContent.mockResolvedValue({
       request_id: firstRecord.id,
       http_meta: {
@@ -185,6 +199,9 @@ describe("RequestRecords", () => {
         truncated: true,
         captured_bytes: 5,
       },
+      upstream_http_meta: null,
+      upstream_request_body: null,
+      upstream_response_content: null,
     });
     container = document.createElement("div");
     document.body.append(container);
@@ -225,6 +242,58 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("10 → 20 Token");
     expect(container.textContent).toContain("upstream · upstream_unavailable");
+  });
+
+  it("nests earlier attempts as numbered child requests under the final record", async () => {
+    const root: RequestRecord = {
+      ...firstRecord,
+      attempt_index: 3,
+      child_count: 2,
+    };
+    const children: RequestRecord[] = [
+      {
+        ...secondRecord,
+        id: "req_childaaaaaaaaaaaaaaaaaaaaaaaaa",
+        parent_request_id: root.id,
+        attempt_index: 1,
+        child_count: 0,
+      },
+      {
+        ...secondRecord,
+        id: "req_childbbbbbbbbbbbbbbbbbbbbbbbbb",
+        parent_request_id: root.id,
+        attempt_index: 2,
+        child_count: 0,
+      },
+    ];
+    bridgeMocks.listRequestRecords.mockResolvedValueOnce({
+      items: [root],
+      next_cursor: null,
+    });
+    bridgeMocks.listRequestRecordChildren.mockResolvedValueOnce({
+      items: children,
+      next_cursor: null,
+    });
+
+    await renderRecords();
+    expect(
+      container.querySelector(`[data-record-id="${root.id}"]`)?.textContent,
+    ).toContain("最后一次记录");
+
+    await act(async () => {
+      exactButton("子请求 2 条").click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    expect(bridgeMocks.listRequestRecordChildren).toHaveBeenCalledWith(root.id);
+    const renderedChildren = container.querySelectorAll(
+      ".record-group__children .record-row",
+    );
+    expect(renderedChildren).toHaveLength(2);
+    expect(renderedChildren[0].textContent).toContain("子请求 1");
+    expect(renderedChildren[1].textContent).toContain("子请求 2");
+    expect(exactButton("收起子请求")).not.toBeNull();
   });
 
   it("filters locally so a later status update can still reach the row", async () => {
@@ -338,6 +407,9 @@ describe("RequestRecords", () => {
       http_meta: null,
       request_body: null,
       response_content: null,
+      upstream_http_meta: null,
+      upstream_request_body: null,
+      upstream_response_content: null,
     });
     await renderRecords();
     await act(async () => {
@@ -466,12 +538,7 @@ describe("RequestRecords", () => {
       http_status: null,
       latency_ms: null,
       usage: null,
-      audit: {
-        request_body_captured: false,
-        response_content_captured: false,
-        request_body_truncated: false,
-        response_content_truncated: false,
-      },
+      audit: { ...emptyAudit },
     };
     bridgeMocks.listRequestRecords.mockResolvedValueOnce({
       items: [pending],

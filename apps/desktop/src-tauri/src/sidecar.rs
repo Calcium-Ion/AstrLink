@@ -1381,6 +1381,23 @@ impl CoreManager {
             .map_err(|error| format!("request record returned invalid JSON: {error}"))
     }
 
+    pub async fn list_request_record_children(
+        &self,
+        request_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(request_id)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/requests/{request_id}/children"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request record children returned invalid JSON: {error}"))
+    }
+
     pub async fn delete_request_record(&self, request_id: &str) -> Result<(), String> {
         validate_resource_id(request_id)?;
         self.authenticated_control(

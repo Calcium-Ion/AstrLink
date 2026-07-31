@@ -22,6 +22,13 @@ const localPolicyWarningHeader = "X-AstrLink-Policy-Warning"
 type Target struct {
 	BaseURL        *url.URL
 	RequestHeaders http.Header
+	// ObserveOutbound runs after the outbound request is fully constructed and
+	// immediately before RoundTrip. It is skipped on TargetError. Callers may
+	// tee the request body; the forwarder does not retain the request.
+	ObserveOutbound func(*http.Request)
+	// WrapResponseBody may tee the upstream response body before it is copied
+	// to the client writer. It receives hop-by-hop-stripped response headers.
+	WrapResponseBody func(status int, header http.Header, body io.ReadCloser) io.ReadCloser
 }
 
 // TargetError reports a target rejected before an upstream request was made.
@@ -112,6 +119,10 @@ func (forwarder *Forwarder) Forward(writer http.ResponseWriter, request *http.Re
 	overlayHeaders(outbound.Header, target.RequestHeaders)
 	removeHopByHopHeaders(outbound.Header)
 
+	if target.ObserveOutbound != nil {
+		target.ObserveOutbound(outbound)
+	}
+
 	response, err := forwarder.roundTripper.RoundTrip(outbound)
 	if err != nil {
 		return &UpstreamError{err: err}
@@ -122,19 +133,27 @@ func (forwarder *Forwarder) Forward(writer http.ResponseWriter, request *http.Re
 	if response.Body == nil {
 		return &UpstreamError{err: errors.New("round trip returned a response with a nil body")}
 	}
-	defer response.Body.Close()
 
 	responseHeaders := response.Header.Clone()
 	removeHopByHopHeaders(responseHeaders)
 	removeCORSHeaders(responseHeaders)
 	removeHeaderFold(responseHeaders, localPolicyWarningHeader)
+	body := io.ReadCloser(response.Body)
+	if target.WrapResponseBody != nil {
+		body = target.WrapResponseBody(response.StatusCode, responseHeaders.Clone(), response.Body)
+		if body == nil {
+			_ = response.Body.Close()
+			return &UpstreamError{err: errors.New("response body wrapper returned nil")}
+		}
+	}
+	defer body.Close()
 	copyHeaders(writer.Header(), responseHeaders)
 	writer.WriteHeader(response.StatusCode)
 
 	if err := flush(writer); err != nil {
 		return &ResponseError{err: err}
 	}
-	if err := copyStreaming(writer, response.Body); err != nil {
+	if err := copyStreaming(writer, body); err != nil {
 		return &ResponseError{err: err}
 	}
 	return nil

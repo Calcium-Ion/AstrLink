@@ -349,6 +349,14 @@ async fn get_request_record(
 }
 
 #[tauri::command]
+async fn list_request_record_children(
+    request_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.list_request_record_children(&request_id).await
+}
+
+#[tauri::command]
 async fn delete_request_record(
     request_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -548,6 +556,7 @@ pub fn run() {
             delete_route,
             list_request_records,
             get_request_record,
+            list_request_record_children,
             delete_request_record,
             purge_request_records,
             get_request_audit_content,

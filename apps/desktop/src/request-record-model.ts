@@ -24,6 +24,10 @@ export interface RequestAuditSummary {
   response_content_captured: boolean;
   request_body_truncated: boolean;
   response_content_truncated: boolean;
+  upstream_request_body_captured: boolean;
+  upstream_response_content_captured: boolean;
+  upstream_request_body_truncated: boolean;
+  upstream_response_content_truncated: boolean;
 }
 
 export interface PrivacyRestoreSummary {
@@ -35,6 +39,9 @@ export interface PrivacyRestoreSummary {
 
 export interface RequestRecord {
   id: string;
+  parent_request_id: string | null;
+  attempt_index: number;
+  child_count: number;
   started_at: string;
   completed_at: string | null;
   status: RequestStatus;
@@ -94,6 +101,9 @@ export interface AuditContent {
   http_meta: AuditHTTPMeta | null;
   request_body: AuditContentPart | null;
   response_content: AuditContentPart | null;
+  upstream_http_meta: AuditHTTPMeta | null;
+  upstream_request_body: AuditContentPart | null;
+  upstream_response_content: AuditContentPart | null;
 }
 
 export interface PurgeResult {
@@ -184,6 +194,11 @@ function parseError(
   };
 }
 
+function optionalBoolAt(value: unknown, path: string, fallback = false): boolean {
+  if (value === undefined) return fallback;
+  return boolAt(value, path);
+}
+
 function parseAuditSummary(value: unknown, path: string): RequestAuditSummary {
   const audit = objectAt(value, path);
   return {
@@ -202,6 +217,22 @@ function parseAuditSummary(value: unknown, path: string): RequestAuditSummary {
     response_content_truncated: boolAt(
       audit.response_content_truncated,
       `${path}.response_content_truncated`,
+    ),
+    upstream_request_body_captured: optionalBoolAt(
+      audit.upstream_request_body_captured,
+      `${path}.upstream_request_body_captured`,
+    ),
+    upstream_response_content_captured: optionalBoolAt(
+      audit.upstream_response_content_captured,
+      `${path}.upstream_response_content_captured`,
+    ),
+    upstream_request_body_truncated: optionalBoolAt(
+      audit.upstream_request_body_truncated,
+      `${path}.upstream_request_body_truncated`,
+    ),
+    upstream_response_content_truncated: optionalBoolAt(
+      audit.upstream_response_content_truncated,
+      `${path}.upstream_response_content_truncated`,
     ),
   };
 }
@@ -240,8 +271,22 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     invalid(`${path}.status`, "状态枚举无效");
   }
 
+  const attemptIndex = Object.hasOwn(record, "attempt_index")
+    ? intAt(record.attempt_index, `${path}.attempt_index`)
+    : 1;
+  const childCount = Object.hasOwn(record, "child_count")
+    ? intAt(record.child_count, `${path}.child_count`)
+    : 0;
+  if (attemptIndex < 0) invalid(`${path}.attempt_index`, "不得为负数");
+  if (childCount < 0) invalid(`${path}.child_count`, "不得为负数");
+
   return {
     id: stringAt(record.id, `${path}.id`),
+    parent_request_id: Object.hasOwn(record, "parent_request_id")
+      ? nullableStringAt(record.parent_request_id, `${path}.parent_request_id`)
+      : null,
+    attempt_index: attemptIndex,
+    child_count: childCount,
     started_at: stringAt(record.started_at, `${path}.started_at`),
     completed_at: nullableStringAt(record.completed_at, `${path}.completed_at`),
     status: record.status as RequestStatus,
@@ -350,6 +395,24 @@ export function parseAuditContent(value: unknown): AuditContent {
       content.response_content,
       "$.response_content",
     ),
+    upstream_http_meta: Object.hasOwn(content, "upstream_http_meta")
+      ? parseAuditHTTPMeta(content.upstream_http_meta, "$.upstream_http_meta")
+      : null,
+    upstream_request_body: Object.hasOwn(content, "upstream_request_body")
+      ? parseAuditContentPart(
+          content.upstream_request_body,
+          "$.upstream_request_body",
+        )
+      : null,
+    upstream_response_content: Object.hasOwn(
+      content,
+      "upstream_response_content",
+    )
+      ? parseAuditContentPart(
+          content.upstream_response_content,
+          "$.upstream_response_content",
+        )
+      : null,
   };
 }
 

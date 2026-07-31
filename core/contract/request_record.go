@@ -75,10 +75,14 @@ func (summary ErrorSummary) Validate() error {
 }
 
 type AuditRecordSummary struct {
-	RequestBodyCaptured      bool `json:"request_body_captured"`
-	ResponseContentCaptured  bool `json:"response_content_captured"`
-	RequestBodyTruncated     bool `json:"request_body_truncated"`
-	ResponseContentTruncated bool `json:"response_content_truncated"`
+	RequestBodyCaptured              bool `json:"request_body_captured"`
+	ResponseContentCaptured          bool `json:"response_content_captured"`
+	RequestBodyTruncated             bool `json:"request_body_truncated"`
+	ResponseContentTruncated         bool `json:"response_content_truncated"`
+	UpstreamRequestBodyCaptured      bool `json:"upstream_request_body_captured"`
+	UpstreamResponseContentCaptured  bool `json:"upstream_response_content_captured"`
+	UpstreamRequestBodyTruncated     bool `json:"upstream_request_body_truncated"`
+	UpstreamResponseContentTruncated bool `json:"upstream_response_content_truncated"`
 }
 
 // PrivacyRestoreSummary contains bounded, non-sensitive diagnostics for the
@@ -107,6 +111,9 @@ func NotCapturedAuditSummary() AuditRecordSummary {
 
 type RequestRecord struct {
 	ID                 RequestID              `json:"id"`
+	ParentRequestID    *RequestID             `json:"parent_request_id"`
+	AttemptIndex       int                    `json:"attempt_index"`
+	ChildCount         int                    `json:"child_count"`
 	StartedAt          time.Time              `json:"started_at"`
 	CompletedAt        *time.Time             `json:"completed_at"`
 	Status             RequestStatus          `json:"status"`
@@ -129,6 +136,23 @@ type RequestRecord struct {
 func (record RequestRecord) Validate() error {
 	if err := record.ID.Validate(); err != nil {
 		return err
+	}
+	if record.ParentRequestID != nil {
+		if err := record.ParentRequestID.Validate(); err != nil {
+			return fmt.Errorf("parent_request_id: %w", err)
+		}
+		if *record.ParentRequestID == record.ID {
+			return fmt.Errorf("parent_request_id must not equal id")
+		}
+	}
+	if record.AttemptIndex < 0 {
+		return fmt.Errorf("attempt_index must be non-negative")
+	}
+	if record.ChildCount < 0 {
+		return fmt.Errorf("child_count must be non-negative")
+	}
+	if record.ParentRequestID != nil && record.ChildCount != 0 {
+		return fmt.Errorf("child records must have child_count 0")
 	}
 	if record.StartedAt.IsZero() {
 		return fmt.Errorf("started_at is required")

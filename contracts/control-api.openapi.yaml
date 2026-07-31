@@ -75,6 +75,7 @@ x-astrlink-implementation:
     - GET /control/v1/requests
     - GET /control/v1/requests/{request_id}
     - DELETE /control/v1/requests/{request_id}
+    - GET /control/v1/requests/{request_id}/children
     - POST /control/v1/requests/purge
     - GET /control/v1/requests/{request_id}/audit
     - GET /control/v1/audit-settings
@@ -1155,8 +1156,13 @@ paths:
     get:
       tags: [Requests]
       operationId: listRequestRecords
-      summary: List request metadata records.
-      description: This operation never returns request or response body content.
+      summary: List root request metadata records.
+      description: |
+        Paginates root records only (parent_request_id null). Failed retry children
+        are not listed here; fetch them via /requests/{request_id}/children.
+        Service/status/protocol filters that match a child still surface its root
+        group. Time ordering and cursors are based on the root. This operation
+        never returns request or response body content.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -1233,7 +1239,8 @@ paths:
         Available only through the authenticated local control plane. A null part
         means that direction was disabled or no content was captured. This response
         must not be logged, cached, included in diagnostics, or exported as ordinary
-        configuration.
+        configuration. Root records may expose client and upstream sides; retry
+        children expose only their own upstream capture fields.
       responses:
         "200":
           description: Decrypted audit content.
@@ -1250,6 +1257,33 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /control/v1/requests/{request_id}/children:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      tags: [Requests]
+      operationId: listRequestRecordChildren
+      summary: List failed retry attempts folded under a root request record.
+      description: |
+        Returns independent child request records for earlier upstream attempts,
+        ordered by attempt_index ascending. The parent request_id must identify a
+        root record (parent_request_id null). Each child remains addressable through
+        the ordinary record and audit endpoints.
+      responses:
+        "200":
+          description: Child request metadata without body content.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestRecordPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /control/v1/requests/purge:
     x-astrlink-implementation-status: implemented
     post:
@@ -2773,6 +2807,9 @@ components:
       type: object
       required:
         - id
+        - parent_request_id
+        - attempt_index
+        - child_count
         - started_at
         - completed_at
         - status
@@ -2792,6 +2829,23 @@ components:
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        parent_request_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+          description: |
+            Null for the final upstream attempt (list root). Set to the root id for
+            earlier failed retry attempts demoted to independent child records.
+        attempt_index:
+          type: integer
+          minimum: 0
+          description: |
+            1-based index over real upstream RoundTrip attempts. 0 means the request
+            never reached upstream (local blocked/failed). Legacy rows migrate as 1.
+        child_count:
+          type: integer
+          minimum: 0
+          description: Derived count of demoted retry children under a root; always 0 for children.
         started_at:
           type: string
           format: date-time
@@ -2895,6 +2949,10 @@ components:
         - response_content_captured
         - request_body_truncated
         - response_content_truncated
+        - upstream_request_body_captured
+        - upstream_response_content_captured
+        - upstream_request_body_truncated
+        - upstream_response_content_truncated
       properties:
         request_body_captured:
           type: boolean
@@ -2903,6 +2961,14 @@ components:
         request_body_truncated:
           type: boolean
         response_content_truncated:
+          type: boolean
+        upstream_request_body_captured:
+          type: boolean
+        upstream_response_content_captured:
+          type: boolean
+        upstream_request_body_truncated:
+          type: boolean
+        upstream_response_content_truncated:
           type: boolean
       additionalProperties: false
     PrivacyRestoreSummary:
@@ -2923,7 +2989,14 @@ components:
       additionalProperties: false
     AuditContent:
       type: object
-      required: [request_id, http_meta, request_body, response_content]
+      required:
+        - request_id
+        - http_meta
+        - request_body
+        - response_content
+        - upstream_http_meta
+        - upstream_request_body
+        - upstream_response_content
       properties:
         request_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -2931,15 +3004,34 @@ components:
           oneOf:
             - $ref: "#/components/schemas/AuditHTTPMeta"
             - type: "null"
-          description: Redacted HTTP envelope (ADR 0008); null when http_meta capture was disabled or the record predates it.
+          description: Redacted client HTTP envelope (ADR 0008); null for children and when capture was disabled.
         request_body:
           oneOf:
             - $ref: "#/components/schemas/AuditContentPart"
             - type: "null"
+          description: Original client request body before privacy/model/protocol rewrites; null on children.
         response_content:
           oneOf:
             - $ref: "#/components/schemas/AuditContentPart"
             - type: "null"
+          description: Client-visible response after restore transforms; null on children.
+        upstream_http_meta:
+          oneOf:
+            - $ref: "#/components/schemas/AuditHTTPMeta"
+            - type: "null"
+          description: |
+            Redacted upstream envelope for this attempt. URL is path/query only —
+            never an upstream origin. Credentials are masked at capture time.
+        upstream_request_body:
+          oneOf:
+            - $ref: "#/components/schemas/AuditContentPart"
+            - type: "null"
+          description: Exact upstream request body after privacy, model rewrite, and RelayKit conversion.
+        upstream_response_content:
+          oneOf:
+            - $ref: "#/components/schemas/AuditContentPart"
+            - type: "null"
+          description: Raw upstream response bytes before RelayKit/alias/privacy restoration.
       additionalProperties: false
     AuditHeader:
       type: object

@@ -142,6 +142,11 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 type forwarderFunc func(http.ResponseWriter, *http.Request, transport.Target) error
 
 func (function forwarderFunc) Forward(writer http.ResponseWriter, request *http.Request, target transport.Target) error {
+	// Mirror production transport.Forward so attempt bookkeeping runs under
+	// test doubles. Response-body tees are covered by transport.New tests.
+	if target.ObserveOutbound != nil {
+		target.ObserveOutbound(request)
+	}
 	return function(writer, request, target)
 }
 

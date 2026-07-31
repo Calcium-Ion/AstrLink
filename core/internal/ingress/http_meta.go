@@ -211,6 +211,55 @@ func RedactRequestMeta(request *http.Request) contract.AuditHTTPMeta {
 	return meta
 }
 
+// RedactUpstreamRequestMeta snapshots the redacted outbound envelope after the
+// transport has constructed the normalized upstream request. The URL is path
+// and query only — scheme and host are never persisted.
+func RedactUpstreamRequestMeta(request *http.Request) contract.AuditHTTPMeta {
+	meta := contract.AuditHTTPMeta{
+		RequestHeaders:  []contract.AuditHeader{},
+		ResponseHeaders: []contract.AuditHeader{},
+	}
+	if request == nil {
+		return meta
+	}
+	meta.Method = request.Method
+	meta.URL = redactUpstreamURL(request.URL)
+	meta.HTTPVersion = request.Proto
+	meta.RequestHeaders = redactHeaders(request.Header)
+	return meta
+}
+
+// redactUpstreamURL keeps path and redacted query only. Origin, userinfo, and
+// fragment are discarded so endpoint hosts never reach audit storage.
+func redactUpstreamURL(requestURL *url.URL) string {
+	if requestURL == nil {
+		return ""
+	}
+	path := requestURL.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	rendered := path
+	if requestURL.RawQuery != "" {
+		pairs := strings.Split(requestURL.RawQuery, "&")
+		for index, pair := range pairs {
+			name, _, hasValue := strings.Cut(pair, "=")
+			decoded, err := url.QueryUnescape(name)
+			if err != nil {
+				decoded = name
+			}
+			if hasValue && queryNameSensitive(decoded) {
+				pairs[index] = name + "=<redacted>"
+			}
+		}
+		rendered += "?" + strings.Join(pairs, "&")
+	}
+	if len(rendered) > maxCapturedURLLength {
+		rendered = rendered[:maxCapturedURLLength] + "…"
+	}
+	return rendered
+}
+
 // RedactResponseHeaders converts the local response header map into redacted
 // capture lines. Hop-by-hop headers are already stripped by the forwarder.
 func RedactResponseHeaders(headers http.Header) []contract.AuditHeader {

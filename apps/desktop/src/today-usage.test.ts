@@ -5,9 +5,13 @@ import { aggregateTodayUsage, startOfTodayIso } from "./today-usage";
 
 function record(
   usage: RequestRecord["usage"],
+  overrides: Partial<RequestRecord> = {},
 ): RequestRecord {
   return {
     id: "req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    parent_request_id: null,
+    attempt_index: 1,
+    child_count: 0,
     started_at: "2026-07-25T10:00:00Z",
     completed_at: null,
     status: "succeeded",
@@ -26,8 +30,13 @@ function record(
       response_content_captured: false,
       request_body_truncated: false,
       response_content_truncated: false,
+      upstream_request_body_captured: false,
+      upstream_response_content_captured: false,
+      upstream_request_body_truncated: false,
+      upstream_response_content_truncated: false,
     },
     privacy_restore: null,
+    ...overrides,
   };
 }
 
@@ -61,6 +70,35 @@ describe("today usage aggregation", () => {
 
   it("preserves the capped flag", () => {
     expect(aggregateTodayUsage([], true).capped).toBe(true);
+  });
+
+  it("counts only successful root records", () => {
+    expect(
+      aggregateTodayUsage(
+        [
+          record({ input_tokens: 1, output_tokens: 1, total_tokens: 2 }),
+          record(
+            { input_tokens: 9, output_tokens: 9, total_tokens: 18 },
+            { status: "failed" },
+          ),
+          record(
+            { input_tokens: 5, output_tokens: 5, total_tokens: 10 },
+            {
+              id: "req_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              parent_request_id: "req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              attempt_index: 1,
+            },
+          ),
+        ],
+        false,
+      ),
+    ).toEqual({
+      requests: 1,
+      input_tokens: 1,
+      output_tokens: 1,
+      total_tokens: 2,
+      capped: false,
+    });
   });
 
   it("returns local midnight as an ISO string", () => {

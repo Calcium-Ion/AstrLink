@@ -5,6 +5,9 @@ import type { AuditContent, RequestRecord } from "./request-record-model";
 
 const record: RequestRecord = {
   id: "req_bundle_test",
+  parent_request_id: null,
+  attempt_index: 1,
+  child_count: 0,
   started_at: "2026-07-25T10:00:00Z",
   completed_at: "2026-07-25T10:00:01Z",
   status: "succeeded",
@@ -28,6 +31,10 @@ const record: RequestRecord = {
     response_content_captured: true,
     request_body_truncated: false,
     response_content_truncated: false,
+    upstream_request_body_captured: true,
+    upstream_response_content_captured: true,
+    upstream_request_body_truncated: false,
+    upstream_response_content_truncated: false,
   },
   privacy_restore: {
     enabled: true,
@@ -68,7 +75,33 @@ const content: AuditContent = {
     truncated: true,
     captured_bytes: 23,
   },
-};
+  upstream_http_meta: {
+    method: "POST",
+    url: "/prefix/v1/responses?stream=true",
+    http_version: "HTTP/1.1",
+    request_headers: [
+      {
+        name: "authorization",
+        value: "Bearer <redacted:14 chars>",
+        redacted: true,
+      },
+    ],
+    response_status: 200,
+    response_headers: [],
+  },
+  upstream_request_body: {
+    media_type: "application/json",
+    content: '{"model":"upstream-model"}',
+    truncated: false,
+    captured_bytes: 26,
+  },
+  upstream_response_content: {
+    media_type: "text/event-stream",
+    content: 'data: {"type":"raw"}\n\n',
+    truncated: false,
+    captured_bytes: 22,
+  },
+}
 
 describe("fence", () => {
   it("survives content containing backtick fences", () => {
@@ -98,14 +131,18 @@ describe("buildRecordBundle", () => {
       "- 隐私还原: 已开启 · 映射 4 · 已还原 5 · 安全降级 0",
     );
     expect(bundle).toContain("Primary gateway");
-    expect(bundle).toContain("## HTTP 请求");
+    expect(bundle).toContain("## 客户端 HTTP 请求");
     expect(bundle).toContain("POST /v1/responses?stream=true HTTP/1.1");
     expect(bundle).toContain("authorization: Bearer <redacted:51 chars>");
-    expect(bundle).toContain("## HTTP 响应");
+    expect(bundle).toContain("## 客户端 HTTP 响应");
     expect(bundle).toContain("x-request-id: req_up_1");
-    expect(bundle).toContain("## 请求体");
+    expect(bundle).toContain("## 上游 HTTP 请求");
+    expect(bundle).toContain("POST /prefix/v1/responses?stream=true HTTP/1.1");
+    expect(bundle).toContain("## 客户端请求体");
     expect(bundle).toContain('{"model":"gpt-4.1"}');
-    expect(bundle).toContain("## 响应内容");
+    expect(bundle).toContain("## 客户端响应内容");
+    expect(bundle).toContain("## 上游请求体");
+    expect(bundle).toContain('{"model":"upstream-model"}');
     // Truncation must be flagged inline so an LLM reading the bundle knows
     // the bytes are incomplete.
     expect(bundle).toContain("已截断");
@@ -115,26 +152,27 @@ describe("buildRecordBundle", () => {
     const bundle = buildRecordBundle(record, content, {
       includeBodies: false,
     });
-    expect(bundle).toContain("## HTTP 请求");
-    expect(bundle).not.toContain("## 请求体");
+    expect(bundle).toContain("## 客户端 HTTP 请求");
+    expect(bundle).not.toContain("## 客户端请求体");
     expect(bundle).not.toContain('{"model":"gpt-4.1"}');
   });
 
   it("states explicitly when http metadata was never captured", () => {
     const bundle = buildRecordBundle(
       record,
-      { ...content, http_meta: null },
+      { ...content, http_meta: null, upstream_http_meta: null },
       {},
     );
     expect(bundle).toContain("（此记录未捕获 HTTP 元数据）");
-    expect(bundle).not.toContain("## HTTP 请求");
+    expect(bundle).not.toContain("## 客户端 HTTP 请求");
   });
 
   it("handles a record with no decrypted content at all", () => {
     const bundle = buildRecordBundle(record, null, {});
     expect(bundle).toContain("（此记录未捕获 HTTP 元数据）");
-    expect(bundle).toContain("## 请求体\n（未捕获）");
-    expect(bundle).toContain("## 响应内容\n（未捕获）");
+    expect(bundle).toContain("## 客户端请求体\n（未捕获）");
+    expect(bundle).toContain("## 客户端响应内容\n（未捕获）");
+    expect(bundle).toContain("## 上游请求体\n（未捕获）");
   });
 
   it("includes the error section for failed records", () => {

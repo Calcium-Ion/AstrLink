@@ -14,6 +14,13 @@ import (
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
+const requestRecordSelectColumns = `
+    id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
+    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
+    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json, created_at,
+    (SELECT COUNT(*) FROM request_records children
+     WHERE children.parent_request_id = request_records.id) AS child_count`
+
 func (store *Store) InsertRequestRecord(ctx context.Context, record contract.RequestRecord) error {
 	if err := record.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
@@ -23,14 +30,14 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 		return err
 	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
-    id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, privacy_restore_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.id, row.startedAt, row.completedAt, row.status, row.inputProtocol, row.requestedModel,
-		row.streaming, row.routeID, row.endpointID, row.localAccessTokenID, row.planJSON,
-		row.httpStatus, row.latencyMs, row.usageJSON, row.errorJSON, row.auditJSON,
-		row.privacyRestoreJSON, row.createdAt,
+    id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
+    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
+    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
+		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
+		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
+		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.createdAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert request record: %w", err)
@@ -51,11 +58,13 @@ func (store *Store) UpsertRequestRecord(ctx context.Context, record contract.Req
 		return err
 	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
-    id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, privacy_restore_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
+    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
+    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
+    parent_request_id = excluded.parent_request_id,
+    attempt_index = excluded.attempt_index,
     started_at = excluded.started_at,
     completed_at = excluded.completed_at,
     status = excluded.status,
@@ -73,10 +82,10 @@ ON CONFLICT(id) DO UPDATE SET
     audit_json = excluded.audit_json,
     privacy_restore_json = excluded.privacy_restore_json
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
-		row.id, row.startedAt, row.completedAt, row.status, row.inputProtocol, row.requestedModel,
-		row.streaming, row.routeID, row.endpointID, row.localAccessTokenID, row.planJSON,
-		row.httpStatus, row.latencyMs, row.usageJSON, row.errorJSON, row.auditJSON,
-		row.privacyRestoreJSON, row.createdAt,
+		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
+		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
+		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
+		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.createdAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert request record: %w", err)
@@ -118,10 +127,7 @@ func (store *Store) GetRequestRecord(ctx context.Context, id contract.RequestID)
 	if err := id.Validate(); err != nil {
 		return contract.RequestRecord{}, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
-	row := store.db.QueryRowContext(ctx, `SELECT
-    id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, privacy_restore_json, created_at
+	row := store.db.QueryRowContext(ctx, `SELECT`+requestRecordSelectColumns+`
 FROM request_records WHERE id = ?`, id)
 	record, err := scanRequestRecord(row)
 	if err != nil {
@@ -142,9 +148,35 @@ func (store *Store) DeleteRequestRecord(ctx context.Context, id contract.Request
 		return fmt.Errorf("begin request delete: %w", err)
 	}
 	defer rollbackOnError(transaction, &err)
-	if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs WHERE request_id = ?`, id); err != nil {
+
+	var parentID sql.NullString
+	if err = transaction.QueryRowContext(ctx,
+		`SELECT parent_request_id FROM request_records WHERE id = ?`, id,
+	).Scan(&parentID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = fmt.Errorf("%w: request %q", storagecontract.ErrNotFound, id)
+			return err
+		}
+		return fmt.Errorf("lookup request record: %w", err)
+	}
+
+	// Root delete cascades to children via FK; delete child audit blobs for the
+	// whole group first so purge counts stay accurate even if CASCADE is off.
+	if !parentID.Valid {
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs WHERE request_id IN (
+    SELECT id FROM request_records WHERE id = ? OR parent_request_id = ?
+)`, id, id); err != nil {
+			return fmt.Errorf("delete request audit blobs: %w", err)
+		}
+		if _, err = transaction.ExecContext(ctx,
+			`DELETE FROM request_records WHERE parent_request_id = ?`, id,
+		); err != nil {
+			return fmt.Errorf("delete child request records: %w", err)
+		}
+	} else if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs WHERE request_id = ?`, id); err != nil {
 		return fmt.Errorf("delete request audit blobs: %w", err)
 	}
+
 	result, err := transaction.ExecContext(ctx, `DELETE FROM request_records WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete request record: %w", err)
@@ -184,12 +216,9 @@ func (store *Store) ListRequestRecords(
 	}
 
 	query := strings.Builder{}
-	query.WriteString(`SELECT
-    id, started_at, completed_at, status, input_protocol, requested_model, streaming,
-    route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, privacy_restore_json, created_at
-FROM request_records WHERE 1 = 1`)
-	args := make([]any, 0, 8)
+	query.WriteString(`SELECT` + requestRecordSelectColumns + `
+FROM request_records WHERE parent_request_id IS NULL`)
+	args := make([]any, 0, 12)
 	if options.From != nil {
 		query.WriteString(` AND started_at >= ?`)
 		args = append(args, options.From.UTC().Format(time.RFC3339Nano))
@@ -198,17 +227,38 @@ FROM request_records WHERE 1 = 1`)
 		query.WriteString(` AND started_at < ?`)
 		args = append(args, options.To.UTC().Format(time.RFC3339Nano))
 	}
-	if options.Protocol != nil {
-		query.WriteString(` AND input_protocol = ?`)
-		args = append(args, string(*options.Protocol))
-	}
-	if options.ServiceID != nil {
-		query.WriteString(` AND service_id = ?`)
-		args = append(args, string(*options.ServiceID))
-	}
-	if options.Status != nil {
-		query.WriteString(` AND status = ?`)
-		args = append(args, string(*options.Status))
+	if options.Protocol != nil || options.ServiceID != nil || options.Status != nil {
+		query.WriteString(` AND (`)
+		directParts := make([]string, 0, 3)
+		if options.Protocol != nil {
+			directParts = append(directParts, `input_protocol = ?`)
+			args = append(args, string(*options.Protocol))
+		}
+		if options.ServiceID != nil {
+			directParts = append(directParts, `service_id = ?`)
+			args = append(args, string(*options.ServiceID))
+		}
+		if options.Status != nil {
+			directParts = append(directParts, `status = ?`)
+			args = append(args, string(*options.Status))
+		}
+		query.WriteString(strings.Join(directParts, ` AND `))
+		query.WriteString(` OR EXISTS (
+    SELECT 1 FROM request_records children
+    WHERE children.parent_request_id = request_records.id`)
+		if options.Protocol != nil {
+			query.WriteString(` AND children.input_protocol = ?`)
+			args = append(args, string(*options.Protocol))
+		}
+		if options.ServiceID != nil {
+			query.WriteString(` AND children.service_id = ?`)
+			args = append(args, string(*options.ServiceID))
+		}
+		if options.Status != nil {
+			query.WriteString(` AND children.status = ?`)
+			args = append(args, string(*options.Status))
+		}
+		query.WriteString(`))`)
 	}
 	if options.Cursor != "" {
 		query.WriteString(` AND (started_at < ? OR (started_at = ? AND id < ?))`)
@@ -243,6 +293,46 @@ FROM request_records WHERE 1 = 1`)
 		page.NextCursor = encodeRequestRecordCursor(last.StartedAt, last.ID)
 	}
 	return page, nil
+}
+
+func (store *Store) ListRequestRecordChildren(
+	ctx context.Context,
+	parentID contract.RequestID,
+) ([]contract.RequestRecord, error) {
+	if err := parentID.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	var exists int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT 1 FROM request_records WHERE id = ? AND parent_request_id IS NULL`, parentID,
+	).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: request %q", storagecontract.ErrNotFound, parentID)
+		}
+		return nil, fmt.Errorf("lookup parent request record: %w", err)
+	}
+
+	rows, err := store.db.QueryContext(ctx, `SELECT`+requestRecordSelectColumns+`
+FROM request_records
+WHERE parent_request_id = ?
+ORDER BY attempt_index ASC, id ASC`, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("list request record children: %w", err)
+	}
+	defer rows.Close()
+
+	children := make([]contract.RequestRecord, 0)
+	for rows.Next() {
+		record, err := scanRequestRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		children = append(children, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate request record children: %w", err)
+	}
+	return children, nil
 }
 
 func (store *Store) PurgeRequestRecords(
@@ -283,32 +373,53 @@ func (store *Store) PurgeRequestRecords(
 		return contract.PurgeResult{DeletedRecords: int(deleted), DeletedAuditBlobs: blobCount}, nil
 	case contract.PurgeScopeBefore:
 		before := request.Before.UTC().Format(time.RFC3339Nano)
+		// Aged roots take their children with them. Aged children of surviving
+		// roots are removed independently so retention never leaves orphans.
 		if err = transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_blobs
-WHERE request_id IN (SELECT id FROM request_records WHERE started_at < ?)`, before).Scan(&blobCount); err != nil {
+WHERE request_id IN (
+    SELECT id FROM request_records WHERE started_at < ?
+    UNION
+    SELECT id FROM request_records WHERE parent_request_id IN (
+        SELECT id FROM request_records WHERE parent_request_id IS NULL AND started_at < ?
+    )
+)`, before, before).Scan(&blobCount); err != nil {
 			return contract.PurgeResult{}, fmt.Errorf("count purge audit blobs: %w", err)
 		}
+		var recordCount int
+		if err = transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM request_records WHERE id IN (
+    SELECT id FROM request_records WHERE started_at < ?
+    UNION
+    SELECT id FROM request_records WHERE parent_request_id IN (
+        SELECT id FROM request_records WHERE parent_request_id IS NULL AND started_at < ?
+    )
+)`, before, before).Scan(&recordCount); err != nil {
+			return contract.PurgeResult{}, fmt.Errorf("count purge request records: %w", err)
+		}
 		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs
-WHERE request_id IN (SELECT id FROM request_records WHERE started_at < ?)`, before); err != nil {
+WHERE request_id IN (
+    SELECT id FROM request_records WHERE started_at < ?
+    UNION
+    SELECT id FROM request_records WHERE parent_request_id IN (
+        SELECT id FROM request_records WHERE parent_request_id IS NULL AND started_at < ?
+    )
+)`, before, before); err != nil {
 			return contract.PurgeResult{}, fmt.Errorf("purge audit blobs: %w", err)
 		}
-		result, execErr := transaction.ExecContext(
-			ctx,
-			`DELETE FROM request_records WHERE started_at < ?`,
-			before,
-		)
-		if execErr != nil {
-			err = execErr
-			return contract.PurgeResult{}, fmt.Errorf("purge request records: %w", err)
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM request_records
+WHERE parent_request_id IN (
+    SELECT id FROM request_records WHERE parent_request_id IS NULL AND started_at < ?
+)`, before); err != nil {
+			return contract.PurgeResult{}, fmt.Errorf("purge child request records: %w", err)
 		}
-		deleted, rowsErr := result.RowsAffected()
-		if rowsErr != nil {
-			err = rowsErr
-			return contract.PurgeResult{}, fmt.Errorf("read purge result: %w", err)
+		if _, err = transaction.ExecContext(ctx,
+			`DELETE FROM request_records WHERE started_at < ?`, before,
+		); err != nil {
+			return contract.PurgeResult{}, fmt.Errorf("purge request records: %w", err)
 		}
 		if err = transaction.Commit(); err != nil {
 			return contract.PurgeResult{}, fmt.Errorf("commit request purge: %w", err)
 		}
-		return contract.PurgeResult{DeletedRecords: int(deleted), DeletedAuditBlobs: blobCount}, nil
+		return contract.PurgeResult{DeletedRecords: recordCount, DeletedAuditBlobs: blobCount}, nil
 	default:
 		err = fmt.Errorf("%w: unknown purge scope", storagecontract.ErrInvalidArgument)
 		return contract.PurgeResult{}, err
@@ -317,6 +428,8 @@ WHERE request_id IN (SELECT id FROM request_records WHERE started_at < ?)`, befo
 
 type requestRecordRow struct {
 	id                 string
+	parentRequestID    any
+	attemptIndex       int
 	startedAt          string
 	completedAt        any
 	status             string
@@ -343,12 +456,16 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 	}
 	row := requestRecordRow{
 		id:            string(record.ID),
+		attemptIndex:  record.AttemptIndex,
 		startedAt:     record.StartedAt.UTC().Format(time.RFC3339Nano),
 		status:        string(record.Status),
 		inputProtocol: string(record.InputProtocol),
 		streaming:     boolToInt(record.Streaming),
 		auditJSON:     string(auditJSON),
 		createdAt:     createdAt.Format(time.RFC3339Nano),
+	}
+	if record.ParentRequestID != nil {
+		row.parentRequestID = string(*record.ParentRequestID)
 	}
 	if record.CompletedAt != nil {
 		row.completedAt = record.CompletedAt.UTC().Format(time.RFC3339Nano)
@@ -409,16 +526,18 @@ type scannable interface {
 func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	var (
 		id, startedAt, status, inputProtocol, auditJSON, createdAt string
+		parentRequestID                                            sql.NullString
+		attemptIndex, childCount, streaming                        int
 		completedAt, requestedModel, routeID, endpointID           sql.NullString
 		localAccessTokenID, planJSON, usageJSON, errorJSON         sql.NullString
 		privacyRestoreJSON                                         sql.NullString
-		streaming                                                  int
 		httpStatus, latencyMs                                      sql.NullInt64
 	)
 	if err := row.Scan(
-		&id, &startedAt, &completedAt, &status, &inputProtocol, &requestedModel, &streaming,
-		&routeID, &endpointID, &localAccessTokenID, &planJSON, &httpStatus, &latencyMs,
-		&usageJSON, &errorJSON, &auditJSON, &privacyRestoreJSON, &createdAt,
+		&id, &parentRequestID, &attemptIndex, &startedAt, &completedAt, &status, &inputProtocol,
+		&requestedModel, &streaming, &routeID, &endpointID, &localAccessTokenID, &planJSON,
+		&httpStatus, &latencyMs, &usageJSON, &errorJSON, &auditJSON, &privacyRestoreJSON,
+		&createdAt, &childCount,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -428,10 +547,16 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	}
 	record := contract.RequestRecord{
 		ID:            contract.RequestID(id),
+		AttemptIndex:  attemptIndex,
+		ChildCount:    childCount,
 		StartedAt:     started.UTC(),
 		Status:        contract.RequestStatus(status),
 		InputProtocol: contract.ProtocolID(inputProtocol),
 		Streaming:     streaming != 0,
+	}
+	if parentRequestID.Valid {
+		value := contract.RequestID(parentRequestID.String)
+		record.ParentRequestID = &value
 	}
 	if completedAt.Valid {
 		completed, err := time.Parse(time.RFC3339Nano, completedAt.String)

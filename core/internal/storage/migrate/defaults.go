@@ -349,5 +349,36 @@ FROM endpoint_credentials`,
 				`ALTER TABLE request_records ADD COLUMN privacy_restore_json TEXT`,
 			},
 		},
+		{
+			Version: 14,
+			Name:    "independent_upstream_attempt_records",
+			// Roots keep a stable client-call id; failed retries are demoted to
+			// independent child rows. Audit directions expand for per-attempt
+			// upstream request/response/http_meta capture.
+			Statements: []string{
+				`ALTER TABLE request_records ADD COLUMN parent_request_id TEXT REFERENCES request_records(id) ON DELETE CASCADE`,
+				`ALTER TABLE request_records ADD COLUMN attempt_index INTEGER NOT NULL DEFAULT 1 CHECK(attempt_index >= 0)`,
+				`CREATE INDEX request_records_parent_id_idx ON request_records (parent_request_id)`,
+				`CREATE INDEX request_records_parent_attempt_idx ON request_records (parent_request_id, attempt_index)`,
+				`CREATE TABLE audit_blobs_new (
+    request_id TEXT NOT NULL REFERENCES request_records(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK(direction IN (
+        'request', 'response', 'http_meta',
+        'upstream_request', 'upstream_response', 'upstream_http_meta'
+    )),
+    media_type TEXT NOT NULL,
+    nonce BLOB NOT NULL,
+    ciphertext BLOB NOT NULL,
+    truncated INTEGER NOT NULL CHECK(truncated IN (0, 1)),
+    captured_bytes INTEGER NOT NULL CHECK(captured_bytes >= 0),
+    created_at TEXT NOT NULL,
+    UNIQUE(request_id, direction)
+)`,
+				`INSERT INTO audit_blobs_new SELECT * FROM audit_blobs`,
+				`DROP TABLE audit_blobs`,
+				`ALTER TABLE audit_blobs_new RENAME TO audit_blobs`,
+				`CREATE INDEX audit_blobs_created_at_idx ON audit_blobs (created_at)`,
+			},
+		},
 	}
 }

@@ -59,6 +59,30 @@ function partSection(title: string, part: AuditContentPart | null): string[] {
   return lines;
 }
 
+function httpSection(title: string, meta: NonNullable<AuditContent["http_meta"]> | null): string[] {
+  if (meta === null) {
+    return ["", `## ${title}`, "（此记录未捕获 HTTP 元数据）"];
+  }
+  const lines = [
+    "",
+    `## ${title} 请求`,
+    `${meta.method} ${meta.url} ${meta.http_version}`.trim(),
+  ];
+  if (meta.request_headers.length > 0) {
+    lines.push("", buildHeadersText(meta.request_headers));
+  }
+  lines.push("", `## ${title} 响应`);
+  lines.push(
+    meta.response_status !== null
+      ? `HTTP ${meta.response_status}`
+      : "（无响应状态）",
+  );
+  if (meta.response_headers.length > 0) {
+    lines.push("", buildHeadersText(meta.response_headers));
+  }
+  return lines;
+}
+
 export function buildRecordBundle(
   record: RequestRecord,
   content: AuditContent | null,
@@ -66,6 +90,7 @@ export function buildRecordBundle(
 ): string {
   const includeBodies = options.includeBodies !== false;
   const lines: string[] = [`# AstrLink 请求记录 ${record.id}`, ""];
+  const isChild = record.parent_request_id !== null;
 
   const time = record.completed_at
     ? `${record.started_at} → ${record.completed_at}`
@@ -78,6 +103,12 @@ export function buildRecordBundle(
   lines.push(`- 状态: ${statusLabel(record.status)}${httpStatus}`);
   lines.push(
     `- 协议: ${record.input_protocol} · 模型: ${record.requested_model ?? "（未知）"} · 流式: ${record.streaming ? "是" : "否"}`,
+  );
+  lines.push(
+    `- 尝试序号: ${record.attempt_index === 0 ? "未到达上游" : record.attempt_index}` +
+      (isChild
+        ? ` · 父记录: ${record.parent_request_id}`
+        : ` · 重试子记录: ${record.child_count}`),
   );
   const service = options.serviceLabel ?? record.service_id ?? "（未路由）";
   const route = record.route_id ? ` · 路由: ${record.route_id}` : "";
@@ -107,34 +138,18 @@ export function buildRecordBundle(
     );
   }
 
-  const meta = content?.http_meta ?? null;
-  if (meta === null) {
-    // Explicit absence beats omission: the reader must know the envelope
-    // was never captured rather than silently dropped from the bundle.
-    lines.push("", "## HTTP", "（此记录未捕获 HTTP 元数据）");
-  } else {
-    lines.push(
-      "",
-      "## HTTP 请求",
-      `${meta.method} ${meta.url} ${meta.http_version}`.trim(),
-    );
-    if (meta.request_headers.length > 0) {
-      lines.push("", buildHeadersText(meta.request_headers));
-    }
-    lines.push("", "## HTTP 响应");
-    lines.push(
-      meta.response_status !== null
-        ? `HTTP ${meta.response_status}`
-        : "（无响应状态）",
-    );
-    if (meta.response_headers.length > 0) {
-      lines.push("", buildHeadersText(meta.response_headers));
-    }
+  if (!isChild) {
+    lines.push(...httpSection("客户端 HTTP", content?.http_meta ?? null));
   }
+  lines.push(...httpSection("上游 HTTP", content?.upstream_http_meta ?? null));
 
   if (includeBodies) {
-    lines.push("", ...partSection("请求体", content?.request_body ?? null));
-    lines.push("", ...partSection("响应内容", content?.response_content ?? null));
+    if (!isChild) {
+      lines.push("", ...partSection("客户端请求体", content?.request_body ?? null));
+      lines.push("", ...partSection("客户端响应内容", content?.response_content ?? null));
+    }
+    lines.push("", ...partSection("上游请求体", content?.upstream_request_body ?? null));
+    lines.push("", ...partSection("上游响应内容", content?.upstream_response_content ?? null));
   }
 
   return lines.join("\n");

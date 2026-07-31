@@ -168,10 +168,13 @@ func (patch AuditSettingsPatch) Acknowledged() bool {
 
 // AuditContent is the decrypted privileged audit payload for one request.
 type AuditContent struct {
-	RequestID       RequestID         `json:"request_id"`
-	HTTPMeta        *AuditHTTPMeta    `json:"http_meta"`
-	RequestBody     *AuditContentPart `json:"request_body"`
-	ResponseContent *AuditContentPart `json:"response_content"`
+	RequestID               RequestID         `json:"request_id"`
+	HTTPMeta                *AuditHTTPMeta    `json:"http_meta"`
+	RequestBody             *AuditContentPart `json:"request_body"`
+	ResponseContent         *AuditContentPart `json:"response_content"`
+	UpstreamHTTPMeta        *AuditHTTPMeta    `json:"upstream_http_meta"`
+	UpstreamRequestBody     *AuditContentPart `json:"upstream_request_body"`
+	UpstreamResponseContent *AuditContentPart `json:"upstream_response_content"`
 }
 
 func (content AuditContent) Validate() error {
@@ -191,6 +194,21 @@ func (content AuditContent) Validate() error {
 	if content.ResponseContent != nil {
 		if err := content.ResponseContent.Validate(); err != nil {
 			return fmt.Errorf("response_content: %w", err)
+		}
+	}
+	if content.UpstreamHTTPMeta != nil {
+		if err := content.UpstreamHTTPMeta.Validate(); err != nil {
+			return fmt.Errorf("upstream_http_meta: %w", err)
+		}
+	}
+	if content.UpstreamRequestBody != nil {
+		if err := content.UpstreamRequestBody.Validate(); err != nil {
+			return fmt.Errorf("upstream_request_body: %w", err)
+		}
+	}
+	if content.UpstreamResponseContent != nil {
+		if err := content.UpstreamResponseContent.Validate(); err != nil {
+			return fmt.Errorf("upstream_response_content: %w", err)
 		}
 	}
 	return nil

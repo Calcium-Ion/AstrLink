@@ -273,6 +273,15 @@ export async function getRequestRecord(
   );
 }
 
+export async function listRequestRecordChildren(
+  requestId: string,
+): Promise<RequestRecordPage> {
+  requireNativeBridge();
+  return parseRequestRecordPage(
+    await invoke<unknown>("list_request_record_children", { requestId }),
+  );
+}
+
 export async function deleteRequestRecord(requestId: string): Promise<void> {
   requireNativeBridge();
   await invoke("delete_request_record", { requestId });

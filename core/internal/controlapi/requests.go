@@ -73,6 +73,15 @@ func (handler *Handler) requestRecordItem(writer http.ResponseWriter, request *h
 		handler.getRequestAuditContent(writer, request, idPart)
 		return
 	}
+	if strings.HasSuffix(rawID, "/children") {
+		idPart := strings.TrimSuffix(rawID, "/children")
+		if idPart == "" || strings.Contains(idPart, "/") {
+			writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
+			return
+		}
+		handler.listRequestRecordChildren(writer, request, idPart)
+		return
+	}
 	if strings.Contains(rawID, "/") {
 		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
@@ -155,9 +164,8 @@ func (handler *Handler) getRequestAuditContent(writer http.ResponseWriter, reque
 		return
 	}
 	for _, blob := range blobs {
-		if blob.Direction == storage.AuditDirectionHTTPMeta {
-			// A corrupt meta blob must not fail the whole detail view;
-			// http_meta simply stays null.
+		switch blob.Direction {
+		case storage.AuditDirectionHTTPMeta, storage.AuditDirectionUpstreamHTTPMeta:
 			plaintext, err := storage.OpenAuditBlob(key, blob.Nonce, blob.Ciphertext)
 			if err != nil {
 				writeError(writer, http.StatusConflict, "audit_decrypt_failed", "audit content cannot be decrypted")
@@ -165,26 +173,68 @@ func (handler *Handler) getRequestAuditContent(writer http.ResponseWriter, reque
 			}
 			var meta contract.AuditHTTPMeta
 			if err := json.Unmarshal(plaintext, &meta); err != nil {
-				// A corrupt meta payload leaves http_meta null instead of
+				// A corrupt meta payload leaves that meta field null instead of
 				// failing the whole detail view.
 				continue
 			}
-			content.HTTPMeta = &meta
-			continue
-		}
-		part, err := decryptAuditContentPart(key, blob)
-		if err != nil {
-			writeError(writer, http.StatusConflict, "audit_decrypt_failed", "audit content cannot be decrypted")
-			return
-		}
-		switch blob.Direction {
-		case storage.AuditDirectionRequest:
-			content.RequestBody = part
-		case storage.AuditDirectionResponse:
-			content.ResponseContent = part
+			if blob.Direction == storage.AuditDirectionHTTPMeta {
+				content.HTTPMeta = &meta
+			} else {
+				content.UpstreamHTTPMeta = &meta
+			}
+		case storage.AuditDirectionRequest,
+			storage.AuditDirectionResponse,
+			storage.AuditDirectionUpstreamRequest,
+			storage.AuditDirectionUpstreamResponse:
+			part, err := decryptAuditContentPart(key, blob)
+			if err != nil {
+				writeError(writer, http.StatusConflict, "audit_decrypt_failed", "audit content cannot be decrypted")
+				return
+			}
+			switch blob.Direction {
+			case storage.AuditDirectionRequest:
+				content.RequestBody = part
+			case storage.AuditDirectionResponse:
+				content.ResponseContent = part
+			case storage.AuditDirectionUpstreamRequest:
+				content.UpstreamRequestBody = part
+			case storage.AuditDirectionUpstreamResponse:
+				content.UpstreamResponseContent = part
+			}
 		}
 	}
 	writeJSON(writer, http.StatusOK, content)
+}
+
+func (handler *Handler) listRequestRecordChildren(
+	writer http.ResponseWriter,
+	request *http.Request,
+	rawID string,
+) {
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	decodedID, err := url.PathUnescape(rawID)
+	if err != nil || decodedID != rawID {
+		writeError(writer, http.StatusBadRequest, "invalid_request_id", "request_id must use its canonical form")
+		return
+	}
+	id := contract.RequestID(decodedID)
+	if err := id.Validate(); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_request_id", "request_id is invalid")
+		return
+	}
+	children, err := handler.requestRecords.ListRequestRecordChildren(request.Context(), id)
+	if err != nil {
+		handler.writeRequestRecordStoreError(writer, err)
+		return
+	}
+	if children == nil {
+		children = []contract.RequestRecord{}
+	}
+	writeJSON(writer, http.StatusOK, requestRecordPageResponse{Items: children})
 }
 
 func decryptAuditContentPart(key []byte, blob storage.AuditBlob) (*contract.AuditContentPart, error) {

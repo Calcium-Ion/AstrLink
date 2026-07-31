@@ -299,21 +299,15 @@ func (handler *Handler) executeCandidates(
 		}
 		attempts++
 		health := newAttemptHealthOutcome(controller, candidate, healthAware)
-		if session := recordSessionFromContext(request.Context()); session != nil {
-			session.noteAttempt(
-				request.Context(),
-				candidate,
-				plan,
-				handler.requestRecords,
-				handler.recordLogger,
-			)
-		}
+		recordSession := recordSessionFromContext(request.Context())
 
 		outWriter := http.ResponseWriter(downstream)
 		var aliasWriter *aliasRestoringWriter
 		var restoring *restoringResponseWriter
 		var relayWriter *relayKitResponseWriter
-		if session := recordSessionFromContext(request.Context()); session.responseCaptureEnabled() {
+		if recordSession != nil &&
+			(recordSession.responseCaptureEnabled() ||
+				recordSession.upstreamResponseCapture.enabled) {
 			attemptRequest.Header.Del("Accept-Encoding")
 		}
 		// Writer onion (outermost receives upstream bytes first):
@@ -373,10 +367,24 @@ func (handler *Handler) executeCandidates(
 				}
 			}
 		})
-		forwardErr := handler.forwarder.Forward(startWriter, attemptRequest, transport.Target{
+		forwardTarget := transport.Target{
 			BaseURL:        baseURL,
 			RequestHeaders: headers,
-		})
+		}
+		if recordSession != nil {
+			forwardTarget.ObserveOutbound = func(outbound *http.Request) {
+				recordSession.beginNetworkAttempt(
+					request.Context(),
+					candidate,
+					plan,
+					handler.requestRecords,
+					handler.recordLogger,
+				)
+				recordSession.observeOutboundCapture(outbound)
+			}
+			forwardTarget.WrapResponseBody = recordSession.wrapUpstreamResponseBody
+		}
+		forwardErr := handler.forwarder.Forward(startWriter, attemptRequest, forwardTarget)
 		attemptContext.Stop()
 		timedOut := attemptContext.TimedOut()
 		relayConversionFailed := false
@@ -486,6 +494,18 @@ func (handler *Handler) executeCandidates(
 			if !body.Replayable() {
 				break
 			}
+			demoteFailedAttemptForRetry(
+				request.Context(),
+				recordSession,
+				handler.requestRecords,
+				handler.auditBlobs,
+				errorSummaryFromInference(
+					"relaykit_conversion_failed",
+					"upstream response could not be converted",
+					true,
+				),
+				handler.recordLogger,
+			)
 			continue
 		}
 
@@ -497,6 +517,20 @@ func (handler *Handler) executeCandidates(
 		if !safeRetryFailure || !body.Replayable() {
 			break
 		}
+		code := "upstream_unavailable"
+		message := "upstream request could not be completed"
+		if errors.Is(forwardErr, context.DeadlineExceeded) {
+			code = "upstream_timeout"
+			message = "upstream request timed out before its response started"
+		}
+		demoteFailedAttemptForRetry(
+			request.Context(),
+			recordSession,
+			handler.requestRecords,
+			handler.auditBlobs,
+			errorSummaryFromInference(code, message, true),
+			handler.recordLogger,
+		)
 	}
 
 	if downstream.Committed() || request.Context().Err() != nil {
@@ -513,6 +547,20 @@ func (handler *Handler) executeCandidates(
 		return
 	}
 	handler.writeExecutionFailure(downstream, request, classified, last)
+}
+
+func demoteFailedAttemptForRetry(
+	ctx context.Context,
+	session *recordSession,
+	store RequestRecordStore,
+	blobs AuditBlobPersister,
+	summary contract.ErrorSummary,
+	logf func(string, ...any),
+) {
+	if session == nil {
+		return
+	}
+	session.demoteCurrentAttemptToChild(ctx, store, blobs, summary, logf)
 }
 
 func (handler *Handler) writeExecutionFailure(

@@ -298,8 +298,8 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	if err := database.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 13 {
-		t.Fatalf("schema version = %d, want 13", version)
+	if version != 14 {
+		t.Fatalf("schema version = %d, want 14", version)
 	}
 	var requestRecordsTable int
 	if err := database.QueryRow(
@@ -394,7 +394,7 @@ func TestPrivacyRestoreDiagnosticsMigrationLeavesLegacyRecordsNull(t *testing.T)
 		t.Fatal(err)
 	}
 	if err := full.Up(context.Background()); err != nil {
-		t.Fatalf("upgrade to version 13: %v", err)
+		t.Fatalf("upgrade to version 14: %v", err)
 	}
 	var diagnostics sql.NullString
 	if err := database.QueryRow(
@@ -404,6 +404,16 @@ func TestPrivacyRestoreDiagnosticsMigrationLeavesLegacyRecordsNull(t *testing.T)
 	}
 	if diagnostics.Valid {
 		t.Fatalf("legacy diagnostics=%q, want NULL", diagnostics.String)
+	}
+	var attemptIndex int
+	var parentID sql.NullString
+	if err := database.QueryRow(
+		`SELECT attempt_index, parent_request_id FROM request_records WHERE id = 'request_v12'`,
+	).Scan(&attemptIndex, &parentID); err != nil {
+		t.Fatal(err)
+	}
+	if attemptIndex != 1 || parentID.Valid {
+		t.Fatalf("legacy attempt_index=%d parent=%v, want 1/NULL", attemptIndex, parentID)
 	}
 }
 

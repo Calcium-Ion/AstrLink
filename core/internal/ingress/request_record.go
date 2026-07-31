@@ -31,6 +31,7 @@ func recordSessionFromContext(ctx context.Context) *recordSession {
 // metadata records (ADR 0007). Nil disables recording.
 type RequestRecordStore interface {
 	UpsertRequestRecord(context.Context, contract.RequestRecord) error
+	InsertRequestRecord(context.Context, contract.RequestRecord) error
 }
 
 // AuditSettingsProvider supplies the capture switches for one request.
@@ -78,27 +79,43 @@ func (buffer *captureBuffer) observe(chunk []byte) {
 	buffer.bytes = append(buffer.bytes, chunk...)
 }
 
+func (buffer *captureBuffer) reset(enabled bool, maxBytes int) {
+	*buffer = captureBuffer{enabled: enabled, maxBytes: maxBytes}
+}
+
 type recordSession struct {
-	id                   contract.RequestID
-	startedAt            time.Time
-	classified           Request
-	accessTokenID        *contract.AccessTokenID
-	scanner              *usageScanner
-	status               contract.RequestStatus
-	httpStatus           int
-	hasHTTPStatus        bool
-	endpointID           *contract.ServiceID
-	routeID              *contract.RouteID
-	plan                 *contract.ExecutionPlan
-	errorSummary         *contract.ErrorSummary
-	privacyRestore       *contract.PrivacyRestoreSummary
-	responseWriter       *recordStatusWriter
-	requestCapture       captureBuffer
-	responseCapture      captureBuffer
-	httpMetaEnabled      bool
-	httpMetaCaptured     bool
-	httpMetaResponseDone bool
-	httpMeta             contract.AuditHTTPMeta
+	id                       contract.RequestID
+	startedAt                time.Time
+	classified               Request
+	accessTokenID            *contract.AccessTokenID
+	scanner                  *usageScanner
+	upstreamScanner          *usageScanner
+	status                   contract.RequestStatus
+	httpStatus               int
+	hasHTTPStatus            bool
+	upstreamHTTPStatus       int
+	hasUpstreamHTTPStatus    bool
+	endpointID               *contract.ServiceID
+	routeID                  *contract.RouteID
+	plan                     *contract.ExecutionPlan
+	errorSummary             *contract.ErrorSummary
+	privacyRestore           *contract.PrivacyRestoreSummary
+	attemptIndex             int
+	childCount               int
+	networkAttemptOpen       bool
+	responseWriter           *recordStatusWriter
+	requestCapture           captureBuffer
+	responseCapture          captureBuffer
+	upstreamRequestCapture   captureBuffer
+	upstreamResponseCapture  captureBuffer
+	httpMetaEnabled          bool
+	httpMetaCaptured         bool
+	httpMetaResponseDone     bool
+	httpMeta                 contract.AuditHTTPMeta
+	upstreamHTTPMetaEnabled  bool
+	upstreamHTTPMetaCaptured bool
+	upstreamHTTPMeta         contract.AuditHTTPMeta
+	settings                 contract.AuditSettings
 }
 
 func newRecordSession(
@@ -112,6 +129,8 @@ func newRecordSession(
 		classified: classified,
 		scanner:    newUsageScanner(classified.Protocol, classified.Streaming),
 		status:     contract.RequestStatusPending,
+		// No upstream RoundTrip yet — blocked/local failures stay at 0.
+		attemptIndex: 0,
 		requestCapture: captureBuffer{
 			enabled:  settings.RequestBodyEnabled,
 			maxBytes: settings.RequestBodyMaxBytes,
@@ -120,7 +139,17 @@ func newRecordSession(
 			enabled:  settings.ResponseContentEnabled,
 			maxBytes: settings.ResponseContentMaxBytes,
 		},
-		httpMetaEnabled: settings.HTTPMetaEnabled,
+		upstreamRequestCapture: captureBuffer{
+			enabled:  settings.RequestBodyEnabled,
+			maxBytes: settings.RequestBodyMaxBytes,
+		},
+		upstreamResponseCapture: captureBuffer{
+			enabled:  settings.ResponseContentEnabled,
+			maxBytes: settings.ResponseContentMaxBytes,
+		},
+		httpMetaEnabled:         settings.HTTPMetaEnabled,
+		upstreamHTTPMetaEnabled: settings.HTTPMetaEnabled,
+		settings:                settings,
 	}
 	if accessTokenID != "" {
 		session.accessTokenID = &accessTokenID
@@ -156,9 +185,16 @@ func (session *recordSession) recordSnapshot(
 	if session.hasHTTPStatus {
 		status := session.httpStatus
 		httpStatus = &status
+	} else if session.hasUpstreamHTTPStatus {
+		// Retry children never reach the client writer; surface upstream status.
+		status := session.upstreamHTTPStatus
+		httpStatus = &status
 	}
 	return contract.RequestRecord{
 		ID:                 session.id,
+		ParentRequestID:    nil,
+		AttemptIndex:       session.attemptIndex,
+		ChildCount:         session.childCount,
 		StartedAt:          session.startedAt,
 		CompletedAt:        completedAt,
 		Status:             session.status,
@@ -171,11 +207,23 @@ func (session *recordSession) recordSnapshot(
 		Plan:               session.plan,
 		HTTPStatus:         httpStatus,
 		LatencyMs:          latencyMs,
-		Usage:              session.scanner.Usage(),
+		Usage:              session.attemptUsage(),
 		Error:              session.errorSummary,
 		Audit:              contract.NotCapturedAuditSummary(),
 		PrivacyRestore:     session.privacyRestore,
 	}
+}
+
+func (session *recordSession) attemptUsage() *contract.Usage {
+	if session == nil {
+		return nil
+	}
+	if session.upstreamScanner != nil {
+		if usage := session.upstreamScanner.Usage(); usage != nil {
+			return usage
+		}
+	}
+	return session.scanner.Usage()
 }
 
 func (session *recordSession) responseCaptureEnabled() bool {
@@ -262,7 +310,9 @@ func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan con
 	session.plan = &planCopy
 }
 
-func (session *recordSession) noteAttempt(
+// beginNetworkAttempt marks the start of a real RoundTrip. Candidate selection
+// that never reaches ObserveOutbound must not call this.
+func (session *recordSession) beginNetworkAttempt(
 	ctx context.Context,
 	candidate endpoint.Resolved,
 	plan contract.ExecutionPlan,
@@ -272,6 +322,10 @@ func (session *recordSession) noteAttempt(
 	if session == nil {
 		return
 	}
+	session.attemptIndex++
+	session.startedAt = time.Now().UTC()
+	session.networkAttemptOpen = true
+	session.upstreamScanner = newUsageScanner(plan.UpstreamProtocol, session.classified.Streaming)
 	session.noteSelected(candidate, plan)
 	if store == nil {
 		return
@@ -281,6 +335,99 @@ func (session *recordSession) noteAttempt(
 	if err := store.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
 		logRequestRecordFailure(logf, "pending_route_upsert", err)
 	}
+}
+
+// observeOutboundCapture records the exact upstream request after transport
+// normalization and attaches a body tee. Credentials are redacted first.
+func (session *recordSession) observeOutboundCapture(outbound *http.Request) {
+	if session == nil || outbound == nil {
+		return
+	}
+	if session.upstreamHTTPMetaEnabled {
+		session.upstreamHTTPMeta = RedactUpstreamRequestMeta(outbound)
+		session.upstreamHTTPMetaCaptured = true
+	}
+	if !session.upstreamRequestCapture.enabled {
+		return
+	}
+	mediaType := strings.TrimSpace(outbound.Header.Get("Content-Type"))
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	session.upstreamRequestCapture.mediaType = mediaType
+	if outbound.Body == nil || outbound.Body == http.NoBody {
+		return
+	}
+	outbound.Body = &upstreamRequestCaptureBody{ReadCloser: outbound.Body, session: session}
+}
+
+type upstreamRequestCaptureBody struct {
+	io.ReadCloser
+	session *recordSession
+}
+
+func (body *upstreamRequestCaptureBody) Read(p []byte) (int, error) {
+	n, err := body.ReadCloser.Read(p)
+	if n > 0 && body.session != nil {
+		body.session.upstreamRequestCapture.observe(p[:n])
+	}
+	return n, err
+}
+
+// wrapUpstreamResponseBody tees raw upstream response bytes before RelayKit /
+// privacy / alias restoration. Partial bytes on interruption are kept.
+func (session *recordSession) wrapUpstreamResponseBody(
+	status int,
+	headers http.Header,
+	body io.ReadCloser,
+) io.ReadCloser {
+	if session == nil {
+		return body
+	}
+	session.upstreamHTTPStatus = status
+	session.hasUpstreamHTTPStatus = true
+	if session.upstreamHTTPMetaEnabled {
+		if !session.upstreamHTTPMetaCaptured {
+			session.upstreamHTTPMeta = contract.AuditHTTPMeta{
+				RequestHeaders:  []contract.AuditHeader{},
+				ResponseHeaders: []contract.AuditHeader{},
+			}
+		}
+		statusCopy := status
+		session.upstreamHTTPMeta.ResponseStatus = &statusCopy
+		session.upstreamHTTPMeta.ResponseHeaders = RedactResponseHeaders(headers)
+		session.upstreamHTTPMetaCaptured = true
+	}
+	if session.upstreamScanner != nil {
+		session.upstreamScanner.setContentEncoding(headers.Get("Content-Encoding"))
+	}
+	if body == nil {
+		return body
+	}
+	if session.upstreamResponseCapture.enabled {
+		mediaType := strings.TrimSpace(headers.Get("Content-Type"))
+		if mediaType == "" {
+			mediaType = "application/octet-stream"
+		}
+		session.upstreamResponseCapture.mediaType = mediaType
+	}
+	return &upstreamResponseCaptureBody{ReadCloser: body, session: session}
+}
+
+type upstreamResponseCaptureBody struct {
+	io.ReadCloser
+	session *recordSession
+}
+
+func (body *upstreamResponseCaptureBody) Read(p []byte) (int, error) {
+	n, err := body.ReadCloser.Read(p)
+	if n > 0 && body.session != nil {
+		body.session.upstreamResponseCapture.observe(p[:n])
+		if body.session.upstreamScanner != nil {
+			body.session.upstreamScanner.observe(p[:n])
+		}
+	}
+	return n, err
 }
 
 func (session *recordSession) beginPrivacyAttempt() {
@@ -345,6 +492,115 @@ func (session *recordSession) noteCancelled() {
 	session.status = contract.RequestStatusCancelled
 }
 
+// demoteCurrentAttemptToChild snapshots the failed network attempt into a new
+// independent child record, persists its upstream audit blobs, then resets
+// attempt-local state so the stable root id can represent the next attempt.
+func (session *recordSession) demoteCurrentAttemptToChild(
+	ctx context.Context,
+	store RequestRecordStore,
+	blobs AuditBlobPersister,
+	summary contract.ErrorSummary,
+	logf func(string, ...any),
+) {
+	if session == nil || !session.networkAttemptOpen || session.attemptIndex < 1 {
+		return
+	}
+	session.noteFailed(summary)
+	completed := time.Now().UTC()
+	latency := int(completed.Sub(session.startedAt).Milliseconds())
+	if latency < 0 {
+		latency = 0
+	}
+
+	childID := newRequestRecordID()
+	parentID := session.id
+	child := session.recordSnapshot(&completed, &latency)
+	child.ID = childID
+	child.ParentRequestID = &parentID
+	child.ChildCount = 0
+	child.Audit = session.upstreamAuditSummary()
+
+	pendingBlobs := make([]storage.AuditBlob, 0, 3)
+	if blobs != nil {
+		key, keyErr := session.prepareUpstreamAuditKey(ctx, blobs, logf)
+		if keyErr == nil && key != nil {
+			if blob, ok := session.sealCapture(storage.AuditDirectionUpstreamRequest, &session.upstreamRequestCapture, key, completed, logf); ok {
+				blob.RequestID = childID
+				pendingBlobs = append(pendingBlobs, blob)
+			}
+			if blob, ok := session.sealCapture(storage.AuditDirectionUpstreamResponse, &session.upstreamResponseCapture, key, completed, logf); ok {
+				blob.RequestID = childID
+				pendingBlobs = append(pendingBlobs, blob)
+			}
+			if blob, ok := session.sealUpstreamHTTPMeta(key, completed, logf); ok {
+				blob.RequestID = childID
+				pendingBlobs = append(pendingBlobs, blob)
+			}
+		}
+	}
+
+	if err := child.Validate(); err != nil {
+		logRequestRecordFailure(logf, "child_validate", err)
+		session.resetAttemptLocal()
+		return
+	}
+	if store != nil {
+		if err := store.InsertRequestRecord(ctx, child); err != nil {
+			logRequestRecordFailure(logf, "child_insert", err)
+			session.resetAttemptLocal()
+			return
+		}
+	}
+	if blobs != nil {
+		for _, blob := range pendingBlobs {
+			if err := blobs.InsertAuditBlob(ctx, blob); err != nil {
+				logRequestRecordFailure(logf, "child_audit_blob_insert", err)
+			}
+		}
+	}
+	session.childCount++
+	session.resetAttemptLocal()
+	if store != nil {
+		persistCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		if err := store.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
+			logRequestRecordFailure(logf, "root_reset_upsert", err)
+		}
+	}
+}
+
+func (session *recordSession) resetAttemptLocal() {
+	// Keep the scanner pointer held by the client writer valid across retries.
+	session.scanner.reset(session.classified.Protocol, session.classified.Streaming)
+	session.upstreamScanner = nil
+	session.status = contract.RequestStatusPending
+	session.httpStatus = 0
+	session.hasHTTPStatus = false
+	session.upstreamHTTPStatus = 0
+	session.hasUpstreamHTTPStatus = false
+	session.endpointID = nil
+	session.routeID = nil
+	session.plan = nil
+	session.errorSummary = nil
+	session.privacyRestore = nil
+	session.networkAttemptOpen = false
+	session.upstreamRequestCapture.reset(session.settings.RequestBodyEnabled, session.settings.RequestBodyMaxBytes)
+	session.upstreamResponseCapture.reset(session.settings.ResponseContentEnabled, session.settings.ResponseContentMaxBytes)
+	session.upstreamHTTPMeta = contract.AuditHTTPMeta{}
+	session.upstreamHTTPMetaCaptured = false
+	// Client-side captures and attemptIndex stay on the root until the next
+	// beginNetworkAttempt advances the index.
+}
+
+func (session *recordSession) upstreamAuditSummary() contract.AuditRecordSummary {
+	return contract.AuditRecordSummary{
+		UpstreamRequestBodyCaptured:      session.upstreamRequestCapture.enabled && len(session.upstreamRequestCapture.bytes) > 0,
+		UpstreamResponseContentCaptured:  session.upstreamResponseCapture.enabled && len(session.upstreamResponseCapture.bytes) > 0,
+		UpstreamRequestBodyTruncated:     session.upstreamRequestCapture.truncated,
+		UpstreamResponseContentTruncated: session.upstreamResponseCapture.truncated,
+	}
+}
+
 func (session *recordSession) finish(
 	ctx context.Context,
 	store RequestRecordStore,
@@ -369,7 +625,7 @@ func (session *recordSession) finish(
 		latency = 0
 	}
 	audit := contract.NotCapturedAuditSummary()
-	pendingBlobs := make([]storage.AuditBlob, 0, 3)
+	pendingBlobs := make([]storage.AuditBlob, 0, 6)
 	if blobs != nil {
 		key, keyErr := session.prepareAuditKey(ctx, blobs, logf)
 		if keyErr == nil && key != nil {
@@ -384,6 +640,19 @@ func (session *recordSession) finish(
 				audit.ResponseContentTruncated = session.responseCapture.truncated
 			}
 			if blob, ok := session.sealHTTPMeta(key, completed, logf); ok {
+				pendingBlobs = append(pendingBlobs, blob)
+			}
+			if blob, ok := session.sealCapture(storage.AuditDirectionUpstreamRequest, &session.upstreamRequestCapture, key, completed, logf); ok {
+				pendingBlobs = append(pendingBlobs, blob)
+				audit.UpstreamRequestBodyCaptured = true
+				audit.UpstreamRequestBodyTruncated = session.upstreamRequestCapture.truncated
+			}
+			if blob, ok := session.sealCapture(storage.AuditDirectionUpstreamResponse, &session.upstreamResponseCapture, key, completed, logf); ok {
+				pendingBlobs = append(pendingBlobs, blob)
+				audit.UpstreamResponseContentCaptured = true
+				audit.UpstreamResponseContentTruncated = session.upstreamResponseCapture.truncated
+			}
+			if blob, ok := session.sealUpstreamHTTPMeta(key, completed, logf); ok {
 				pendingBlobs = append(pendingBlobs, blob)
 			}
 		}
@@ -417,9 +686,28 @@ func (session *recordSession) prepareAuditKey(
 ) ([]byte, error) {
 	requestHasBytes := session.requestCapture.enabled && len(session.requestCapture.bytes) > 0
 	responseHasBytes := session.responseCapture.enabled && len(session.responseCapture.bytes) > 0
-	// http meta needs the key too: it must persist even when both body
-	// captures are disabled (the common default configuration).
-	if !requestHasBytes && !responseHasBytes && !session.httpMetaCaptured {
+	upstreamRequestHasBytes := session.upstreamRequestCapture.enabled && len(session.upstreamRequestCapture.bytes) > 0
+	upstreamResponseHasBytes := session.upstreamResponseCapture.enabled && len(session.upstreamResponseCapture.bytes) > 0
+	if !requestHasBytes && !responseHasBytes && !upstreamRequestHasBytes &&
+		!upstreamResponseHasBytes && !session.httpMetaCaptured && !session.upstreamHTTPMetaCaptured {
+		return nil, nil
+	}
+	key, err := blobs.GetOrCreateAuditKey(ctx)
+	if err != nil {
+		logRequestRecordFailure(logf, "audit_key", err)
+		return nil, err
+	}
+	return key, nil
+}
+
+func (session *recordSession) prepareUpstreamAuditKey(
+	ctx context.Context,
+	blobs AuditBlobPersister,
+	logf func(string, ...any),
+) ([]byte, error) {
+	upstreamRequestHasBytes := session.upstreamRequestCapture.enabled && len(session.upstreamRequestCapture.bytes) > 0
+	upstreamResponseHasBytes := session.upstreamResponseCapture.enabled && len(session.upstreamResponseCapture.bytes) > 0
+	if !upstreamRequestHasBytes && !upstreamResponseHasBytes && !session.upstreamHTTPMetaCaptured {
 		return nil, nil
 	}
 	key, err := blobs.GetOrCreateAuditKey(ctx)
@@ -483,6 +771,35 @@ func (session *recordSession) sealHTTPMeta(
 	}
 	return storage.AuditBlob{
 		Direction:     storage.AuditDirectionHTTPMeta,
+		MediaType:     "application/json",
+		Nonce:         nonce,
+		Ciphertext:    ciphertext,
+		Truncated:     false,
+		CapturedBytes: len(payload),
+		CreatedAt:     createdAt,
+	}, true
+}
+
+func (session *recordSession) sealUpstreamHTTPMeta(
+	key []byte,
+	createdAt time.Time,
+	logf func(string, ...any),
+) (storage.AuditBlob, bool) {
+	if !session.upstreamHTTPMetaCaptured {
+		return storage.AuditBlob{}, false
+	}
+	payload, err := json.Marshal(session.upstreamHTTPMeta)
+	if err != nil {
+		logRequestRecordFailure(logf, "upstream_http_meta_encode", err)
+		return storage.AuditBlob{}, false
+	}
+	nonce, ciphertext, err := storage.SealAuditBlob(key, payload)
+	if err != nil {
+		logRequestRecordFailure(logf, "audit_encrypt", err)
+		return storage.AuditBlob{}, false
+	}
+	return storage.AuditBlob{
+		Direction:     storage.AuditDirectionUpstreamHTTPMeta,
 		MediaType:     "application/json",
 		Nonce:         nonce,
 		Ciphertext:    ciphertext,

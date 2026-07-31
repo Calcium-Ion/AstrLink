@@ -93,9 +93,7 @@ func TestIngressAuditCaptureNonStreamingRoundTrip(t *testing.T) {
 		!records.records[0].Audit.ResponseContentCaptured {
 		t.Fatalf("record=%#v", records.records)
 	}
-	if len(blobs.blobs) != 2 {
-		t.Fatalf("blobs=%d", len(blobs.blobs))
-	}
+	var sawRequest, sawResponse bool
 	for _, blob := range blobs.blobs {
 		plain, err := storage.OpenAuditBlob(blobs.key, blob.Nonce, blob.Ciphertext)
 		if err != nil {
@@ -103,14 +101,19 @@ func TestIngressAuditCaptureNonStreamingRoundTrip(t *testing.T) {
 		}
 		switch blob.Direction {
 		case storage.AuditDirectionRequest:
+			sawRequest = true
 			if string(plain) != requestBody {
 				t.Fatalf("request plain=%q", plain)
 			}
 		case storage.AuditDirectionResponse:
+			sawResponse = true
 			if string(plain) != responseBody {
 				t.Fatalf("response plain=%q", plain)
 			}
 		}
+	}
+	if !sawRequest || !sawResponse {
+		t.Fatalf("missing client blobs among %#v", blobs.blobs)
 	}
 }
 
@@ -182,18 +185,25 @@ func TestIngressAuditCaptureSSEByteFidelity(t *testing.T) {
 		records.records[0].Usage.TotalTokens != 25 {
 		t.Fatalf("usage=%#v", records.records[0].Usage)
 	}
-	if len(blobs.blobs) != 1 || blobs.blobs[0].Direction != storage.AuditDirectionResponse {
-		t.Fatalf("blobs=%#v", blobs.blobs)
+	var responseBlob *storage.AuditBlob
+	for index := range blobs.blobs {
+		if blobs.blobs[index].Direction == storage.AuditDirectionResponse {
+			responseBlob = &blobs.blobs[index]
+			break
+		}
 	}
-	plain, err := storage.OpenAuditBlob(blobs.key, blobs.blobs[0].Nonce, blobs.blobs[0].Ciphertext)
+	if responseBlob == nil {
+		t.Fatalf("missing client response blob among %#v", blobs.blobs)
+	}
+	plain, err := storage.OpenAuditBlob(blobs.key, responseBlob.Nonce, responseBlob.Ciphertext)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(plain, want) {
 		t.Fatalf("stored stream != client bytes:\n got %q\nwant %q", plain, want)
 	}
-	if blobs.blobs[0].Truncated || blobs.blobs[0].CapturedBytes != len(want) {
-		t.Fatalf("audit blob=%#v", blobs.blobs[0])
+	if responseBlob.Truncated || responseBlob.CapturedBytes != len(want) {
+		t.Fatalf("audit blob=%#v", responseBlob)
 	}
 }
 
@@ -434,12 +444,15 @@ func TestIngressHTTPMetaCaptureWithBodyCaptureOff(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d", response.Code)
 	}
-	if len(blobs.blobs) != 1 {
-		t.Fatalf("blobs=%d, want exactly the http_meta blob", len(blobs.blobs))
+	var blob *storage.AuditBlob
+	for index := range blobs.blobs {
+		if blobs.blobs[index].Direction == storage.AuditDirectionHTTPMeta {
+			blob = &blobs.blobs[index]
+			break
+		}
 	}
-	blob := blobs.blobs[0]
-	if blob.Direction != storage.AuditDirectionHTTPMeta {
-		t.Fatalf("direction=%q", blob.Direction)
+	if blob == nil {
+		t.Fatalf("missing client http_meta among %#v", blobs.blobs)
 	}
 	if blob.MediaType != "application/json" {
 		t.Fatalf("media_type=%q", blob.MediaType)
@@ -450,6 +463,15 @@ func TestIngressHTTPMetaCaptureWithBodyCaptureOff(t *testing.T) {
 	}
 	if bytes.Contains(plaintext, []byte(credential)) {
 		t.Fatalf("http_meta blob leaks inbound credential: %s", plaintext)
+	}
+	for _, candidate := range blobs.blobs {
+		plain, err := storage.OpenAuditBlob(blobs.key, candidate.Nonce, candidate.Ciphertext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(plain, []byte(credential)) || bytes.Contains(plain, []byte("upstream.example")) {
+			t.Fatalf("%s blob leaks sensitive material: %s", candidate.Direction, plain)
+		}
 	}
 	var meta contract.AuditHTTPMeta
 	if err := json.Unmarshal(plaintext, &meta); err != nil {

@@ -21,9 +21,13 @@ type DocumentViewMode = "formatted" | "raw";
 export function HTTPMetaSection({
   meta,
   copyFeedback,
+  title = "HTTP",
+  copyKey = "http-meta",
 }: {
   meta: AuditHTTPMeta | null;
   copyFeedback: CopyFeedback;
+  title?: string;
+  copyKey?: string;
 }) {
   return (
     <DetailBlock
@@ -33,7 +37,7 @@ export function HTTPMetaSection({
             className="text-button"
             onClick={() =>
               copyFeedback.copy(
-                "http-meta",
+                copyKey,
                 [
                   `${meta.method} ${meta.url} ${meta.http_version}`.trim(),
                   "",
@@ -48,11 +52,11 @@ export function HTTPMetaSection({
             }
             type="button"
           >
-            {copyButtonLabel(copyFeedback, "http-meta")}
+            {copyButtonLabel(copyFeedback, copyKey)}
           </button>
         ) : null
       }
-      title="HTTP"
+      title={title}
     >
       {meta === null ? (
         <p className="record-http-meta__missing">

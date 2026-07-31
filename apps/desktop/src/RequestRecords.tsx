@@ -13,6 +13,8 @@ import {
   deleteRequestRecord,
   getAuditSettings,
   getRequestAuditContent,
+  getRequestRecord,
+  listRequestRecordChildren,
   listRequestRecords,
   purgeRequestRecords,
   updateAuditSettings,
@@ -71,7 +73,9 @@ interface LiveState {
 function auditContentBytes(content: AuditContent): number {
   return (
     (content.request_body?.captured_bytes ?? 0) +
-    (content.response_content?.captured_bytes ?? 0)
+    (content.response_content?.captured_bytes ?? 0) +
+    (content.upstream_request_body?.captured_bytes ?? 0) +
+    (content.upstream_response_content?.captured_bytes ?? 0)
   );
 }
 
@@ -98,6 +102,9 @@ export function RequestRecords({
   const [loadingMore, setLoadingMore] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [overlayRecords, setOverlayRecords] = useState<
+    Record<string, RequestRecord>
+  >({});
   const [navigationIds, setNavigationIds] = useState<string[]>([]);
   const [auditContent, setAuditContent] = useState<AuditContent | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -150,10 +157,30 @@ export function RequestRecords({
         .length,
     [filters, live.queued],
   );
-  const selected = useMemo(
-    () => allRecords.find((record) => record.id === selectedId) ?? null,
-    [allRecords, selectedId],
-  );
+  const selected = useMemo(() => {
+    if (!selectedId) return null;
+    return (
+      allRecords.find((record) => record.id === selectedId) ??
+      overlayRecords[selectedId] ??
+      null
+    );
+  }, [allRecords, overlayRecords, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || selected) return;
+    let cancelled = false;
+    void getRequestRecord(selectedId)
+      .then((record) => {
+        if (cancelled) return;
+        setOverlayRecords((current) => ({ ...current, [record.id]: record }));
+      })
+      .catch(() => {
+        /* detail view shows missing via selected === null */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, selected]);
   const protocolOptions = useMemo(() => {
     const protocols = new Set<string>();
     services.forEach((service) =>
@@ -181,6 +208,7 @@ export function RequestRecords({
     viewRef.current = "monitor";
     setView("monitor");
     setSelectedId(null);
+    setOverlayRecords({});
     setNavigationIds([]);
     setAuditContent(null);
     setAuditLoading(false);
@@ -498,6 +526,14 @@ export function RequestRecords({
     try {
       await deleteRequestRecord(requestId);
       auditCacheRef.current.delete(requestId);
+      setOverlayRecords((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(
+            ([id, record]) =>
+              id !== requestId && record.parent_request_id !== requestId,
+          ),
+        ),
+      );
       setLive((current) => ({
         ...current,
         items: current.items.filter((record) => record.id !== requestId),
@@ -892,7 +928,71 @@ function RecordStream({
   nowMs: number;
   onOpen: (requestId: string) => void;
 }) {
+  const [expandedRoots, setExpandedRoots] = useState<Set<string>>(() => new Set());
+  const [childrenByRoot, setChildrenByRoot] = useState<
+    Record<string, RequestRecord[]>
+  >({});
+  const [childrenLoading, setChildrenLoading] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const fetchedRootsRef = useRef<Set<string>>(new Set());
   const groups = groupRecordsByDate(records, new Date(nowMs));
+
+  const loadChildren = (rootId: string, force = false) => {
+    if (!force && fetchedRootsRef.current.has(rootId)) return;
+    if (childrenLoading.has(rootId)) return;
+    setChildrenLoading((current) => new Set(current).add(rootId));
+    void listRequestRecordChildren(rootId)
+      .then((page) => {
+        fetchedRootsRef.current.add(rootId);
+        setChildrenByRoot((current) => ({
+          ...current,
+          [rootId]: page.items,
+        }));
+      })
+      .catch(() => {
+        fetchedRootsRef.current.add(rootId);
+        setChildrenByRoot((current) => ({
+          ...current,
+          [rootId]: current[rootId] ?? [],
+        }));
+      })
+      .finally(() => {
+        setChildrenLoading((current) => {
+          const next = new Set(current);
+          next.delete(rootId);
+          return next;
+        });
+      });
+  };
+
+  const toggleRoot = (rootId: string, childCount: number) => {
+    setExpandedRoots((current) => {
+      const next = new Set(current);
+      if (next.has(rootId)) {
+        next.delete(rootId);
+        return next;
+      }
+      next.add(rootId);
+      return next;
+    });
+    if (childCount > 0) {
+      loadChildren(rootId);
+    }
+  };
+
+  // Refresh expanded groups when live polling changes child_count.
+  useEffect(() => {
+    for (const root of records) {
+      if (!expandedRoots.has(root.id) || root.child_count <= 0) continue;
+      const cached = childrenByRoot[root.id];
+      if (cached && cached.length === root.child_count) continue;
+      fetchedRootsRef.current.delete(root.id);
+      loadChildren(root.id, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, expandedRoots]);
+
   return (
     <div className="record-stream" role="feed" aria-label="实时请求流">
       {groups.map((group) => (
@@ -901,16 +1001,49 @@ function RecordStream({
             <span>{group.label}</span>
             <small>{group.records.length} 条</small>
           </div>
-          {group.records.map((record) => (
-            <RecordRow
-              serviceName={serviceLabel(record.service_id, services)}
-              key={record.id}
-              nowMs={nowMs}
-              onOpen={() => onOpen(record.id)}
-              record={record}
-              selected={record.id === selectedId}
-            />
-          ))}
+          {group.records.map((record) => {
+            const expanded = expandedRoots.has(record.id);
+            const children = childrenByRoot[record.id] ?? [];
+            return (
+              <div className="record-group" key={record.id}>
+                <RecordRow
+                  serviceName={serviceLabel(record.service_id, services)}
+                  nowMs={nowMs}
+                  onOpen={() => onOpen(record.id)}
+                  onToggleRetries={
+                    record.child_count > 0
+                      ? () => toggleRoot(record.id, record.child_count)
+                      : undefined
+                  }
+                  record={record}
+                  retriesExpanded={expanded}
+                  selected={record.id === selectedId}
+                />
+                {expanded ? (
+                  <div className="record-group__children">
+                    {childrenLoading.has(record.id) && children.length === 0 ? (
+                      <p className="record-group__loading" role="status">
+                        正在加载重试记录…
+                      </p>
+                    ) : (
+                      children.map((child, childIndex) => (
+                        <RecordRow
+                          child
+                          childOrdinal={childIndex + 1}
+                          key={child.id}
+                          nowMs={nowMs}
+                          onOpen={() => onOpen(child.id)}
+                          record={child}
+                          selected={child.id === selectedId}
+                          serviceName={serviceLabel(child.service_id, services)}
+                        />
+                      ))
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </section>
       ))}
     </div>
@@ -923,60 +1056,96 @@ function RecordRow({
   nowMs,
   selected,
   onOpen,
+  child = false,
+  childOrdinal,
+  retriesExpanded = false,
+  onToggleRetries,
 }: {
   record: RequestRecord;
   serviceName: string | null;
   nowMs: number;
   selected: boolean;
   onOpen: () => void;
+  child?: boolean;
+  childOrdinal?: number;
+  retriesExpanded?: boolean;
+  onToggleRetries?: () => void;
 }) {
   const captured =
     record.audit.request_body_captured ||
-    record.audit.response_content_captured;
+    record.audit.response_content_captured ||
+    record.audit.upstream_request_body_captured ||
+    record.audit.upstream_response_content_captured;
   const time = new Date(record.started_at);
   return (
-    <button
-      aria-current={selected ? "true" : undefined}
-      className={`record-row${record.status === "pending" ? " is-pending" : ""}`}
-      data-record-id={record.id}
-      onClick={onOpen}
-      type="button"
+    <div
+      className={`record-row-wrap${child ? " is-child" : ""}`}
     >
-      <span className="record-row__primary">
-        <span
-          className={`dot dot--${statusTone(record.status)}`}
-          aria-hidden="true"
-        />
-        <time dateTime={record.started_at}>
-          {Number.isNaN(time.getTime())
-            ? record.started_at
-            : time.toLocaleTimeString("zh-CN", { hour12: false })}
-        </time>
-        <strong>{record.requested_model ?? "未指定模型"}</strong>
-        <span className="record-row__service">
-          {serviceName ?? record.service_id ?? "正在选择服务"}
+      <button
+        aria-current={selected ? "true" : undefined}
+        className={`record-row${record.status === "pending" ? " is-pending" : ""}${child ? " is-child" : ""}`}
+        data-record-id={record.id}
+        onClick={onOpen}
+        type="button"
+      >
+        <span className="record-row__primary">
+          <span
+            className={`dot dot--${statusTone(record.status)}`}
+            aria-hidden="true"
+          />
+          <time dateTime={record.started_at}>
+            {Number.isNaN(time.getTime())
+              ? record.started_at
+              : time.toLocaleTimeString("zh-CN", { hour12: false })}
+          </time>
+          <strong>{record.requested_model ?? "未指定模型"}</strong>
+          <span className="record-row__service">
+            {serviceName ?? record.service_id ?? "正在选择服务"}
+          </span>
+          {child ? (
+            <span className="record-row__attempt">
+              子请求 {childOrdinal ?? record.attempt_index}
+            </span>
+          ) : record.child_count > 0 ? (
+            <span className="record-row__attempt">最后一次记录</span>
+          ) : null}
+          <span className="record-row__duration">
+            {formatDuration(liveDurationMs(record, nowMs))}
+          </span>
         </span>
-        <span className="record-row__duration">
-          {formatDuration(liveDurationMs(record, nowMs))}
+        <span className="record-row__secondary">
+          <StatusText record={record} />
+          <span>HTTP {record.http_status ?? "—"}</span>
+          <code>{record.input_protocol}</code>
+          <span className="record-row__minor">
+            {record.streaming ? "流式" : "非流式"}
+          </span>
+          <span className="record-row__tokens">
+            {record.usage
+              ? `${record.usage.input_tokens.toLocaleString()} → ${record.usage.output_tokens.toLocaleString()} Token`
+              : "Token —"}
+          </span>
+          <span className="record-row__audit">
+            {captured ? "已捕获" : "未捕获正文"}
+          </span>
         </span>
-      </span>
-      <span className="record-row__secondary">
-        <StatusText record={record} />
-        <span>HTTP {record.http_status ?? "—"}</span>
-        <code>{record.input_protocol}</code>
-        <span className="record-row__minor">
-          {record.streaming ? "流式" : "非流式"}
-        </span>
-        <span className="record-row__tokens">
-          {record.usage
-            ? `${record.usage.input_tokens.toLocaleString()} → ${record.usage.output_tokens.toLocaleString()} Token`
-            : "Token —"}
-        </span>
-        <span className="record-row__audit">
-          {captured ? "已捕获" : "未捕获正文"}
-        </span>
-      </span>
-    </button>
+      </button>
+      {onToggleRetries ? (
+        <button
+          aria-expanded={retriesExpanded}
+          className="record-row__retries"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleRetries();
+          }}
+          type="button"
+        >
+          {retriesExpanded
+            ? "收起子请求"
+            : `子请求 ${record.child_count} 条`}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -1028,8 +1197,11 @@ function RecordDetail({
 }) {
   const copyFeedback = useCopyFeedback();
   const [bundleSize, setBundleSize] = useState<number | null>(null);
+  const isChild = record.parent_request_id !== null;
   const requestPart = auditContent?.request_body ?? null;
   const responsePart = auditContent?.response_content ?? null;
+  const upstreamRequestPart = auditContent?.upstream_request_body ?? null;
+  const upstreamResponsePart = auditContent?.upstream_response_content ?? null;
 
   const copyBundle = (includeBodies: boolean) => {
     const bundle = buildRecordBundle(record, auditContent, {
@@ -1245,29 +1417,71 @@ function RecordDetail({
           </DetailSection>
         ) : auditContent ? (
           <>
+            {!isChild ? (
+              <>
+                <HTTPMetaSection
+                  copyFeedback={copyFeedback}
+                  meta={auditContent.http_meta}
+                  title="客户端 HTTP"
+                />
+                <AuditPartSection
+                  copyFeedback={copyFeedback}
+                  part={requestPart}
+                  protocol={record.input_protocol}
+                  sectionKey="request-body"
+                  title="客户端请求体"
+                />
+                <AuditPartSection
+                  copyFeedback={copyFeedback}
+                  part={responsePart}
+                  protocol={record.input_protocol}
+                  sectionKey="response-content"
+                  title="客户端响应内容"
+                />
+              </>
+            ) : null}
             <HTTPMetaSection
               copyFeedback={copyFeedback}
-              meta={auditContent.http_meta}
+              copyKey="upstream-http-meta"
+              meta={auditContent.upstream_http_meta}
+              title="上游 HTTP"
             />
             <AuditPartSection
               copyFeedback={copyFeedback}
-              part={requestPart}
+              part={upstreamRequestPart}
               protocol={record.input_protocol}
-              sectionKey="request-body"
-              title="请求体"
+              sectionKey="upstream-request-body"
+              title="上游请求体"
             />
             <AuditPartSection
               copyFeedback={copyFeedback}
-              part={responsePart}
+              part={upstreamResponsePart}
               protocol={record.input_protocol}
-              sectionKey="response-content"
-              title="响应内容"
+              sectionKey="upstream-response-content"
+              title="上游响应内容"
             />
           </>
         ) : null}
 
         <DetailSection title="关联">
           <dl className="record-detail-grid">
+            <DetailField
+              label="尝试序号"
+              value={
+                record.attempt_index === 0
+                  ? "未到达上游"
+                  : String(record.attempt_index)
+              }
+            />
+            <DetailField
+              label="父记录"
+              value={record.parent_request_id ?? "（根记录）"}
+              code
+            />
+            <DetailField
+              label="重试子记录"
+              value={String(record.child_count)}
+            />
             <DetailField label="路由" value={record.route_id ?? "—"} code />
             <DetailField
               label="服务"
@@ -1283,17 +1497,33 @@ function RecordDetail({
 
         <DetailSection title="审计">
           <div className="record-audit-summary">
+            {!isChild ? (
+              <>
+                <AuditSummaryCard
+                  captured={record.audit.request_body_captured}
+                  label="客户端请求体"
+                  part={requestPart}
+                  truncated={record.audit.request_body_truncated}
+                />
+                <AuditSummaryCard
+                  captured={record.audit.response_content_captured}
+                  label="客户端响应"
+                  part={responsePart}
+                  truncated={record.audit.response_content_truncated}
+                />
+              </>
+            ) : null}
             <AuditSummaryCard
-              captured={record.audit.request_body_captured}
-              label="请求体"
-              part={requestPart}
-              truncated={record.audit.request_body_truncated}
+              captured={record.audit.upstream_request_body_captured}
+              label="上游请求体"
+              part={upstreamRequestPart}
+              truncated={record.audit.upstream_request_body_truncated}
             />
             <AuditSummaryCard
-              captured={record.audit.response_content_captured}
-              label="响应内容"
-              part={responsePart}
-              truncated={record.audit.response_content_truncated}
+              captured={record.audit.upstream_response_content_captured}
+              label="上游响应"
+              part={upstreamResponsePart}
+              truncated={record.audit.upstream_response_content_truncated}
             />
           </div>
           <div className="record-audit-clear">

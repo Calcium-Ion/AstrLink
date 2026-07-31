@@ -32,6 +32,24 @@ func newUsageScanner(protocol contract.ProtocolID, streaming bool) *usageScanner
 	return &usageScanner{protocol: protocol, streaming: streaming}
 }
 
+// reset clears attempt-local parsing state without changing the scanner's
+// address. The client response writer is installed once per ingress request
+// and retains this pointer across upstream retries.
+func (scanner *usageScanner) reset(protocol contract.ProtocolID, streaming bool) {
+	if scanner == nil {
+		return
+	}
+	*scanner = usageScanner{protocol: protocol, streaming: streaming}
+}
+
+func (scanner *usageScanner) setContentEncoding(encoding string) {
+	if scanner == nil {
+		return
+	}
+	scanner.encodingCaptured = true
+	scanner.contentEncoding = strings.ToLower(strings.TrimSpace(encoding))
+}
+
 func (scanner *usageScanner) wrap(inner http.ResponseWriter) http.ResponseWriter {
 	if scanner == nil {
 		return inner
@@ -335,10 +353,7 @@ func (writer *usageScanningWriter) captureEncoding() {
 	if writer.scanner == nil || writer.scanner.encodingCaptured {
 		return
 	}
-	writer.scanner.encodingCaptured = true
-	writer.scanner.contentEncoding = strings.ToLower(strings.TrimSpace(
-		writer.Header().Get("Content-Encoding"),
-	))
+	writer.scanner.setContentEncoding(writer.Header().Get("Content-Encoding"))
 }
 
 func (writer *usageScanningWriter) Flush() {
