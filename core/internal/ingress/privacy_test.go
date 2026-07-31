@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
+
+var emailPlaceholderPattern = regexp.MustCompile(`<PRIVATE_EMAIL_[0-9a-f]{16}>`)
 
 func TestDisabledPrivacyPolicyDoesNotReadOrReplaceOriginalGeminiBody(t *testing.T) {
 	const original = " {\n \"contents\":[{\"parts\":[{\"text\":\"alice@example.com\"}]}]\n} "
@@ -149,6 +152,7 @@ func TestPrivacyRedactReassemblesJSONAndUpdatesBodyLength(t *testing.T) {
 	}, nil)
 	upstream := validEndpoint(contract.ProtocolOpenAIChat, false)
 	forwarded := false
+	var upstreamPlaceholder string
 	handler := NewWithDependencies(Dependencies{
 		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
 			return endpoint.Resolved{Endpoint: upstream}, nil
@@ -164,10 +168,10 @@ func TestPrivacyRedactReassemblesJSONAndUpdatesBodyLength(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !json.Valid(body) || strings.Contains(string(body), "alice@example.com") ||
-				!strings.Contains(string(body), "model@example.com") ||
-				!strings.Contains(string(body), "<PRIVATE_EMAIL>") {
+				!strings.Contains(string(body), "model@example.com") {
 				t.Fatalf("redacted body = %s", body)
 			}
+			upstreamPlaceholder = emailPlaceholderFromBody(t, body)
 			if request.ContentLength != int64(len(body)) ||
 				request.Header.Get("Content-Length") != strconv.Itoa(len(body)) {
 				t.Fatalf(
@@ -180,7 +184,7 @@ func TestPrivacyRedactReassemblesJSONAndUpdatesBodyLength(t *testing.T) {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.Header().Set("Content-Length", "8")
 			writer.WriteHeader(http.StatusOK)
-			_, err = writer.Write([]byte(`{"echo":"<PRIVATE_EMAIL>"}`))
+			_, err = writer.Write([]byte(`{"echo":"` + upstreamPlaceholder + `"}`))
 			return err
 		}),
 	})
@@ -195,7 +199,7 @@ func TestPrivacyRedactReassemblesJSONAndUpdatesBodyLength(t *testing.T) {
 		t.Fatalf("forwarded=%t response=%d %s", forwarded, response.Code, response.Body.String())
 	}
 	if !strings.Contains(response.Body.String(), "alice@example.com") ||
-		strings.Contains(response.Body.String(), "<PRIVATE_EMAIL>") {
+		strings.Contains(response.Body.String(), upstreamPlaceholder) {
 		t.Fatalf("response was not restored: %s", response.Body.String())
 	}
 	if response.Header().Get("Content-Length") != strconv.Itoa(response.Body.Len()) {
@@ -223,16 +227,17 @@ func TestStreamingResponseRestorePreservesPlaceholderSplitAcrossTransportFlushes
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(body), "alice@example.com") ||
-				!strings.Contains(string(body), "<PRIVATE_EMAIL>") {
+			if strings.Contains(string(body), "alice@example.com") {
 				t.Fatalf("request was not redacted: %s", body)
 			}
+			placeholder := emailPlaceholderFromBody(t, body)
+			split := len(placeholder) / 2
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": {"text/event-stream"}},
 				Body: &chunkReadCloser{chunks: [][]byte{
-					[]byte("data: <PRIVATE_"),
-					[]byte("EMAIL>\n\n"),
+					[]byte("data: " + placeholder[:split]),
+					[]byte(placeholder[split:] + "\n\n"),
 				}},
 			}, nil
 		})),
@@ -282,18 +287,20 @@ func TestBufferedResponseRestoreDiscardsInterruptedAttemptBeforeFallback(t *test
 			if err != nil || strings.Contains(string(body), "alice@example.com") {
 				t.Fatalf("redacted attempt body = %q, %v", body, err)
 			}
+			placeholder := emailPlaceholderFromBody(t, body)
 			response := &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": {"application/json"}},
 			}
 			if request.URL.Host == "first.example" {
+				split := len(placeholder) / 2
 				response.Body = io.NopCloser(io.MultiReader(
-					strings.NewReader(`{"echo":"<PRIVATE_`),
+					strings.NewReader(`{"echo":"`+placeholder[:split]),
 					failingReader{err: errors.New("upstream body interrupted")},
 				))
 				return response, nil
 			}
-			response.Body = io.NopCloser(strings.NewReader(`{"echo":"<PRIVATE_EMAIL>"}`))
+			response.Body = io.NopCloser(strings.NewReader(`{"echo":"` + placeholder + `"}`))
 			return response, nil
 		})),
 	})
@@ -334,6 +341,7 @@ func TestPrivacyRedactSkipsResponseRestoreWhenDisabled(t *testing.T) {
 	filter := testPrivacyEngine(t, privacy.Policy{
 		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact, ResponseRestore: false,
 	}, nil)
+	var upstreamPlaceholder string
 	handler := NewWithDependencies(Dependencies{
 		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
 			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIChat, false)}, nil
@@ -347,12 +355,13 @@ func TestPrivacyRedactSkipsResponseRestoreWhenDisabled(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(body), "alice@example.com") || !strings.Contains(string(body), "<PRIVATE_EMAIL>") {
+			if strings.Contains(string(body), "alice@example.com") {
 				t.Fatalf("request should still be redacted: %s", body)
 			}
+			upstreamPlaceholder = emailPlaceholderFromBody(t, body)
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusOK)
-			_, err = writer.Write([]byte(`{"echo":"<PRIVATE_EMAIL>"}`))
+			_, err = writer.Write([]byte(`{"echo":"` + upstreamPlaceholder + `"}`))
 			return err
 		}),
 	})
@@ -361,7 +370,7 @@ func TestPrivacyRedactSkipsResponseRestoreWhenDisabled(t *testing.T) {
 	request.Header.Set("Accept-Encoding", "gzip")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "<PRIVATE_EMAIL>") ||
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), upstreamPlaceholder) ||
 		strings.Contains(response.Body.String(), "alice@example.com") {
 		t.Fatalf("restore should stay off: %d %s", response.Code, response.Body.String())
 	}
@@ -394,6 +403,35 @@ func TestPrivacyBlockRunsBeforeCredentialLoadingAndDoesNotLeakMatch(t *testing.T
 	assertInferenceError(t, response, http.StatusForbidden, "policy_blocked")
 	if authorized || forwarded || strings.Contains(response.Body.String(), "alice@example.com") {
 		t.Fatalf("unsafe block result: authorized=%t forwarded=%t body=%s", authorized, forwarded, response.Body.String())
+	}
+}
+
+func TestPrivacyUnsafeRewriteStopsBeforeCredentialLoadingAndForwarding(t *testing.T) {
+	authorized := false
+	forwarded := false
+	handler := NewWithDependencies(Dependencies{
+		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
+		}),
+		Authorizer: authorizerFunc(func(context.Context, contract.Endpoint) (http.Header, error) {
+			authorized = true
+			return nil, nil
+		}),
+		PrivacyFilter: unsafeRewritePrivacyFilter{},
+		Forwarder: forwarderFunc(func(http.ResponseWriter, *http.Request, transport.Target) error {
+			forwarded = true
+			return nil
+		}),
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"alice@example.com"}`)),
+	)
+
+	assertInferenceError(t, response, http.StatusForbidden, "policy_blocked")
+	if authorized || forwarded {
+		t.Fatalf("unsafe rewrite escaped privacy boundary: authorized=%t forwarded=%t", authorized, forwarded)
 	}
 }
 
@@ -719,6 +757,34 @@ func testPrivacyEngine(t *testing.T, policy privacy.Policy, model privacy.Detect
 		t.Fatal(err)
 	}
 	return engine
+}
+
+func emailPlaceholderFromBody(t *testing.T, body []byte) string {
+	t.Helper()
+	matches := emailPlaceholderPattern.FindAll(body, -1)
+	if len(matches) != 1 {
+		t.Fatalf("email placeholders = %q", body)
+	}
+	return string(matches[0])
+}
+
+type unsafeRewritePrivacyFilter struct{}
+
+func (unsafeRewritePrivacyFilter) ResolvePolicy(context.Context, privacy.Scope) (privacy.Policy, error) {
+	return privacy.Policy{
+		Enabled: true,
+		Mode:    privacy.ModeRegex,
+		Action:  privacy.ActionRedact,
+	}, nil
+}
+
+func (unsafeRewritePrivacyFilter) Inspect(
+	context.Context,
+	privacy.Policy,
+	contract.ProtocolID,
+	[]byte,
+) (privacy.Result, error) {
+	return privacy.Result{Decision: privacy.DecisionBlock}, privacy.ErrUnsafeRewrite
 }
 
 type trackingRequestBody struct {

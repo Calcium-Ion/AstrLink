@@ -66,7 +66,7 @@ function policyRecord(
       priority: 0,
       detector: "regex",
       local_model_id: null,
-      min_confidence: 0.8,
+      min_confidence: 0.6,
       request_action: "redact",
       response_action: "allow",
       response_restore: true,
@@ -779,9 +779,9 @@ describe("SafetyPolicy", () => {
     expect(dialog?.textContent).toContain("不对响应正文或 SSE");
     expect(dialog?.textContent).toContain("固定示例");
     expect(dialog?.textContent).toContain("alice@example.com");
-    expect(dialog?.textContent).toContain("<PRIVATE_EMAIL>");
-    expect(dialog?.textContent).toContain("data: <PRIVATE_");
-    expect(dialog?.textContent).toContain("EMAIL>");
+    expect(dialog?.textContent).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
+    expect(dialog?.textContent).toContain("data: <PRIVATE_EMAIL_7f3a");
+    expect(dialog?.textContent).toContain("91c04d28be56>");
     expect(dialog?.textContent).toContain("data: alice@example.com");
     expect(dialog?.textContent).toContain("客户端");
     expect(dialog?.textContent).toContain("AstrLink");
@@ -810,15 +810,15 @@ describe("SafetyPolicy", () => {
     expect(
       container.querySelector(".streaming-restore-demo__packet--redacted")
         ?.textContent,
-    ).toContain("<PRIVATE_EMAIL>");
+    ).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
     expect(
       container.querySelector(".streaming-restore-demo__packet--chunk-a")
         ?.textContent,
-    ).toContain("data: <PRIVATE_");
+    ).toContain("data: <PRIVATE_EMAIL_7f3a");
     expect(
       container.querySelector(".streaming-restore-demo__packet--chunk-b")
         ?.textContent,
-    ).toContain("EMAIL>");
+    ).toContain("91c04d28be56>");
     expect(
       container.querySelector(".streaming-restore-demo__packet--restored")
         ?.textContent,
@@ -937,18 +937,18 @@ describe("SafetyPolicy", () => {
           path: "/messages/0/content",
           start: 0,
           end: 6,
-          confidence: 0.696717,
+          confidence: 0.596717,
         },
       ],
       redactions: [
         {
-          placeholder: "<PRIVATE_EMAIL>",
+          placeholder: "<PRIVATE_EMAIL_7f3a91c04d28be56>",
           kind: "email",
           value: "alice@example.com",
         },
       ],
       redacted_body:
-        '{"messages":[{"content":"email <PRIVATE_EMAIL>","role":"user"}]}',
+        '{"messages":[{"content":"email <PRIVATE_EMAIL_7f3a91c04d28be56>","role":"user"}]}',
       inspected_body:
         '{"messages":[{"content":"email alice@example.com","role":"user"}]}',
     });
@@ -967,18 +967,38 @@ describe("SafetyPolicy", () => {
         enabled: true,
         detector: "local_model",
         local_model_id: ready.id,
-        min_confidence: 0.8,
+        min_confidence: 0.6,
         request_action: "redact",
       },
     });
     expect(container.textContent).toContain("脱敏后继续");
     expect(container.textContent).toContain("邮箱 × 1");
-    expect(container.textContent).toContain("0.910000 ≥ 0.80");
+    expect(container.textContent).toContain("0.910000 ≥ 0.60");
     expect(container.textContent).toContain("低于门槛（已抑制，不执行策略）");
-    expect(container.textContent).toContain("0.696717 < 0.80");
+    expect(container.textContent).toContain("0.596717 < 0.60");
     expect(container.textContent).toContain("占位符对照（仅本地预览）");
-    expect(container.textContent).toContain("<PRIVATE_EMAIL>");
+    expect(container.textContent).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
     expect(container.textContent).toContain("alice@example.com");
     expect(container.textContent).toContain("脱敏后的请求体");
+  });
+
+  it("prompts that privacy protection is disabled instead of showing no findings", async () => {
+    await renderPolicy();
+
+    expect(container.textContent).toContain(
+      "隐私保护未开启，请先开启后再试运行",
+    );
+
+    await act(async () => {
+      button("试运行").click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(bridgeMocks.dryRunPrivacyPolicy).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(
+      "隐私保护未开启，请先开启后再试运行。",
+    );
+    expect(container.querySelector(".safety-dry-run__result")).toBeNull();
   });
 });

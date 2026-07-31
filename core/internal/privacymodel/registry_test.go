@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -928,6 +929,29 @@ func emailMapping() map[string]*contract.CanonicalKind {
 	return map[string]*contract.CanonicalKind{"EMAIL": &kind}
 }
 
+func nymConfigDocument(t *testing.T) []byte {
+	t.Helper()
+	mapping := defaultNymLabelMapping()
+	labels := make([]string, 0, len(mapping))
+	for label := range mapping {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	id2label := map[string]string{"0": "O"}
+	for index, label := range labels {
+		id2label[strconv.Itoa(index*2+1)] = "B-" + label
+		id2label[strconv.Itoa(index*2+2)] = "I-" + label
+	}
+	document, err := json.Marshal(map[string]any{
+		"architectures": []string{"TinyForTokenClassification"},
+		"id2label":      id2label,
+	})
+	if err != nil {
+		t.Fatalf("marshal Nym config: %v", err)
+	}
+	return document
+}
+
 func TestRegistryNeverUsesProductionHuggingFaceHostInTestMode(t *testing.T) {
 	t.Setenv(noRemoteModelsEnvironment, "1")
 	_, err := NewRegistry(context.Background(), RegistryConfig{
@@ -1204,6 +1228,52 @@ func TestOpenAICatalogMappingAllowsCompleteRemapAndRejectsMissingKeys(t *testing
 	tampered.License = &tamperedLicense
 	if validInstallationProvenance(tampered) {
 		t.Fatal("catalog license tampering passed provenance validation")
+	}
+}
+
+func TestNymCatalogUsesCompleteDefaultMapping(t *testing.T) {
+	repository := newFakeHFRepository(t)
+	repository.repoID = "Wismut/nym-pii-multilingual-small"
+	repository.revision = "4348999cd3c2e20c49615e9af7c6bbb45b64cd85"
+	repository.requestedRevision = repository.revision
+	repository.assets = map[string][]byte{
+		"config.json":               nymConfigDocument(t),
+		"tokenizer.json":            []byte(`{"version":"1.0","model":{"type":"WordPiece"}}`),
+		"edge-int8/model_int8.onnx": []byte("metadata-only fake model"),
+	}
+	repository.lfs = map[string]bool{
+		"edge-int8/model_int8.onnx": true,
+	}
+	registry := newTestRegistry(
+		t,
+		filepath.Join(t.TempDir(), "models"),
+		repository,
+		nil,
+	)
+	plan, err := registry.prepareInstallation(
+		context.Background(),
+		contract.PrivacyModelInstallRequest{
+			RepoID:    repository.repoID,
+			Revision:  repository.revision,
+			VariantID: "edge_int8",
+		},
+	)
+	if err != nil ||
+		!labelMappingsEqual(
+			plan.installation.LabelMapping,
+			defaultNymLabelMapping(),
+		) {
+		t.Fatalf("default Nym mapping plan=%#v err=%v", plan, err)
+	}
+	if plan.installation.CatalogID == nil ||
+		*plan.installation.CatalogID != CatalogNymPIIMultilingualSmall {
+		t.Fatalf("Nym catalog provenance=%#v", plan.installation)
+	}
+	if repository.assetRequests.Load() != 2 {
+		t.Fatalf(
+			"asset requests=%d, want config+tokenizer only",
+			repository.assetRequests.Load(),
+		)
 	}
 }
 

@@ -412,7 +412,7 @@ raise "Policy min_confidence contract drifted" unless policy.fetch("required").i
                                                       min_confidence.fetch("type") == "number" &&
                                                       min_confidence.fetch("minimum") == 0 &&
                                                       min_confidence.fetch("maximum") == 1 &&
-                                                      min_confidence.fetch("default") == 0.8
+                                                      min_confidence.fetch("default") == 0.6
 raise "PolicyAction wire values drifted" unless openapi.dig("components", "schemas", "PolicyAction", "enum") == %w[allow warn block redact]
 raise "PolicyDetector wire values drifted" unless openapi.dig("components", "schemas", "PolicyDetector", "enum") == %w[regex local_model]
 policy_patch_fields = openapi.dig("components", "schemas", "PolicyPatch", "properties").keys

@@ -962,31 +962,34 @@ func strictEntityTag(raw string) (string, string, bool) {
 
 func suggestedCanonicalKind(label string) *contract.CanonicalKind {
 	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(label), "-", "_"))
-	aliases := map[string]contract.CanonicalKind{
-		"EMAIL": contract.CanonicalKindEmail, "EMAIL_ADDRESS": contract.CanonicalKindEmail,
-		"PRIVATE_EMAIL": contract.CanonicalKindEmail,
-		"PHONE":         contract.CanonicalKindPhone,
-		"TELEPHONE":     contract.CanonicalKindPhone,
-		"PRIVATE_PHONE": contract.CanonicalKindPhone,
-		"MOBILE":        contract.CanonicalKindPhone,
-		"ACCOUNT":       contract.CanonicalKindAccount, "ACCOUNT_NUMBER": contract.CanonicalKindAccount,
-		"IBAN": contract.CanonicalKindAccount, "BANK_ACCOUNT": contract.CanonicalKindAccount,
-		"CREDIT_CARD": contract.CanonicalKindPaymentCard, "CARD_NUMBER": contract.CanonicalKindPaymentCard,
-		"IP": contract.CanonicalKindIPAddress, "IPV4": contract.CanonicalKindIPAddress,
-		"IPV6": contract.CanonicalKindIPAddress, "URL": contract.CanonicalKindURL,
-		"PRIVATE_URL": contract.CanonicalKindURL,
-		"API_KEY":     contract.CanonicalKindCommonSecret, "PASSWORD": contract.CanonicalKindCommonSecret,
-		"SECRET": contract.CanonicalKindCommonSecret, "TOKEN": contract.CanonicalKindCommonSecret,
-		"ADDRESS": contract.CanonicalKindAddress, "STREET_ADDRESS": contract.CanonicalKindAddress,
+	aliases := nymLabelKinds()
+	for alias, kind := range map[string]contract.CanonicalKind{
+		"EMAIL_ADDRESS":   contract.CanonicalKindEmail,
+		"PRIVATE_EMAIL":   contract.CanonicalKindEmail,
+		"TELEPHONE":       contract.CanonicalKindPhone,
+		"PRIVATE_PHONE":   contract.CanonicalKindPhone,
+		"MOBILE":          contract.CanonicalKindPhone,
+		"ACCOUNT":         contract.CanonicalKindAccount,
+		"BANK_ACCOUNT":    contract.CanonicalKindAccount,
+		"CREDIT_CARD":     contract.CanonicalKindPaymentCard,
+		"CARD_NUMBER":     contract.CanonicalKindPaymentCard,
+		"IP":              contract.CanonicalKindIPAddress,
+		"IPV4":            contract.CanonicalKindIPAddress,
+		"IPV6":            contract.CanonicalKindIPAddress,
+		"PRIVATE_URL":     contract.CanonicalKindURL,
+		"SECRET":          contract.CanonicalKindCommonSecret,
+		"TOKEN":           contract.CanonicalKindCommonSecret,
+		"ADDRESS":         contract.CanonicalKindAddress,
 		"PRIVATE_ADDRESS": contract.CanonicalKindAddress,
-		"DATE_OF_BIRTH":   contract.CanonicalKindDate,
 		"DOB":             contract.CanonicalKindDate,
 		"PRIVATE_DATE":    contract.CanonicalKindDate,
 		"PERSON":          contract.CanonicalKindPerson,
 		"NAME":            contract.CanonicalKindPerson,
 		"PRIVATE_PERSON":  contract.CanonicalKindPerson,
-		"FIRST_NAME":      contract.CanonicalKindPerson, "LAST_NAME": contract.CanonicalKindPerson,
-		"GIVEN_NAME": contract.CanonicalKindPerson, "SURNAME": contract.CanonicalKindPerson,
+		"FIRST_NAME":      contract.CanonicalKindPerson,
+		"LAST_NAME":       contract.CanonicalKindPerson,
+	} {
+		aliases[alias] = kind
 	}
 	kind, exists := aliases[normalized]
 	if !exists {

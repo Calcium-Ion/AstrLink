@@ -22,7 +22,7 @@ const policy = {
   priority: 0,
   detector: "regex",
   local_model_id: null,
-  min_confidence: 0.8,
+  min_confidence: 0.6,
   request_action: "redact",
   response_action: "allow",
   response_restore: true,
@@ -110,7 +110,7 @@ describe("privacy-policy IPC contract", () => {
       suppressed_findings: [],
       redactions: [
         {
-          placeholder: "<PRIVATE_EMAIL>",
+          placeholder: "<PRIVATE_EMAIL_7f3a91c04d28be56>",
           kind: "email",
           value: "alice@example.com",
         },

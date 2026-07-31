@@ -3,6 +3,7 @@ package controlapi
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -266,6 +267,22 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 		result.Redactions[0].Value != "alice@example.com" {
 		t.Fatalf("redactions=%#v", result.Redactions)
 	}
+	placeholder := result.Redactions[0].Placeholder
+	const emailPlaceholderPrefix = "<PRIVATE_EMAIL_"
+	if !strings.HasPrefix(placeholder, emailPlaceholderPrefix) ||
+		!strings.HasSuffix(placeholder, ">") {
+		t.Fatalf("random placeholder=%q", placeholder)
+	}
+	suffix := strings.TrimSuffix(strings.TrimPrefix(placeholder, emailPlaceholderPrefix), ">")
+	if len(suffix) != 16 {
+		t.Fatalf("random placeholder suffix=%q", suffix)
+	}
+	if _, err := hex.DecodeString(suffix); err != nil {
+		t.Fatalf("random placeholder suffix=%q: %v", suffix, err)
+	}
+	if !strings.Contains(*result.RedactedBody, placeholder) {
+		t.Fatalf("redacted body does not contain generated placeholder: %s", *result.RedactedBody)
+	}
 
 	response = policyRequest(
 		t, handler, http.MethodPost, PolicyDryRunPath, "application/json",
@@ -322,7 +339,7 @@ func TestPolicyDryRunSeparatesAcceptedAndSuppressedModelFindings(t *testing.T) {
 		}
 		return []privacy.Finding{{
 			Segment: 0, Start: 0, End: len(input.Segments[0].Value),
-			Kind: privacy.KindPerson, Confidence: 0.696717,
+			Kind: privacy.KindPerson, Confidence: 0.596717,
 		}}, nil
 	})
 	filter, err := privacy.New(provider, detector)
@@ -339,11 +356,12 @@ func TestPolicyDryRunSeparatesAcceptedAndSuppressedModelFindings(t *testing.T) {
 		wantSuppressed int
 	}{
 		{
-			name: "default threshold suppresses", minConfidence: 0.80,
-			wantDecision: "allow", wantSuppressed: 1,
+			name:          "default threshold suppresses",
+			minConfidence: contract.DefaultPrivacyMinConfidence,
+			wantDecision:  "allow", wantSuppressed: 1,
 		},
 		{
-			name: "lower threshold accepts", minConfidence: 0.69,
+			name: "lower threshold accepts", minConfidence: 0.59,
 			wantDecision: "block", wantFindings: 1,
 		},
 	} {
@@ -372,7 +390,7 @@ func TestPolicyDryRunSeparatesAcceptedAndSuppressedModelFindings(t *testing.T) {
 				result.SuppressedFindings...,
 			)
 			if len(candidates) != 1 ||
-				candidates[0].Confidence != 0.696717 ||
+				candidates[0].Confidence != 0.596717 ||
 				candidates[0].Kind != "private_person" ||
 				candidates[0].Path == "" {
 				t.Fatalf("candidates=%#v", candidates)

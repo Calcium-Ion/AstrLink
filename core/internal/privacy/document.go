@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -408,8 +407,13 @@ type placedFinding struct {
 	Placeholder string
 }
 
-func rewriteDocument(document jsonDocument, extracted []extractedSegment, findings []Finding) ([]byte, []Redaction, error) {
-	placed, redactions, err := assignPlaceholders(extracted, findings)
+func rewriteDocument(
+	document jsonDocument,
+	extracted []extractedSegment,
+	findings []Finding,
+	allocator *placeholderAllocator,
+) ([]byte, []Redaction, error) {
+	placed, redactions, err := assignPlaceholders(extracted, findings, allocator)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -450,7 +454,11 @@ func validStructuredJSON(value string) bool {
 	return err == nil && !duplicateKeys
 }
 
-func assignPlaceholders(extracted []extractedSegment, findings []Finding) ([]placedFinding, []Redaction, error) {
+func assignPlaceholders(
+	extracted []extractedSegment,
+	findings []Finding,
+	allocator *placeholderAllocator,
+) ([]placedFinding, []Redaction, error) {
 	grouped := make(map[int][]Finding)
 	for _, finding := range findings {
 		grouped[finding.Segment] = append(grouped[finding.Segment], finding)
@@ -490,30 +498,21 @@ func assignPlaceholders(extracted []extractedSegment, findings []Finding) ([]pla
 		kind  Kind
 		value string
 	}
-	distinctOrder := make(map[Kind][]string)
-	seenValue := make(map[kindKey]struct{})
+	placeholderFor := make(map[kindKey]string, len(selected))
 	for _, item := range selected {
 		key := kindKey{kind: item.Kind, value: item.Value}
-		if _, exists := seenValue[key]; exists {
+		if _, exists := placeholderFor[key]; exists {
 			continue
 		}
-		seenValue[key] = struct{}{}
-		distinctOrder[item.Kind] = append(distinctOrder[item.Kind], item.Value)
-	}
-	placeholderFor := make(map[kindKey]string, len(seenValue))
-	for kind, values := range distinctOrder {
-		base := replacementFor(kind)
-		if len(values) == 1 {
-			placeholderFor[kindKey{kind: kind, value: values[0]}] = base
-			continue
+		placeholder, err := allocator.allocate(item.Kind)
+		if err != nil {
+			return nil, nil, err
 		}
-		for index, value := range values {
-			placeholderFor[kindKey{kind: kind, value: value}] = indexedReplacement(base, index)
-		}
+		placeholderFor[key] = placeholder
 	}
 
-	redactions := make([]Redaction, 0, len(seenValue))
-	seenPlaceholder := make(map[string]struct{}, len(seenValue))
+	redactions := make([]Redaction, 0, len(placeholderFor))
+	seenPlaceholder := make(map[string]struct{}, len(placeholderFor))
 	for index := range selected {
 		key := kindKey{kind: selected[index].Kind, value: selected[index].Value}
 		placeholder := placeholderFor[key]
@@ -610,13 +609,6 @@ func replacementFor(kind Kind) string {
 	default:
 		return "<PRIVATE>"
 	}
-}
-
-func indexedReplacement(base string, index int) string {
-	if strings.HasPrefix(base, "<") && strings.HasSuffix(base, ">") {
-		return base[:len(base)-1] + "_" + strconv.Itoa(index) + ">"
-	}
-	return base + "_" + strconv.Itoa(index)
 }
 
 func kindPriority(kind Kind) int {

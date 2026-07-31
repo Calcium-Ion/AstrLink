@@ -2,8 +2,10 @@ package privacy
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"unicode/utf8"
@@ -12,9 +14,10 @@ import (
 )
 
 type Engine struct {
-	provider      PolicyProvider
-	regexDetector Detector
-	modelDetector Detector
+	provider           PolicyProvider
+	regexDetector      Detector
+	modelDetector      Detector
+	placeholderEntropy io.Reader
 }
 
 func New(provider PolicyProvider, modelDetector Detector) (*Engine, error) {
@@ -22,9 +25,10 @@ func New(provider PolicyProvider, modelDetector Detector) (*Engine, error) {
 		return nil, fmt.Errorf("privacy policy provider is required")
 	}
 	return &Engine{
-		provider:      provider,
-		regexDetector: NewRegexDetector(),
-		modelDetector: modelDetector,
+		provider:           provider,
+		regexDetector:      NewRegexDetector(),
+		modelDetector:      modelDetector,
+		placeholderEntropy: rand.Reader,
 	}, nil
 }
 
@@ -138,7 +142,12 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 				SuppressedFindings: suppressed,
 			}, ErrUnsafeRewrite
 		}
-		redacted, redactions, err := rewriteDocument(document, extracted, accepted)
+		redacted, redactions, err := rewriteDocument(
+			document,
+			extracted,
+			accepted,
+			newPlaceholderAllocator(engine.placeholderEntropy),
+		)
 		if err != nil {
 			return Result{
 				Decision:           DecisionBlock,

@@ -405,6 +405,10 @@ func (registry *Registry) prepareInstallation(
 				return installationPlan{}, ErrInvalidConfig
 			}
 		} else {
+			if catalogPlan.item.ID == CatalogNymPIIMultilingualSmall &&
+				len(mapping) == 0 {
+				mapping = defaultNymLabelMapping()
+			}
 			probed, err := registry.probe.inspect(
 				ctx,
 				contract.PrivacyModelProbeRequest{

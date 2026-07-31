@@ -226,7 +226,7 @@ describe("App workspace navigation", () => {
         priority: 0,
         detector: "regex",
         local_model_id: null,
-        min_confidence: 0.8,
+        min_confidence: 0.6,
         request_action: "redact",
         response_action: "allow",
         response_restore: true,

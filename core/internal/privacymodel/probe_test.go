@@ -284,6 +284,84 @@ func TestSuggestedCanonicalKindRecognizesBuiltinPrivateLabels(t *testing.T) {
 	}
 }
 
+func TestNymDefaultLabelMappingCoversPinnedModelLabels(t *testing.T) {
+	expected := map[string]contract.CanonicalKind{
+		"ACCOUNT_NUMBER":        contract.CanonicalKindAccount,
+		"AGE":                   contract.CanonicalKindDate,
+		"API_KEY":               contract.CanonicalKindCommonSecret,
+		"BUILDING_NUMBER":       contract.CanonicalKindAddress,
+		"CITY":                  contract.CanonicalKindAddress,
+		"COMPANY_NAME":          contract.CanonicalKindPerson,
+		"COUNTRY":               contract.CanonicalKindAddress,
+		"CREDIT_DEBIT_CARD":     contract.CanonicalKindPaymentCard,
+		"CUSTOMER_ID":           contract.CanonicalKindAccount,
+		"CVV":                   contract.CanonicalKindPaymentCard,
+		"DATE":                  contract.CanonicalKindDate,
+		"DATE_OF_BIRTH":         contract.CanonicalKindDate,
+		"DRIVERS_LICENSE":       contract.CanonicalKindAccount,
+		"EMAIL":                 contract.CanonicalKindEmail,
+		"EMPLOYEE_ID":           contract.CanonicalKindAccount,
+		"FAX_NUMBER":            contract.CanonicalKindPhone,
+		"GENDER":                contract.CanonicalKindPerson,
+		"GIVEN_NAME":            contract.CanonicalKindPerson,
+		"GOVERNMENT_ID":         contract.CanonicalKindAccount,
+		"IBAN":                  contract.CanonicalKindAccount,
+		"LICENSE_PLATE":         contract.CanonicalKindAccount,
+		"MAC_ADDRESS":           contract.CanonicalKindIPAddress,
+		"MEDICAL_RECORD_NUMBER": contract.CanonicalKindAccount,
+		"PASSPORT":              contract.CanonicalKindAccount,
+		"PASSWORD":              contract.CanonicalKindCommonSecret,
+		"PHONE":                 contract.CanonicalKindPhone,
+		"PIN":                   contract.CanonicalKindCommonSecret,
+		"ROUTING_NUMBER":        contract.CanonicalKindAccount,
+		"SECONDARY_ADDRESS":     contract.CanonicalKindAddress,
+		"SSN":                   contract.CanonicalKindAccount,
+		"STATE":                 contract.CanonicalKindAddress,
+		"STREET_ADDRESS":        contract.CanonicalKindAddress,
+		"STREET_NAME":           contract.CanonicalKindAddress,
+		"SURNAME":               contract.CanonicalKindPerson,
+		"SWIFT_BIC":             contract.CanonicalKindAccount,
+		"TAX_ID":                contract.CanonicalKindAccount,
+		"TIME":                  contract.CanonicalKindDate,
+		"URL":                   contract.CanonicalKindURL,
+		"USERNAME":              contract.CanonicalKindAccount,
+		"ZIP_CODE":              contract.CanonicalKindAddress,
+	}
+	mapping := defaultNymLabelMapping()
+	if len(mapping) != len(expected) {
+		t.Fatalf("Nym mapping has %d labels, want %d", len(mapping), len(expected))
+	}
+	for label, want := range expected {
+		mapped, exists := mapping[label]
+		if !exists || mapped == nil || *mapped != want {
+			t.Fatalf("default Nym mapping %q=%v, want %q", label, mapped, want)
+		}
+		suggested := suggestedCanonicalKind(label)
+		if suggested == nil || *suggested != want {
+			t.Fatalf("suggestedCanonicalKind(%q)=%v, want %q", label, suggested, want)
+		}
+	}
+	id2label := map[string]string{"0": "O"}
+	index := 1
+	for label := range expected {
+		id2label[fmt.Sprintf("%d", index)] = "B-" + label
+		id2label[fmt.Sprintf("%d", index+1)] = "I-" + label
+		index += 2
+	}
+	labels, tagScheme, complete, valid := probeLabels(id2label)
+	if !valid || !complete || tagScheme != "bio" ||
+		len(labels) != len(expected) {
+		t.Fatalf(
+			"Nym labels valid=%t complete=%t scheme=%q count=%d, want bio/%d",
+			valid,
+			complete,
+			tagScheme,
+			len(labels),
+			len(expected),
+		)
+	}
+}
+
 func TestSafeAssetPathMatchesWorkerBoundary(t *testing.T) {
 	maximum := strings.Repeat("a", 507) + ".onnx"
 	for _, test := range []struct {

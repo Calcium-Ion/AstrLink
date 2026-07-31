@@ -358,6 +358,61 @@ func defaultOpenAILabelMapping() map[string]*contract.CanonicalKind {
 		"private_url":     contract.CanonicalKindURL,
 		"secret":          contract.CanonicalKindCommonSecret,
 	}
+	return resolvedLabelMapping(values)
+}
+
+func defaultNymLabelMapping() map[string]*contract.CanonicalKind {
+	return resolvedLabelMapping(nymLabelKinds())
+}
+
+func nymLabelKinds() map[string]contract.CanonicalKind {
+	return map[string]contract.CanonicalKind{
+		"ACCOUNT_NUMBER":        contract.CanonicalKindAccount,
+		"AGE":                   contract.CanonicalKindDate,
+		"API_KEY":               contract.CanonicalKindCommonSecret,
+		"BUILDING_NUMBER":       contract.CanonicalKindAddress,
+		"CITY":                  contract.CanonicalKindAddress,
+		"COMPANY_NAME":          contract.CanonicalKindPerson,
+		"COUNTRY":               contract.CanonicalKindAddress,
+		"CREDIT_DEBIT_CARD":     contract.CanonicalKindPaymentCard,
+		"CUSTOMER_ID":           contract.CanonicalKindAccount,
+		"CVV":                   contract.CanonicalKindPaymentCard,
+		"DATE":                  contract.CanonicalKindDate,
+		"DATE_OF_BIRTH":         contract.CanonicalKindDate,
+		"DRIVERS_LICENSE":       contract.CanonicalKindAccount,
+		"EMAIL":                 contract.CanonicalKindEmail,
+		"EMPLOYEE_ID":           contract.CanonicalKindAccount,
+		"FAX_NUMBER":            contract.CanonicalKindPhone,
+		"GENDER":                contract.CanonicalKindPerson,
+		"GIVEN_NAME":            contract.CanonicalKindPerson,
+		"GOVERNMENT_ID":         contract.CanonicalKindAccount,
+		"IBAN":                  contract.CanonicalKindAccount,
+		"LICENSE_PLATE":         contract.CanonicalKindAccount,
+		"MAC_ADDRESS":           contract.CanonicalKindIPAddress,
+		"MEDICAL_RECORD_NUMBER": contract.CanonicalKindAccount,
+		"PASSPORT":              contract.CanonicalKindAccount,
+		"PASSWORD":              contract.CanonicalKindCommonSecret,
+		"PHONE":                 contract.CanonicalKindPhone,
+		"PIN":                   contract.CanonicalKindCommonSecret,
+		"ROUTING_NUMBER":        contract.CanonicalKindAccount,
+		"SECONDARY_ADDRESS":     contract.CanonicalKindAddress,
+		"SSN":                   contract.CanonicalKindAccount,
+		"STATE":                 contract.CanonicalKindAddress,
+		"STREET_ADDRESS":        contract.CanonicalKindAddress,
+		"STREET_NAME":           contract.CanonicalKindAddress,
+		"SURNAME":               contract.CanonicalKindPerson,
+		"SWIFT_BIC":             contract.CanonicalKindAccount,
+		"TAX_ID":                contract.CanonicalKindAccount,
+		"TIME":                  contract.CanonicalKindDate,
+		"URL":                   contract.CanonicalKindURL,
+		"USERNAME":              contract.CanonicalKindAccount,
+		"ZIP_CODE":              contract.CanonicalKindAddress,
+	}
+}
+
+func resolvedLabelMapping(
+	values map[string]contract.CanonicalKind,
+) map[string]*contract.CanonicalKind {
 	result := make(map[string]*contract.CanonicalKind, len(values))
 	for label, kind := range values {
 		value := kind

@@ -42,7 +42,7 @@ const (
 	DefaultPrivacyPolicyID       PolicyID = "policy_privacy_default"
 	DefaultPrivacyPolicyName              = "隐私保护"
 	DefaultPrivacyPolicyPriority          = 0
-	DefaultPrivacyMinConfidence           = 0.80
+	DefaultPrivacyMinConfidence           = 0.60
 )
 
 type PolicyMatch struct {

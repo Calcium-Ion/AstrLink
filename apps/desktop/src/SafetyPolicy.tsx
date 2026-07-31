@@ -469,6 +469,10 @@ function StreamingRestoreDemoDialog({
           示例邮箱 <code>alice@example.com</code>
           为固定示例，不代表当前策略状态。
         </p>
+        <p className="streaming-restore-demo__example-note">
+          实际请求会使用随机后缀；这里固定展示
+          <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>。
+        </p>
         <div
           aria-label="请求脱敏与响应占位符还原数据流"
           className="streaming-restore-demo__canvas"
@@ -510,7 +514,7 @@ function StreamingRestoreDemoDialog({
               alice@example.com
             </span>
             <span className="streaming-restore-demo__packet streaming-restore-demo__packet--redacted">
-              &lt;PRIVATE_EMAIL&gt;
+              &lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;
             </span>
           </div>
 
@@ -525,10 +529,10 @@ function StreamingRestoreDemoDialog({
               </span>
             </div>
             <span className="streaming-restore-demo__packet streaming-restore-demo__packet--chunk-a">
-              data: &lt;PRIVATE_
+              data: &lt;PRIVATE_EMAIL_7f3a
             </span>
             <span className="streaming-restore-demo__packet streaming-restore-demo__packet--chunk-b">
-              EMAIL&gt;
+              91c04d28be56&gt;
             </span>
             <span className="streaming-restore-demo__packet streaming-restore-demo__packet--restored">
               data: alice@example.com
@@ -538,7 +542,8 @@ function StreamingRestoreDemoDialog({
           <ol className="streaming-restore-demo__legend">
             <li>
               <span className="streaming-restore-demo__swatch streaming-restore-demo__swatch--request" />
-              请求侧脱敏：原文 → <code>&lt;PRIVATE_EMAIL&gt;</code>
+              请求侧脱敏：原文 →
+              <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>
             </li>
             <li>
               <span className="streaming-restore-demo__swatch streaming-restore-demo__swatch--sse" />
@@ -954,6 +959,13 @@ export function SafetyPolicy({
       saving ||
       status !== "ready"
     ) {
+      return;
+    }
+    if (!record.policy.enabled) {
+      const message = "隐私保护未开启，请先开启后再试运行。";
+      setDryRunResult(null);
+      setDryRunError(message);
+      setError(message);
       return;
     }
     const sample = dryRunSample.trim();
@@ -1677,6 +1689,8 @@ export function SafetyPolicy({
                 </button>
                 {dryRunSampleOverLimit ? (
                   <small>样例过长（上限 256 KiB），请缩短后再试</small>
+                ) : !policy.enabled ? (
+                  <small>隐私保护未开启，请先开启后再试运行</small>
                 ) : policy.enabled &&
                   policy.detector === "local_model" &&
                   !selectedModelReady ? (

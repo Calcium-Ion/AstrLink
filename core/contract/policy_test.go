@@ -28,7 +28,7 @@ func TestDefaultPrivacyPolicyIsFrozenAndValid(t *testing.T) {
 	}
 	if !strings.Contains(string(document), `"match":{}`) ||
 		!strings.Contains(string(document), `"detector":"regex"`) ||
-		!strings.Contains(string(document), `"min_confidence":0.8`) ||
+		!strings.Contains(string(document), `"min_confidence":0.6`) ||
 		!strings.Contains(string(document), `"request_action":"redact"`) ||
 		!strings.Contains(string(document), `"response_restore":true`) {
 		t.Fatalf("default policy wire shape = %s", document)
