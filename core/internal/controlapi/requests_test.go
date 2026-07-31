@@ -41,6 +41,9 @@ func TestRequestRecordControlAPI(t *testing.T) {
 		RequestedModel: &model, HTTPStatus: &status, LatencyMs: &latency,
 		Audit: contract.NotCapturedAuditSummary(),
 		Usage: &contract.Usage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		PrivacyRestore: &contract.PrivacyRestoreSummary{
+			Enabled: true, MappingCount: 1, RestoredCount: 2,
+		},
 	}
 	if err := store.InsertRequestRecord(context.Background(), record); err != nil {
 		t.Fatal(err)
@@ -64,6 +67,11 @@ func TestRequestRecordControlAPI(t *testing.T) {
 	decode(t, response, &loaded)
 	if loaded.RequestedModel == nil || *loaded.RequestedModel != "public-alias" {
 		t.Fatalf("loaded=%#v", loaded)
+	}
+	if loaded.PrivacyRestore == nil ||
+		loaded.PrivacyRestore.MappingCount != 1 ||
+		loaded.PrivacyRestore.RestoredCount != 2 {
+		t.Fatalf("privacy restore=%#v", loaded.PrivacyRestore)
 	}
 
 	response = requestRecordHTTP(

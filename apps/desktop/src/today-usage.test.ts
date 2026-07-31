@@ -27,6 +27,7 @@ function record(
       request_body_truncated: false,
       response_content_truncated: false,
     },
+    privacy_restore: null,
   };
 }
 

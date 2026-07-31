@@ -342,5 +342,12 @@ FROM endpoint_credentials`,
 				`CREATE INDEX request_records_service_id_idx ON request_records (service_id)`,
 			},
 		},
+		{
+			Version: 13,
+			Name:    "privacy_restore_diagnostics",
+			Statements: []string{
+				`ALTER TABLE request_records ADD COLUMN privacy_restore_json TEXT`,
+			},
+		},
 	}
 }

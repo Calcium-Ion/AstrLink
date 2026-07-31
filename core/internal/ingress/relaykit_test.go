@@ -198,6 +198,7 @@ func TestRelayKitPrivacyRedactRestoreSurvivesConversion(t *testing.T) {
 		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact, ResponseRestore: true,
 	}, nil)
 	var upstreamBody string
+	var placeholder string
 	handler := NewWithDependencies(Dependencies{
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
 			Endpoint: upstream, PlanType: contract.PlanTypeRelayKit,
@@ -211,9 +212,22 @@ func TestRelayKitPrivacyRedactRestoreSurvivesConversion(t *testing.T) {
 			if strings.Contains(upstreamBody, "alice@example.com") {
 				t.Fatalf("email leaked to upstream: %s", upstreamBody)
 			}
+			var converted struct {
+				Messages []struct {
+					Content string `json:"content"`
+				} `json:"messages"`
+			}
+			if err := json.Unmarshal(raw, &converted); err != nil ||
+				len(converted.Messages) == 0 {
+				t.Fatalf("converted upstream request=%s err=%v", raw, err)
+			}
+			placeholder = emailPlaceholderPattern.FindString(converted.Messages[0].Content)
+			if placeholder == "" {
+				t.Fatalf("converted request has no email placeholder: %s", raw)
+			}
 			return jsonResponse(http.StatusOK, `{
 				"id":"msg_1","type":"message","role":"assistant","model":"claude-upstream",
-				"content":[{"type":"text","text":"redacted echo"}],
+				"content":[{"type":"text","text":"redacted echo `+placeholder+`"}],
 				"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}
 			}`), nil
 		})),
@@ -231,6 +245,11 @@ func TestRelayKitPrivacyRedactRestoreSurvivesConversion(t *testing.T) {
 	}
 	if upstreamBody == "" || strings.Contains(upstreamBody, "alice@example.com") {
 		t.Fatalf("unexpected upstream body %q", upstreamBody)
+	}
+	if placeholder == "" ||
+		!strings.Contains(response.Body.String(), "redacted echo alice@example.com") ||
+		strings.Contains(response.Body.String(), placeholder) {
+		t.Fatalf("converted response was not restored: %s", response.Body.String())
 	}
 }
 

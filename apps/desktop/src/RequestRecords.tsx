@@ -1189,6 +1189,31 @@ function RecordDetail({
           </dl>
         </DetailSection>
 
+        <DetailSection title="隐私还原">
+          {record.privacy_restore ? (
+            <dl className="record-metrics">
+              <Metric
+                label="状态"
+                value={record.privacy_restore.enabled ? "已开启" : "已关闭"}
+              />
+              <Metric
+                label="映射数"
+                value={record.privacy_restore.mapping_count}
+              />
+              <Metric
+                label="已还原"
+                value={record.privacy_restore.restored_count}
+              />
+              <Metric
+                label="安全降级"
+                value={record.privacy_restore.fallback_count}
+              />
+            </dl>
+          ) : (
+            <p className="inline-notice">本次未触发请求脱敏，或属于旧版记录。</p>
+          )}
+        </DetailSection>
+
         {record.error ? (
           <DetailSection tone="error" title="错误">
             <dl className="record-detail-grid">

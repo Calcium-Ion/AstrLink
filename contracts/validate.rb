@@ -375,6 +375,8 @@ raise "request records must reserve local access-token attribution" unless reque
 raise "request records must use service_id" unless request_record.fetch("required").include?("service_id") &&
                                                    request_record.fetch("properties").key?("service_id") &&
                                                    !request_record.fetch("properties").key?("endpoint_id")
+raise "request records must expose privacy restore diagnostics" unless request_record.fetch("required").include?("privacy_restore") &&
+                                                                        request_record.dig("properties", "privacy_restore", "oneOf")&.any? { |entry| entry["$ref"] == "#/components/schemas/PrivacyRestoreSummary" }
 
 policy_match = openapi.dig("components", "schemas", "PolicyMatch")
 raise "policy matches must use service_ids" unless policy_match.fetch("properties").key?("service_ids") &&

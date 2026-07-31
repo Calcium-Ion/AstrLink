@@ -25,11 +25,12 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
     route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    usage_json, error_json, audit_json, privacy_restore_json, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.id, row.startedAt, row.completedAt, row.status, row.inputProtocol, row.requestedModel,
 		row.streaming, row.routeID, row.endpointID, row.localAccessTokenID, row.planJSON,
-		row.httpStatus, row.latencyMs, row.usageJSON, row.errorJSON, row.auditJSON, row.createdAt,
+		row.httpStatus, row.latencyMs, row.usageJSON, row.errorJSON, row.auditJSON,
+		row.privacyRestoreJSON, row.createdAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert request record: %w", err)
@@ -52,8 +53,8 @@ func (store *Store) UpsertRequestRecord(ctx context.Context, record contract.Req
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
     route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    usage_json, error_json, audit_json, privacy_restore_json, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     started_at = excluded.started_at,
     completed_at = excluded.completed_at,
@@ -69,11 +70,13 @@ ON CONFLICT(id) DO UPDATE SET
     latency_ms = excluded.latency_ms,
     usage_json = excluded.usage_json,
     error_json = excluded.error_json,
-    audit_json = excluded.audit_json
+    audit_json = excluded.audit_json,
+    privacy_restore_json = excluded.privacy_restore_json
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 		row.id, row.startedAt, row.completedAt, row.status, row.inputProtocol, row.requestedModel,
 		row.streaming, row.routeID, row.endpointID, row.localAccessTokenID, row.planJSON,
-		row.httpStatus, row.latencyMs, row.usageJSON, row.errorJSON, row.auditJSON, row.createdAt,
+		row.httpStatus, row.latencyMs, row.usageJSON, row.errorJSON, row.auditJSON,
+		row.privacyRestoreJSON, row.createdAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert request record: %w", err)
@@ -118,7 +121,7 @@ func (store *Store) GetRequestRecord(ctx context.Context, id contract.RequestID)
 	row := store.db.QueryRowContext(ctx, `SELECT
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
     route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, created_at
+    usage_json, error_json, audit_json, privacy_restore_json, created_at
 FROM request_records WHERE id = ?`, id)
 	record, err := scanRequestRecord(row)
 	if err != nil {
@@ -184,7 +187,7 @@ func (store *Store) ListRequestRecords(
 	query.WriteString(`SELECT
     id, started_at, completed_at, status, input_protocol, requested_model, streaming,
     route_id, service_id, local_access_token_id, plan_json, http_status, latency_ms,
-    usage_json, error_json, audit_json, created_at
+    usage_json, error_json, audit_json, privacy_restore_json, created_at
 FROM request_records WHERE 1 = 1`)
 	args := make([]any, 0, 8)
 	if options.From != nil {
@@ -329,6 +332,7 @@ type requestRecordRow struct {
 	usageJSON          any
 	errorJSON          any
 	auditJSON          string
+	privacyRestoreJSON any
 	createdAt          string
 }
 
@@ -388,6 +392,13 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 		}
 		row.errorJSON = string(encoded)
 	}
+	if record.PrivacyRestore != nil {
+		encoded, err := json.Marshal(record.PrivacyRestore)
+		if err != nil {
+			return requestRecordRow{}, fmt.Errorf("encode privacy restore summary: %w", err)
+		}
+		row.privacyRestoreJSON = string(encoded)
+	}
 	return row, nil
 }
 
@@ -400,13 +411,14 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		id, startedAt, status, inputProtocol, auditJSON, createdAt string
 		completedAt, requestedModel, routeID, endpointID           sql.NullString
 		localAccessTokenID, planJSON, usageJSON, errorJSON         sql.NullString
+		privacyRestoreJSON                                         sql.NullString
 		streaming                                                  int
 		httpStatus, latencyMs                                      sql.NullInt64
 	)
 	if err := row.Scan(
 		&id, &startedAt, &completedAt, &status, &inputProtocol, &requestedModel, &streaming,
 		&routeID, &endpointID, &localAccessTokenID, &planJSON, &httpStatus, &latencyMs,
-		&usageJSON, &errorJSON, &auditJSON, &createdAt,
+		&usageJSON, &errorJSON, &auditJSON, &privacyRestoreJSON, &createdAt,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -476,6 +488,17 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	}
 	if err := json.Unmarshal([]byte(auditJSON), &record.Audit); err != nil {
 		return contract.RequestRecord{}, fmt.Errorf("%w: request %q audit", storagecontract.ErrInvalidRecord, id)
+	}
+	if privacyRestoreJSON.Valid {
+		var summary contract.PrivacyRestoreSummary
+		if err := json.Unmarshal([]byte(privacyRestoreJSON.String), &summary); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf(
+				"%w: request %q privacy_restore",
+				storagecontract.ErrInvalidRecord,
+				id,
+			)
+		}
+		record.PrivacyRestore = &summary
 	}
 	if _, err := time.Parse(time.RFC3339Nano, createdAt); err != nil {
 		return contract.RequestRecord{}, fmt.Errorf("%w: request %q created_at", storagecontract.ErrInvalidRecord, id)

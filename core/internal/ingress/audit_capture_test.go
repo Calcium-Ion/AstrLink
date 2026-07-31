@@ -8,13 +8,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
+)
+
+var requestScopedPlaceholderPattern = regexp.MustCompile(
+	`<PRIVATE_(?:EMAIL|PHONE)_[0-9a-f]{16}>`,
 )
 
 type memoryAuditSettings struct {
@@ -188,6 +194,136 @@ func TestIngressAuditCaptureSSEByteFidelity(t *testing.T) {
 	}
 	if blobs.blobs[0].Truncated || blobs.blobs[0].CapturedBytes != len(want) {
 		t.Fatalf("audit blob=%#v", blobs.blobs[0])
+	}
+}
+
+func TestIngressAuditCapturesRestoredCrossEventPrivacyResponse(t *testing.T) {
+	const input = "邮箱：alice@example.com\n" +
+		"备用邮箱：alice@example.com\n" +
+		"另一邮箱：bob@example.com\n" +
+		"电话A：+1-415-555-0001\n" +
+		"电话B：+1-415-555-0002"
+	requestBody, err := json.Marshal(map[string]any{
+		"model":  "gpt-5",
+		"stream": true,
+		"messages": []any{map[string]any{
+			"role":    "user",
+			"content": input,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	filter := testPrivacyEngine(t, privacy.Policy{
+		Enabled:         true,
+		Mode:            privacy.ModeRegex,
+		Action:          privacy.ActionRedact,
+		ResponseRestore: true,
+	}, nil)
+	records := &memoryRequestRecordStore{}
+	blobs := &memoryAuditBlobs{}
+	settings := &memoryAuditSettings{settings: contract.AuditSettings{
+		ResponseContentEnabled:  true,
+		ResponseContentMaxBytes: 64 * 1024,
+		RequestBodyMaxBytes:     1024,
+		MetadataRetentionDays:   30,
+		ContentRetentionDays:    7,
+	}}
+	handler := NewWithDependencies(Dependencies{
+		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
+			Endpoint: validEndpoint(contract.ProtocolOpenAIChat, true),
+		}}},
+		PrivacyFilter:  filter,
+		RequestRecords: records,
+		AuditSettings:  settings,
+		AuditBlobs:     blobs,
+		Forwarder: forwarderFunc(func(
+			writer http.ResponseWriter,
+			request *http.Request,
+			_ transport.Target,
+		) error {
+			redacted, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				return readErr
+			}
+			matches := requestScopedPlaceholderPattern.FindAllString(string(redacted), -1)
+			if len(matches) != 5 || matches[0] != matches[1] {
+				t.Fatalf("outbound placeholders=%#v body=%s", matches, redacted)
+			}
+			fragments := []string{
+				"邮箱=" + matches[0][:8],
+				matches[0][8:] + "\n备用邮箱=" + matches[1][:1],
+				matches[1][1:] + "\n另一邮箱=" + matches[2][:12],
+				matches[2][12:] + "\n电话A=" + matches[3][:8],
+				matches[3][8:] + "\n电话B=" + matches[4][:14],
+				matches[4][14:],
+			}
+			writer.Header().Set("Content-Type", "text/event-stream")
+			writer.WriteHeader(http.StatusOK)
+			for _, fragment := range fragments {
+				event, marshalErr := json.Marshal(map[string]any{
+					"choices": []any{map[string]any{
+						"index": 0,
+						"delta": map[string]any{"content": fragment},
+					}},
+				})
+				if marshalErr != nil {
+					return marshalErr
+				}
+				wire := append([]byte("data: "), event...)
+				wire = append(wire, '\n', '\n')
+				if _, writeErr := writer.Write(wire); writeErr != nil {
+					return writeErr
+				}
+			}
+			_, writeErr := writer.Write([]byte("data: [DONE]\n\n"))
+			return writeErr
+		}),
+	})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/chat/completions",
+		bytes.NewReader(requestBody),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+
+	want := "邮箱=alice@example.com\n" +
+		"备用邮箱=alice@example.com\n" +
+		"另一邮箱=bob@example.com\n" +
+		"电话A=+1-415-555-0001\n" +
+		"电话B=+1-415-555-0002"
+	if response.Code != http.StatusOK ||
+		visibleSSEText(t, contract.ProtocolOpenAIChat, response.Body.Bytes()) != want ||
+		strings.Contains(response.Body.String(), "<PRIVATE_") {
+		t.Fatalf("client response=%d %s", response.Code, response.Body.String())
+	}
+	if len(records.records) != 1 || records.records[0].PrivacyRestore == nil {
+		t.Fatalf("record=%#v", records.records)
+	}
+	restore := records.records[0].PrivacyRestore
+	if !restore.Enabled ||
+		restore.MappingCount != 4 ||
+		restore.RestoredCount != 5 ||
+		restore.FallbackCount != 0 {
+		t.Fatalf("privacy restore=%#v", restore)
+	}
+	if len(blobs.blobs) != 1 ||
+		blobs.blobs[0].Direction != storage.AuditDirectionResponse {
+		t.Fatalf("blobs=%#v", blobs.blobs)
+	}
+	plain, err := storage.OpenAuditBlob(
+		blobs.key,
+		blobs.blobs[0].Nonce,
+		blobs.blobs[0].Ciphertext,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(plain, response.Body.Bytes()) ||
+		strings.Contains(string(plain), "<PRIVATE_") {
+		t.Fatalf("captured response=%s", plain)
 	}
 }
 

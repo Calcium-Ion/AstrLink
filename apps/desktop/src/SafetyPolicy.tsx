@@ -529,13 +529,17 @@ function StreamingRestoreDemoDialog({
               </span>
             </div>
             <span className="streaming-restore-demo__packet streaming-restore-demo__packet--chunk-a">
-              data: &lt;PRIVATE_EMAIL_7f3a
+              {
+                'data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"<PRIVATE_EMAIL_7f3a"}'
+              }
             </span>
             <span className="streaming-restore-demo__packet streaming-restore-demo__packet--chunk-b">
-              91c04d28be56&gt;
+              {
+                'data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"91c04d28be56>"}'
+              }
             </span>
             <span className="streaming-restore-demo__packet streaming-restore-demo__packet--restored">
-              data: alice@example.com
+              正文: alice@example.com
             </span>
           </div>
 
@@ -547,7 +551,7 @@ function StreamingRestoreDemoDialog({
             </li>
             <li>
               <span className="streaming-restore-demo__swatch streaming-restore-demo__swatch--sse" />
-              上游分片跨 chunk 保留不完整占位符
+              上游把占位符拆到两个 SSE delta event
             </li>
             <li>
               <span className="streaming-restore-demo__swatch streaming-restore-demo__swatch--restore" />

@@ -58,6 +58,12 @@ const firstRecord: RequestRecord = {
     request_body_truncated: false,
     response_content_truncated: false,
   },
+  privacy_restore: {
+    enabled: true,
+    mapping_count: 4,
+    restored_count: 5,
+    fallback_count: 0,
+  },
 };
 
 const secondRecord: RequestRecord = {
@@ -280,6 +286,10 @@ describe("RequestRecords", () => {
     expect(container.querySelector("h1")?.textContent).toBe("记录详情");
     expect(container.textContent).toContain("身份");
     expect(container.textContent).toContain("指标");
+    expect(container.textContent).toContain("隐私还原");
+    expect(container.textContent).toContain("映射数4");
+    expect(container.textContent).toContain("已还原5");
+    expect(container.textContent).toContain("安全降级0");
     expect(container.textContent).toContain("POST /v1/responses?stream=true");
     expect(container.textContent).toContain("Bearer <redacted:51 chars>");
     expect(container.textContent).toContain('"prompt": "secret"');

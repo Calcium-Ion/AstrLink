@@ -81,29 +81,49 @@ type AuditRecordSummary struct {
 	ResponseContentTruncated bool `json:"response_content_truncated"`
 }
 
+// PrivacyRestoreSummary contains bounded, non-sensitive diagnostics for the
+// request-scoped response placeholder mapping. It never contains categories,
+// placeholders, or original values.
+type PrivacyRestoreSummary struct {
+	Enabled       bool `json:"enabled"`
+	MappingCount  int  `json:"mapping_count"`
+	RestoredCount int  `json:"restored_count"`
+	FallbackCount int  `json:"fallback_count"`
+}
+
+func (summary PrivacyRestoreSummary) Validate() error {
+	if summary.MappingCount < 0 ||
+		summary.RestoredCount < 0 ||
+		summary.FallbackCount < 0 {
+		return fmt.Errorf("privacy restore counts must be non-negative")
+	}
+	return nil
+}
+
 // NotCapturedAuditSummary reports that neither body direction was captured.
 func NotCapturedAuditSummary() AuditRecordSummary {
 	return AuditRecordSummary{}
 }
 
 type RequestRecord struct {
-	ID                 RequestID          `json:"id"`
-	StartedAt          time.Time          `json:"started_at"`
-	CompletedAt        *time.Time         `json:"completed_at"`
-	Status             RequestStatus      `json:"status"`
-	InputProtocol      ProtocolID         `json:"input_protocol"`
-	RequestedModel     *string            `json:"requested_model"`
-	Streaming          bool               `json:"streaming"`
-	RouteID            *RouteID           `json:"route_id"`
-	ServiceID          *ServiceID         `json:"service_id"`
-	LocalAccessTokenID *AccessTokenID     `json:"local_access_token_id"`
-	Plan               *ExecutionPlan     `json:"plan"`
-	HTTPStatus         *int               `json:"http_status"`
-	LatencyMs          *int               `json:"latency_ms"`
-	Usage              *Usage             `json:"usage"`
-	Error              *ErrorSummary      `json:"error"`
-	Audit              AuditRecordSummary `json:"audit"`
-	Extensions         map[string]any     `json:"extensions,omitempty"`
+	ID                 RequestID              `json:"id"`
+	StartedAt          time.Time              `json:"started_at"`
+	CompletedAt        *time.Time             `json:"completed_at"`
+	Status             RequestStatus          `json:"status"`
+	InputProtocol      ProtocolID             `json:"input_protocol"`
+	RequestedModel     *string                `json:"requested_model"`
+	Streaming          bool                   `json:"streaming"`
+	RouteID            *RouteID               `json:"route_id"`
+	ServiceID          *ServiceID             `json:"service_id"`
+	LocalAccessTokenID *AccessTokenID         `json:"local_access_token_id"`
+	Plan               *ExecutionPlan         `json:"plan"`
+	HTTPStatus         *int                   `json:"http_status"`
+	LatencyMs          *int                   `json:"latency_ms"`
+	Usage              *Usage                 `json:"usage"`
+	Error              *ErrorSummary          `json:"error"`
+	Audit              AuditRecordSummary     `json:"audit"`
+	PrivacyRestore     *PrivacyRestoreSummary `json:"privacy_restore"`
+	Extensions         map[string]any         `json:"extensions,omitempty"`
 }
 
 func (record RequestRecord) Validate() error {
@@ -159,6 +179,11 @@ func (record RequestRecord) Validate() error {
 	}
 	if record.Error != nil {
 		if err := record.Error.Validate(); err != nil {
+			return err
+		}
+	}
+	if record.PrivacyRestore != nil {
+		if err := record.PrivacyRestore.Validate(); err != nil {
 			return err
 		}
 	}

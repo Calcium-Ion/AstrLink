@@ -26,6 +26,13 @@ export interface RequestAuditSummary {
   response_content_truncated: boolean;
 }
 
+export interface PrivacyRestoreSummary {
+  enabled: boolean;
+  mapping_count: number;
+  restored_count: number;
+  fallback_count: number;
+}
+
 export interface RequestRecord {
   id: string;
   started_at: string;
@@ -42,6 +49,7 @@ export interface RequestRecord {
   usage: RequestUsage | null;
   error: RequestErrorSummary | null;
   audit: RequestAuditSummary;
+  privacy_restore: PrivacyRestoreSummary | null;
 }
 
 export interface RequestRecordPage {
@@ -198,6 +206,26 @@ function parseAuditSummary(value: unknown, path: string): RequestAuditSummary {
   };
 }
 
+function parsePrivacyRestore(
+  value: unknown,
+  path: string,
+): PrivacyRestoreSummary | null {
+  if (value === null || value === undefined) return null;
+  const summary = objectAt(value, path);
+  const mappingCount = intAt(summary.mapping_count, `${path}.mapping_count`);
+  const restoredCount = intAt(summary.restored_count, `${path}.restored_count`);
+  const fallbackCount = intAt(summary.fallback_count, `${path}.fallback_count`);
+  if (mappingCount < 0 || restoredCount < 0 || fallbackCount < 0) {
+    return invalid(path, "计数不得为负数");
+  }
+  return {
+    enabled: boolAt(summary.enabled, `${path}.enabled`),
+    mapping_count: mappingCount,
+    restored_count: restoredCount,
+    fallback_count: fallbackCount,
+  };
+}
+
 export function parseRequestRecord(value: unknown): RequestRecord {
   return parseRequestRecordAt(value, "$");
 }
@@ -234,6 +262,10 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     usage: parseUsage(record.usage, `${path}.usage`),
     error: parseError(record.error, `${path}.error`),
     audit: parseAuditSummary(record.audit, `${path}.audit`),
+    privacy_restore: parsePrivacyRestore(
+      record.privacy_restore,
+      `${path}.privacy_restore`,
+    ),
   };
 }
 

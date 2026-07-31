@@ -29,6 +29,12 @@ const record: RequestRecord = {
     request_body_truncated: false,
     response_content_truncated: false,
   },
+  privacy_restore: {
+    enabled: true,
+    mapping_count: 4,
+    restored_count: 5,
+    fallback_count: 0,
+  },
 };
 
 const content: AuditContent = {
@@ -88,6 +94,9 @@ describe("buildRecordBundle", () => {
 
     expect(bundle).toContain("# AstrLink 请求记录 req_bundle_test");
     expect(bundle).toContain("- 状态: 成功 · HTTP 200");
+    expect(bundle).toContain(
+      "- 隐私还原: 已开启 · 映射 4 · 已还原 5 · 安全降级 0",
+    );
     expect(bundle).toContain("Primary gateway");
     expect(bundle).toContain("## HTTP 请求");
     expect(bundle).toContain("POST /v1/responses?stream=true HTTP/1.1");

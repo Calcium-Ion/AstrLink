@@ -37,12 +37,12 @@ func TestCarryRestorerRestoresSplitAcrossChunks(t *testing.T) {
 	}
 }
 
-func TestCarryRestorerDoesNotInventAcrossUnrelatedFlush(t *testing.T) {
+func TestRawCarryRestorerDoesNotInventAcrossLogicalEventBoundary(t *testing.T) {
 	restorer := NewCarryRestorer([]Redaction{
 		{Placeholder: "<PRIVATE_EMAIL>", Kind: KindEmail, Value: "alice@example.com"},
 	})
-	// Simulates v1 limitation: flushing carry between independent SSE/delta
-	// events drops the cross-event split rather than inventing a restore.
+	// The raw helper intentionally treats Flush as a logical boundary. The
+	// ingress protocol-aware writer owns cross-SSE-event reconstruction.
 	first := restorer.Push([]byte(`event1 <PRIV`))
 	second := restorer.Flush()
 	third := restorer.Push([]byte(`ATE_EMAIL> event2`))

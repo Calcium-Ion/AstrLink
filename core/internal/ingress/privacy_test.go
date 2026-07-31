@@ -184,7 +184,11 @@ func TestPrivacyRedactReassemblesJSONAndUpdatesBodyLength(t *testing.T) {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.Header().Set("Content-Length", "8")
 			writer.WriteHeader(http.StatusOK)
-			_, err = writer.Write([]byte(`{"echo":"` + upstreamPlaceholder + `"}`))
+			_, err = writer.Write([]byte(
+				`{"choices":[{"index":0,"message":{"content":"` +
+					upstreamPlaceholder +
+					`"}}]}`,
+			))
 			return err
 		}),
 	})
@@ -236,8 +240,16 @@ func TestStreamingResponseRestorePreservesPlaceholderSplitAcrossTransportFlushes
 				StatusCode: http.StatusOK,
 				Header:     http.Header{"Content-Type": {"text/event-stream"}},
 				Body: &chunkReadCloser{chunks: [][]byte{
-					[]byte("data: " + placeholder[:split]),
-					[]byte(placeholder[split:] + "\n\n"),
+					[]byte(
+						`data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"` +
+							placeholder[:split] +
+							`"}` + "\n\n",
+					),
+					[]byte(
+						`data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"` +
+							placeholder[split:] +
+							`"}` + "\n\n",
+					),
 				}},
 			}, nil
 		})),
@@ -252,7 +264,8 @@ func TestStreamingResponseRestorePreservesPlaceholderSplitAcrossTransportFlushes
 	if response.Code != http.StatusOK {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
 	}
-	if response.Body.String() != "data: alice@example.com\n\n" {
+	if !strings.Contains(response.Body.String(), "alice@example.com") ||
+		strings.Contains(response.Body.String(), "<PRIVATE_") {
 		t.Fatalf("split placeholder was not restored: %q", response.Body.String())
 	}
 }
@@ -295,12 +308,19 @@ func TestBufferedResponseRestoreDiscardsInterruptedAttemptBeforeFallback(t *test
 			if request.URL.Host == "first.example" {
 				split := len(placeholder) / 2
 				response.Body = io.NopCloser(io.MultiReader(
-					strings.NewReader(`{"echo":"`+placeholder[:split]),
+					strings.NewReader(
+						`{"output":[{"type":"message","content":[{"type":"output_text","text":"`+
+							placeholder[:split],
+					),
 					failingReader{err: errors.New("upstream body interrupted")},
 				))
 				return response, nil
 			}
-			response.Body = io.NopCloser(strings.NewReader(`{"echo":"` + placeholder + `"}`))
+			response.Body = io.NopCloser(strings.NewReader(
+				`{"output":[{"type":"message","content":[{"type":"output_text","text":"` +
+					placeholder +
+					`"}]}]}`,
+			))
 			return response, nil
 		})),
 	})
@@ -318,7 +338,8 @@ func TestBufferedResponseRestoreDiscardsInterruptedAttemptBeforeFallback(t *test
 		t.Fatalf("attempts = %d, want 2", attempts)
 	}
 	if response.Code != http.StatusOK ||
-		response.Body.String() != `{"echo":"alice@example.com"}` {
+		!strings.Contains(response.Body.String(), "alice@example.com") ||
+		strings.Contains(response.Body.String(), "<PRIVATE_") {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
 	}
 	if strings.Contains(response.Body.String(), "<PRIVATE_") {
@@ -342,11 +363,13 @@ func TestPrivacyRedactSkipsResponseRestoreWhenDisabled(t *testing.T) {
 		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact, ResponseRestore: false,
 	}, nil)
 	var upstreamPlaceholder string
+	records := &memoryRequestRecordStore{}
 	handler := NewWithDependencies(Dependencies{
 		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
 			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIChat, false)}, nil
 		}),
-		PrivacyFilter: filter,
+		PrivacyFilter:  filter,
+		RequestRecords: records,
 		Forwarder: forwarderFunc(func(writer http.ResponseWriter, request *http.Request, _ transport.Target) error {
 			if request.Header.Get("Accept-Encoding") != "gzip" {
 				t.Fatalf("Accept-Encoding should remain when restore is off, got %q", request.Header.Get("Accept-Encoding"))
@@ -373,6 +396,13 @@ func TestPrivacyRedactSkipsResponseRestoreWhenDisabled(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), upstreamPlaceholder) ||
 		strings.Contains(response.Body.String(), "alice@example.com") {
 		t.Fatalf("restore should stay off: %d %s", response.Code, response.Body.String())
+	}
+	if len(records.records) != 1 ||
+		records.records[0].PrivacyRestore == nil ||
+		records.records[0].PrivacyRestore.Enabled ||
+		records.records[0].PrivacyRestore.MappingCount != 1 ||
+		records.records[0].PrivacyRestore.RestoredCount != 0 {
+		t.Fatalf("privacy diagnostics=%#v", records.records)
 	}
 }
 

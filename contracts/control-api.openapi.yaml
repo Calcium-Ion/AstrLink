@@ -2788,6 +2788,7 @@ components:
         - usage
         - error
         - audit
+        - privacy_restore
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -2840,6 +2841,11 @@ components:
             - type: "null"
         audit:
           $ref: "#/components/schemas/AuditRecordSummary"
+        privacy_restore:
+          oneOf:
+            - $ref: "#/components/schemas/PrivacyRestoreSummary"
+            - type: "null"
+          description: Non-sensitive request-scoped placeholder restoration diagnostics; null for legacy records and requests without redactions.
         extensions:
           $ref: ./protocol-capabilities.schema.json#/$defs/Extensions
       additionalProperties: false
@@ -2898,6 +2904,22 @@ components:
           type: boolean
         response_content_truncated:
           type: boolean
+      additionalProperties: false
+    PrivacyRestoreSummary:
+      type: object
+      required: [enabled, mapping_count, restored_count, fallback_count]
+      properties:
+        enabled:
+          type: boolean
+        mapping_count:
+          type: integer
+          minimum: 0
+        restored_count:
+          type: integer
+          minimum: 0
+        fallback_count:
+          type: integer
+          minimum: 0
       additionalProperties: false
     AuditContent:
       type: object

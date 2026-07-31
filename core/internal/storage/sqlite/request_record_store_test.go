@@ -30,6 +30,9 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 			RequestedModel: &model, Streaming: false, ServiceID: &endpointID,
 			HTTPStatus: &statusOK, LatencyMs: &latency, Audit: contract.NotCapturedAuditSummary(),
 			Usage: &contract.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
+			PrivacyRestore: &contract.PrivacyRestoreSummary{
+				Enabled: true, MappingCount: 4, RestoredCount: 5, FallbackCount: 0,
+			},
 		},
 		{
 			ID: "request_b", StartedAt: start.Add(time.Minute), CompletedAt: ptrTime(start.Add(2 * time.Minute)),
@@ -74,6 +77,11 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 	}
 	if filtered.Items[0].Usage == nil || filtered.Items[0].Usage.TotalTokens != 3 {
 		t.Fatalf("usage = %#v", filtered.Items[0].Usage)
+	}
+	if filtered.Items[0].PrivacyRestore == nil ||
+		filtered.Items[0].PrivacyRestore.MappingCount != 4 ||
+		filtered.Items[0].PrivacyRestore.RestoredCount != 5 {
+		t.Fatalf("privacy restore = %#v", filtered.Items[0].PrivacyRestore)
 	}
 
 	got, err := store.GetRequestRecord(ctx, "request_a")

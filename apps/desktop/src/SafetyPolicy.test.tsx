@@ -780,9 +780,16 @@ describe("SafetyPolicy", () => {
     expect(dialog?.textContent).toContain("固定示例");
     expect(dialog?.textContent).toContain("alice@example.com");
     expect(dialog?.textContent).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
-    expect(dialog?.textContent).toContain("data: <PRIVATE_EMAIL_7f3a");
-    expect(dialog?.textContent).toContain("91c04d28be56>");
-    expect(dialog?.textContent).toContain("data: alice@example.com");
+    expect(dialog?.textContent).toContain(
+      '"type":"response.output_text.delta"',
+    );
+    expect(dialog?.textContent).toContain(
+      '"delta":"<PRIVATE_EMAIL_7f3a"',
+    );
+    expect(dialog?.textContent).toContain(
+      '"delta":"91c04d28be56>"',
+    );
+    expect(dialog?.textContent).toContain("正文: alice@example.com");
     expect(dialog?.textContent).toContain("客户端");
     expect(dialog?.textContent).toContain("AstrLink");
     expect(dialog?.textContent).toContain("上游");
@@ -814,15 +821,15 @@ describe("SafetyPolicy", () => {
     expect(
       container.querySelector(".streaming-restore-demo__packet--chunk-a")
         ?.textContent,
-    ).toContain("data: <PRIVATE_EMAIL_7f3a");
+    ).toContain('"delta":"<PRIVATE_EMAIL_7f3a"');
     expect(
       container.querySelector(".streaming-restore-demo__packet--chunk-b")
         ?.textContent,
-    ).toContain("91c04d28be56>");
+    ).toContain('"delta":"91c04d28be56>"');
     expect(
       container.querySelector(".streaming-restore-demo__packet--restored")
         ?.textContent,
-    ).toContain("data: alice@example.com");
+    ).toContain("正文: alice@example.com");
 
     await act(async () => {
       button("重新播放").click();

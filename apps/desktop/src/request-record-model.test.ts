@@ -36,6 +36,12 @@ const fullRecord = {
     request_body_truncated: false,
     response_content_truncated: false,
   },
+  privacy_restore: {
+    enabled: true,
+    mapping_count: 4,
+    restored_count: 5,
+    fallback_count: 0,
+  },
   extensions: { note: "ignored" },
 };
 
@@ -60,6 +66,7 @@ const nullOptionalRecord = {
     request_body_truncated: false,
     response_content_truncated: false,
   },
+  privacy_restore: null,
 };
 
 describe("request-record IPC contract", () => {
@@ -86,6 +93,7 @@ describe("request-record IPC contract", () => {
       },
       error: null,
       audit: fullRecord.audit,
+      privacy_restore: fullRecord.privacy_restore,
     });
     expect(parseRequestRecord(nullOptionalRecord)).toEqual(nullOptionalRecord);
   });

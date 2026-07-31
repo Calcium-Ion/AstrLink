@@ -332,7 +332,12 @@ func (handler *Handler) executeCandidates(
 		}
 		if len(redactions) > 0 {
 			attemptRequest.Header.Del("Accept-Encoding")
-			restoring = newRestoringResponseWriter(outWriter, redactions, classified.Streaming)
+			restoring = newRestoringResponseWriter(
+				outWriter,
+				redactions,
+				classified.Streaming,
+				classified.Protocol,
+			)
 			outWriter = restoring
 		}
 		if plan.Type == contract.PlanTypeRelayKit {
@@ -381,9 +386,14 @@ func (handler *Handler) executeCandidates(
 				relayConversionFailed = !downstream.Committed()
 			}
 		}
-		if restoring != nil && forwardErr == nil {
-			if finishErr := restoring.Finish(); finishErr != nil {
+		if restoring != nil && (forwardErr == nil || classified.Streaming) {
+			if finishErr := restoring.Finish(); finishErr != nil && forwardErr == nil {
 				forwardErr = transport.NewResponseError(finishErr)
+			}
+		}
+		if restoring != nil {
+			if session := recordSessionFromContext(request.Context()); session != nil {
+				session.notePrivacyRestore(restoring.privacyRestoreSummary())
 			}
 		}
 		if aliasWriter != nil && forwardErr == nil {

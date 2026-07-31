@@ -73,9 +73,9 @@ func applyRestoreReplacements(data []byte, replacements []restoreReplacement) []
 	return data
 }
 
-// CarryRestorer restores placeholders across arbitrary read chunks by holding
-// back a trailing prefix of a known placeholder. Cross-event / cross-delta
-// splits that do not arrive in the same byte stream window are not restored.
+// CarryRestorer restores placeholders across arbitrary chunks within one
+// logical text value. Protocol framing and cross-event text channels are owned
+// by ingress's protocol-aware response writer.
 type CarryRestorer struct {
 	replacements []restoreReplacement
 	maxPrefix    int

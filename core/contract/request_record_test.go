@@ -23,6 +23,9 @@ func TestRequestRecordValidation(t *testing.T) {
 		HTTPStatus:     &status,
 		LatencyMs:      &latency,
 		Audit:          NotCapturedAuditSummary(),
+		PrivacyRestore: &PrivacyRestoreSummary{
+			Enabled: true, MappingCount: 1, RestoredCount: 2,
+		},
 	}
 	tests := []struct {
 		name    string
@@ -69,6 +72,13 @@ func TestRequestRecordValidation(t *testing.T) {
 				}
 			},
 			wantErr: "error code",
+		},
+		{
+			name: "rejects negative privacy restore count",
+			mutate: func(record *RequestRecord) {
+				record.PrivacyRestore = &PrivacyRestoreSummary{FallbackCount: -1}
+			},
+			wantErr: "privacy restore counts",
 		},
 		{
 			name: "accepts null optional attribution fields",

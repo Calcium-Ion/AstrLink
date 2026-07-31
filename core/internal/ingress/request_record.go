@@ -91,6 +91,7 @@ type recordSession struct {
 	routeID              *contract.RouteID
 	plan                 *contract.ExecutionPlan
 	errorSummary         *contract.ErrorSummary
+	privacyRestore       *contract.PrivacyRestoreSummary
 	responseWriter       *recordStatusWriter
 	requestCapture       captureBuffer
 	responseCapture      captureBuffer
@@ -173,6 +174,7 @@ func (session *recordSession) recordSnapshot(
 		Usage:              session.scanner.Usage(),
 		Error:              session.errorSummary,
 		Audit:              contract.NotCapturedAuditSummary(),
+		PrivacyRestore:     session.privacyRestore,
 	}
 }
 
@@ -279,6 +281,31 @@ func (session *recordSession) noteAttempt(
 	if err := store.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
 		logRequestRecordFailure(logf, "pending_route_upsert", err)
 	}
+}
+
+func (session *recordSession) beginPrivacyAttempt() {
+	if session == nil {
+		return
+	}
+	session.privacyRestore = nil
+}
+
+func (session *recordSession) notePrivacyMapping(enabled bool, mappingCount int) {
+	if session == nil || mappingCount <= 0 {
+		return
+	}
+	session.privacyRestore = &contract.PrivacyRestoreSummary{
+		Enabled:      enabled,
+		MappingCount: mappingCount,
+	}
+}
+
+func (session *recordSession) notePrivacyRestore(summary contract.PrivacyRestoreSummary) {
+	if session == nil {
+		return
+	}
+	copy := summary
+	session.privacyRestore = &copy
 }
 
 func (session *recordSession) noteSucceeded() {

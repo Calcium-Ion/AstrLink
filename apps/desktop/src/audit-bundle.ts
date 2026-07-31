@@ -91,6 +91,12 @@ export function buildRecordBundle(
       `- Token: 输入 ${record.usage.input_tokens} / 输出 ${record.usage.output_tokens} / 总计 ${record.usage.total_tokens}${cached}`,
     );
   }
+  if (record.privacy_restore) {
+    const restore = record.privacy_restore;
+    lines.push(
+      `- 隐私还原: ${restore.enabled ? "已开启" : "已关闭"} · 映射 ${restore.mapping_count} · 已还原 ${restore.restored_count} · 安全降级 ${restore.fallback_count}`,
+    );
+  }
 
   if (record.error) {
     lines.push(

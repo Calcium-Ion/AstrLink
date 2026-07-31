@@ -298,8 +298,8 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	if err := database.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 12 {
-		t.Fatalf("schema version = %d, want 12", version)
+	if version != 13 {
+		t.Fatalf("schema version = %d, want 13", version)
 	}
 	var requestRecordsTable int
 	if err := database.QueryRow(
@@ -362,6 +362,48 @@ WHERE type = 'table'
 		if !strings.Contains(privacyPolicyDocument, expected) {
 			t.Fatalf("default privacy policy missing %s: %s", expected, privacyPolicyDocument)
 		}
+	}
+}
+
+func TestPrivacyRestoreDiagnosticsMigrationLeavesLegacyRecordsNull(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	migrations := DefaultMigrations()
+	versionTwelve, err := New(SQLDatabase{DB: database}, migrations[:12])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := versionTwelve.Up(context.Background()); err != nil {
+		t.Fatalf("migrate to version 12: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO request_records (
+    id, started_at, status, input_protocol, streaming, audit_json, created_at
+) VALUES ('request_v12', '2026-07-31T00:00:00Z', 'succeeded', 'openai.chat', 1, '{}', '2026-07-31T00:00:00Z')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	full, err := New(SQLDatabase{DB: database}, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := full.Up(context.Background()); err != nil {
+		t.Fatalf("upgrade to version 13: %v", err)
+	}
+	var diagnostics sql.NullString
+	if err := database.QueryRow(
+		`SELECT privacy_restore_json FROM request_records WHERE id = 'request_v12'`,
+	).Scan(&diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics.Valid {
+		t.Fatalf("legacy diagnostics=%q, want NULL", diagnostics.String)
 	}
 }
 

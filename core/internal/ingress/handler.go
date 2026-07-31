@@ -244,6 +244,8 @@ func (handler *Handler) applyPrivacy(
 	classified Request,
 	endpointID contract.ServiceID,
 ) (func(), []privacy.Redaction, error) {
+	session := recordSessionFromContext(request.Context())
+	session.beginPrivacyAttempt()
 	if handler.privacyFilter == nil {
 		return func() {}, nil, nil
 	}
@@ -307,6 +309,10 @@ func (handler *Handler) applyPrivacy(
 			return finish, nil, privacy.ErrUnsafeRewrite
 		}
 		buffered.Replace(result.Body)
+		session.notePrivacyMapping(
+			policy.ResponseRestore,
+			uniqueRedactionMappingCount(result.Redactions),
+		)
 		if !policy.ResponseRestore || len(result.Redactions) == 0 {
 			return finish, nil, nil
 		}
@@ -314,6 +320,17 @@ func (handler *Handler) applyPrivacy(
 	default:
 		return finish, nil, privacy.ErrPolicyUnavailable
 	}
+}
+
+func uniqueRedactionMappingCount(redactions []privacy.Redaction) int {
+	seen := make(map[string]struct{}, len(redactions))
+	for _, redaction := range redactions {
+		if redaction.Placeholder == "" {
+			continue
+		}
+		seen[redaction.Placeholder] = struct{}{}
+	}
+	return len(seen)
 }
 
 func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *http.Request, err error) {
