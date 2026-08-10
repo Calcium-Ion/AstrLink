@@ -57,6 +57,48 @@ pub struct Decoder {
     labels: Vec<Tag>,
     scheme: TagScheme,
     biases: TransitionBiases,
+    sensitive: Option<SensitiveCalibration>,
+}
+
+#[derive(Clone, Debug)]
+struct SensitiveCalibration {
+    en: LanguageCalibration,
+    zh: LanguageCalibration,
+}
+
+#[derive(Clone, Debug)]
+struct LanguageCalibration {
+    emission_bias: Vec<f32>,
+    thresholds: BTreeMap<String, f32>,
+    span_confidence: BTreeMap<String, SpanCalibrator>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct SpanCalibrator {
+    slope: f64,
+    intercept: f64,
+    empirical_precision_lower_bound: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct SensitiveCalibrationDocument {
+    schema_version: u8,
+    status: String,
+    decoder: String,
+    language_decoder_biases: BTreeMap<String, EmissionBias>,
+    language_operating_points: BTreeMap<String, OperatingPoint>,
+    span_confidence: BTreeMap<String, BTreeMap<String, SpanCalibrator>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmissionBias {
+    emission_bias: Vec<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OperatingPoint {
+    default_threshold: f32,
+    per_label: BTreeMap<String, f32>,
 }
 
 impl Decoder {
@@ -98,6 +140,7 @@ impl Decoder {
             labels,
             scheme: TagScheme::Bioes,
             biases,
+            sensitive: None,
         })
     }
 
@@ -114,11 +157,34 @@ impl Decoder {
             labels,
             scheme,
             biases: TransitionBiases::default(),
+            sensitive: None,
         })
+    }
+
+    pub fn from_sensitive_json(
+        config: &[u8],
+        calibration: &[u8],
+        manifest_mapping: &BTreeMap<String, Option<String>>,
+    ) -> Result<Self, &'static str> {
+        let mut decoder = Self::from_hf_json(config, TagScheme::Bioes, manifest_mapping)?;
+        if decoder.labels.len() != OPENAI_LABEL_COUNT
+            || decoder.labels != expected_openai_labels(manifest_mapping)
+        {
+            return Err("invalid_model_labels");
+        }
+        decoder.sensitive = Some(parse_sensitive_calibration(calibration)?);
+        Ok(decoder)
     }
 
     pub fn label_count(&self) -> usize {
         self.labels.len()
+    }
+
+    pub fn sensitive_precision_lower_bound(&self, text: &str, source: &str) -> Option<f32> {
+        self.language_calibration(text)?
+            .span_confidence
+            .get(source)
+            .map(|calibrator| calibrator.empirical_precision_lower_bound)
     }
 
     pub fn decode(
@@ -126,6 +192,29 @@ impl Decoder {
         text_id: u32,
         logits: &[f32],
         offsets: &[(usize, usize)],
+    ) -> Result<Vec<DetectedSpan>, &'static str> {
+        self.decode_internal(text_id, logits, offsets, None)
+    }
+
+    pub fn decode_sensitive(
+        &self,
+        text_id: u32,
+        logits: &[f32],
+        offsets: &[(usize, usize)],
+        text: &str,
+    ) -> Result<Vec<DetectedSpan>, &'static str> {
+        if self.sensitive.is_none() {
+            return Err("invalid_calibration");
+        }
+        self.decode_internal(text_id, logits, offsets, Some(text))
+    }
+
+    fn decode_internal(
+        &self,
+        text_id: u32,
+        logits: &[f32],
+        offsets: &[(usize, usize)],
+        text: Option<&str>,
     ) -> Result<Vec<DetectedSpan>, &'static str> {
         let label_count = self.label_count();
         if logits.len() != offsets.len() * label_count {
@@ -138,6 +227,18 @@ impl Decoder {
             return Ok(Vec::new());
         }
 
+        let language = text.and_then(|value| self.language_calibration(value));
+        let adjusted_logits;
+        let logits = if let Some(language) = language {
+            adjusted_logits = logits
+                .iter()
+                .enumerate()
+                .map(|(index, value)| *value + language.emission_bias[index % label_count])
+                .collect::<Vec<_>>();
+            adjusted_logits.as_slice()
+        } else {
+            logits
+        };
         let path = self.viterbi(logits, offsets.len())?;
         let probabilities = path
             .iter()
@@ -151,8 +252,31 @@ impl Decoder {
             .collect::<Vec<_>>();
 
         match self.scheme {
-            TagScheme::Bio => decode_bio(text_id, &self.labels, &path, offsets, &probabilities),
-            TagScheme::Bioes => decode_bioes(text_id, &self.labels, &path, offsets, &probabilities),
+            TagScheme::Bio => decode_bio(
+                text_id,
+                &self.labels,
+                &path,
+                offsets,
+                &probabilities,
+                language,
+            ),
+            TagScheme::Bioes => decode_bioes(
+                text_id,
+                &self.labels,
+                &path,
+                offsets,
+                &probabilities,
+                language,
+            ),
+        }
+    }
+
+    fn language_calibration(&self, text: &str) -> Option<&LanguageCalibration> {
+        let sensitive = self.sensitive.as_ref()?;
+        if text.chars().any(is_zh_signal) {
+            Some(&sensitive.zh)
+        } else {
+            Some(&sensitive.en)
         }
     }
 
@@ -278,6 +402,86 @@ fn parse_calibration_biases(calibration: &[u8]) -> Result<TransitionBiases, &'st
     }
     .ok_or("invalid_calibration")?;
     serde_json::from_value(biases.clone()).map_err(|_| "invalid_calibration")
+}
+
+fn parse_sensitive_calibration(calibration: &[u8]) -> Result<SensitiveCalibration, &'static str> {
+    let document: SensitiveCalibrationDocument =
+        serde_json::from_slice(calibration).map_err(|_| "invalid_calibration")?;
+    // Schema 1 and 2 share the numeric fields this decoder consumes.
+    // Schema 2 may add compatibility metadata that we ignore.
+    if !matches!(document.schema_version, 1 | 2)
+        || document.status != "fitted"
+        || document.decoder != "bioes-constrained-viterbi"
+        || document.language_decoder_biases.len() != 2
+        || document.language_operating_points.len() != 2
+        || document.span_confidence.len() != 2
+    {
+        return Err("invalid_calibration");
+    }
+    let parse_language = |language: &str| -> Result<LanguageCalibration, &'static str> {
+        let emission_bias = document
+            .language_decoder_biases
+            .get(language)
+            .ok_or("invalid_calibration")?
+            .emission_bias
+            .clone();
+        let operating_point = document
+            .language_operating_points
+            .get(language)
+            .ok_or("invalid_calibration")?;
+        let span_confidence = document
+            .span_confidence
+            .get(language)
+            .ok_or("invalid_calibration")?
+            .clone();
+        if emission_bias.len() != OPENAI_LABEL_COUNT
+            || emission_bias.iter().any(|value| !value.is_finite())
+            || !probability(operating_point.default_threshold)
+            || operating_point.per_label.len() != OPENAI_ENTITY_LABELS.len()
+            || span_confidence.len() != OPENAI_ENTITY_LABELS.len()
+        {
+            return Err("invalid_calibration");
+        }
+        for source in OPENAI_ENTITY_LABELS {
+            if operating_point
+                .per_label
+                .get(source)
+                .is_none_or(|value| !probability(*value))
+                || span_confidence.get(source).is_none_or(|calibrator| {
+                    !calibrator.slope.is_finite()
+                        || !calibrator.intercept.is_finite()
+                        || !probability(calibrator.empirical_precision_lower_bound)
+                })
+            {
+                return Err("invalid_calibration");
+            }
+        }
+        Ok(LanguageCalibration {
+            emission_bias,
+            thresholds: operating_point.per_label.clone(),
+            span_confidence,
+        })
+    };
+    Ok(SensitiveCalibration {
+        en: parse_language("en")?,
+        zh: parse_language("zh")?,
+    })
+}
+
+fn probability(value: f32) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
+fn is_zh_signal(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x3000..=0x303F
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0xFF00..=0xFFEF
+            | 0x20000..=0x3134F
+    )
 }
 
 fn parse_labels(
@@ -427,6 +631,7 @@ fn decode_bio(
     path: &[usize],
     offsets: &[(usize, usize)],
     probabilities: &[f32],
+    calibration: Option<&LanguageCalibration>,
 ) -> Result<Vec<DetectedSpan>, &'static str> {
     let mut spans = Vec::new();
     let mut index = 0;
@@ -447,9 +652,11 @@ fn decode_bio(
                     push_span(
                         &mut spans,
                         text_id,
+                        entity,
                         canonical,
                         &offsets[start..index],
                         &probabilities[start..index],
+                        calibration,
                     );
                 }
             }
@@ -466,6 +673,7 @@ fn decode_bioes(
     path: &[usize],
     offsets: &[(usize, usize)],
     probabilities: &[f32],
+    calibration: Option<&LanguageCalibration>,
 ) -> Result<Vec<DetectedSpan>, &'static str> {
     let mut spans = Vec::new();
     let mut index = 0;
@@ -476,9 +684,11 @@ fn decode_bioes(
                     push_span(
                         &mut spans,
                         text_id,
+                        entity,
                         canonical,
                         &offsets[index..=index],
                         &probabilities[index..=index],
+                        calibration,
                     );
                 }
                 index += 1;
@@ -507,9 +717,11 @@ fn decode_bioes(
                     push_span(
                         &mut spans,
                         text_id,
+                        entity,
                         canonical,
                         &offsets[start..index],
                         &probabilities[start..index],
+                        calibration,
                     );
                 }
             }
@@ -538,9 +750,11 @@ fn softmax_probability(logits: &[f32], state: usize) -> f32 {
 fn push_span(
     spans: &mut Vec<DetectedSpan>,
     text_id: u32,
-    entity: &str,
+    entity: &Entity,
+    canonical: &str,
     offsets: &[(usize, usize)],
     probabilities: &[f32],
+    calibration: Option<&LanguageCalibration>,
 ) {
     let Some(start) = offsets
         .iter()
@@ -558,14 +772,38 @@ fn push_span(
     if start >= end {
         return;
     }
-    let score = probabilities.iter().copied().sum::<f32>() / probabilities.len() as f32;
+    let raw_score = probabilities.iter().copied().sum::<f32>() / probabilities.len() as f32;
+    let score = calibration
+        .and_then(|language| language.span_confidence.get(&entity.source))
+        .map_or(raw_score, |calibrator| {
+            calibrated_probability(raw_score, calibrator)
+        });
+    if calibration
+        .and_then(|language| language.thresholds.get(&entity.source))
+        .is_some_and(|threshold| score < *threshold)
+    {
+        return;
+    }
     spans.push(DetectedSpan {
         text_id,
-        label: entity.into(),
+        label: canonical.into(),
         start,
         end,
         score,
     });
+}
+
+fn calibrated_probability(score: f32, calibrator: &SpanCalibrator) -> f32 {
+    let score = f64::from(score).clamp(1.0e-7, 1.0 - 1.0e-7);
+    let log_odds = (score / (1.0 - score)).ln();
+    let value = calibrator.slope * log_odds + calibrator.intercept;
+    if value >= 40.0 {
+        1.0
+    } else if value <= -40.0 {
+        0.0
+    } else {
+        (1.0 / (1.0 + (-value).exp())) as f32
+    }
 }
 
 #[cfg(test)]
@@ -763,6 +1001,83 @@ mod tests {
                 "invalid_calibration"
             );
         }
+    }
+
+    #[test]
+    fn sensitive_adapter_accepts_viterbi_schema_one_and_two() {
+        let mut labels = vec!["O".to_owned()];
+        for source in OPENAI_ENTITY_LABELS {
+            for prefix in ["B", "I", "E", "S"] {
+                labels.push(format!("{prefix}-{source}"));
+            }
+        }
+        let labels = labels.iter().map(String::as_str).collect::<Vec<_>>();
+        let mapping = default_openai_mapping();
+        Decoder::from_sensitive_json(
+            &config(&labels),
+            &sensitive_calibration(1, false),
+            &mapping,
+        )
+        .expect("schema 1");
+        Decoder::from_sensitive_json(
+            &config(&labels),
+            &sensitive_calibration(2, true),
+            &mapping,
+        )
+        .expect("schema 2 with compatibility metadata");
+        assert_eq!(
+            Decoder::from_sensitive_json(
+                &config(&labels),
+                &sensitive_calibration(3, false),
+                &mapping,
+            )
+            .unwrap_err(),
+            "invalid_calibration"
+        );
+    }
+
+    fn sensitive_calibration(schema_version: u8, with_compatibility: bool) -> Vec<u8> {
+        let zeros = vec![0.0; OPENAI_LABEL_COUNT];
+        let mut thresholds = serde_json::Map::new();
+        let mut calibrators = serde_json::Map::new();
+        for source in OPENAI_ENTITY_LABELS {
+            thresholds.insert((*source).into(), serde_json::json!(0.0));
+            calibrators.insert(
+                (*source).into(),
+                serde_json::json!({
+                    "slope": 1.0,
+                    "intercept": 0.0,
+                    "empirical_precision_lower_bound": 0.9
+                }),
+            );
+        }
+        let mut root = serde_json::json!({
+            "schema_version": schema_version,
+            "status": "fitted",
+            "decoder": "bioes-constrained-viterbi",
+            "language_decoder_biases": {
+                "en": {"emission_bias": zeros.clone()},
+                "zh": {"emission_bias": zeros}
+            },
+            "language_operating_points": {
+                "en": {"default_threshold": 0.0, "per_label": thresholds.clone()},
+                "zh": {"default_threshold": 0.0, "per_label": thresholds}
+            },
+            "span_confidence": {
+                "en": calibrators.clone(),
+                "zh": calibrators
+            }
+        });
+        if with_compatibility {
+            root.as_object_mut().unwrap().insert(
+                "compatibility".into(),
+                serde_json::json!({
+                    "confidence_revision": 2,
+                    "ranking_policy": "monotonic_platt_without_empirical_floor"
+                }),
+            );
+        }
+        serde_json::to_vec(&root).expect("calibration")
     }
 
     fn default_openai_mapping() -> BTreeMap<String, Option<String>> {

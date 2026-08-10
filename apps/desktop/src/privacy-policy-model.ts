@@ -2,7 +2,8 @@ export type PrivacyDetector = "regex" | "local_model";
 export type PrivacyAction = "allow" | "warn" | "block" | "redact";
 export type PrivacyModelAdapter =
   | "openai_bioes_viterbi"
-  | "hf_token_classification";
+  | "hf_token_classification"
+  | "astrlink_sensitive_guard";
 export type CanonicalPrivacyKind =
   | "email"
   | "phone"
@@ -158,6 +159,10 @@ export interface PrivacyModelProbeInput {
   revision: string;
 }
 
+export interface LocalProbeInput {
+  path: string;
+}
+
 export interface PrivacyModelInstallInput {
   repo_id: string;
   revision: string;
@@ -167,7 +172,7 @@ export interface PrivacyModelInstallInput {
 
 export interface PrivacyModelInstallation {
   id: string;
-  source: "catalog" | "custom";
+  source: "catalog" | "custom" | "local";
   catalog_id: string | null;
   catalog_source: "official" | "community" | null;
   name: string;
@@ -215,6 +220,7 @@ const actions = new Set<PrivacyAction>([
 const adapters = new Set<PrivacyModelAdapter>([
   "openai_bioes_viterbi",
   "hf_token_classification",
+  "astrlink_sensitive_guard",
 ]);
 const canonicalKinds = new Set<CanonicalPrivacyKind>([
   "email",
@@ -1060,7 +1066,8 @@ export function parsePrivacyModelInstallation(
   );
   if (
     installation.source !== "catalog" &&
-    installation.source !== "custom"
+    installation.source !== "custom" &&
+    installation.source !== "local"
   ) {
     invalid(`${path}.source`, "unknown installation source");
   }
@@ -1083,11 +1090,16 @@ export function parsePrivacyModelInstallation(
           installation.catalog_source === "community"
         ? installation.catalog_source
         : invalid(`${path}.catalog_source`, "unknown catalog source");
+  const repoID = repoIDAt(installation.repo_id, `${path}.repo_id`);
   if (
     (installation.source === "catalog") !== (catalogID !== null) ||
     (installation.source === "catalog") !== (catalogSource !== null)
   ) {
     invalid(path, "installation catalog provenance is inconsistent");
+  }
+  const localRepoID = /^local\/model-[0-9a-f]{12}$/.test(repoID);
+  if ((installation.source === "local") !== localRepoID) {
+    invalid(path, "installation local provenance is inconsistent");
   }
   const downloaded = safeIntegerAt(
     installation.bytes_downloaded,
@@ -1143,7 +1155,7 @@ export function parsePrivacyModelInstallation(
       `${path}.languages`,
       32,
     ),
-    repo_id: repoIDAt(installation.repo_id, `${path}.repo_id`),
+    repo_id: repoID,
     revision: revisionAt(installation.revision, `${path}.revision`),
     variant_id: variantIDAt(
       installation.variant_id,
@@ -1202,6 +1214,25 @@ export function validatePrivacyModelProbeInput(
     repo_id: repoIDAt(input.repo_id, "$.repo_id"),
     revision: requestedRevisionAt(input.revision, "$.revision"),
   };
+}
+
+export function validateLocalProbeInput(
+  input: LocalProbeInput,
+): LocalProbeInput {
+  if (typeof input.path !== "string") {
+    invalid("$.path", "expected a local model path");
+  }
+  const path = input.path.trim();
+  stringAt(path, "$.path", 1, 4096);
+  if (/\p{Cc}/u.test(path)) {
+    invalid("$.path", "must contain no control characters");
+  }
+  const hasURIScheme = /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path);
+  const isWindowsDrivePath = /^[A-Za-z]:[\\/]/.test(path);
+  if (hasURIScheme && !isWindowsDrivePath) {
+    invalid("$.path", "expected a local path, not a URI");
+  }
+  return { path };
 }
 
 export function validatePrivacyModelInstallInput(

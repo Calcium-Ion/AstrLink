@@ -47,6 +47,7 @@ const SUPPORTED_PROTOCOL_CONTRACT_VERSION: &str = "v1";
 const PRIVACY_MODEL_CATALOG_PATH: &str = "/control/v1/privacy-model-catalog";
 const PRIVACY_MODELS_PATH: &str = "/control/v1/privacy-models";
 const PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/probe";
+const LOCAL_PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/local/probe";
 const POLICY_DRY_RUN_PATH: &str = "/control/v1/policies/policy_privacy_default/dry-run";
 const ROUTES_PATH: &str = "/control/v1/routes";
 const SERVICES_PATH: &str = "/control/v1/services";
@@ -1168,6 +1169,22 @@ impl CoreManager {
         parse_privacy_model_probe(&body)
     }
 
+    pub async fn probe_local_privacy_model(
+        &self,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let input = validate_local_privacy_model_probe_input(input)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::POST,
+                LOCAL_PRIVACY_MODEL_PROBE_PATH,
+                Some(input),
+                None,
+            )
+            .await?;
+        parse_privacy_model_probe(&body)
+    }
+
     pub async fn list_privacy_model_installations(&self) -> Result<serde_json::Value, String> {
         let (_, body) = self
             .authenticated_control(Method::GET, PRIVACY_MODELS_PATH, None, None)
@@ -1734,7 +1751,11 @@ impl CoreManager {
 }
 
 fn control_request_timeout(method: &Method, path: &str) -> Duration {
-    if method == Method::POST && (path == PRIVACY_MODEL_PROBE_PATH || path == PRIVACY_MODELS_PATH) {
+    if method == Method::POST
+        && (path == PRIVACY_MODEL_PROBE_PATH
+            || path == LOCAL_PRIVACY_MODEL_PROBE_PATH
+            || path == PRIVACY_MODELS_PATH)
+    {
         return PRIVACY_MODEL_METADATA_TIMEOUT;
     }
     if method == Method::POST && path == POLICY_DRY_RUN_PATH {
@@ -2552,6 +2573,43 @@ fn validate_privacy_model_probe_input(
     Ok(input)
 }
 
+fn validate_local_privacy_model_probe_input(
+    input: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    validate_exact_object_keys(&input, &["path"], "local privacy model probe input")?;
+    let path = validate_string(&input["path"], 1, 4096, "local privacy model path")?;
+    if path.chars().any(char::is_control) {
+        return Err("local privacy model path must contain no control characters".to_string());
+    }
+    if looks_like_uri(path) || !Path::new(path).is_absolute() {
+        return Err("local privacy model path must be an absolute filesystem path".to_string());
+    }
+    Ok(input)
+}
+
+fn looks_like_uri(value: &str) -> bool {
+    let Some(separator) = value.find(':') else {
+        return false;
+    };
+    let scheme = &value[..separator];
+    if scheme.len() == 1
+        && scheme.as_bytes()[0].is_ascii_alphabetic()
+        && value[separator + 1..]
+            .bytes()
+            .next()
+            .is_some_and(|byte| matches!(byte, b'/' | b'\\'))
+    {
+        return false;
+    }
+    scheme
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic())
+        && scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+}
+
 fn validate_privacy_model_install_input(
     input: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
@@ -2702,15 +2760,27 @@ fn validate_privacy_model_installation(installation: &serde_json::Value) -> Resu
     let source = object["source"]
         .as_str()
         .ok_or_else(|| "privacy model installation source must be a string".to_string())?;
+    let repo_id = object["repo_id"]
+        .as_str()
+        .ok_or_else(|| "privacy model installation repo_id must be a string".to_string())?;
     let catalog_id = object["catalog_id"].as_str();
     let catalog_source = object["catalog_source"].as_str();
     match (source, catalog_id, catalog_source) {
         ("catalog", Some(id), Some("official" | "community")) => validate_privacy_catalog_id(id)?,
-        ("custom", None, None)
+        ("custom" | "local", None, None)
             if object["catalog_id"].is_null() && object["catalog_source"].is_null() => {}
         _ => {
             return Err("privacy model installation catalog provenance is inconsistent".to_string())
         }
+    }
+    let local_repo_id = repo_id.strip_prefix("local/model-").is_some_and(|digest| {
+        digest.len() == 12
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    });
+    if (source == "local") != local_repo_id {
+        return Err("privacy model installation local provenance is inconsistent".to_string());
     }
     validate_metadata_string(&object["name"], 1, 128, "privacy model installation name")?;
     if !object["license"].is_null() {
@@ -2823,7 +2893,9 @@ fn validate_canonical_privacy_kind(value: &serde_json::Value) -> Result<(), Stri
 
 fn validate_privacy_model_adapter(value: &serde_json::Value) -> Result<(), String> {
     match value.as_str() {
-        Some("openai_bioes_viterbi" | "hf_token_classification") => Ok(()),
+        Some("openai_bioes_viterbi" | "hf_token_classification" | "astrlink_sensitive_guard") => {
+            Ok(())
+        }
         _ => Err("privacy model adapter is invalid".to_string()),
     }
 }
@@ -4036,6 +4108,10 @@ mod tests {
             PRIVACY_MODEL_METADATA_TIMEOUT
         );
         assert_eq!(
+            control_request_timeout(&Method::POST, LOCAL_PRIVACY_MODEL_PROBE_PATH),
+            PRIVACY_MODEL_METADATA_TIMEOUT
+        );
+        assert_eq!(
             control_request_timeout(&Method::POST, PRIVACY_MODELS_PATH),
             PRIVACY_MODEL_METADATA_TIMEOUT
         );
@@ -4578,6 +4654,61 @@ mod tests {
     }
 
     #[test]
+    fn strictly_validates_local_privacy_model_probe_paths_without_leaking_them() {
+        let directory_path = std::env::current_dir()
+            .expect("current directory")
+            .to_string_lossy()
+            .into_owned();
+        let valid = serde_json::json!({"path": directory_path});
+        assert_eq!(
+            validate_local_privacy_model_probe_input(valid.clone()).unwrap(),
+            valid
+        );
+        let onnx_path = std::env::current_dir()
+            .expect("current directory")
+            .join("model.onnx")
+            .to_string_lossy()
+            .into_owned();
+        let valid = serde_json::json!({"path": onnx_path});
+        assert_eq!(
+            validate_local_privacy_model_probe_input(valid.clone()).unwrap(),
+            valid
+        );
+
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!({"path": directory_path, "unexpected": true}),
+            serde_json::json!({"directory": directory_path}),
+            serde_json::json!({"path": ""}),
+            serde_json::json!({"path": "relative/model-directory"}),
+            serde_json::json!({"path": "smb://ioncat.private/model-secret"}),
+            serde_json::json!({"path": "file:///private/model-secret"}),
+            serde_json::json!({"path": "/private/model-secret\n"}),
+            serde_json::json!({"path": 42}),
+        ] {
+            let error = validate_local_privacy_model_probe_input(invalid)
+                .expect_err("invalid local model path must be rejected");
+            assert!(!error.contains("ioncat.private"));
+            assert!(!error.contains("model-secret"));
+        }
+
+        let overlong = std::env::current_dir()
+            .expect("current directory")
+            .join("x".repeat(4097))
+            .to_string_lossy()
+            .into_owned();
+        assert!(validate_local_privacy_model_probe_input(serde_json::json!({
+            "path": overlong
+        }))
+        .is_err());
+
+        assert!(looks_like_uri("smb://server/share"));
+        assert!(looks_like_uri("file:///private/model"));
+        assert!(!looks_like_uri("/private/model:name"));
+        assert!(!looks_like_uri(r"C:\models\privacy"));
+    }
+
+    #[test]
     fn strictly_parses_privacy_model_catalog_probe_and_installations() {
         let catalog = serde_json::to_vec(&serde_json::json!({
             "items": [{
@@ -4738,6 +4869,17 @@ mod tests {
         custom_installation["languages"] = serde_json::json!([]);
         assert!(validate_privacy_model_installation(&custom_installation).is_ok());
 
+        let mut local_installation = custom_installation.clone();
+        local_installation["source"] = serde_json::json!("local");
+        local_installation["repo_id"] = serde_json::json!("local/model-0123456789ab");
+        assert!(validate_privacy_model_installation(&local_installation).is_ok());
+        local_installation["catalog_id"] = serde_json::json!("catalog_example_privacy");
+        assert!(validate_privacy_model_installation(&local_installation).is_err());
+
+        let mut mismatched_local_repo = custom_installation.clone();
+        mismatched_local_repo["repo_id"] = serde_json::json!("local/model-0123456789ab");
+        assert!(validate_privacy_model_installation(&mismatched_local_repo).is_err());
+
         let mut missing_catalog_source = privacy_installation_value();
         missing_catalog_source["catalog_source"] = serde_json::Value::Null;
         assert!(validate_privacy_model_installation(&missing_catalog_source).is_err());
@@ -4765,6 +4907,10 @@ mod tests {
             "/control/v1/privacy-model-catalog"
         );
         assert_eq!(PRIVACY_MODEL_PROBE_PATH, "/control/v1/privacy-models/probe");
+        assert_eq!(
+            LOCAL_PRIVACY_MODEL_PROBE_PATH,
+            "/control/v1/privacy-models/local/probe"
+        );
         assert_eq!(PRIVACY_MODELS_PATH, "/control/v1/privacy-models");
         assert_ne!(PRIVACY_MODEL_CATALOG_PATH, PRIVACY_MODELS_PATH);
     }

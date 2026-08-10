@@ -29,12 +29,14 @@ import {
   parsePrivacyModelProbe,
   parsePrivacyPolicyPage,
   parsePrivacyPolicyRecord,
+  validateLocalProbeInput,
   validatePrivacyDryRunInput,
   validatePrivacyModelInstallationID,
   validatePrivacyModelInstallInput,
   validatePrivacyModelProbeInput,
   type PrivacyDryRunInput,
   type PrivacyDryRunResult,
+  type LocalProbeInput,
   type PrivacyModelCatalog,
   type PrivacyModelInstallation,
   type PrivacyModelInstallationList,
@@ -397,6 +399,16 @@ export async function probePrivacyModel(
   const validated = validatePrivacyModelProbeInput(input);
   return parsePrivacyModelProbe(
     await invoke<unknown>("probe_privacy_model", { input: validated }),
+  );
+}
+
+export async function probeLocalPrivacyModel(
+  input: LocalProbeInput,
+): Promise<PrivacyModelProbe> {
+  requireNativeBridge();
+  const validated = validateLocalProbeInput(input);
+  return parsePrivacyModelProbe(
+    await invoke<unknown>("probe_local_privacy_model", { input: validated }),
   );
 }
 

@@ -22,18 +22,19 @@ import (
 )
 
 const (
-	HealthPath              = "/control/v1/health"
-	VersionPath             = "/control/v1/version"
-	CapabilitiesPath        = "/control/v1/capabilities"
-	ShutdownPath            = "/control/v1/shutdown"
-	ServicesPath            = "/control/v1/services"
-	RoutesPath              = "/control/v1/routes"
-	AccessTokensPath        = "/control/v1/access-tokens"
-	PoliciesPath            = "/control/v1/policies"
-	PolicyDryRunPath        = PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID) + "/dry-run"
-	PrivacyModelCatalogPath = "/control/v1/privacy-model-catalog"
-	PrivacyModelsPath       = "/control/v1/privacy-models"
-	PrivacyModelProbePath   = PrivacyModelsPath + "/probe"
+	HealthPath                 = "/control/v1/health"
+	VersionPath                = "/control/v1/version"
+	CapabilitiesPath           = "/control/v1/capabilities"
+	ShutdownPath               = "/control/v1/shutdown"
+	ServicesPath               = "/control/v1/services"
+	RoutesPath                 = "/control/v1/routes"
+	AccessTokensPath           = "/control/v1/access-tokens"
+	PoliciesPath               = "/control/v1/policies"
+	PolicyDryRunPath           = PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID) + "/dry-run"
+	PrivacyModelCatalogPath    = "/control/v1/privacy-model-catalog"
+	PrivacyModelsPath          = "/control/v1/privacy-models"
+	PrivacyModelProbePath      = PrivacyModelsPath + "/probe"
+	PrivacyModelLocalProbePath = PrivacyModelsPath + "/local/probe"
 )
 
 type Dependencies struct {
@@ -66,6 +67,7 @@ type AccessTokenManager interface {
 type PrivacyModelRegistry interface {
 	Catalog() contract.PrivacyModelCatalogResponse
 	Probe(context.Context, contract.PrivacyModelProbeRequest) (contract.PrivacyModelProbeResponse, error)
+	ProbeLocal(context.Context, contract.PrivacyModelLocalProbeRequest) (contract.PrivacyModelProbeResponse, error)
 	ListInstallations() []contract.PrivacyModelInstallation
 	GetInstallation(contract.PrivacyModelID) (contract.PrivacyModelInstallation, error)
 	Install(context.Context, contract.PrivacyModelInstallRequest) (contract.PrivacyModelInstallation, error)

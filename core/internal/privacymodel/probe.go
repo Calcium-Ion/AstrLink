@@ -79,22 +79,24 @@ type sourceDescriptor struct {
 }
 
 type sourceDescriptorVariant struct {
-	ID                string               `json:"id"`
-	Name              string               `json:"name"`
-	Quantization      string               `json:"quantization"`
-	EstimatedRAMBytes int64                `json:"estimated_ram_bytes"`
-	Recommended       bool                 `json:"recommended"`
-	ModelPath         string               `json:"model_path"`
-	ExternalData      []string             `json:"external_data_paths"`
-	TokenizerPath     string               `json:"tokenizer_path"`
-	ConfigPath        string               `json:"config_path"`
-	CalibrationPath   *string              `json:"calibration_path"`
-	TagScheme         string               `json:"tag_scheme"`
-	Window            int                  `json:"window"`
-	Stride            int                  `json:"stride"`
-	MaxRequestTokens  int                  `json:"max_request_tokens"`
-	InputNames        normalizedInputNames `json:"input_names"`
-	OutputName        string               `json:"output_name"`
+	ID                    string               `json:"id"`
+	Name                  string               `json:"name"`
+	Quantization          string               `json:"quantization"`
+	EstimatedRAMBytes     int64                `json:"estimated_ram_bytes"`
+	Recommended           bool                 `json:"recommended"`
+	ModelPath             string               `json:"model_path"`
+	ExternalData          []string             `json:"external_data_paths"`
+	TokenizerPath         string               `json:"tokenizer_path"`
+	ConfigPath            string               `json:"config_path"`
+	CalibrationPath       *string              `json:"calibration_path"`
+	SecretRulesPath       *string              `json:"secret_rules_path"`
+	SecretCalibrationPath *string              `json:"secret_calibration_path"`
+	TagScheme             string               `json:"tag_scheme"`
+	Window                int                  `json:"window"`
+	Stride                int                  `json:"stride"`
+	MaxRequestTokens      int                  `json:"max_request_tokens"`
+	InputNames            normalizedInputNames `json:"input_names"`
+	OutputName            string               `json:"output_name"`
 }
 
 type probeResult struct {
@@ -268,11 +270,18 @@ func (probe *hfProbe) inspect(
 			if variant.CalibrationPath != nil {
 				requiredJSON[*variant.CalibrationPath] = struct{}{}
 			}
+			if variant.SecretRulesPath != nil {
+				requiredJSON[*variant.SecretRulesPath] = struct{}{}
+			}
+			if variant.SecretCalibrationPath != nil {
+				requiredJSON[*variant.SecretCalibrationPath] = struct{}{}
+			}
 		}
 	}
 	jsonDocuments := make(map[string][]byte, len(requiredJSON))
 	for filename := range requiredJSON {
-		if !strings.HasSuffix(strings.ToLower(filename), ".json") ||
+		if (!strings.HasSuffix(strings.ToLower(filename), ".json") &&
+			!strings.HasSuffix(strings.ToLower(filename), ".yaml")) ||
 			!siblingExists(metadata.Siblings, filename) {
 			return probeResult{}, ErrUnsupportedModel
 		}
@@ -307,6 +316,18 @@ func (probe *hfProbe) inspect(
 	labels, tagScheme, complete, validLabels := probeLabels(modelConfig.ID2Label)
 	if !validLabels {
 		return probeResult{}, ErrRemoteMetadata
+	}
+	if descriptor != nil &&
+		descriptor.Adapter == contract.PrivacyModelAdapterAstrLinkGuard {
+		variant := descriptor.Variants[0]
+		if validateSensitiveGuardAssets(
+			modelConfig.ID2Label,
+			jsonDocuments[*variant.CalibrationPath],
+			jsonDocuments[*variant.SecretRulesPath],
+			jsonDocuments[*variant.SecretCalibrationPath],
+		) != nil {
+			return probeResult{}, ErrUnsupportedModel
+		}
 	}
 	var variants []contract.PrivacyModelVariant
 	var plans map[string]customVariantPlan
@@ -412,6 +433,9 @@ func validateSourceDescriptor(descriptor sourceDescriptor) error {
 	sharedConfig := descriptor.Variants[0].ConfigPath
 	sharedTokenizer := descriptor.Variants[0].TokenizerPath
 	sharedTagScheme := descriptor.Variants[0].TagScheme
+	sharedCalibration := descriptor.Variants[0].CalibrationPath
+	sharedSecretRules := descriptor.Variants[0].SecretRulesPath
+	sharedSecretCalibration := descriptor.Variants[0].SecretCalibrationPath
 	for _, variant := range descriptor.Variants {
 		if contract.ValidatePrivacyModelVariantID(variant.ID) != nil ||
 			!validProbeMetadataText(variant.Name, 64) ||
@@ -432,6 +456,12 @@ func validateSourceDescriptor(descriptor sourceDescriptor) error {
 			variant.ConfigPath != sharedConfig ||
 			variant.TokenizerPath != sharedTokenizer ||
 			variant.TagScheme != sharedTagScheme ||
+			!optionalStringsEqual(variant.CalibrationPath, sharedCalibration) ||
+			!optionalStringsEqual(variant.SecretRulesPath, sharedSecretRules) ||
+			!optionalStringsEqual(
+				variant.SecretCalibrationPath,
+				sharedSecretCalibration,
+			) ||
 			(variant.TagScheme != "bio" && variant.TagScheme != "bioes") ||
 			variant.Window <= 0 || variant.Stride < 0 ||
 			variant.Stride >= variant.Window ||
@@ -455,11 +485,21 @@ func validateSourceDescriptor(descriptor sourceDescriptor) error {
 			return ErrUnsupportedModel
 		}
 		if descriptor.Adapter == contract.PrivacyModelAdapterOpenAIBIOES &&
-			(variant.TagScheme != "bioes" || variant.CalibrationPath == nil) {
+			(variant.TagScheme != "bioes" || variant.CalibrationPath == nil ||
+				variant.SecretRulesPath != nil ||
+				variant.SecretCalibrationPath != nil) {
 			return ErrUnsupportedModel
 		}
 		if descriptor.Adapter == contract.PrivacyModelAdapterHFToken &&
-			variant.CalibrationPath != nil {
+			(variant.CalibrationPath != nil ||
+				variant.SecretRulesPath != nil ||
+				variant.SecretCalibrationPath != nil) {
+			return ErrUnsupportedModel
+		}
+		if descriptor.Adapter == contract.PrivacyModelAdapterAstrLinkGuard &&
+			(variant.TagScheme != "bioes" || variant.CalibrationPath == nil ||
+				variant.SecretRulesPath == nil ||
+				variant.SecretCalibrationPath == nil) {
 			return ErrUnsupportedModel
 		}
 		if _, exists := seen[variant.ID]; exists {
@@ -501,16 +541,47 @@ func validateSourceDescriptor(descriptor sourceDescriptor) error {
 				*variant.CalibrationPath == InstallationManifestName {
 				return ErrUnsupportedModel
 			}
+			rolePaths[*variant.CalibrationPath] = struct{}{}
+		}
+		if variant.SecretRulesPath != nil {
+			if !safeAssetPath(*variant.SecretRulesPath) ||
+				(!strings.HasSuffix(strings.ToLower(*variant.SecretRulesPath), ".json") &&
+					!strings.HasSuffix(strings.ToLower(*variant.SecretRulesPath), ".yaml")) ||
+				*variant.SecretRulesPath == InstallationManifestName {
+				return ErrUnsupportedModel
+			}
+			if _, exists := rolePaths[*variant.SecretRulesPath]; exists {
+				return ErrUnsupportedModel
+			}
+			rolePaths[*variant.SecretRulesPath] = struct{}{}
+		}
+		if variant.SecretCalibrationPath != nil {
+			if !safeAssetPath(*variant.SecretCalibrationPath) ||
+				!strings.HasSuffix(strings.ToLower(*variant.SecretCalibrationPath), ".json") ||
+				*variant.SecretCalibrationPath == InstallationManifestName {
+				return ErrUnsupportedModel
+			}
+			if _, exists := rolePaths[*variant.SecretCalibrationPath]; exists {
+				return ErrUnsupportedModel
+			}
+			rolePaths[*variant.SecretCalibrationPath] = struct{}{}
 		}
 	}
 	return nil
 }
 
 func maxDescriptorExternalFiles(variant sourceDescriptorVariant) int {
+	limit := 125
 	if variant.CalibrationPath != nil {
-		return 124
+		limit--
 	}
-	return 125
+	if variant.SecretRulesPath != nil {
+		limit--
+	}
+	if variant.SecretCalibrationPath != nil {
+		limit--
+	}
+	return limit
 }
 
 func hasTokenClassificationArchitecture(architectures []string) bool {
@@ -561,6 +632,12 @@ func descriptorVariants(
 		if source.CalibrationPath != nil {
 			required = append(required, *source.CalibrationPath)
 		}
+		if source.SecretRulesPath != nil {
+			required = append(required, *source.SecretRulesPath)
+		}
+		if source.SecretCalibrationPath != nil {
+			required = append(required, *source.SecretCalibrationPath)
+		}
 		assets := make([]Asset, 0, len(required))
 		var total int64
 		supported := !nonCPUModelPath(source.ModelPath) &&
@@ -600,8 +677,10 @@ func descriptorVariants(
 			modelPath:     source.ModelPath,
 			externalData:  append([]string(nil), source.ExternalData...),
 			tokenizerPath: source.TokenizerPath, configPath: source.ConfigPath,
-			calibrationPath: cloneString(source.CalibrationPath),
-			tagScheme:       source.TagScheme, window: source.Window,
+			calibrationPath:       cloneString(source.CalibrationPath),
+			secretRulesPath:       cloneString(source.SecretRulesPath),
+			secretCalibrationPath: cloneString(source.SecretCalibrationPath),
+			tagScheme:             source.TagScheme, window: source.Window,
 			stride: source.Stride, maxRequestTokens: source.MaxRequestTokens,
 			inputNames: source.InputNames, outputName: source.OutputName,
 		}

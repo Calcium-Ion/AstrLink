@@ -388,6 +388,7 @@ raise "policy matches must use service_ids" unless policy_match.fetch("propertie
   PATCH\ /control/v1/policies/{policy_id}
   GET\ /control/v1/privacy-model-catalog
   POST\ /control/v1/privacy-models/probe
+  POST\ /control/v1/privacy-models/local/probe
   GET\ /control/v1/privacy-models
   POST\ /control/v1/privacy-models
   GET\ /control/v1/privacy-models/{installation_id}
@@ -399,6 +400,8 @@ privacy_catalog_methods = openapi.dig("paths", "/control/v1/privacy-model-catalo
 raise "privacy-model catalog methods drifted: #{privacy_catalog_methods}" unless privacy_catalog_methods == %w[get]
 privacy_probe_methods = openapi.dig("paths", "/control/v1/privacy-models/probe").keys
 raise "privacy-model probe methods drifted: #{privacy_probe_methods}" unless privacy_probe_methods == %w[post]
+local_privacy_probe_methods = openapi.dig("paths", "/control/v1/privacy-models/local/probe").keys
+raise "local privacy-model probe methods drifted: #{local_privacy_probe_methods}" unless local_privacy_probe_methods == %w[post]
 privacy_collection_methods = openapi.dig("paths", "/control/v1/privacy-models").keys
 raise "privacy-model collection methods drifted: #{privacy_collection_methods}" unless privacy_collection_methods == %w[get post]
 privacy_item_methods = openapi.dig("paths", "/control/v1/privacy-models/{installation_id}").keys
@@ -450,7 +453,7 @@ catalog = openapi.dig("components", "schemas", "PrivacyModelCatalog")
 raise "privacy model catalog must expose items" unless catalog.fetch("required") == %w[items]
 
 adapter_values = openapi.dig("components", "schemas", "PrivacyModelAdapter", "enum")
-raise "privacy model adapter values drifted" unless adapter_values == %w[openai_bioes_viterbi hf_token_classification]
+raise "privacy model adapter values drifted" unless adapter_values == %w[openai_bioes_viterbi hf_token_classification astrlink_sensitive_guard]
 
 canonical_kinds = openapi.dig("components", "schemas", "PrivacyCanonicalKind", "enum")
 expected_kinds = %w[email phone account payment_card ip_address url common_secret private_address private_date private_person]
@@ -466,5 +469,12 @@ raise "privacy installation shape drifted" unless installation.fetch("required")
                                                    installation.fetch("properties").keys == expected_installation_fields
 catalog_source_values = installation.dig("properties", "catalog_source", "oneOf", 0, "enum")
 raise "privacy catalog provenance values drifted" unless catalog_source_values == %w[official community]
+installation_source_values = installation.dig("properties", "source", "enum")
+raise "privacy installation source values drifted" unless installation_source_values == %w[catalog custom local]
+
+local_probe = openapi.dig("components", "schemas", "PrivacyModelLocalProbeRequest")
+raise "local privacy model probe must accept only one path" unless local_probe.fetch("required") == %w[path] &&
+                                                               local_probe.fetch("properties").keys == %w[path] &&
+                                                               local_probe.fetch("additionalProperties") == false
 
 puts "validated #{reference_count} local $ref values, frozen fixtures, Alpha relay and classification-route invariants, and audit patch semantics"

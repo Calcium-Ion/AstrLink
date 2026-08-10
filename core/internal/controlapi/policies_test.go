@@ -170,6 +170,7 @@ func TestPolicyAndPrivacyModelRoutesRequireAuthenticationAndNoStore(t *testing.T
 		{method: http.MethodGet, path: PrivacyModelCatalogPath},
 		{method: http.MethodGet, path: PrivacyModelsPath},
 		{method: http.MethodPost, path: PrivacyModelProbePath},
+		{method: http.MethodPost, path: PrivacyModelLocalProbePath},
 	} {
 		request := httptest.NewRequest(operation.method, operation.path, nil)
 		response := httptest.NewRecorder()

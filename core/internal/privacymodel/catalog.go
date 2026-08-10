@@ -15,17 +15,19 @@ const (
 )
 
 type runtimeSpec struct {
-	modelPath        string
-	externalData     []string
-	tokenizerPath    string
-	configPath       string
-	calibrationPath  *string
-	tagScheme        string
-	window           int
-	stride           int
-	maxRequestTokens int
-	inputNames       normalizedInputNames
-	outputName       string
+	modelPath             string
+	externalData          []string
+	tokenizerPath         string
+	configPath            string
+	calibrationPath       *string
+	secretRulesPath       *string
+	secretCalibrationPath *string
+	tagScheme             string
+	window                int
+	stride                int
+	maxRequestTokens      int
+	inputNames            normalizedInputNames
+	outputName            string
 }
 
 type variantPlan struct {

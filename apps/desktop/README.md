@@ -105,14 +105,19 @@ statistics requests until usage storage is implemented.
 ## Local privacy models
 
 The safety page keeps Regex available without model assets and exposes a
-versioned built-in model catalog plus an advanced public Hugging Face probe.
+versioned built-in model catalog, an advanced public Hugging Face probe, and a
+local import flow for an already-mounted model package. Local import accepts an
+absolute native directory or `.onnx` file path rather than `smb://` or another
+URI; network shares must first be mounted by the operating system. Selecting a
+file probes only that model variant and its required companion assets.
 Users choose one CPU model/quantization installation for the global policy;
 several immutable installations may coexist. The WebView receives catalog,
 persisted source/license/language details, progress, compatibility, and
 sanitized error metadata only. Label mapping is handled in a bounded modal so
 large label sets do not expand the main workspace. The WebView never downloads
 weights directly and cannot pass arbitrary URLs or executable repository code
-to Core.
+to Core. Core returns no source-directory path and copies the selected,
+content-pinned assets into AstrLink's private model storage before execution.
 
 Enabling or switching to a model shows its disk/RAM estimate and requires an
 explicit confirmation. Model loading remains lazy in the trusted Rust worker.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -12,17 +14,18 @@ import (
 )
 
 type fakePrivacyModelRegistry struct {
-	catalog       contract.PrivacyModelCatalogResponse
-	probeResponse contract.PrivacyModelProbeResponse
-	probeErr      error
-	installErr    error
-	deleteErr     error
-	installations map[contract.PrivacyModelID]contract.PrivacyModelInstallation
-	ready         map[contract.PrivacyModelID]bool
-	installCalls  int
-	deleteCalls   int
-	lastInstall   contract.PrivacyModelInstallRequest
-	lastDeleted   contract.PrivacyModelID
+	catalog        contract.PrivacyModelCatalogResponse
+	probeResponse  contract.PrivacyModelProbeResponse
+	probeErr       error
+	installErr     error
+	deleteErr      error
+	installations  map[contract.PrivacyModelID]contract.PrivacyModelInstallation
+	ready          map[contract.PrivacyModelID]bool
+	installCalls   int
+	deleteCalls    int
+	lastInstall    contract.PrivacyModelInstallRequest
+	lastLocalProbe contract.PrivacyModelLocalProbeRequest
+	lastDeleted    contract.PrivacyModelID
 }
 
 func (registry *fakePrivacyModelRegistry) Catalog() contract.PrivacyModelCatalogResponse {
@@ -33,6 +36,14 @@ func (registry *fakePrivacyModelRegistry) Probe(
 	context.Context,
 	contract.PrivacyModelProbeRequest,
 ) (contract.PrivacyModelProbeResponse, error) {
+	return registry.probeResponse, registry.probeErr
+}
+
+func (registry *fakePrivacyModelRegistry) ProbeLocal(
+	_ context.Context,
+	request contract.PrivacyModelLocalProbeRequest,
+) (contract.PrivacyModelProbeResponse, error) {
+	registry.lastLocalProbe = request
 	return registry.probeResponse, registry.probeErr
 }
 
@@ -302,6 +313,60 @@ func TestPrivacyModelCollectionRoutesAndSelectedDeleteGuard(t *testing.T) {
 	}
 }
 
+func TestLocalPrivacyModelProbeAndExistingCollectionInstallRoutes(t *testing.T) {
+	_, handler, registry := newPolicyHandler(t)
+	kind := contract.CanonicalKindEmail
+	revision := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	repoID := "local/model-aaaaaaaaaaaa"
+	registry.probeResponse = contract.PrivacyModelProbeResponse{
+		RepoID: repoID, RequestedRevision: revision, Revision: revision,
+		Name: "Local Model", Languages: []string{},
+		Adapter: contract.PrivacyModelAdapterHFToken,
+		Variants: []contract.PrivacyModelVariant{{
+			ID: "cpu_int8", Name: "CPU INT8", Quantization: "int8",
+			BytesTotal: 10, EstimatedRAMBytes: 20, Supported: true,
+		}},
+		Labels: []contract.PrivacyModelLabel{{
+			Label: "EMAIL", SuggestedKind: &kind,
+		}},
+	}
+	path := t.TempDir() + string(os.PathSeparator)
+	response := policyRequest(
+		t, handler, http.MethodPost, PrivacyModelLocalProbePath,
+		"application/json", `{"path":`+strconv.Quote(path)+`}`, "",
+	)
+	if response.Code != http.StatusOK ||
+		registry.lastLocalProbe.Path != path {
+		t.Fatalf("local probe status=%d request=%#v body=%s", response.Code, registry.lastLocalProbe, response.Body.String())
+	}
+	var probed contract.PrivacyModelProbeResponse
+	decode(t, response, &probed)
+	if probed.RepoID != repoID || probed.Revision != revision {
+		t.Fatalf("local probe=%#v", probed)
+	}
+
+	id := privacymodel.InstallationID(repoID, revision, "cpu_int8")
+	registry.installations[id] = contract.PrivacyModelInstallation{
+		ID: id, Source: contract.PrivacyModelSourceLocal,
+		Name: "Local Model", Languages: []string{}, RepoID: repoID,
+		Revision: revision, VariantID: "cpu_int8", VariantName: "CPU INT8",
+		Quantization: "int8", Adapter: contract.PrivacyModelAdapterHFToken,
+		Status:     contract.PrivacyModelStatusDownloading,
+		BytesTotal: 10, EstimatedRAMBytes: 20,
+		LabelMapping: map[string]*contract.CanonicalKind{"EMAIL": &kind},
+	}
+	response = policyRequest(
+		t, handler, http.MethodPost, PrivacyModelsPath,
+		"application/json",
+		`{"repo_id":"`+repoID+`","revision":"`+revision+`","variant_id":"cpu_int8","label_mapping":{"EMAIL":"email"}}`,
+		"",
+	)
+	if response.Code != http.StatusAccepted || registry.installCalls != 1 ||
+		registry.lastInstall.RepoID != repoID {
+		t.Fatalf("local install status=%d calls=%d input=%#v body=%s", response.Code, registry.installCalls, registry.lastInstall, response.Body.String())
+	}
+}
+
 func TestPrivacyModelRoutesRejectQueriesUnknownFieldsAndWrongMethods(t *testing.T) {
 	_, handler, registry := newPolicyHandler(t)
 	tests := []struct {
@@ -314,6 +379,11 @@ func TestPrivacyModelRoutesRejectQueriesUnknownFieldsAndWrongMethods(t *testing.
 		{http.MethodGet, PrivacyModelCatalogPath + "?x=1", "", "", http.StatusBadRequest},
 		{http.MethodPost, PrivacyModelCatalogPath, "", "", http.StatusMethodNotAllowed},
 		{http.MethodGet, PrivacyModelProbePath, "", "", http.StatusMethodNotAllowed},
+		{http.MethodGet, PrivacyModelLocalProbePath, "", "", http.StatusMethodNotAllowed},
+		{http.MethodPost, PrivacyModelLocalProbePath + "?x=1", "application/json", `{}`, http.StatusBadRequest},
+		{http.MethodPost, PrivacyModelLocalProbePath, "application/json", `{"path":"relative/model"}`, http.StatusUnprocessableEntity},
+		{http.MethodPost, PrivacyModelLocalProbePath, "application/json", `{"directory":"/tmp/model"}`, http.StatusBadRequest},
+		{http.MethodPost, PrivacyModelLocalProbePath, "application/json", `{"path":"/tmp/model","extra":true}`, http.StatusBadRequest},
 		{http.MethodPost, PrivacyModelProbePath, "application/json", `{"repo_id":"acme/model","revision":"main","extra":true}`, http.StatusBadRequest},
 		{http.MethodPost, PrivacyModelsPath, "text/plain", `{}`, http.StatusUnsupportedMediaType},
 		{http.MethodPatch, PrivacyModelsPath, "", "", http.StatusMethodNotAllowed},

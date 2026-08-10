@@ -9,6 +9,7 @@ import {
   parsePrivacyModelProbe,
   parsePrivacyPolicyPage,
   parsePrivacyPolicyRecord,
+  validateLocalProbeInput,
   validatePrivacyDryRunInput,
   validatePrivacyModelInstallInput,
 } from "./privacy-policy-model";
@@ -298,6 +299,26 @@ describe("privacy-policy IPC contract", () => {
     expect(parsePrivacyModelInstallation(customInstallation)).toEqual(
       customInstallation,
     );
+    const localInstallation = {
+      ...customInstallation,
+      source: "local",
+      repo_id: "local/model-aaaaaaaaaaaa",
+    } as const;
+    expect(parsePrivacyModelInstallation(localInstallation)).toEqual(
+      localInstallation,
+    );
+    expect(() =>
+      parsePrivacyModelInstallation({
+        ...customInstallation,
+        repo_id: "local/model-aaaaaaaaaaaa",
+      }),
+    ).toThrow("local provenance");
+    expect(() =>
+      parsePrivacyModelInstallation({
+        ...customInstallation,
+        source: "local",
+      }),
+    ).toThrow("local provenance");
     const downloading = {
       ...readyInstallation,
       status: "downloading",
@@ -423,5 +444,29 @@ describe("privacy-policy IPC contract", () => {
         estimated_ram_bytes: 1,
       }),
     ).toBe(true);
+  });
+
+  it("normalizes local probe paths and rejects URIs or control characters", () => {
+    expect(
+      validateLocalProbeInput({ path: "  /Volumes/models/privacy  " }),
+    ).toEqual({ path: "/Volumes/models/privacy" });
+    expect(
+      validateLocalProbeInput({ path: "C:\\models\\privacy\\model.onnx" }),
+    ).toEqual({ path: "C:\\models\\privacy\\model.onnx" });
+    expect(() => validateLocalProbeInput({ path: "   " })).toThrow(
+      "1 to 4096 characters",
+    );
+    expect(() =>
+      validateLocalProbeInput({ path: "smb://host/share/model.onnx" }),
+    ).toThrow("not a URI");
+    expect(() =>
+      validateLocalProbeInput({ path: "file:/Volumes/models/privacy" }),
+    ).toThrow("not a URI");
+    expect(() =>
+      validateLocalProbeInput({ path: "/Volumes/models\u0000/privacy" }),
+    ).toThrow("control characters");
+    expect(() =>
+      validateLocalProbeInput({ path: `/${"a".repeat(4096)}` }),
+    ).toThrow("1 to 4096 characters");
   });
 });

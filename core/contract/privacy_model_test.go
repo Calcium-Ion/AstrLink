@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -51,6 +52,18 @@ func TestValidatePrivacyModelInstallationDisplayMetadataProvenance(t *testing.T)
 	if err := ValidatePrivacyModelInstallation(custom); err != nil {
 		t.Fatalf("valid custom installation: %v", err)
 	}
+	remoteLocalOwner := custom
+	remoteLocalOwner.RepoID = "local/privacy-filter"
+	if err := ValidatePrivacyModelInstallation(remoteLocalOwner); err != nil {
+		t.Fatalf("valid public repository owned by local: %v", err)
+	}
+
+	local := custom
+	local.Source = PrivacyModelSourceLocal
+	local.RepoID = "local/model-aaaaaaaaaaaa"
+	if err := ValidatePrivacyModelInstallation(local); err != nil {
+		t.Fatalf("valid local installation: %v", err)
+	}
 
 	for name, mutate := range map[string]func(*PrivacyModelInstallation){
 		"catalog without catalog source": func(value *PrivacyModelInstallation) {
@@ -75,6 +88,17 @@ func TestValidatePrivacyModelInstallationDisplayMetadataProvenance(t *testing.T)
 		"empty resolved mapping": func(value *PrivacyModelInstallation) {
 			value.LabelMapping = map[string]*CanonicalKind{}
 		},
+		"local source without local identity": func(value *PrivacyModelInstallation) {
+			value.Source = PrivacyModelSourceLocal
+			value.CatalogID = nil
+			value.CatalogSource = nil
+		},
+		"non-local source with local identity": func(value *PrivacyModelInstallation) {
+			value.Source = PrivacyModelSourceCustom
+			value.CatalogID = nil
+			value.CatalogSource = nil
+			value.RepoID = "local/model-aaaaaaaaaaaa"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := base
@@ -83,6 +107,33 @@ func TestValidatePrivacyModelInstallationDisplayMetadataProvenance(t *testing.T)
 				t.Fatalf("invalid installation was accepted: %#v", candidate)
 			}
 		})
+	}
+}
+
+func TestValidatePrivacyModelLocalProbeRequest(t *testing.T) {
+	path := t.TempDir()
+	for _, candidate := range []string{
+		path,
+		path + string(filepath.Separator),
+		filepath.Join(path, "model.onnx"),
+	} {
+		if err := ValidatePrivacyModelLocalProbeRequest(
+			PrivacyModelLocalProbeRequest{Path: candidate},
+		); err != nil {
+			t.Fatalf("valid absolute path %q: %v", candidate, err)
+		}
+	}
+	for _, candidate := range []string{
+		"relative/model",
+		"smb://server/share/model",
+		path + "\nmodel",
+		strings.Repeat("/x", 2050),
+	} {
+		if err := ValidatePrivacyModelLocalProbeRequest(
+			PrivacyModelLocalProbeRequest{Path: candidate},
+		); err == nil {
+			t.Fatalf("invalid path was accepted: %q", candidate)
+		}
 	}
 }
 

@@ -31,6 +31,7 @@ import {
   listAccessTokens,
   listPrivacyModelInstallations,
   listPrivacyPolicies,
+  probeLocalPrivacyModel,
   probePrivacyModel,
   revealAccessToken,
   restartCore,
@@ -484,6 +485,25 @@ describe("desktop bridge contract", () => {
     expect(invokeMock).toHaveBeenLastCalledWith("probe_privacy_model", {
       input: { repo_id: catalogModel.repo_id, revision: "main" },
     });
+
+    const localProbe = {
+      ...probe,
+      repo_id: "local/model-aaaaaaaaaaaa",
+      requested_revision: revision,
+    };
+    invokeMock.mockResolvedValueOnce(localProbe);
+    await expect(
+      probeLocalPrivacyModel({ path: "  /Volumes/models/privacy/model_int8.onnx  " }),
+    ).resolves.toEqual(localProbe);
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "probe_local_privacy_model",
+      { input: { path: "/Volumes/models/privacy/model_int8.onnx" } },
+    );
+    const callsBeforeInvalidLocalProbe = invokeMock.mock.calls.length;
+    await expect(
+      probeLocalPrivacyModel({ path: "smb://host/share/privacy/model.onnx" }),
+    ).rejects.toThrow("not a URI");
+    expect(invokeMock).toHaveBeenCalledTimes(callsBeforeInvalidLocalProbe);
 
     invokeMock.mockResolvedValueOnce({ items: [installation] });
     await expect(listPrivacyModelInstallations()).resolves.toEqual({

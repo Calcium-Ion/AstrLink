@@ -2,6 +2,7 @@ mod decoder;
 mod engine;
 mod manifest;
 mod protocol;
+mod sensitive;
 
 use std::{
     env,

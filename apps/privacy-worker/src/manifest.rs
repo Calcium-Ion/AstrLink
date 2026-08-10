@@ -30,6 +30,7 @@ const OPENAI_ENTITY_LABELS: [&str; 8] = [
 pub enum Adapter {
     OpenaiBioesViterbi,
     HfTokenClassification,
+    AstrlinkSensitiveGuard,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -54,6 +55,8 @@ pub struct ModelManifest {
     pub tokenizer_path: String,
     pub config_path: String,
     pub calibration_path: Option<String>,
+    pub secret_rules_path: Option<String>,
+    pub secret_calibration_path: Option<String>,
     pub tag_scheme: TagScheme,
     pub window: usize,
     pub stride: usize,
@@ -147,12 +150,28 @@ impl ModelManifest {
 
         match self.adapter {
             Adapter::OpenaiBioesViterbi => {
-                if self.tag_scheme != TagScheme::Bioes || self.calibration_path.is_none() {
+                if self.tag_scheme != TagScheme::Bioes
+                    || self.calibration_path.is_none()
+                    || self.secret_rules_path.is_some()
+                    || self.secret_calibration_path.is_some()
+                {
                     return Err(io::Error::other("invalid_model_manifest"));
                 }
             }
             Adapter::HfTokenClassification => {
-                if self.calibration_path.is_some() {
+                if self.calibration_path.is_some()
+                    || self.secret_rules_path.is_some()
+                    || self.secret_calibration_path.is_some()
+                {
+                    return Err(io::Error::other("invalid_model_manifest"));
+                }
+            }
+            Adapter::AstrlinkSensitiveGuard => {
+                if self.tag_scheme != TagScheme::Bioes
+                    || self.calibration_path.is_none()
+                    || self.secret_rules_path.is_none()
+                    || self.secret_calibration_path.is_none()
+                {
                     return Err(io::Error::other("invalid_model_manifest"));
                 }
             }
@@ -177,6 +196,8 @@ impl ModelManifest {
             Some(self.tokenizer_path.as_str()),
             Some(self.config_path.as_str()),
             self.calibration_path.as_deref(),
+            self.secret_rules_path.as_deref(),
+            self.secret_calibration_path.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -192,7 +213,7 @@ impl ModelManifest {
             }
         }
         match self.adapter {
-            Adapter::OpenaiBioesViterbi
+            Adapter::OpenaiBioesViterbi | Adapter::AstrlinkSensitiveGuard
                 if self.label_mapping.len() != OPENAI_ENTITY_LABELS.len()
                     || OPENAI_ENTITY_LABELS
                         .iter()
@@ -466,6 +487,8 @@ mod tests {
             tokenizer_path: "tokenizer.json".into(),
             config_path: "config.json".into(),
             calibration_path: None,
+            secret_rules_path: None,
+            secret_calibration_path: None,
             tag_scheme: TagScheme::Bio,
             window: 512,
             stride: 128,

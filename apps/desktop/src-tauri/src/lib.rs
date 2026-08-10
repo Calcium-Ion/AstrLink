@@ -472,6 +472,21 @@ async fn probe_privacy_model(
     manager.probe_privacy_model(input).await
 }
 
+async fn probe_local_privacy_model_with_manager(
+    input: serde_json::Value,
+    manager: &CoreManager,
+) -> Result<serde_json::Value, String> {
+    manager.probe_local_privacy_model(input).await
+}
+
+#[tauri::command]
+async fn probe_local_privacy_model(
+    input: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    probe_local_privacy_model_with_manager(input, manager.inner()).await
+}
+
 #[tauri::command]
 async fn list_privacy_model_installations(
     manager: State<'_, Arc<CoreManager>>,
@@ -572,6 +587,7 @@ pub fn run() {
             dry_run_privacy_policy,
             get_privacy_model_catalog,
             probe_privacy_model,
+            probe_local_privacy_model,
             list_privacy_model_installations,
             install_privacy_model,
             get_privacy_model_installation,
@@ -721,6 +737,32 @@ mod tests {
         assert_eq!(
             platform_initialization_script("macos"),
             "window.__ASTRLINK_DESKTOP_PLATFORM__ = \"macos\";"
+        );
+    }
+
+    #[test]
+    fn local_privacy_model_probe_command_validates_before_delegating() {
+        let manager = CoreManager::new();
+        let invalid = tauri::async_runtime::block_on(probe_local_privacy_model_with_manager(
+            serde_json::json!({"path": "smb://ioncat.private/model-secret"}),
+            &manager,
+        ))
+        .expect_err("URI input must be rejected before contacting Core");
+        assert!(!invalid.contains("ioncat.private"));
+        assert!(!invalid.contains("model-secret"));
+
+        let path = std::env::current_dir()
+            .expect("current directory")
+            .to_string_lossy()
+            .into_owned();
+        let delegated = tauri::async_runtime::block_on(probe_local_privacy_model_with_manager(
+            serde_json::json!({"path": path}),
+            &manager,
+        ))
+        .expect_err("a valid input should reach the stopped Core manager");
+        assert_eq!(
+            delegated,
+            "Core is not ready for authenticated control operations"
         );
     }
 }

@@ -20,6 +20,10 @@ func (handler *Handler) registerPrivacyModelsRoutes() {
 		handler.authenticated(handler.privacyModelProbe),
 	)
 	handler.mux.HandleFunc(
+		PrivacyModelLocalProbePath,
+		handler.authenticated(handler.privacyModelLocalProbe),
+	)
+	handler.mux.HandleFunc(
 		PrivacyModelsPath,
 		handler.authenticated(handler.privacyModelCollection),
 	)
@@ -27,6 +31,38 @@ func (handler *Handler) registerPrivacyModelsRoutes() {
 		PrivacyModelsPath+"/",
 		handler.authenticated(handler.privacyModelItem),
 	)
+}
+
+func (handler *Handler) privacyModelLocalProbe(
+	writer http.ResponseWriter,
+	request *http.Request,
+) {
+	if request.URL.RawQuery != "" {
+		writeError(writer, http.StatusBadRequest, "invalid_query", "local privacy model probe does not accept query parameters")
+		return
+	}
+	if request.Method != http.MethodPost {
+		writer.Header().Set("Allow", http.MethodPost)
+		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
+		return
+	}
+	if !requireMediaType(writer, request, "application/json") {
+		return
+	}
+	var input contract.PrivacyModelLocalProbeRequest
+	if !decodeControlJSON(writer, request, &input) {
+		return
+	}
+	if err := contract.ValidatePrivacyModelLocalProbeRequest(input); err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_privacy_model_local_probe", "local privacy model probe request is invalid")
+		return
+	}
+	response, err := handler.privacyModels.ProbeLocal(request.Context(), input)
+	if err != nil {
+		handler.writePrivacyModelRegistryError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, response)
 }
 
 func (handler *Handler) privacyModelCatalog(
@@ -207,6 +243,10 @@ func (handler *Handler) writePrivacyModelRegistryError(
 		writeError(writer, http.StatusConflict, "privacy_model_already_installed", "the privacy model installation is already ready")
 	case errors.Is(err, privacymodel.ErrCapacity):
 		writeError(writer, http.StatusConflict, "privacy_model_limit", "the privacy model installation limit has been reached")
+	case errors.Is(err, privacymodel.ErrLocalProbeRequired):
+		writeError(writer, http.StatusConflict, "privacy_model_local_probe_required", "probe the local model path again before installing")
+	case errors.Is(err, privacymodel.ErrLocalSource):
+		writeError(writer, http.StatusUnprocessableEntity, "privacy_model_local_source_unavailable", "the local model source is unavailable or unsafe")
 	case errors.Is(err, privacymodel.ErrInvalidConfig),
 		errors.Is(err, privacymodel.ErrUnsupportedModel):
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_privacy_model", "privacy model metadata or label mapping is unsupported")

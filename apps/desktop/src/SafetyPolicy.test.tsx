@@ -13,6 +13,7 @@ const bridgeMocks = vi.hoisted(() => ({
   getPrivacyPolicy: vi.fn(),
   installPrivacyModel: vi.fn(),
   listPrivacyModelInstallations: vi.fn(),
+  probeLocalPrivacyModel: vi.fn(),
   probePrivacyModel: vi.fn(),
   updatePrivacyPolicy: vi.fn(),
 }));
@@ -538,6 +539,113 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain(heavyProbe.license);
   });
 
+  it("probes an already-mounted ONNX file and reuses the install flow", async () => {
+    const localProbe = probe({
+      repo_id: "local/model-aaaaaaaaaaaa",
+      requested_revision: revision,
+      name: "Astr PII Ettin 32M",
+    });
+    const localInstallation = installation({
+      id: customInstallationID,
+      source: "local",
+      catalog_id: null,
+      catalog_source: null,
+      name: localProbe.name,
+      license: localProbe.license,
+      languages: localProbe.languages,
+      repo_id: localProbe.repo_id,
+      revision: localProbe.revision,
+      label_mapping: {
+        EMAIL: "email",
+        PERSON: "private_person",
+        MISC: null,
+      },
+    });
+    bridgeMocks.probeLocalPrivacyModel.mockResolvedValueOnce(localProbe);
+    bridgeMocks.installPrivacyModel.mockResolvedValueOnce(localInstallation);
+    await renderPolicy();
+
+    await act(async () => button("本地导入").click());
+    expect(container.textContent).toContain("请先在系统中挂载网络共享");
+    expect(container.textContent).toContain("smb://");
+
+    await setInput('[aria-label="本地模型路径"]', "smb://host/share/model.onnx");
+    await act(async () => {
+      button("检查本地模型").click();
+      await Promise.resolve();
+    });
+    expect(bridgeMocks.probeLocalPrivacyModel).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("本地导入不接收 URI");
+
+    await setInput(
+      '[aria-label="本地模型路径"]',
+      "  /Volumes/models/astr-pii-ettin/model_int8.onnx  ",
+    );
+    await act(async () => {
+      button("检查本地模型").click();
+      await Promise.resolve();
+    });
+    expect(bridgeMocks.probeLocalPrivacyModel).toHaveBeenCalledWith({
+      path: "/Volumes/models/astr-pii-ettin/model_int8.onnx",
+    });
+    expect(container.textContent).toContain(localProbe.name);
+    expect(container.textContent).toContain("已检查此路径");
+    expect(container.textContent).not.toContain(
+      "/Volumes/models/astr-pii-ettin/model_int8.onnx ·",
+    );
+    expect(
+      container.querySelector<HTMLSelectElement>(
+        '[aria-label="MISC 标签映射"]',
+      )?.value,
+    ).toBe("__unresolved__");
+
+    await setSelect('[aria-label="MISC 标签映射"]', "");
+    await act(async () => button("应用映射").click());
+    await act(async () => {
+      button("导入本地模型").click();
+      await Promise.resolve();
+    });
+    expect(bridgeMocks.installPrivacyModel).toHaveBeenCalledWith({
+      repo_id: localProbe.repo_id,
+      revision: localProbe.revision,
+      variant_id: catalogModel.variants[0].id,
+      label_mapping: {
+        EMAIL: "email",
+        PERSON: "private_person",
+        MISC: null,
+      },
+    });
+    expect(container.textContent).toContain("本地导入");
+    expect(container.textContent).toContain("导入中");
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a Hugging Face retry for failed local imports", async () => {
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({
+      items: [
+        installation({
+          source: "local",
+          catalog_id: null,
+          catalog_source: null,
+          status: "error",
+          error: "integrity_failed",
+          bytes_downloaded: 0,
+          installed_at: null,
+        }),
+      ],
+    });
+    await renderPolicy();
+
+    await act(async () => button("已安装 1").click());
+    expect(container.textContent).toContain("本地导入");
+    expect(container.textContent).toContain("完整性校验失败");
+    expect(
+      [...container.querySelectorAll("button")].some(
+        (candidate) => candidate.textContent?.trim() === "重试",
+      ),
+    ).toBe(false);
+  });
+
   it("locks the custom repository identity while a probe is in flight", async () => {
     const pending = deferred<PrivacyModelProbe>();
     bridgeMocks.probePrivacyModel.mockReturnValueOnce(pending.promise);
@@ -987,6 +1095,71 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
     expect(container.textContent).toContain("alice@example.com");
     expect(container.textContent).toContain("脱敏后的请求体");
+  });
+
+  it("offers diverse dry-run presets and clears stale results when switching", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({ enabled: true, detector: "regex" }),
+    );
+    bridgeMocks.dryRunPrivacyPolicy.mockResolvedValueOnce({
+      decision: "allow",
+      findings_summary: "",
+      findings: [],
+      suppressed_findings: [],
+      redactions: [],
+      redacted_body: null,
+      inspected_body:
+        '{"messages":[{"content":"故障信息","role":"user"}]}',
+    });
+    await renderPolicy();
+
+    for (const label of [
+      "综合联系方式",
+      "账号与 IBAN",
+      "IP 与链接",
+      "测试密钥",
+      "中文个人资料",
+      "英文个人资料",
+      "中英混合多实体",
+      "无敏感信息",
+      "数字边界反例",
+    ]) {
+      expect(button(label)).toBeTruthy();
+    }
+    expect(container.textContent).toContain("9 组虚构测试用例");
+
+    await act(async () => button("IP 与链接").click());
+    const sample = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="试运行样例文本"]',
+    );
+    expect(sample?.value).toContain("192.0.2.10");
+    expect(sample?.value).toContain("https://private.example/");
+    expect(button("IP 与链接").getAttribute("aria-pressed")).toBe("true");
+    expect(container.textContent).toContain("不包含真实网络目标");
+
+    await act(async () => {
+      button("试运行").click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenCalledWith({
+      protocol: "openai.chat",
+      sample_text: expect.stringContaining("192.0.2.10"),
+      policy: {
+        enabled: true,
+        detector: "regex",
+        local_model_id: null,
+        min_confidence: 0.6,
+        request_action: "redact",
+      },
+    });
+    expect(container.querySelector(".safety-dry-run__result")).not.toBeNull();
+
+    await act(async () => button("无敏感信息").click());
+    expect(sample?.value).toContain("公开产品说明");
+    expect(container.querySelector(".safety-dry-run__result")).toBeNull();
+    expect(button("无敏感信息").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("prompts that privacy protection is disabled instead of showing no findings", async () => {

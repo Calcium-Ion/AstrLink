@@ -116,14 +116,28 @@ PyTorch, GGUF, arbitrary URLs, and remote-code loading. Common labels are
 mapped to AstrLink's stable privacy kinds; every unknown label needs an
 explicit user mapping or `ignore` before installation.
 
+Users may also import the same standard Hugging Face ONNX
+token-classification layout from an already-mounted absolute directory or a
+specific `.onnx` file. File mode pins only that variant and its required
+companion assets. Core reads only the bounded model/config/tokenizer asset
+surface, rejects symlinks,
+derives a synthetic `local/model-<digest>` identity from full SHA-256 content
+digests (that exact shape is reserved; other `local/*` Hugging Face repositories
+remain available), and keeps the source path only in a short-lived in-memory
+probe cache. Installation streams the selected pinned assets into private
+staging and verifies their
+identity, size, and digest before the same atomic publication path is used; the
+worker never executes directly from the mounted source.
+
 Core can persist multiple immutable repository/commit/variant installations.
 Each record also retains nullable license metadata, languages, and the
 official/community catalog provenance needed by the installed-model view after
 a restart.
-Downloads select only the chosen ONNX variant and its tokenizer/configuration
-data, use a private staging directory, verify every pinned byte length and
-SHA-256 digest, write a normalized execution manifest, and atomically publish
-the completed directory. Each asset receives bounded retries for transient DNS,
+Remote downloads and local imports select only the chosen ONNX variant and its
+tokenizer/configuration data, use a private staging directory, verify every
+pinned byte length and SHA-256 digest, write a normalized execution manifest,
+and atomically publish the completed directory. Each remote asset receives
+bounded retries for transient DNS,
 transport, HTTP 408/425/429/5xx, and truncated-body failures; failed-attempt
 bytes are rolled out of reported progress before retrying. Partial and
 abandoned downloads are removed, and deleting a downloading installation

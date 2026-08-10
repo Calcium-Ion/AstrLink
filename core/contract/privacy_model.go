@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -23,11 +24,13 @@ const (
 
 	LegacyOpenAIPrivacyFilterInstallationID PrivacyModelID = "model_de5ac42e03b4af887b31a7645d3ce111"
 
-	PrivacyModelAdapterOpenAIBIOES PrivacyModelAdapter = "openai_bioes_viterbi"
-	PrivacyModelAdapterHFToken     PrivacyModelAdapter = "hf_token_classification"
+	PrivacyModelAdapterOpenAIBIOES   PrivacyModelAdapter = "openai_bioes_viterbi"
+	PrivacyModelAdapterHFToken       PrivacyModelAdapter = "hf_token_classification"
+	PrivacyModelAdapterAstrLinkGuard PrivacyModelAdapter = "astrlink_sensitive_guard"
 
 	PrivacyModelSourceCatalog PrivacyModelSource = "catalog"
 	PrivacyModelSourceCustom  PrivacyModelSource = "custom"
+	PrivacyModelSourceLocal   PrivacyModelSource = "local"
 
 	PrivacyModelCatalogSourceOfficial  PrivacyModelCatalogSource = "official"
 	PrivacyModelCatalogSourceCommunity PrivacyModelCatalogSource = "community"
@@ -60,6 +63,7 @@ var (
 	requestedRevision     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$`)
 	variantIDPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 	privacyModelLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+	localModelRepoPattern = regexp.MustCompile(`^local/model-[0-9a-f]{12}$`)
 )
 
 func (id PrivacyModelID) Validate() error {
@@ -108,11 +112,14 @@ func ValidatePrivacyModelVariantID(value string) error {
 
 func (adapter PrivacyModelAdapter) Valid() bool {
 	return adapter == PrivacyModelAdapterOpenAIBIOES ||
-		adapter == PrivacyModelAdapterHFToken
+		adapter == PrivacyModelAdapterHFToken ||
+		adapter == PrivacyModelAdapterAstrLinkGuard
 }
 
 func (source PrivacyModelSource) Valid() bool {
-	return source == PrivacyModelSourceCatalog || source == PrivacyModelSourceCustom
+	return source == PrivacyModelSourceCatalog ||
+		source == PrivacyModelSourceCustom ||
+		source == PrivacyModelSourceLocal
 }
 
 func (source PrivacyModelCatalogSource) Valid() bool {
@@ -180,6 +187,10 @@ type PrivacyModelLabel struct {
 type PrivacyModelProbeRequest struct {
 	RepoID   string `json:"repo_id"`
 	Revision string `json:"revision"`
+}
+
+type PrivacyModelLocalProbeRequest struct {
+	Path string `json:"path"`
 }
 
 type PrivacyModelProbeResponse struct {
@@ -257,6 +268,18 @@ func ValidatePrivacyModelInstallRequest(request PrivacyModelInstallRequest) erro
 		if kind != nil && !kind.Valid() {
 			return fmt.Errorf("label_mapping kind is invalid")
 		}
+	}
+	return nil
+}
+
+func ValidatePrivacyModelLocalProbeRequest(
+	request PrivacyModelLocalProbeRequest,
+) error {
+	if request.Path == "" || len(request.Path) > 4096 ||
+		!filepath.IsAbs(request.Path) ||
+		strings.Contains(request.Path, "://") ||
+		strings.IndexFunc(request.Path, unicode.IsControl) >= 0 {
+		return fmt.Errorf("path must be an absolute native path")
 	}
 	return nil
 }
@@ -374,6 +397,10 @@ func ValidatePrivacyModelInstallation(installation PrivacyModelInstallation) err
 	}
 	if err := ValidatePrivacyModelRepoID(installation.RepoID); err != nil {
 		return err
+	}
+	isLocalRepo := localModelRepoPattern.MatchString(installation.RepoID)
+	if (installation.Source == PrivacyModelSourceLocal) != isLocalRepo {
+		return fmt.Errorf("privacy model local provenance is inconsistent")
 	}
 	if err := ValidatePrivacyModelRevision(installation.Revision); err != nil {
 		return err

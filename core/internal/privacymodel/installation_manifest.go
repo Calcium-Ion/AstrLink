@@ -34,26 +34,28 @@ type normalizedFile struct {
 }
 
 type normalizedManifest struct {
-	Version          int                                `json:"version"`
-	InstallationID   contract.PrivacyModelID            `json:"installation_id"`
-	Identity         string                             `json:"identity"`
-	RepoID           string                             `json:"repo_id"`
-	Revision         string                             `json:"revision"`
-	VariantID        string                             `json:"variant_id"`
-	Adapter          contract.PrivacyModelAdapter       `json:"adapter"`
-	ModelPath        string                             `json:"model_path"`
-	ExternalData     []string                           `json:"external_data_paths"`
-	TokenizerPath    string                             `json:"tokenizer_path"`
-	ConfigPath       string                             `json:"config_path"`
-	CalibrationPath  *string                            `json:"calibration_path"`
-	TagScheme        string                             `json:"tag_scheme"`
-	Window           int                                `json:"window"`
-	Stride           int                                `json:"stride"`
-	MaxRequestTokens int                                `json:"max_request_tokens"`
-	InputNames       normalizedInputNames               `json:"input_names"`
-	OutputName       string                             `json:"output_name"`
-	LabelMapping     map[string]*contract.CanonicalKind `json:"label_mapping"`
-	Files            []normalizedFile                   `json:"files"`
+	Version               int                                `json:"version"`
+	InstallationID        contract.PrivacyModelID            `json:"installation_id"`
+	Identity              string                             `json:"identity"`
+	RepoID                string                             `json:"repo_id"`
+	Revision              string                             `json:"revision"`
+	VariantID             string                             `json:"variant_id"`
+	Adapter               contract.PrivacyModelAdapter       `json:"adapter"`
+	ModelPath             string                             `json:"model_path"`
+	ExternalData          []string                           `json:"external_data_paths"`
+	TokenizerPath         string                             `json:"tokenizer_path"`
+	ConfigPath            string                             `json:"config_path"`
+	CalibrationPath       *string                            `json:"calibration_path"`
+	SecretRulesPath       *string                            `json:"secret_rules_path"`
+	SecretCalibrationPath *string                            `json:"secret_calibration_path"`
+	TagScheme             string                             `json:"tag_scheme"`
+	Window                int                                `json:"window"`
+	Stride                int                                `json:"stride"`
+	MaxRequestTokens      int                                `json:"max_request_tokens"`
+	InputNames            normalizedInputNames               `json:"input_names"`
+	OutputName            string                             `json:"output_name"`
+	LabelMapping          map[string]*contract.CanonicalKind `json:"label_mapping"`
+	Files                 []normalizedFile                   `json:"files"`
 }
 
 func buildNormalizedManifest(
@@ -75,8 +77,10 @@ func buildNormalizedManifest(
 		Adapter:   installation.Adapter, ModelPath: runtime.modelPath,
 		ExternalData:  append([]string{}, runtime.externalData...),
 		TokenizerPath: runtime.tokenizerPath, ConfigPath: runtime.configPath,
-		CalibrationPath: cloneString(runtime.calibrationPath),
-		TagScheme:       runtime.tagScheme, Window: runtime.window,
+		CalibrationPath:       cloneString(runtime.calibrationPath),
+		SecretRulesPath:       cloneString(runtime.secretRulesPath),
+		SecretCalibrationPath: cloneString(runtime.secretCalibrationPath),
+		TagScheme:             runtime.tagScheme, Window: runtime.window,
 		Stride: runtime.stride, MaxRequestTokens: runtime.maxRequestTokens,
 		InputNames: runtime.inputNames, OutputName: runtime.outputName,
 		LabelMapping: cloneLabelMapping(installation.LabelMapping), Files: files,
@@ -208,14 +212,26 @@ func validateNormalizedManifest(manifest normalizedManifest) error {
 	}
 	if manifest.Adapter == contract.PrivacyModelAdapterOpenAIBIOES &&
 		(manifest.TagScheme != "bioes" ||
-			manifest.CalibrationPath == nil) {
+			manifest.CalibrationPath == nil ||
+			manifest.SecretRulesPath != nil ||
+			manifest.SecretCalibrationPath != nil) {
 		return ErrInvalidConfig
 	}
 	if manifest.Adapter == contract.PrivacyModelAdapterHFToken &&
-		manifest.CalibrationPath != nil {
+		(manifest.CalibrationPath != nil ||
+			manifest.SecretRulesPath != nil ||
+			manifest.SecretCalibrationPath != nil) {
 		return ErrInvalidConfig
 	}
-	if manifest.Adapter == contract.PrivacyModelAdapterOpenAIBIOES &&
+	if manifest.Adapter == contract.PrivacyModelAdapterAstrLinkGuard &&
+		(manifest.TagScheme != "bioes" ||
+			manifest.CalibrationPath == nil ||
+			manifest.SecretRulesPath == nil ||
+			manifest.SecretCalibrationPath == nil) {
+		return ErrInvalidConfig
+	}
+	if (manifest.Adapter == contract.PrivacyModelAdapterOpenAIBIOES ||
+		manifest.Adapter == contract.PrivacyModelAdapterAstrLinkGuard) &&
 		!sameLabelKeys(
 			manifest.LabelMapping,
 			defaultOpenAILabelMapping(),
@@ -269,6 +285,17 @@ func validateNormalizedManifest(manifest normalizedManifest) error {
 			*manifest.CalibrationPath == InstallationManifestName) {
 		return ErrInvalidConfig
 	}
+	if manifest.SecretRulesPath != nil &&
+		((!strings.HasSuffix(strings.ToLower(*manifest.SecretRulesPath), ".json") &&
+			!strings.HasSuffix(strings.ToLower(*manifest.SecretRulesPath), ".yaml")) ||
+			*manifest.SecretRulesPath == InstallationManifestName) {
+		return ErrInvalidConfig
+	}
+	if manifest.SecretCalibrationPath != nil &&
+		(!strings.HasSuffix(strings.ToLower(*manifest.SecretCalibrationPath), ".json") ||
+			*manifest.SecretCalibrationPath == InstallationManifestName) {
+		return ErrInvalidConfig
+	}
 	assets := make([]Asset, len(manifest.Files))
 	paths := make(map[string]struct{}, len(manifest.Files))
 	for index, verified := range manifest.Files {
@@ -288,6 +315,12 @@ func validateNormalizedManifest(manifest normalizedManifest) error {
 	required = append(required, manifest.ExternalData...)
 	if manifest.CalibrationPath != nil {
 		required = append(required, *manifest.CalibrationPath)
+	}
+	if manifest.SecretRulesPath != nil {
+		required = append(required, *manifest.SecretRulesPath)
+	}
+	if manifest.SecretCalibrationPath != nil {
+		required = append(required, *manifest.SecretCalibrationPath)
 	}
 	requiredPaths := make(map[string]struct{}, len(required))
 	for _, candidate := range required {

@@ -9,6 +9,7 @@ import {
   getPrivacyPolicy,
   installPrivacyModel,
   listPrivacyModelInstallations,
+  probeLocalPrivacyModel,
   probePrivacyModel,
   updatePrivacyPolicy,
 } from "./bridge";
@@ -16,6 +17,7 @@ import {
   isResourceHeavyVariant,
   MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES,
   utf8ByteLength,
+  validateLocalProbeInput,
   type CanonicalPrivacyKind,
   type PrivacyAction,
   type PrivacyCatalogModel,
@@ -32,7 +34,8 @@ import {
 import { PageHeader } from "./PageHeader";
 
 type SafetyPolicyStatus = "blocked" | "loading" | "ready" | "error";
-type ModelView = "catalog" | "installed" | "custom";
+type ModelView = "catalog" | "installed" | "custom" | "local";
+type ProbeView = Extract<ModelView, "custom" | "local">;
 
 interface CatalogPreparation {
   catalogID: string;
@@ -84,8 +87,71 @@ const dryRunProtocolOptions: ReadonlyArray<{
   { value: "google.generate_content", label: "Google Generate Content" },
 ];
 
-const dryRunSampleExample =
-  "请联系 alice@example.com 或拨打 +1-415-555-2671，银行卡 4242-4242-4242-4242。";
+interface DryRunSamplePreset {
+  id: string;
+  label: string;
+  description: string;
+  text: string;
+}
+
+const dryRunSamplePresets: ReadonlyArray<DryRunSamplePreset> = [
+  {
+    id: "mixed-contact",
+    label: "综合联系方式",
+    description: "邮箱、国际电话和测试银行卡，适合快速检查多类别命中。",
+    text: "请联系虚构用户 Alice：alice@example.com，电话 +65 6123 4567；测试卡号 4242 4242 4242 4242。",
+  },
+  {
+    id: "account",
+    label: "账号与 IBAN",
+    description: "上下文账号和标准测试 IBAN，用于检查账号类识别。",
+    text: "请将退款打到测试账户，account number: 12345678901；IBAN 为 GB82WEST12345698765432。",
+  },
+  {
+    id: "network",
+    label: "IP 与链接",
+    description: "保留用途 IPv4 和 .example 链接，不包含真实网络目标。",
+    text: "故障信息：客户端 IP 192.0.2.10，回调地址 https://private.example/callback?ticket=demo。",
+  },
+  {
+    id: "secret",
+    label: "测试密钥",
+    description: "明确标记为虚构的 API Key 和密码赋值格式。",
+    text: '以下均为虚构测试值：api_key=example_test_key_1234567890，password="demo_password_123456"。',
+  },
+  {
+    id: "zh-profile",
+    label: "中文个人资料",
+    description: "中文姓名、地址、日期和邮箱，更适合验证本地模型。",
+    text: "以下为虚构资料：李明住在上海市测试区示例路 88 号，出生日期为 1990-01-02，邮箱 liming@example.cn。",
+  },
+  {
+    id: "en-profile",
+    label: "英文个人资料",
+    description: "英文姓名、地址和出生日期，更适合验证本地模型。",
+    text: "Fictional profile: Alice Doe lives at 123 Example Street, Testville, and was born on January 2, 1990.",
+  },
+  {
+    id: "mixed-language",
+    label: "中英混合多实体",
+    description: "姓名、日期、电话、邮箱和链接混合在同一段文本中。",
+    text: "虚构客户王小明于 2025-08-01 提交 ticket，电话 +86 138 0013 8000，邮箱 wang@example.com，访问 https://support.example/ticket/42。",
+  },
+  {
+    id: "clean",
+    label: "无敏感信息",
+    description: "不包含 PII 的正常文本，用于检查误报。",
+    text: "请把这段公开产品说明总结成三点，并给出一个简短标题。",
+  },
+  {
+    id: "numeric-boundary",
+    label: "数字边界反例",
+    description: "无效卡号、无效 IP 和普通订单号，用于检查数字误报。",
+    text: "订单号 1234567890，测试卡号 4242 4242 4242 4241，地址 999.999.1.1；这些都不应按高置信度 PII 处理。",
+  },
+];
+
+const defaultDryRunSample = dryRunSamplePresets[0].text;
 
 const installationStatusLabels: Record<
   PrivacyModelInstallation["status"],
@@ -311,16 +377,21 @@ function ModelActionDialog({
 }: ModelActionDialogProps) {
   const activating = action.kind === "activate";
   const downloading = installation.status === "downloading";
+  const local = installation.source === "local";
   const heavy = isResourceHeavyVariant(installation);
   const title = activating
     ? "确认使用本地模型"
     : downloading
-      ? "取消模型下载"
+      ? local
+        ? "取消模型导入"
+        : "取消模型下载"
       : "删除本地模型";
   const confirmLabel = activating
     ? "确认用于策略"
     : downloading
-      ? "确认取消下载"
+      ? local
+        ? "确认取消导入"
+        : "确认取消下载"
       : "确认删除";
 
   return (
@@ -336,8 +407,8 @@ function ModelActionDialog({
           {activating
             ? `将使用 ${installation.name} · ${installation.variant_name} 进行本地检测。`
             : downloading
-              ? `将停止 ${installation.name} 的下载并清理临时文件。`
-              : `将从本机删除 ${installation.name} · ${installation.variant_name}，再次使用时需要重新下载。`}
+              ? `将停止 ${installation.name} 的${local ? "导入" : "下载"}并清理临时文件。`
+              : `将从本机删除 ${installation.name} · ${installation.variant_name}，再次使用时需要重新${local ? "导入" : "下载"}。`}
         </p>
         {activating ? (
           <>
@@ -389,6 +460,7 @@ function InstallationResourceDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const local = pending.key === "local";
   return (
     <div className="token-dialog-backdrop" role="presentation">
       <section
@@ -403,7 +475,7 @@ function InstallationResourceDialog({
         </p>
         <dl className="model-action-dialog__resources">
           <div>
-            <dt>下载大小</dt>
+            <dt>{local ? "导入大小" : "下载大小"}</dt>
             <dd>{formatBytes(pending.variant.bytes_total)}</dd>
           </div>
           <div>
@@ -597,7 +669,9 @@ export function SafetyPolicy({
   >({});
   const [customRepoID, setCustomRepoID] = useState("");
   const [customRevision, setCustomRevision] = useState("main");
+  const [localPath, setLocalPath] = useState("");
   const [probe, setProbe] = useState<PrivacyModelProbe | null>(null);
+  const [probeView, setProbeView] = useState<ProbeView | null>(null);
   const [customMappingOpen, setCustomMappingOpen] = useState(false);
   const [probeVariantID, setProbeVariantID] = useState("");
   const [labelMapping, setLabelMapping] = useState<PrivacyLabelMapping>({});
@@ -612,7 +686,7 @@ export function SafetyPolicy({
   const [catalogProbeBusy, setCatalogProbeBusy] = useState<string | null>(null);
   const [dryRunProtocol, setDryRunProtocol] =
     useState<PrivacyDryRunProtocol>("openai.chat");
-  const [dryRunSample, setDryRunSample] = useState(dryRunSampleExample);
+  const [dryRunSample, setDryRunSample] = useState(defaultDryRunSample);
   const [dryRunBusy, setDryRunBusy] = useState(false);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [dryRunResult, setDryRunResult] = useState<PrivacyDryRunResult | null>(
@@ -686,6 +760,7 @@ export function SafetyPolicy({
     setPendingInstallation(null);
     setStreamingDemoOpen(false);
     setProbe(null);
+    setProbeView(null);
     setCustomMappingOpen(false);
     setLabelMapping({});
     setLabelMappingTouched([]);
@@ -805,6 +880,7 @@ export function SafetyPolicy({
     setError(null);
     setNotice(null);
     setProbe(null);
+    setProbeView(null);
     setCustomMappingOpen(false);
     setCatalogPreparation(null);
     setPendingModelAction(null);
@@ -953,6 +1029,14 @@ export function SafetyPolicy({
   const dryRunSampleBytes = utf8ByteLength(dryRunSample);
   const dryRunSampleOverLimit =
     dryRunSampleBytes > MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES;
+  const selectedDryRunPreset =
+    dryRunSamplePresets.find((preset) => preset.text === dryRunSample) ?? null;
+
+  const changeDryRunSample = (sample: string) => {
+    setDryRunSample(sample);
+    setDryRunError(null);
+    setDryRunResult(null);
+  };
 
   const runDryRun = async () => {
     if (
@@ -1075,7 +1159,11 @@ export function SafetyPolicy({
       setCatalogPreparation(null);
       setCustomMappingOpen(false);
       setView("installed");
-      setNotice("模型安装已开始，可在“已安装”中查看进度。");
+      setNotice(
+        key === "local"
+          ? "本地模型导入已开始，可在“已安装”中查看进度。"
+          : "模型安装已开始，可在“已安装”中查看进度。",
+      );
     } catch (installError) {
       if (
         generationRef.current !== generation ||
@@ -1276,6 +1364,15 @@ export function SafetyPolicy({
     }
   };
 
+  const resetProbedModel = () => {
+    setProbe(null);
+    setProbeView(null);
+    setCustomMappingOpen(false);
+    setProbeVariantID("");
+    setLabelMapping({});
+    setLabelMappingTouched([]);
+  };
+
   const runProbe = async () => {
     if (
       probing ||
@@ -1290,10 +1387,7 @@ export function SafetyPolicy({
     const requestedRevision = customRevision.trim();
     probeRequestRef.current = request;
     setProbing(true);
-    setProbe(null);
-    setCustomMappingOpen(false);
-    setLabelMapping({});
-    setLabelMappingTouched([]);
+    resetProbedModel();
     setError(null);
     setNotice(null);
     try {
@@ -1314,6 +1408,7 @@ export function SafetyPolicy({
         throw new Error("Core 返回的探测结果与当前自定义模型输入不一致。");
       }
       setProbe(result);
+      setProbeView("custom");
       setCustomMappingOpen(result.requires_label_mapping);
       setLabelMapping(initialLabelMapping(result));
       setLabelMappingTouched([]);
@@ -1327,6 +1422,70 @@ export function SafetyPolicy({
         return;
       }
       setError(messageOf(probeError, "无法检查自定义模型。"));
+    } finally {
+      if (
+        generationRef.current === generation &&
+        probeRequestRef.current === request
+      ) {
+        setProbing(false);
+      }
+    }
+  };
+
+  const runLocalProbe = async () => {
+    if (
+      probing ||
+      catalogProbeBusy !== null ||
+      operationBusy !== null
+    ) {
+      return;
+    }
+    let input: ReturnType<typeof validateLocalProbeInput>;
+    try {
+      input = validateLocalProbeInput({ path: localPath });
+    } catch (validationError) {
+      setNotice(null);
+      setError(
+        validationError instanceof Error &&
+          validationError.message.includes("not a URI")
+          ? "本地导入不接收 URI；请先在系统中挂载共享目录，再填写本机路径。"
+          : messageOf(
+              validationError,
+              "请输入已挂载到本机的模型目录或 ONNX 文件路径。",
+            ),
+      );
+      return;
+    }
+    const generation = generationRef.current;
+    const request = probeRequestRef.current + 1;
+    probeRequestRef.current = request;
+    setProbing(true);
+    resetProbedModel();
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await probeLocalPrivacyModel(input);
+      if (
+        generationRef.current !== generation ||
+        probeRequestRef.current !== request
+      ) {
+        return;
+      }
+      setProbe(result);
+      setProbeView("local");
+      setCustomMappingOpen(result.requires_label_mapping);
+      setLabelMapping(initialLabelMapping(result));
+      setLabelMappingTouched([]);
+      setProbeVariantID(recommendedVariant(result.variants)?.id ?? "");
+      setNotice("本地模型检查完成，请确认版本、标签映射与资源占用。");
+    } catch (probeError) {
+      if (
+        generationRef.current !== generation ||
+        probeRequestRef.current !== request
+      ) {
+        return;
+      }
+      setError(messageOf(probeError, "无法检查本地模型路径。"));
     } finally {
       if (
         generationRef.current === generation &&
@@ -1356,7 +1515,7 @@ export function SafetyPolicy({
   const readyCount = installations.filter(
     (installation) => installation.status === "ready",
   ).length;
-  const customVariant =
+  const probeVariant =
     probe?.variants.find(
       (variant) => variant.id === probeVariantID && variant.supported,
     ) ?? null;
@@ -1621,11 +1780,13 @@ export function SafetyPolicy({
                 <select
                   disabled={dryRunBusy}
                   id="privacy-dry-run-protocol"
-                  onChange={(event) =>
+                  onChange={(event) => {
                     setDryRunProtocol(
                       event.currentTarget.value as PrivacyDryRunProtocol,
-                    )
-                  }
+                    );
+                    setDryRunError(null);
+                    setDryRunResult(null);
+                  }}
                   value={dryRunProtocol}
                 >
                   {dryRunProtocolOptions.map((option) => (
@@ -1635,27 +1796,49 @@ export function SafetyPolicy({
                   ))}
                 </select>
               </label>
-              <label
-                className="safety-dry-run__sample"
-                htmlFor="privacy-dry-run-sample"
-              >
-                <span>
-                  <strong>样例文本</strong>
-                  <button
-                    className="btn-secondary"
-                    disabled={dryRunBusy}
-                    onClick={() => setDryRunSample(dryRunSampleExample)}
-                    type="button"
-                  >
-                    填入示例
-                  </button>
-                </span>
+              <div className="safety-dry-run__sample">
+                <div className="safety-dry-run__sample-header">
+                  <label htmlFor="privacy-dry-run-sample">
+                    <strong>样例文本</strong>
+                  </label>
+                  <small>{dryRunSamplePresets.length} 组虚构测试用例</small>
+                </div>
+                <div
+                  aria-label="试运行样例"
+                  className="safety-dry-run__presets"
+                  role="group"
+                >
+                  {dryRunSamplePresets.map((preset) => {
+                    const selected = selectedDryRunPreset?.id === preset.id;
+                    return (
+                      <button
+                        aria-pressed={selected}
+                        className={
+                          selected
+                            ? "btn-secondary safety-dry-run__preset safety-dry-run__preset--active"
+                            : "btn-secondary safety-dry-run__preset"
+                        }
+                        disabled={dryRunBusy}
+                        key={preset.id}
+                        onClick={() => changeDryRunSample(preset.text)}
+                        title={preset.description}
+                        type="button"
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <small className="safety-dry-run__preset-description">
+                  {selectedDryRunPreset?.description ??
+                    "自定义样例：可以继续编辑下方文本。"}
+                </small>
                 <textarea
+                  aria-label="试运行样例文本"
                   id="privacy-dry-run-sample"
                   disabled={dryRunBusy}
                   onChange={(event) => {
-                    setDryRunSample(event.currentTarget.value);
-                    setDryRunError(null);
+                    changeDryRunSample(event.currentTarget.value);
                   }}
                   rows={4}
                   value={dryRunSample}
@@ -1671,7 +1854,7 @@ export function SafetyPolicy({
                   {MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString()} 字节
                   （256 KiB）
                 </small>
-              </label>
+              </div>
               <div className="safety-dry-run__actions">
                 <button
                   className="btn-primary"
@@ -1855,6 +2038,7 @@ export function SafetyPolicy({
                 [
                   ["catalog", "内置"],
                   ["installed", `已安装 ${installations.length}`],
+                  ["local", "本地导入"],
                   ["custom", "自定义"],
                 ] as const
               ).map(([value, label]) => (
@@ -1997,7 +2181,9 @@ export function SafetyPolicy({
                         )
                       : 0;
                     const sourceLabel =
-                      installation.catalog_source === "official"
+                      installation.source === "local"
+                        ? "本地导入"
+                        : installation.catalog_source === "official"
                         ? "官方目录"
                         : installation.catalog_source === "community"
                           ? "社区目录"
@@ -2028,7 +2214,12 @@ export function SafetyPolicy({
                           >
                             {selected
                               ? "策略已选择"
-                              : installationStatusLabels[installation.status]}
+                              : installation.source === "local" &&
+                                  installation.status === "downloading"
+                                ? "导入中"
+                                : installationStatusLabels[
+                                    installation.status
+                                  ]}
                           </span>
                         </div>
                         <p className="installation__meta">
@@ -2045,14 +2236,20 @@ export function SafetyPolicy({
                                     )} / ${formatBytes(
                                       installation.bytes_total,
                                     )}`
-                                  : "正在准备下载"}
+                                  : installation.source === "local"
+                                    ? "正在准备导入"
+                                    : "正在准备下载"}
                               </span>
                               <strong>
                                 {hasDownloadTotal ? `${progress}%` : "准备中"}
                               </strong>
                             </div>
                             <progress
-                              aria-label={`${installation.name} 下载进度`}
+                              aria-label={`${installation.name} ${
+                                installation.source === "local"
+                                  ? "导入"
+                                  : "下载"
+                              }进度`}
                               max={installation.bytes_total || 1}
                               value={installation.bytes_downloaded}
                             />
@@ -2102,7 +2299,8 @@ export function SafetyPolicy({
                               {selected ? "当前模型" : "用于策略"}
                             </button>
                           ) : null}
-                          {installation.status === "error" ? (
+                          {installation.status === "error" &&
+                          installation.source !== "local" ? (
                             <button
                               className="btn-secondary"
                               disabled={operationBusy !== null}
@@ -2158,9 +2356,142 @@ export function SafetyPolicy({
                   })}
                   {installations.length === 0 ? (
                     <p className="model-library__empty">
-                      尚未安装本地模型，可从“内置”或“自定义”开始。
+                      尚未安装本地模型，可从“内置”“本地导入”或“自定义”开始。
                     </p>
                   ) : null}
+                </div>
+              ) : null}
+
+              {view === "local" ? (
+                <div className="custom-model local-model">
+                  <div className="custom-model__form custom-model__form--local">
+                    <label>
+                      <span>已挂载的模型目录或 ONNX 文件</span>
+                      <input
+                        aria-describedby="local-model-mount-note"
+                        aria-label="本地模型路径"
+                        autoComplete="off"
+                        disabled={probing}
+                        maxLength={4096}
+                        onChange={(event) => {
+                          setLocalPath(event.currentTarget.value);
+                          resetProbedModel();
+                        }}
+                        placeholder="例如 /Volumes/models/privacy/model_int8.onnx"
+                        spellCheck={false}
+                        value={localPath}
+                      />
+                    </label>
+                    <button
+                      className="btn-secondary"
+                      disabled={
+                        probing ||
+                        operationBusy !== null ||
+                        localPath.trim() === ""
+                      }
+                      onClick={() => void runLocalProbe()}
+                      type="button"
+                    >
+                      {probing ? "检查中…" : "检查本地模型"}
+                    </button>
+                  </div>
+                  <p className="local-model__mount-note" id="local-model-mount-note">
+                    请先在系统中挂载网络共享，再填写本机绝对目录或 ONNX 文件路径；不接收{" "}
+                    <code>smb://</code>、<code>file://</code> 或其他 URI。
+                  </p>
+
+                  {probe !== null && probeView === "local" ? (
+                    <div className="custom-model__result">
+                      <div className="custom-model__summary">
+                        <div>
+                          <strong>{probe.name}</strong>
+                          <span>
+                            已检查此路径 ·{" "}
+                            {probe.license === null
+                              ? "未声明许可证"
+                              : probe.license}
+                          </span>
+                        </div>
+                        <span>{probe.languages.join(" / ")}</span>
+                      </div>
+                      <label className="custom-model__variant">
+                        <span>本地运行版本</span>
+                        <select
+                          aria-label="本地模型版本"
+                          onChange={(event) =>
+                            setProbeVariantID(event.currentTarget.value)
+                          }
+                          value={probeVariant?.id ?? ""}
+                        >
+                          {probe.variants.map((variant) => (
+                            <option
+                              disabled={!variant.supported}
+                              key={variant.id}
+                              value={variant.id}
+                            >
+                              {variant.name}
+                              {variant.recommended ? " · 推荐" : ""}
+                              {!variant.supported ? " · 当前不支持" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <div className="custom-model__install">
+                        <span>
+                          {probeVariant === null
+                            ? "没有当前设备支持的版本"
+                            : `导入 ${formatBytes(
+                                probeVariant.bytes_total,
+                              )} · 预计内存 ${formatBytes(
+                                probeVariant.estimated_ram_bytes,
+                              )}${
+                                unresolvedCustomLabels.length > 0
+                                  ? ` · 还有 ${unresolvedCustomLabels.length} 个标签待确认`
+                                  : ""
+                              }`}
+                        </span>
+                        <button
+                          className="btn-secondary"
+                          onClick={() => setCustomMappingOpen(true)}
+                          type="button"
+                        >
+                          配置标签
+                        </button>
+                        <button
+                          className="btn-primary"
+                          disabled={
+                            probeVariant === null ||
+                            unresolvedCustomLabels.length > 0 ||
+                            operationBusy !== null
+                          }
+                          onClick={() => {
+                            if (probeVariant === null) return;
+                            void startInstallation(
+                              "local",
+                              probe.name,
+                              probeVariant,
+                              {
+                                repo_id: probe.repo_id,
+                                revision: probe.revision,
+                                variant_id: probeVariant.id,
+                                label_mapping: labelMapping,
+                              },
+                            );
+                          }}
+                          type="button"
+                        >
+                          {operationBusy === "local"
+                            ? "处理中…"
+                            : "导入本地模型"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="custom-model__note">
+                      指定 ONNX 文件时只检查该版本及其配置、Tokenizer 和外部数据；确认后才会导入到 AstrLink 的受管模型目录。
+                    </p>
+                  )}
                 </div>
               ) : null}
 
@@ -2174,10 +2505,7 @@ export function SafetyPolicy({
                         disabled={probing}
                         onChange={(event) => {
                           setCustomRepoID(event.currentTarget.value);
-                          setProbe(null);
-                          setCustomMappingOpen(false);
-                          setLabelMapping({});
-                          setLabelMappingTouched([]);
+                          resetProbedModel();
                         }}
                         placeholder="组织/模型"
                         value={customRepoID}
@@ -2190,10 +2518,7 @@ export function SafetyPolicy({
                         disabled={probing}
                         onChange={(event) => {
                           setCustomRevision(event.currentTarget.value);
-                          setProbe(null);
-                          setCustomMappingOpen(false);
-                          setLabelMapping({});
-                          setLabelMappingTouched([]);
+                          resetProbedModel();
                         }}
                         placeholder="main、标签或 commit"
                         value={customRevision}
@@ -2214,7 +2539,7 @@ export function SafetyPolicy({
                     </button>
                   </div>
 
-                  {probe !== null ? (
+                  {probe !== null && probeView === "custom" ? (
                     <div className="custom-model__result">
                       <div className="custom-model__summary">
                         <div>
@@ -2235,7 +2560,7 @@ export function SafetyPolicy({
                           onChange={(event) =>
                             setProbeVariantID(event.currentTarget.value)
                           }
-                          value={customVariant?.id ?? ""}
+                          value={probeVariant?.id ?? ""}
                         >
                           {probe.variants.map((variant) => (
                             <option
@@ -2253,12 +2578,12 @@ export function SafetyPolicy({
 
                       <div className="custom-model__install">
                         <span>
-                          {customVariant === null
+                          {probeVariant === null
                             ? "没有当前设备支持的版本"
                             : `下载 ${formatBytes(
-                                customVariant.bytes_total,
+                                probeVariant.bytes_total,
                               )} · 预计内存 ${formatBytes(
-                                customVariant.estimated_ram_bytes,
+                                probeVariant.estimated_ram_bytes,
                               )}${
                                 unresolvedCustomLabels.length > 0
                                   ? ` · 还有 ${unresolvedCustomLabels.length} 个标签待确认`
@@ -2275,20 +2600,20 @@ export function SafetyPolicy({
                         <button
                           className="btn-primary"
                           disabled={
-                            customVariant === null ||
+                            probeVariant === null ||
                             unresolvedCustomLabels.length > 0 ||
                             operationBusy !== null
                           }
                           onClick={() => {
-                            if (customVariant === null) return;
+                            if (probeVariant === null) return;
                             void startInstallation(
                               "custom",
                               probe.name,
-                              customVariant,
+                              probeVariant,
                               {
                                 repo_id: probe.repo_id,
                                 revision: probe.revision,
-                                variant_id: customVariant.id,
+                                variant_id: probeVariant.id,
                                 label_mapping: labelMapping,
                               },
                             );
@@ -2311,7 +2636,7 @@ export function SafetyPolicy({
             </div>
 
             <div className="model-trust-note">
-              模型由 Core 固定 revision、校验文件并在本机运行；请求正文不会发送到模型仓库。
+              模型由 Core 固定来源身份、校验文件并在本机运行；请求正文不会发送到模型来源。
             </div>
           </section>
         </div>

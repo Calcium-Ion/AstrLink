@@ -14,6 +14,7 @@ use crate::{
     decoder::Decoder,
     manifest::{Adapter, ModelManifest},
     protocol::{DetectedSpan, TextInput},
+    sensitive::SensitiveGuard,
 };
 
 const INTRA_OP_THREADS: usize = 2;
@@ -28,6 +29,7 @@ pub struct PrivacyEngine {
     tokenizer: Tokenizer,
     apply_post_processor: bool,
     decoder: Decoder,
+    sensitive: Option<SensitiveGuard>,
     session: Session,
     model_window_tokens: usize,
     content_window_tokens: usize,
@@ -51,20 +53,52 @@ impl PrivacyEngine {
         tokenizer.with_truncation(None)?;
         tokenizer.with_padding(None);
         let config = fs::read(manifest.resolve(model_directory, &manifest.config_path))?;
-        let decoder = match manifest.adapter {
+        let (decoder, sensitive) = match manifest.adapter {
             Adapter::OpenaiBioesViterbi => {
                 let calibration_path = manifest
                     .calibration_path
                     .as_deref()
                     .ok_or_else(|| io::Error::other("invalid_model_manifest"))?;
                 let calibration = fs::read(manifest.resolve(model_directory, calibration_path))?;
-                Decoder::from_openai_json(&config, &calibration, &manifest.label_mapping)
+                (
+                    Decoder::from_openai_json(&config, &calibration, &manifest.label_mapping),
+                    None,
+                )
             }
-            Adapter::HfTokenClassification => {
-                Decoder::from_hf_json(&config, manifest.tag_scheme, &manifest.label_mapping)
+            Adapter::HfTokenClassification => (
+                Decoder::from_hf_json(&config, manifest.tag_scheme, &manifest.label_mapping),
+                None,
+            ),
+            Adapter::AstrlinkSensitiveGuard => {
+                let calibration_path = manifest
+                    .calibration_path
+                    .as_deref()
+                    .ok_or_else(|| io::Error::other("invalid_model_manifest"))?;
+                let rules_path = manifest
+                    .secret_rules_path
+                    .as_deref()
+                    .ok_or_else(|| io::Error::other("invalid_model_manifest"))?;
+                let secret_calibration_path = manifest
+                    .secret_calibration_path
+                    .as_deref()
+                    .ok_or_else(|| io::Error::other("invalid_model_manifest"))?;
+                let calibration = fs::read(manifest.resolve(model_directory, calibration_path))?;
+                let rules = fs::read(manifest.resolve(model_directory, rules_path))?;
+                let secret_calibration =
+                    fs::read(manifest.resolve(model_directory, secret_calibration_path))?;
+                let sensitive = SensitiveGuard::from_json(
+                    &rules,
+                    &secret_calibration,
+                    manifest.label_mapping.get("secret").cloned().flatten(),
+                )
+                .map_err(io::Error::other)?;
+                (
+                    Decoder::from_sensitive_json(&config, &calibration, &manifest.label_mapping),
+                    Some(sensitive),
+                )
             }
-        }
-        .map_err(io::Error::other)?;
+        };
+        let decoder = decoder.map_err(io::Error::other)?;
         let apply_post_processor = tokenizer.get_post_processor().is_some();
         let added_special_tokens = if apply_post_processor {
             added_special_token_count(&tokenizer)?
@@ -91,6 +125,7 @@ impl PrivacyEngine {
             tokenizer,
             apply_post_processor,
             decoder,
+            sensitive,
             session,
             model_window_tokens: manifest.window,
             content_window_tokens,
@@ -113,7 +148,7 @@ impl PrivacyEngine {
             let encoding = self.tokenizer.encode(input.text.as_str(), false)?;
             total_tokens =
                 checked_token_total(total_tokens, encoding.len(), self.max_request_tokens)?;
-            spans.extend(self.detect_encoding(input.id, &encoding)?);
+            spans.extend(self.detect_encoding(input.id, &input.text, &encoding)?);
         }
         spans.sort_by_key(|span| (span.text_id, span.start, span.end));
         Ok(spans)
@@ -122,6 +157,7 @@ impl PrivacyEngine {
     fn detect_encoding(
         &mut self,
         text_id: u32,
+        text: &str,
         encoding: &Encoding,
     ) -> Result<Vec<DetectedSpan>, Box<dyn std::error::Error + Send + Sync>> {
         let ids = encoding.get_ids();
@@ -188,9 +224,21 @@ impl PrivacyEngine {
                 .map_err(io::Error::other)?;
         }
         let scores = scores.finish().map_err(io::Error::other)?;
-        self.decoder
-            .decode(text_id, &scores, offsets)
-            .map_err(|error| io::Error::other(error).into())
+        let model_spans = if self.sensitive.is_some() {
+            self.decoder
+                .decode_sensitive(text_id, &scores, offsets, text)
+        } else {
+            self.decoder.decode(text_id, &scores, offsets)
+        }
+        .map_err(io::Error::other)?;
+        let Some(guard) = self.sensitive.as_ref() else {
+            return Ok(model_spans);
+        };
+        let rule_confidence = self
+            .decoder
+            .sensitive_precision_lower_bound(text, "secret")
+            .ok_or_else(|| io::Error::other("invalid_calibration"))?;
+        Ok(guard.fuse(text_id, text, model_spans, rule_confidence))
     }
 }
 

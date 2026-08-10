@@ -32,8 +32,10 @@ const (
 )
 
 var (
-	ErrNotFound = errors.New("privacy model installation not found")
-	ErrCapacity = errors.New("privacy model installation limit reached")
+	ErrNotFound           = errors.New("privacy model installation not found")
+	ErrCapacity           = errors.New("privacy model installation limit reached")
+	ErrLocalProbeRequired = errors.New("local privacy model must be probed again")
+	ErrLocalSource        = errors.New("local privacy model source is unavailable")
 
 	errAssetIntegrity    = errors.New("privacy model asset integrity failed")
 	errModelIncompatible = errors.New("privacy model is incompatible")
@@ -83,6 +85,7 @@ type Registry struct {
 	bindings      map[contract.PrivacyModelID]storage.PrivacyModelManifestBinding
 	operations    map[contract.PrivacyModelID]*registryOperation
 	deleting      map[contract.PrivacyModelID]struct{}
+	localProbes   map[string]localProbeCacheEntry
 }
 
 type registryOperation struct {
@@ -94,6 +97,7 @@ type installationPlan struct {
 	installation contract.PrivacyModelInstallation
 	assets       []Asset
 	runtime      runtimeSpec
+	localSource  string
 }
 
 func NewRegistry(
@@ -131,6 +135,7 @@ func NewRegistry(
 		bindings:      make(map[contract.PrivacyModelID]storage.PrivacyModelManifestBinding),
 		operations:    make(map[contract.PrivacyModelID]*registryOperation),
 		deleting:      make(map[contract.PrivacyModelID]struct{}),
+		localProbes:   make(map[string]localProbeCacheEntry),
 	}
 	for _, directory := range []string{
 		registry.rootDirectory, registry.installationsDir, registry.stagingDir,
@@ -160,6 +165,9 @@ func (registry *Registry) Probe(
 	ctx context.Context,
 	request contract.PrivacyModelProbeRequest,
 ) (contract.PrivacyModelProbeResponse, error) {
+	if isLocalPrivacyModelRepoID(request.RepoID) {
+		return contract.PrivacyModelProbeResponse{}, ErrLocalProbeRequired
+	}
 	result, err := registry.probe.inspect(ctx, request)
 	if err != nil {
 		return contract.PrivacyModelProbeResponse{}, err
@@ -392,6 +400,9 @@ func (registry *Registry) prepareInstallation(
 	ctx context.Context,
 	request contract.PrivacyModelInstallRequest,
 ) (installationPlan, error) {
+	if isLocalPrivacyModelRepoID(request.RepoID) {
+		return registry.prepareLocalInstallation(request)
+	}
 	id := InstallationID(request.RepoID, request.Revision, request.VariantID)
 	if catalogPlan, exists := builtinVariantPlan(
 		request.RepoID, request.Revision, request.VariantID,
@@ -572,7 +583,9 @@ func validateStagedCompatibility(
 	switch installation.Adapter {
 	case contract.PrivacyModelAdapterOpenAIBIOES:
 		if !validOpenAILabelOrder(config.ID2Label) ||
-			runtime.calibrationPath == nil {
+			runtime.calibrationPath == nil ||
+			runtime.secretRulesPath != nil ||
+			runtime.secretCalibrationPath != nil {
 			return errModelIncompatible
 		}
 		calibrationDocument, err := readStagedJSONAsset(
@@ -585,7 +598,39 @@ func validateStagedCompatibility(
 			return errModelIncompatible
 		}
 	case contract.PrivacyModelAdapterHFToken:
-		if runtime.calibrationPath != nil {
+		if runtime.calibrationPath != nil ||
+			runtime.secretRulesPath != nil ||
+			runtime.secretCalibrationPath != nil {
+			return errModelIncompatible
+		}
+	case contract.PrivacyModelAdapterAstrLinkGuard:
+		if runtime.calibrationPath == nil ||
+			runtime.secretRulesPath == nil ||
+			runtime.secretCalibrationPath == nil {
+			return errModelIncompatible
+		}
+		viterbiDocument, viterbiErr := readStagedJSONAsset(
+			directory,
+			*runtime.calibrationPath,
+			maxConfigBytes,
+		)
+		rulesDocument, rulesErr := readStagedJSONAsset(
+			directory,
+			*runtime.secretRulesPath,
+			maxConfigBytes,
+		)
+		secretCalibrationDocument, secretCalibrationErr := readStagedJSONAsset(
+			directory,
+			*runtime.secretCalibrationPath,
+			maxConfigBytes,
+		)
+		if viterbiErr != nil || rulesErr != nil || secretCalibrationErr != nil ||
+			validateSensitiveGuardAssets(
+				config.ID2Label,
+				viterbiDocument,
+				rulesDocument,
+				secretCalibrationDocument,
+			) != nil {
 			return errModelIncompatible
 		}
 	}
@@ -768,6 +813,14 @@ func manifestMatchesBuiltinPlan(
 			manifest.CalibrationPath,
 			plan.runtime.calibrationPath,
 		) ||
+		!optionalStringsEqual(
+			manifest.SecretRulesPath,
+			plan.runtime.secretRulesPath,
+		) ||
+		!optionalStringsEqual(
+			manifest.SecretCalibrationPath,
+			plan.runtime.secretCalibrationPath,
+		) ||
 		manifest.TagScheme != plan.runtime.tagScheme ||
 		manifest.Window != plan.runtime.window ||
 		manifest.Stride != plan.runtime.stride ||
@@ -918,15 +971,27 @@ func (registry *Registry) download(
 	}
 	verifiedAssets := make([]Asset, 0, len(plan.assets))
 	for index, asset := range plan.assets {
-		verified, err := registry.downloadAssetWithPosition(
-			ctx,
-			id,
-			temporary,
-			plan.installation,
-			asset,
-			index+1,
-			len(plan.assets),
-		)
+		var verified Asset
+		var err error
+		if plan.localSource == "" {
+			verified, err = registry.downloadAssetWithPosition(
+				ctx,
+				id,
+				temporary,
+				plan.installation,
+				asset,
+				index+1,
+				len(plan.assets),
+			)
+		} else {
+			verified, err = registry.copyLocalAsset(
+				ctx,
+				id,
+				temporary,
+				plan.localSource,
+				asset,
+			)
+		}
 		if err != nil {
 			fail("asset", err)
 			return
@@ -1444,7 +1509,8 @@ func manifestMatchesInstallationProvenance(
 	manifest normalizedManifest,
 	installation contract.PrivacyModelInstallation,
 ) bool {
-	if installation.Source == contract.PrivacyModelSourceCustom {
+	if installation.Source == contract.PrivacyModelSourceCustom ||
+		installation.Source == contract.PrivacyModelSourceLocal {
 		return true
 	}
 	plan, exists := builtinVariantPlan(
@@ -1609,7 +1675,14 @@ func validInstallationProvenance(
 	if installation.Source == contract.PrivacyModelSourceCustom {
 		return installation.CatalogID == nil &&
 			installation.CatalogSource == nil &&
-			!builtin
+			!builtin &&
+			!isLocalPrivacyModelRepoID(installation.RepoID)
+	}
+	if installation.Source == contract.PrivacyModelSourceLocal {
+		return installation.CatalogID == nil &&
+			installation.CatalogSource == nil &&
+			!builtin &&
+			isLocalPrivacyModelRepoID(installation.RepoID)
 	}
 	if installation.Source != contract.PrivacyModelSourceCatalog ||
 		installation.CatalogID == nil ||

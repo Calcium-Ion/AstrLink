@@ -68,6 +68,7 @@ x-astrlink-implementation:
     - POST /control/v1/policies/{policy_id}/dry-run
     - GET /control/v1/privacy-model-catalog
     - POST /control/v1/privacy-models/probe
+    - POST /control/v1/privacy-models/local/probe
     - GET /control/v1/privacy-models
     - POST /control/v1/privacy-models
     - GET /control/v1/privacy-models/{installation_id}
@@ -943,6 +944,7 @@ paths:
       tags: [Privacy Model]
       operationId: probePrivacyModel
       summary: Inspect a public Hugging Face repository without loading model weights.
+      description: Content-derived identities matching `local/model-<12 lowercase hex>` are reserved for the mounted-directory probe and return a conflict here until that directory is probed again. Other repositories owned by `local` remain valid public repositories.
       requestBody:
         required: true
         content:
@@ -963,12 +965,45 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "500":
           $ref: "#/components/responses/InternalServerError"
         "502":
           $ref: "#/components/responses/BadGateway"
+  /control/v1/privacy-models/local/probe:
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: probeLocalPrivacyModel
+      summary: Inspect a model package from an already-mounted local path.
+      description: The path may identify a package directory or one ONNX file within it. A file probe pins only that model variant plus its required config, tokenizer, and external data. The source path is used only for the authenticated probe and is never returned, logged, or persisted. Installation copies pinned assets into AstrLink private storage before execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacyModelLocalProbeRequest"
+      responses:
+        "200":
+          description: Content-pinned local package identity, detected ONNX variants, and label-mapping requirements.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelProbe"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /control/v1/privacy-models:
     get:
       x-astrlink-implementation-status: implemented
@@ -2336,7 +2371,7 @@ components:
       enum: [regex, local_model]
     PrivacyModelAdapter:
       type: string
-      enum: [openai_bioes_viterbi, hf_token_classification]
+      enum: [openai_bioes_viterbi, hf_token_classification, astrlink_sensitive_guard]
     PrivacyModelInstallationId:
       type: string
       pattern: "^model_[0-9a-f]{32}$"
@@ -2430,6 +2465,7 @@ components:
         repo_id:
           type: string
           pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+          description: Public Hugging Face repository ID. The exact synthetic shape `local/model-<12 lowercase hex>` is reserved for local-import identities.
         revision:
           type: string
           pattern: "^[0-9a-f]{40}$"
@@ -2471,11 +2507,22 @@ components:
         repo_id:
           type: string
           pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+          description: Public Hugging Face repository ID. The exact synthetic shape `local/model-<12 lowercase hex>` is reserved for local-import identities.
         revision:
           type: string
           minLength: 1
           maxLength: 128
           pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+      additionalProperties: false
+    PrivacyModelLocalProbeRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute path to an already-mounted model package directory or `.onnx` file. URI forms such as smb:// are not accepted.
       additionalProperties: false
     PrivacyModelProbeLabel:
       type: object
@@ -2603,7 +2650,7 @@ components:
           $ref: "#/components/schemas/PrivacyModelInstallationId"
         source:
           type: string
-          enum: [catalog, custom]
+          enum: [catalog, custom, local]
         catalog_id:
           oneOf:
             - $ref: "#/components/schemas/PrivacyModelCatalogId"

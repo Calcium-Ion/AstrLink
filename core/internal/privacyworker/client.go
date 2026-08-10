@@ -755,26 +755,28 @@ func workerKind(label string) (privacy.Kind, bool) {
 }
 
 type installationManifest struct {
-	Version           int                                `json:"version"`
-	InstallationID    contract.PrivacyModelID            `json:"installation_id"`
-	Identity          string                             `json:"identity"`
-	RepoID            string                             `json:"repo_id"`
-	Revision          string                             `json:"revision"`
-	VariantID         string                             `json:"variant_id"`
-	Adapter           contract.PrivacyModelAdapter       `json:"adapter"`
-	ModelPath         string                             `json:"model_path"`
-	ExternalDataPaths []string                           `json:"external_data_paths"`
-	TokenizerPath     string                             `json:"tokenizer_path"`
-	ConfigPath        string                             `json:"config_path"`
-	CalibrationPath   *string                            `json:"calibration_path"`
-	TagScheme         string                             `json:"tag_scheme"`
-	Window            int                                `json:"window"`
-	Stride            int                                `json:"stride"`
-	MaxRequestTokens  int                                `json:"max_request_tokens"`
-	InputNames        installationInputNames             `json:"input_names"`
-	OutputName        string                             `json:"output_name"`
-	LabelMapping      map[string]*contract.CanonicalKind `json:"label_mapping"`
-	Files             []installationFile                 `json:"files"`
+	Version               int                                `json:"version"`
+	InstallationID        contract.PrivacyModelID            `json:"installation_id"`
+	Identity              string                             `json:"identity"`
+	RepoID                string                             `json:"repo_id"`
+	Revision              string                             `json:"revision"`
+	VariantID             string                             `json:"variant_id"`
+	Adapter               contract.PrivacyModelAdapter       `json:"adapter"`
+	ModelPath             string                             `json:"model_path"`
+	ExternalDataPaths     []string                           `json:"external_data_paths"`
+	TokenizerPath         string                             `json:"tokenizer_path"`
+	ConfigPath            string                             `json:"config_path"`
+	CalibrationPath       *string                            `json:"calibration_path"`
+	SecretRulesPath       *string                            `json:"secret_rules_path"`
+	SecretCalibrationPath *string                            `json:"secret_calibration_path"`
+	TagScheme             string                             `json:"tag_scheme"`
+	Window                int                                `json:"window"`
+	Stride                int                                `json:"stride"`
+	MaxRequestTokens      int                                `json:"max_request_tokens"`
+	InputNames            installationInputNames             `json:"input_names"`
+	OutputName            string                             `json:"output_name"`
+	LabelMapping          map[string]*contract.CanonicalKind `json:"label_mapping"`
+	Files                 []installationFile                 `json:"files"`
 }
 
 type installationInputNames struct {
@@ -938,12 +940,22 @@ func validateInstallationManifest(
 	}
 	switch manifest.Adapter {
 	case contract.PrivacyModelAdapterOpenAIBIOES:
-		if manifest.TagScheme != "bioes" || manifest.CalibrationPath == nil {
+		if manifest.TagScheme != "bioes" || manifest.CalibrationPath == nil ||
+			manifest.SecretRulesPath != nil ||
+			manifest.SecretCalibrationPath != nil {
 			return errors.New("invalid OpenAI adapter")
 		}
 	case contract.PrivacyModelAdapterHFToken:
-		if manifest.CalibrationPath != nil {
+		if manifest.CalibrationPath != nil ||
+			manifest.SecretRulesPath != nil ||
+			manifest.SecretCalibrationPath != nil {
 			return errors.New("invalid Hugging Face adapter")
+		}
+	case contract.PrivacyModelAdapterAstrLinkGuard:
+		if manifest.TagScheme != "bioes" || manifest.CalibrationPath == nil ||
+			manifest.SecretRulesPath == nil ||
+			manifest.SecretCalibrationPath == nil {
+			return errors.New("invalid AstrLink sensitive guard adapter")
 		}
 	}
 	if manifest.Window <= 0 || manifest.Stride < 0 ||
@@ -990,6 +1002,12 @@ func validateInstallationManifest(
 	required = append(required, manifest.ExternalDataPaths...)
 	if manifest.CalibrationPath != nil {
 		required = append(required, *manifest.CalibrationPath)
+	}
+	if manifest.SecretRulesPath != nil {
+		required = append(required, *manifest.SecretRulesPath)
+	}
+	if manifest.SecretCalibrationPath != nil {
+		required = append(required, *manifest.SecretCalibrationPath)
 	}
 	for _, requiredPath := range required {
 		if !safeModelPath(requiredPath) {

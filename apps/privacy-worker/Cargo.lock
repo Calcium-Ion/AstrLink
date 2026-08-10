@@ -30,6 +30,7 @@ name = "astrlink-privacy-worker"
 version = "0.1.0"
 dependencies = [
  "ort",
+ "regex",
  "serde",
  "serde_json",
  "tokenizers",
