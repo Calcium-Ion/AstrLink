@@ -22,6 +22,7 @@ const service: RoutableService = {
   id: "service_01",
   name: "Primary gateway",
   enabled: true,
+  models: ["gpt-5.2", "team/code"],
   capabilities: [
     {
       protocol: "openai.responses",

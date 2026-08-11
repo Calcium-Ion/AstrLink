@@ -170,7 +170,7 @@ raise "AuditSettingsPatch must not materialize defaults: #{patch_defaults.join('
 
 service = openapi.dig("components", "schemas", "Service")
 service_create = openapi.dig("components", "schemas", "ServiceCreate")
-expected_service_fields = %w[id name kind enabled capabilities created_at updated_at]
+expected_service_fields = %w[id name kind enabled models capabilities created_at updated_at]
 raise "Service response shape drifted" unless service.fetch("required") == expected_service_fields
 raise "Service must expose both connection variants" unless service.fetch("properties").key?("http") &&
                                                        service.fetch("properties").key?("subscription")
@@ -178,6 +178,9 @@ raise "ServiceCreate must require name and kind" unless service_create.fetch("re
 raise "ServiceCreate must model subscription and HTTP variants" unless service_create.fetch("oneOf").length == 2
 raise "legacy lossy auth_scheme field remains" if service_create.fetch("properties").key?("auth_scheme")
 raise "unpersisted Service extensions remain" if service_create.fetch("properties").key?("extensions")
+
+service_capability = schema.dig("$defs", "ServiceCapability")
+raise "capability-level model filters remain" if service_capability.fetch("properties").key?("models")
 
 http_connection_input = openapi.dig("components", "schemas", "HTTPServiceConnectionInput")
 raise "HTTP service input must require auth" unless http_connection_input.fetch("required").include?("auth")

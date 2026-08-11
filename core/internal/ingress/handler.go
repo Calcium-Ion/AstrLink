@@ -606,6 +606,7 @@ func (handler *Handler) writeResolveError(writer http.ResponseWriter, request *h
 		writeMissingCapability(
 			writer,
 			capabilityErr.Protocol,
+			capabilityErr.Model,
 			capabilityErr.Modes,
 			capabilityErr.Streaming,
 		)
@@ -618,6 +619,7 @@ func (handler *Handler) writeResolveError(writer http.ResponseWriter, request *h
 		writeMissingCapability(
 			writer,
 			classified.Protocol,
+			classified.Model,
 			[]contract.CapabilityMode{
 				contract.CapabilityModeNative,
 				contract.CapabilityModeDelegated,
@@ -656,24 +658,31 @@ func (handler *Handler) writeResolveError(writer http.ResponseWriter, request *h
 func writeMissingCapability(
 	writer http.ResponseWriter,
 	protocol contract.ProtocolID,
+	model string,
 	modes []contract.CapabilityMode,
 	streaming bool,
 ) {
 	modeDescription, planTypes := capabilityModeDescription(modes)
+	message := fmt.Sprintf(
+		"no enabled endpoint provides protocol %q in %s mode with streaming=%t",
+		protocol,
+		modeDescription,
+		streaming,
+	)
+	reason := fmt.Sprintf("required mode=%s; streaming=%t", modeDescription, streaming)
+	if model != "" {
+		message += fmt.Sprintf(" for model %q", model)
+		reason += fmt.Sprintf("; model=%q", model)
+	}
 	writeInferenceError(
 		writer,
 		http.StatusUnprocessableEntity,
 		"missing_protocol_capability",
-		fmt.Sprintf(
-			"no enabled endpoint provides protocol %q in %s mode with streaming=%t",
-			protocol,
-			modeDescription,
-			streaming,
-		),
+		message,
 		false,
 		[]errorDetail{{
 			Protocol:          string(protocol),
-			Reason:            fmt.Sprintf("required mode=%s; streaming=%t", modeDescription, streaming),
+			Reason:            reason,
 			RequiredPlanTypes: planTypes,
 		}},
 	)
@@ -683,6 +692,7 @@ func writePlannerCapability(writer http.ResponseWriter, capability *planner.Capa
 	if capability == nil {
 		writeMissingCapability(
 			writer,
+			"",
 			"",
 			[]contract.CapabilityMode{
 				contract.CapabilityModeNative,
@@ -695,6 +705,7 @@ func writePlannerCapability(writer http.ResponseWriter, capability *planner.Capa
 	writeMissingCapability(
 		writer,
 		capability.Protocol,
+		"",
 		[]contract.CapabilityMode{capability.Mode},
 		capability.Streaming,
 	)

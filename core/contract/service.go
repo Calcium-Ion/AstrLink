@@ -3,10 +3,13 @@ package contract
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
+
+const MaxServiceModels = 2000
 
 // ServiceID is the single stable identity used by configured API services,
 // routes, execution plans, health state, and request records.
@@ -126,6 +129,7 @@ type Service struct {
 	Name         string                  `json:"name"`
 	Kind         ServiceKind             `json:"kind"`
 	Enabled      bool                    `json:"enabled"`
+	Models       []string                `json:"models"`
 	Capabilities []Capability            `json:"capabilities"`
 	HTTP         *HTTPConnection         `json:"http,omitempty"`
 	Subscription *SubscriptionConnection `json:"subscription,omitempty"`
@@ -165,6 +169,9 @@ func (service Service) Validate() error {
 	if service.Capabilities == nil {
 		return fmt.Errorf("service capabilities must be a non-null array")
 	}
+	if err := validateServiceModels(service.Models); err != nil {
+		return err
+	}
 	if service.Kind.IsSubscription() && !equalCapabilities(service.Capabilities, DefaultOpenAICodexCapabilities()) {
 		return fmt.Errorf("codex subscription capabilities are fixed")
 	}
@@ -191,13 +198,8 @@ func equalCapabilities(left, right []Capability) bool {
 	}
 	for index := range left {
 		a, b := left[index], right[index]
-		if a.Protocol != b.Protocol || a.Mode != b.Mode || a.Streaming != b.Streaming || len(a.Models) != len(b.Models) {
+		if a.Protocol != b.Protocol || a.Mode != b.Mode || a.Streaming != b.Streaming {
 			return false
-		}
-		for modelIndex := range a.Models {
-			if a.Models[modelIndex] != b.Models[modelIndex] {
-				return false
-			}
 		}
 	}
 	return true
@@ -209,7 +211,8 @@ func ServiceFromEndpoint(endpoint Endpoint) Service {
 	credentialRef := strings.Replace(endpoint.CredentialRef, "local://endpoint/", "local://service/", 1)
 	return Service{
 		ID: endpoint.ID, Name: endpoint.Name, Kind: endpoint.Kind,
-		Enabled: endpoint.Enabled, Capabilities: append([]Capability(nil), endpoint.Capabilities...),
+		Enabled: endpoint.Enabled, Models: cloneServiceModels(endpoint.Models),
+		Capabilities: append([]Capability(nil), endpoint.Capabilities...),
 		HTTP: &HTTPConnection{
 			BaseURL: endpoint.BaseURL, Auth: endpoint.Auth,
 			CredentialRef: credentialRef,
@@ -225,15 +228,65 @@ func (service Service) EndpointView() (Endpoint, error) {
 		ID: service.ID, Name: service.Name, Kind: service.Kind,
 		BaseURL: service.HTTP.BaseURL, Auth: service.HTTP.Auth,
 		CredentialRef: service.HTTP.CredentialRef, Enabled: service.Enabled,
+		Models:       cloneServiceModels(service.Models),
 		Capabilities: append([]Capability(nil), service.Capabilities...),
 	}
 	return endpoint, endpoint.Validate()
+}
+
+func validateServiceModels(models []string) error {
+	if len(models) > MaxServiceModels {
+		return fmt.Errorf("service models must contain at most %d items", MaxServiceModels)
+	}
+	seen := make(map[string]struct{}, len(models))
+	for index, model := range models {
+		if model == "" || utf8.RuneCountInString(model) > 256 {
+			return fmt.Errorf("models[%d] must contain 1 to 256 characters", index)
+		}
+		if _, duplicate := seen[model]; duplicate {
+			return fmt.Errorf("models[%d] duplicates model %q", index, model)
+		}
+		seen[model] = struct{}{}
+	}
+	return nil
+}
+
+func cloneServiceModels(models []string) []string {
+	if models == nil {
+		return nil
+	}
+	return append([]string{}, models...)
+}
+
+// NormalizeServiceModels returns the canonical service-level model allow-list.
+func NormalizeServiceModels(models []string) ([]string, error) {
+	if models == nil {
+		models = []string{}
+	}
+	seen := make(map[string]struct{}, len(models))
+	result := make([]string, 0, len(models))
+	for _, model := range models {
+		if _, duplicate := seen[model]; duplicate {
+			continue
+		}
+		seen[model] = struct{}{}
+		result = append(result, model)
+	}
+	if result == nil {
+		result = []string{}
+	}
+	sort.Strings(result)
+	if err := validateServiceModels(result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func ServiceFromSubscriptionAccount(account SubscriptionAccount) Service {
 	return Service{
 		ID: account.ID, Name: account.DisplayName, Kind: ServiceKindCodexSubscription,
 		Enabled:      account.Status != SubscriptionStatusDisconnected,
+		Models:       []string{},
 		Capabilities: append([]Capability(nil), account.Capabilities...),
 		Subscription: &SubscriptionConnection{
 			Provider: account.Provider, Status: account.Status, AccountHint: account.AccountHint,

@@ -380,5 +380,27 @@ FROM endpoint_credentials`,
 				`CREATE INDEX audit_blobs_created_at_idx ON audit_blobs (created_at)`,
 			},
 		},
+		{
+			Version: 15,
+			Name:    "service_level_model_allowlists",
+			Statements: []string{
+				`UPDATE services
+SET document_json = json_set(
+    document_json,
+    '$.models', json('[]'),
+    '$.capabilities', json(COALESCE((
+        SELECT json_group_array(json(json_remove(value, '$.models')))
+        FROM json_each(services.document_json, '$.capabilities')
+    ), '[]'))
+)`,
+				`UPDATE services
+SET document_json = json_set(
+    document_json,
+    '$.capabilities',
+    json('[{"protocol":"openai.responses","mode":"native","streaming":true},{"protocol":"openai.responses.compact","mode":"native","streaming":false},{"protocol":"openai.models","mode":"native","streaming":false}]')
+)
+WHERE json_extract(document_json, '$.kind') = 'codex_subscription'`,
+			},
+		},
 	}
 }

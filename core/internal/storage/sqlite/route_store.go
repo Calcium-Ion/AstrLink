@@ -307,18 +307,21 @@ func serviceSupportsRouteTarget(
 	effectiveModel string,
 ) bool {
 	mode := contract.CapabilityMode(target.PlanType)
+	modelSupported := effectiveModel == ""
+	for _, model := range service.Models {
+		if model == effectiveModel {
+			modelSupported = true
+			break
+		}
+	}
+	if !modelSupported {
+		return false
+	}
 	for _, capability := range service.Capabilities {
 		if capability.Protocol != target.UpstreamProtocol || capability.Mode != mode {
 			continue
 		}
-		if effectiveModel == "" || len(capability.Models) == 0 {
-			return true
-		}
-		for _, model := range capability.Models {
-			if model == effectiveModel {
-				return true
-			}
-		}
+		return true
 	}
 	return false
 }

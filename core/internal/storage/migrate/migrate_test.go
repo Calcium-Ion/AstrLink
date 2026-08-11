@@ -298,8 +298,8 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	if err := database.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 14 {
-		t.Fatalf("schema version = %d, want 14", version)
+	if version != 15 {
+		t.Fatalf("schema version = %d, want 15", version)
 	}
 	var requestRecordsTable int
 	if err := database.QueryRow(
@@ -362,6 +362,67 @@ WHERE type = 'table'
 		if !strings.Contains(privacyPolicyDocument, expected) {
 			t.Fatalf("default privacy policy missing %s: %s", expected, privacyPolicyDocument)
 		}
+	}
+}
+
+func TestServiceLevelModelMigrationFailsClosedAndRemovesCapabilityModels(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	migrations := DefaultMigrations()
+	versionFourteen, err := New(SQLDatabase{DB: database}, migrations[:14])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := versionFourteen.Up(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct{ id, document string }{
+		{
+			"service_http",
+			`{"id":"service_http","name":"HTTP","kind":"openai","enabled":true,"capabilities":[{"protocol":"openai.responses","mode":"native","streaming":true,"models":["gpt-old"]}],"http":{"base_url":"https://example.test","auth":{"scheme":"none"}},"created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}`,
+		},
+		{
+			"service_codex",
+			`{"id":"service_codex","name":"Codex","kind":"codex_subscription","enabled":true,"capabilities":[{"protocol":"openai.responses","mode":"native","streaming":true},{"protocol":"openai.responses.compact","mode":"native","streaming":false}],"subscription":{"provider":"openai_codex","status":"disconnected"},"created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}`,
+		},
+	} {
+		if _, err := database.Exec(
+			`INSERT INTO services (id, document_json, created_at, updated_at) VALUES (?, ?, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')`,
+			row.id, row.document,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest, err := New(SQLDatabase{DB: database}, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := latest.Up(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var modelCount, legacyModelFields, codexCapabilityCount, codexModelCapability int
+	if err := database.QueryRow(
+		`SELECT json_array_length(json_extract(document_json, '$.models')),
+                (SELECT COUNT(*) FROM json_each(document_json, '$.capabilities') WHERE json_type(value, '$.models') IS NOT NULL)
+         FROM services WHERE id = 'service_http'`,
+	).Scan(&modelCount, &legacyModelFields); err != nil {
+		t.Fatal(err)
+	}
+	if modelCount != 0 || legacyModelFields != 0 {
+		t.Fatalf("HTTP migration models=%d legacy fields=%d", modelCount, legacyModelFields)
+	}
+	if err := database.QueryRow(
+		`SELECT json_array_length(json_extract(document_json, '$.capabilities')),
+                (SELECT COUNT(*) FROM json_each(document_json, '$.capabilities') WHERE json_extract(value, '$.protocol') = 'openai.models')
+         FROM services WHERE id = 'service_codex'`,
+	).Scan(&codexCapabilityCount, &codexModelCapability); err != nil {
+		t.Fatal(err)
+	}
+	if codexCapabilityCount != 3 || codexModelCapability != 1 {
+		t.Fatalf("Codex capabilities=%d model capability=%d", codexCapabilityCount, codexModelCapability)
 	}
 }
 

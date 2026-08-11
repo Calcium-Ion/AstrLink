@@ -32,7 +32,6 @@ type serviceCapabilityInput struct {
 	Protocol  *contract.ProtocolID     `json:"protocol"`
 	Mode      *contract.CapabilityMode `json:"mode"`
 	Streaming *bool                    `json:"streaming"`
-	Models    json.RawMessage          `json:"models,omitempty"`
 }
 
 func (handler *Handler) authenticated(next http.HandlerFunc) http.HandlerFunc {
@@ -74,23 +73,27 @@ func decodeServiceCapabilities(raw json.RawMessage) ([]contract.Capability, erro
 				index,
 			)
 		}
-		var models []string
-		if input.Models != nil {
-			if isJSONNull(input.Models) {
-				return nil, fmt.Errorf("capabilities[%d].models must be an array", index)
-			}
-			if err := strictUnmarshal(input.Models, &models); err != nil {
-				return nil, fmt.Errorf("decode capabilities[%d].models: %w", index, err)
-			}
-		}
 		capabilities = append(capabilities, contract.Capability{
 			Protocol:  *input.Protocol,
 			Mode:      *input.Mode,
 			Streaming: *input.Streaming,
-			Models:    models,
 		})
 	}
 	return capabilities, nil
+}
+
+func decodeServiceModels(raw json.RawMessage) ([]string, error) {
+	if raw == nil {
+		return []string{}, nil
+	}
+	if isJSONNull(raw) {
+		return nil, fmt.Errorf("models must be an array")
+	}
+	var models []string
+	if err := strictUnmarshal(raw, &models); err != nil {
+		return nil, fmt.Errorf("decode models: %w", err)
+	}
+	return contract.NormalizeServiceModels(models)
 }
 
 func decodeServiceAuth(raw json.RawMessage) (contract.ServiceAuth, error) {

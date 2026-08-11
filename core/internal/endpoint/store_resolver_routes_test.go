@@ -170,6 +170,7 @@ func TestStoreResolverMatchingRouteDoesNotFallThrough(t *testing.T) {
 	}
 	_, err = resolver.ResolveCandidates(context.Background(), ResolveRequest{
 		Protocol:  contract.ProtocolOpenAIResponses,
+		Model:     "gpt-5",
 		Streaming: true,
 	})
 	if !errors.Is(err, ErrNoEndpoint) {
@@ -208,6 +209,7 @@ func TestStoreResolverDeduplicatesOnePhysicalPinnedEndpoint(t *testing.T) {
 	}
 	candidates, err := resolver.ResolveCandidates(context.Background(), ResolveRequest{
 		Protocol:  contract.ProtocolOpenAIResponses,
+		Model:     "gpt-5",
 		Streaming: true,
 	})
 	if err != nil {
@@ -396,6 +398,66 @@ func TestStoreResolverCarriesTargetUpstreamModel(t *testing.T) {
 	}
 }
 
+func TestStoreResolverAppliesServiceAllowlistToEffectiveRouteModel(t *testing.T) {
+	t.Run("filters targets by rewritten upstream model", func(t *testing.T) {
+		route := resolverRoute(
+			"route_alias",
+			0,
+			"public-alias",
+			resolverTarget("endpoint_blocked", contract.PlanTypeNative, 0),
+			resolverTarget("endpoint_allowed", contract.PlanTypeNative, 1),
+		)
+		route.Targets[0].UpstreamModel = "real-blocked"
+		route.Targets[1].UpstreamModel = "real-allowed"
+		resolver, err := NewStoreResolver(resolverStore{
+			endpoints: []contract.Endpoint{
+				resolverEndpoint("endpoint_blocked", contract.CapabilityModeNative, true, []string{"public-alias"}),
+				resolverEndpoint("endpoint_allowed", contract.CapabilityModeNative, true, []string{"real-allowed"}),
+			},
+			routes: []contract.Route{route},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidates, err := resolver.ResolveCandidates(context.Background(), ResolveRequest{
+			Protocol: contract.ProtocolOpenAIResponses,
+			Model:    "public-alias",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(candidates) != 1 || candidates[0].Service.ID != "endpoint_allowed" {
+			t.Fatalf("candidates = %#v, want only endpoint_allowed", candidates)
+		}
+	})
+
+	t.Run("uses public model when target has no rewrite", func(t *testing.T) {
+		resolver, err := NewStoreResolver(resolverStore{
+			endpoints: []contract.Endpoint{
+				resolverEndpoint("endpoint_no_public", contract.CapabilityModeNative, true, []string{"other"}),
+			},
+			routes: []contract.Route{
+				resolverRoute(
+					"route_public",
+					0,
+					"public-alias",
+					resolverTarget("endpoint_no_public", contract.PlanTypeNative, 0),
+				),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = resolver.ResolveCandidates(context.Background(), ResolveRequest{
+			Protocol: contract.ProtocolOpenAIResponses,
+			Model:    "public-alias",
+		})
+		if !errors.Is(err, ErrNoEndpoint) {
+			t.Fatalf("ResolveCandidates() error = %v, want ErrNoEndpoint", err)
+		}
+	})
+}
+
 func TestStoreResolverRejectsAlphaIneligibleRouteAndRouteReadFailure(t *testing.T) {
 	relayRoute := resolverRoute(
 		"route_relay",
@@ -414,7 +476,7 @@ func TestStoreResolverRejectsAlphaIneligibleRouteAndRouteReadFailure(t *testing.
 		t.Fatal(err)
 	}
 	if _, err := resolver.ResolveCandidates(context.Background(), ResolveRequest{
-		Protocol: contract.ProtocolOpenAIResponses,
+		Protocol: contract.ProtocolOpenAIResponses, Model: "gpt-5",
 	}); !errors.Is(err, ErrNoEndpoint) {
 		t.Fatalf("unavailable RelayKit route error = %v, want no endpoint", err)
 	}

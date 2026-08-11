@@ -28,8 +28,9 @@ export interface ServiceCapability {
   protocol: string;
   mode: "native" | "delegated";
   streaming: boolean;
-  models?: string[];
 }
+
+export type ModelDiscoveryProtocol = "openai.models" | "google.models";
 
 export type ServiceKind = "codex_subscription" | HTTPServiceKind;
 
@@ -56,6 +57,7 @@ export interface Service {
   name: string;
   kind: ServiceKind;
   enabled: boolean;
+  models: string[];
   capabilities: ServiceCapability[];
   http?: HTTPServiceConnection;
   subscription?: SubscriptionServiceConnection;
@@ -65,7 +67,7 @@ export interface Service {
 
 export type RoutableService = Pick<
   Service,
-  "id" | "name" | "enabled" | "capabilities"
+  "id" | "name" | "enabled" | "models" | "capabilities"
 >;
 
 export interface ServicePage {
@@ -82,12 +84,14 @@ export type SubscriptionServiceCreateInput = {
   name: string;
   kind: "codex_subscription";
   enabled?: boolean;
+  models?: string[];
 };
 
 export type HTTPServiceCreateInput = {
   name: string;
   kind: HTTPServiceKind;
   enabled?: boolean;
+  models?: string[];
   http: {
     base_url: string;
     auth: ServiceAuth;
@@ -103,6 +107,7 @@ export type ServiceCreateInput =
 export type ServicePatchInput = {
   name?: string;
   enabled?: boolean;
+  models?: string[];
   http?: {
     base_url?: string;
     auth?: ServiceAuth;
@@ -110,6 +115,19 @@ export type ServicePatchInput = {
   };
   capabilities?: ServiceCapability[];
 };
+
+export interface ServiceModelProbe {
+  service_id?: string;
+  protocol: ModelDiscoveryProtocol;
+  model_ids: string[];
+}
+
+export interface DraftServiceModelProbeInput {
+  service_id?: string;
+  kind: HTTPServiceKind;
+  http: HTTPServiceCreateInput["http"];
+  protocol: ModelDiscoveryProtocol;
+}
 
 type JsonObject = Record<string, unknown>;
 
@@ -220,7 +238,7 @@ function parseAuth(value: unknown, path: string): ServiceAuth {
 
 function parseCapability(value: unknown, path: string): ServiceCapability {
   const capability = objectAt(value, path);
-  keysAt(capability, ["protocol", "mode", "streaming"], ["models"], path);
+  keysAt(capability, ["protocol", "mode", "streaming"], [], path);
   const protocol = stringAt(capability.protocol, `${path}.protocol`, 3, 96);
   if (!protocolIDPattern.test(protocol)) invalid(`${path}.protocol`, "invalid protocol ID");
   if (capability.mode !== "native" && capability.mode !== "delegated") {
@@ -229,22 +247,22 @@ function parseCapability(value: unknown, path: string): ServiceCapability {
   if (typeof capability.streaming !== "boolean") {
     invalid(`${path}.streaming`, "expected a boolean");
   }
-  let models: string[] | undefined;
-  if (Object.hasOwn(capability, "models")) {
-    if (!Array.isArray(capability.models)) invalid(`${path}.models`, "expected an array");
-    models = capability.models.map((model, index) =>
-      stringAt(model, `${path}.models[${index}]`, 1, 256),
-    );
-    if (new Set(models).size !== models.length) {
-      invalid(`${path}.models`, "duplicate model");
-    }
-  }
   return {
     protocol,
     mode: capability.mode,
     streaming: capability.streaming,
-    ...(models ? { models } : {}),
   };
+}
+
+function parseModels(value: unknown, path: string, maximum = 2_000): string[] {
+  if (!Array.isArray(value) || value.length > maximum) {
+    return invalid(path, `expected an array with at most ${maximum} items`);
+  }
+  const models = value.map((model, index) =>
+    stringAt(model, `${path}[${index}]`, 1, 256),
+  );
+  if (new Set(models).size !== models.length) invalid(path, "duplicate model");
+  return models;
 }
 
 function parseHTTPConnection(value: unknown, path: string): HTTPServiceConnection {
@@ -374,7 +392,7 @@ export function parseService(value: unknown, path = "$"): Service {
   const service = objectAt(value, path);
   keysAt(
     service,
-    ["id", "name", "kind", "enabled", "capabilities", "created_at", "updated_at"],
+    ["id", "name", "kind", "enabled", "models", "capabilities", "created_at", "updated_at"],
     ["http", "subscription"],
     path,
   );
@@ -389,6 +407,7 @@ export function parseService(value: unknown, path = "$"): Service {
     invalid(`${path}.kind`, "unknown service kind");
   }
   if (typeof service.enabled !== "boolean") invalid(`${path}.enabled`, "expected a boolean");
+  const models = parseModels(service.models, `${path}.models`);
   if (!Array.isArray(service.capabilities)) {
     invalid(`${path}.capabilities`, "expected an array");
   }
@@ -410,6 +429,7 @@ export function parseService(value: unknown, path = "$"): Service {
       name,
       kind: "codex_subscription",
       enabled: service.enabled,
+      models,
       capabilities,
       subscription: parseSubscriptionConnection(
         service.subscription,
@@ -427,11 +447,30 @@ export function parseService(value: unknown, path = "$"): Service {
     name,
     kind: service.kind as HTTPServiceKind,
     enabled: service.enabled,
+    models,
     capabilities,
     http: parseHTTPConnection(service.http, `${path}.http`),
     created_at: createdAt,
     updated_at: updatedAt,
   };
+}
+
+export function parseServiceModelProbe(value: unknown): ServiceModelProbe {
+  const probe = objectAt(value, "$");
+  keysAt(probe, ["protocol", "model_ids"], ["service_id"], "$");
+  if (probe.protocol !== "openai.models" && probe.protocol !== "google.models") {
+    invalid("$.protocol", "unknown model discovery protocol");
+  }
+  const result: ServiceModelProbe = {
+    protocol: probe.protocol,
+    model_ids: parseModels(probe.model_ids, "$.model_ids", 10_000),
+  };
+  if (Object.hasOwn(probe, "service_id")) {
+    const serviceID = stringAt(probe.service_id, "$.service_id", 3, 96);
+    if (!resourceIDPattern.test(serviceID)) invalid("$.service_id", "invalid service ID");
+    result.service_id = serviceID;
+  }
+  return result;
 }
 
 export function parseServicePage(value: unknown): ServicePage {

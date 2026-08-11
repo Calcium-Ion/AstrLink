@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/privacymodel"
 	"github.com/QuantumNous/astrlink/core/internal/privacyworker"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
+	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
@@ -152,6 +153,7 @@ func main() {
 			AuditKeys:          store,
 			AuditBlobs:         store,
 			Subscriptions:      subscriptionManager,
+			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,

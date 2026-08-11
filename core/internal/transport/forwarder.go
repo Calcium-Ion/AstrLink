@@ -221,6 +221,13 @@ func joinTargetURL(base, incoming *url.URL) *url.URL {
 	return &joined
 }
 
+// JoinTargetURL applies the same reverse-proxy-prefix and API-version joining
+// rules used by Forwarder. Control-plane probes use it to address the exact
+// upstream model-discovery endpoint without duplicating URL policy.
+func JoinTargetURL(base, incoming *url.URL) *url.URL {
+	return joinTargetURL(base, incoming)
+}
+
 func joinURLPath(base, incoming *url.URL) (path string, rawPath string) {
 	if base.RawPath == "" && incoming.RawPath == "" {
 		return singleJoiningSlash(base.Path, trimDuplicateProtocolVersion(base.Path, incoming.Path)), ""

@@ -569,7 +569,7 @@ func TestInferencePlaneCapabilityErrorsNameProtocolModeAndStreaming(t *testing.T
 				return endpoint.Resolved{}, endpoint.ErrNoEndpoint
 			}),
 			body:            `{"model":"gpt-5","stream":true}`,
-			wantModeReason:  "required mode=native or delegated; streaming=true",
+			wantModeReason:  `required mode=native or delegated; streaming=true; model="gpt-5"`,
 			wantPlanTypes:   []string{"native", "delegated"},
 			wantMessagePart: `protocol "openai.responses" in native or delegated mode with streaming=true`,
 		},
@@ -1858,6 +1858,25 @@ func validEndpoint(protocol contract.ProtocolID, streaming bool) contract.Endpoi
 		Capabilities: []contract.Capability{{
 			Protocol: protocol, Mode: contract.CapabilityModeNative, Streaming: streaming,
 		}},
+	}
+}
+
+func TestMissingCapabilityErrorNamesUnavailableModel(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeMissingCapability(
+		response,
+		contract.ProtocolOpenAIResponses,
+		"gpt-unlisted",
+		[]contract.CapabilityMode{contract.CapabilityModeNative},
+		true,
+	)
+	envelope := assertInferenceError(
+		t, response, http.StatusUnprocessableEntity, "missing_protocol_capability",
+	)
+	if !strings.Contains(envelope.Error.Message, `model "gpt-unlisted"`) ||
+		len(envelope.Error.Details) != 1 ||
+		!strings.Contains(envelope.Error.Details[0].Reason, `model="gpt-unlisted"`) {
+		t.Fatalf("error response = %#v", envelope)
 	}
 }
 

@@ -58,6 +58,7 @@ func TestEndpointAndCredentialRoundTripKeepsSecretOutOfDocumentJSON(t *testing.T
 	defer store.Close()
 	ctx := context.Background()
 	endpoint := testEndpoint("endpoint_01")
+	endpoint.Models = nil
 	secret := []byte("provider-secret-value")
 
 	record, err := store.CreateEndpoint(ctx, endpoint, storagecontract.CredentialMutation{Present: true, Secret: secret})
@@ -66,6 +67,9 @@ func TestEndpointAndCredentialRoundTripKeepsSecretOutOfDocumentJSON(t *testing.T
 	}
 	if record.Endpoint.CredentialRef != "local://service/endpoint_01" || record.ETag == "" {
 		t.Fatalf("created endpoint = %#v", record)
+	}
+	if record.Endpoint.Models == nil || len(record.Endpoint.Models) != 0 {
+		t.Fatalf("created models = %#v, want non-nil empty allow-list", record.Endpoint.Models)
 	}
 	var document string
 	if err := store.db.QueryRow(`SELECT document_json FROM services WHERE id = ?`, endpoint.ID).Scan(&document); err != nil {
@@ -577,7 +581,7 @@ func testEndpoint(id contract.ServiceID) contract.Endpoint {
 	return contract.Endpoint{
 		ID: id, Name: string(id), Kind: contract.EndpointKindOpenAI,
 		BaseURL: "https://api.example/v1", Auth: contract.EndpointAuth{Scheme: contract.AuthSchemeBearer},
-		Enabled: true,
+		Enabled: true, Models: []string{"upstream-model"},
 		Capabilities: []contract.Capability{{
 			Protocol: contract.ProtocolOpenAIResponses, Mode: contract.CapabilityModeNative, Streaming: true,
 		}},

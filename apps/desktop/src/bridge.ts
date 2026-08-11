@@ -7,11 +7,15 @@ import {
 } from "./core-model";
 import {
   parseServicePage,
+  parseServiceModelProbe,
   parseServiceRecord,
   type ServiceCreateInput,
   type ServicePage,
   type ServicePatchInput,
   type ServiceRecord,
+  type ServiceModelProbe,
+  type DraftServiceModelProbeInput,
+  type ModelDiscoveryProtocol,
 } from "./service-model";
 import {
   parseAccessTokenCreateResult,
@@ -166,6 +170,28 @@ export async function updateService(
 export async function deleteService(serviceId: string, etag: string): Promise<void> {
   requireNativeBridge();
   await invoke("delete_service", { serviceId, etag });
+}
+
+export async function probeServiceModels(
+  serviceId: string,
+  protocol: ModelDiscoveryProtocol,
+): Promise<ServiceModelProbe> {
+  requireNativeBridge();
+  return parseServiceModelProbe(
+    await invoke<unknown>("probe_service_models", {
+      serviceId,
+      input: { protocol },
+    }),
+  );
+}
+
+export async function probeDraftServiceModels(
+  input: DraftServiceModelProbeInput,
+): Promise<ServiceModelProbe> {
+  requireNativeBridge();
+  return parseServiceModelProbe(
+    await invoke<unknown>("probe_draft_service_models", { input }),
+  );
 }
 
 export async function beginServiceAuthorization(

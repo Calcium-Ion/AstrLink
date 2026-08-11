@@ -106,11 +106,35 @@ func (handler *Handler) aggregateModelDiscovery(
 	}
 	mergeInput := results
 	if lister, ok := handler.resolver.(endpoint.AliasLister); ok {
-		aliases, aliasErr := lister.ListAliasModels(request.Context(), classified.Protocol)
+		mappings, aliasErr := lister.ListAliasModelMappings(request.Context(), classified.Protocol)
 		if aliasErr != nil {
 			handler.writeResolveError(writer, request, classified, aliasErr)
 			return
 		}
+		aliasSet := make(map[string]struct{}, len(mappings))
+		hiddenByService := make(map[contract.ServiceID]map[string]struct{})
+		for _, mapping := range mappings {
+			aliasSet[mapping.PublicModel] = struct{}{}
+			hidden := hiddenByService[mapping.ServiceID]
+			if hidden == nil {
+				hidden = make(map[string]struct{})
+				hiddenByService[mapping.ServiceID] = hidden
+			}
+			hidden[mapping.UpstreamModel] = struct{}{}
+		}
+		for index, candidate := range candidates {
+			serviceID := candidate.CanonicalService().ID
+			if hidden := hiddenByService[serviceID]; len(hidden) > 0 {
+				results[index].entries = removeHiddenAliasTargets(
+					classified.Protocol, results[index].entries, hidden,
+				)
+			}
+		}
+		aliases := make([]string, 0, len(aliasSet))
+		for alias := range aliasSet {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
 		if len(aliases) > 0 {
 			aliasEntries, encodeErr := synthesizeAliasDiscoveryEntries(classified.Protocol, aliases)
 			if encodeErr != nil {
@@ -326,12 +350,87 @@ func (handler *Handler) fetchModelDiscovery(
 			endpointID: candidate.Service.ID,
 		}}
 	}
+	entries, entriesErr = filterAndCompleteDiscoveryEntries(
+		classified.Protocol,
+		entries,
+		candidate.Service.Models,
+	)
+	if entriesErr != nil {
+		health.Failure()
+		return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
+			kind:       executionFailureUpstream,
+			err:        entriesErr,
+			endpointID: candidate.Service.ID,
+		}}
+	}
 	health.Success()
 	return discoveryResult{
 		outcome: discoveryOutcomeFetched,
 		entries: entries,
 		warning: recorder.Header().Get(PolicyWarningHeader),
 	}
+}
+
+func filterAndCompleteDiscoveryEntries(
+	protocol contract.ProtocolID,
+	entries []discoveryEntry,
+	models []string,
+) ([]discoveryEntry, error) {
+	if models == nil {
+		return entries, nil
+	}
+	allowed := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		allowed[model] = struct{}{}
+	}
+	filtered := make([]discoveryEntry, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, entry := range entries {
+		model := entry.id
+		if protocol == contract.ProtocolGoogleModels {
+			model = strings.TrimPrefix(model, "models/")
+		}
+		if _, ok := allowed[model]; !ok {
+			continue
+		}
+		if _, duplicate := seen[model]; duplicate {
+			continue
+		}
+		seen[model] = struct{}{}
+		filtered = append(filtered, entry)
+	}
+	missing := make([]string, 0, len(models)-len(seen))
+	for _, model := range models {
+		if _, exists := seen[model]; !exists {
+			missing = append(missing, model)
+		}
+	}
+	if len(missing) == 0 {
+		return filtered, nil
+	}
+	synthesized, err := synthesizeAliasDiscoveryEntries(protocol, missing)
+	if err != nil {
+		return nil, err
+	}
+	return append(filtered, synthesized...), nil
+}
+
+func removeHiddenAliasTargets(
+	protocol contract.ProtocolID,
+	entries []discoveryEntry,
+	hidden map[string]struct{},
+) []discoveryEntry {
+	filtered := make([]discoveryEntry, 0, len(entries))
+	for _, entry := range entries {
+		model := entry.id
+		if protocol == contract.ProtocolGoogleModels {
+			model = strings.TrimPrefix(model, "models/")
+		}
+		if _, private := hidden[model]; !private {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 // mergeDiscoveryEntries deduplicates public model IDs by first appearance in

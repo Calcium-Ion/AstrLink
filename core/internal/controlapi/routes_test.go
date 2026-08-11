@@ -18,6 +18,7 @@ func TestRouteControlAPICRUDAndRuntimeGate(t *testing.T) {
 		Name:    "route target",
 		Kind:    contract.ServiceKindOpenAI,
 		Enabled: true,
+		Models:  []string{"gpt-5.2"},
 		HTTP: &contract.HTTPConnection{
 			BaseURL: "https://api.example/v1",
 			Auth:    contract.ServiceAuth{Scheme: contract.AuthSchemeNone},

@@ -57,6 +57,7 @@ x-astrlink-implementation:
     - DELETE /control/v1/services/{service_id}/authorization
     - POST /control/v1/services/{service_id}/logout
     - POST /control/v1/services/{service_id}/probe-models
+    - POST /control/v1/service-model-probes
     - POST /control/v1/services/{service_id}/probe-responses
     - GET /control/v1/access-tokens
     - POST /control/v1/access-tokens
@@ -481,7 +482,19 @@ paths:
     post:
       tags: [Services]
       operationId: probeServiceModels
-      summary: Discover models through a connected subscription service.
+      summary: Discover models through a persisted HTTP or subscription service.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [protocol]
+              properties:
+                protocol:
+                  type: string
+                  enum: [openai.models, google.models]
+              additionalProperties: false
       responses:
         "200":
           description: Provider model list summary.
@@ -498,6 +511,46 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /control/v1/service-model-probes:
+    x-astrlink-implementation-status: implemented
+    post:
+      tags: [Services]
+      operationId: probeDraftServiceModels
+      summary: Discover models using an unsaved HTTP service draft.
+      description: A service_id allows an omitted draft credential to reuse that service's stored credential, even when the draft changes the HTTP URL or authentication scheme. An explicit draft credential takes precedence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DraftServiceModelProbe"
+      responses:
+        "200":
+          description: Upstream model identifiers without credential material.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceModelProbe"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
   /control/v1/services/{service_id}/probe-responses:
     x-astrlink-implementation-status: implemented
     parameters:
@@ -1517,6 +1570,15 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    GatewayTimeout:
+      description: The upstream model-discovery request exceeded its deadline.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   schemas:
     ReadyEvent:
       type: object
@@ -1713,7 +1775,7 @@ components:
       additionalProperties: false
     Service:
       type: object
-      required: [id, name, kind, enabled, capabilities, created_at, updated_at]
+      required: [id, name, kind, enabled, models, capabilities, created_at, updated_at]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -1725,6 +1787,8 @@ components:
           $ref: "#/components/schemas/ServiceKind"
         enabled:
           type: boolean
+        models:
+          $ref: "#/components/schemas/ServiceModels"
         capabilities:
           type: array
           items:
@@ -1782,6 +1846,8 @@ components:
         enabled:
           type: boolean
           default: true
+        models:
+          $ref: "#/components/schemas/ServiceModels"
         http:
           $ref: "#/components/schemas/HTTPServiceConnectionInput"
         capabilities:
@@ -1830,6 +1896,8 @@ components:
           maxLength: 128
         enabled:
           type: boolean
+        models:
+          $ref: "#/components/schemas/ServiceModels"
         http:
           $ref: "#/components/schemas/HTTPServiceConnectionPatch"
         capabilities:
@@ -1847,6 +1915,30 @@ components:
           maxLength: 16384
           writeOnly: true
           description: Stored through CredentialStore and never returned or logged.
+      additionalProperties: false
+    ServiceModels:
+      type: array
+      maxItems: 2000
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+        maxLength: 256
+      default: []
+      description: Exact service-wide model allow-list. An empty list makes the service unavailable for inference routing.
+    DraftServiceModelProbe:
+      type: object
+      required: [kind, http, protocol]
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        kind:
+          $ref: ./protocol-capabilities.schema.json#/$defs/HTTPServiceKind
+        http:
+          $ref: "#/components/schemas/HTTPServiceConnectionInput"
+        protocol:
+          type: string
+          enum: [openai.models, google.models]
       additionalProperties: false
     AstrLinkAutoModel:
       type: string
@@ -3402,12 +3494,17 @@ components:
       additionalProperties: false
     ServiceModelProbe:
       type: object
-      required: [service_id, model_ids]
+      required: [protocol, model_ids]
       properties:
         service_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        protocol:
+          type: string
+          enum: [openai.models, google.models]
         model_ids:
           type: array
+          maxItems: 10000
+          uniqueItems: true
           items:
             type: string
             minLength: 1

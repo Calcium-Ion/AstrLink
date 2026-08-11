@@ -47,6 +47,8 @@ const bridgeMocks = vi.hoisted(() => ({
   cancelServiceAuthorization: vi.fn(),
   logoutService: vi.fn(),
   openAuthorizationURL: vi.fn(),
+  probeDraftServiceModels: vi.fn(),
+  probeServiceModels: vi.fn(),
 }));
 
 vi.mock("./bridge", () => bridgeMocks);
@@ -169,6 +171,7 @@ describe("App workspace navigation", () => {
           name: "Primary gateway",
           kind: "newapi",
           enabled: true,
+          models: ["gpt-5"],
           capabilities: [
             {
               protocol: "openai.responses",
@@ -189,6 +192,7 @@ describe("App workspace navigation", () => {
           name: "Codex 订阅",
           kind: "codex_subscription",
           enabled: true,
+          models: [],
           capabilities: [
             {
               protocol: "openai.responses",
@@ -566,6 +570,7 @@ describe("App workspace navigation", () => {
         name: "new-api",
         kind: "newapi",
         enabled: true,
+        models: ["gpt-5"],
         capabilities: [
           {
             protocol: "openai.responses",

@@ -5321,8 +5321,7 @@ code {
 }
 
 .simple-form label,
-.advanced-grid label,
-.capability-row label {
+.advanced-grid label {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -5330,8 +5329,7 @@ code {
 }
 
 .simple-form label > span,
-.advanced-grid label > span,
-.capability-row label > span {
+.advanced-grid label > span {
   color: var(--text-secondary);
   font-size: 10.5px;
   font-weight: 650;
@@ -5485,9 +5483,7 @@ textarea:focus {
 
 .advanced-settings__toolbar button,
 .capability-editor__header button,
-.capability-row__title button,
-.capability-model-row button,
-.capability-model-add {
+.service-model-row button {
   padding: 0;
   border: 0;
   color: var(--accent-text);
@@ -5992,8 +5988,7 @@ textarea:focus {
   background: var(--panel);
 }
 
-.advanced-check input,
-.capability-row__streaming input {
+.advanced-check input {
   width: auto;
 }
 
@@ -6037,83 +6032,101 @@ textarea:focus {
   gap: 8px;
 }
 
-.capability-row {
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--panel);
-}
-
-.capability-row__title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  gap: 8px;
-}
-
-.capability-row__title strong {
-  overflow: hidden;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.capability-row__title button,
-.capability-model-row button {
+.service-model-row button {
   color: var(--danger-text);
 }
 
-.capability-row__grid {
-  display: grid;
-  align-items: end;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-}
-
-.capability-row__models {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  grid-column: 1 / -1;
-}
-
-.capability-row__models legend {
-  margin-bottom: 5px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 650;
-}
-
-.capability-model-list {
+.service-model-list {
   display: grid;
   gap: 6px;
 }
 
-.capability-model-row {
+.service-model-row {
   display: grid;
   align-items: center;
   gap: 7px;
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.capability-row__models small {
-  display: block;
-  margin-top: 5px;
-  color: var(--text-muted);
-  font-size: 8.5px;
+.service-models-editor {
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
 }
 
-.capability-model-add {
-  margin-top: 6px;
-}
-
-.capability-row .capability-row__streaming {
-  flex-direction: row;
+.service-models-editor__heading {
+  display: flex;
   align-items: center;
-  grid-column: 1 / -1;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.service-models-editor__heading strong {
+  font-weight: 700;
+}
+
+.service-models-editor__help,
+.service-models-editor > small {
+  display: block;
+  margin: 7px 0 0;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.service-models-editor__add {
+  display: grid;
+  align-items: end;
+  margin: 12px 0;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.service-models-editor__add textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.service-models-editor__empty {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--danger-text) 28%, var(--line));
+  border-radius: 9px;
+  color: var(--danger-text);
+  background: color-mix(in srgb, var(--danger-text) 6%, var(--card));
+}
+
+.service-models-editor .service-model-list {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.service-models-editor .service-model-row code,
+.service-model-preview code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-model-preview {
+  width: min(620px, calc(100vw - 40px));
+}
+
+.service-model-preview__list {
+  display: grid;
+  max-height: min(52vh, 460px);
+  margin: 12px 0;
+  overflow: auto;
+  gap: 7px;
+}
+
+.service-model-preview__list .advanced-check {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .service-capability-grid {
@@ -6140,10 +6153,6 @@ textarea:focus {
 .service-capability-option select {
   padding-block: 6px;
   font-size: 9.5px;
-}
-
-.capability-row__streaming input:disabled + span {
-  color: var(--text-muted);
 }
 
 .service-form__actions {
@@ -6291,7 +6300,6 @@ textarea:focus {
   .overview-grid,
   .simple-form,
   .advanced-grid,
-  .capability-row__grid,
   .detail-grid {
     grid-template-columns: 1fr;
   }
@@ -6447,9 +6455,7 @@ textarea:focus {
   .simple-form label:first-child,
   .simple-form label:nth-child(4),
   .simple-form__no-auth,
-  .advanced-grid__wide,
-  .capability-row__models,
-  .capability-row .capability-row__streaming {
+  .advanced-grid__wide {
     grid-column: auto;
   }
 }

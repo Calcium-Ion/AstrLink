@@ -39,6 +39,44 @@ func discoveryHostServiceID(host string) string {
 	return strings.ReplaceAll(strings.TrimSuffix(host, ".example"), "-", "_")
 }
 
+func TestDiscoveryEntriesRespectServiceModelAllowlist(t *testing.T) {
+	entries := []discoveryEntry{
+		{id: "alpha", raw: []byte(`{"id":"alpha","owned_by":"upstream"}`)},
+		{id: "blocked", raw: []byte(`{"id":"blocked"}`)},
+	}
+	filtered, err := filterAndCompleteDiscoveryEntries(
+		contract.ProtocolOpenAIModels,
+		entries,
+		[]string{"alpha", "manual"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := encodeDiscoveryList(contract.ProtocolOpenAIModels, filtered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(body), `{"object":"list","data":[{"id":"alpha","owned_by":"upstream"},{"id":"manual","object":"model","created":0,"owned_by":"system"}],"first_id":"alpha","has_more":false,"last_id":"manual"}`; got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	empty, err := filterAndCompleteDiscoveryEntries(
+		contract.ProtocolOpenAIModels,
+		entries,
+		[]string{},
+	)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty allow-list result=%v err=%v", empty, err)
+	}
+	google, err := filterAndCompleteDiscoveryEntries(
+		contract.ProtocolGoogleModels,
+		[]discoveryEntry{{id: "models/gemini-a", raw: []byte(`{"name":"models/gemini-a"}`)}},
+		[]string{"gemini-a"},
+	)
+	if err != nil || len(google) != 1 || google[0].id != "models/gemini-a" {
+		t.Fatalf("Google result=%v err=%v", google, err)
+	}
+}
+
 func TestModelDiscoveryAggregatesDeterministicallyWithRoutingOrderConflictWins(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -233,6 +271,10 @@ func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
 			// on the listing protocol alone.
 			if test.protocol == contract.ProtocolOpenAIModels {
 				candidate := store.endpoints[0]
+				candidate.Models = []string{
+					"alpha-model", "shared-model",
+					"provider/secret-upstream", "provider/zeta-real",
+				}
 				candidate.Capabilities = append(candidate.Capabilities,
 					contract.Capability{Protocol: contract.ProtocolOpenAIResponses, Mode: contract.CapabilityModeNative, Streaming: true},
 					contract.Capability{Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true},
@@ -241,6 +283,7 @@ func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
 			}
 			if test.protocol == contract.ProtocolGoogleModels {
 				candidate := store.endpoints[0]
+				candidate.Models = []string{"alpha", "gemini-secret"}
 				candidate.Capabilities = append(candidate.Capabilities,
 					contract.Capability{Protocol: contract.ProtocolGoogleGenerateContent, Mode: contract.CapabilityModeNative, Streaming: true},
 				)

@@ -28,7 +28,7 @@ func TestProductionGateResolvesSQLiteEndpointAndLoadsDedicatedCredential(t *test
 	persisted := contract.Endpoint{
 		ID: "endpoint_01", Name: "production", Kind: contract.EndpointKindOpenAI,
 		BaseURL: "https://upstream.example/v1", Auth: contract.EndpointAuth{Scheme: contract.AuthSchemeBearer},
-		Enabled: true,
+		Enabled: true, Models: []string{"gpt-5"},
 		Capabilities: []contract.Capability{{
 			Protocol: contract.ProtocolOpenAIResponses, Mode: contract.CapabilityModeNative, Streaming: true,
 		}},
@@ -119,7 +119,7 @@ func TestProductionGateRoutesToSelectedCodexSubscriptionService(t *testing.T) {
 		expiresAt := now.Add(time.Hour)
 		service := contract.Service{
 			ID: account.id, Name: account.name, Kind: contract.ServiceKindCodexSubscription,
-			Enabled: true, Capabilities: contract.DefaultOpenAICodexCapabilities(),
+			Enabled: true, Models: []string{"gpt-5"}, Capabilities: contract.DefaultOpenAICodexCapabilities(),
 			Subscription: &contract.SubscriptionConnection{
 				Provider:          contract.SubscriptionProviderOpenAICodex,
 				Status:            contract.SubscriptionStatusConnected,

@@ -16,10 +16,7 @@ import {
   updateRoute,
 } from "./bridge";
 import { PageHeader } from "./PageHeader";
-import {
-  type RoutableService,
-  type ServiceCapability,
-} from "./service-model";
+import { type RoutableService } from "./service-model";
 import { protocolLabel, type ProtocolDescriptor } from "./service-presets";
 import type {
   Route,
@@ -104,7 +101,7 @@ function capabilityFor(
   service: RoutableService | undefined,
   protocol: string,
   mode: "native" | "delegated",
-): ServiceCapability | undefined {
+) {
   return service?.capabilities.find(
     (capability) =>
       capability.protocol === protocol && capability.mode === mode,
@@ -115,10 +112,12 @@ function compatibleServices(
   services: RoutableService[],
   protocol: string,
 ): RoutableService[] {
-  return services.filter((service) =>
-    service.capabilities.some(
-      (capability) => capability.protocol === protocol,
-    ),
+  return services.filter(
+    (service) =>
+      service.models.length > 0 &&
+      service.capabilities.some(
+        (capability) => capability.protocol === protocol,
+      ),
   );
 }
 
@@ -265,11 +264,9 @@ function validateDraft(
     const effectiveModel = target.upstreamModel || draft.publicModel;
     if (
       effectiveModel &&
-      capability.models &&
-      capability.models.length > 0 &&
-      !capability.models.includes(effectiveModel)
+      !service.models.includes(effectiveModel)
     ) {
-      return `目标 ${index + 1} 的有效上游模型不在该 API 服务声明的模型范围内。`;
+      return `目标 ${index + 1} 的有效上游模型不在该 API 服务的模型白名单内。`;
     }
   }
   return null;
@@ -844,6 +841,7 @@ export function RouteManager({
                           <span>上游模型</span>
                           <input
                             disabled={!draft.publicModel}
+                            list={`route-target-models-${index}`}
                             maxLength={256}
                             onChange={(event) =>
                               updateTarget(index, (current) => ({
@@ -858,6 +856,11 @@ export function RouteManager({
                             }
                             value={target.upstreamModel}
                           />
+                          <datalist id={`route-target-models-${index}`}>
+                            {service?.models.map((model) => (
+                              <option key={model} value={model} />
+                            ))}
+                          </datalist>
                         </label>
                       </div>
                       <button

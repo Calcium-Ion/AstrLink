@@ -89,6 +89,7 @@ describe("HTTP service product presets", () => {
           mode: "native",
           streaming: true,
         },
+        { protocol: "openai.models", mode: "native", streaming: false },
       ],
     });
     expect(httpServicePreset("gemini")).toMatchObject({

@@ -253,6 +253,23 @@ async fn delete_service(
 }
 
 #[tauri::command]
+async fn probe_service_models(
+    service_id: String,
+    input: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.probe_service_models(&service_id, input).await
+}
+
+#[tauri::command]
+async fn probe_draft_service_models(
+    input: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.probe_draft_service_models(input).await
+}
+
+#[tauri::command]
 async fn begin_service_authorization(
     service_id: String,
     flow: String,
@@ -559,6 +576,8 @@ pub fn run() {
             create_service,
             update_service,
             delete_service,
+            probe_service_models,
+            probe_draft_service_models,
             begin_service_authorization,
             open_authorization_url,
             get_service_authorization,

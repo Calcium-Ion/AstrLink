@@ -23,6 +23,7 @@ var (
 // to ErrNoEndpoint for compatibility with the original resolver seam.
 type CapabilityUnavailableError struct {
 	Protocol  contract.ProtocolID
+	Model     string
 	Modes     []contract.CapabilityMode
 	Streaming bool
 }
@@ -33,9 +34,10 @@ func (err *CapabilityUnavailableError) Error() string {
 		modes = append(modes, string(mode))
 	}
 	return fmt.Sprintf(
-		"%s: protocol=%q modes=%q streaming=%t",
+		"%s: protocol=%q model=%q modes=%q streaming=%t",
 		ErrNoEndpoint,
 		err.Protocol,
+		err.Model,
 		strings.Join(modes, ","),
 		err.Streaming,
 	)
@@ -126,11 +128,20 @@ type CandidateResolver interface {
 	ResolveCandidates(context.Context, ResolveRequest) ([]Resolved, error)
 }
 
-// AliasLister names the public alias models that explicit Routes define
-// for a protocol family (ADR 0006). Implementations must not disclose
-// target endpoints or upstream models.
+// AliasModelMapping is internal discovery metadata. It lets the aggregate
+// listing replace a route's private upstream model with its public alias.
+type AliasModelMapping struct {
+	ServiceID     contract.ServiceID
+	PublicModel   string
+	UpstreamModel string
+}
+
+// AliasLister names the public alias models that explicit Routes define for a
+// protocol family (ADR 0006). Mappings stay inside the process and must never
+// be serialized into a discovery response.
 type AliasLister interface {
 	ListAliasModels(ctx context.Context, discovery contract.ProtocolID) ([]string, error)
+	ListAliasModelMappings(ctx context.Context, discovery contract.ProtocolID) ([]AliasModelMapping, error)
 }
 
 // AttemptController owns transient endpoint health admission and feedback.

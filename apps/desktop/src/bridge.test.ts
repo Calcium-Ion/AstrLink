@@ -32,6 +32,8 @@ import {
   listPrivacyModelInstallations,
   listPrivacyPolicies,
   probeLocalPrivacyModel,
+  probeDraftServiceModels,
+  probeServiceModels,
   probePrivacyModel,
   revealAccessToken,
   restartCore,
@@ -557,6 +559,7 @@ describe("desktop bridge contract", () => {
       name: "Codex subscription",
       kind: "codex_subscription",
       enabled: true,
+      models: [],
       capabilities: [
         { protocol: "openai.responses", mode: "native", streaming: true },
         {
@@ -637,6 +640,42 @@ describe("desktop bridge contract", () => {
     await expect(logoutService(service.id)).resolves.toMatchObject({
       service: { id: service.id },
     });
+
+    const modelProbe = {
+      service_id: service.id,
+      protocol: "openai.models" as const,
+      model_ids: ["gpt-5"],
+    };
+    invokeMock.mockResolvedValueOnce(modelProbe);
+    await expect(
+      probeServiceModels(service.id, "openai.models"),
+    ).resolves.toEqual(modelProbe);
+    expect(invokeMock).toHaveBeenLastCalledWith("probe_service_models", {
+      serviceId: service.id,
+      input: { protocol: "openai.models" },
+    });
+
+    const draftProbe = {
+      service_id: "service_gateway",
+      kind: "openai" as const,
+      http: {
+        base_url: "https://api.example/v1",
+        auth: { scheme: "bearer" as const },
+      },
+      protocol: "openai.models" as const,
+    };
+    invokeMock.mockResolvedValueOnce({
+      service_id: draftProbe.service_id,
+      protocol: draftProbe.protocol,
+      model_ids: ["gpt-5"],
+    });
+    await expect(probeDraftServiceModels(draftProbe)).resolves.toMatchObject({
+      model_ids: ["gpt-5"],
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "probe_draft_service_models",
+      { input: draftProbe },
+    );
 
     invokeMock.mockResolvedValueOnce(undefined);
     await deleteService(service.id, etag);

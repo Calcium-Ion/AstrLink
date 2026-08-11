@@ -2,6 +2,7 @@ package contract
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -180,7 +181,7 @@ func TestCapabilityStreamingMatchesBuiltInRegistry(t *testing.T) {
 	}
 }
 
-func TestCapabilityRejectsInvalidModeAndModels(t *testing.T) {
+func TestCapabilityRejectsInvalidMode(t *testing.T) {
 	valid := Capability{Protocol: ProtocolOpenAIResponses, Mode: CapabilityModeNative}
 	tests := []struct {
 		name   string
@@ -188,9 +189,6 @@ func TestCapabilityRejectsInvalidModeAndModels(t *testing.T) {
 		want   string
 	}{
 		{name: "mode", mutate: func(value *Capability) { value.Mode = "relaykit" }, want: "mode"},
-		{name: "empty model", mutate: func(value *Capability) { value.Models = []string{""} }, want: "models[0]"},
-		{name: "long model", mutate: func(value *Capability) { value.Models = []string{strings.Repeat("m", 257)} }, want: "models[0]"},
-		{name: "duplicate model", mutate: func(value *Capability) { value.Models = []string{"gpt", "gpt"} }, want: "duplicates"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -200,6 +198,32 @@ func TestCapabilityRejectsInvalidModeAndModels(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeServiceModelsValidatesDeduplicatesAndSorts(t *testing.T) {
+	empty, err := NormalizeServiceModels(nil)
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("NormalizeServiceModels(nil) = %#v, %v", empty, err)
+	}
+	models, err := NormalizeServiceModels([]string{"zeta", "alpha", "zeta"})
+	if err != nil {
+		t.Fatalf("NormalizeServiceModels() error = %v", err)
+	}
+	if got, want := strings.Join(models, ","), "alpha,zeta"; got != want {
+		t.Fatalf("models = %q, want %q", got, want)
+	}
+	for _, input := range [][]string{{""}, {strings.Repeat("m", 257)}} {
+		if _, err := NormalizeServiceModels(input); err == nil {
+			t.Fatalf("NormalizeServiceModels(%q) succeeded", input)
+		}
+	}
+	tooMany := make([]string, MaxServiceModels+1)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("model-%04d", index)
+	}
+	if _, err := NormalizeServiceModels(tooMany); err == nil {
+		t.Fatalf("NormalizeServiceModels() accepted %d unique models", len(tooMany))
 	}
 }
 

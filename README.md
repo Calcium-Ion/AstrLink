@@ -37,9 +37,9 @@ There is no implicit Responses-to-Chat downgrade.
   settings.
 - Post-Alpha: Claude and Gemini subscription service variants using their own official
   authorization flows.
-- Authentication, per-capability mode/streaming/models, and enablement live in
-  folded advanced settings only for HTTP services; subscription login does not
-  reuse that form.
+- Authentication and per-capability mode/streaming settings remain specific to
+  HTTP services. The exact model allow-list is configured once per Service for
+  both HTTP and subscription services; an empty list disables inference routing.
 - Existing HTTP Service documents are edited losslessly; presets do not change the
   stable wire contract or become a second persisted source of truth.
 

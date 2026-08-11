@@ -190,6 +190,11 @@ func DefaultOpenAICodexCapabilities() []Capability {
 			Mode:      CapabilityModeNative,
 			Streaming: false,
 		},
+		{
+			Protocol:  ProtocolOpenAIModels,
+			Mode:      CapabilityModeNative,
+			Streaming: false,
+		},
 	}
 }
 

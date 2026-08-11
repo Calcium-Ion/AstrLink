@@ -108,7 +108,6 @@ type Capability struct {
 	Protocol  ProtocolID     `json:"protocol"`
 	Mode      CapabilityMode `json:"mode"`
 	Streaming bool           `json:"streaming"`
-	Models    []string       `json:"models,omitempty"`
 }
 
 func (capability Capability) Validate() error {
@@ -120,16 +119,6 @@ func (capability Capability) Validate() error {
 	}
 	if descriptor, known := LookupProtocolDescriptor(capability.Protocol); known && capability.Streaming && !descriptor.Streaming {
 		return fmt.Errorf("protocol %q does not support streaming", capability.Protocol)
-	}
-	seenModels := make(map[string]struct{}, len(capability.Models))
-	for index, model := range capability.Models {
-		if model == "" || utf8.RuneCountInString(model) > 256 {
-			return fmt.Errorf("models[%d] must contain 1 to 256 characters", index)
-		}
-		if _, ok := seenModels[model]; ok {
-			return fmt.Errorf("models[%d] duplicates model %q", index, model)
-		}
-		seenModels[model] = struct{}{}
 	}
 	return nil
 }
@@ -177,6 +166,7 @@ type Endpoint struct {
 	Auth          EndpointAuth `json:"auth"`
 	CredentialRef string       `json:"credential_ref,omitempty"`
 	Enabled       bool         `json:"enabled"`
+	Models        []string     `json:"models"`
 	Capabilities  []Capability `json:"capabilities"`
 }
 
@@ -217,6 +207,11 @@ func (endpoint Endpoint) Validate() error {
 	}
 	if endpoint.Capabilities == nil {
 		return fmt.Errorf("endpoint capabilities must be a non-null array")
+	}
+	if endpoint.Models != nil {
+		if err := validateServiceModels(endpoint.Models); err != nil {
+			return err
+		}
 	}
 
 	seenCapabilities := make(map[string]struct{}, len(endpoint.Capabilities))

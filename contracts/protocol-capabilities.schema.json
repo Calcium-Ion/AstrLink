@@ -427,16 +427,6 @@
         "streaming": {
           "type": "boolean",
           "default": false
-        },
-        "models": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          },
-          "description": "Optional exact model allow-list. Omission or an empty list means the capability is not model-restricted."
         }
       },
       "additionalProperties": false,

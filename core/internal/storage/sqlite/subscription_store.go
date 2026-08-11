@@ -51,6 +51,7 @@ func (store *Store) PutSubscriptionAccount(ctx context.Context, account contract
 			return fmt.Errorf("%w: service %q has kind %q", storagecontract.ErrConflict, account.ID, existing.Service.Kind)
 		}
 		service.Enabled = existing.Service.Enabled
+		service.Models = append([]string{}, existing.Service.Models...)
 		service.CreatedAt = existing.Service.CreatedAt
 	} else if !errors.Is(err, storagecontract.ErrNotFound) {
 		return err

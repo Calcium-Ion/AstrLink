@@ -131,6 +131,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 		if len(candidates) == 0 {
 			return nil, &CapabilityUnavailableError{
 				Protocol:  request.Protocol,
+				Model:     request.Model,
 				Modes:     routeCapabilityModes(*selected),
 				Streaming: request.Streaming,
 			}
@@ -142,6 +143,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 	if len(candidates) == 0 {
 		return nil, &CapabilityUnavailableError{
 			Protocol: request.Protocol,
+			Model:    request.Model,
 			Modes: []contract.CapabilityMode{
 				contract.CapabilityModeNative,
 				contract.CapabilityModeDelegated,
@@ -315,13 +317,17 @@ func routeCandidates(
 		}
 		mode, ok := capabilityMode(target.PlanType)
 		upstreamProtocol := target.UpstreamProtocol
+		effectiveRequest := request
+		if target.UpstreamModel != "" {
+			effectiveRequest.Model = target.UpstreamModel
+		}
 		if target.PlanType == contract.PlanTypeRelayKit {
 			if !runtime.RelayKitAvailable ||
-				!supportsProtocol(candidate, upstreamProtocol, request.Model, request.Streaming, contract.CapabilityModeNative) {
+				!supportsProtocol(candidate, upstreamProtocol, effectiveRequest.Model, request.Streaming, contract.CapabilityModeNative) {
 				continue
 			}
 			mode = contract.CapabilityModeNative
-		} else if !ok || !supportsRequest(candidate, request, mode) {
+		} else if !ok || !supportsRequest(candidate, effectiveRequest, mode) {
 			continue
 		}
 		key := candidateKey{endpoint: candidate.ID}
@@ -437,6 +443,9 @@ func supportsProtocol(
 	streaming bool,
 	mode contract.CapabilityMode,
 ) bool {
+	if !protocol.IsModelDiscovery() && !containsModel(endpoint.Models, model) {
+		return false
+	}
 	for _, capability := range endpoint.Capabilities {
 		if capability.Protocol != protocol || capability.Mode != mode {
 			continue
@@ -444,9 +453,7 @@ func supportsProtocol(
 		if streaming && !capability.Streaming {
 			continue
 		}
-		if len(capability.Models) == 0 || containsModel(capability.Models, model) {
-			return true
-		}
+		return true
 	}
 	return false
 }
@@ -509,32 +516,13 @@ func (resolver *StoreResolver) ListAliasModels(
 	ctx context.Context,
 	discovery contract.ProtocolID,
 ) ([]string, error) {
-	if resolver == nil || resolver.reader == nil {
-		return nil, ErrUnavailable
-	}
-	routes, err := resolver.readRoutes(ctx)
+	mappings, err := resolver.ListAliasModelMappings(ctx, discovery)
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]struct{})
-	for _, route := range routes {
-		if !route.Enabled || route.Match.Model == "" {
-			continue
-		}
-		if !aliasRouteMatchesDiscovery(route.Match.Protocol, discovery) {
-			continue
-		}
-		hasRewrite := false
-		for _, target := range route.Targets {
-			if target.UpstreamModel != "" {
-				hasRewrite = true
-				break
-			}
-		}
-		if !hasRewrite {
-			continue
-		}
-		seen[route.Match.Model] = struct{}{}
+	seen := make(map[string]struct{}, len(mappings))
+	for _, mapping := range mappings {
+		seen[mapping.PublicModel] = struct{}{}
 	}
 	names := make([]string, 0, len(seen))
 	for name := range seen {
@@ -542,6 +530,63 @@ func (resolver *StoreResolver) ListAliasModels(
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// ListAliasModelMappings returns enabled, model-eligible rewrites for internal
+// discovery filtering. Callers must expose PublicModel only.
+func (resolver *StoreResolver) ListAliasModelMappings(
+	ctx context.Context,
+	discovery contract.ProtocolID,
+) ([]AliasModelMapping, error) {
+	if resolver == nil || resolver.reader == nil {
+		return nil, ErrUnavailable
+	}
+	routes, err := resolver.readRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	services, err := resolver.readEnabledServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[contract.ServiceID]contract.Service, len(services))
+	for _, service := range services {
+		byID[service.ID] = service
+	}
+	seen := make(map[AliasModelMapping]struct{})
+	for _, route := range routes {
+		if !route.Enabled || route.Match.Model == "" {
+			continue
+		}
+		if !aliasRouteMatchesDiscovery(route.Match.Protocol, discovery) {
+			continue
+		}
+		for _, target := range route.Targets {
+			service, exists := byID[target.ServiceID]
+			if target.UpstreamModel != "" && exists &&
+				containsModel(service.Models, target.UpstreamModel) {
+				seen[AliasModelMapping{
+					ServiceID: target.ServiceID, PublicModel: route.Match.Model,
+					UpstreamModel: target.UpstreamModel,
+				}] = struct{}{}
+			}
+		}
+	}
+	mappings := make([]AliasModelMapping, 0, len(seen))
+	for mapping := range seen {
+		mappings = append(mappings, mapping)
+	}
+	sort.Slice(mappings, func(left, right int) bool {
+		a, b := mappings[left], mappings[right]
+		if a.PublicModel != b.PublicModel {
+			return a.PublicModel < b.PublicModel
+		}
+		if a.ServiceID != b.ServiceID {
+			return a.ServiceID < b.ServiceID
+		}
+		return a.UpstreamModel < b.UpstreamModel
+	})
+	return mappings, nil
 }
 
 func aliasRouteMatchesDiscovery(routeProtocol, discovery contract.ProtocolID) bool {

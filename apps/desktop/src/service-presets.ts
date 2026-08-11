@@ -145,7 +145,7 @@ const profileDefinitions: Readonly<
     baseURLPlaceholder: "https://api.anthropic.com",
     authScheme: "anthropic_api_key",
     headerName: "",
-    capabilityIDs: ["anthropic.messages"],
+    capabilityIDs: ["anthropic.messages", "openai.models"],
     capabilityMode: "native",
     advancedOnStart: false,
   },

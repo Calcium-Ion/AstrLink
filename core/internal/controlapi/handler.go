@@ -27,6 +27,7 @@ const (
 	CapabilitiesPath           = "/control/v1/capabilities"
 	ShutdownPath               = "/control/v1/shutdown"
 	ServicesPath               = "/control/v1/services"
+	ServiceModelProbesPath     = "/control/v1/service-model-probes"
 	RoutesPath                 = "/control/v1/routes"
 	AccessTokensPath           = "/control/v1/access-tokens"
 	PoliciesPath               = "/control/v1/policies"
@@ -50,6 +51,7 @@ type Dependencies struct {
 	AuditKeys          storage.AuditKeyStore
 	AuditBlobs         storage.AuditBlobStore
 	Subscriptions      *subscription.Manager
+	ServiceModels      ServiceModelProber
 	ControlToken       string
 	NewServiceID       func() (contract.ServiceID, error)
 	NewRouteID         func() (contract.RouteID, error)
@@ -90,6 +92,7 @@ type Handler struct {
 	auditKeys      storage.AuditKeyStore
 	auditBlobs     storage.AuditBlobStore
 	subscriptions  *subscription.Manager
+	serviceModels  ServiceModelProber
 	controlToken   []byte
 	newServiceID   func() (contract.ServiceID, error)
 	newRouteID     func() (contract.RouteID, error)
@@ -136,6 +139,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		auditKeys:      dependencies.AuditKeys,
 		auditBlobs:     dependencies.AuditBlobs,
 		subscriptions:  dependencies.Subscriptions,
+		serviceModels:  dependencies.ServiceModels,
 		controlToken:   []byte(dependencies.ControlToken),
 		newServiceID:   dependencies.NewServiceID,
 		newRouteID:     dependencies.NewRouteID,

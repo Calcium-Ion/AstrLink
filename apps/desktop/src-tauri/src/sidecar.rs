@@ -25,6 +25,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(12);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 const STOP_POLL_DELAY: Duration = Duration::from_millis(25);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const SERVICE_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(65);
 // Policy changes may synchronously stop a worker for up to five seconds, and
 // model deletion also waits for download cancellation and filesystem cleanup.
 const PRIVACY_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -51,6 +52,7 @@ const LOCAL_PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/local/p
 const POLICY_DRY_RUN_PATH: &str = "/control/v1/policies/policy_privacy_default/dry-run";
 const ROUTES_PATH: &str = "/control/v1/routes";
 const SERVICES_PATH: &str = "/control/v1/services";
+const SERVICE_MODEL_PROBES_PATH: &str = "/control/v1/service-model-probes";
 #[cfg(target_os = "linux")]
 const LINUX_ONNX_RUNTIME_PATH_ENV: &str = "ASTRLINK_ONNX_RUNTIME_PATH";
 #[cfg(target_os = "linux")]
@@ -1289,6 +1291,35 @@ impl CoreManager {
         Ok(())
     }
 
+    pub async fn probe_service_models(
+        &self,
+        service_id: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::POST,
+                &format!("{SERVICES_PATH}/{service_id}/probe-models"),
+                Some(input),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("service model probe returned invalid JSON: {error}"))
+    }
+
+    pub async fn probe_draft_service_models(
+        &self,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::POST, SERVICE_MODEL_PROBES_PATH, Some(input), None)
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("draft service model probe returned invalid JSON: {error}"))
+    }
+
     pub async fn begin_service_authorization(
         &self,
         service_id: &str,
@@ -1751,6 +1782,12 @@ impl CoreManager {
 }
 
 fn control_request_timeout(method: &Method, path: &str) -> Duration {
+    if method == Method::POST
+        && (path == SERVICE_MODEL_PROBES_PATH
+            || (path.starts_with(&format!("{SERVICES_PATH}/")) && path.ends_with("/probe-models")))
+    {
+        return SERVICE_MODEL_PROBE_TIMEOUT;
+    }
     if method == Method::POST
         && (path == PRIVACY_MODEL_PROBE_PATH
             || path == LOCAL_PRIVACY_MODEL_PROBE_PATH
@@ -4118,6 +4155,17 @@ mod tests {
         assert_eq!(
             control_request_timeout(&Method::GET, PRIVACY_MODEL_CATALOG_PATH),
             REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::POST, SERVICE_MODEL_PROBES_PATH),
+            SERVICE_MODEL_PROBE_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(
+                &Method::POST,
+                "/control/v1/services/service_http/probe-models"
+            ),
+            SERVICE_MODEL_PROBE_TIMEOUT
         );
         assert_eq!(
             control_request_timeout(

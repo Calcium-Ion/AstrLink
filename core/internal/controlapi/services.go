@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,14 +15,21 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
+
+type ServiceModelProber interface {
+	ProbeService(context.Context, contract.Service, contract.ProtocolID) ([]string, error)
+	ProbeHTTP(context.Context, contract.ServiceID, contract.ServiceKind, contract.HTTPConnection, []byte, contract.ProtocolID) ([]string, error)
+}
 
 type serviceCreateRequest struct {
 	Name         string                `json:"name"`
 	Kind         *contract.ServiceKind `json:"kind"`
 	Enabled      json.RawMessage       `json:"enabled,omitempty"`
+	Models       json.RawMessage       `json:"models,omitempty"`
 	HTTP         json.RawMessage       `json:"http,omitempty"`
 	Capabilities json.RawMessage       `json:"capabilities,omitempty"`
 }
@@ -54,6 +62,7 @@ type authorizationStartRequest struct {
 func (handler *Handler) registerServiceRoutes() {
 	handler.mux.HandleFunc(ServicesPath, handler.authenticated(handler.serviceCollection))
 	handler.mux.HandleFunc(ServicesPath+"/", handler.authenticated(handler.serviceItem))
+	handler.mux.HandleFunc(ServiceModelProbesPath, handler.authenticated(handler.probeDraftServiceModels))
 }
 
 func (handler *Handler) serviceCollection(writer http.ResponseWriter, request *http.Request) {
@@ -169,6 +178,12 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 		ID: id, Name: input.Name, Kind: *input.Kind, Enabled: enabled,
 		CreatedAt: now, UpdatedAt: now,
 	}
+	models, err := decodeServiceModels(input.Models)
+	if err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "models violate the service contract")
+		return
+	}
+	service.Models = models
 	credential := storage.CredentialMutation{}
 	switch {
 	case input.Kind.IsSubscription():
@@ -446,8 +461,20 @@ func (handler *Handler) logoutService(writer http.ResponseWriter, request *http.
 }
 
 type serviceModelProbeResponse struct {
-	ServiceID contract.ServiceID `json:"service_id"`
-	ModelIDs  []string           `json:"model_ids"`
+	ServiceID contract.ServiceID  `json:"service_id,omitempty"`
+	Protocol  contract.ProtocolID `json:"protocol"`
+	ModelIDs  []string            `json:"model_ids"`
+}
+
+type serviceModelProbeRequest struct {
+	Protocol *contract.ProtocolID `json:"protocol"`
+}
+
+type draftServiceModelProbeRequest struct {
+	ServiceID *contract.ServiceID   `json:"service_id,omitempty"`
+	Kind      *contract.ServiceKind `json:"kind"`
+	HTTP      json.RawMessage       `json:"http"`
+	Protocol  *contract.ProtocolID  `json:"protocol"`
 }
 
 type subscriptionResponsesProbeRequest struct {
@@ -455,23 +482,130 @@ type subscriptionResponsesProbeRequest struct {
 }
 
 func (handler *Handler) probeServiceModels(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
-	tokens, err := handler.subscriptions.AccessToken(request.Context(), id)
-	if err != nil {
-		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
+	if handler.serviceModels == nil {
+		writeError(writer, http.StatusServiceUnavailable, "model_probe_unavailable", "model discovery is unavailable")
 		return
 	}
-	models, err := handler.subscriptions.Provider().ListModels(request.Context(), tokens)
+	protocol := contract.ProtocolOpenAIModels
+	if request.Body != nil && request.ContentLength != 0 {
+		if !requireMediaType(writer, request, "application/json") {
+			return
+		}
+		var input serviceModelProbeRequest
+		if !decodeControlJSON(writer, request, &input) {
+			return
+		}
+		if input.Protocol == nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "protocol is required")
+			return
+		}
+		protocol = *input.Protocol
+	}
+	record, err := handler.serviceStore.GetService(request.Context(), id)
 	if err != nil {
-		writeError(writer, http.StatusBadGateway, "subscription_probe_failed", "model discovery through subscription failed")
+		handler.writeStoreError(writer, err)
 		return
 	}
-	ids := make([]string, 0, len(models.Data))
-	for _, model := range models.Data {
-		if model.ID != "" {
-			ids = append(ids, model.ID)
+	ids, err := handler.serviceModels.ProbeService(request.Context(), record.Service, protocol)
+	if err != nil {
+		writeServiceModelProbeError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, serviceModelProbeResponse{ServiceID: id, Protocol: protocol, ModelIDs: ids})
+}
+
+func (handler *Handler) probeDraftServiceModels(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeMethodNotAllowed(writer, http.MethodPost)
+		return
+	}
+	if handler.serviceModels == nil {
+		writeError(writer, http.StatusServiceUnavailable, "model_probe_unavailable", "model discovery is unavailable")
+		return
+	}
+	if !requireMediaType(writer, request, "application/json") {
+		return
+	}
+	var input draftServiceModelProbeRequest
+	if !decodeControlJSON(writer, request, &input) {
+		return
+	}
+	if input.Kind == nil || input.Protocol == nil || input.HTTP == nil || !input.Kind.IsHTTP() {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "kind, http, and protocol are required")
+		return
+	}
+	var httpInput serviceHTTPInput
+	if strictUnmarshal(input.HTTP, &httpInput) != nil || httpInput.Auth == nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "http service configuration is invalid")
+		return
+	}
+	auth, err := decodeServiceAuth(httpInput.Auth)
+	if err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "http authentication is invalid")
+		return
+	}
+	serviceID := contract.ServiceID("service_model_probe")
+	connection := contract.HTTPConnection{BaseURL: httpInput.BaseURL, Auth: auth}
+	var secret []byte
+	if httpInput.Credential != nil {
+		if isJSONNull(httpInput.Credential) {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "credential must be an object")
+			return
+		}
+		var credential credentialInput
+		if strictUnmarshal(httpInput.Credential, &credential) != nil || credential.Secret == "" {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "credential.secret must not be empty")
+			return
+		}
+		secret = []byte(credential.Secret)
+		defer clear(secret)
+	}
+	if input.ServiceID != nil {
+		if err := input.ServiceID.Validate(); err != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "service_id is invalid")
+			return
+		}
+		current, err := handler.serviceStore.GetService(request.Context(), *input.ServiceID)
+		if err != nil {
+			handler.writeStoreError(writer, err)
+			return
+		}
+		if !current.Service.Kind.IsHTTP() || current.Service.HTTP == nil {
+			writeError(writer, http.StatusConflict, "service_not_http", "service does not have an HTTP credential")
+			return
+		}
+		serviceID = *input.ServiceID
+		if len(secret) == 0 {
+			connection.CredentialRef = current.Service.HTTP.CredentialRef
 		}
 	}
-	writeJSON(writer, http.StatusOK, serviceModelProbeResponse{ServiceID: id, ModelIDs: ids})
+	ids, err := handler.serviceModels.ProbeHTTP(
+		request.Context(), serviceID, *input.Kind, connection, secret, *input.Protocol,
+	)
+	if err != nil {
+		writeServiceModelProbeError(writer, err)
+		return
+	}
+	response := serviceModelProbeResponse{Protocol: *input.Protocol, ModelIDs: ids}
+	if input.ServiceID != nil {
+		response.ServiceID = *input.ServiceID
+	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
+func writeServiceModelProbeError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(writer, http.StatusGatewayTimeout, "upstream_model_discovery_timeout", "upstream model discovery timed out")
+	case errors.Is(err, servicemodel.ErrUnsupported):
+		writeError(writer, http.StatusUnprocessableEntity, "model_discovery_unsupported", "service does not support this model discovery protocol")
+	case errors.Is(err, servicemodel.ErrCredentialUnavailable):
+		writeError(writer, http.StatusConflict, "credential_unavailable", "service credential is unavailable")
+	case errors.Is(err, servicemodel.ErrNotConnected):
+		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
+	default:
+		writeError(writer, http.StatusBadGateway, "upstream_model_discovery_failed", "upstream model discovery failed")
+	}
 }
 
 func (handler *Handler) probeServiceResponses(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
@@ -522,7 +656,7 @@ func applyServicePatch(
 	if len(patch) == 0 {
 		return service, credential, fmt.Errorf("patch is empty")
 	}
-	allowed := map[string]bool{"name": true, "enabled": true}
+	allowed := map[string]bool{"name": true, "enabled": true, "models": true}
 	if service.Kind.IsHTTP() {
 		allowed["http"] = true
 		allowed["capabilities"] = true
@@ -541,6 +675,13 @@ func applyServicePatch(
 		if err := strictUnmarshal(raw, &service.Enabled); err != nil {
 			return service, credential, err
 		}
+	}
+	if raw, ok := patch["models"]; ok {
+		models, err := decodeServiceModels(raw)
+		if err != nil {
+			return service, credential, err
+		}
+		service.Models = models
 	}
 	if raw, ok := patch["capabilities"]; ok {
 		capabilities, err := decodeServiceCapabilities(raw)

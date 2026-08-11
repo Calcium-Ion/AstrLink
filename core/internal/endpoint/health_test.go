@@ -264,6 +264,7 @@ func TestStoreResolverExcludesOpenAutomaticCandidateButKeepsExplicitPin(t *testi
 			})
 			request := ResolveRequest{
 				Protocol:  contract.ProtocolOpenAIResponses,
+				Model:     "gpt-5",
 				Streaming: true,
 			}
 			candidates, err := resolver.ResolveCandidates(context.Background(), request)

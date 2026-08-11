@@ -13,6 +13,8 @@ const bridgeMocks = vi.hoisted(() => ({
   getServiceAuthorization: vi.fn(),
   logoutService: vi.fn(),
   openAuthorizationURL: vi.fn(),
+  probeDraftServiceModels: vi.fn(),
+  probeServiceModels: vi.fn(),
   updateService: vi.fn(),
 }));
 
@@ -29,6 +31,7 @@ const codexService: Service = {
   name: "Codex personal",
   kind: "codex_subscription",
   enabled: true,
+  models: [],
   capabilities: [
     { protocol: "openai.responses", mode: "native", streaming: true },
   ],
@@ -51,8 +54,10 @@ const gatewayService: Service = {
   name: "new-api",
   kind: "newapi",
   enabled: true,
+  models: ["gpt-5"],
   capabilities: [
     { protocol: "openai.responses", mode: "delegated", streaming: true },
+    { protocol: "openai.models", mode: "delegated", streaming: false },
   ],
   http: {
     base_url: "https://gateway.example/v1",
@@ -181,6 +186,7 @@ describe("ServiceManager", () => {
       name: "Personal Codex",
       kind: "codex_subscription",
       enabled: true,
+      models: [],
     });
     expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
       codexService.id,
@@ -255,6 +261,185 @@ describe("ServiceManager", () => {
     expect(
       container.querySelector<HTMLInputElement>("#service-name")?.value,
     ).toBe("Anthropic API");
+  });
+
+  it("previews upstream models and reuses the saved credential for an edited service", async () => {
+    bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
+    bridgeMocks.probeDraftServiceModels.mockResolvedValue({
+      service_id: gatewayService.id,
+      protocol: "openai.models",
+      model_ids: ["gpt-4.1", "gpt-5"],
+    });
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[gatewayService]}
+          view={{ kind: "edit", serviceId: gatewayService.id }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const fetchModels = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "从上游获取",
+    );
+    await act(async () => {
+      fetchModels?.click();
+      await Promise.resolve();
+    });
+    expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledWith({
+      service_id: gatewayService.id,
+      kind: "newapi",
+      http: {
+        base_url: gatewayService.http?.base_url,
+        auth: { scheme: "bearer" },
+      },
+      protocol: "openai.models",
+    });
+    expect(container.textContent).toContain("选择服务支持的模型");
+    const apply = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.startsWith("应用所选模型"),
+    );
+    await act(async () => apply?.click());
+    expect(container.textContent).toContain("2 / 2,000 个模型");
+  });
+
+  it("merges New API discovery results and keeps successful results after a partial failure", async () => {
+    const multiProtocolGateway: Service = {
+      ...gatewayService,
+      models: ["current-model"],
+      capabilities: [
+        ...gatewayService.capabilities,
+        { protocol: "google.models", mode: "delegated", streaming: false },
+      ],
+    };
+    bridgeMocks.getService.mockResolvedValue({
+      service: multiProtocolGateway,
+      etag,
+    });
+    bridgeMocks.probeDraftServiceModels.mockImplementation(
+      ({ protocol }: { protocol: string }) =>
+        protocol === "openai.models"
+          ? Promise.resolve({
+              service_id: gatewayService.id,
+              protocol,
+              model_ids: ["openai-model"],
+            })
+          : Promise.reject(new Error("Gemini 上游暂不可用")),
+    );
+
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[multiProtocolGateway]}
+          view={{ kind: "edit", serviceId: gatewayService.id }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const fetchModels = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "从上游获取",
+    );
+    await act(async () => {
+      fetchModels?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("部分协议获取失败");
+    expect(container.textContent).toContain("current-model");
+    expect(container.textContent).toContain("openai-model");
+    const apply = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.startsWith("应用所选模型"),
+    );
+    await act(async () => apply?.click());
+    expect(container.textContent).toContain("2 / 2,000 个模型");
+  });
+
+  it("keeps a saved API key when connection settings change without explicit removal", async () => {
+    const updatedService: Service = {
+      ...gatewayService,
+      http: {
+        ...gatewayService.http!,
+        auth: { scheme: "none" },
+      },
+    };
+    bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
+    bridgeMocks.updateService.mockResolvedValue({
+      service: updatedService,
+      etag: `"sha256:${"b".repeat(64)}"`,
+    });
+
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[gatewayService]}
+          view={{ kind: "edit", serviceId: gatewayService.id }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const authSelect = [...container.querySelectorAll("select")].find(
+      (select) => select.value === "bearer",
+    );
+    if (!authSelect) throw new Error("missing authentication select");
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "value",
+    )?.set;
+    if (!valueSetter) throw new Error("missing select value setter");
+    await act(async () => {
+      valueSetter.call(authSelect, "none");
+      authSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const form = container.querySelector<HTMLFormElement>("form");
+    await act(async () => {
+      form?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(bridgeMocks.updateService).toHaveBeenCalledWith(
+      gatewayService.id,
+      etag,
+      {
+        name: gatewayService.name,
+        enabled: true,
+        models: ["gpt-5"],
+        http: {
+          base_url: gatewayService.http?.base_url,
+          auth: { scheme: "none" },
+        },
+        capabilities: gatewayService.capabilities,
+      },
+    );
   });
 
   it("keeps a newly created Codex service when login cannot start", async () => {

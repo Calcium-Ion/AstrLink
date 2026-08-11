@@ -23,6 +23,10 @@ func (store *Store) CreateService(
 		service.CreatedAt = now
 	}
 	service.UpdatedAt = now
+	service.Models, err = contract.NormalizeServiceModels(service.Models)
+	if err != nil {
+		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
 	service, err = applyServiceCredentialMutation(service, credential)
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
@@ -154,6 +158,10 @@ func (store *Store) UpdateService(
 	}
 	service.CreatedAt = current.Service.CreatedAt
 	service.UpdatedAt = store.now().UTC()
+	service.Models, err = contract.NormalizeServiceModels(service.Models)
+	if err != nil {
+		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
 	service, err = applyServiceCredentialMutation(service, credential)
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
@@ -247,6 +255,11 @@ func applyServiceCredentialMutation(service contract.Service, credential storage
 }
 
 func encodeService(service contract.Service) ([]byte, error) {
+	models, err := contract.NormalizeServiceModels(service.Models)
+	if err != nil {
+		return nil, err
+	}
+	service.Models = models
 	if err := service.Validate(); err != nil {
 		return nil, err
 	}

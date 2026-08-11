@@ -4,6 +4,7 @@ import {
   parseService,
   parseServicePage,
   parseServiceRecord,
+  parseServiceModelProbe,
 } from "./service-model";
 
 const createdAt = "2026-07-28T12:00:00Z";
@@ -17,6 +18,7 @@ describe("service model", () => {
           name: "Codex personal",
           kind: "codex_subscription",
           enabled: true,
+          models: [],
           capabilities: [
             {
               protocol: "openai.responses",
@@ -39,6 +41,7 @@ describe("service model", () => {
           name: "new-api",
           kind: "newapi",
           enabled: true,
+          models: ["gpt-5"],
           capabilities: [
             {
               protocol: "openai.responses",
@@ -75,6 +78,7 @@ describe("service model", () => {
         name: "Wrong",
         kind: "codex_subscription",
         enabled: true,
+        models: [],
         capabilities: [],
         http: {
           base_url: "https://example.com",
@@ -86,6 +90,32 @@ describe("service model", () => {
     ).toThrow(/requires only subscription/);
   });
 
+  it("rejects retired capability-level model lists", () => {
+    expect(() =>
+      parseService({
+        id: "service_http",
+        name: "HTTP",
+        kind: "openai",
+        enabled: true,
+        models: [],
+        capabilities: [
+          {
+            protocol: "openai.responses",
+            mode: "native",
+            streaming: true,
+            models: ["gpt-5"],
+          },
+        ],
+        http: {
+          base_url: "https://example.com",
+          auth: { scheme: "none" },
+        },
+        created_at: createdAt,
+        updated_at: createdAt,
+      }),
+    ).toThrow(/capabilities\[0\]\.models: unexpected field/);
+  });
+
   it("parses service records with strong ETags", () => {
     const record = parseServiceRecord({
       service: {
@@ -93,6 +123,7 @@ describe("service model", () => {
         name: "Codex work",
         kind: "codex_subscription",
         enabled: true,
+        models: [],
         capabilities: [],
         subscription: {
           provider: "openai_codex",
@@ -104,5 +135,25 @@ describe("service model", () => {
       etag: `"sha256:${"a".repeat(64)}"`,
     });
     expect(record.service.id).toBe("service_codex_work");
+  });
+
+  it("parses bounded model probe results", () => {
+    expect(
+      parseServiceModelProbe({
+        service_id: "service_gateway",
+        protocol: "openai.models",
+        model_ids: ["gpt-5", "gpt-4.1"],
+      }),
+    ).toEqual({
+      service_id: "service_gateway",
+      protocol: "openai.models",
+      model_ids: ["gpt-5", "gpt-4.1"],
+    });
+    expect(() =>
+      parseServiceModelProbe({
+        protocol: "vendor.models",
+        model_ids: [],
+      }),
+    ).toThrow(/unknown model discovery protocol/);
   });
 });

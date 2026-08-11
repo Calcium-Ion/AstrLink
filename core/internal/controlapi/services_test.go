@@ -167,6 +167,33 @@ func TestServicesAreTheOnlyServiceControlSurface(t *testing.T) {
 		t.Fatalf("stale patch status=%d body=%s", stale.Code, stale.Body.String())
 	}
 
+	retained := serviceRequestForTest(
+		t,
+		handler,
+		http.MethodPatch,
+		ServicesPath+"/service_http_one",
+		"application/merge-patch+json",
+		`{
+			"http":{
+				"base_url":"https://replacement.example/v1",
+				"auth":{"scheme":"google_api_key"}
+			}
+		}`,
+		etag,
+	)
+	if retained.Code != http.StatusOK {
+		t.Fatalf("credential-retaining patch status=%d body=%s", retained.Code, retained.Body.String())
+	}
+	retainedETag := retained.Header().Get("ETag")
+	secret, err := store.Get(
+		context.Background(),
+		secretstore.Ref("local://service/service_http_one"),
+	)
+	if err != nil || string(secret) != "initial-secret-value" {
+		t.Fatalf("retained credential=%q err=%v", secret, err)
+	}
+	clear(secret)
+
 	updated := serviceRequestForTest(
 		t,
 		handler,
@@ -177,19 +204,19 @@ func TestServicesAreTheOnlyServiceControlSurface(t *testing.T) {
 			"name":"new-api renamed",
 			"http":{"credential":{"secret":"replacement-secret-value"}}
 		}`,
-		etag,
+		retainedETag,
 	)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("patch status=%d body=%s", updated.Code, updated.Body.String())
 	}
 	updatedETag := updated.Header().Get("ETag")
-	if updatedETag == "" || updatedETag == etag {
-		t.Fatalf("updated ETag=%q initial=%q", updatedETag, etag)
+	if updatedETag == "" || updatedETag == retainedETag {
+		t.Fatalf("updated ETag=%q retained=%q", updatedETag, retainedETag)
 	}
 	if strings.Contains(updated.Body.String(), "replacement-secret-value") {
 		t.Fatal("patch response exposed replacement credential")
 	}
-	secret, err := store.Get(
+	secret, err = store.Get(
 		context.Background(),
 		secretstore.Ref("local://service/service_http_one"),
 	)

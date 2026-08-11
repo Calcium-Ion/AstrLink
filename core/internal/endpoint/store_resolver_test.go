@@ -60,13 +60,41 @@ func TestStoreResolverUsesDelegatedOnlyWhenNoNativePathExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolved, err := resolver.Resolve(context.Background(), ResolveRequest{
-		Protocol: contract.ProtocolOpenAIResponses, Streaming: true,
+		Protocol: contract.ProtocolOpenAIResponses, Model: "gpt-5", Streaming: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved.Endpoint.ID != "endpoint_01" || resolved.Mode != contract.CapabilityModeDelegated {
 		t.Fatalf("delegated resolution = %#v", resolved)
+	}
+}
+
+func TestStoreResolverTreatsEmptyServiceModelListAsNoAvailableModels(t *testing.T) {
+	reader := endpointReaderFunc(func(context.Context, storage.EndpointListOptions) (storage.EndpointPage, error) {
+		return storage.EndpointPage{Items: []storage.EndpointRecord{{
+			Endpoint: resolverEndpoint(
+				"endpoint_empty_models",
+				contract.CapabilityModeNative,
+				true,
+				[]string{},
+			),
+		}}}, nil
+	})
+	resolver, err := NewStoreResolver(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolver.Resolve(context.Background(), ResolveRequest{
+		Protocol: contract.ProtocolOpenAIResponses,
+		Model:    "gpt-5",
+	})
+	if !errors.Is(err, ErrNoEndpoint) {
+		t.Fatalf("Resolve() error = %v, want ErrNoEndpoint", err)
+	}
+	var capabilityErr *CapabilityUnavailableError
+	if !errors.As(err, &capabilityErr) || capabilityErr.Model != "gpt-5" {
+		t.Fatalf("Resolve() error = %#v, want requested model detail", err)
 	}
 }
 
@@ -105,11 +133,18 @@ func TestStoreResolverPaginatesAndFailsClosed(t *testing.T) {
 }
 
 func resolverEndpoint(id contract.ServiceID, mode contract.CapabilityMode, streaming bool, models []string) contract.Endpoint {
+	if models == nil {
+		models = []string{
+			"gpt-5", "other", "public-alias", "real", "real-a", "real-b",
+			"real-a-dup", "delegated-rewrite", "native-rewrite", "gemini-real",
+		}
+	}
 	return contract.Endpoint{
 		ID: id, Name: string(id), Kind: contract.EndpointKindOpenAI,
 		BaseURL: "https://api.example/v1", Auth: contract.EndpointAuth{Scheme: contract.AuthSchemeNone}, Enabled: true,
+		Models: models,
 		Capabilities: []contract.Capability{{
-			Protocol: contract.ProtocolOpenAIResponses, Mode: mode, Streaming: streaming, Models: models,
+			Protocol: contract.ProtocolOpenAIResponses, Mode: mode, Streaming: streaming,
 		}},
 	}
 }

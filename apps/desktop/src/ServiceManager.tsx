@@ -9,6 +9,8 @@ import {
   getServiceAuthorization,
   logoutService,
   openAuthorizationURL,
+  probeDraftServiceModels,
+  probeServiceModels,
   updateService,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
@@ -21,10 +23,12 @@ import {
   type ProtocolDescriptor,
 } from "./service-presets";
 import { PageHeader } from "./PageHeader";
+import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 import {
   serviceKindLabel,
   serviceStatusLabel,
   type HTTPServiceKind,
+  type ModelDiscoveryProtocol,
   type Service,
   type ServiceAuthScheme,
   type ServiceCapability,
@@ -72,6 +76,7 @@ type Draft = {
   headerName: string;
   secret: string;
   removeCredential: boolean;
+  models: string[];
   capabilities: ServiceCapability[];
   authorizationFlow: AuthorizationFlow | null;
 };
@@ -85,6 +90,12 @@ type AuthorizationDialog = {
   service: Service;
   requestedFlow: AuthorizationFlow;
   session: AuthorizationSession;
+};
+
+type ModelPreview = {
+  models: string[];
+  selected: string[];
+  warnings: string[];
 };
 
 const authLabels: Record<ServiceAuthScheme, string> = {
@@ -109,6 +120,7 @@ function draftForKind(
       headerName: "",
       secret: "",
       removeCredential: false,
+      models: [],
       capabilities: [],
       authorizationFlow: null,
     };
@@ -126,6 +138,7 @@ function draftForKind(
     headerName: preset.headerName,
     secret: "",
     removeCredential: false,
+    models: [],
     capabilities: preset.capabilities.map((capability) => ({ ...capability })),
     authorizationFlow: null,
   };
@@ -138,6 +151,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
       ...draftForKind("codex_subscription", []),
       name: service.name,
       enabled: service.enabled,
+      models: [...service.models],
     };
   }
   if (!service.http) throw new Error("HTTP 服务缺少连接配置。");
@@ -150,13 +164,9 @@ function draftFromRecord(record: ServiceRecord): Draft {
     headerName: service.http.auth.header_name ?? "",
     secret: "",
     removeCredential: false,
+    models: [...service.models],
     authorizationFlow: null,
-    capabilities: service.capabilities.map((capability) => ({
-      ...capability,
-      ...(capability.models
-        ? { models: [...capability.models] }
-        : {}),
-    })),
+    capabilities: service.capabilities.map((capability) => ({ ...capability })),
   };
 }
 
@@ -180,6 +190,14 @@ function validateDraft(
 ): string | null {
   if (draft.name.trim().length === 0 || [...draft.name.trim()].length > 128) {
     return "服务名称需包含 1 至 128 个字符。";
+  }
+  if (draft.models.length > 2_000) return "每个服务最多配置 2,000 个模型。";
+  if (
+    draft.models.some(
+      (model) => [...model].length < 1 || [...model].length > 256,
+    ) || new Set(draft.models).size !== draft.models.length
+  ) {
+    return "模型 ID 必须唯一，且每项包含 1 至 256 个字符。";
   }
   if (draft.kind === "codex_subscription") {
     if (!editing && draft.authorizationFlow === null) {
@@ -260,6 +278,9 @@ export function ServiceManager({
     useState<AuthorizationFlow | null>(null);
   const [authorizationDialog, setAuthorizationDialog] =
     useState<AuthorizationDialog | null>(null);
+  const [modelEditor, setModelEditor] = useState("");
+  const [probingModels, setProbingModels] = useState(false);
+  const [modelPreview, setModelPreview] = useState<ModelPreview | null>(null);
   const copyFeedback = useCopyFeedback();
   const loadGeneration = useRef(0);
   const protocolsRef = useRef(protocols);
@@ -280,6 +301,8 @@ export function ServiceManager({
     const generation = loadGeneration.current + 1;
     loadGeneration.current = generation;
     setError(null);
+    setModelEditor("");
+    setModelPreview(null);
     if (view.kind === "list") {
       setEditing(null);
       setBaseline(null);
@@ -426,6 +449,93 @@ export function ServiceManager({
     });
   };
 
+  const addModels = () => {
+    const additions = modelEditor
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map(decodeModelEditorValue);
+    if (additions.length === 0) {
+      setError("请输入至少一个模型 ID；批量添加时每行一个。");
+      return;
+    }
+    if (additions.some((model) => [...model].length > 256)) {
+      setError("模型 ID 不能超过 256 个字符。");
+      return;
+    }
+    const models = [...new Set([...draft.models, ...additions])].sort();
+    if (models.length > 2_000) {
+      setError("每个服务最多配置 2,000 个模型。");
+      return;
+    }
+    setDraft((current) => ({ ...current, models }));
+    setModelEditor("");
+    setError(null);
+  };
+
+  const discoverModels = async () => {
+    if (draft.kind === "codex_subscription" && !editing) {
+      setError("请先保存并完成 Codex 登录，再从上游获取模型。");
+      return;
+    }
+    const discoveryProtocols: ModelDiscoveryProtocol[] =
+      draft.kind === "codex_subscription"
+        ? ["openai.models"]
+        : (["openai.models", "google.models"] as const).filter((protocol) =>
+            draft.capabilities.some((capability) => capability.protocol === protocol),
+          );
+    if (discoveryProtocols.length === 0) {
+      setError("请先在 API 能力中启用 OpenAI Models 或 Gemini Models。");
+      return;
+    }
+    setProbingModels(true);
+    setError(null);
+    try {
+      const attempts = await Promise.allSettled(
+        discoveryProtocols.map((protocol) => {
+          if (draft.kind === "codex_subscription") {
+            return probeServiceModels(editing!.service.id, protocol);
+          }
+          return probeDraftServiceModels({
+            ...(editing ? { service_id: editing.service.id } : {}),
+            kind: draft.kind as HTTPServiceKind,
+            http: {
+              base_url: draft.baseURL.trim(),
+              auth: authForDraft(draft),
+              ...(draft.secret.trim()
+                ? { credential: { secret: draft.secret } }
+                : {}),
+            },
+            protocol,
+          });
+        }),
+      );
+      const discovered: string[] = [];
+      const warnings: string[] = [];
+      attempts.forEach((attempt, index) => {
+        if (attempt.status === "fulfilled") {
+          discovered.push(...attempt.value.model_ids);
+        } else {
+          warnings.push(
+            `${protocolLabel(discoveryProtocols[index] ?? "models")}：${errorMessage(attempt.reason, "获取失败")}`,
+          );
+        }
+      });
+      if (warnings.length === attempts.length) {
+        setError(`无法从上游获取模型。${warnings.join("；")}`);
+        return;
+      }
+      const models = [...new Set([...draft.models, ...discovered])].sort();
+      if (models.length > 2_000) {
+        setError("上游模型与当前清单合并后超过 2,000 项，草稿未作更改。");
+        return;
+      }
+      setModelPreview({ models, selected: [...models], warnings });
+    } finally {
+      setProbingModels(false);
+    }
+  };
+
   const presentAuthorization = (
     service: Service,
     requestedFlow: AuthorizationFlow,
@@ -460,6 +570,7 @@ export function ServiceManager({
         const patch: ServicePatchInput = {
           name: draft.name.trim(),
           enabled: draft.enabled,
+          models: draft.models,
         };
         if (draft.kind !== "codex_subscription") {
           patch.http = {
@@ -467,9 +578,7 @@ export function ServiceManager({
             auth: authForDraft(draft),
             ...(draft.secret.trim()
               ? { credential: { secret: draft.secret } }
-              : draft.removeCredential ||
-                  (draft.authScheme === "none" &&
-                    Boolean(editing.service.http?.credential_ref))
+              : draft.removeCredential
                 ? { credential: null }
                 : {}),
           };
@@ -488,12 +597,14 @@ export function ServiceManager({
             name: draft.name.trim(),
             kind: "codex_subscription",
             enabled: draft.enabled,
+            models: draft.models,
           };
         } else {
           input = {
             name: draft.name.trim(),
             kind: draft.kind as HTTPServiceKind,
             enabled: draft.enabled,
+            models: draft.models,
             http: {
               base_url: draft.baseURL.trim(),
               auth: authForDraft(draft),
@@ -730,7 +841,7 @@ export function ServiceManager({
                             : "OpenAI Codex OAuth")}
                       </code>
                       <p>
-                        支持 {service.capabilities.length} 项 API 能力
+                        支持 {service.capabilities.length} 项 API 能力 · {service.models.length} 个模型
                         {subscription?.authorization_boundary
                           ? ` · ${subscription.authorization_boundary}`
                           : ""}
@@ -1320,6 +1431,65 @@ export function ServiceManager({
               ) : null}
             </div>
 
+            <fieldset
+              aria-labelledby="service-models-editor-heading"
+              className="service-models-editor"
+            >
+              <div className="service-models-editor__heading">
+                <strong id="service-models-editor-heading">支持模型</strong>
+                <button
+                  className="btn-secondary"
+                  disabled={probingModels}
+                  onClick={() => void discoverModels()}
+                  type="button"
+                >
+                  {probingModels ? "获取中…" : "从上游获取"}
+                </button>
+              </div>
+              <p className="service-models-editor__help">
+                精确匹配的服务级白名单。空清单表示没有可用模型，服务不会参与推理路由。
+              </p>
+              <div className="service-models-editor__add">
+                <textarea
+                  aria-label="待添加模型 ID"
+                  placeholder={"每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-4-5"}
+                  rows={3}
+                  value={modelEditor}
+                  onChange={(event) => setModelEditor(event.target.value)}
+                />
+                <button className="btn-secondary" onClick={addModels} type="button">
+                  添加模型
+                </button>
+              </div>
+              {draft.models.length === 0 ? (
+                <p className="service-models-editor__empty" role="status">
+                  0 个模型：该服务当前不会参与路由。
+                </p>
+              ) : (
+                <div className="service-model-list" aria-label="已配置模型">
+                  {draft.models.map((model) => (
+                    <div className="service-model-row" key={model}>
+                      <code title={encodeModelEditorValue(model)}>
+                        {encodeModelEditorValue(model)}
+                      </code>
+                      <button
+                        onClick={() =>
+                          setDraft((current) => ({
+                            ...current,
+                            models: current.models.filter((item) => item !== model),
+                          }))
+                        }
+                        type="button"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <small>{draft.models.length} / 2,000 个模型</small>
+            </fieldset>
+
             {draft.kind === "codex_subscription" ? (
               <div className="preset-summary">
                 <span aria-hidden="true">✓</span>
@@ -1417,6 +1587,70 @@ export function ServiceManager({
           </div>
         </form>
       )}
+      {modelPreview ? (
+        <div className="token-dialog-backdrop" role="presentation">
+          <section
+            aria-labelledby="service-model-preview-title"
+            aria-modal="true"
+            className="token-dialog service-model-preview"
+            role="dialog"
+          >
+            <h3 id="service-model-preview-title">选择服务支持的模型</h3>
+            <p>确认后，服务模型清单将替换为下面勾选的项目。</p>
+            {modelPreview.warnings.length > 0 ? (
+              <div className="form-message form-message--notice" role="status">
+                部分协议获取失败：{modelPreview.warnings.join("；")}
+              </div>
+            ) : null}
+            <div className="service-model-preview__list">
+              {modelPreview.models.length === 0 ? (
+                <p>上游没有返回模型；确认后将应用空清单。</p>
+              ) : (
+                modelPreview.models.map((model) => (
+                  <label className="advanced-check" key={model}>
+                    <input
+                      checked={modelPreview.selected.includes(model)}
+                      onChange={(event) =>
+                        setModelPreview((current) => {
+                          if (!current) return current;
+                          const selected = event.target.checked
+                            ? [...new Set([...current.selected, model])].sort()
+                            : current.selected.filter((item) => item !== model);
+                          return { ...current, selected };
+                        })
+                      }
+                      type="checkbox"
+                    />
+                    <code>{encodeModelEditorValue(model)}</code>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="token-dialog__actions">
+              <button
+                className="btn-secondary"
+                onClick={() => setModelPreview(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  setDraft((current) => ({
+                    ...current,
+                    models: [...modelPreview.selected].sort(),
+                  }));
+                  setModelPreview(null);
+                }}
+                type="button"
+              >
+                应用所选模型（{modelPreview.selected.length}）
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
