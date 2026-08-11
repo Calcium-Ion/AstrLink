@@ -289,7 +289,7 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
     const fetchModels = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "从上游获取",
+      (button) => button.textContent === "获取模型列表",
     );
     await act(async () => {
       fetchModels?.click();
@@ -309,7 +309,7 @@ describe("ServiceManager", () => {
       button.textContent?.startsWith("应用所选模型"),
     );
     await act(async () => apply?.click());
-    expect(container.textContent).toContain("2 / 2,000 个模型");
+    expect(container.textContent).toContain("2 / 2,000");
   });
 
   it("merges New API discovery results and keeps successful results after a partial failure", async () => {
@@ -355,7 +355,7 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
     const fetchModels = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "从上游获取",
+      (button) => button.textContent === "获取模型列表",
     );
     await act(async () => {
       fetchModels?.click();
@@ -370,7 +370,145 @@ describe("ServiceManager", () => {
       button.textContent?.startsWith("应用所选模型"),
     );
     await act(async () => apply?.click());
-    expect(container.textContent).toContain("2 / 2,000 个模型");
+    expect(container.textContent).toContain("2 / 2,000");
+  });
+
+  it("groups allow-listed models and supports search plus clear", async () => {
+    const listed: Service = {
+      ...gatewayService,
+      models: [
+        "claude-opus-4-7",
+        "claude-sonnet-4-5",
+        "gpt-5",
+        "gpt-5-mini",
+      ],
+    };
+    bridgeMocks.getService.mockResolvedValue({ service: listed, etag });
+
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[listed]}
+          view={{ kind: "edit", serviceId: listed.id }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("claude-opus");
+    expect(container.textContent).toContain("claude-sonnet");
+    expect(container.textContent).toContain("4 / 2,000");
+    expect(container.textContent).toContain("3 组 · 4 个模型");
+    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(4);
+    expect(container.textContent).toContain("claude-opus-4-7");
+
+    const search = container.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索已配置模型"]',
+    );
+    if (!search) throw new Error("missing model search");
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    if (!valueSetter) throw new Error("missing input value setter");
+    await act(async () => {
+      valueSetter.call(search, "sonnet");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.textContent).toContain("匹配 1 / 4");
+    expect(container.textContent).toContain("claude-sonnet-4-5");
+    expect(container.textContent).not.toContain("claude-opus-4-7");
+    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(1);
+
+    const clear = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "清空",
+    );
+    await act(async () => clear?.click());
+    expect(container.textContent).toContain("清空支持模型？");
+    const confirm = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "确认删除",
+    );
+    await act(async () => confirm?.click());
+    expect(container.textContent).toContain("还没有模型 · 服务不会参与路由");
+    expect(container.textContent).toContain("0 / 2,000");
+  });
+
+  it("collapses large allow-lists until a group or search expands them", async () => {
+    const models = Array.from({ length: 12 }, (_, index) => {
+      const family = index < 6 ? "claude-opus" : "claude-sonnet";
+      return `${family}-4-${index}`;
+    });
+    const listed: Service = { ...gatewayService, models };
+    bridgeMocks.getService.mockResolvedValue({ service: listed, etag });
+
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[listed]}
+          view={{ kind: "edit", serviceId: listed.id }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("claude-opus");
+    expect(container.textContent).toContain("12 / 2,000");
+    expect(container.textContent).toContain("2 组 · 12 个模型");
+    expect(container.textContent).toContain("展开全部");
+    expect(container.textContent).not.toContain("claude-opus-4-0");
+    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(0);
+
+    const expandOpus = [...container.querySelectorAll("button")].find(
+      (button) =>
+        button.classList.contains("service-model-group__toggle") &&
+        button.textContent?.includes("claude-opus"),
+    );
+    await act(async () => expandOpus?.click());
+    expect(container.textContent).toContain("claude-opus-4-0");
+    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(6);
+    expect(container.textContent).not.toContain("claude-sonnet-4-6");
+    expect(container.textContent).toContain("折叠全部");
+
+    const foldAll = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "折叠全部",
+    );
+    await act(async () => foldAll?.click());
+    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(0);
+    expect(container.textContent).toContain("展开全部");
+
+    const search = container.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索已配置模型"]',
+    );
+    if (!search) throw new Error("missing model search");
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    if (!valueSetter) throw new Error("missing input value setter");
+    await act(async () => {
+      valueSetter.call(search, "sonnet-4-6");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.textContent).toContain("claude-sonnet-4-6");
+    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(1);
   });
 
   it("keeps a saved API key when connection settings change without explicit removal", async () => {

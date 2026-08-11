@@ -24,6 +24,8 @@ import {
 } from "./service-presets";
 import { PageHeader } from "./PageHeader";
 import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
+import { filterModels } from "./model-groups";
+import { ServiceModelsEditor } from "./ServiceModelsEditor";
 import {
   serviceKindLabel,
   serviceStatusLabel,
@@ -245,6 +247,132 @@ function serviceDot(service: Service): "positive" | "pending" | "negative" | "ne
   return "negative";
 }
 
+function ModelPreviewDialog({
+  preview,
+  query,
+  onQueryChange,
+  onSelectedChange,
+  onApply,
+  onClose,
+}: {
+  preview: ModelPreview;
+  query: string;
+  onQueryChange: (value: string) => void;
+  onSelectedChange: (selected: string[]) => void;
+  onApply: () => void;
+  onClose: () => void;
+}) {
+  const filtered = useMemo(
+    () => filterModels(preview.models, query),
+    [preview.models, query],
+  );
+  const selectedSet = useMemo(
+    () => new Set(preview.selected),
+    [preview.selected],
+  );
+  const filteredSelectedCount = filtered.reduce(
+    (count, model) => count + (selectedSet.has(model) ? 1 : 0),
+    0,
+  );
+  const hasQuery = query.trim().length > 0;
+
+  return (
+    <div className="token-dialog-backdrop" role="presentation">
+      <section
+        aria-labelledby="service-model-preview-title"
+        aria-modal="true"
+        className="token-dialog service-model-preview"
+        role="dialog"
+      >
+        <h3 id="service-model-preview-title">选择服务支持的模型</h3>
+        <p>确认后，服务模型清单将替换为下面勾选的项目。</p>
+        {preview.warnings.length > 0 ? (
+          <div className="form-message form-message--notice" role="status">
+            部分协议获取失败：{preview.warnings.join("；")}
+          </div>
+        ) : null}
+        {preview.models.length > 0 ? (
+          <div className="service-model-preview__toolbar">
+            <input
+              aria-label="搜索上游模型"
+              placeholder="搜索模型…"
+              type="search"
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+            />
+            <div className="service-model-preview__toolbar-actions">
+              <button
+                className="btn-secondary"
+                disabled={filtered.length === 0}
+                onClick={() =>
+                  onSelectedChange(
+                    [...new Set([...preview.selected, ...filtered])].sort(),
+                  )
+                }
+                type="button"
+              >
+                {hasQuery ? `全选匹配（${filtered.length}）` : "全选"}
+              </button>
+              <button
+                className="btn-secondary"
+                disabled={filteredSelectedCount === 0}
+                onClick={() => {
+                  if (!hasQuery) {
+                    onSelectedChange([]);
+                    return;
+                  }
+                  const drop = new Set(filtered);
+                  onSelectedChange(
+                    preview.selected.filter((model) => !drop.has(model)),
+                  );
+                }}
+                type="button"
+              >
+                {hasQuery ? "取消匹配" : "全不选"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <div className="service-model-preview__list">
+          {preview.models.length === 0 ? (
+            <p>上游没有返回模型；确认后将应用空清单。</p>
+          ) : filtered.length === 0 ? (
+            <p>没有匹配“{query.trim()}”的模型。</p>
+          ) : (
+            filtered.map((model) => (
+              <label className="advanced-check" key={model}>
+                <input
+                  checked={selectedSet.has(model)}
+                  onChange={(event) => {
+                    const selected = event.target.checked
+                      ? [...new Set([...preview.selected, model])].sort()
+                      : preview.selected.filter((item) => item !== model);
+                    onSelectedChange(selected);
+                  }}
+                  type="checkbox"
+                />
+                <code>{encodeModelEditorValue(model)}</code>
+              </label>
+            ))
+          )}
+        </div>
+        <small className="service-model-preview__count">
+          已选 {preview.selected.length}
+          {hasQuery ? ` · 显示 ${filtered.length} / ${preview.models.length}` : ""}
+        </small>
+        <div className="token-dialog__actions">
+          <button className="btn-secondary" onClick={onClose} type="button">
+            取消
+          </button>
+          <button className="btn-primary" onClick={onApply} type="button">
+            应用所选模型（{preview.selected.length}）
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function ServiceManager({
   isReady,
   protocols,
@@ -281,6 +409,7 @@ export function ServiceManager({
   const [modelEditor, setModelEditor] = useState("");
   const [probingModels, setProbingModels] = useState(false);
   const [modelPreview, setModelPreview] = useState<ModelPreview | null>(null);
+  const [modelPreviewQuery, setModelPreviewQuery] = useState("");
   const copyFeedback = useCopyFeedback();
   const loadGeneration = useRef(0);
   const protocolsRef = useRef(protocols);
@@ -303,6 +432,7 @@ export function ServiceManager({
     setError(null);
     setModelEditor("");
     setModelPreview(null);
+    setModelPreviewQuery("");
     if (view.kind === "list") {
       setEditing(null);
       setBaseline(null);
@@ -530,10 +660,20 @@ export function ServiceManager({
         setError("上游模型与当前清单合并后超过 2,000 项，草稿未作更改。");
         return;
       }
+      setModelPreviewQuery("");
       setModelPreview({ models, selected: [...models], warnings });
     } finally {
       setProbingModels(false);
     }
+  };
+
+  const removeDraftModels = (removals: string[]) => {
+    if (removals.length === 0) return;
+    const drop = new Set(removals);
+    setDraft((current) => ({
+      ...current,
+      models: current.models.filter((model) => !drop.has(model)),
+    }));
   };
 
   const presentAuthorization = (
@@ -1431,64 +1571,19 @@ export function ServiceManager({
               ) : null}
             </div>
 
-            <fieldset
-              aria-labelledby="service-models-editor-heading"
-              className="service-models-editor"
-            >
-              <div className="service-models-editor__heading">
-                <strong id="service-models-editor-heading">支持模型</strong>
-                <button
-                  className="btn-secondary"
-                  disabled={probingModels}
-                  onClick={() => void discoverModels()}
-                  type="button"
-                >
-                  {probingModels ? "获取中…" : "从上游获取"}
-                </button>
-              </div>
-              <p className="service-models-editor__help">
-                精确匹配的服务级白名单。空清单表示没有可用模型，服务不会参与推理路由。
-              </p>
-              <div className="service-models-editor__add">
-                <textarea
-                  aria-label="待添加模型 ID"
-                  placeholder={"每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-4-5"}
-                  rows={3}
-                  value={modelEditor}
-                  onChange={(event) => setModelEditor(event.target.value)}
-                />
-                <button className="btn-secondary" onClick={addModels} type="button">
-                  添加模型
-                </button>
-              </div>
-              {draft.models.length === 0 ? (
-                <p className="service-models-editor__empty" role="status">
-                  0 个模型：该服务当前不会参与路由。
-                </p>
-              ) : (
-                <div className="service-model-list" aria-label="已配置模型">
-                  {draft.models.map((model) => (
-                    <div className="service-model-row" key={model}>
-                      <code title={encodeModelEditorValue(model)}>
-                        {encodeModelEditorValue(model)}
-                      </code>
-                      <button
-                        onClick={() =>
-                          setDraft((current) => ({
-                            ...current,
-                            models: current.models.filter((item) => item !== model),
-                          }))
-                        }
-                        type="button"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <small>{draft.models.length} / 2,000 个模型</small>
-            </fieldset>
+            <ServiceModelsEditor
+              key={editingServiceID ?? "create"}
+              modelEditor={modelEditor}
+              models={draft.models}
+              probingModels={probingModels}
+              onAddModels={addModels}
+              onDiscoverModels={() => void discoverModels()}
+              onModelEditorChange={setModelEditor}
+              onRemoveModels={removeDraftModels}
+              onReplaceModels={(models) =>
+                setDraft((current) => ({ ...current, models }))
+              }
+            />
 
             {draft.kind === "codex_subscription" ? (
               <div className="preset-summary">
@@ -1588,68 +1683,28 @@ export function ServiceManager({
         </form>
       )}
       {modelPreview ? (
-        <div className="token-dialog-backdrop" role="presentation">
-          <section
-            aria-labelledby="service-model-preview-title"
-            aria-modal="true"
-            className="token-dialog service-model-preview"
-            role="dialog"
-          >
-            <h3 id="service-model-preview-title">选择服务支持的模型</h3>
-            <p>确认后，服务模型清单将替换为下面勾选的项目。</p>
-            {modelPreview.warnings.length > 0 ? (
-              <div className="form-message form-message--notice" role="status">
-                部分协议获取失败：{modelPreview.warnings.join("；")}
-              </div>
-            ) : null}
-            <div className="service-model-preview__list">
-              {modelPreview.models.length === 0 ? (
-                <p>上游没有返回模型；确认后将应用空清单。</p>
-              ) : (
-                modelPreview.models.map((model) => (
-                  <label className="advanced-check" key={model}>
-                    <input
-                      checked={modelPreview.selected.includes(model)}
-                      onChange={(event) =>
-                        setModelPreview((current) => {
-                          if (!current) return current;
-                          const selected = event.target.checked
-                            ? [...new Set([...current.selected, model])].sort()
-                            : current.selected.filter((item) => item !== model);
-                          return { ...current, selected };
-                        })
-                      }
-                      type="checkbox"
-                    />
-                    <code>{encodeModelEditorValue(model)}</code>
-                  </label>
-                ))
-              )}
-            </div>
-            <div className="token-dialog__actions">
-              <button
-                className="btn-secondary"
-                onClick={() => setModelPreview(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="btn-primary"
-                onClick={() => {
-                  setDraft((current) => ({
-                    ...current,
-                    models: [...modelPreview.selected].sort(),
-                  }));
-                  setModelPreview(null);
-                }}
-                type="button"
-              >
-                应用所选模型（{modelPreview.selected.length}）
-              </button>
-            </div>
-          </section>
-        </div>
+        <ModelPreviewDialog
+          preview={modelPreview}
+          query={modelPreviewQuery}
+          onClose={() => {
+            setModelPreview(null);
+            setModelPreviewQuery("");
+          }}
+          onQueryChange={setModelPreviewQuery}
+          onSelectedChange={(selected) =>
+            setModelPreview((current) =>
+              current ? { ...current, selected } : current,
+            )
+          }
+          onApply={() => {
+            setDraft((current) => ({
+              ...current,
+              models: [...modelPreview.selected].sort(),
+            }));
+            setModelPreview(null);
+            setModelPreviewQuery("");
+          }}
+        />
       ) : null}
     </section>
   );
