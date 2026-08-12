@@ -1,11 +1,31 @@
 import {
-  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import {
+  Activity,
+  Copy,
+  House,
+  KeyRound,
+  Plus,
+  Route,
+  Server,
+  Settings,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
+
+import { AppShell } from "@/components/AppShell";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { SectionKicker } from "@/components/SectionKicker";
+import { StatusDot } from "@/components/StatusDot";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 import {
   getCoreStatus,
@@ -101,71 +121,26 @@ function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-function Icon({ name }: { name: IconName }) {
-  const paths: Record<IconName, ReactNode> = {
-    activity: (
-      <path d="M3 12h4l2.2-5 4.1 10 2.2-5H21" />
-    ),
-    copy: (
-      <>
-        <rect width="13" height="13" x="9" y="9" rx="2" />
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-      </>
-    ),
-    home: (
-      <>
-        <path d="m3 11 9-8 9 8" />
-        <path d="M5 10v10h14V10M9 20v-6h6v6" />
-      </>
-    ),
-    key: (
-      <>
-        <circle cx="8" cy="15" r="4" />
-        <path d="m11 12 8-8M17 6l2 2M14 9l2 2" />
-      </>
-    ),
-    plus: <path d="M12 5v14M5 12h14" />,
-    route: (
-      <>
-        <circle cx="6" cy="18" r="2" />
-        <circle cx="18" cy="6" r="2" />
-        <path d="M8 18h2a8 8 0 0 0 8-8V8M14 6h2" />
-      </>
-    ),
-    server: (
-      <>
-        <rect width="18" height="7" x="3" y="3" rx="2" />
-        <rect width="18" height="7" x="3" y="14" rx="2" />
-        <path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" />
-      </>
-    ),
-    settings: (
-      <>
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 9 19.35a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.09A1.7 1.7 0 0 0 4.65 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1.03-1.56V3h4v.09A1.7 1.7 0 0 0 15 4.65a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.2.77.2 1.18v3.64c0 .41-.08.81-.2 1.18Z" />
-      </>
-    ),
-    shield: (
-      <>
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-        <path d="m9 12 2 2 4-4" />
-      </>
-    ),
-  };
+const icons: Record<IconName, LucideIcon> = {
+  activity: Activity,
+  copy: Copy,
+  home: House,
+  key: KeyRound,
+  plus: Plus,
+  route: Route,
+  server: Server,
+  settings: Settings,
+  shield: ShieldCheck,
+};
 
+function Icon({ name }: { name: IconName }) {
+  const IconComponent = icons[name];
   return (
-    <svg
+    <IconComponent
       aria-hidden="true"
-      className="app-icon"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-    >
-      {paths[name]}
-    </svg>
+      className="size-[18px] shrink-0"
+      strokeWidth={1.8}
+    />
   );
 }
 
@@ -183,19 +158,23 @@ function NavButton({
   onClick?: () => void;
 }) {
   return (
-    <button
+    <Button
       aria-label={disabled ? `${label}，即将推出` : label}
       aria-current={active ? "page" : undefined}
-      className={`nav-item${active ? " nav-item--active" : ""}`}
+      className={cn(
+        "min-h-10 w-full justify-start gap-2.5 rounded-[10px] px-2.5 text-[12.5px] font-semibold text-text-secondary hover:bg-accent hover:text-foreground max-[900px]:justify-center max-[900px]:px-0",
+        active && "bg-accent text-accent-foreground",
+      )}
       disabled={disabled}
       onClick={onClick}
       title={disabled ? `${label}（即将推出）` : label}
       type="button"
+      variant="ghost"
     >
       <Icon name={icon} />
-      <span className="nav-item__label">{label}</span>
-      {disabled ? <span className="nav-item__soon">即将推出</span> : null}
-    </button>
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap max-[900px]:hidden">{label}</span>
+      {disabled ? <Badge className="ml-auto text-[8.5px] max-[900px]:hidden" variant="secondary">即将推出</Badge> : null}
+    </Button>
   );
 }
 
@@ -246,18 +225,23 @@ function Overview({
   const inferenceURL = snapshot?.ready?.inference_url ?? "";
 
   return (
-    <div className="overview-page">
+    <div className="grid gap-3.5 [&_[data-slot=page-header]]:mb-0">
       <PageHeader
         description="查看本地网关状态、今日用量与接入配置。"
         eyebrow="工作区"
         title="概览"
       />
-      <section className={`core-strip core-strip--${statusTone}`}>
-        <div className="core-strip__status">
-          <span className={`dot dot--${statusTone}`} aria-hidden="true" />
-          <div>
-            <strong>{isReady ? "Core 正常运行" : statusLabel}</strong>
-            <span>
+      <Card
+        className={cn(
+          "flex min-h-[62px] flex-row items-center justify-between gap-3.5 rounded-[14px] px-4 py-3 shadow-[0_4px_16px_color-mix(in_srgb,var(--foreground)_3%,transparent)]",
+          statusTone === "negative" && "border-destructive/25 bg-danger-wash",
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-[11px]">
+          <StatusDot tone={statusTone} />
+          <div className="flex min-w-0 flex-col">
+            <strong className="text-[12.5px]">{isReady ? "Core 正常运行" : statusLabel}</strong>
+            <span className="mt-[3px] overflow-hidden text-[10.5px] leading-[1.45] text-text-secondary text-ellipsis whitespace-nowrap">
               {isReady
                 ? `本地网关已在 ${inferenceURL} 监听`
                 : snapshot?.last_error ?? "正在建立本地连接…"}
@@ -265,40 +249,40 @@ function Overview({
           </div>
         </div>
         {isNativeApp && !isReady ? (
-          <button
-            className="btn-secondary"
+          <Button
+            variant="outline"
             disabled={isRestarting || snapshot?.phase === "stopping"}
             onClick={onRestart}
             type="button"
           >
             {isRestarting ? "重启中…" : "重启 Core"}
-          </button>
+          </Button>
         ) : null}
-      </section>
+      </Card>
 
-      <section className="usage-card" aria-labelledby="today-usage-heading">
-        <div className="usage-card__header">
+      <Card className="min-w-0 gap-0 rounded-2xl px-[18px] pt-[15px] pb-[13px] shadow-[var(--shadow-card)]" aria-labelledby="today-usage-heading">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <span className="section-kicker">本机汇总</span>
-            <h2 id="today-usage-heading">今日用量</h2>
+            <SectionKicker>本机汇总</SectionKicker>
+            <h2 className="mt-1 text-[17px] tracking-[-0.02em]" id="today-usage-heading">今日用量</h2>
           </div>
-          <div className="usage-card__actions">
+          <div className="flex shrink-0 items-center gap-2">
             {todayUsage.status === "loading" ? (
-              <span className="usage-pending-badge">统计中…</span>
+              <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">统计中…</Badge>
             ) : todayUsage.summary?.capped ? (
-              <span className="usage-pending-badge">仅统计最近 1000 条</span>
+              <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">仅统计最近 1000 条</Badge>
             ) : null}
-            <button
-              className="btn-secondary"
+            <Button
+              variant="outline"
               disabled={!isReady || todayUsage.status === "loading"}
               onClick={onRefreshTodayUsage}
               type="button"
             >
               刷新
-            </button>
+            </Button>
           </div>
         </div>
-        <div className="usage-card__metrics">
+        <div className="mt-[11px] grid grid-cols-5 max-[720px]:grid-cols-2">
           {(
             [
               ["请求数", todayUsage.summary?.requests],
@@ -308,9 +292,9 @@ function Overview({
               ["预估费用", null],
             ] as const
           ).map(([label, value]) => (
-            <div key={label}>
-              <span>{label}</span>
-              <strong>
+            <div className="min-w-0 border-l px-3 first:border-l-0 first:pl-0 max-[720px]:border-l-0 max-[720px]:px-0 max-[720px]:py-2" key={label}>
+              <span className="block overflow-hidden text-[9px] text-muted-foreground text-ellipsis whitespace-nowrap">{label}</span>
+              <strong className="mt-1 block text-xl tracking-[-0.04em]">
                 {label === "预估费用"
                   ? "—"
                   : value === undefined || todayUsage.status === "blocked"
@@ -323,47 +307,50 @@ function Overview({
           ))}
         </div>
         {todayUsage.status === "error" && todayUsage.error ? (
-          <p className="inline-error" role="alert">
+          <p className="mt-2 text-[9.5px] text-danger-foreground" role="alert">
             {todayUsage.error}
           </p>
         ) : (
-          <p>按本机时区统计今天已记录的请求与 Token。</p>
+          <p className="mt-2 text-[9px] text-muted-foreground">按本机时区统计今天已记录的请求与 Token。</p>
         )}
-      </section>
+      </Card>
 
-      <div className="overview-grid">
-        <section className="workspace-card access-card" aria-labelledby="access-heading">
-          <div className="workspace-card__header">
+      <div className="grid grid-cols-2 items-stretch gap-3.5 max-[720px]:grid-cols-1">
+        <Card className="min-h-[255px] min-w-0 gap-0 rounded-2xl p-[18px] shadow-[var(--shadow-card)]" aria-labelledby="access-heading">
+          <div className="flex min-h-[42px] items-start justify-between gap-3">
             <div>
-              <span className="section-kicker">本地接入</span>
-              <h2 id="access-heading">连接 AstrLink</h2>
+              <SectionKicker>本地接入</SectionKicker>
+              <h2 className="mt-[5px] text-[17px] tracking-[-0.02em]" id="access-heading">连接 AstrLink</h2>
             </div>
-            <span className={`compact-status compact-status--${statusTone}`}>
-              <span className={`dot dot--${statusTone}`} aria-hidden="true" />
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-muted px-2 py-[5px] text-[9.5px] font-semibold text-text-secondary">
+              <StatusDot tone={statusTone} />
               {isReady ? "可用" : statusLabel}
             </span>
           </div>
 
-          <div className="copy-field">
-            <div>
-              <span>API 地址</span>
-              <code>{inferenceURL || "等待 Core 就绪"}</code>
+          <div className="mt-[18px] flex min-w-0 items-center gap-2.5 rounded-[11px] border bg-muted px-[13px] py-3">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[9.5px] font-semibold text-muted-foreground">API 地址</span>
+              <code className="mt-[5px] overflow-hidden text-[11.5px] text-ellipsis whitespace-nowrap">{inferenceURL || "等待 Core 就绪"}</code>
             </div>
-            <button
+            <Button
               aria-label="复制 API 地址"
+              className="size-[31px]"
               disabled={!inferenceURL}
               onClick={() => onCopy(inferenceURL, "API 地址")}
               type="button"
+              size="icon-sm"
+              variant="outline"
             >
               <Icon name="copy" />
-            </button>
+            </Button>
           </div>
 
-          <div className="access-summary">
-            <div>
-              <span>访问令牌</span>
-              <strong>{tokensUnknown ? "—" : tokenCatalog.items.length}</strong>
-              <small>
+          <div className="mt-[13px] flex min-w-0 items-center gap-2.5 rounded-[11px] border bg-card px-[13px] py-3">
+            <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+              <span className="text-[9.5px] text-muted-foreground">访问令牌</span>
+              <strong className="text-xl tracking-[-0.04em]">{tokensUnknown ? "—" : tokenCatalog.items.length}</strong>
+              <small className="text-[9.5px] text-muted-foreground">
                 {tokensUnknown
                   ? "Core 就绪后读取"
                   : tokenCatalog.items.length
@@ -372,173 +359,175 @@ function Overview({
               </small>
             </div>
             {tokenCatalog.stale ? (
-              <span className="stale-badge">等待刷新</span>
+              <Badge className="ml-auto bg-warning-wash text-warning-foreground" variant="secondary">等待刷新</Badge>
             ) : null}
-            <button
-              className="btn-secondary"
+            <Button
+              variant="outline"
               disabled={!isReady && tokenCatalog.items.length === 0}
               onClick={onManageTokens}
               type="button"
             >
               管理令牌
-            </button>
+            </Button>
           </div>
           {copyError ? (
-            <p className="inline-error" role="alert">
+            <p className="mt-2 text-[9.5px] text-danger-foreground" role="alert">
               {copyError}
             </p>
           ) : copyFeedback ? (
-            <p className="inline-notice" role="status">
+            <p className="mt-2 text-[9.5px] text-success-foreground" role="status">
               {copyFeedback}
             </p>
           ) : null}
-          <button className="card-footer-action" onClick={onManageTokens} type="button">
+          <Button className="mt-auto h-auto w-full justify-between rounded-none border-t px-0.5 pt-2.5 text-[10.5px] font-bold no-underline hover:bg-transparent hover:no-underline" onClick={onManageTokens} type="button" variant="link">
             打开访问令牌
             <span aria-hidden="true">→</span>
-          </button>
-        </section>
+          </Button>
+        </Card>
 
-        <section className="workspace-card services-summary" aria-labelledby="services-heading">
-          <div className="workspace-card__header">
+        <Card className="min-h-[255px] min-w-0 gap-0 rounded-2xl p-[18px] shadow-[var(--shadow-card)]" aria-labelledby="services-heading">
+          <div className="flex min-h-[42px] items-start justify-between gap-3">
             <div>
-              <span className="section-kicker">API 服务</span>
-              <h2 id="services-heading">上游服务</h2>
+              <SectionKicker>API 服务</SectionKicker>
+              <h2 className="mt-[5px] text-[17px] tracking-[-0.02em]" id="services-heading">上游服务</h2>
             </div>
             {catalog.items.length > 0 ? (
-              <button
-                className="icon-text-button"
+              <Button
                 disabled={!isReady}
                 onClick={onAddService}
                 type="button"
+                size="sm"
+                variant="outline"
               >
                 <Icon name="plus" />
                 添加
-              </button>
+              </Button>
             ) : null}
           </div>
 
-          <div className="service-counts">
-            <div>
-              <strong>{catalogUnknown ? "—" : catalog.items.length}</strong>
-              <span>已配置</span>
+          <div className="mt-[13px] flex items-center gap-6 border-b py-[11px]">
+            <div className="flex items-baseline gap-1.5">
+              <strong className="text-xl tracking-[-0.04em]">{catalogUnknown ? "—" : catalog.items.length}</strong>
+              <span className="text-[9.5px] text-muted-foreground">已配置</span>
             </div>
-            <div>
-              <strong>{catalogUnknown ? "—" : enabledCount}</strong>
-              <span>已启用</span>
+            <div className="flex items-baseline gap-1.5">
+              <strong className="text-xl tracking-[-0.04em]">{catalogUnknown ? "—" : enabledCount}</strong>
+              <span className="text-[9.5px] text-muted-foreground">已启用</span>
             </div>
             {catalogUnknown ? (
-              <span className="stale-badge">等待 Core</span>
+              <Badge className="ml-auto bg-warning-wash text-warning-foreground" variant="secondary">等待 Core</Badge>
             ) : catalog.stale ? (
-              <span className="stale-badge">等待刷新</span>
+              <Badge className="ml-auto bg-warning-wash text-warning-foreground" variant="secondary">等待刷新</Badge>
             ) : null}
           </div>
 
           {catalogUnknown ? (
-            <div className="compact-empty">
-              <p>Core 就绪后显示已配置服务。</p>
-              <span>当前没有可用的服务目录数据。</span>
+            <div className="flex min-h-[142px] flex-1 flex-col items-center justify-center p-[18px] text-center text-muted-foreground">
+              <p className="text-xs font-semibold text-text-secondary">Core 就绪后显示已配置服务。</p>
+              <span className="mt-[5px] text-[9.5px]">当前没有可用的服务目录数据。</span>
             </div>
           ) : catalog.status === "error" && catalog.items.length === 0 ? (
-            <div className="compact-empty compact-empty--error">
-              <p>{catalog.error ?? "无法读取 API 服务。"}</p>
-              <button className="btn-secondary" onClick={onRefreshServices} type="button">
+            <div className="flex min-h-[142px] flex-1 flex-col items-center justify-center p-[18px] text-center text-muted-foreground">
+              <p className="text-xs text-danger-foreground">{catalog.error ?? "无法读取 API 服务。"}</p>
+              <Button className="mt-3.5" variant="outline" onClick={onRefreshServices} type="button">
                 重试
-              </button>
+              </Button>
             </div>
           ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-            <div className="compact-empty">
-              <p>正在读取已配置服务…</p>
+            <div className="flex min-h-[142px] flex-1 items-center justify-center p-[18px] text-center">
+              <p className="text-xs font-semibold text-text-secondary">正在读取已配置服务…</p>
             </div>
           ) : catalog.items.length === 0 ? (
-            <div className="compact-empty">
-              <p>尚未添加 API 服务。</p>
-              <span>添加一个 new-api 或 API 订阅即可开始使用。</span>
-              <button className="btn-primary" disabled={!isReady} onClick={onAddService} type="button">
+            <div className="flex min-h-[142px] flex-1 flex-col items-center justify-center p-[18px] text-center text-muted-foreground">
+              <p className="text-xs font-semibold text-text-secondary">尚未添加 API 服务。</p>
+              <span className="mt-[5px] text-[9.5px]">添加一个 new-api 或 API 订阅即可开始使用。</span>
+              <Button className="mt-3.5" disabled={!isReady} onClick={onAddService} type="button">
                 添加服务
-              </button>
+              </Button>
             </div>
           ) : (
-            <div className="service-preview-list">
+            <div className="mt-2 grid gap-[3px]">
               {catalog.items.slice(0, 3).map((service) => (
-                <button
-                  className="service-preview"
+                <Button
+                  className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-[9px] rounded-lg bg-transparent px-[7px] py-2 text-left text-foreground hover:bg-muted"
                   key={service.id}
                   onClick={onManageServices}
                   type="button"
+                  variant="ghost"
                 >
-                  <span className={`dot dot--${service.enabled ? "positive" : "neutral"}`} />
-                  <span>
-                    <strong>{service.name}</strong>
-                    <code>
+                  <StatusDot tone={service.enabled ? "positive" : "neutral"} />
+                  <span className="flex min-w-0 flex-col">
+                    <strong className="overflow-hidden text-[11px] text-ellipsis whitespace-nowrap">{service.name}</strong>
+                    <code className="mt-0.5 overflow-hidden text-[8.5px] text-muted-foreground text-ellipsis whitespace-nowrap">
                       {service.http?.base_url ??
                         (service.subscription?.account_hint
                           ? `OpenAI 账户 ${service.subscription.account_hint}`
                           : "OpenAI Codex OAuth")}
                     </code>
                   </span>
-                  <span>{service.capabilities.length} 项能力</span>
-                </button>
+                  <span className="text-[8.5px] whitespace-nowrap text-muted-foreground">{service.capabilities.length} 项能力</span>
+                </Button>
               ))}
             </div>
           )}
 
-          <button className="card-footer-action" onClick={onManageServices} type="button">
+          <Button className="mt-auto h-auto w-full justify-between rounded-none border-t px-0.5 pt-2.5 text-[10.5px] font-bold no-underline hover:bg-transparent hover:no-underline" onClick={onManageServices} type="button" variant="link">
             管理全部服务
             <span aria-hidden="true">→</span>
-          </button>
-        </section>
+          </Button>
+        </Card>
       </div>
 
-      <details className="system-details">
-        <summary>
-          <span>
-            <strong>系统详情</strong>
-            <small>版本、监听地址与协议能力</small>
+      <details className="group overflow-hidden rounded-[13px] border bg-card">
+        <summary className="flex min-h-[51px] cursor-pointer list-none items-center justify-between px-4 text-text-secondary [&::-webkit-details-marker]:hidden">
+          <span className="flex flex-col">
+            <strong className="text-[11.5px] text-foreground">系统详情</strong>
+            <small className="mt-0.5 text-[9px] text-muted-foreground">版本、监听地址与协议能力</small>
           </span>
-          <span aria-hidden="true">›</span>
+          <span aria-hidden="true" className="text-xl transition-transform group-open:rotate-90">›</span>
         </summary>
-        <div className="system-details__body">
-          <dl className="detail-grid">
-            <div>
-              <dt>桌面版本</dt>
-              <dd>{snapshot?.app_version ?? "未知"}</dd>
+        <div className="border-t px-4 py-[15px]">
+          <dl className="grid grid-cols-3 gap-x-4 gap-y-2.5 max-[720px]:grid-cols-2">
+            <div className="min-w-0">
+              <dt className="text-[9px] font-semibold text-muted-foreground">桌面版本</dt>
+              <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">{snapshot?.app_version ?? "未知"}</dd>
             </div>
-            <div>
-              <dt>Core 版本</dt>
-              <dd>{snapshot?.version?.core_version ?? snapshot?.ready?.core_version ?? "待定"}</dd>
+            <div className="min-w-0">
+              <dt className="text-[9px] font-semibold text-muted-foreground">Core 版本</dt>
+              <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">{snapshot?.version?.core_version ?? snapshot?.ready?.core_version ?? "待定"}</dd>
             </div>
-            <div>
-              <dt>进程</dt>
-              <dd>{snapshot?.pid ? `PID ${snapshot.pid}` : "未运行"}</dd>
+            <div className="min-w-0">
+              <dt className="text-[9px] font-semibold text-muted-foreground">进程</dt>
+              <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">{snapshot?.pid ? `PID ${snapshot.pid}` : "未运行"}</dd>
             </div>
-            <div>
-              <dt>控制监听</dt>
-              <dd>
+            <div className="min-w-0">
+              <dt className="text-[9px] font-semibold text-muted-foreground">控制监听</dt>
+              <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">
                 <code>{snapshot?.ready?.control_url ?? "未分配"}</code>
               </dd>
             </div>
-            <div>
-              <dt>控制合同</dt>
-              <dd>{snapshot?.version?.control_api_version ?? "待握手"}</dd>
+            <div className="min-w-0">
+              <dt className="text-[9px] font-semibold text-muted-foreground">控制合同</dt>
+              <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">{snapshot?.version?.control_api_version ?? "待握手"}</dd>
             </div>
-            <div>
-              <dt>转换引擎</dt>
-              <dd>
+            <div className="min-w-0">
+              <dt className="text-[9px] font-semibold text-muted-foreground">转换引擎</dt>
+              <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">
                 {conversionEngine?.available
                   ? `${conversionEngine.name} ${conversionEngine.version ?? ""}`.trim()
                   : "RelayKit 未启用"}
               </dd>
             </div>
           </dl>
-          <div className="protocol-detail">
-            <span>协议能力</span>
-            <div>
+          <div className="mt-3.5 grid gap-2 border-t pt-3">
+            <span className="text-[9px] font-semibold text-muted-foreground">协议能力</span>
+            <div className="flex flex-wrap gap-[5px]">
               {capabilities?.protocols.length ? (
                 capabilities.protocols.map((protocol) => (
-                  <code key={protocol.id}>{protocol.id}</code>
+                  <code className="rounded-[5px] bg-muted px-1.5 py-1 text-[8.5px] text-text-secondary" key={protocol.id}>{protocol.id}</code>
                 ))
               ) : (
-                <small>Core 握手完成后显示。</small>
+                <small className="text-[9px] text-muted-foreground">Core 握手完成后显示。</small>
               )}
             </div>
           </div>
@@ -904,22 +893,23 @@ export default function App() {
   );
 
   return (
-    <div className="desktop-shell">
-      <aside className="sidebar">
-        <div className="brand">
+    <AppShell
+      sidebar={
+      <aside className="sticky top-0 z-20 flex h-screen min-h-[600px] flex-col border-r bg-sidebar px-3.5 pt-[calc(var(--window-chrome-height)+18px)] pb-3.5 backdrop-blur-[18px] max-[900px]:px-2 max-[900px]:pt-[calc(var(--window-chrome-height)+16px)] max-[900px]:pb-3">
+        <div className="flex items-center gap-2.5 px-2 pb-[18px] max-[900px]:justify-center max-[900px]:px-0">
           <img
-            className="brand__mark"
+            className="block size-8 shrink-0"
             src={astrlinkLogo}
             alt=""
             width={32}
             height={32}
             aria-hidden="true"
           />
-          <span className="brand__name">AstrLink</span>
+          <span className="overflow-hidden text-base font-[750] tracking-[-0.02em] whitespace-nowrap max-[900px]:hidden">AstrLink</span>
         </div>
 
-        <nav className="sidebar__nav" aria-label="主要导航">
-          <span className="nav-group-label">工作区</span>
+        <nav className="flex flex-1 flex-col gap-1" aria-label="主要导航" data-slot="sidebar-navigation">
+          <span className="px-[11px] pt-[7px] pb-[5px] text-[10px] font-[750] tracking-[0.11em] text-muted-foreground uppercase max-[900px]:hidden">工作区</span>
           <NavButton
             active={page.kind === "overview"}
             icon="home"
@@ -957,7 +947,7 @@ export default function App() {
             onClick={() => navigate({ kind: "routing" })}
           />
 
-          <span className="nav-group-label nav-group-label--secondary">系统</span>
+          <span className="mt-[18px] px-[11px] pt-[7px] pb-[5px] text-[10px] font-[750] tracking-[0.11em] text-muted-foreground uppercase max-[900px]:mx-[9px] max-[900px]:mt-3.5 max-[900px]:mb-2 max-[900px]:h-px max-[900px]:bg-border max-[900px]:p-0 max-[900px]:text-transparent">系统</span>
           <NavButton
             active={page.kind === "settings"}
             icon="settings"
@@ -968,19 +958,29 @@ export default function App() {
 
         <div
           aria-label={`Core ${statusLabel}`}
-          className={`sidebar-status sidebar-status--${statusTone}`}
+          className="mt-3.5 flex items-center gap-[9px] rounded-[11px] border bg-card px-[11px] py-2.5 text-text-secondary max-[900px]:justify-center max-[900px]:px-0 max-[900px]:py-3"
           title={`Core ${statusLabel}`}
         >
-          <span className={`dot dot--${statusTone}`} aria-hidden="true" />
-          <span>
-            <strong>Core</strong>
-            <small>{statusLabel}</small>
+          <StatusDot tone={statusTone} />
+          <span className="flex min-w-0 flex-col max-[900px]:hidden">
+            <strong className="text-[11.5px] text-foreground">Core</strong>
+            <small className="mt-px overflow-hidden text-[9.5px] text-ellipsis whitespace-nowrap">{statusLabel}</small>
           </span>
         </div>
       </aside>
-
-      <div className="app-surface">
-        <main className={`workspace workspace--${page.kind}`}>
+      }
+    >
+        <main
+          className={cn(
+            "min-w-0 px-[clamp(18px,3vw,30px)] pt-[calc(var(--window-chrome-height)+clamp(18px,3vw,30px))] pb-[clamp(18px,3vw,30px)] [container-type:inline-size] [container-name:workspace-surface] max-h-[680px]:pt-[calc(var(--window-chrome-height)+14px)] max-h-[680px]:pb-3.5",
+            page.kind !== "overview" &&
+              "flex min-h-screen flex-col",
+            ["list", "tokens", "records"].includes(page.kind) &&
+              "h-screen overflow-hidden",
+          )}
+          data-page={page.kind}
+          data-slot="workspace"
+        >
           {page.kind === "overview" ? (
             <Overview
               catalog={catalog}
@@ -1051,39 +1051,19 @@ export default function App() {
             />
           )}
         </main>
-      </div>
-      {pendingPage ? (
-        <div className="token-dialog-backdrop" role="presentation">
-          <section
-            aria-describedby="leave-editor-description"
-            aria-labelledby="leave-editor-title"
-            aria-modal="true"
-            className="token-dialog"
-            role="dialog"
-          >
-            <h3 id="leave-editor-title">放弃未保存的修改？</h3>
-            <p id="leave-editor-description">
+      <ConfirmDialog
+        cancelLabel="继续编辑"
+        confirmLabel="放弃修改并离开"
+        description={
+          <p>
               当前配置尚未保存。离开此页面后，本次修改将会丢失。
-            </p>
-            <div className="token-dialog__actions">
-              <button
-                className="btn-secondary"
-                onClick={() => setPendingPage(null)}
-                type="button"
-              >
-                继续编辑
-              </button>
-              <button
-                className="btn-primary"
-                onClick={confirmPendingNavigation}
-                type="button"
-              >
-                放弃修改并离开
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-    </div>
+          </p>
+        }
+        onCancel={() => setPendingPage(null)}
+        onConfirm={confirmPendingNavigation}
+        open={pendingPage !== null}
+        title="放弃未保存的修改？"
+      />
+    </AppShell>
   );
 }

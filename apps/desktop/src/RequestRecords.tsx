@@ -6,6 +6,32 @@ import {
   type ReactNode,
 } from "react";
 
+import { ConfirmDialog as AppConfirmDialog } from "@/components/ConfirmDialog";
+import { FormMessage } from "@/components/FormMessage";
+import { StatusDot } from "@/components/StatusDot";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+
 import { AuditPartSection, HTTPMetaSection } from "./AuditReviewer";
 import { buildRecordBundle } from "./audit-bundle";
 import type { AuditSettings, AuditSettingsPatch } from "./audit-settings-model";
@@ -651,26 +677,26 @@ export function RequestRecords({
         <PageHeader
           actions={
             <>
-              <span className="records-live-indicator">
-                <span className="dot dot--positive" aria-hidden="true" />
+              <span className="mr-[3px] inline-flex items-center gap-[7px] text-[10px] font-semibold text-muted-foreground max-[720px]:mr-auto">
+                <StatusDot tone="positive" />
                 每秒同步
               </span>
-              <button
-                className="btn-secondary"
+              <Button
+                variant="outline"
                 disabled={!isReady}
                 onClick={() => setPurgeOpen(true)}
                 type="button"
               >
                 清理…
-              </button>
-              <button
-                className="btn-secondary"
+              </Button>
+              <Button
+                variant="outline"
                 disabled={!isReady}
                 onClick={() => void openSettings()}
                 type="button"
               >
                 审计设置
-              </button>
+              </Button>
             </>
           }
           description="已认证的推理请求会在开始后立即进入日志流。"
@@ -679,38 +705,39 @@ export function RequestRecords({
           titleId="request-records-heading"
         />
       ) : null}
-      <div className="records-stack">
+      <div className="flex h-full min-h-0 min-w-0 flex-1">
         <section
           aria-labelledby="request-records-heading"
-          className="workspace-card records-surface records-monitor"
+          className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-card shadow-[var(--shadow-card)]"
           hidden={view !== "monitor"}
         >
           {notice ? (
-            <p className="inline-notice records-banner" role="status">
+            <FormMessage className="mx-[22px] mt-2.5 shrink-0" tone="success">
               {notice}
-            </p>
+            </FormMessage>
           ) : null}
           {error ? (
-            <p className="inline-error records-banner" role="alert">
+            <FormMessage className="mx-[22px] mt-2.5 shrink-0" tone="error">
               {error}
-            </p>
+            </FormMessage>
           ) : null}
           {syncWarning ? (
-            <p className="records-sync-warning" role="status">
-              <span className="dot dot--pending" />
+            <FormMessage className="mx-[22px] mt-2.5 flex shrink-0 items-center gap-2" tone="warning">
+              <StatusDot tone="pending" />
               {syncWarning}
-            </p>
+            </FormMessage>
           ) : null}
 
           <div
-            className="records-monitor__scroll"
+            className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain"
+            data-testid="request-records-scroll"
             onScroll={(event) => {
               atTopRef.current = event.currentTarget.scrollTop <= 8;
             }}
             ref={monitorScrollRef}
           >
-            <div className="records-toolbar">
-              <div className="records-filters">
+            <div className="sticky top-0 z-7 flex items-end justify-between border-b bg-card/92 px-[22px] py-3 shadow-[0_8px_18px_color-mix(in_srgb,var(--foreground)_2%,transparent)] backdrop-blur-sm @max-[720px]:items-stretch @max-[720px]:flex-col @max-[720px]:gap-2">
+              <div className="flex items-end gap-2 @max-[720px]:grid @max-[720px]:grid-cols-2">
                 <FilterSelect
                   label="状态"
                   onChange={(status) =>
@@ -719,80 +746,81 @@ export function RequestRecords({
                       status: status as RequestStatus | "",
                     }))
                   }
+                  options={[
+                    { label: "全部", value: "" },
+                    ...STATUSES.map((status) => ({
+                      label: statusLabel(status),
+                      value: status,
+                    })),
+                  ]}
                   value={filters.status}
-                >
-                  <option value="">全部</option>
-                  {STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {statusLabel(status)}
-                    </option>
-                  ))}
-                </FilterSelect>
+                />
                 <FilterSelect
                   label="服务"
                   onChange={(serviceId) =>
                     setFilters((current) => ({ ...current, serviceId }))
                   }
+                  options={[
+                    { label: "全部", value: "" },
+                    ...services.map((service) => ({
+                      label: service.name,
+                      value: service.id,
+                    })),
+                  ]}
                   value={filters.serviceId}
-                >
-                  <option value="">全部</option>
-                  {services.map((service) => (
-                    <option key={service.id} value={service.id}>
-                      {service.name}
-                    </option>
-                  ))}
-                </FilterSelect>
+                />
                 <FilterSelect
                   label="协议"
                   onChange={(protocol) =>
                     setFilters((current) => ({ ...current, protocol }))
                   }
+                  options={[
+                    { label: "全部", value: "" },
+                    ...protocolOptions.map((protocol) => ({
+                      label: protocol,
+                      value: protocol,
+                    })),
+                  ]}
                   value={filters.protocol}
-                >
-                  <option value="">全部</option>
-                  {protocolOptions.map((protocol) => (
-                    <option key={protocol} value={protocol}>
-                      {protocol}
-                    </option>
-                  ))}
-                </FilterSelect>
+                />
               </div>
-              <button
-                className="btn-secondary records-refresh"
+              <Button
+                className="@max-[720px]:self-end"
+                variant="outline"
                 disabled={!isReady || pollInFlightRef.current}
                 onClick={() => manualPollRef.current?.()}
                 type="button"
               >
                 刷新
-              </button>
+              </Button>
             </div>
 
             {queuedVisibleCount > 0 ? (
-              <button
-                className="records-new-button"
+              <Button
+                className="sticky top-[88px] z-6 mx-auto mt-2 flex shadow-md @max-[720px]:top-[155px]"
                 onClick={applyQueue}
                 type="button"
               >
                 ↑ {queuedVisibleCount} 条新记录
-              </button>
+              </Button>
             ) : null}
 
             {!isReady || listStatus === "blocked" ? (
-              <div className="records-empty">
-                <strong>等待 Core 就绪</strong>
-                <span>连接成功后，请求会自动出现在这里。</span>
+              <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
+                <strong className="text-xs">等待 Core 就绪</strong>
+                <span className="mt-1.5 text-[10px] text-muted-foreground">连接成功后，请求会自动出现在这里。</span>
               </div>
             ) : listStatus === "error" && listError ? (
-              <div className="records-empty">
-                <strong>无法读取请求记录</strong>
-                <span>{listError}</span>
+              <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
+                <strong className="text-xs">无法读取请求记录</strong>
+                <span className="mt-1.5 text-[10px] text-muted-foreground">{listError}</span>
               </div>
             ) : listStatus === "loading" && live.items.length === 0 ? (
               <RecordSkeleton />
             ) : visibleItems.length === 0 ? (
-              <div className="records-empty">
-                <strong>没有匹配的请求</strong>
-                <span>调整筛选条件，或发起一次新的推理请求。</span>
+              <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
+                <strong className="text-xs">没有匹配的请求</strong>
+                <span className="mt-1.5 text-[10px] text-muted-foreground">调整筛选条件，或发起一次新的推理请求。</span>
               </div>
             ) : (
               <RecordStream
@@ -805,14 +833,15 @@ export function RequestRecords({
             )}
 
             {live.nextCursor ? (
-              <button
-                className="btn-secondary records-load-more"
+              <Button
+                className="mx-auto my-3 flex"
+                variant="outline"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
                 type="button"
               >
                 {loadingMore ? "加载中…" : "加载更早记录"}
-              </button>
+              </Button>
             ) : null}
           </div>
         </section>
@@ -885,8 +914,7 @@ export function RequestRecords({
       ) : null}
 
       {pendingConfirm ? (
-        <ConfirmDialog
-          busy={settingsBusy || deleting || purgeBusy}
+        <AppConfirmDialog
           confirmLabel={
             pendingConfirm.kind === "audit-risk"
               ? "确认开启"
@@ -894,7 +922,9 @@ export function RequestRecords({
                 ? "确定删除"
                 : "确定清理"
           }
-          message={confirmMessage(pendingConfirm)}
+          description={<p>{confirmMessage(pendingConfirm)}</p>}
+          destructive={pendingConfirm.kind !== "audit-risk"}
+          disabled={settingsBusy || deleting || purgeBusy}
           onCancel={() => {
             if (pendingConfirm.kind === "audit-risk") {
               setSettingsNotice("已取消开启正文捕获。");
@@ -902,6 +932,7 @@ export function RequestRecords({
             setPendingConfirm(null);
           }}
           onConfirm={resolveConfirm}
+          open
           title={
             pendingConfirm.kind === "audit-risk"
               ? "确认开启正文捕获"
@@ -994,18 +1025,18 @@ function RecordStream({
   }, [records, expandedRoots]);
 
   return (
-    <div className="record-stream" role="feed" aria-label="实时请求流">
+    <div className="px-3 pb-3" role="feed" aria-label="实时请求流">
       {groups.map((group) => (
-        <section className="record-day" key={group.key}>
-          <div className="record-day__divider">
+        <section className="mt-3 first:mt-0" key={group.key}>
+          <div className="flex items-center gap-2.5 py-2 text-[9px] font-bold text-muted-foreground after:h-px after:flex-1 after:bg-border">
             <span>{group.label}</span>
-            <small>{group.records.length} 条</small>
+            <small className="font-medium">{group.records.length} 条</small>
           </div>
           {group.records.map((record) => {
             const expanded = expandedRoots.has(record.id);
             const children = childrenByRoot[record.id] ?? [];
             return (
-              <div className="record-group" key={record.id}>
+              <div key={record.id}>
                 <RecordRow
                   serviceName={serviceLabel(record.service_id, services)}
                   nowMs={nowMs}
@@ -1020,9 +1051,9 @@ function RecordStream({
                   selected={record.id === selectedId}
                 />
                 {expanded ? (
-                  <div className="record-group__children">
+                  <div className="ml-6 border-l pl-2" data-testid="request-record-children">
                     {childrenLoading.has(record.id) && children.length === 0 ? (
-                      <p className="record-group__loading" role="status">
+                      <p className="px-3 py-2 text-[9px] text-muted-foreground" role="status">
                         正在加载重试记录…
                       </p>
                     ) : (
@@ -1078,72 +1109,73 @@ function RecordRow({
     record.audit.upstream_response_content_captured;
   const time = new Date(record.started_at);
   return (
-    <div
-      className={`record-row-wrap${child ? " is-child" : ""}`}
-    >
-      <button
+    <div className={cn("relative", child && "opacity-95")}>
+      <Button
         aria-current={selected ? "true" : undefined}
-        className={`record-row${record.status === "pending" ? " is-pending" : ""}${child ? " is-child" : ""}`}
+        className={cn(
+          "grid h-auto w-full grid-cols-1 gap-1 rounded-[9px] border-b bg-transparent px-3 py-2.5 text-left text-foreground shadow-none hover:bg-muted focus-visible:bg-accent aria-[current=true]:bg-accent",
+          child && "pl-2",
+        )}
         data-record-id={record.id}
+        data-testid="request-record-row"
         onClick={onOpen}
         type="button"
+        variant="ghost"
       >
-        <span className="record-row__primary">
-          <span
-            className={`dot dot--${statusTone(record.status)}`}
-            aria-hidden="true"
-          />
-          <time dateTime={record.started_at}>
+        <span className="grid min-w-0 grid-cols-[8px_74px_minmax(120px,1fr)_minmax(100px,.7fr)_auto_auto] items-center gap-2 @max-[720px]:grid-cols-[8px_66px_minmax(90px,1fr)_auto_auto]">
+          <StatusDot tone={statusTone(record.status)} />
+          <time className="text-[9.5px] tabular-nums text-muted-foreground" dateTime={record.started_at}>
             {Number.isNaN(time.getTime())
               ? record.started_at
               : time.toLocaleTimeString("zh-CN", { hour12: false })}
           </time>
-          <strong>{record.requested_model ?? "未指定模型"}</strong>
-          <span className="record-row__service">
+          <strong className="overflow-hidden text-[10.5px] text-ellipsis whitespace-nowrap">{record.requested_model ?? "未指定模型"}</strong>
+          <span className="overflow-hidden text-[9px] text-muted-foreground text-ellipsis whitespace-nowrap @max-[720px]:hidden">
             {serviceName ?? record.service_id ?? "正在选择服务"}
           </span>
           {child ? (
-            <span className="record-row__attempt">
+            <Badge className="text-[8px]" variant="secondary">
               子请求 {childOrdinal ?? record.attempt_index}
-            </span>
+            </Badge>
           ) : record.child_count > 0 ? (
-            <span className="record-row__attempt">最后一次记录</span>
+            <Badge className="text-[8px]" variant="secondary">最后一次记录</Badge>
           ) : null}
-          <span className="record-row__duration">
+          <span className="text-right text-[9.5px] font-semibold tabular-nums">
             {formatDuration(liveDurationMs(record, nowMs))}
           </span>
         </span>
-        <span className="record-row__secondary">
+        <span className="flex min-w-0 items-center gap-2 overflow-hidden pl-4 text-[8.5px] text-muted-foreground [&>*]:max-w-[190px] [&>*]:overflow-hidden [&>*]:text-ellipsis [&>*]:whitespace-nowrap">
           <StatusText record={record} />
           <span>HTTP {record.http_status ?? "—"}</span>
           <code>{record.input_protocol}</code>
-          <span className="record-row__minor">
+          <span>
             {record.streaming ? "流式" : "非流式"}
           </span>
-          <span className="record-row__tokens">
+          <span>
             {record.usage
               ? `${record.usage.input_tokens.toLocaleString()} → ${record.usage.output_tokens.toLocaleString()} Token`
               : "Token —"}
           </span>
-          <span className="record-row__audit">
+          <span>
             {captured ? "已捕获" : "未捕获正文"}
           </span>
         </span>
-      </button>
+      </Button>
       {onToggleRetries ? (
-        <button
+        <Button
           aria-expanded={retriesExpanded}
-          className="record-row__retries"
+          className="absolute top-1/2 right-2 h-6 -translate-y-1/2 px-2 text-[8px]"
           onClick={(event) => {
             event.stopPropagation();
             onToggleRetries();
           }}
           type="button"
+          variant="outline"
         >
           {retriesExpanded
             ? "收起子请求"
             : `子请求 ${record.child_count} 条`}
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -1152,7 +1184,7 @@ function RecordRow({
 function StatusText({ record }: { record: RequestRecord }) {
   if (record.error && record.status !== "pending") {
     return (
-      <strong className="record-row__error">
+      <strong className="text-danger-foreground">
         {record.error.category} · {record.error.code}
       </strong>
     );
@@ -1215,34 +1247,33 @@ function RecordDetail({
   return (
     <section
       aria-labelledby="request-detail-heading"
-      className="workspace-card records-surface record-detail"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-card shadow-[var(--shadow-card)]"
     >
       <PageHeader
         actions={
           <>
-            <button
-              className="btn-secondary"
+            <Button
+              variant="outline"
               disabled={!previousId}
               onClick={onPrevious}
               title="快捷键 ["
               type="button"
             >
               上一条
-            </button>
-            <span className="record-detail__position">
+            </Button>
+            <span className="text-[9px] tabular-nums text-muted-foreground">
               {index >= 0 ? index + 1 : "—"} / {navigationCount || "—"}
             </span>
-            <button
-              className="btn-secondary"
+            <Button
+              variant="outline"
               disabled={!nextId}
               onClick={onNext}
               title="快捷键 ]"
               type="button"
             >
               下一条
-            </button>
-            <button
-              className="btn-primary"
+            </Button>
+            <Button
               onClick={() => copyBundle(true)}
               type="button"
             >
@@ -1254,9 +1285,9 @@ function RecordDetail({
                   ? `已复制 ${formatBytes(bundleSize)}`
                   : "已复制",
               )}
-            </button>
-            <button
-              className="btn-secondary"
+            </Button>
+            <Button
+              variant="outline"
               onClick={() => copyBundle(false)}
               type="button"
             >
@@ -1265,9 +1296,9 @@ function RecordDetail({
                 "bundle-meta",
                 "仅复制元数据 + HTTP",
               )}
-            </button>
-            <button
-              className="btn-secondary is-danger"
+            </Button>
+            <Button
+              className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
               disabled={deleting || record.status === "pending"}
               onClick={onDelete}
               title={
@@ -1276,9 +1307,10 @@ function RecordDetail({
                   : undefined
               }
               type="button"
+              variant="outline"
             >
               {deleting ? "删除中…" : "删除"}
-            </button>
+            </Button>
           </>
         }
         back={{ label: "实时监控", onClick: onBack }}
@@ -1289,14 +1321,14 @@ function RecordDetail({
         variant="card"
       />
 
-      <div className="record-detail__scroll">
+      <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-auto overscroll-contain p-[22px]">
         <DetailSection title="身份">
-          <div className="record-identity">
-            <div className="record-identity__status">
-              <span className={`dot dot--${statusTone(record.status)}`} />
-              <strong>{statusLabel(record.status)}</strong>
+          <div className="grid grid-cols-4 gap-3 @max-[720px]:grid-cols-2">
+            <div className="col-span-full flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
+              <StatusDot tone={statusTone(record.status)} />
+              <strong className="text-[11px]">{statusLabel(record.status)}</strong>
               {record.status === "pending" ? (
-                <span>
+                <span className="text-[9px] text-muted-foreground">
                   已运行 {formatDuration(liveDurationMs(record, nowMs))}
                 </span>
               ) : null}
@@ -1318,24 +1350,25 @@ function RecordDetail({
                 record.completed_at ? formatDateTime(record.completed_at) : "—"
               }
             />
-            <div className="detail-field record-id-field">
-              <dt>ID</dt>
-              <dd>
-                <code>{record.id}</code>
-                <button
-                  className="text-button"
+            <div className="col-span-full min-w-0">
+              <dt className="text-[9px] font-semibold text-muted-foreground">ID</dt>
+              <dd className="mt-1 flex min-w-0 items-center gap-2 text-[10.5px] text-text-secondary">
+                <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{record.id}</code>
+                <Button
+                  className="h-auto px-0 text-[10px]"
                   onClick={() => copyFeedback.copy("record-id", record.id)}
                   type="button"
+                  variant="link"
                 >
                   {copyButtonLabel(copyFeedback, "record-id")}
-                </button>
+                </Button>
               </dd>
             </div>
           </div>
         </DetailSection>
 
         <DetailSection title="指标">
-          <dl className="record-metrics">
+          <dl className="grid grid-cols-3 @max-[720px]:grid-cols-2 [&>div]:border-l [&>div]:px-3 [&>div:nth-child(3n+1)]:border-l-0 [&>div:nth-child(3n+1)]:pl-0 @max-[720px]:[&>div:nth-child(3n+1)]:border-l @max-[720px]:[&>div:nth-child(3n+1)]:pl-3 @max-[720px]:[&>div:nth-child(odd)]:border-l-0 @max-[720px]:[&>div:nth-child(odd)]:pl-0">
             <Metric label="HTTP" value={record.http_status ?? "—"} />
             <Metric
               label="延迟"
@@ -1363,7 +1396,7 @@ function RecordDetail({
 
         <DetailSection title="隐私还原">
           {record.privacy_restore ? (
-            <dl className="record-metrics">
+            <dl className="grid grid-cols-4 @max-[720px]:grid-cols-2 [&>div]:border-l [&>div]:px-3 [&>div:first-child]:border-l-0 [&>div:first-child]:pl-0">
               <Metric
                 label="状态"
                 value={record.privacy_restore.enabled ? "已开启" : "已关闭"}
@@ -1382,13 +1415,13 @@ function RecordDetail({
               />
             </dl>
           ) : (
-            <p className="inline-notice">本次未触发请求脱敏，或属于旧版记录。</p>
+            <p className="text-[9.5px] text-success-foreground">本次未触发请求脱敏，或属于旧版记录。</p>
           )}
         </DetailSection>
 
         {record.error ? (
           <DetailSection tone="error" title="错误">
-            <dl className="record-detail-grid">
+            <dl className="grid grid-cols-3 gap-3 @max-[720px]:grid-cols-2">
               <DetailField label="类别" value={record.error.category} code />
               <DetailField label="代码" value={record.error.code} code />
               <DetailField
@@ -1396,7 +1429,7 @@ function RecordDetail({
                 value={record.error.retryable ? "是" : "否"}
               />
               <DetailField
-                className="is-wide"
+                className="col-span-full"
                 label="信息"
                 value={record.error.message}
               />
@@ -1405,13 +1438,13 @@ function RecordDetail({
         ) : null}
 
         {auditError ? (
-          <p className="inline-error" role="alert">
+          <p className="text-[9.5px] text-danger-foreground" role="alert">
             {auditError}
           </p>
         ) : null}
         {auditLoading ? (
           <DetailSection title="内容">
-            <p className="record-audit-loading" role="status">
+            <p className="text-[10px] text-muted-foreground" role="status">
               正在解密内容…
             </p>
           </DetailSection>
@@ -1464,7 +1497,7 @@ function RecordDetail({
         ) : null}
 
         <DetailSection title="关联">
-          <dl className="record-detail-grid">
+          <dl className="grid grid-cols-3 gap-3 @max-[720px]:grid-cols-2">
             <DetailField
               label="尝试序号"
               value={
@@ -1496,7 +1529,7 @@ function RecordDetail({
         </DetailSection>
 
         <DetailSection title="审计">
-          <div className="record-audit-summary">
+          <div className="grid grid-cols-2 gap-2.5 @max-[720px]:grid-cols-1">
             {!isChild ? (
               <>
                 <AuditSummaryCard
@@ -1526,15 +1559,15 @@ function RecordDetail({
               truncated={record.audit.upstream_response_content_truncated}
             />
           </div>
-          <div className="record-audit-clear">
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-[9px] text-muted-foreground">
             <span>解密内容仅保存在当前会话内存中。</span>
-            <button
-              className="btn-secondary"
+            <Button
+              variant="outline"
               onClick={onClearDecrypted}
               type="button"
             >
               清除已解密内容
-            </button>
+            </Button>
           </div>
         </DetailSection>
       </div>
@@ -1553,9 +1586,12 @@ function DetailSection({
 }) {
   return (
     <section
-      className={`record-detail-section${tone ? ` is-${tone}` : ""}`}
+      className={cn(
+        "rounded-[11px] border bg-card p-3.5",
+        tone === "error" && "border-destructive/25 bg-danger-wash",
+      )}
     >
-      <h3>{title}</h3>
+      <h3 className="mb-2.5 text-[11px] font-bold">{title}</h3>
       {children}
     </section>
   );
@@ -1573,9 +1609,9 @@ function DetailField({
   className?: string;
 }) {
   return (
-    <div className={`detail-field ${className}`}>
-      <dt>{label}</dt>
-      <dd>{code && typeof value === "string" && value !== "—" ? <code>{value}</code> : value}</dd>
+    <div className={cn("min-w-0", className)}>
+      <dt className="text-[9px] font-semibold text-muted-foreground">{label}</dt>
+      <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">{code && typeof value === "string" && value !== "—" ? <code className="text-[10px]">{value}</code> : value}</dd>
     </div>
   );
 }
@@ -1590,11 +1626,11 @@ function Metric({
   live?: boolean;
 }) {
   return (
-    <div>
-      <dt>{label}</dt>
-      <dd>
+    <div className="min-w-0">
+      <dt className="text-[9px] font-semibold text-muted-foreground">{label}</dt>
+      <dd className="mt-1 text-base font-[750] tabular-nums">
         {value}
-        {live ? <small>实时</small> : null}
+        {live ? <small className="ml-1 text-[8px] font-medium text-warning-foreground">实时</small> : null}
       </dd>
     </div>
   );
@@ -1612,14 +1648,14 @@ function AuditSummaryCard({
   part: AuditContentPart | null;
 }) {
   return (
-    <article>
-      <header>
-        <strong>{label}</strong>
-        <span className={captured ? "is-captured" : ""}>
+    <article className="rounded-[10px] border bg-muted p-3">
+      <header className="mb-2 flex items-center justify-between gap-2">
+        <strong className="text-[10px]">{label}</strong>
+        <span className={cn("text-[8.5px] text-muted-foreground", captured && "text-success-foreground")}>
           {captured ? "已捕获" : "未捕获"}
         </span>
       </header>
-      <dl>
+      <dl className="grid grid-cols-3 gap-2">
         <DetailField label="类型" value={part?.media_type ?? "—"} />
         <DetailField
           label="大小"
@@ -1635,33 +1671,45 @@ function FilterSelect({
   label,
   value,
   onChange,
-  children,
+  options,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
-  children: ReactNode;
+  options: Array<{ label: string; value: string }>;
 }) {
   return (
-    <label>
+    <Label className="grid items-stretch gap-1.5 text-[9px] font-semibold text-text-secondary @max-[720px]:last:col-span-full">
       <span>{label}</span>
-      <select
-        onChange={(event) => onChange(event.currentTarget.value)}
-        value={value}
+      <Select
+        onValueChange={(next) => onChange(next === "__all__" ? "" : next)}
+        value={value || "__all__"}
       >
-        {children}
-      </select>
-    </label>
+        <SelectTrigger aria-label={`${label}筛选`} className="h-8 min-w-[120px] @max-[720px]:w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem
+              key={option.value || "__all__"}
+              value={option.value || "__all__"}
+            >
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Label>
   );
 }
 
 function RecordSkeleton() {
   return (
-    <div aria-label="正在加载请求记录" className="record-skeleton">
+    <div aria-label="正在加载请求记录" className="grid gap-2 p-3">
       {Array.from({ length: 6 }, (_, index) => (
-        <div key={index}>
-          <span />
-          <span />
+        <div className="grid animate-pulse gap-2 rounded-[9px] border p-3" key={index}>
+          <span className="h-3 w-2/3 rounded bg-muted" />
+          <span className="h-2 w-1/2 rounded bg-muted" />
         </div>
       ))}
     </div>
@@ -1691,7 +1739,7 @@ function SettingsDialog({
   return (
     <ModalDialog onCancel={onCancel} title="审计设置">
       {draft ? (
-        <div className="audit-settings-form">
+        <div className="grid grid-cols-2 gap-3 max-[600px]:grid-cols-1">
           <CheckField
             checked={draft.http_meta_enabled}
             label="HTTP 元数据捕获（方法 / URL / 请求头，敏感值已脱敏）"
@@ -1735,34 +1783,33 @@ function SettingsDialog({
             onChange={(value) => onChange("content_retention_days", value)}
             value={draft.content_retention_days}
           />
-          <p className="inline-notice audit-settings-form__hint">
+          <FormMessage className="col-span-full" tone="notice">
             开启后仅捕获新请求；正文以密文保存在本机。开启正文捕获需进行第二步风险确认；HTTP
             元数据在捕获时即脱敏（Authorization 等敏感值不落盘），无需额外确认。
-          </p>
+          </FormMessage>
         </div>
       ) : busy ? (
         <p>加载中…</p>
       ) : null}
-      {error ? <p className="inline-error">{error}</p> : null}
-      {notice ? <p className="inline-notice">{notice}</p> : null}
-      <div className="token-dialog__actions">
-        <button
-          className="btn-secondary"
+      {error ? <FormMessage tone="error">{error}</FormMessage> : null}
+      {notice ? <FormMessage tone="success">{notice}</FormMessage> : null}
+      <DialogFooter>
+        <Button
+          variant="outline"
           disabled={busy}
           onClick={onCancel}
           type="button"
         >
           关闭
-        </button>
-        <button
-          className="btn-primary"
+        </Button>
+        <Button
           disabled={busy || !draft}
           onClick={onSave}
           type="button"
         >
           {busy ? "保存中…" : "保存"}
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </ModalDialog>
   );
 }
@@ -1786,91 +1833,45 @@ function PurgeDialog({
 }) {
   return (
     <ModalDialog onCancel={onCancel} title="清理请求记录">
-      <div className="purge-options">
-        <label>
-          <input
-            checked={mode === "all"}
-            name="purge-mode"
-            onChange={() => onModeChange("all")}
-            type="radio"
-          />
+      <RadioGroup
+        className="grid gap-2"
+        disabled={busy}
+        onValueChange={(value) => onModeChange(value as "all" | "before")}
+        value={mode}
+      >
+        <Label className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-sm">
+          <RadioGroupItem value="all" />
           <span>清空全部记录及加密内容</span>
-        </label>
-        <label>
-          <input
-            checked={mode === "before"}
-            name="purge-mode"
-            onChange={() => onModeChange("before")}
-            type="radio"
-          />
+        </Label>
+        <Label className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-sm">
+          <RadioGroupItem value="before" />
           <span>清除指定时间之前的记录</span>
-        </label>
+        </Label>
         {mode === "before" ? (
-          <input
+          <Input
             onChange={(event) => onBeforeChange(event.currentTarget.value)}
             type="datetime-local"
             value={before}
           />
         ) : null}
-      </div>
-      <div className="token-dialog__actions">
-        <button
-          className="btn-secondary"
+      </RadioGroup>
+      <DialogFooter>
+        <Button
+          variant="outline"
           disabled={busy}
           onClick={onCancel}
           type="button"
         >
           取消
-        </button>
-        <button
-          className="btn-primary"
+        </Button>
+        <Button
           disabled={busy}
           onClick={onSubmit}
           type="button"
         >
           {busy ? "清理中…" : "执行清理"}
-        </button>
-      </div>
-    </ModalDialog>
-  );
-}
-
-function ConfirmDialog({
-  title,
-  message,
-  confirmLabel,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  title: string;
-  message: string;
-  confirmLabel: string;
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <ModalDialog onCancel={onCancel} title={title}>
-      <p>{message}</p>
-      <div className="token-dialog__actions">
-        <button
-          className="btn-secondary"
-          disabled={busy}
-          onClick={onCancel}
-          type="button"
-        >
-          取消
-        </button>
-        <button
-          className="btn-primary"
-          disabled={busy}
-          onClick={onConfirm}
-          type="button"
-        >
-          {confirmLabel}
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </ModalDialog>
   );
 }
@@ -1885,23 +1886,17 @@ function ModalDialog({
   onCancel: () => void;
 }) {
   return (
-    <div
-      className="token-dialog-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-      role="presentation"
-    >
-      <section
-        aria-label={title}
-        aria-modal="true"
-        className="token-dialog records-dialog"
-        role="dialog"
-      >
-        <h3>{title}</h3>
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="max-w-xl sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            配置请求记录的捕获范围、保留期限或清理条件。
+          </DialogDescription>
+        </DialogHeader>
         {children}
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1915,14 +1910,14 @@ function CheckField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="audit-settings-form__check">
-      <input
+    <Label className="flex items-start gap-2 rounded-lg border bg-muted px-3 py-2 text-[10px] leading-5">
+      <Checkbox
+        aria-label={label}
         checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-        type="checkbox"
+        onCheckedChange={(value) => onChange(value === true)}
       />
       <span>{label}</span>
-    </label>
+    </Label>
   );
 }
 
@@ -1940,16 +1935,16 @@ function NumberField({
   onChange: (value: number) => void;
 }) {
   return (
-    <label>
+    <Label className="grid items-stretch gap-1.5 text-[10px] font-semibold text-text-secondary">
       <span>{label}</span>
-      <input
+      <Input
         max={max}
         min={min}
         onChange={(event) => onChange(Number(event.currentTarget.value))}
         type="number"
         value={value}
       />
-    </label>
+    </Label>
   );
 }
 

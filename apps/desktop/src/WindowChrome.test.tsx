@@ -95,10 +95,10 @@ describe("WindowChrome", () => {
       root.render(<WindowChrome platform="macos" />);
     });
 
-    expect(container.querySelector(".window-chrome")).not.toBeNull();
+    expect(container.querySelector('header[aria-label="窗口控制栏"]')).not.toBeNull();
     expect(
       container.querySelector(
-        ".window-chrome__drag[data-tauri-drag-region]",
+        '[data-slot="window-drag-region"][data-tauri-drag-region]',
       ),
     ).not.toBeNull();
     expect(container.querySelector("button")).toBeNull();
@@ -106,7 +106,7 @@ describe("WindowChrome", () => {
     expect(container.textContent).toBe("");
     expect(
       container.querySelector(
-        ".window-chrome__drag[data-tauri-drag-region]",
+        '[data-slot="window-drag-region"][data-tauri-drag-region]',
       ),
     ).not.toBeNull();
   });
@@ -130,7 +130,7 @@ describe("WindowChrome", () => {
     expect(windowMocks.close).toHaveBeenCalledOnce();
 
     const southeast = container.querySelector<HTMLDivElement>(
-      ".window-resize-handle--southeast",
+      '[data-slot="window-resize-handle"][data-direction="southeast"]',
     );
     expect(southeast).not.toBeNull();
     await act(async () => {
@@ -158,12 +158,12 @@ describe("WindowChrome", () => {
     );
     expect(
       container.querySelector(
-        '.window-chrome__controls--start button[aria-label="关闭窗口"]',
+        '[data-slot="window-controls"][data-placement="start"] button[aria-label="关闭窗口"]',
       ),
     ).not.toBeNull();
     expect(
       container.querySelectorAll(
-        ".window-chrome__controls--end button",
+        '[data-slot="window-controls"][data-placement="end"] button',
       ),
     ).toHaveLength(2);
     expect(container.textContent).toBe("");
@@ -178,7 +178,7 @@ describe("WindowChrome", () => {
     await act(async () => undefined);
 
     expect(control(container, "还原窗口")).not.toBeNull();
-    expect(container.querySelector(".window-resize-handle")).toBeNull();
+    expect(container.querySelector('[data-slot="window-resize-handle"]')).toBeNull();
 
     await act(async () => root.unmount());
     expect(windowMocks.unlistenFocus).toHaveBeenCalledOnce();

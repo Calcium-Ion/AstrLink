@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+
 import { encodeModelEditorValue } from "./model-editor";
 import { filterModels, groupModels } from "./model-groups";
 
@@ -110,43 +116,44 @@ export function ServiceModelsEditor({
   return (
     <fieldset
       aria-labelledby="service-models-editor-heading"
-      className="service-models-editor"
+      className="min-w-0 border-0 border-t bg-transparent px-0 pt-3 pb-0.5"
     >
-      <div className="service-models-editor__heading">
-        <div className="service-models-editor__title">
-          <strong id="service-models-editor-heading">支持模型</strong>
-          <p className="service-models-editor__help">
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-0.5">
+          <strong className="text-[12.5px] font-bold" id="service-models-editor-heading">支持模型</strong>
+          <p className="text-[9px] leading-[1.4] text-muted-foreground">
             精确匹配白名单；空清单不参与推理路由。
           </p>
         </div>
-        <span className="service-models-editor__count" aria-live="polite">
+        <Badge className="mt-px shrink-0 tabular-nums" aria-live="polite" variant="secondary">
           {hasQuery && models.length > 0
             ? `${filtered.length} / ${models.length}`
             : `${models.length} / 2,000`}
-        </span>
+        </Badge>
       </div>
 
-      <div className="service-models-editor__toolbar">
-        <input
+      <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-2">
+        <Input
           aria-label="搜索已配置模型"
-          className="service-models-editor__search"
+          className="h-8 min-w-0 flex-[1_1_160px]"
           placeholder="搜索模型…"
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <button
-          className="btn-secondary service-models-editor__fetch"
+        <Button
+          className="h-8 shrink-0"
           disabled={probingModels}
           onClick={onDiscoverModels}
           type="button"
+          variant="outline"
         >
           {probingModels ? "获取中…" : "获取模型列表"}
-        </button>
-        <button
+        </Button>
+        <Button
           aria-expanded={adding}
           aria-label="添加模型"
-          className="btn-secondary service-models-editor__add-toggle"
+          className="size-8 shrink-0 p-0 text-base font-semibold"
           onClick={() => {
             setAdding((open) => {
               const next = !open;
@@ -158,23 +165,26 @@ export function ServiceModelsEditor({
             });
           }}
           type="button"
+          size="icon-sm"
+          variant="outline"
         >
           {adding ? "−" : "+"}
-        </button>
+        </Button>
       </div>
 
       {adding ? (
-        <div className="service-models-editor__add">
+        <div className="mt-2 grid gap-2 rounded-[9px] border bg-muted p-[9px]">
           {bulkPaste ? (
-            <textarea
+            <Textarea
               aria-label="待添加模型 ID"
               placeholder={"每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-4-5"}
+              className="min-h-[72px] resize-y"
               rows={3}
               value={modelEditor}
               onChange={(event) => onModelEditorChange(event.target.value)}
             />
           ) : (
-            <input
+            <Input
               ref={addInputRef}
               aria-label="待添加模型 ID"
               placeholder="输入模型 ID，回车添加"
@@ -189,45 +199,47 @@ export function ServiceModelsEditor({
               }}
             />
           )}
-          <div className="service-models-editor__add-actions">
-            <button
-              className="service-models-editor__text-action"
+          <div className="flex items-center justify-end gap-2.5">
+            <Button
+              className="h-auto px-0 text-[9.5px]"
               onClick={() => setBulkPaste((value) => !value)}
               type="button"
+              variant="link"
             >
               {bulkPaste ? "单行输入" : "批量粘贴"}
-            </button>
-            <button className="btn-secondary" onClick={submitAdd} type="button">
+            </Button>
+            <Button variant="outline" onClick={submitAdd} type="button">
               添加
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
 
       {models.length === 0 ? (
-        <p className="service-models-editor__empty" role="status">
+        <p className="mt-2.5 rounded-[9px] border border-dashed bg-muted/70 p-3 text-center text-[10.5px] text-muted-foreground" role="status">
           还没有模型 · 服务不会参与路由
         </p>
       ) : (
         <>
-          <div className="service-models-editor__meta">
-            <span className="service-models-editor__stats">
+          <div className="my-1.5 mt-2 flex min-h-4 items-center justify-between gap-2.5">
+            <span className="text-[9.5px] font-semibold text-muted-foreground tabular-nums">
               {hasQuery
                 ? `匹配 ${filtered.length} / ${models.length}`
                 : `${groups.length} 组 · ${models.length} 个模型`}
             </span>
-            <div className="service-models-editor__meta-actions">
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
               {!hasQuery ? (
-                <button
-                  className="service-models-editor__text-action"
+                <Button
+                  className="h-auto px-0 text-[9.5px]"
                   onClick={allCollapsed ? expandAll : collapseAll}
                   type="button"
+                  variant="link"
                 >
                   {allCollapsed ? "展开全部" : "折叠全部"}
-                </button>
+                </Button>
               ) : (
-                <button
-                  className="service-models-editor__text-action service-models-editor__text-action--danger"
+                <Button
+                  className="h-auto px-0 text-[9.5px] text-danger-foreground"
                   disabled={filtered.length === 0}
                   onClick={() =>
                     setConfirm({
@@ -236,51 +248,55 @@ export function ServiceModelsEditor({
                     })
                   }
                   type="button"
+                  variant="link"
                 >
                   删除匹配（{filtered.length}）
-                </button>
+                </Button>
               )}
-              <button
-                className="service-models-editor__text-action service-models-editor__text-action--danger"
+              <Button
+                className="h-auto px-0 text-[9.5px] text-danger-foreground"
                 onClick={() => setConfirm({ kind: "clear" })}
                 type="button"
+                variant="link"
               >
                 清空
-              </button>
+              </Button>
             </div>
           </div>
 
           {filtered.length === 0 ? (
-            <p className="service-models-editor__filter-empty" role="status">
+            <p className="mt-1.5 rounded-[9px] border border-dashed p-2.5 text-[10.5px] text-muted-foreground" role="status">
               没有匹配“{query.trim()}”的模型。
             </p>
           ) : (
-            <div className="service-model-list" aria-label="已配置模型">
+            <div className="grid gap-2" aria-label="已配置模型">
               {groups.map((group) => {
                 const collapsedGroup = isGroupCollapsed(group.key);
                 return (
-                  <section className="service-model-group" key={group.key}>
-                    <div className="service-model-group__header">
-                      <button
+                  <section className="min-w-0" key={group.key}>
+                    <div className="group flex items-center gap-1.5 border-b px-px py-[5px]">
+                      <Button
                         aria-expanded={!collapsedGroup}
-                        className="service-model-group__toggle"
+                        className="h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[11px] text-text-secondary hover:bg-transparent"
+                        data-testid="service-model-group-toggle"
                         onClick={() => toggleGroup(group.key)}
                         type="button"
+                        variant="ghost"
                       >
                         <span
                           aria-hidden="true"
-                          className="service-model-group__chevron"
+                          className="shrink-0 text-[8px] leading-none text-muted-foreground"
                         >
                           {collapsedGroup ? "▸" : "▾"}
                         </span>
-                        <strong>{group.key}</strong>
-                        <small className="service-model-group__count">
+                        <strong className="min-w-0 overflow-hidden text-[11px] font-bold text-foreground text-ellipsis whitespace-nowrap">{group.key}</strong>
+                        <Badge className="px-1.5 py-0 text-[8.5px] tabular-nums" variant="secondary">
                           {group.models.length}
-                        </small>
-                      </button>
-                      <button
+                        </Badge>
+                      </Button>
+                      <Button
                         aria-label={`删除分组 ${group.key}`}
-                        className="service-model-group__remove"
+                        className="size-6 shrink-0 text-sm text-danger-foreground opacity-0 hover:bg-danger-wash group-hover:opacity-100 group-focus-within:opacity-100"
                         onClick={() =>
                           setConfirm({
                             kind: "remove_group",
@@ -289,25 +305,29 @@ export function ServiceModelsEditor({
                           })
                         }
                         type="button"
+                        size="icon-xs"
+                        variant="ghost"
                       >
                         −
-                      </button>
+                      </Button>
                     </div>
                     {collapsedGroup ? null : (
-                      <div className="service-model-group__body">
+                      <div className="mt-[7px] flex flex-wrap gap-[5px]">
                         {group.models.map((model) => {
                           const label = encodeModelEditorValue(model);
                           return (
-                            <div className="service-model-chip" key={model}>
-                              <code title={label}>{label}</code>
-                              <button
+                            <div className="group/chip inline-flex min-w-0 max-w-[260px] items-center gap-1 overflow-hidden rounded-[7px] border bg-muted py-1 pr-1.5 pl-2 text-text-secondary hover:border-primary/25" data-testid="service-model-chip" key={model}>
+                              <code className="min-w-0 overflow-hidden text-[9.5px] text-ellipsis whitespace-nowrap" title={label}>{label}</code>
+                              <Button
                                 aria-label={`删除 ${label}`}
-                                className="service-model-chip__remove"
+                                className="size-6 shrink-0 rounded text-[11px] text-danger-foreground opacity-0 hover:bg-danger-wash group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"
                                 onClick={() => onRemoveModels([model])}
                                 type="button"
+                                size="icon-xs"
+                                variant="ghost"
                               >
                                 ×
-                              </button>
+                              </Button>
                             </div>
                           );
                         })}
@@ -321,45 +341,29 @@ export function ServiceModelsEditor({
         </>
       )}
 
-      {confirm ? (
-        <div className="token-dialog-backdrop" role="presentation">
-          <section
-            aria-labelledby="service-models-confirm-title"
-            aria-modal="true"
-            className="token-dialog"
-            role="dialog"
-          >
-            <h3 id="service-models-confirm-title">
-              {confirm.kind === "clear"
-                ? "清空支持模型？"
-                : confirm.kind === "remove_group"
-                  ? `删除分组“${confirm.group}”？`
-                  : "删除匹配的模型？"}
-            </h3>
-            <p>
-              {confirm.kind === "clear"
+      <ConfirmDialog
+        confirmLabel="确认删除"
+        description={
+          <p>
+              {confirm?.kind === "clear"
                 ? `将移除全部 ${models.length} 个模型；空清单时该服务不会参与推理路由。`
-                : `将从白名单移除 ${confirm.models.length} 个模型。保存前可继续编辑。`}
-            </p>
-            <div className="token-dialog__actions">
-              <button
-                className="btn-secondary"
-                onClick={() => setConfirm(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="btn-primary"
-                onClick={applyConfirm}
-                type="button"
-              >
-                确认删除
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+                : confirm
+                  ? `将从白名单移除 ${confirm.models.length} 个模型。保存前可继续编辑。`
+                  : ""}
+          </p>
+        }
+        destructive
+        onCancel={() => setConfirm(null)}
+        onConfirm={applyConfirm}
+        open={confirm !== null}
+        title={
+          confirm?.kind === "clear"
+            ? "清空支持模型？"
+            : confirm?.kind === "remove_group"
+              ? `删除分组“${confirm.group}”？`
+              : "删除匹配的模型？"
+        }
+      />
     </fieldset>
   );
 }

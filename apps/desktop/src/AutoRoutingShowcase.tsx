@@ -1,3 +1,5 @@
+import { Card } from "@/components/ui/card";
+
 interface PreviewCategory {
   id: string;
   label: string;
@@ -47,27 +49,27 @@ const previewCategories: PreviewCategory[] = [
 
 export function AutoRoutingShowcase() {
   return (
-    <div className="routing-showcase" data-testid="auto-routing-showcase">
-      <div className="routing-preview__hero">
-        <div className="routing-preview__model-name">
-          <span>公开模型名</span>
-          <code>astrlink/auto</code>
-          <p>
+    <div data-testid="auto-routing-showcase">
+      <Card className="grid grid-cols-1 gap-0 overflow-hidden rounded-2xl border-primary/20 shadow-[0_10px_32px_color-mix(in_srgb,var(--foreground)_5%,transparent)]">
+        <div className="min-w-0 p-5">
+          <span className="block text-[9px] font-bold text-muted-foreground">公开模型名</span>
+          <code className="mt-[9px] block overflow-hidden text-[clamp(22px,3vw,32px)] font-[750] tracking-[-0.04em] text-accent-foreground text-ellipsis whitespace-nowrap">astrlink/auto</code>
+          <p className="mt-2 text-[10px] leading-6 text-text-secondary">
             真实上游模型由本地任务分类与你配置的分类模型池决定。分类与运行时通过验收前不可启用，也不会写入
             Core。
           </p>
         </div>
-      </div>
+      </Card>
 
-      <ol aria-label="自动路由流程" className="routing-flow">
+      <ol aria-label="自动路由流程" className="mt-3.5 grid list-none grid-cols-3 gap-2 p-0 max-[720px]:grid-cols-1">
         {routingSteps.map((step, index) => (
-          <li key={step.id}>
-            <span aria-hidden="true" className="routing-flow__index">
+          <li className="flex min-w-0 items-center gap-[9px] rounded-[11px] border bg-card p-[11px]" key={step.id}>
+            <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-[9px] bg-accent text-[9px] font-extrabold text-accent-foreground">
               {String(index + 1).padStart(2, "0")}
             </span>
-            <div>
-              <strong>{step.label}</strong>
-              <small>{step.detail}</small>
+            <div className="flex min-w-0 flex-col gap-[3px]">
+              <strong className="text-[10.5px]">{step.label}</strong>
+              <small className="overflow-hidden text-[8.5px] leading-[1.4] text-muted-foreground">{step.detail}</small>
             </div>
           </li>
         ))}
@@ -75,27 +77,27 @@ export function AutoRoutingShowcase() {
 
       <section
         aria-labelledby="routing-categories-title"
-        className="routing-preview__section"
+        className="mt-[22px]"
       >
-        <div className="routing-preview__section-heading">
+        <div className="mb-[9px] flex items-end justify-between gap-3.5">
           <div>
-            <span>任务分类</span>
-            <h3 id="routing-categories-title">按分类配置模型池</h3>
+            <span className="block text-[8.5px] font-[750] tracking-[0.08em] text-muted-foreground uppercase">任务分类</span>
+            <h3 className="mt-1 text-sm tracking-[-0.015em]" id="routing-categories-title">按分类配置模型池</h3>
           </div>
-          <small>示意，不可配置</small>
+          <small className="text-[9px] text-muted-foreground">示意，不可配置</small>
         </div>
 
-        <div className="routing-category-grid">
+        <div className="grid grid-cols-2 gap-2.5 max-[720px]:grid-cols-1">
           {previewCategories.map((category) => (
-            <article className="routing-category-card" key={category.id}>
-              <header>
-                <div>
-                  <code>{category.id}</code>
-                  <h4>{category.label}</h4>
+            <Card className="min-w-0 gap-0 rounded-[13px] p-3.5 shadow-none" data-testid="routing-category" key={category.id}>
+              <header className="flex min-w-0 items-start justify-between gap-2.5">
+                <div className="min-w-0">
+                  <code className="block overflow-hidden text-[8.5px] font-bold text-accent-foreground text-ellipsis whitespace-nowrap">{category.id}</code>
+                  <h4 className="mt-1 text-xs">{category.label}</h4>
                 </div>
               </header>
-              <p>{category.description}</p>
-            </article>
+              <p className="mt-2 text-[9px] leading-6 text-text-secondary">{category.description}</p>
+            </Card>
           ))}
         </div>
       </section>

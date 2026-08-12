@@ -1,11 +1,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
 import App from "./App";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { WindowChrome } from "./WindowChrome";
 import { getDesktopPlatform } from "./window-chrome";
-import "./styles.css";
+import "./styles/globals.css";
 
 const root = document.getElementById("root");
 
@@ -18,9 +21,12 @@ document.documentElement.dataset.desktopPlatform = desktopPlatform;
 
 createRoot(root).render(
   <StrictMode>
-    <WindowChrome platform={desktopPlatform} />
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
+    <TooltipProvider>
+      <WindowChrome platform={desktopPlatform} />
+      <AppErrorBoundary>
+        <App />
+      </AppErrorBoundary>
+      <Toaster position="bottom-right" />
+    </TooltipProvider>
   </StrictMode>,
 );

@@ -125,6 +125,31 @@ function buttonContaining(
   return match;
 }
 
+async function chooseOption(label: string, option: string): Promise<void> {
+  const trigger = document.querySelector<HTMLButtonElement>(
+    `button[role="combobox"][aria-label="${label}"]`,
+  );
+  if (!trigger) throw new Error(`Missing select trigger: ${label}`);
+  await act(async () => {
+    trigger.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerType: "mouse",
+      }),
+    );
+    await Promise.resolve();
+  });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (candidate) => candidate.textContent?.trim() === option,
+  );
+  if (!item) throw new Error(`Missing select option: ${option}`);
+  await act(async () => {
+    item.click();
+    await Promise.resolve();
+  });
+}
+
 describe("RequestRecords", () => {
   let container: HTMLDivElement;
   let reactRoot: Root;
@@ -236,9 +261,9 @@ describe("RequestRecords", () => {
     await renderRecords();
 
     expect(container.querySelector("h1")?.textContent).toBe("请求记录");
-    expect(container.querySelector(".workspace-card .page-header")).toBeNull();
-    expect(container.querySelector(".records-table")).toBeNull();
-    expect(container.querySelectorAll(".record-row")).toHaveLength(2);
+    expect(container.querySelectorAll('[data-slot="page-header"]')).toHaveLength(1);
+    expect(container.querySelector("table")).toBeNull();
+    expect(container.querySelectorAll('[data-testid="request-record-row"]')).toHaveLength(2);
     expect(container.textContent).toContain("gpt-4.1");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("10 → 20 Token");
@@ -289,7 +314,7 @@ describe("RequestRecords", () => {
 
     expect(bridgeMocks.listRequestRecordChildren).toHaveBeenCalledWith(root.id);
     const renderedChildren = container.querySelectorAll(
-      ".record-group__children .record-row",
+      '[data-testid="request-record-children"] [data-testid="request-record-row"]',
     );
     expect(renderedChildren).toHaveLength(2);
     expect(renderedChildren[0].textContent).toContain("子请求 1");
@@ -301,15 +326,7 @@ describe("RequestRecords", () => {
     await renderRecords();
     bridgeMocks.listRequestRecords.mockClear();
 
-    const statusSelect = container.querySelectorAll("select")[0];
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(statusSelect, "failed");
-      statusSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await chooseOption("状态筛选", "失败");
 
     expect(bridgeMocks.listRequestRecords).not.toHaveBeenCalled();
     expect(
@@ -435,16 +452,8 @@ describe("RequestRecords", () => {
         return 1;
       });
     await renderRecords();
-    const statusSelect = container.querySelectorAll("select")[0];
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLSelectElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(statusSelect, "succeeded");
-      statusSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    const scroller = container.querySelector(".records-monitor__scroll");
+    await chooseOption("状态筛选", "成功");
+    const scroller = container.querySelector('[data-testid="request-records-scroll"]');
     if (!(scroller instanceof HTMLDivElement)) {
       throw new Error("Missing monitor scroller");
     }
@@ -460,9 +469,7 @@ describe("RequestRecords", () => {
     });
     await act(async () => buttonContaining("实时监控").click());
 
-    expect((container.querySelectorAll("select")[0] as HTMLSelectElement).value).toBe(
-      "succeeded",
-    );
+    expect(document.querySelector('[aria-label="状态筛选"]')?.textContent).toContain("成功");
     expect(scroller.scrollTop).toBe(180);
     expect(document.activeElement?.getAttribute("data-record-id")).toBe(
       firstRecord.id,
@@ -479,16 +486,16 @@ describe("RequestRecords", () => {
     });
     await act(async () => await Promise.resolve());
 
-    const checkbox = [...container.querySelectorAll('input[type="checkbox"]')].find(
-      (input) => input.closest("label")?.textContent?.includes("请求体捕获"),
+    const checkbox = document.querySelector<HTMLButtonElement>(
+      '[role="checkbox"][aria-label="请求体捕获"]',
     );
-    if (!(checkbox instanceof HTMLInputElement)) {
+    if (!(checkbox instanceof HTMLButtonElement)) {
       throw new Error("Missing request body capture checkbox");
     }
     await act(async () => checkbox.click());
     await act(async () => exactButton("保存").click());
 
-    expect(container.querySelector('[role="dialog"]')?.textContent).toContain(
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
       "确认开启正文捕获",
     );
     await act(async () => {
@@ -502,7 +509,7 @@ describe("RequestRecords", () => {
       audit_risk_acknowledged: true,
     });
     expect(window.confirm).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("审计设置已保存。");
+    expect(document.body.textContent).toContain("审计设置已保存。");
   });
 
   it("purges records through two in-app dialogs", async () => {
@@ -514,7 +521,7 @@ describe("RequestRecords", () => {
 
     await act(async () => exactButton("清理…").click());
     await act(async () => exactButton("执行清理").click());
-    expect(container.querySelector('[role="dialog"]')?.textContent).toContain(
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
       "确定清空全部",
     );
     await act(async () => {
@@ -585,7 +592,7 @@ describe("RequestRecords", () => {
       "1 条新记录",
     );
     await act(async () => buttonContaining("1 条新记录").click());
-    const rows = [...container.querySelectorAll(".record-row")];
+    const rows = [...container.querySelectorAll('[data-testid="request-record-row"]')];
     expect(rows[0].textContent).toContain("gpt-new");
   });
 
@@ -596,7 +603,7 @@ describe("RequestRecords", () => {
       next_cursor: null,
     });
     await renderRecords();
-    const scroller = container.querySelector(".records-monitor__scroll");
+    const scroller = container.querySelector('[data-testid="request-records-scroll"]');
     if (!(scroller instanceof HTMLDivElement)) {
       throw new Error("Missing monitor scroller");
     }

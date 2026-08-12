@@ -67,9 +67,9 @@ describe("AuditReviewer sections", () => {
     });
 
     // Raw is the default view; nothing is parsed yet.
-    expect(container.querySelector(".audit-raw")).not.toBeNull();
-    expect(container.querySelector(".audit-event-card")).toBeNull();
-    const rawText = container.querySelector(".audit-raw pre")?.textContent ?? "";
+    expect(container.querySelector('[data-testid="audit-raw"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="audit-event"]')).toBeNull();
+    const rawText = container.querySelector('[data-testid="audit-raw"] pre')?.textContent ?? "";
     expect(rawText.startsWith("event: response.output_text.delta")).toBe(true);
 
     const eventsTab = [...container.querySelectorAll("button")].find(
@@ -77,7 +77,9 @@ describe("AuditReviewer sections", () => {
     );
     expect(eventsTab).toBeDefined();
     await act(async () => {
-      (eventsTab as HTMLButtonElement).click();
+      (eventsTab as HTMLButtonElement).dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+      );
     });
     // Incremental parsing yields between batches.
     for (let round = 0; round < 20; round += 1) {
@@ -85,14 +87,14 @@ describe("AuditReviewer sections", () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      if (container.querySelectorAll(".audit-event-card").length > 0) break;
+      if (container.querySelectorAll('[data-testid="audit-event"]').length > 0) break;
     }
-    expect(container.querySelectorAll(".audit-event-card")).toHaveLength(300);
+    expect(container.querySelectorAll('[data-testid="audit-event"]')).toHaveLength(300);
     const loadMore = [...container.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("再显示 160 个事件"),
     );
     await act(async () => (loadMore as HTMLButtonElement).click());
-    expect(container.querySelectorAll(".audit-event-card")).toHaveLength(
+    expect(container.querySelectorAll('[data-testid="audit-event"]')).toHaveLength(
       eventCount,
     );
   });
@@ -118,12 +120,12 @@ describe("AuditReviewer sections", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelectorAll(".audit-raw__segment")).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="audit-raw-segment"]')).toHaveLength(1);
     const loadNext = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "加载下一段",
     );
     await act(async () => (loadNext as HTMLButtonElement).click());
-    expect(container.querySelectorAll(".audit-raw__segment")).toHaveLength(2);
+    expect(container.querySelectorAll('[data-testid="audit-raw-segment"]')).toHaveLength(2);
   });
 
   it("renders redacted headers distinctly and reports missing capture", async () => {
@@ -149,7 +151,7 @@ describe("AuditReviewer sections", () => {
 
     expect(container.textContent).toContain("POST /v1/responses?stream=true");
     expect(container.textContent).toContain("Bearer <redacted:51 chars>");
-    expect(container.querySelector(".is-redacted")).not.toBeNull();
+    expect(container.querySelector('[data-redacted="true"]')).not.toBeNull();
     expect(container.textContent).toContain("x-request-id");
 
     await act(async () => {

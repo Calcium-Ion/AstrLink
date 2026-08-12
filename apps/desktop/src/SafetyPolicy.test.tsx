@@ -173,12 +173,26 @@ async function setInput(selector: string, value: string): Promise<void> {
   });
 }
 
-async function setSelect(selector: string, value: string): Promise<void> {
-  const select = document.querySelector<HTMLSelectElement>(selector);
-  if (select === null) throw new Error(`Missing select: ${selector}`);
+async function chooseOption(selector: string, option: string): Promise<void> {
+  const trigger = document.querySelector<HTMLButtonElement>(selector);
+  if (trigger === null) throw new Error(`Missing select trigger: ${selector}`);
   await act(async () => {
-    select.value = value;
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    trigger.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerType: "mouse",
+      }),
+    );
+    await Promise.resolve();
+  });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (candidate) => candidate.textContent?.trim() === option,
+  );
+  if (!item) throw new Error(`Missing select option: ${option}`);
+  await act(async () => {
+    item.click();
+    await Promise.resolve();
   });
 }
 
@@ -231,16 +245,16 @@ describe("SafetyPolicy", () => {
     bridgeMocks.updatePrivacyPolicy.mockReturnValueOnce(pending.promise);
     await renderPolicy();
 
-    const enabled = container.querySelector<HTMLInputElement>(
-      'input[aria-label="启用隐私保护"]',
+    const enabled = container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="启用隐私保护"]',
     );
-    expect(enabled?.checked).toBe(false);
+    expect(enabled?.getAttribute("aria-checked")).toBe("false");
 
     await act(async () => {
       enabled?.click();
       await Promise.resolve();
     });
-    expect(enabled?.checked).toBe(true);
+    expect(enabled?.getAttribute("aria-checked")).toBe("true");
     expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
       enabled: true,
     });
@@ -249,7 +263,7 @@ describe("SafetyPolicy", () => {
       pending.reject(new Error("ETag mismatch"));
       await Promise.resolve();
     });
-    expect(enabled?.checked).toBe(false);
+    expect(enabled?.getAttribute("aria-checked")).toBe("false");
     expect(container.textContent).toContain("ETag mismatch");
   });
 
@@ -286,17 +300,17 @@ describe("SafetyPolicy", () => {
     });
     await renderPolicy();
 
-    const selector = container.querySelector<HTMLSelectElement>(
+    const selector = container.querySelector<HTMLButtonElement>(
       '[aria-label="OpenAI Privacy Filter 模型版本"]',
     );
-    expect(selector?.value).toBe("cpu_q4");
+    expect(selector?.textContent).toContain("CPU Q4");
 
-    await setSelect(
+    await chooseOption(
       '[aria-label="OpenAI Privacy Filter 模型版本"]',
-      "cpu_int8",
+      "CPU INT8",
     );
 
-    expect(selector?.value).toBe("cpu_int8");
+    expect(selector?.textContent).toContain("CPU INT8");
     expect(container.textContent).toContain("OpenAI Privacy Filter");
     expect(container.textContent).toContain("下载 1.0 GB");
   });
@@ -332,10 +346,10 @@ describe("SafetyPolicy", () => {
       revision,
     });
     expect(
-      container.querySelector('[role="dialog"]')?.textContent,
+      document.querySelector('[role="dialog"]')?.textContent,
     ).toContain("标签映射");
     expect(button("确认安装").disabled).toBe(true);
-    await setSelect('[aria-label="MISC 标签映射"]', "");
+    await chooseOption('[aria-label="MISC 标签映射"]', "忽略此标签");
     expect(button("确认安装").disabled).toBe(false);
 
     await act(async () => {
@@ -392,7 +406,7 @@ describe("SafetyPolicy", () => {
       await Promise.resolve();
     });
     expect(
-      container.querySelector('[role="dialog"]')?.textContent,
+      document.querySelector('[role="alertdialog"]')?.textContent,
     ).toContain("取消模型下载");
     expect(
       bridgeMocks.cancelPrivacyModelInstallation,
@@ -496,29 +510,29 @@ describe("SafetyPolicy", () => {
       repo_id: heavyProbe.repo_id,
       revision: "main",
     });
-    expect(container.textContent).toContain("标签映射");
+    expect(document.body.textContent).toContain("标签映射");
     expect(
-      container.querySelector<HTMLSelectElement>(
+      document.querySelector<HTMLButtonElement>(
         '[aria-label="PERSON 标签映射"]',
-      )?.value,
-    ).toBe("private_person");
+      )?.textContent,
+    ).toContain("人名");
     expect(
-      container.querySelector<HTMLSelectElement>(
+      document.querySelector<HTMLButtonElement>(
         '[aria-label="MISC 标签映射"]',
-      )?.value,
-    ).toBe("__unresolved__");
+      )?.textContent,
+    ).toContain("请选择");
     expect(button("安装自定义模型").disabled).toBe(true);
 
-    await setSelect('[aria-label="MISC 标签映射"]', "");
+    await chooseOption('[aria-label="MISC 标签映射"]', "忽略此标签");
     await act(async () => button("应用映射").click());
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(button("安装自定义模型").disabled).toBe(false);
 
     await act(async () => {
       button("安装自定义模型").click();
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("性能较低的设备");
+    expect(document.body.textContent).toContain("性能较低的设备");
     expect(bridgeMocks.installPrivacyModel).not.toHaveBeenCalled();
     expect(window.confirm).not.toHaveBeenCalled();
     await act(async () => {
@@ -594,12 +608,12 @@ describe("SafetyPolicy", () => {
       "/Volumes/models/astr-pii-ettin/model_int8.onnx ·",
     );
     expect(
-      container.querySelector<HTMLSelectElement>(
+      document.querySelector<HTMLButtonElement>(
         '[aria-label="MISC 标签映射"]',
-      )?.value,
-    ).toBe("__unresolved__");
+      )?.textContent,
+    ).toContain("请选择");
 
-    await setSelect('[aria-label="MISC 标签映射"]', "");
+    await chooseOption('[aria-label="MISC 标签映射"]', "忽略此标签");
     await act(async () => button("应用映射").click());
     await act(async () => {
       button("导入本地模型").click();
@@ -715,18 +729,18 @@ describe("SafetyPolicy", () => {
     });
     await renderPolicy("session-new");
     expect(
-      container.querySelector<HTMLSelectElement>("#privacy-request-action")
-        ?.value,
-    ).toBe("block");
+      container.querySelector<HTMLButtonElement>("#privacy-request-action")
+        ?.textContent,
+    ).toContain("阻止请求");
 
     await act(async () => {
       oldPolicy.resolve(policyRecord({ request_action: "warn" }));
       await Promise.resolve();
     });
     expect(
-      container.querySelector<HTMLSelectElement>("#privacy-request-action")
-        ?.value,
-    ).toBe("block");
+      container.querySelector<HTMLButtonElement>("#privacy-request-action")
+        ?.textContent,
+    ).toContain("阻止请求");
   });
 
   it("confirms resource use before activating a local model", async () => {
@@ -752,7 +766,7 @@ describe("SafetyPolicy", () => {
       await Promise.resolve();
     });
 
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.querySelector('[role="alertdialog"]');
     expect(dialog?.textContent).toContain("确认使用本地模型");
     expect(dialog?.textContent).toContain("预计内存");
     expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
@@ -761,7 +775,7 @@ describe("SafetyPolicy", () => {
       button("确认用于策略").click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
       detector: "local_model",
       local_model_id: ready.id,
@@ -786,7 +800,7 @@ describe("SafetyPolicy", () => {
     });
 
     expect(
-      container.querySelector('[role="dialog"]')?.textContent,
+      document.querySelector('[role="alertdialog"]')?.textContent,
     ).toContain("删除本地模型");
     expect(
       bridgeMocks.deletePrivacyModelInstallation,
@@ -817,13 +831,13 @@ describe("SafetyPolicy", () => {
     await act(async () => button("用于策略").click());
     await act(async () => button("返回").click());
 
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
     expect(
-      container.querySelector<HTMLInputElement>(
-        'input[name="privacy-detector"]:checked',
-      )?.closest("label")?.textContent,
-    ).toContain("Regex");
+      container.querySelector<HTMLButtonElement>(
+        '[role="radio"][aria-label="Regex"]',
+      )?.getAttribute("aria-checked"),
+    ).toBe("true");
   });
 
   it("patches response restore independently of request action", async () => {
@@ -833,10 +847,10 @@ describe("SafetyPolicy", () => {
     );
     await renderPolicy();
 
-    const toggle = container.querySelector<HTMLInputElement>(
-      'input[aria-label="响应还原占位符"]',
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="响应还原占位符"]',
     );
-    expect(toggle?.checked).toBe(true);
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
 
     await act(async () => {
       toggle?.click();
@@ -848,10 +862,10 @@ describe("SafetyPolicy", () => {
       response_restore: false,
     });
     expect(
-      container.querySelector<HTMLInputElement>(
-        'input[aria-label="响应还原占位符"]',
-      )?.checked,
-    ).toBe(false);
+      container.querySelector<HTMLButtonElement>(
+        '[role="switch"][aria-label="响应还原占位符"]',
+      )?.getAttribute("aria-checked"),
+    ).toBe("false");
   });
 
   it("opens a local streaming restore demo without mutating policy", async () => {
@@ -876,9 +890,9 @@ describe("SafetyPolicy", () => {
       await Promise.resolve();
     });
 
-    const dialog = container.querySelector('[role="dialog"]');
+    const dialog = document.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
-    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    expect(dialog?.getAttribute("data-state")).toBe("open");
     expect(
       dialog?.querySelector("#streaming-restore-demo-title")?.textContent,
     ).toBe("流式响应还原演示");
@@ -905,37 +919,37 @@ describe("SafetyPolicy", () => {
     expect(dialog?.textContent).not.toContain("SSE 审核");
 
     const canvasBefore = dialog?.querySelector(
-      ".streaming-restore-demo__canvas",
+      '[data-testid="streaming-restore-demo"]',
     );
     const packetsBefore = [
-      ...container.querySelectorAll(".streaming-restore-demo__packet"),
+      ...document.querySelectorAll("[data-packet]"),
     ];
     expect(canvasBefore).not.toBeNull();
     expect(packetsBefore).toHaveLength(5);
     expect(
-      container.querySelector(".streaming-restore-demo__lane--request"),
+      document.querySelector('[data-lane="request"]'),
     ).not.toBeNull();
     expect(
-      container.querySelector(".streaming-restore-demo__lane--response"),
+      document.querySelector('[data-lane="response"]'),
     ).not.toBeNull();
     expect(
-      container.querySelector(".streaming-restore-demo__packet--plain")
+      document.querySelector('[data-packet="plain"]')
         ?.textContent,
     ).toContain("alice@example.com");
     expect(
-      container.querySelector(".streaming-restore-demo__packet--redacted")
+      document.querySelector('[data-packet="redacted"]')
         ?.textContent,
     ).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
     expect(
-      container.querySelector(".streaming-restore-demo__packet--chunk-a")
+      document.querySelector('[data-packet="chunk-a"]')
         ?.textContent,
     ).toContain('"delta":"<PRIVATE_EMAIL_7f3a"');
     expect(
-      container.querySelector(".streaming-restore-demo__packet--chunk-b")
+      document.querySelector('[data-packet="chunk-b"]')
         ?.textContent,
     ).toContain('"delta":"91c04d28be56>"');
     expect(
-      container.querySelector(".streaming-restore-demo__packet--restored")
+      document.querySelector('[data-packet="restored"]')
         ?.textContent,
     ).toContain("正文: alice@example.com");
 
@@ -943,11 +957,11 @@ describe("SafetyPolicy", () => {
       button("重新播放").click();
       await Promise.resolve();
     });
-    const canvasAfter = container.querySelector(
-      ".streaming-restore-demo__canvas",
+    const canvasAfter = document.querySelector(
+      '[data-testid="streaming-restore-demo"]',
     );
     const packetsAfter = [
-      ...container.querySelectorAll(".streaming-restore-demo__packet"),
+      ...document.querySelectorAll("[data-packet]"),
     ];
     expect(canvasAfter).not.toBeNull();
     expect(canvasAfter).not.toBe(canvasBefore);
@@ -958,14 +972,14 @@ describe("SafetyPolicy", () => {
       expect(mock.mock.calls.length, name).toBe(bridgeCallsBefore[name]);
     }
     expect(
-      container.querySelector<HTMLInputElement>(
-        'input[aria-label="响应还原占位符"]',
-      )?.checked,
-    ).toBe(false);
+      container.querySelector<HTMLButtonElement>(
+        '[role="switch"][aria-label="响应还原占位符"]',
+      )?.getAttribute("aria-checked"),
+    ).toBe("false");
     expect(
-      container.querySelector<HTMLSelectElement>("#privacy-request-action")
-        ?.value,
-    ).toBe("block");
+      container.querySelector<HTMLButtonElement>("#privacy-request-action")
+        ?.textContent,
+    ).toContain("阻止请求");
 
     await act(async () => {
       window.dispatchEvent(
@@ -973,18 +987,18 @@ describe("SafetyPolicy", () => {
       );
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
 
     await act(async () => {
       button("查看流式演示").click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     await act(async () => {
       button("关闭").click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
 
     for (const [name, mock] of Object.entries(bridgeMocks)) {
       expect(mock.mock.calls.length, name).toBe(bridgeCallsBefore[name]);
@@ -1154,11 +1168,11 @@ describe("SafetyPolicy", () => {
         request_action: "redact",
       },
     });
-    expect(container.querySelector(".safety-dry-run__result")).not.toBeNull();
+    expect(container.querySelector('[data-testid="safety-dry-run-result"]')).not.toBeNull();
 
     await act(async () => button("无敏感信息").click());
     expect(sample?.value).toContain("公开产品说明");
-    expect(container.querySelector(".safety-dry-run__result")).toBeNull();
+    expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
     expect(button("无敏感信息").getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -1179,6 +1193,6 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain(
       "隐私保护未开启，请先开启后再试运行。",
     );
-    expect(container.querySelector(".safety-dry-run__result")).toBeNull();
+    expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
   });
 });

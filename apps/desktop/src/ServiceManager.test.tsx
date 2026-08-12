@@ -68,6 +68,31 @@ const gatewayService: Service = {
   updated_at: timestamp,
 };
 
+async function chooseOption(label: string, option: string): Promise<void> {
+  const trigger = document.querySelector<HTMLButtonElement>(
+    `button[role="combobox"][aria-label="${label}"]`,
+  );
+  if (!trigger) throw new Error(`Missing select trigger: ${label}`);
+  await act(async () => {
+    trigger.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerType: "mouse",
+      }),
+    );
+    await Promise.resolve();
+  });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (candidate) => candidate.textContent?.trim() === option,
+  );
+  if (!item) throw new Error(`Missing select option: ${option}`);
+  await act(async () => {
+    item.click();
+    await Promise.resolve();
+  });
+}
+
 describe("ServiceManager", () => {
   let root: Root;
   let container: HTMLDivElement;
@@ -108,7 +133,7 @@ describe("ServiceManager", () => {
       );
     });
 
-    expect(container.querySelectorAll(".service-card")).toHaveLength(3);
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(3);
     expect(container.textContent).toContain("Codex personal");
     expect(container.textContent).toContain("Codex work");
     expect(container.textContent).toContain("new-api");
@@ -157,11 +182,11 @@ describe("ServiceManager", () => {
     const name = container.querySelector<HTMLInputElement>("#service-name");
     if (!name) throw new Error("missing service name input");
     const submitButton = container.querySelector<HTMLButtonElement>(
-      ".service-form__submit",
+      '[data-testid="service-submit"]',
     );
     expect(submitButton?.disabled).toBe(true);
-    const browserFlow = container.querySelector<HTMLInputElement>(
-      'input[name="new-codex-login-flow"]',
+    const browserFlow = container.querySelector<HTMLButtonElement>(
+      '[role="radio"][aria-label="浏览器 OAuth"]',
     );
     if (!browserFlow) throw new Error("missing browser login choice");
     const valueSetter = Object.getOwnPropertyDescriptor(
@@ -228,20 +253,9 @@ describe("ServiceManager", () => {
       );
 
     await act(async () => render([]));
-    const kind = container.querySelector<HTMLSelectElement>(
-      ".service-form select",
-    );
-    if (!kind) throw new Error("missing service kind select");
-    const valueSetter = Object.getOwnPropertyDescriptor(
-      HTMLSelectElement.prototype,
-      "value",
-    )?.set;
-    if (!valueSetter) throw new Error("missing select value setter");
-    await act(async () => {
-      valueSetter.call(kind, "anthropic");
-      kind.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect(kind.value).toBe("anthropic");
+    await chooseOption("服务类型", "Anthropic API");
+    const kind = container.querySelector<HTMLButtonElement>('[aria-label="服务类型"]');
+    expect(kind?.textContent).toContain("Anthropic API");
     expect(
       container.querySelector<HTMLInputElement>("#service-name")?.value,
     ).toBe("Anthropic API");
@@ -257,7 +271,7 @@ describe("ServiceManager", () => {
       ]),
     );
 
-    expect(kind.value).toBe("anthropic");
+    expect(kind?.textContent).toContain("Anthropic API");
     expect(
       container.querySelector<HTMLInputElement>("#service-name")?.value,
     ).toBe("Anthropic API");
@@ -304,8 +318,8 @@ describe("ServiceManager", () => {
       },
       protocol: "openai.models",
     });
-    expect(container.textContent).toContain("选择服务支持的模型");
-    const apply = [...container.querySelectorAll("button")].find((button) =>
+    expect(document.body.textContent).toContain("选择服务支持的模型");
+    const apply = [...document.querySelectorAll("button")].find((button) =>
       button.textContent?.startsWith("应用所选模型"),
     );
     await act(async () => apply?.click());
@@ -363,10 +377,10 @@ describe("ServiceManager", () => {
     });
 
     expect(bridgeMocks.probeDraftServiceModels).toHaveBeenCalledTimes(2);
-    expect(container.textContent).toContain("部分协议获取失败");
-    expect(container.textContent).toContain("current-model");
-    expect(container.textContent).toContain("openai-model");
-    const apply = [...container.querySelectorAll("button")].find((button) =>
+    expect(document.body.textContent).toContain("部分协议获取失败");
+    expect(document.body.textContent).toContain("current-model");
+    expect(document.body.textContent).toContain("openai-model");
+    const apply = [...document.querySelectorAll("button")].find((button) =>
       button.textContent?.startsWith("应用所选模型"),
     );
     await act(async () => apply?.click());
@@ -408,7 +422,7 @@ describe("ServiceManager", () => {
     expect(container.textContent).toContain("claude-sonnet");
     expect(container.textContent).toContain("4 / 2,000");
     expect(container.textContent).toContain("3 组 · 4 个模型");
-    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(4);
+    expect(container.querySelectorAll('[data-testid="service-model-chip"]')).toHaveLength(4);
     expect(container.textContent).toContain("claude-opus-4-7");
 
     const search = container.querySelector<HTMLInputElement>(
@@ -427,14 +441,14 @@ describe("ServiceManager", () => {
     expect(container.textContent).toContain("匹配 1 / 4");
     expect(container.textContent).toContain("claude-sonnet-4-5");
     expect(container.textContent).not.toContain("claude-opus-4-7");
-    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="service-model-chip"]')).toHaveLength(1);
 
     const clear = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "清空",
     );
     await act(async () => clear?.click());
-    expect(container.textContent).toContain("清空支持模型？");
-    const confirm = [...container.querySelectorAll("button")].find(
+    expect(document.body.textContent).toContain("清空支持模型？");
+    const confirm = [...document.querySelectorAll("button")].find(
       (button) => button.textContent === "确认删除",
     );
     await act(async () => confirm?.click());
@@ -474,16 +488,16 @@ describe("ServiceManager", () => {
     expect(container.textContent).toContain("2 组 · 12 个模型");
     expect(container.textContent).toContain("展开全部");
     expect(container.textContent).not.toContain("claude-opus-4-0");
-    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid="service-model-chip"]')).toHaveLength(0);
 
     const expandOpus = [...container.querySelectorAll("button")].find(
       (button) =>
-        button.classList.contains("service-model-group__toggle") &&
+        button.dataset.testid === "service-model-group-toggle" &&
         button.textContent?.includes("claude-opus"),
     );
     await act(async () => expandOpus?.click());
     expect(container.textContent).toContain("claude-opus-4-0");
-    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(6);
+    expect(container.querySelectorAll('[data-testid="service-model-chip"]')).toHaveLength(6);
     expect(container.textContent).not.toContain("claude-sonnet-4-6");
     expect(container.textContent).toContain("折叠全部");
 
@@ -491,7 +505,7 @@ describe("ServiceManager", () => {
       (button) => button.textContent === "折叠全部",
     );
     await act(async () => foldAll?.click());
-    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(0);
+    expect(container.querySelectorAll('[data-testid="service-model-chip"]')).toHaveLength(0);
     expect(container.textContent).toContain("展开全部");
 
     const search = container.querySelector<HTMLInputElement>(
@@ -508,7 +522,7 @@ describe("ServiceManager", () => {
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(container.textContent).toContain("claude-sonnet-4-6");
-    expect(container.querySelectorAll(".service-model-chip")).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="service-model-chip"]')).toHaveLength(1);
   });
 
   it("keeps a saved API key when connection settings change without explicit removal", async () => {
@@ -543,19 +557,7 @@ describe("ServiceManager", () => {
       );
       await Promise.resolve();
     });
-    const authSelect = [...container.querySelectorAll("select")].find(
-      (select) => select.value === "bearer",
-    );
-    if (!authSelect) throw new Error("missing authentication select");
-    const valueSetter = Object.getOwnPropertyDescriptor(
-      HTMLSelectElement.prototype,
-      "value",
-    )?.set;
-    if (!valueSetter) throw new Error("missing select value setter");
-    await act(async () => {
-      valueSetter.call(authSelect, "none");
-      authSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await chooseOption("认证方式", "无需认证");
     const form = container.querySelector<HTMLFormElement>("form");
     await act(async () => {
       form?.dispatchEvent(
@@ -608,9 +610,9 @@ describe("ServiceManager", () => {
         />,
       );
     });
-    const deviceFlow = container.querySelectorAll<HTMLInputElement>(
-      'input[name="new-codex-login-flow"]',
-    )[1];
+    const deviceFlow = container.querySelector<HTMLButtonElement>(
+      '[role="radiogroup"][aria-label="新服务登录方式"] [role="radio"][aria-label="Device Code"]',
+    );
     await act(async () => deviceFlow?.click());
     const form = container.querySelector<HTMLFormElement>("form");
     await act(async () => {
@@ -697,14 +699,14 @@ describe("ServiceManager", () => {
     );
     await act(async () => login?.click());
     expect(bridgeMocks.beginServiceAuthorization).not.toHaveBeenCalled();
-    const methodInputs = container.querySelectorAll<HTMLInputElement>(
-      'input[name="existing-codex-login-flow"]',
+    const methodInputs = document.querySelectorAll<HTMLButtonElement>(
+      '[role="radiogroup"][aria-label="登录方式"] [role="radio"]',
     );
     expect(methodInputs).toHaveLength(2);
-    expect([...methodInputs].every((input) => !input.checked)).toBe(true);
+    expect([...methodInputs].every((input) => input.getAttribute("aria-checked") === "false")).toBe(true);
 
     await act(async () => methodInputs[0]?.click());
-    const start = [...container.querySelectorAll("button")].find(
+    const start = [...document.querySelectorAll("button")].find(
       (button) => button.textContent === "开始登录",
     );
     await act(async () => {
@@ -715,10 +717,10 @@ describe("ServiceManager", () => {
       codexService.id,
       "browser",
     );
-    expect(container.textContent).toContain("1455 和 1457 均不可用");
-    expect(container.textContent).toContain("ABCD-EFGH");
+    expect(document.body.textContent).toContain("1455 和 1457 均不可用");
+    expect(document.body.textContent).toContain("ABCD-EFGH");
 
-    const copy = [...container.querySelectorAll("button")].find(
+    const copy = [...document.querySelectorAll("button")].find(
       (button) => button.textContent === "复制验证码",
     );
     await act(async () => {
@@ -727,7 +729,7 @@ describe("ServiceManager", () => {
     });
     expect(writeText).toHaveBeenCalledWith("ABCD-EFGH");
 
-    const reopen = [...container.querySelectorAll("button")].find(
+    const reopen = [...document.querySelectorAll("button")].find(
       (button) => button.textContent === "重新打开登录页面",
     );
     await act(async () => {
@@ -738,7 +740,7 @@ describe("ServiceManager", () => {
       "https://auth.openai.com/codex/device",
     );
 
-    const cancel = [...container.querySelectorAll("button")].find(
+    const cancel = [...document.querySelectorAll("button")].find(
       (button) => button.textContent === "取消登录",
     );
     await act(async () => {
@@ -748,14 +750,14 @@ describe("ServiceManager", () => {
     expect(bridgeMocks.cancelServiceAuthorization).toHaveBeenCalledWith(
       codexService.id,
     );
-    expect(container.querySelector(".device-code-dialog")).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
 
     await act(async () => login?.click());
-    const explicitDevice = container.querySelectorAll<HTMLInputElement>(
-      'input[name="existing-codex-login-flow"]',
-    )[1];
+    const explicitDevice = document.querySelector<HTMLButtonElement>(
+      '[role="radiogroup"][aria-label="登录方式"] [role="radio"][aria-label="Device Code"]',
+    );
     await act(async () => explicitDevice?.click());
-    const restart = [...container.querySelectorAll("button")].find(
+    const restart = [...document.querySelectorAll("button")].find(
       (button) => button.textContent === "开始登录",
     );
     await act(async () => {
@@ -766,7 +768,7 @@ describe("ServiceManager", () => {
       codexService.id,
       "device_code",
     );
-    expect(container.querySelector(".device-code-dialog__fallback")).toBeNull();
+    expect(document.body.textContent).not.toContain("1455 和 1457 均不可用");
   });
 
   it("uses an in-app confirmation before deleting a service", async () => {
@@ -798,10 +800,10 @@ describe("ServiceManager", () => {
       (button) => button.textContent === "删除",
     );
     await act(async () => deleteButton?.click());
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
     expect(bridgeMocks.deleteService).not.toHaveBeenCalled();
 
-    const confirm = [...container.querySelectorAll("button")].find(
+    const confirm = [...document.querySelectorAll("button")].find(
       (button) => button.textContent === "确认",
     );
     await act(async () => {

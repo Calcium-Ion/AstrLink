@@ -1,5 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FormMessage } from "@/components/FormMessage";
+import { StatusDot } from "@/components/StatusDot";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
+
 import {
   beginServiceAuthorization,
   cancelServiceAuthorization,
@@ -277,32 +305,30 @@ function ModelPreviewDialog({
   const hasQuery = query.trim().length > 0;
 
   return (
-    <div className="token-dialog-backdrop" role="presentation">
-      <section
-        aria-labelledby="service-model-preview-title"
-        aria-modal="true"
-        className="token-dialog service-model-preview"
-        role="dialog"
-      >
-        <h3 id="service-model-preview-title">选择服务支持的模型</h3>
-        <p>确认后，服务模型清单将替换为下面勾选的项目。</p>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="w-[min(620px,calc(100vw-40px))] max-w-none sm:max-w-none">
+        <DialogHeader>
+          <DialogTitle>选择服务支持的模型</DialogTitle>
+          <DialogDescription>确认后，服务模型清单将替换为下面勾选的项目。</DialogDescription>
+        </DialogHeader>
         {preview.warnings.length > 0 ? (
-          <div className="form-message form-message--notice" role="status">
+          <FormMessage tone="warning">
             部分协议获取失败：{preview.warnings.join("；")}
-          </div>
+          </FormMessage>
         ) : null}
         {preview.models.length > 0 ? (
-          <div className="service-model-preview__toolbar">
-            <input
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Input
+              className="h-8 min-w-0 flex-[1_1_160px]"
               aria-label="搜索上游模型"
               placeholder="搜索模型…"
               type="search"
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
             />
-            <div className="service-model-preview__toolbar-actions">
-              <button
-                className="btn-secondary"
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
                 disabled={filtered.length === 0}
                 onClick={() =>
                   onSelectedChange(
@@ -312,9 +338,9 @@ function ModelPreviewDialog({
                 type="button"
               >
                 {hasQuery ? `全选匹配（${filtered.length}）` : "全选"}
-              </button>
-              <button
-                className="btn-secondary"
+              </Button>
+              <Button
+                variant="outline"
                 disabled={filteredSelectedCount === 0}
                 onClick={() => {
                   if (!hasQuery) {
@@ -329,47 +355,46 @@ function ModelPreviewDialog({
                 type="button"
               >
                 {hasQuery ? "取消匹配" : "全不选"}
-              </button>
+              </Button>
             </div>
           </div>
         ) : null}
-        <div className="service-model-preview__list">
+        <div className="my-2 grid max-h-[min(52vh,460px)] gap-1 overflow-auto">
           {preview.models.length === 0 ? (
             <p>上游没有返回模型；确认后将应用空清单。</p>
           ) : filtered.length === 0 ? (
             <p>没有匹配“{query.trim()}”的模型。</p>
           ) : (
             filtered.map((model) => (
-              <label className="advanced-check" key={model}>
-                <input
+              <Label className="flex items-center gap-2 rounded-lg border px-2 py-1.5" key={model}>
+                <Checkbox
                   checked={selectedSet.has(model)}
-                  onChange={(event) => {
-                    const selected = event.target.checked
+                  onCheckedChange={(checked) => {
+                    const selected = checked === true
                       ? [...new Set([...preview.selected, model])].sort()
                       : preview.selected.filter((item) => item !== model);
                     onSelectedChange(selected);
                   }}
-                  type="checkbox"
                 />
-                <code>{encodeModelEditorValue(model)}</code>
-              </label>
+                <code className="min-w-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap">{encodeModelEditorValue(model)}</code>
+              </Label>
             ))
           )}
         </div>
-        <small className="service-model-preview__count">
+        <small className="mb-2 block text-[10px] text-muted-foreground">
           已选 {preview.selected.length}
           {hasQuery ? ` · 显示 ${filtered.length} / ${preview.models.length}` : ""}
         </small>
-        <div className="token-dialog__actions">
-          <button className="btn-secondary" onClick={onClose} type="button">
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} type="button">
             取消
-          </button>
-          <button className="btn-primary" onClick={onApply} type="button">
+          </Button>
+          <Button onClick={onApply} type="button">
             应用所选模型（{preview.selected.length}）
-          </button>
-        </div>
-      </section>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -896,26 +921,25 @@ export function ServiceManager({
   if (view.kind === "list") {
     const busy = catalogStatus === "loading";
     return (
-      <section className="service-manager" aria-labelledby="service-heading">
+      <section className="flex min-h-0 w-full flex-1 flex-col" aria-labelledby="service-heading">
         <PageHeader
           actions={
             <>
-              <button
-                className="btn-primary"
+              <Button
                 disabled={!isReady || busy}
                 onClick={() => onViewChange({ kind: "create" })}
                 type="button"
               >
                 添加服务
-              </button>
-              <button
-                className="btn-secondary"
+              </Button>
+              <Button
+                variant="outline"
                 disabled={!isReady || busy}
                 onClick={() => void onRefresh()}
                 type="button"
               >
                 {busy ? "刷新中…" : "刷新列表"}
-              </button>
+              </Button>
             </>
           }
           description="订阅与外部网关都是 API 服务；每次添加都会创建独立服务，可配置多个 Codex 账户。"
@@ -924,35 +948,35 @@ export function ServiceManager({
           titleId="service-heading"
         />
         {!isReady || catalogStatus === "blocked" ? (
-          <div className="service-manager__unavailable">
+          <FormMessage className="mb-3" tone="notice">
             Core 就绪后才能管理 API 服务。
-          </div>
+          </FormMessage>
         ) : null}
         {catalogStatus === "error" && catalogError ? (
-          <div className="form-message form-message--error" role="alert">
+          <FormMessage className="mb-3" tone="error">
             {catalogError}
-          </div>
+          </FormMessage>
         ) : null}
         {error ? (
-          <div className="form-message form-message--error" role="alert">
+          <FormMessage className="mb-3" tone="error">
             {error}
-          </div>
+          </FormMessage>
         ) : null}
         {notice ? (
-          <div className="form-message form-message--notice">{notice}</div>
+          <FormMessage className="mb-3" tone="success">{notice}</FormMessage>
         ) : null}
 
-        <div className="service-manager__grid service-manager__grid--single">
-          <div className="service-list" aria-label="已配置服务">
-            <div className="panel-title">
-              <strong>全部服务</strong>
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-[15px] border bg-card p-3.5 shadow-[var(--shadow-card)]" aria-label="已配置服务">
+            <div className="mb-[11px] flex items-center justify-between text-[10.5px] text-text-secondary">
+              <strong className="text-[12.5px] text-foreground">全部服务</strong>
               <span>{catalogStatus === "blocked" ? "—" : `${services.length} 个`}</span>
             </div>
-            <div className="service-list__scroll">
+            <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-2 overflow-y-auto pr-[3px]">
               {catalogStatus === "loading" && services.length === 0 ? (
-                <p className="service-list__empty">正在加载 API 服务…</p>
+                <p className="flex min-h-[250px] items-center justify-center p-[30px] text-center text-[11px] leading-[1.7] text-muted-foreground">正在加载 API 服务…</p>
               ) : services.length === 0 ? (
-                <p className="service-list__empty">
+                <p className="flex min-h-[250px] items-center justify-center p-[30px] text-center text-[11px] leading-[1.7] text-muted-foreground">
                   尚未添加服务。可先添加 Codex 订阅，或接入 new-api 外部网关。
                 </p>
               ) : (
@@ -960,33 +984,30 @@ export function ServiceManager({
                   const subscription = service.subscription;
                   const acting = actionID === service.id;
                   return (
-                    <article className="service-card" key={service.id}>
-                      <div className="service-card__top">
-                        <span className="service-card__state">
-                          <span
-                            aria-hidden="true"
-                            className={`dot dot--${serviceDot(service)}`}
-                          />
+                    <article className="rounded-[11px] border bg-card px-3.5 py-[13px]" data-testid="service-card" key={service.id}>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex shrink-0 items-center gap-[5px] text-[9px] text-muted-foreground">
+                          <StatusDot tone={serviceDot(service)} />
                           {serviceStatusLabel(service)}
                         </span>
-                        <strong>{service.name}</strong>
-                        <span className="service-card__kind">
+                        <strong className="overflow-hidden text-xs text-ellipsis whitespace-nowrap">{service.name}</strong>
+                        <Badge className="ml-auto text-[8.5px]" variant="secondary">
                           {serviceKindLabel(service.kind)}
-                        </span>
+                        </Badge>
                       </div>
-                      <code>
+                      <code className="mt-2 block overflow-hidden text-[10px] text-text-secondary text-ellipsis whitespace-nowrap">
                         {service.http?.base_url ??
                           (subscription?.account_hint
                             ? `OpenAI 账户 ${subscription.account_hint}`
                             : "OpenAI Codex OAuth")}
                       </code>
-                      <p>
+                      <p className="mt-1.5 overflow-hidden text-[9px] text-muted-foreground text-ellipsis whitespace-nowrap">
                         支持 {service.capabilities.length} 项 API 能力 · {service.models.length} 个模型
                         {subscription?.authorization_boundary
                           ? ` · ${subscription.authorization_boundary}`
                           : ""}
                       </p>
-                      <div className="service-card__footer">
+                      <div className="mt-[9px] flex items-center justify-between border-t pt-2 text-[9px] text-muted-foreground max-[700px]:items-start max-[700px]:flex-col max-[700px]:gap-2">
                         <span>
                           {service.http
                             ? service.http.credential_ref
@@ -998,27 +1019,32 @@ export function ServiceManager({
                               ? "OAuth 凭据已存入系统钥匙串"
                               : "等待 OAuth 登录"}
                         </span>
-                        <div>
+                        <div className="flex flex-wrap gap-3">
                           {subscription ? (
                             subscription.status === "authorizing" ? (
                               <>
-                                <button
+                                <Button
+                                  className="h-auto p-0 text-[10.5px]"
                                   disabled={acting}
                                   onClick={() => void showAuthorization(service)}
                                   type="button"
+                                  variant="link"
                                 >
                                   {acting ? "处理中…" : "查看登录"}
-                                </button>
-                                <button
+                                </Button>
+                                <Button
+                                  className="h-auto p-0 text-[10.5px]"
                                   disabled={acting}
                                   onClick={() => void cancelAuthorization(service)}
                                   type="button"
+                                  variant="link"
                                 >
                                   取消登录
-                                </button>
+                                </Button>
                               </>
                             ) : (
-                              <button
+                              <Button
+                                className="h-auto p-0 text-[10.5px]"
                                 disabled={acting}
                                 onClick={() => {
                                   setLoginChoice(service);
@@ -1026,27 +1052,31 @@ export function ServiceManager({
                                   setError(null);
                                 }}
                                 type="button"
+                                variant="link"
                               >
                                 {acting
                                   ? "处理中…"
                                   : subscription.status === "connected"
                                     ? "重新登录"
                                     : "登录"}
-                              </button>
+                              </Button>
                             )
                           ) : null}
                           {subscription?.status === "connected" ? (
-                            <button
+                            <Button
+                              className="h-auto p-0 text-[10.5px]"
                               disabled={acting}
                               onClick={() =>
                                 setConfirmAction({ kind: "logout", service })
                               }
                               type="button"
+                              variant="link"
                             >
                               退出
-                            </button>
+                            </Button>
                           ) : null}
-                          <button
+                          <Button
+                            className="h-auto p-0 text-[10.5px]"
                             disabled={acting}
                             onClick={() =>
                               onViewChange({
@@ -1055,19 +1085,21 @@ export function ServiceManager({
                               })
                             }
                             type="button"
+                            variant="link"
                           >
                             编辑
-                          </button>
-                          <button
-                            className="danger-link"
+                          </Button>
+                          <Button
+                            className="h-auto p-0 text-[10.5px] text-danger-foreground"
                             disabled={acting}
                             onClick={() =>
                               setConfirmAction({ kind: "delete", service })
                             }
                             type="button"
+                            variant="link"
                           >
                             {acting ? "处理中…" : "删除"}
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     </article>
@@ -1077,94 +1109,73 @@ export function ServiceManager({
             </div>
           </div>
         </div>
-        {confirmAction ? (
-          <div className="token-dialog-backdrop" role="presentation">
-            <section
-              aria-labelledby="service-confirm-title"
-              aria-modal="true"
-              className="token-dialog"
-              role="dialog"
-            >
-              <h3 id="service-confirm-title">
-                {confirmAction.kind === "delete"
-                  ? "删除这个服务？"
-                  : "退出这个 Codex 账户？"}
-              </h3>
-              <p>
-                {confirmAction.kind === "delete"
-                  ? `“${confirmAction.service.name}”及其本机凭据会被删除；被路由引用时 Core 会拒绝删除。`
-                  : `“${confirmAction.service.name}”的 OAuth 凭据将从系统钥匙串删除，服务会保留。`}
-              </p>
-              <div className="token-dialog__actions">
-                <button
-                  className="btn-secondary"
-                  onClick={() => setConfirmAction(null)}
-                  type="button"
+        <ConfirmDialog
+          confirmLabel="确认"
+          description={
+            <p>
+              {confirmAction?.kind === "delete"
+                ? `“${confirmAction.service.name}”及其本机凭据会被删除；被路由引用时 Core 会拒绝删除。`
+                : `“${confirmAction?.service.name ?? ""}”的 OAuth 凭据将从系统钥匙串删除，服务会保留。`}
+            </p>
+          }
+          destructive
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={() => void confirmDestructiveAction()}
+          open={confirmAction !== null}
+          title={
+            confirmAction?.kind === "delete"
+              ? "删除这个服务？"
+              : "退出这个 Codex 账户？"
+          }
+        />
+        <Dialog
+          open={loginChoice !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setLoginChoice(null);
+              setLoginChoiceFlow(null);
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>登录“{loginChoice?.name ?? ""}”</DialogTitle>
+              <DialogDescription>请选择本次使用的 OpenAI 登录方式。</DialogDescription>
+            </DialogHeader>
+              <RadioGroup
+                aria-label="登录方式"
+                className="grid grid-cols-2 gap-[9px] max-[520px]:grid-cols-1"
+                onValueChange={(value) => setLoginChoiceFlow(value as AuthorizationFlow)}
+                value={loginChoiceFlow ?? ""}
+              >
+                <Label
+                  className={cn(
+                    "flex min-w-0 cursor-pointer items-start gap-2 rounded-[9px] border bg-card p-2.5",
+                    loginChoiceFlow === "browser" && "border-primary/65 bg-accent ring-3 ring-primary/10",
+                  )}
                 >
-                  取消
-                </button>
-                <button
-                  className="btn-primary"
-                  onClick={() => void confirmDestructiveAction()}
-                  type="button"
-                >
-                  确认
-                </button>
-              </div>
-            </section>
-          </div>
-        ) : null}
-        {loginChoice ? (
-          <div className="token-dialog-backdrop" role="presentation">
-            <section
-              aria-labelledby="codex-login-method-title"
-              aria-modal="true"
-              className="token-dialog authorization-method-dialog"
-              role="dialog"
-            >
-              <h3 id="codex-login-method-title">
-                登录“{loginChoice.name}”
-              </h3>
-              <p>请选择本次使用的 OpenAI 登录方式。</p>
-              <div className="authorization-flow-grid">
-                <label
-                  className={
-                    loginChoiceFlow === "browser" ? "is-selected" : undefined
-                  }
-                >
-                  <input
-                    checked={loginChoiceFlow === "browser"}
-                    name="existing-codex-login-flow"
-                    onChange={() => setLoginChoiceFlow("browser")}
-                    type="radio"
-                  />
-                  <span>
-                    <strong>浏览器 OAuth</strong>
-                    <small>依次使用本机回调端口 1455 和 1457。</small>
+                  <RadioGroupItem aria-label="浏览器 OAuth" value="browser" />
+                  <span className="grid min-w-0 gap-[3px]">
+                    <strong className="text-[10.5px]">浏览器 OAuth</strong>
+                    <small className="text-[9px] leading-[1.45] text-muted-foreground">依次使用本机回调端口 1455 和 1457。</small>
                   </span>
-                </label>
-                <label
-                  className={
-                    loginChoiceFlow === "device_code"
-                      ? "is-selected"
-                      : undefined
-                  }
+                </Label>
+                <Label
+                  className={cn(
+                    "flex min-w-0 cursor-pointer items-start gap-2 rounded-[9px] border bg-card p-2.5",
+                    loginChoiceFlow === "device_code" && "border-primary/65 bg-accent ring-3 ring-primary/10",
+                  )}
                 >
-                  <input
-                    checked={loginChoiceFlow === "device_code"}
-                    name="existing-codex-login-flow"
-                    onChange={() => setLoginChoiceFlow("device_code")}
-                    type="radio"
-                  />
-                  <span>
-                    <strong>Device Code</strong>
-                    <small>打开登录页并输入一次性验证码。</small>
+                  <RadioGroupItem aria-label="Device Code" value="device_code" />
+                  <span className="grid min-w-0 gap-[3px]">
+                    <strong className="text-[10.5px]">Device Code</strong>
+                    <small className="text-[9px] leading-[1.45] text-muted-foreground">打开登录页并输入一次性验证码。</small>
                   </span>
-                </label>
-              </div>
-              <div className="token-dialog__actions">
-                <button
-                  className="btn-secondary"
+                </Label>
+              </RadioGroup>
+              <DialogFooter>
+                <Button
+                  variant="outline"
                   onClick={() => {
                     setLoginChoice(null);
                     setLoginChoiceFlow(null);
@@ -1172,50 +1183,48 @@ export function ServiceManager({
                   type="button"
                 >
                   取消
-                </button>
-                <button
-                  className="btn-primary"
+                </Button>
+                <Button
                   disabled={loginChoiceFlow === null}
                   onClick={() => {
-                    if (loginChoiceFlow) {
+                    if (loginChoice && loginChoiceFlow) {
                       void authorize(loginChoice, loginChoiceFlow);
                     }
                   }}
                   type="button"
                 >
                   开始登录
-                </button>
-              </div>
-            </section>
-          </div>
-        ) : null}
+                </Button>
+              </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {authorizationDialog ? (
-          <div className="token-dialog-backdrop" role="presentation">
-            <section
-              aria-labelledby="device-code-title"
-              aria-modal="true"
-              className="token-dialog device-code-dialog"
-              role="dialog"
-            >
-              <h3 id="device-code-title">使用 Device Code 登录</h3>
+          <Dialog open onOpenChange={(open) => !open && setAuthorizationDialog(null)}>
+            <DialogContent className="max-w-[460px] sm:max-w-[460px]">
+              <DialogHeader>
+                <DialogTitle>使用 Device Code 登录</DialogTitle>
+                <DialogDescription>
+                  在 OpenAI 登录页面完成本次 Codex 账户授权。
+                </DialogDescription>
+              </DialogHeader>
               {authorizationDialog.requestedFlow === "browser" ? (
-                <p className="device-code-dialog__fallback" role="status">
+                <FormMessage tone="warning">
                   本机回调端口 1455 和 1457 均不可用，已自动切换。
-                </p>
+                </FormMessage>
               ) : null}
               {authorizationDialog.session.status === "pending" &&
               authorizationDialog.session.device_code ? (
                 <>
-                  <p>
+                  <p className="text-sm leading-6 text-muted-foreground">
                     请在 OpenAI 登录页面输入下方一次性验证码。验证码将在
                     15 分钟内失效。
                   </p>
-                  <div className="device-code-dialog__code">
-                    <code>
+                  <div className="flex items-center justify-between gap-3 rounded-[10px] border border-primary/20 bg-accent p-[11px]">
+                    <code className="text-xl font-[750] tracking-[0.08em] text-accent-foreground select-all">
                       {authorizationDialog.session.device_code.user_code}
                     </code>
-                    <button
-                      className="btn-secondary"
+                    <Button
+                      variant="outline"
                       onClick={() =>
                         copyFeedback.copy(
                           "codex-device-code",
@@ -1229,15 +1238,15 @@ export function ServiceManager({
                         "codex-device-code",
                         "复制验证码",
                       )}
-                    </button>
+                    </Button>
                   </div>
-                  <small className="device-code-dialog__note">
+                  <small className="mt-[9px] block text-[9px] leading-[1.5] text-muted-foreground">
                     如果账户或工作区禁用了 Device Code，请改用浏览器 OAuth，
                     或由管理员启用该登录方式。
                   </small>
-                  <div className="token-dialog__actions">
-                    <button
-                      className="btn-secondary"
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
                       disabled={actionID === authorizationDialog.service.id}
                       onClick={() =>
                         void cancelAuthorization(authorizationDialog.service)
@@ -1245,19 +1254,18 @@ export function ServiceManager({
                       type="button"
                     >
                       取消登录
-                    </button>
-                    <button
-                      className="btn-primary"
+                    </Button>
+                    <Button
                       onClick={() => void reopenAuthorizationPage()}
                       type="button"
                     >
                       重新打开登录页面
-                    </button>
-                  </div>
+                    </Button>
+                  </DialogFooter>
                 </>
               ) : (
                 <>
-                  <p role="status">
+                  <p className="text-sm text-muted-foreground" role="status">
                     {authorizationDialog.session.status === "failed"
                       ? authorizationDialog.session.error?.message ??
                         "Device Code 登录失败。"
@@ -1267,19 +1275,18 @@ export function ServiceManager({
                           ? "Device Code 登录已取消。"
                           : "登录已完成。"}
                   </p>
-                  <div className="token-dialog__actions">
-                    <button
-                      className="btn-primary"
+                  <DialogFooter>
+                    <Button
                       onClick={() => setAuthorizationDialog(null)}
                       type="button"
                     >
                       关闭
-                    </button>
-                  </div>
+                    </Button>
+                  </DialogFooter>
                 </>
               )}
-            </section>
-          </div>
+            </DialogContent>
+          </Dialog>
         ) : null}
       </section>
     );
@@ -1296,7 +1303,7 @@ export function ServiceManager({
         );
 
   return (
-    <section className="service-manager" aria-labelledby="service-editor-heading">
+    <section className="flex min-h-0 w-full flex-1 flex-col" aria-labelledby="service-editor-heading">
       <PageHeader
         back={{
           label: "返回服务列表",
@@ -1312,68 +1319,75 @@ export function ServiceManager({
         titleId="service-editor-heading"
       />
       {!isReady ? (
-        <div className="service-manager__unavailable">
+        <FormMessage className="mb-3" tone="notice">
           Core 就绪后才能管理 API 服务。
-        </div>
+        </FormMessage>
       ) : null}
       {error ? (
-        <div className="form-message form-message--error" role="alert">
+        <FormMessage className="mb-3" tone="error">
           {error}
-        </div>
+        </FormMessage>
       ) : null}
       {loadingRecord ? (
-        <div className="service-manager__unavailable" aria-busy="true">
+        <FormMessage className="mb-3" aria-busy="true" tone="notice">
           正在载入服务配置…
-        </div>
+        </FormMessage>
       ) : view.kind === "edit" && !editing ? (
-        <div className="service-manager__unavailable">
+        <FormMessage className="mb-3" tone="error">
           无法载入这个 API 服务。请返回列表后重试。
-        </div>
+        </FormMessage>
       ) : (
         <form
           aria-busy={saving}
-          className="service-form"
+          className="mx-auto w-full max-w-[760px] min-w-0 rounded-[15px] border bg-card p-[18px] shadow-[0_10px_34px_color-mix(in_srgb,var(--foreground)_5%,transparent)]"
+          data-testid="service-form"
           noValidate
           onSubmit={(event) => void submit(event)}
         >
-          <fieldset className="service-form__fields" disabled={!isReady || saving}>
-            <div className="simple-form">
-              <label>
+          <fieldset className="min-w-0 border-0 p-0 disabled:pointer-events-none disabled:opacity-70" disabled={!isReady || saving}>
+            <div className="grid grid-cols-2 gap-3 max-[680px]:grid-cols-1 [&>label]:flex [&>label]:min-w-0 [&>label]:flex-col [&>label]:items-stretch [&>label]:gap-[5px] [&>label>span]:text-[10.5px] [&>label>span]:font-semibold [&>label>span]:text-text-secondary [&>label>small]:text-[9px] [&>label>small]:leading-[1.45] [&>label>small]:text-muted-foreground">
+              <Label className="col-span-full">
                 <span>服务类型</span>
-                <select
+                <Select
                   disabled={view.kind === "edit"}
                   value={draft.kind}
-                  onChange={(event) =>
-                    selectKind(event.target.value as ServiceKind)
-                  }
+                  onValueChange={(value) => selectKind(value as ServiceKind)}
                 >
-                  <optgroup label="订阅服务（P0）">
-                    <option value="codex_subscription">
+                  <SelectTrigger aria-label="服务类型" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>订阅服务（P0）</SelectLabel>
+                    <SelectItem value="codex_subscription">
                       Codex 订阅（OpenAI OAuth）
-                    </option>
-                  </optgroup>
-                  <optgroup label="外部网关（P1）">
-                    <option value="newapi">new-api</option>
-                  </optgroup>
-                  <optgroup label="高级 API 服务">
+                    </SelectItem>
+                  </SelectGroup>
+                  <SelectGroup>
+                    <SelectLabel>外部网关（P1）</SelectLabel>
+                    <SelectItem value="newapi">new-api</SelectItem>
+                  </SelectGroup>
+                  <SelectGroup>
+                    <SelectLabel>高级 API 服务</SelectLabel>
                     {httpServicePresetIDs
                       .filter((kind) => kind !== "newapi")
                       .map((kind) => (
-                        <option key={kind} value={kind}>
+                        <SelectItem key={kind} value={kind}>
                           {serviceKindLabel(kind)}
-                        </option>
+                        </SelectItem>
                       ))}
-                  </optgroup>
-                </select>
+                  </SelectGroup>
+                  </SelectContent>
+                </Select>
                 <small>
                   {draft.kind === "codex_subscription"
                     ? "使用 Codex 官方公开 OAuth 客户端接入真实订阅账户。"
                     : selectedPreset?.description}
                 </small>
-              </label>
-              <label>
+              </Label>
+              <Label>
                 <span>服务名称</span>
-                <input
+                <Input
                   id="service-name"
                   maxLength={128}
                   placeholder={
@@ -1390,79 +1404,66 @@ export function ServiceManager({
                     }))
                   }
                 />
-              </label>
-              <label className="advanced-check">
-                <input
+              </Label>
+              <Label className="col-span-full flex-row! items-center!">
+                <Checkbox
                   checked={draft.enabled}
-                  onChange={(event) =>
+                  onCheckedChange={(checked) =>
                     setDraft((current) => ({
                       ...current,
-                      enabled: event.target.checked,
+                      enabled: checked === true,
                     }))
                   }
-                  type="checkbox"
                 />
                 <span>启用这个服务</span>
-              </label>
+              </Label>
               {draft.kind === "codex_subscription" &&
               view.kind === "create" ? (
-                <fieldset className="authorization-flow-picker">
-                  <legend>登录方式</legend>
-                  <div className="authorization-flow-grid">
-                    <label
-                      className={
-                        draft.authorizationFlow === "browser"
-                          ? "is-selected"
-                          : undefined
-                      }
+                <fieldset className="col-span-full min-w-0 rounded-[10px] border bg-muted p-[11px]">
+                  <legend className="px-1 text-[10.5px] font-semibold text-text-secondary">登录方式</legend>
+                  <RadioGroup
+                    aria-label="新服务登录方式"
+                    className="grid grid-cols-2 gap-[9px] max-[520px]:grid-cols-1"
+                    onValueChange={(value) =>
+                      setDraft((current) => ({
+                        ...current,
+                        authorizationFlow: value as AuthorizationFlow,
+                      }))
+                    }
+                    value={draft.authorizationFlow ?? ""}
+                  >
+                    <Label
+                      className={cn(
+                        "flex min-w-0 cursor-pointer flex-row items-start gap-2 rounded-[9px] border bg-card p-2.5",
+                        draft.authorizationFlow === "browser" && "border-primary/65 bg-accent ring-3 ring-primary/10",
+                      )}
                     >
-                      <input
-                        checked={draft.authorizationFlow === "browser"}
-                        name="new-codex-login-flow"
-                        onChange={() =>
-                          setDraft((current) => ({
-                            ...current,
-                            authorizationFlow: "browser",
-                          }))
-                        }
-                        type="radio"
-                      />
-                      <span>
-                        <strong>浏览器 OAuth</strong>
-                        <small>
+                      <RadioGroupItem aria-label="浏览器 OAuth" value="browser" />
+                      <span className="grid min-w-0 gap-[3px]">
+                        <strong className="text-[10.5px]">浏览器 OAuth</strong>
+                        <small className="text-[9px] leading-[1.45] text-muted-foreground">
                           打开系统浏览器，依次尝试本机回调端口 1455 和
                           1457。
                         </small>
                       </span>
-                    </label>
-                    <label
-                      className={
-                        draft.authorizationFlow === "device_code"
-                          ? "is-selected"
-                          : undefined
-                      }
+                    </Label>
+                    <Label
+                      className={cn(
+                        "flex min-w-0 cursor-pointer flex-row items-start gap-2 rounded-[9px] border bg-card p-2.5",
+                        draft.authorizationFlow === "device_code" && "border-primary/65 bg-accent ring-3 ring-primary/10",
+                      )}
                     >
-                      <input
-                        checked={draft.authorizationFlow === "device_code"}
-                        name="new-codex-login-flow"
-                        onChange={() =>
-                          setDraft((current) => ({
-                            ...current,
-                            authorizationFlow: "device_code",
-                          }))
-                        }
-                        type="radio"
-                      />
-                      <span>
-                        <strong>Device Code</strong>
-                        <small>
+                      <RadioGroupItem aria-label="Device Code" value="device_code" />
+                      <span className="grid min-w-0 gap-[3px]">
+                        <strong className="text-[10.5px]">Device Code</strong>
+                        <small className="text-[9px] leading-[1.45] text-muted-foreground">
                           打开 OpenAI 登录页并输入一次性验证码；部分工作区需要管理员启用。
                         </small>
                       </span>
-                    </label>
-                  </div>
+                    </Label>
+                  </RadioGroup>
                   {draft.authorizationFlow === null ? (
-                    <small className="authorization-flow-picker__hint">
+                    <small className="mt-2 block text-warning-foreground">
                       请选择一种登录方式后继续。
                     </small>
                   ) : null}
@@ -1470,9 +1471,9 @@ export function ServiceManager({
               ) : null}
               {draft.kind !== "codex_subscription" ? (
                 <>
-                  <label>
+                  <Label>
                     <span>API 地址</span>
-                    <input
+                    <Input
                       maxLength={2048}
                       placeholder={
                         selectedPreset?.baseURLPlaceholder ??
@@ -1488,30 +1489,34 @@ export function ServiceManager({
                         }))
                       }
                     />
-                  </label>
-                  <label>
+                  </Label>
+                  <Label>
                     <span>认证方式</span>
-                    <select
+                    <Select
                       value={draft.authScheme}
-                      onChange={(event) =>
+                      onValueChange={(value) =>
                         setDraft((current) => ({
                           ...current,
-                          authScheme:
-                            event.target.value as ServiceAuthScheme,
+                          authScheme: value as ServiceAuthScheme,
                         }))
                       }
                     >
+                      <SelectTrigger aria-label="认证方式" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
                       {Object.entries(authLabels).map(([scheme, label]) => (
-                        <option key={scheme} value={scheme}>
+                        <SelectItem key={scheme} value={scheme}>
                           {label}
-                        </option>
+                        </SelectItem>
                       ))}
-                    </select>
-                  </label>
+                      </SelectContent>
+                    </Select>
+                  </Label>
                   {draft.authScheme === "custom_header" ? (
-                    <label>
+                    <Label>
                       <span>认证 Header 名称</span>
-                      <input
+                      <Input
                         maxLength={128}
                         placeholder="X-Api-Key"
                         value={draft.headerName}
@@ -1522,10 +1527,10 @@ export function ServiceManager({
                           }))
                         }
                       />
-                    </label>
+                    </Label>
                   ) : null}
                   {draft.authScheme !== "none" ? (
-                    <label>
+                    <Label>
                       <span>
                         {editingKind
                           ? canKeepCredential
@@ -1533,7 +1538,7 @@ export function ServiceManager({
                             : "API Key（需填写）"
                           : "API Key"}
                       </span>
-                      <input
+                      <Input
                         autoComplete="new-password"
                         maxLength={16_384}
                         placeholder={
@@ -1550,22 +1555,21 @@ export function ServiceManager({
                           }))
                         }
                       />
-                    </label>
+                    </Label>
                   ) : null}
                   {editing?.service.http?.credential_ref ? (
-                    <label className="advanced-check">
-                      <input
+                    <Label className="col-span-full flex-row! items-center!">
+                      <Checkbox
                         checked={draft.removeCredential}
-                        onChange={(event) =>
+                        onCheckedChange={(checked) =>
                           setDraft((current) => ({
                             ...current,
-                            removeCredential: event.target.checked,
+                            removeCredential: checked === true,
                           }))
                         }
-                        type="checkbox"
                       />
                       <span>保存时删除已存 API Key</span>
-                    </label>
+                    </Label>
                   ) : null}
                 </>
               ) : null}
@@ -1586,51 +1590,49 @@ export function ServiceManager({
             />
 
             {draft.kind === "codex_subscription" ? (
-              <div className="preset-summary">
-                <span aria-hidden="true">✓</span>
+              <div className="mt-[13px] flex items-start gap-[9px] rounded-[9px] border border-success/20 bg-success-wash px-[11px] py-2.5 text-text-secondary">
+                <span aria-hidden="true" className="grid size-[18px] shrink-0 place-items-center rounded-full bg-success text-[9px] font-extrabold text-primary-foreground">✓</span>
                 <div>
-                  <strong>
+                  <strong className="text-[10px] text-success-foreground">
                     {view.kind === "create"
                       ? "保存后使用所选方式登录"
                       : "订阅登录在服务列表中管理"}
                   </strong>
-                  <p>
+                  <p className="mt-0.5 text-[9.5px] leading-[1.45]">
                     每次添加都会创建独立服务，可同时管理多个 Codex 订阅账户。
                   </p>
                 </div>
               </div>
             ) : (
-              <details className="advanced-settings">
-                <summary>
+              <details className="group mt-[13px] rounded-[9px] border bg-card">
+                <summary className="flex cursor-pointer list-none items-center gap-[7px] px-[11px] py-2.5 text-[10.5px] font-bold text-text-secondary before:text-[15px] before:leading-none before:text-muted-foreground before:content-['›'] group-open:before:rotate-90 [&::-webkit-details-marker]:hidden">
                   <span>API 能力</span>
-                  <small>{draft.capabilities.length} 项已启用</small>
+                  <small className="ml-auto text-[9px] font-medium text-muted-foreground">{draft.capabilities.length} 项已启用</small>
                 </summary>
-                <div className="advanced-settings__body">
-                  <div className="service-capability-grid">
+                <div className="border-t p-3">
+                  <div className="grid grid-cols-2 gap-2 max-[600px]:grid-cols-1">
                     {descriptors.map((descriptor) => {
                       const capability = draft.capabilities.find(
                         (item) => item.protocol === descriptor.id,
                       );
                       return (
-                        <div className="service-capability-option" key={descriptor.id}>
-                          <label className="advanced-check">
-                            <input
+                        <div className="grid min-w-0 gap-[7px] rounded-[9px] border bg-card p-[9px]" key={descriptor.id}>
+                          <Label className="flex flex-row items-center gap-2 text-[10px] text-text-secondary">
+                            <Checkbox
                               checked={Boolean(capability)}
-                              onChange={(event) =>
+                              onCheckedChange={(checked) =>
                                 toggleCapability(
                                   descriptor,
-                                  event.target.checked,
+                                  checked === true,
                                 )
                               }
-                              type="checkbox"
                             />
                             <span>{protocolLabel(descriptor.id)}</span>
-                          </label>
+                          </Label>
                           {capability ? (
-                            <select
-                              aria-label={`${protocolLabel(descriptor.id)} 处理模式`}
+                            <Select
                               value={capability.mode}
-                              onChange={(event) =>
+                              onValueChange={(value) =>
                                 setDraft((current) => ({
                                   ...current,
                                   capabilities: current.capabilities.map(
@@ -1638,7 +1640,7 @@ export function ServiceManager({
                                       item.protocol === descriptor.id
                                         ? {
                                             ...item,
-                                            mode: event.target.value as
+                                            mode: value as
                                               | "native"
                                               | "delegated",
                                           }
@@ -1647,9 +1649,17 @@ export function ServiceManager({
                                 }))
                               }
                             >
-                              <option value="native">原生协议</option>
-                              <option value="delegated">由网关路由</option>
-                            </select>
+                              <SelectTrigger
+                                aria-label={`${protocolLabel(descriptor.id)} 处理模式`}
+                                className="w-full"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="native">原生协议</SelectItem>
+                                <SelectItem value="delegated">由网关路由</SelectItem>
+                              </SelectContent>
+                            </Select>
                           ) : null}
                         </div>
                       );
@@ -1659,9 +1669,10 @@ export function ServiceManager({
               </details>
             )}
           </fieldset>
-          <div className="service-form__actions">
-            <button
-              className="btn-primary service-form__submit"
+          <div className="sticky bottom-0 z-4 mt-[15px] border-t bg-[linear-gradient(to_bottom,color-mix(in_srgb,var(--card)_82%,transparent),var(--card)_34%)] px-0 pt-2.5 pb-1 backdrop-blur-sm">
+            <Button
+              className="w-full"
+              data-testid="service-submit"
               disabled={
                 !isReady ||
                 saving ||
@@ -1678,7 +1689,7 @@ export function ServiceManager({
                   : draft.kind === "codex_subscription"
                     ? "添加并登录"
                     : "保存服务"}
-            </button>
+            </Button>
           </div>
         </form>
       )}

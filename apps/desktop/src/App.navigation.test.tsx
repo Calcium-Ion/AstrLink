@@ -116,7 +116,7 @@ function button(label: string): HTMLButtonElement {
 
 function workspaceHeading(): HTMLHeadingElement {
   const headings = [
-    ...document.querySelectorAll<HTMLHeadingElement>(".workspace h1"),
+    ...document.querySelectorAll<HTMLHeadingElement>('[data-slot="workspace"] h1'),
   ];
   if (headings.length !== 1) {
     throw new Error(`Expected one workspace heading, found ${headings.length}`);
@@ -138,17 +138,28 @@ async function setInput(selector: string, value: string): Promise<void> {
   });
 }
 
-async function setSelect(selector: string, value: string): Promise<void> {
-  const select = document.querySelector<HTMLSelectElement>(selector);
-  if (!select) throw new Error(`Missing select: ${selector}`);
-  const valueSetter = Object.getOwnPropertyDescriptor(
-    HTMLSelectElement.prototype,
-    "value",
-  )?.set;
-  if (!valueSetter) throw new Error("Missing HTMLSelectElement value setter");
+async function chooseOption(label: string, option: string): Promise<void> {
+  const trigger = document.querySelector<HTMLButtonElement>(
+    `button[role="combobox"][aria-label="${label}"]`,
+  );
+  if (!trigger) throw new Error(`Missing select trigger: ${label}`);
   await act(async () => {
-    valueSetter.call(select, value);
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    trigger.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerType: "mouse",
+      }),
+    );
+    await Promise.resolve();
+  });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (candidate) => candidate.textContent?.trim() === option,
+  );
+  if (!item) throw new Error(`Missing select option: ${option}`);
+  await act(async () => {
+    item.click();
+    await Promise.resolve();
   });
 }
 
@@ -315,7 +326,7 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("概览");
-    expect(container.querySelector(".workspace-header")).toBeNull();
+    expect(container.querySelectorAll('[data-slot="page-header"]')).toHaveLength(1);
     expect(workspaceHeading().textContent).toBe("概览");
     expect(container.textContent).toContain("连接 AstrLink");
     expect(container.textContent).toContain("今日用量");
@@ -357,7 +368,7 @@ describe("App workspace navigation", () => {
       button("添加服务").click();
     });
     expect(workspaceHeading().textContent).toBe("添加服务");
-    expect(container.querySelector("form.service-form")).not.toBeNull();
+    expect(container.querySelector('[data-testid="service-form"]')).not.toBeNull();
 
     const back = container.querySelector<HTMLButtonElement>(
       'button[aria-label="返回服务列表"]',
@@ -372,7 +383,7 @@ describe("App workspace navigation", () => {
   it("keeps Codex subscription inside API services instead of the sidebar", async () => {
     await renderApp();
 
-    expect(container.querySelector(".sidebar__nav")?.textContent).not.toContain(
+    expect(container.querySelector('[data-slot="sidebar-navigation"]')?.textContent).not.toContain(
       "Codex 订阅",
     );
 
@@ -447,7 +458,7 @@ describe("App workspace navigation", () => {
       port.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await act(async () => button("概览").click());
-    expect(container.textContent).toContain("放弃未保存的修改？");
+    expect(document.body.textContent).toContain("放弃未保存的修改？");
     expect(workspaceHeading().textContent).toBe("设置");
   });
 
@@ -592,9 +603,9 @@ describe("App workspace navigation", () => {
 
     await act(async () => button("API 服务").click());
     await act(async () => button("添加服务").click());
-    await setSelect(".service-form select", "newapi");
-    await setInput('.service-form input[type="url"]', "https://saved.example");
-    await setInput('.service-form input[type="password"]', "secret-key");
+    await chooseOption("服务类型", "new-api");
+    await setInput('[data-testid="service-form"] input[type="url"]', "https://saved.example");
+    await setInput('[data-testid="service-form"] input[type="password"]', "secret-key");
     await act(async () => {
       button("保存服务").click();
       await Promise.resolve();
@@ -604,7 +615,7 @@ describe("App workspace navigation", () => {
     expect(bridgeMocks.createService).toHaveBeenCalledOnce();
     expect(workspaceHeading().textContent).toBe("管理 API 服务");
     expect(container.textContent).not.toContain("放弃未保存的修改？");
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
   it("uses an in-app dialog before leaving an editor with unsaved changes", async () => {
@@ -625,25 +636,25 @@ describe("App workspace navigation", () => {
       back?.click();
     });
 
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(container.textContent).toContain("放弃未保存的修改？");
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("放弃未保存的修改？");
     expect(workspaceHeading().textContent).toBe("添加服务");
 
     await act(async () => {
       button("继续编辑").click();
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(workspaceHeading().textContent).toBe("添加服务");
 
     await act(async () => {
       button("路由与模型").click();
     });
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
 
     await act(async () => {
       button("放弃修改并离开").click();
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(workspaceHeading().textContent).toBe("自动选择合适的模型");
   });
 });

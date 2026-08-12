@@ -57,7 +57,7 @@ function button(label: string, root: ParentNode = document): HTMLButtonElement {
 }
 
 function row(name: string): HTMLElement {
-  const match = [...document.querySelectorAll<HTMLElement>(".token-row")].find(
+  const match = [...document.querySelectorAll<HTMLElement>('[data-testid="access-token-row"]')].find(
     (candidate) => candidate.textContent?.includes(name),
   );
   if (!match) throw new Error(`Missing token row: ${name}`);
@@ -228,7 +228,7 @@ describe("AccessTokenManager", () => {
     });
 
     expect(container.textContent).not.toContain(firstSecret);
-    expect(container.querySelector(".token-row__secret")).toBeNull();
+    expect(container.querySelector('[data-testid="revealed-access-token"]')).toBeNull();
     expect(bridgeMocks.deleteAccessToken).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -285,14 +285,14 @@ describe("AccessTokenManager", () => {
       button("删除", row(firstToken.name)).click();
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("最后一个访问令牌");
+    expect(document.body.textContent).toContain("最后一个访问令牌");
     expect(window.confirm).not.toHaveBeenCalled();
     await act(async () => {
       button("确认删除").click();
       await Promise.resolve();
     });
     expect(bridgeMocks.deleteAccessToken).toHaveBeenCalledWith(firstToken.id);
-    expect(container.querySelector(".token-row")).toBeNull();
+    expect(container.querySelector('[data-testid="access-token-row"]')).toBeNull();
   });
 
   it("renders usage placeholders without starting any usage request", async () => {

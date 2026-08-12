@@ -5,6 +5,23 @@ import {
   useState,
 } from "react";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FormMessage } from "@/components/FormMessage";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
 import {
   createAccessToken,
   deleteAccessToken,
@@ -229,12 +246,11 @@ export function AccessTokenManager({
     revealingID !== null;
 
   return (
-    <section className="token-manager" aria-labelledby="token-manager-heading">
+    <section className="flex min-h-0 w-full flex-1 flex-col" aria-labelledby="token-manager-heading">
       <PageHeader
         actions={
           <>
-            <button
-              className="btn-primary"
+            <Button
               disabled={!isReady || catalogBusy}
               onClick={() => {
                 setCreateOpen(true);
@@ -243,15 +259,15 @@ export function AccessTokenManager({
               type="button"
             >
               创建令牌
-            </button>
-            <button
-              className="btn-secondary"
+            </Button>
+            <Button
+              variant="outline"
               disabled={!isReady || catalogBusy}
               onClick={refresh}
               type="button"
             >
               {catalog.status === "loading" ? "刷新中…" : "刷新"}
-            </button>
+            </Button>
           </>
         }
         description="为 IDE、CLI 或其他本机客户端分配独立令牌。"
@@ -261,118 +277,125 @@ export function AccessTokenManager({
       />
 
       {(!isReady || catalog.status === "blocked") && (
-        <div className="service-manager__unavailable">
+        <FormMessage className="mb-3" tone="notice">
           {catalog.items.length
             ? "Core 尚未就绪，当前显示上次读取的令牌。"
             : "Core 就绪后才能管理访问令牌。"}
-        </div>
+        </FormMessage>
       )}
       {catalog.status === "error" && catalog.error ? (
-        <div className="form-message form-message--error" role="alert">
+        <FormMessage className="mb-3" tone="error">
           {catalog.error}
-        </div>
+        </FormMessage>
       ) : null}
       {error ? (
-        <div className="form-message form-message--error" role="alert">
+        <FormMessage className="mb-3" tone="error">
           {error}
-        </div>
+        </FormMessage>
       ) : null}
       {notice ? (
-        <div className="form-message form-message--notice" role="status">
+        <FormMessage className="mb-3" tone="success">
           {notice}
-        </div>
+        </FormMessage>
       ) : null}
 
-      <div className="token-list">
-        <div className="token-list__title">
+      <Card className="min-h-0 flex-1 gap-0 overflow-hidden py-0 shadow-[var(--shadow-card)]">
+        <div className="flex items-center justify-between border-b px-[18px] py-3.5">
           <div>
-            <strong>访问令牌</strong>
-            <span>
+            <strong className="text-[12.5px]">访问令牌</strong>
+            <span className="ml-2 text-[10px] text-muted-foreground">
               {catalog.status === "blocked" && catalog.items.length === 0
                 ? "—"
                 : `${catalog.items.length} 个`}
             </span>
           </div>
-          <span className="usage-pending-badge">统计待接入</span>
+          <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">统计待接入</Badge>
         </div>
 
-        <div
+        <ScrollArea
           aria-busy={catalog.status === "loading"}
           aria-label="访问令牌列表"
-          className="token-list__scroll"
+          className="min-h-0 flex-1"
         >
+          <div className="grid content-start">
           {catalog.status === "blocked" && catalog.items.length === 0 ? (
-            <div className="token-list__empty">Core 就绪后将读取访问令牌。</div>
+            <div className="grid min-h-[250px] place-items-center p-8 text-center text-[11px] text-muted-foreground">Core 就绪后将读取访问令牌。</div>
           ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-            <div className="token-list__skeleton" aria-label="正在加载访问令牌">
-              <span />
-              <span />
-              <span />
+            <div className="grid gap-2 p-4" aria-label="正在加载访问令牌">
+              <span className="h-16 animate-pulse rounded-xl bg-muted" />
+              <span className="h-16 animate-pulse rounded-xl bg-muted" />
+              <span className="h-16 animate-pulse rounded-xl bg-muted" />
             </div>
           ) : catalog.status === "error" && catalog.items.length === 0 ? (
-            <div className="token-list__empty">
-              <p>暂时无法显示访问令牌。</p>
-              <button
-                className="btn-secondary"
+            <div className="flex min-h-[250px] flex-col items-center justify-center gap-3 p-8 text-center text-[11px] text-muted-foreground">
+              <p className="text-xs text-foreground">暂时无法显示访问令牌。</p>
+              <Button
+                variant="outline"
                 disabled={!isReady}
                 onClick={refresh}
                 type="button"
               >
                 重试
-              </button>
+              </Button>
             </div>
           ) : catalog.items.length === 0 ? (
-            <div className="token-list__empty">
-              <p>还没有访问令牌。</p>
+            <div className="flex min-h-[250px] flex-col items-center justify-center gap-2 p-8 text-center text-[11px] text-muted-foreground">
+              <p className="text-xs font-semibold text-foreground">还没有访问令牌。</p>
               <span>创建一个令牌即可连接本机客户端。</span>
-              <button
-                className="btn-primary"
+              <Button
+                className="mt-2"
                 disabled={!isReady}
                 onClick={() => setCreateOpen(true)}
                 type="button"
               >
                 创建令牌
-              </button>
+              </Button>
             </div>
           ) : (
             catalog.items.map((token) => {
               const isRevealed = revealed?.tokenId === token.id;
               const isRevealing = revealingID === token.id;
               return (
-                <article className="token-row" key={token.id}>
-                  <div className="token-row__identity">
+                <article
+                  className="grid grid-cols-[minmax(160px,1fr)_minmax(260px,1.5fr)_auto] items-center gap-4 border-b px-[18px] py-3.5 last:border-b-0 max-[900px]:grid-cols-1"
+                  data-testid="access-token-row"
+                  key={token.id}
+                >
+                  <div className="grid min-w-0 gap-1.5">
                     <span>
-                      <strong>{token.name}</strong>
+                      <strong className="text-xs">{token.name}</strong>
                       {token.source === "system_default" ? (
-                        <small>默认</small>
+                        <Badge className="ml-2 px-1.5 py-0 text-[8px]" variant="secondary">默认</Badge>
                       ) : null}
                     </span>
-                    <code>{token.hint}</code>
+                    <code className="overflow-hidden text-[10px] text-text-secondary text-ellipsis whitespace-nowrap">{token.hint}</code>
                   </div>
-                  <dl className="token-row__metrics">
-                    <div>
-                      <dt>今日 Token</dt>
-                      <dd>—</dd>
+                  <dl className="grid grid-cols-3 gap-3 max-[600px]:grid-cols-1">
+                    <div className="grid gap-1">
+                      <dt className="text-[9px] text-muted-foreground">今日 Token</dt>
+                      <dd className="text-[10.5px] font-semibold">—</dd>
                     </div>
-                    <div>
-                      <dt>累计 Token</dt>
-                      <dd>—</dd>
+                    <div className="grid gap-1">
+                      <dt className="text-[9px] text-muted-foreground">累计 Token</dt>
+                      <dd className="text-[10.5px] font-semibold">—</dd>
                     </div>
-                    <div>
-                      <dt>创建时间</dt>
-                      <dd>{createdAtLabel(token.created_at)}</dd>
+                    <div className="grid gap-1">
+                      <dt className="text-[9px] text-muted-foreground">创建时间</dt>
+                      <dd className="text-[10.5px] font-semibold">{createdAtLabel(token.created_at)}</dd>
                     </div>
                   </dl>
-                  <div className="token-row__actions">
-                    <button
+                  <div className="flex items-center justify-end gap-1 max-[900px]:justify-start">
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       disabled={!isReady || deletingID !== null}
                       onClick={() => void toggleReveal(token.id)}
                       type="button"
                     >
                       {isRevealing ? "读取中…" : isRevealed ? "隐藏" : "显示"}
-                    </button>
-                    <button
-                      className="danger-link"
+                    </Button>
+                    <Button
+                      className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
                       disabled={!isReady || deletingID !== null}
                       onClick={() => {
                         revealGeneration.current += 1;
@@ -384,18 +407,20 @@ export function AccessTokenManager({
                         setNotice(null);
                       }}
                       type="button"
+                      size="sm"
+                      variant="ghost"
                     >
                       {deletingID === token.id ? "删除中…" : "删除"}
-                    </button>
+                    </Button>
                   </div>
                   {isRevealed ? (
-                    <div className="token-row__secret">
-                      <code>{revealed.value}</code>
-                      <button onClick={() => void copyRevealed()} type="button">
+                    <div className="col-span-full flex min-w-0 items-center gap-2 rounded-lg bg-accent px-3 py-2 max-[600px]:flex-wrap" data-testid="revealed-access-token">
+                      <code className="min-w-0 flex-1 overflow-auto text-[10px] text-accent-foreground select-all">{revealed.value}</code>
+                      <Button size="sm" variant="outline" onClick={() => void copyRevealed()} type="button">
                         复制
-                      </button>
+                      </Button>
                       {copyNotice ? (
-                        <span role="status">{copyNotice}</span>
+                        <span className="text-[9px] text-success-foreground" role="status">{copyNotice}</span>
                       ) : null}
                     </div>
                   ) : null}
@@ -403,30 +428,28 @@ export function AccessTokenManager({
               );
             })
           )}
-        </div>
-      </div>
+          </div>
+        </ScrollArea>
+      </Card>
 
-      {createOpen ? (
-        <div
-          className="token-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target && !creating) {
-              setCreateOpen(false);
-              setName("");
-            }
-          }}
-        >
-          <section
-            aria-labelledby="create-token-heading"
-            aria-modal="true"
-            className="token-dialog"
-            role="dialog"
-          >
-            <h3 id="create-token-heading">创建访问令牌</h3>
-            <p>用客户端名称标记用途，创建后可随时在列表中显示。</p>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !creating) {
+            setCreateOpen(false);
+            setName("");
+          }
+        }}
+      >
+        <DialogContent showCloseButton={!creating}>
+          <DialogHeader>
+            <DialogTitle>创建访问令牌</DialogTitle>
+            <DialogDescription>用客户端名称标记用途，创建后可随时在列表中显示。</DialogDescription>
+          </DialogHeader>
             <form onSubmit={(event) => void submitCreate(event)}>
-              <label htmlFor="access-token-name">令牌名称</label>
-              <input
+              <div className="grid gap-2">
+              <Label htmlFor="access-token-name">令牌名称</Label>
+              <Input
                 autoComplete="off"
                 id="access-token-name"
                 maxLength={64}
@@ -435,9 +458,10 @@ export function AccessTokenManager({
                 ref={nameInput}
                 value={name}
               />
-              <div className="token-dialog__actions">
-                <button
-                  className="btn-secondary"
+              </div>
+              <DialogFooter className="mt-5">
+                <Button
+                  variant="outline"
                   disabled={creating}
                   onClick={() => {
                     setCreateOpen(false);
@@ -446,63 +470,34 @@ export function AccessTokenManager({
                   type="button"
                 >
                   取消
-                </button>
-                <button className="btn-primary" disabled={creating} type="submit">
+                </Button>
+                <Button disabled={creating} type="submit">
                   {creating ? "创建中…" : "创建"}
-                </button>
-              </div>
+                </Button>
+              </DialogFooter>
             </form>
-          </section>
-        </div>
-      ) : null}
-      {pendingDelete ? (
-        <div
-          className="token-dialog-backdrop"
-          onMouseDown={(event) => {
-            if (
-              event.currentTarget === event.target &&
-              deletingID === null
-            ) {
-              setPendingDelete(null);
-            }
-          }}
-          role="presentation"
-        >
-          <section
-            aria-labelledby="delete-token-heading"
-            aria-modal="true"
-            className="token-dialog"
-            role="dialog"
-          >
-            <h3 id="delete-token-heading">删除访问令牌？</h3>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        cancelLabel="取消"
+        confirmLabel={deletingID === pendingDelete?.id ? "删除中…" : "确认删除"}
+        description={
+          <>
             <p>
               {catalog.items.length === 1
-                ? `“${pendingDelete.name}”是最后一个访问令牌。删除后，所有客户端都将无法连接，直到创建新令牌。`
-                : `删除“${pendingDelete.name}”后，使用它的客户端将立即无法连接。`}
+                ? `“${pendingDelete?.name ?? ""}”是最后一个访问令牌。删除后，所有客户端都将无法连接，直到创建新令牌。`
+                : `删除“${pendingDelete?.name ?? ""}”后，使用它的客户端将立即无法连接。`}
             </p>
             <p>此操作无法撤销。</p>
-            <div className="token-dialog__actions">
-              <button
-                autoFocus
-                className="btn-secondary"
-                disabled={deletingID !== null}
-                onClick={() => setPendingDelete(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="btn-danger"
-                disabled={deletingID !== null}
-                onClick={() => void remove()}
-                type="button"
-              >
-                {deletingID === pendingDelete.id ? "删除中…" : "确认删除"}
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+          </>
+        }
+        destructive
+        disabled={deletingID !== null}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void remove()}
+        open={pendingDelete !== null}
+        title="删除访问令牌？"
+      />
     </section>
   );
 }

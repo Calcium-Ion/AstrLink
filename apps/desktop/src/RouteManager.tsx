@@ -6,6 +6,29 @@ import {
   useRef,
   useState,
 } from "react";
+import { ChevronDown } from "lucide-react";
+
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { FormMessage } from "@/components/FormMessage";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 import { AutoRoutingShowcase } from "./AutoRoutingShowcase";
 import {
@@ -597,20 +620,20 @@ export function RouteManager({
   );
 
   return (
-    <section aria-labelledby="route-manager-title" className="route-manager">
+    <section aria-labelledby="route-manager-title" className="mx-auto flex min-h-0 w-full max-w-[1120px] flex-1 flex-col overflow-y-auto">
       <PageHeader
         actions={
           editor ? (
-            <button
-              className="btn-secondary"
+            <Button
+              variant="outline"
               disabled={saving}
               onClick={() => (dirty ? setCancelPending(true) : closeEditor())}
               type="button"
             >
               返回
-            </button>
+            </Button>
           ) : (
-            <span className="routing-preview__state">训练中 · 不可启用</span>
+            <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">训练中 · 不可启用</Badge>
           )
         }
         description={
@@ -629,19 +652,19 @@ export function RouteManager({
         titleId="route-manager-title"
       />
 
-      {notice ? <p className="notice notice--success">{notice}</p> : null}
+      {notice ? <FormMessage className="mb-2.5" tone="success">{notice}</FormMessage> : null}
       {error || catalog.error ? (
-        <p className="notice notice--error" role="alert">
+        <FormMessage className="mb-2.5" tone="error">
           {error ?? catalog.error}
-        </p>
+        </FormMessage>
       ) : null}
 
       {editor ? (
-        <form aria-busy={saving} className="route-form" onSubmit={save}>
-          <div className="route-form__grid">
-            <label>
+        <form aria-busy={saving} className="mx-auto w-full max-w-[860px] min-w-0 rounded-[15px] border bg-card p-[18px] shadow-[0_10px_34px_color-mix(in_srgb,var(--foreground)_5%,transparent)] aria-busy:pointer-events-none aria-busy:opacity-70" onSubmit={save}>
+          <div className="grid grid-cols-2 gap-[11px] max-[720px]:grid-cols-1">
+            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
               <span>路由名称</span>
-              <input
+              <Input
                 autoFocus
                 maxLength={128}
                 onChange={(event) =>
@@ -652,10 +675,10 @@ export function RouteManager({
                 }
                 value={draft.name}
               />
-            </label>
-            <label>
+            </Label>
+            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
               <span>路由优先级</span>
-              <input
+              <Input
                 inputMode="numeric"
                 max="1000000"
                 min="0"
@@ -668,24 +691,29 @@ export function RouteManager({
                 type="number"
                 value={draft.priority}
               />
-              <small>数值越小越先匹配。</small>
-            </label>
-            <label>
+              <small className="text-[8px] font-normal text-muted-foreground">数值越小越先匹配。</small>
+            </Label>
+            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
               <span>入口协议</span>
-              <select
-                onChange={(event) => changeProtocol(event.target.value)}
+              <Select
+                onValueChange={changeProtocol}
                 value={draft.protocol}
               >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
                 {protocolIDs.map((protocol) => (
-                  <option key={protocol} value={protocol}>
+                  <SelectItem key={protocol} value={protocol}>
                     {protocolLabel(protocol)}
-                  </option>
+                  </SelectItem>
                 ))}
-              </select>
-            </label>
-            <label>
+                </SelectContent>
+              </Select>
+            </Label>
+            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
               <span>公开模型名（可选）</span>
-              <input
+              <Input
                 maxLength={256}
                 onChange={(event) => {
                   const publicModel = event.target.value;
@@ -703,74 +731,73 @@ export function RouteManager({
                 placeholder="留空匹配该协议的全部模型"
                 value={draft.publicModel}
               />
-              <small>填写后可为每个目标设置真实上游模型，形成模型别名。</small>
-            </label>
+              <small className="text-[8px] font-normal text-muted-foreground">填写后可为每个目标设置真实上游模型，形成模型别名。</small>
+            </Label>
           </div>
 
-          <label className="route-form__enabled">
-            <input
+          <Label className="mt-[13px] flex items-center gap-2 rounded-[9px] border bg-muted px-[11px] py-2.5">
+            <Checkbox
               checked={draft.enabled}
-              onChange={(event) =>
+              onCheckedChange={(checked) =>
                 setDraft((current) => ({
                   ...current,
-                  enabled: event.target.checked,
+                  enabled: checked === true,
                 }))
               }
-              type="checkbox"
             />
-            <span>
-              <strong>保存后立即启用</strong>
-              <small>停用路由会保留配置，但不会参与请求匹配。</small>
+            <span className="flex flex-col gap-0.5">
+              <strong className="text-[9.5px] text-foreground">保存后立即启用</strong>
+              <small className="text-[8px] font-normal text-muted-foreground">停用路由会保留配置，但不会参与请求匹配。</small>
             </span>
-          </label>
+          </Label>
 
-          <section className="route-target-editor">
-            <header>
-              <div>
-                <span>执行目标</span>
-                <strong>按优先级依次尝试</strong>
+          <section className="mt-4 border-t pt-3.5">
+            <header className="flex items-center justify-between gap-2.5">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[8px] text-muted-foreground">执行目标</span>
+                <strong className="text-[11px]">按优先级依次尝试</strong>
               </div>
-              <button
-                className="btn-secondary"
+              <Button
+                variant="outline"
                 disabled={!canAddTarget}
                 onClick={addTarget}
                 type="button"
               >
                 添加 fallback
-              </button>
+              </Button>
             </header>
 
             {draft.targets.length === 0 ? (
-              <div className="route-target-editor__empty">
-                <p>没有 API 服务声明 {protocolLabel(draft.protocol)} 能力。</p>
-                <button
-                  className="btn-secondary"
+              <div className="mt-2.5 flex items-center justify-between gap-3 rounded-[10px] border border-dashed border-input bg-muted p-[13px] text-text-secondary">
+                <p className="text-[9px]">没有 API 服务声明 {protocolLabel(draft.protocol)} 能力。</p>
+                <Button
+                  variant="outline"
                   onClick={onManageServices}
                   type="button"
                 >
                   管理 API 服务
-                </button>
+                </Button>
               </div>
             ) : (
-              <ol className="route-target-list">
+              <ol className="mt-2.5 grid list-none gap-2 p-0">
                 {draft.targets.map((target, index) => {
                   const service = services.find(
                     (candidate) => candidate.id === target.serviceId,
                   );
                   const modes = modesFor(service, draft.protocol);
                   return (
-                    <li key={`${target.serviceId}:${index}`}>
-                      <span className="route-target-list__order">
+                    <li className="grid min-w-0 grid-cols-[28px_minmax(0,1fr)_max-content] items-center gap-[9px] rounded-[10px] border bg-muted p-2.5 max-[760px]:grid-cols-[28px_minmax(0,1fr)]" key={`${target.serviceId}:${index}`}>
+                      <span className="grid size-7 place-items-center rounded-lg bg-accent text-[8.5px] font-extrabold text-accent-foreground">
                         {String(index + 1).padStart(2, "0")}
                       </span>
-                      <div className="route-target-list__fields">
-                        <label>
+                      <div className="grid min-w-0 grid-cols-[minmax(150px,1.2fr)_minmax(100px,.7fr)_minmax(90px,.55fr)_minmax(150px,1fr)] gap-2 max-[960px]:grid-cols-2 max-[600px]:grid-cols-1">
+                        <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
                           <span>API 服务</span>
-                          <select
-                            onChange={(event) => {
+                          <Select
+                            onValueChange={(serviceId) => {
                               const nextService = services.find(
                                 (candidate) =>
-                                  candidate.id === event.target.value,
+                                  candidate.id === serviceId,
                               );
                               const nextModes = modesFor(
                                 nextService,
@@ -778,7 +805,7 @@ export function RouteManager({
                               );
                               updateTarget(index, (current) => ({
                                 ...current,
-                                serviceId: event.target.value,
+                                serviceId,
                                 planType: nextModes.includes(current.planType)
                                   ? current.planType
                                   : (nextModes[0] ?? "native"),
@@ -786,8 +813,12 @@ export function RouteManager({
                             }}
                             value={target.serviceId}
                           >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
                             {servicesForProtocol.map((candidate) => (
-                              <option
+                              <SelectItem
                                 disabled={draft.targets.some(
                                   (item, itemIndex) =>
                                     itemIndex !== index &&
@@ -798,32 +829,37 @@ export function RouteManager({
                               >
                                 {candidate.name}
                                 {candidate.enabled ? "" : "（已停用）"}
-                              </option>
+                              </SelectItem>
                             ))}
-                          </select>
-                        </label>
-                        <label>
+                            </SelectContent>
+                          </Select>
+                        </Label>
+                        <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
                           <span>执行方式</span>
-                          <select
-                            onChange={(event) =>
+                          <Select
+                            onValueChange={(value) =>
                               updateTarget(index, (current) => ({
                                 ...current,
-                                planType: event.target
-                                  .value as RouteDraftTarget["planType"],
+                                planType: value as RouteDraftTarget["planType"],
                               }))
                             }
                             value={target.planType}
                           >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
                             {modes.map((mode) => (
-                              <option key={mode} value={mode}>
+                              <SelectItem key={mode} value={mode}>
                                 {modeLabels[mode]}
-                              </option>
+                              </SelectItem>
                             ))}
-                          </select>
-                        </label>
-                        <label>
+                            </SelectContent>
+                          </Select>
+                        </Label>
+                        <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
                           <span>目标优先级</span>
-                          <input
+                          <Input
                             inputMode="numeric"
                             max="1000000"
                             min="0"
@@ -836,36 +872,73 @@ export function RouteManager({
                             type="number"
                             value={target.priority}
                           />
-                        </label>
-                        <label>
-                          <span>上游模型</span>
-                          <input
-                            disabled={!draft.publicModel}
-                            list={`route-target-models-${index}`}
-                            maxLength={256}
-                            onChange={(event) =>
-                              updateTarget(index, (current) => ({
-                                ...current,
-                                upstreamModel: event.target.value,
-                              }))
-                            }
-                            placeholder={
-                              draft.publicModel
-                                ? "例如 gpt-5.2"
-                                : "先填写公开模型名"
-                            }
-                            value={target.upstreamModel}
-                          />
-                          <datalist id={`route-target-models-${index}`}>
-                            {service?.models.map((model) => (
-                              <option key={model} value={model} />
-                            ))}
-                          </datalist>
-                        </label>
+                        </Label>
+                        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_36px] gap-x-1.5 gap-y-[5px] text-[9px] font-semibold text-text-secondary">
+                          <Label
+                            className="contents"
+                            htmlFor={`route-upstream-model-${index}`}
+                          >
+                            <span className="col-span-full">上游模型</span>
+                            <Input
+                              className="min-w-0 flex-1"
+                              disabled={!draft.publicModel}
+                              id={`route-upstream-model-${index}`}
+                              maxLength={256}
+                              onChange={(event) =>
+                                updateTarget(index, (current) => ({
+                                  ...current,
+                                  upstreamModel: event.target.value,
+                                }))
+                              }
+                              placeholder={
+                                draft.publicModel
+                                  ? "例如 gpt-5.2"
+                                  : "先填写公开模型名"
+                              }
+                              value={target.upstreamModel}
+                            />
+                          </Label>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                aria-label={`选择目标 ${index + 1} 的上游模型`}
+                                disabled={
+                                  !draft.publicModel ||
+                                  (service?.models.length ?? 0) === 0
+                                }
+                                size="icon"
+                                type="button"
+                                variant="outline"
+                              >
+                                <ChevronDown aria-hidden="true" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              className="max-w-[min(420px,calc(100vw-2rem))] min-w-[220px]"
+                            >
+                              {service?.models.map((model) => (
+                                <DropdownMenuItem
+                                  key={model}
+                                  onSelect={() =>
+                                    updateTarget(index, (current) => ({
+                                      ...current,
+                                      upstreamModel: model,
+                                    }))
+                                  }
+                                >
+                                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                                    {model}
+                                  </span>
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
-                      <button
+                      <Button
                         aria-label={`移除目标 ${index + 1}`}
-                        className="danger-link"
+                        className="text-danger-foreground max-[760px]:col-start-2 max-[760px]:justify-self-end"
                         disabled={draft.targets.length === 1}
                         onClick={() =>
                           setDraft((current) => ({
@@ -876,9 +949,10 @@ export function RouteManager({
                           }))
                         }
                         type="button"
+                        variant="ghost"
                       >
                         移除
-                      </button>
+                      </Button>
                     </li>
                   );
                 })}
@@ -886,17 +960,16 @@ export function RouteManager({
             )}
           </section>
 
-          <div className="route-form__actions">
-            <button
-              className="btn-secondary"
+          <div className="mt-4 flex justify-end gap-2 border-t pt-3">
+            <Button
+              variant="outline"
               disabled={saving}
               onClick={() => (dirty ? setCancelPending(true) : closeEditor())}
               type="button"
             >
               取消
-            </button>
-            <button
-              className="btn-primary"
+            </Button>
+            <Button
               disabled={saving || draft.targets.length === 0}
               type="submit"
             >
@@ -905,119 +978,118 @@ export function RouteManager({
                 : editor.kind === "create"
                   ? "创建固定路由"
                   : "保存修改"}
-            </button>
+            </Button>
           </div>
         </form>
       ) : (
-        <div className="route-manager__body">
+        <div className="flex min-w-0 flex-1 flex-col gap-[22px] pb-6">
           <AutoRoutingShowcase />
 
           <section
             aria-labelledby="manual-routes-title"
-            className="route-manual-section"
+            className="flex min-w-0 flex-col gap-3 border-t pt-1"
           >
-            <div className="route-manual-section__heading">
-              <div>
-                <span>高级</span>
-                <h3 id="manual-routes-title">固定路由与别名</h3>
-                <p>
+            <div className="flex min-w-0 items-start justify-between gap-4 max-[720px]:flex-col">
+              <div className="min-w-0">
+                <span className="block text-[9px] font-bold text-muted-foreground">高级</span>
+                <h3 className="mt-1 text-sm font-[750]" id="manual-routes-title">固定路由与别名</h3>
+                <p className="mt-1.5 max-w-[560px] text-[10px] leading-[1.55] text-text-secondary">
                   显式模型名与别名走确定性优先级，不经过任务分类。用于固定服务、fallback
                   或公开模型别名映射。
                 </p>
               </div>
-              <div className="route-manual-section__actions">
-                <button
-                  className="btn-secondary"
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                <Button
+                  variant="outline"
                   disabled={!isReady || catalog.status === "loading"}
                   onClick={() => void refresh()}
                   type="button"
                 >
                   刷新
-                </button>
-                <button
-                  className="btn-primary"
+                </Button>
+                <Button
                   disabled={!isReady || loadingRecord}
                   onClick={beginCreate}
                   type="button"
                 >
                   新建固定路由
-                </button>
+                </Button>
               </div>
             </div>
 
-            <div className="route-list">
+            <div className="flex min-w-0 flex-col">
               {!isReady && catalog.items.length === 0 ? (
-                <div className="route-list__empty">
-                  <strong>等待 Core 就绪</strong>
-                  <p>Core 就绪后会读取本机固定路由配置。</p>
+                <div className="flex min-h-[180px] flex-col items-center justify-center rounded-[15px] border border-dashed border-input bg-card p-[30px] text-center text-text-secondary">
+                  <strong className="text-[13px] text-foreground">等待 Core 就绪</strong>
+                  <p className="mt-1.5 max-w-[520px] text-[10px] leading-[1.6]">Core 就绪后会读取本机固定路由配置。</p>
                 </div>
               ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-                <div className="route-list__empty">
-                  <strong>正在读取路由</strong>
+                <div className="flex min-h-[180px] flex-col items-center justify-center rounded-[15px] border border-dashed border-input bg-card p-[30px] text-center text-text-secondary">
+                  <strong className="text-[13px] text-foreground">正在读取路由</strong>
                 </div>
               ) : catalog.items.length === 0 ? (
-                <div className="route-list__empty">
-                  <strong>还没有固定路由</strong>
-                  <p>
+                <div className="flex min-h-[180px] flex-col items-center justify-center rounded-[15px] border border-dashed border-input bg-card p-[30px] text-center text-text-secondary">
+                  <strong className="text-[13px] text-foreground">还没有固定路由</strong>
+                  <p className="mt-1.5 mb-3.5 max-w-[520px] text-[10px] leading-[1.6]">
                     默认请求走 astrlink/auto（就绪后）。创建固定路由可绕过任务分类，固定服务、安排
                     fallback 或建立模型别名。
                   </p>
-                  <button
-                    className="btn-primary"
+                  <Button
                     disabled={!isReady}
                     onClick={beginCreate}
                     type="button"
                   >
                     创建第一条固定路由
-                  </button>
+                  </Button>
                 </div>
               ) : (
-                <ol className="route-card-list">
+                <ol className="grid list-none content-start gap-2 p-0">
                   {catalog.items.map((route) => {
                     const targets = route.targets ?? [];
                     const aliasTarget = targets.find(
                       (target) => target.upstream_model,
                     );
                     return (
-                      <li className="route-card" key={route.id}>
-                        <div className="route-card__priority">
-                          <span>优先级</span>
-                          <strong>{route.priority}</strong>
+                      <li className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)_max-content] items-stretch overflow-hidden rounded-[13px] border bg-card shadow-[0_5px_18px_color-mix(in_srgb,var(--foreground)_3%,transparent)] max-[760px]:grid-cols-[62px_minmax(0,1fr)]" key={route.id}>
+                        <div className="flex flex-col items-center justify-center gap-[3px] border-r bg-muted p-3">
+                          <span className="text-[8px] text-muted-foreground">优先级</span>
+                          <strong className="text-base">{route.priority}</strong>
                         </div>
-                        <div className="route-card__main">
-                          <header>
-                            <div>
-                              <strong>{route.name}</strong>
+                        <div className="min-w-0 px-3.5 py-3">
+                          <header className="flex min-w-0 items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-[7px]">
+                              <strong className="overflow-hidden text-[11.5px] text-ellipsis whitespace-nowrap">{route.name}</strong>
                               <span
-                                className={`route-card__state${
-                                  route.enabled ? "" : " route-card__state--off"
-                                }`}
+                                className={cn(
+                                  "shrink-0 text-[8px] font-bold text-success-foreground",
+                                  !route.enabled && "text-muted-foreground",
+                                )}
                               >
                                 {route.enabled ? "已启用" : "已停用"}
                               </span>
                             </div>
-                            <code>{route.match.model ?? "全部模型"}</code>
+                            <code className="max-w-[40%] overflow-hidden rounded-md bg-accent px-1.5 py-[3px] text-[8.5px] text-accent-foreground text-ellipsis whitespace-nowrap">{route.match.model ?? "全部模型"}</code>
                           </header>
-                          <p>
+                          <p className="my-2 mt-[5px] overflow-hidden text-[8.5px] text-muted-foreground text-ellipsis whitespace-nowrap">
                             {protocolLabel(route.match.protocol)} ·{" "}
                             {targets.length} 个目标
                             {aliasTarget
                               ? ` · 别名映射至 ${aliasTarget.upstream_model}`
                               : ""}
                           </p>
-                          <div className="route-card__targets">
+                          <div className="flex min-w-0 flex-wrap gap-[5px]">
                             {targets.map((target, index) => {
                               const service = services.find(
                                 (candidate) =>
                                   candidate.id === target.service_id,
                               );
                               return (
-                                <span
+                                <span className="inline-flex min-w-0 items-center gap-[5px] overflow-hidden rounded-[7px] border bg-muted px-1.5 py-1 text-[8.5px] text-text-secondary text-ellipsis whitespace-nowrap"
                                   key={`${target.service_id}:${target.priority}:${index}`}
                                 >
                                   {index + 1}.{" "}
                                   {service?.name ?? target.service_id}
-                                  <small>
+                                  <small className="text-[7.5px] text-muted-foreground">
                                     {modeLabels[
                                       target.plan_type as "native" | "delegated"
                                     ] ?? target.plan_type}
@@ -1027,31 +1099,35 @@ export function RouteManager({
                             })}
                           </div>
                         </div>
-                        <div className="route-card__actions">
-                          <button
-                            className="btn-secondary"
+                        <div className="flex items-center justify-center gap-1.5 border-l px-3 py-2.5 max-[760px]:col-span-2 max-[760px]:border-t max-[760px]:border-l-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
                             disabled={mutatingID === route.id || loadingRecord}
                             onClick={() => void beginEdit(route)}
                             type="button"
                           >
                             编辑
-                          </button>
-                          <button
-                            className="btn-secondary"
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
                             disabled={mutatingID === route.id}
                             onClick={() => void toggleRoute(route)}
                             type="button"
                           >
                             {route.enabled ? "停用" : "启用"}
-                          </button>
-                          <button
-                            className="danger-link"
+                          </Button>
+                          <Button
+                            className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
                             disabled={mutatingID === route.id}
                             onClick={() => void askDelete(route)}
                             type="button"
+                            size="sm"
+                            variant="ghost"
                           >
                             删除
-                          </button>
+                          </Button>
                         </div>
                       </li>
                     );
@@ -1059,78 +1135,39 @@ export function RouteManager({
                 </ol>
               )}
               {catalog.stale ? (
-                <p className="route-list__stale">当前显示上次读取的路由。</p>
+                <p className="mt-2 text-[8.5px] text-warning-foreground">当前显示上次读取的路由。</p>
               ) : null}
             </div>
           </section>
         </div>
       )}
 
-      {cancelPending ? (
-        <div className="token-dialog-backdrop" role="presentation">
-          <section
-            aria-describedby="route-cancel-description"
-            aria-labelledby="route-cancel-title"
-            aria-modal="true"
-            className="token-dialog"
-            role="dialog"
-          >
-            <h3 id="route-cancel-title">放弃未保存的路由修改？</h3>
-            <p id="route-cancel-description">本次修改尚未写入 Core。</p>
-            <div className="token-dialog__actions">
-              <button
-                className="btn-secondary"
-                onClick={() => setCancelPending(false)}
-                type="button"
-              >
-                继续编辑
-              </button>
-              <button
-                className="btn-primary"
-                onClick={closeEditor}
-                type="button"
-              >
-                放弃修改
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <ConfirmDialog
+        cancelLabel="继续编辑"
+        confirmLabel="放弃修改"
+        description={<p>本次修改尚未写入 Core。</p>}
+        onCancel={() => setCancelPending(false)}
+        onConfirm={closeEditor}
+        open={cancelPending}
+        title="放弃未保存的路由修改？"
+      />
 
-      {deletePending ? (
-        <div className="token-dialog-backdrop" role="presentation">
-          <section
-            aria-describedby="route-delete-description"
-            aria-labelledby="route-delete-title"
-            aria-modal="true"
-            className="token-dialog"
-            role="dialog"
-          >
-            <h3 id="route-delete-title">删除路由？</h3>
-            <p id="route-delete-description">
-              “{deletePending.route.name}”将被永久删除，后续请求不再匹配它。
-            </p>
-            <div className="token-dialog__actions">
-              <button
-                className="btn-secondary"
-                disabled={mutatingID === deletePending.route.id}
-                onClick={() => setDeletePending(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="btn-danger"
-                disabled={mutatingID === deletePending.route.id}
-                onClick={() => void confirmDelete()}
-                type="button"
-              >
-                {mutatingID === deletePending.route.id ? "删除中…" : "确认删除"}
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <ConfirmDialog
+        confirmLabel={
+          mutatingID === deletePending?.route.id ? "删除中…" : "确认删除"
+        }
+        description={
+          <p>
+            “{deletePending?.route.name ?? ""}”将被永久删除，后续请求不再匹配它。
+          </p>
+        }
+        destructive
+        disabled={mutatingID === deletePending?.route.id}
+        onCancel={() => setDeletePending(null)}
+        onConfirm={() => void confirmDelete()}
+        open={deletePending !== null}
+        title="删除路由？"
+      />
     </section>
   );
 }

@@ -16,6 +16,7 @@ import {
   loadLinuxWindowControlLayout,
   parseLinuxDecorationLayout,
 } from "./window-chrome";
+import { cn } from "@/lib/utils";
 
 type ResizeDirection =
   | "East"
@@ -52,6 +53,17 @@ const initialWindowState: WindowState = {
   focused: true,
   fullscreen: false,
   maximized: false,
+};
+
+const resizeHandleClasses: Record<ResizeDirection, string> = {
+  North: "top-0 right-[7px] left-[7px] h-[5px] cursor-ns-resize",
+  NorthEast: "top-0 right-0 size-2 cursor-nesw-resize",
+  East: "top-[7px] right-0 bottom-[7px] w-[5px] cursor-ew-resize",
+  SouthEast: "right-0 bottom-0 size-2 cursor-nwse-resize",
+  South: "right-[7px] bottom-0 left-[7px] h-[5px] cursor-ns-resize",
+  SouthWest: "bottom-0 left-0 size-2 cursor-nesw-resize",
+  West: "top-[7px] bottom-[7px] left-0 w-[5px] cursor-ew-resize",
+  NorthWest: "top-0 left-0 size-2 cursor-nwse-resize",
 };
 
 function ControlIcon({
@@ -235,14 +247,36 @@ export function WindowChrome({
   ) =>
     controls.length > 0 ? (
       <div
-        className={`window-chrome__controls window-chrome__controls--${placement}`}
+        className={cn(
+          "flex h-full items-center [app-region:no-drag] [-webkit-app-region:no-drag]",
+          placement === "start" ? "col-start-1" : "col-start-3",
+          platform === "linux" && "gap-[3px] px-1.5",
+        )}
+        data-placement={placement}
+        data-slot="window-controls"
       >
         {controls.map((control) => {
           const label = controlLabel(control, windowState.maximized);
           return (
             <button
               aria-label={label}
-              className={`window-chrome__button window-chrome__button--${control}`}
+              className={cn(
+                "grid h-full place-items-center rounded-none border-0 bg-transparent p-0 text-inherit outline-offset-[-3px]",
+                !windowState.focused &&
+                  "text-muted-foreground opacity-70 hover:opacity-100",
+                platform === "windows" &&
+                  "w-[46px] hover:bg-foreground/8 hover:text-foreground",
+                platform === "windows" &&
+                  control === "close" &&
+                  "hover:bg-destructive hover:text-destructive-foreground",
+                platform === "linux" &&
+                  "size-[34px] rounded-full hover:bg-foreground/8 hover:text-foreground",
+                platform === "linux" &&
+                  control === "close" &&
+                  "hover:bg-danger-wash hover:text-danger-foreground",
+              )}
+              data-control={control}
+              data-slot="window-control"
               key={control}
               onClick={() => activateControl(control)}
               title={label}
@@ -250,6 +284,7 @@ export function WindowChrome({
             >
               <svg
                 aria-hidden="true"
+                className="size-4 stroke-current stroke-[1.1] [stroke-linecap:square] [stroke-linejoin:miter]"
                 fill="none"
                 viewBox="0 0 16 16"
               >
@@ -268,15 +303,19 @@ export function WindowChrome({
     <>
       <header
         aria-label="窗口控制栏"
-        className={`window-chrome window-chrome--${platform}`}
+        className={cn(
+          "fixed inset-x-0 top-0 z-80 grid h-[var(--window-chrome-height)] grid-cols-[max-content_minmax(0,1fr)_max-content] select-none text-text-secondary",
+          windowState.fullscreen && "hidden",
+        )}
         data-focused={windowState.focused}
         data-maximized={windowState.maximized}
         data-platform={platform}
       >
         {renderControls(layout.start, "start")}
         <div
-          className="window-chrome__drag"
+          className="col-start-2 h-full min-w-0 [app-region:drag] [-webkit-app-region:drag]"
           data-tauri-drag-region
+          data-slot="window-drag-region"
         />
         {renderControls(layout.end, "end")}
       </header>
@@ -286,7 +325,9 @@ export function WindowChrome({
         ? resizeDirections.map((direction) => (
             <div
               aria-hidden="true"
-              className={`window-resize-handle window-resize-handle--${direction.toLowerCase()}`}
+              className={cn("fixed z-90", resizeHandleClasses[direction])}
+              data-direction={direction.toLowerCase()}
+              data-slot="window-resize-handle"
               key={direction}
               onMouseDown={(event) => beginResize(direction, event)}
             />

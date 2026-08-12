@@ -206,14 +206,14 @@ describe("RouteManager", () => {
       findButton("删除").click();
       await Promise.resolve();
     });
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(container.textContent).toContain("删除路由？");
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("删除路由？");
 
     await act(async () => {
       findButton("确认删除").click();
       await Promise.resolve();
     });
     expect(bridgeMocks.deleteRoute).toHaveBeenCalledWith(route.id, etag);
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 });

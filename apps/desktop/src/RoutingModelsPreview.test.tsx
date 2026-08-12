@@ -38,6 +38,6 @@ describe("RoutingModelsPreview", () => {
       expect(container.textContent).toContain(category);
     }
 
-    expect(container.querySelectorAll(".routing-category-card")).toHaveLength(4);
+    expect(container.querySelectorAll('[data-testid="routing-category"]')).toHaveLength(4);
   });
 });

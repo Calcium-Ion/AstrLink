@@ -114,9 +114,7 @@ describe("SettingsCenter", () => {
       await Promise.resolve();
     });
 
-    const toggles = container.querySelectorAll<HTMLInputElement>(
-      '.settings-toggle input[type="checkbox"]',
-    );
+    const toggles = container.querySelectorAll<HTMLButtonElement>('[role="switch"]');
     const autostart = toggles[0];
     if (!autostart) throw new Error("missing autostart toggle");
 

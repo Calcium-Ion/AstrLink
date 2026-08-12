@@ -1,5 +1,6 @@
 import { defineConfig } from "@rsbuild/core";
 import { pluginReact } from "@rsbuild/plugin-react";
+import tailwindcss from "@tailwindcss/postcss";
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -34,6 +35,9 @@ export default defineConfig({
       : undefined,
   },
   tools: {
+    postcss: (_config, { addPlugins }) => {
+      addPlugins(tailwindcss());
+    },
     rspack: {
       watchOptions: {
         ignored: ["**/src-tauri/**"],
