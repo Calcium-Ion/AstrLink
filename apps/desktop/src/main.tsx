@@ -1,6 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+// Self-hosted: the desktop app has no guaranteed network at launch.
+// Latin and digits render in Plex; CJK falls back to the system face.
+import "@fontsource-variable/ibm-plex-sans/wght.css";
+import "@fontsource/ibm-plex-mono/latin-400.css";
+import "@fontsource/ibm-plex-mono/latin-500.css";
+
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -18,6 +24,14 @@ if (!root) {
 
 const desktopPlatform = getDesktopPlatform();
 document.documentElement.dataset.desktopPlatform = desktopPlatform;
+
+if (import.meta.env.DEV) {
+  void import("./dev-webview-reload").then(
+    ({ isTauriRuntime, startDevWebviewReload }) => {
+      startDevWebviewReload({ enabled: isTauriRuntime() });
+    },
+  );
+}
 
 createRoot(root).render(
   <StrictMode>

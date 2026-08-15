@@ -5,10 +5,10 @@ import { cn } from "@/lib/utils";
 type FormMessageTone = "error" | "notice" | "success" | "warning";
 
 const toneClasses: Record<FormMessageTone, string> = {
-  error: "border-danger-wash bg-danger-wash text-danger-foreground",
-  notice: "border-accent bg-accent text-accent-foreground",
-  success: "border-success-wash bg-success-wash text-success-foreground",
-  warning: "border-warning-wash bg-warning-wash text-warning-foreground",
+  error: "border-destructive/25 bg-danger-wash text-danger-foreground",
+  notice: "border-border bg-muted text-text-secondary",
+  success: "border-success/25 bg-success-wash text-success-foreground",
+  warning: "border-warning/30 bg-warning-wash text-warning-foreground",
 };
 
 export function FormMessage({
@@ -19,7 +19,7 @@ export function FormMessage({
   return (
     <p
       className={cn(
-        "rounded-lg border px-3 py-2 text-xs leading-5",
+        "shrink-0 rounded-md border px-3 py-2 text-xs",
         toneClasses[tone],
         className,
       )}

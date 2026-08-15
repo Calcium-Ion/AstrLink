@@ -159,6 +159,34 @@ function button(label: string): HTMLButtonElement {
   return match;
 }
 
+function actionButton(label: string): HTMLButtonElement {
+  const match = [...document.querySelectorAll("button")].find(
+    (candidate) =>
+      candidate.textContent?.trim() === label &&
+      candidate.getAttribute("role") !== "tab",
+  );
+  if (!(match instanceof HTMLButtonElement)) {
+    throw new Error(`Missing action button: ${label}`);
+  }
+  return match;
+}
+
+async function openModels(): Promise<void> {
+  await act(async () => {
+    button("模型").click();
+    await Promise.resolve();
+  });
+}
+
+async function openDryRun(): Promise<void> {
+  await act(async () => {
+    document
+      .querySelector<HTMLButtonElement>('[role="tab"][aria-label="试运行结果"]')
+      ?.click();
+    await Promise.resolve();
+  });
+}
+
 async function setInput(selector: string, value: string): Promise<void> {
   const input = document.querySelector<HTMLInputElement>(selector);
   if (input === null) throw new Error(`Missing input: ${selector}`);
@@ -299,6 +327,7 @@ describe("SafetyPolicy", () => {
       items: [openAIModel],
     });
     await renderPolicy();
+    await openModels();
 
     const selector = container.querySelector<HTMLButtonElement>(
       '[aria-label="OpenAI Privacy Filter 模型版本"]',
@@ -336,6 +365,7 @@ describe("SafetyPolicy", () => {
       readyInstallation(),
     );
     await renderPolicy();
+    await openModels();
 
     await act(async () => {
       button("检查并安装").click();
@@ -391,6 +421,7 @@ describe("SafetyPolicy", () => {
       undefined,
     );
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("已安装 1").click());
     await act(async () => {
@@ -445,6 +476,7 @@ describe("SafetyPolicy", () => {
       .mockRejectedValueOnce(new Error("temporary unavailable"))
       .mockResolvedValueOnce(readyInstallation());
     await renderPolicy();
+    await openModels();
     await act(async () => button("已安装 1").click());
 
     await act(async () => {
@@ -499,6 +531,7 @@ describe("SafetyPolicy", () => {
       }),
     );
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("自定义").click());
     await setInput('[aria-label="Hugging Face 仓库"]', heavyProbe.repo_id);
@@ -578,6 +611,7 @@ describe("SafetyPolicy", () => {
     bridgeMocks.probeLocalPrivacyModel.mockResolvedValueOnce(localProbe);
     bridgeMocks.installPrivacyModel.mockResolvedValueOnce(localInstallation);
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("本地导入").click());
     expect(container.textContent).toContain("请先在系统中挂载网络共享");
@@ -649,6 +683,7 @@ describe("SafetyPolicy", () => {
       ],
     });
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("已安装 1").click());
     expect(container.textContent).toContain("本地导入");
@@ -664,6 +699,7 @@ describe("SafetyPolicy", () => {
     const pending = deferred<PrivacyModelProbe>();
     bridgeMocks.probePrivacyModel.mockReturnValueOnce(pending.promise);
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("自定义").click());
     await setInput(
@@ -708,6 +744,7 @@ describe("SafetyPolicy", () => {
       items: [readyInstallation()],
     });
     await renderPolicy();
+    await openModels();
     await act(async () => button("已安装 1").click());
     expect(button("当前模型").disabled).toBe(true);
     expect(button("删除").disabled).toBe(true);
@@ -759,6 +796,7 @@ describe("SafetyPolicy", () => {
       }),
     );
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("已安装 1").click());
     await act(async () => {
@@ -792,6 +830,7 @@ describe("SafetyPolicy", () => {
       undefined,
     );
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("已安装 1").click());
     await act(async () => {
@@ -826,6 +865,7 @@ describe("SafetyPolicy", () => {
       items: [ready],
     });
     await renderPolicy();
+    await openModels();
 
     await act(async () => button("已安装 1").click());
     await act(async () => button("用于策略").click());
@@ -1066,7 +1106,7 @@ describe("SafetyPolicy", () => {
           path: "/messages/0/content",
           start: 0,
           end: 6,
-          confidence: 0.596717,
+          confidence: 0.42,
         },
       ],
       redactions: [
@@ -1082,9 +1122,10 @@ describe("SafetyPolicy", () => {
         '{"messages":[{"content":"email alice@example.com","role":"user"}]}',
     });
     await renderPolicy();
+    await openDryRun();
 
     await act(async () => {
-      button("试运行").click();
+      actionButton("试运行").click();
       await Promise.resolve();
     });
     await flush();
@@ -1102,13 +1143,19 @@ describe("SafetyPolicy", () => {
     });
     expect(container.textContent).toContain("脱敏后继续");
     expect(container.textContent).toContain("邮箱 × 1");
-    expect(container.textContent).toContain("0.910000 ≥ 0.60");
+    expect(container.textContent).toContain("0.91 ≥ 0.60");
     expect(container.textContent).toContain("低于门槛（已抑制，不执行策略）");
-    expect(container.textContent).toContain("0.596717 < 0.60");
+    expect(container.textContent).toContain("0.42 < 0.60");
     expect(container.textContent).toContain("占位符对照（仅本地预览）");
     expect(container.textContent).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
     expect(container.textContent).toContain("alice@example.com");
     expect(container.textContent).toContain("脱敏后的请求体");
+    expect(
+      document
+        .querySelector('[role="tab"][aria-label="试运行结果"]')
+        ?.getAttribute("data-state"),
+    ).toBe("active");
+    expect(button("返回策略")).toBeTruthy();
   });
 
   it("offers diverse dry-run presets and clears stale results when switching", async () => {
@@ -1126,6 +1173,7 @@ describe("SafetyPolicy", () => {
         '{"messages":[{"content":"故障信息","role":"user"}]}',
     });
     await renderPolicy();
+    await openDryRun();
 
     for (const label of [
       "综合联系方式",
@@ -1152,7 +1200,7 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain("不包含真实网络目标");
 
     await act(async () => {
-      button("试运行").click();
+      actionButton("试运行").click();
       await Promise.resolve();
     });
     await flush();
@@ -1178,13 +1226,14 @@ describe("SafetyPolicy", () => {
 
   it("prompts that privacy protection is disabled instead of showing no findings", async () => {
     await renderPolicy();
+    await openDryRun();
 
     expect(container.textContent).toContain(
       "隐私保护未开启，请先开启后再试运行",
     );
 
     await act(async () => {
-      button("试运行").click();
+      actionButton("试运行").click();
       await Promise.resolve();
     });
     await flush();
@@ -1194,5 +1243,10 @@ describe("SafetyPolicy", () => {
       "隐私保护未开启，请先开启后再试运行。",
     );
     expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
+    expect(
+      document
+        .querySelector('[role="tab"][aria-label="试运行结果"]')
+        ?.getAttribute("data-state"),
+    ).toBe("active");
   });
 });

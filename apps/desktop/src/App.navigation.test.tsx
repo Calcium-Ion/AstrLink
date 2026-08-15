@@ -349,8 +349,8 @@ describe("App workspace navigation", () => {
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("安全策略");
     expect(workspaceHeading().textContent).toBe("隐私保护");
-    expect(container.textContent).toContain("全局隐私保护");
-    expect(container.textContent).toContain("Regex 覆盖限制");
+    expect(container.textContent).toContain("启用隐私保护");
+    expect(container.textContent).toContain("Regex 覆盖邮箱");
 
     await act(async () => {
       button("API 服务").click();

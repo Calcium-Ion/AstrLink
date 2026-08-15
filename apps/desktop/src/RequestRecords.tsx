@@ -677,7 +677,7 @@ export function RequestRecords({
         <PageHeader
           actions={
             <>
-              <span className="mr-[3px] inline-flex items-center gap-[7px] text-[10px] font-semibold text-muted-foreground max-[720px]:mr-auto">
+              <span className="mr-[3px] inline-flex items-center gap-[7px] text-xs font-semibold text-muted-foreground max-[720px]:mr-auto">
                 <StatusDot tone="positive" />
                 每秒同步
               </span>
@@ -708,7 +708,7 @@ export function RequestRecords({
       <div className="flex h-full min-h-0 min-w-0 flex-1">
         <section
           aria-labelledby="request-records-heading"
-          className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-card shadow-[var(--shadow-card)]"
+          className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card"
           hidden={view !== "monitor"}
         >
           {notice ? (
@@ -736,7 +736,7 @@ export function RequestRecords({
             }}
             ref={monitorScrollRef}
           >
-            <div className="sticky top-0 z-7 flex items-end justify-between border-b bg-card/92 px-[22px] py-3 shadow-[0_8px_18px_color-mix(in_srgb,var(--foreground)_2%,transparent)] backdrop-blur-sm @max-[720px]:items-stretch @max-[720px]:flex-col @max-[720px]:gap-2">
+            <div className="sticky top-0 z-7 flex items-end justify-between border-b bg-card px-4 py-3 @max-[720px]:items-stretch @max-[720px]:flex-col @max-[720px]:gap-2">
               <div className="flex items-end gap-2 @max-[720px]:grid @max-[720px]:grid-cols-2">
                 <FilterSelect
                   label="状态"
@@ -808,19 +808,19 @@ export function RequestRecords({
             {!isReady || listStatus === "blocked" ? (
               <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
                 <strong className="text-xs">等待 Core 就绪</strong>
-                <span className="mt-1.5 text-[10px] text-muted-foreground">连接成功后，请求会自动出现在这里。</span>
+                <span className="mt-1.5 text-xs text-muted-foreground">连接成功后，请求会自动出现在这里。</span>
               </div>
             ) : listStatus === "error" && listError ? (
               <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
                 <strong className="text-xs">无法读取请求记录</strong>
-                <span className="mt-1.5 text-[10px] text-muted-foreground">{listError}</span>
+                <span className="mt-1.5 text-xs text-muted-foreground">{listError}</span>
               </div>
             ) : listStatus === "loading" && live.items.length === 0 ? (
               <RecordSkeleton />
             ) : visibleItems.length === 0 ? (
               <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
                 <strong className="text-xs">没有匹配的请求</strong>
-                <span className="mt-1.5 text-[10px] text-muted-foreground">调整筛选条件，或发起一次新的推理请求。</span>
+                <span className="mt-1.5 text-xs text-muted-foreground">调整筛选条件，或发起一次新的推理请求。</span>
               </div>
             ) : (
               <RecordStream
@@ -1028,7 +1028,7 @@ function RecordStream({
     <div className="px-3 pb-3" role="feed" aria-label="实时请求流">
       {groups.map((group) => (
         <section className="mt-3 first:mt-0" key={group.key}>
-          <div className="flex items-center gap-2.5 py-2 text-[9px] font-bold text-muted-foreground after:h-px after:flex-1 after:bg-border">
+          <div className="flex items-center gap-2.5 py-2 text-xs font-medium text-muted-foreground after:h-px after:flex-1 after:bg-border">
             <span>{group.label}</span>
             <small className="font-medium">{group.records.length} 条</small>
           </div>
@@ -1053,7 +1053,7 @@ function RecordStream({
                 {expanded ? (
                   <div className="ml-6 border-l pl-2" data-testid="request-record-children">
                     {childrenLoading.has(record.id) && children.length === 0 ? (
-                      <p className="px-3 py-2 text-[9px] text-muted-foreground" role="status">
+                      <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
                         正在加载重试记录…
                       </p>
                     ) : (
@@ -1113,7 +1113,7 @@ function RecordRow({
       <Button
         aria-current={selected ? "true" : undefined}
         className={cn(
-          "grid h-auto w-full grid-cols-1 gap-1 rounded-[9px] border-b bg-transparent px-3 py-2.5 text-left text-foreground shadow-none hover:bg-muted focus-visible:bg-accent aria-[current=true]:bg-accent",
+          "grid h-auto w-full grid-cols-1 gap-1 rounded-none border-b bg-transparent px-3 py-2.5 text-left text-foreground shadow-none hover:bg-muted focus-visible:bg-accent aria-[current=true]:bg-accent",
           child && "pl-2",
         )}
         data-record-id={record.id}
@@ -1124,27 +1124,27 @@ function RecordRow({
       >
         <span className="grid min-w-0 grid-cols-[8px_74px_minmax(120px,1fr)_minmax(100px,.7fr)_auto_auto] items-center gap-2 @max-[720px]:grid-cols-[8px_66px_minmax(90px,1fr)_auto_auto]">
           <StatusDot tone={statusTone(record.status)} />
-          <time className="text-[9.5px] tabular-nums text-muted-foreground" dateTime={record.started_at}>
+          <time className="text-xs tabular-nums text-muted-foreground" dateTime={record.started_at}>
             {Number.isNaN(time.getTime())
               ? record.started_at
               : time.toLocaleTimeString("zh-CN", { hour12: false })}
           </time>
-          <strong className="overflow-hidden text-[10.5px] text-ellipsis whitespace-nowrap">{record.requested_model ?? "未指定模型"}</strong>
-          <span className="overflow-hidden text-[9px] text-muted-foreground text-ellipsis whitespace-nowrap @max-[720px]:hidden">
+          <strong className="truncate text-sm font-medium">{record.requested_model ?? "未指定模型"}</strong>
+          <span className="overflow-hidden text-xs text-muted-foreground text-ellipsis whitespace-nowrap @max-[720px]:hidden">
             {serviceName ?? record.service_id ?? "正在选择服务"}
           </span>
           {child ? (
-            <Badge className="text-[8px]" variant="secondary">
+            <Badge className="text-micro" variant="secondary">
               子请求 {childOrdinal ?? record.attempt_index}
             </Badge>
           ) : record.child_count > 0 ? (
-            <Badge className="text-[8px]" variant="secondary">最后一次记录</Badge>
+            <Badge className="text-micro" variant="secondary">最后一次记录</Badge>
           ) : null}
-          <span className="text-right text-[9.5px] font-semibold tabular-nums">
+          <span className="text-right text-xs font-semibold tabular-nums">
             {formatDuration(liveDurationMs(record, nowMs))}
           </span>
         </span>
-        <span className="flex min-w-0 items-center gap-2 overflow-hidden pl-4 text-[8.5px] text-muted-foreground [&>*]:max-w-[190px] [&>*]:overflow-hidden [&>*]:text-ellipsis [&>*]:whitespace-nowrap">
+        <span className="flex min-w-0 items-center gap-2 overflow-hidden pl-4 text-micro text-muted-foreground [&>*]:max-w-[190px] [&>*]:overflow-hidden [&>*]:text-ellipsis [&>*]:whitespace-nowrap">
           <StatusText record={record} />
           <span>HTTP {record.http_status ?? "—"}</span>
           <code>{record.input_protocol}</code>
@@ -1164,7 +1164,7 @@ function RecordRow({
       {onToggleRetries ? (
         <Button
           aria-expanded={retriesExpanded}
-          className="absolute top-1/2 right-2 h-6 -translate-y-1/2 px-2 text-[8px]"
+          className="absolute top-1/2 right-2 h-6 -translate-y-1/2 px-2 text-micro"
           onClick={(event) => {
             event.stopPropagation();
             onToggleRetries();
@@ -1247,7 +1247,7 @@ function RecordDetail({
   return (
     <section
       aria-labelledby="request-detail-heading"
-      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-card shadow-[var(--shadow-card)]"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card"
     >
       <PageHeader
         actions={
@@ -1261,7 +1261,7 @@ function RecordDetail({
             >
               上一条
             </Button>
-            <span className="text-[9px] tabular-nums text-muted-foreground">
+            <span className="text-xs tabular-nums text-muted-foreground">
               {index >= 0 ? index + 1 : "—"} / {navigationCount || "—"}
             </span>
             <Button
@@ -1326,9 +1326,9 @@ function RecordDetail({
           <div className="grid grid-cols-4 gap-3 @max-[720px]:grid-cols-2">
             <div className="col-span-full flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
               <StatusDot tone={statusTone(record.status)} />
-              <strong className="text-[11px]">{statusLabel(record.status)}</strong>
+              <strong className="text-sm">{statusLabel(record.status)}</strong>
               {record.status === "pending" ? (
-                <span className="text-[9px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   已运行 {formatDuration(liveDurationMs(record, nowMs))}
                 </span>
               ) : null}
@@ -1351,11 +1351,11 @@ function RecordDetail({
               }
             />
             <div className="col-span-full min-w-0">
-              <dt className="text-[9px] font-semibold text-muted-foreground">ID</dt>
-              <dd className="mt-1 flex min-w-0 items-center gap-2 text-[10.5px] text-text-secondary">
+              <dt className="text-xs font-medium text-muted-foreground">ID</dt>
+              <dd className="mt-1 flex min-w-0 items-center gap-2 text-xs text-text-secondary">
                 <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{record.id}</code>
                 <Button
-                  className="h-auto px-0 text-[10px]"
+                  className="h-auto px-0 text-xs"
                   onClick={() => copyFeedback.copy("record-id", record.id)}
                   type="button"
                   variant="link"
@@ -1415,7 +1415,7 @@ function RecordDetail({
               />
             </dl>
           ) : (
-            <p className="text-[9.5px] text-success-foreground">本次未触发请求脱敏，或属于旧版记录。</p>
+            <p className="text-xs text-success-foreground">本次未触发请求脱敏，或属于旧版记录。</p>
           )}
         </DetailSection>
 
@@ -1438,13 +1438,13 @@ function RecordDetail({
         ) : null}
 
         {auditError ? (
-          <p className="text-[9.5px] text-danger-foreground" role="alert">
+          <p className="text-xs text-danger-foreground" role="alert">
             {auditError}
           </p>
         ) : null}
         {auditLoading ? (
           <DetailSection title="内容">
-            <p className="text-[10px] text-muted-foreground" role="status">
+            <p className="text-xs text-muted-foreground" role="status">
               正在解密内容…
             </p>
           </DetailSection>
@@ -1559,7 +1559,7 @@ function RecordDetail({
               truncated={record.audit.upstream_response_content_truncated}
             />
           </div>
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-[9px] text-muted-foreground">
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
             <span>解密内容仅保存在当前会话内存中。</span>
             <Button
               variant="outline"
@@ -1587,11 +1587,11 @@ function DetailSection({
   return (
     <section
       className={cn(
-        "rounded-[11px] border bg-card p-3.5",
+        "rounded-md border bg-card p-3.5",
         tone === "error" && "border-destructive/25 bg-danger-wash",
       )}
     >
-      <h3 className="mb-2.5 text-[11px] font-bold">{title}</h3>
+      <h3 className="mb-2.5 text-sm font-semibold">{title}</h3>
       {children}
     </section>
   );
@@ -1610,8 +1610,8 @@ function DetailField({
 }) {
   return (
     <div className={cn("min-w-0", className)}>
-      <dt className="text-[9px] font-semibold text-muted-foreground">{label}</dt>
-      <dd className="mt-1 overflow-hidden text-[10.5px] text-text-secondary text-ellipsis whitespace-nowrap">{code && typeof value === "string" && value !== "—" ? <code className="text-[10px]">{value}</code> : value}</dd>
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="mt-1 overflow-hidden text-xs text-text-secondary text-ellipsis whitespace-nowrap">{code && typeof value === "string" && value !== "—" ? <code className="text-xs">{value}</code> : value}</dd>
     </div>
   );
 }
@@ -1627,10 +1627,10 @@ function Metric({
 }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[9px] font-semibold text-muted-foreground">{label}</dt>
-      <dd className="mt-1 text-base font-[750] tabular-nums">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="mt-1 text-base font-semibold tabular-nums">
         {value}
-        {live ? <small className="ml-1 text-[8px] font-medium text-warning-foreground">实时</small> : null}
+        {live ? <small className="ml-1 text-micro font-medium text-warning-foreground">实时</small> : null}
       </dd>
     </div>
   );
@@ -1648,10 +1648,10 @@ function AuditSummaryCard({
   part: AuditContentPart | null;
 }) {
   return (
-    <article className="rounded-[10px] border bg-muted p-3">
+    <article className="rounded-md border bg-muted p-3">
       <header className="mb-2 flex items-center justify-between gap-2">
-        <strong className="text-[10px]">{label}</strong>
-        <span className={cn("text-[8.5px] text-muted-foreground", captured && "text-success-foreground")}>
+        <strong className="text-sm font-medium">{label}</strong>
+        <span className={cn("text-micro text-muted-foreground", captured && "text-success-foreground")}>
           {captured ? "已捕获" : "未捕获"}
         </span>
       </header>
@@ -1679,7 +1679,7 @@ function FilterSelect({
   options: Array<{ label: string; value: string }>;
 }) {
   return (
-    <Label className="grid items-stretch gap-1.5 text-[9px] font-semibold text-text-secondary @max-[720px]:last:col-span-full">
+    <Label className="grid items-stretch gap-1.5 text-xs font-semibold text-text-secondary @max-[720px]:last:col-span-full">
       <span>{label}</span>
       <Select
         onValueChange={(next) => onChange(next === "__all__" ? "" : next)}
@@ -1707,7 +1707,7 @@ function RecordSkeleton() {
   return (
     <div aria-label="正在加载请求记录" className="grid gap-2 p-3">
       {Array.from({ length: 6 }, (_, index) => (
-        <div className="grid animate-pulse gap-2 rounded-[9px] border p-3" key={index}>
+        <div className="grid animate-pulse gap-2 rounded-md border p-3" key={index}>
           <span className="h-3 w-2/3 rounded bg-muted" />
           <span className="h-2 w-1/2 rounded bg-muted" />
         </div>
@@ -1910,7 +1910,7 @@ function CheckField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <Label className="flex items-start gap-2 rounded-lg border bg-muted px-3 py-2 text-[10px] leading-5">
+    <Label className="flex items-start gap-2 rounded-lg border bg-muted px-3 py-2 text-xs leading-5">
       <Checkbox
         aria-label={label}
         checked={checked}
@@ -1935,7 +1935,7 @@ function NumberField({
   onChange: (value: number) => void;
 }) {
   return (
-    <Label className="grid items-stretch gap-1.5 text-[10px] font-semibold text-text-secondary">
+    <Label className="grid items-stretch gap-1.5 text-xs font-semibold text-text-secondary">
       <span>{label}</span>
       <Input
         max={max}

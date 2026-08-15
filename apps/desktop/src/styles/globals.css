@@ -1,65 +1,69 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/*
+ * Palette derived from astrlink-logo.svg: the constellation "A" is drawn in a
+ * #26336F -> #4656A6 indigo, and a cyan/periwinkle/pink tide crosses it. The
+ * indigo becomes the ink for every surface; the tide's periwinkle is kept as a
+ * flat signature accent. No gradients anywhere in the UI.
+ */
 :root {
-  /* AstrLink surfaces */
-  --background: #fafbfc;
-  --foreground: #141a24;
+  /* White paper: separation comes from hairlines, never from fills */
+  --background: #ffffff;
+  --foreground: #1c2340;
   --card: #ffffff;
-  --card-foreground: #141a24;
+  --card-foreground: #1c2340;
   --popover: #ffffff;
-  --popover-foreground: #141a24;
-  --secondary: #f4f6f9;
-  --secondary-foreground: #141a24;
-  --muted: #f4f6f9;
-  --muted-foreground: #5c6d86;
-  --border: #e5e9ef;
-  --input: #d5dce6;
-  --ring: #1a5fd4;
+  --popover-foreground: #1c2340;
+  --secondary: #f4f5fa;
+  --secondary-foreground: #1c2340;
+  --muted: #f4f5fa;
+  --muted-foreground: #6e7391;
+  --border: #e5e7f0;
+  --input: #d5d8e6;
+  --ring: #768df6;
 
-  /* AstrLink accent */
-  --primary: #1a5fd4;
+  /* Brand ink, straight off the logo's structure gradient */
+  --primary: #26336f;
   --primary-foreground: #ffffff;
-  --primary-hover: #1549a0;
-  --accent: #e8f1fc;
-  --accent-foreground: #1565c0;
+  --primary-hover: #1b2552;
+  --accent: #edeff9;
+  --accent-foreground: #35428d;
 
-  /* AstrLink semantic states */
-  --destructive: #c0344a;
+  /* The tide, flattened: navigation indicator and focus only */
+  --tide: #768df6;
+  --tide-wash: #eef1fe;
+
+  /* Semantic states, tuned to sit beside indigo */
+  --destructive: #c2384f;
   --destructive-foreground: #ffffff;
-  --danger-foreground: #a82a3c;
-  --danger-wash: #fdecef;
-  --success: #1fad6f;
-  --success-foreground: #0f6b4c;
-  --success-strong: #0d7a52;
-  --success-wash: #e6f7f0;
-  --warning: #e6a317;
-  --warning-foreground: #8a5a00;
-  --warning-wash: #fff6e5;
-  --violet: #5b4bd6;
-  --violet-foreground: #4a38a8;
-  --violet-wash: #efeafc;
+  --danger-foreground: #a52c43;
+  --danger-wash: #fdeef1;
+  --success: #1f9d6b;
+  --success-foreground: #14724f;
+  --success-wash: #e9f7f1;
+  --warning: #d2911a;
+  --warning-foreground: #8a6013;
+  --warning-wash: #fcf4e4;
+  --violet: #6b5fd0;
+  --violet-foreground: #5749ae;
+  --violet-wash: #efedfc;
 
-  /* AstrLink navigation and charts */
-  --sidebar: rgb(250 252 255 / 92%);
-  --sidebar-foreground: #141a24;
-  --sidebar-primary: #1a5fd4;
+  /* Navigation */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1c2340;
+  --sidebar-primary: #26336f;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e8f1fc;
-  --sidebar-accent-foreground: #1565c0;
-  --sidebar-border: #e5e9ef;
-  --sidebar-ring: #1a5fd4;
-  --chart-1: #1f6ae0;
-  --chart-2: #0f766e;
-  --chart-3: #5b4bd6;
+  --sidebar-accent: #edeff9;
+  --sidebar-accent-foreground: #35428d;
+  --sidebar-border: #e5e7f0;
+  --sidebar-ring: #768df6;
 
-  /* AstrLink details */
-  --text-secondary: #4a5a72;
-  --text-disabled: #5a687c;
-  --accent-tint: #f3f8fc;
-  --accent-tint-end: #f0faf8;
-  --shadow-card: 0 8px 28px rgb(20 30 50 / 6%);
-  --radius: 0.75rem;
+  /* Details */
+  --text-secondary: #4b5273;
+  --shadow-card: none;
+  --shadow-overlay: 0 1px 3px rgb(28 35 64 / 10%), 0 10px 30px rgb(28 35 64 / 8%);
+  --radius: 0.5rem;
   --window-chrome-height: 0px;
 }
 
@@ -146,10 +150,41 @@
 }
 
 @theme inline {
-  --font-sans: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif,
-    system-ui, -apple-system, sans-serif;
-  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+  --font-sans: "IBM Plex Sans Variable", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
     monospace;
+
+  /* Six steps, nothing in between. Anything smaller than micro is unreadable. */
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 1.45;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.55;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.35;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.25;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.2;
+
+  /* Legacy rounded-xl/2xl collapse onto the same 8px cap so pages that have
+     not been migrated yet inherit the tighter geometry. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.5rem;
+
+  --shadow-2xs: 0 1px 1px rgb(28 28 26 / 4%);
+  --shadow-xs: 0 1px 1px rgb(28 28 26 / 5%);
+  --shadow-sm: 0 1px 2px rgb(28 28 26 / 5%);
+  --shadow-md: var(--shadow-overlay);
+  --shadow-lg: var(--shadow-overlay);
+  --shadow-xl: var(--shadow-overlay);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -166,6 +201,8 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-tide: var(--tide);
+  --color-tide-wash: var(--tide-wash);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-danger-foreground: var(--danger-foreground);
@@ -175,7 +212,6 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
-  --color-success-strong: var(--success-strong);
   --color-success-wash: var(--success-wash);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
@@ -191,18 +227,7 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
   --color-text-secondary: var(--text-secondary);
-  --color-text-disabled: var(--text-disabled);
-  --color-accent-tint: var(--accent-tint);
-  --color-accent-tint-end: var(--accent-tint-end);
-
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
 }
 
 @layer base {
@@ -223,14 +248,16 @@
   }
 
   body {
-    @apply min-h-screen bg-background font-sans text-foreground antialiased;
-    background-image: radial-gradient(
-      900px 500px at 50% -12%,
-      color-mix(in srgb, var(--foreground) 3%, transparent),
-      transparent 70%
-    );
+    @apply min-h-screen bg-background font-sans text-sm text-foreground antialiased;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-variant-ligatures: none;
   }
 
   button:not(:disabled),

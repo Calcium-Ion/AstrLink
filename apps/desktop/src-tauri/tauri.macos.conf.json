@@ -15,7 +15,7 @@
         "shadow": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "backgroundColor": "#f5f8fc"
+        "backgroundColor": "#ffffff"
       }
     ]
   }

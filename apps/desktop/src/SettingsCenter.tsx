@@ -1,13 +1,15 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
+import { ChoiceCard } from "@/components/ChoiceCard";
+import { DataRow } from "@/components/DataRow";
 import { FormMessage } from "@/components/FormMessage";
+import { Panel, PanelHeader } from "@/components/Panel";
 import { SectionKicker } from "@/components/SectionKicker";
 import { StatusDot } from "@/components/StatusDot";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { RadioGroup } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -38,80 +40,62 @@ function activePort(snapshot: AppSnapshot | null): number | null {
   }
 }
 
-function SettingsIcon({ name }: { name: "window" | "core" | "port" }) {
-  const paths: Record<typeof name, ReactNode> = {
-    window: (
-      <>
-        <rect height="14" rx="2" width="18" x="3" y="5" />
-        <path d="M3 9h18" />
-        <circle cx="7" cy="7" r="0.8" />
-        <circle cx="10" cy="7" r="0.8" />
-      </>
-    ),
-    core: (
-      <>
-        <circle cx="12" cy="12" r="3" />
-        <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" />
-      </>
-    ),
-    port: (
-      <>
-        <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-        <rect height="12" rx="2" width="14" x="5" y="7" />
-        <path d="M12 11v4" />
-      </>
-    ),
-  };
-
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "grid size-10 place-items-center rounded-xl bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_12%,transparent)]",
-        name === "port" &&
-          "bg-success-wash text-success-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--success)_14%,transparent)]",
-      )}
-    >
-      <svg className="size-[18px]" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24">
-        {paths[name]}
-      </svg>
-    </span>
-  );
-}
-
 function SettingsToggle({
   checked,
   disabled,
+  hint,
   label,
   onChange,
 }: {
   checked: boolean;
   disabled?: boolean;
+  hint?: string;
   label: string;
   onChange: (checked: boolean) => void;
 }) {
   const id = useId();
 
   return (
-    <div
-      className={cn(
-        "grid min-h-11 grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-xl border bg-muted px-3 py-2.5 transition-colors",
-        checked && "border-primary/30 bg-accent",
-        !disabled && "hover:border-primary/30 hover:bg-card",
-        disabled && "cursor-not-allowed opacity-60",
-      )}
-    >
+    <DataRow className={cn(disabled && "opacity-60")}>
+      <Label
+        className="min-w-0 flex-1 cursor-pointer text-sm font-normal"
+        htmlFor={id}
+      >
+        {label}
+        {hint ? (
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            {hint}
+          </span>
+        ) : null}
+      </Label>
       <Switch
         checked={checked}
-        className="h-6 w-10 [&_[data-slot=switch-thumb]]:size-[18px] [&_[data-slot=switch-thumb]]:data-[state=checked]:translate-x-4"
+        className="shrink-0"
         disabled={disabled}
         id={id}
         onCheckedChange={onChange}
       />
-      <Label className="text-[12.5px] leading-[1.4] font-semibold" htmlFor={id}>
-        {label}
-      </Label>
-    </div>
+    </DataRow>
+  );
+}
+
+function SettingsPanelHeader({
+  hint,
+  kicker,
+  title,
+}: {
+  hint: string;
+  kicker: string;
+  title: string;
+}) {
+  return (
+    <PanelHeader>
+      <SectionKicker>{kicker}</SectionKicker>
+      <strong className="mt-1 block text-sm font-semibold tracking-tight">
+        {title}
+      </strong>
+      <p className="mt-1 text-xs text-text-secondary">{hint}</p>
+    </PanelHeader>
   );
 }
 
@@ -243,13 +227,18 @@ export function SettingsCenter({
     return (
       <section className="grid gap-4 pb-2">
         <PageHeader eyebrow="桌面偏好" title="设置" />
-        <Card className="gap-2.5 border-destructive/35 bg-danger-wash p-5 text-danger-foreground shadow-[var(--shadow-card)]">
-          <strong>无法加载设置</strong>
-          <p className="text-xs leading-6">{loadingError}</p>
-          <Button variant="outline" onClick={() => window.location.reload()} type="button">
+        <Panel className="grid gap-2.5 border-destructive/35 bg-danger-wash p-4 text-danger-foreground">
+          <strong className="text-sm font-semibold">无法加载设置</strong>
+          <p className="text-xs">{loadingError}</p>
+          <Button
+            className="justify-self-start"
+            variant="outline"
+            onClick={() => window.location.reload()}
+            type="button"
+          >
             重新加载
           </Button>
-        </Card>
+        </Panel>
       </section>
     );
   }
@@ -287,43 +276,32 @@ export function SettingsCenter({
       />
 
       {settings.load_warning ? (
-        <FormMessage className="px-3.5 py-[11px] text-xs" tone="warning">
-          {settings.load_warning}
-        </FormMessage>
+        <FormMessage tone="warning">{settings.load_warning}</FormMessage>
       ) : null}
       {settings.autostart_error ? (
-        <FormMessage className="px-3.5 py-[11px] text-xs" tone="warning">
-          {settings.autostart_error}
-        </FormMessage>
+        <FormMessage tone="warning">{settings.autostart_error}</FormMessage>
       ) : settings.autostart_actual !== prefs.autostart ? (
-        <FormMessage className="px-3.5 py-[11px] text-xs" tone="warning">
+        <FormMessage tone="warning">
           偏好与系统开机启动状态不一致；可再次切换以重新核对。
         </FormMessage>
       ) : null}
       {actionError ? (
-        <FormMessage className="px-3.5 py-[11px] text-xs" tone="error">
-          {actionError}
-        </FormMessage>
+        <FormMessage tone="error">{actionError}</FormMessage>
       ) : null}
-      {feedback ? (
-        <FormMessage className="px-3.5 py-[11px] text-xs" tone="success">
-          {feedback}
-        </FormMessage>
-      ) : null}
+      {feedback ? <FormMessage tone="success">{feedback}</FormMessage> : null}
 
-      <div className="grid grid-cols-2 gap-3.5 max-[920px]:grid-cols-1">
-        <Card className="grid min-w-0 content-start gap-[18px] rounded-[18px] p-5 pb-[18px] shadow-[var(--shadow-card)]">
-          <header className="grid grid-cols-[40px_minmax(0,1fr)] items-start gap-3">
-            <SettingsIcon name="window" />
-            <div>
-              <SectionKicker>窗口与启动</SectionKicker>
-              <h3 className="mt-[3px] text-base font-[750] tracking-[-0.02em]">桌面行为</h3>
-              <p className="mt-1 text-[11px] leading-6 text-text-secondary">更改后立即生效，无需手动保存。</p>
-            </div>
-          </header>
+      <div className="grid grid-cols-2 gap-3 max-[920px]:grid-cols-1">
+        <Panel className="min-w-0">
+          <SettingsPanelHeader
+            hint="更改后立即生效，无需手动保存。"
+            kicker="窗口与启动"
+            title="桌面行为"
+          />
 
-          <div className="grid gap-2">
-            <span className="text-[11px] font-semibold text-text-secondary">关闭主窗口时</span>
+          <div className="grid gap-2 border-b px-4 py-3">
+            <span className="text-xs font-medium text-text-secondary">
+              关闭主窗口时
+            </span>
             <RadioGroup
               className={cn(
                 "grid grid-cols-2 gap-2 max-[560px]:grid-cols-1",
@@ -338,91 +316,84 @@ export function SettingsCenter({
               }
               value={prefs.close_behavior}
             >
-              <Label
-                className={cn(
-                  "relative grid min-h-16 cursor-pointer items-stretch gap-[3px] rounded-xl border border-input bg-card px-[13px] py-3 transition-[border-color,background,box-shadow] hover:border-primary/35",
-                  prefs.close_behavior === "hide_to_tray" &&
-                    "border-primary/50 bg-accent shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary)_10%,transparent)]",
-                )}
-              >
-                <RadioGroupItem className="absolute top-3 right-3" value="hide_to_tray" />
-                <strong className="pr-6 text-[12.5px] font-bold">隐藏到托盘</strong>
-                <small className="pr-6 text-[10.5px] leading-[1.4] text-muted-foreground">后台继续运行</small>
-              </Label>
-              <Label
-                className={cn(
-                  "relative grid min-h-16 cursor-pointer items-stretch gap-[3px] rounded-xl border border-input bg-card px-[13px] py-3 transition-[border-color,background,box-shadow] hover:border-primary/35",
-                  prefs.close_behavior === "quit" &&
-                    "border-primary/50 bg-accent shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary)_10%,transparent)]",
-                )}
-              >
-                <RadioGroupItem className="absolute top-3 right-3" value="quit" />
-                <strong className="pr-6 text-[12.5px] font-bold">退出 AstrLink</strong>
-                <small className="pr-6 text-[10.5px] leading-[1.4] text-muted-foreground">结束全部进程</small>
-              </Label>
+              <ChoiceCard
+                description="后台继续运行"
+                label="隐藏到托盘"
+                selected={prefs.close_behavior === "hide_to_tray"}
+                value="hide_to_tray"
+              />
+              <ChoiceCard
+                description="结束全部进程"
+                label="退出 AstrLink"
+                selected={prefs.close_behavior === "quit"}
+                value="quit"
+              />
             </RadioGroup>
           </div>
 
-          <div className="grid gap-2">
-            <SettingsToggle
-              checked={prefs.autostart}
-              disabled={prefsBusy}
-              label="登录系统后自动启动 AstrLink"
-              onChange={(autostart) => void applyInstant({ autostart })}
-            />
-          </div>
+          <SettingsToggle
+            checked={prefs.autostart}
+            disabled={prefsBusy}
+            label="登录系统后自动启动 AstrLink"
+            onChange={(autostart) => void applyInstant({ autostart })}
+          />
 
-          <p className="text-[11px] leading-6 text-muted-foreground">系统托盘始终提供“显示 AstrLink”和“退出”。</p>
-        </Card>
+          <p className="px-4 py-2.5 text-xs text-muted-foreground">
+            系统托盘始终提供“显示 AstrLink”和“退出”。
+          </p>
+        </Panel>
 
-        <Card className="grid min-w-0 content-start gap-[18px] rounded-[18px] p-5 pb-[18px] shadow-[var(--shadow-card)]">
-          <header className="grid grid-cols-[40px_minmax(0,1fr)] items-start gap-3">
-            <SettingsIcon name="core" />
-            <div>
-              <SectionKicker>本地运行时</SectionKicker>
-              <h3 className="mt-[3px] text-base font-[750] tracking-[-0.02em]">Core 启动与恢复</h3>
-              <p className="mt-1 text-[11px] leading-6 text-text-secondary">更改后立即生效，无需手动保存。</p>
+        <Panel className="min-w-0">
+          <SettingsPanelHeader
+            hint="更改后立即生效，无需手动保存。"
+            kicker="本地运行时"
+            title="Core 启动与恢复"
+          />
+
+          <SettingsToggle
+            checked={prefs.core_auto_start}
+            disabled={prefsBusy}
+            label="AstrLink 启动时自动启动 Core"
+            onChange={(core_auto_start) => void applyInstant({ core_auto_start })}
+          />
+          <SettingsToggle
+            checked={prefs.core_auto_recover}
+            disabled={prefsBusy}
+            label="Core 异常退出后自动恢复"
+            onChange={(core_auto_recover) =>
+              void applyInstant({ core_auto_recover })
+            }
+          />
+
+          <div className="border-b px-4 py-3">
+            <div
+              className={cn(
+                "flex items-center gap-2.5 rounded-md border bg-muted px-3 py-2.5",
+                tone === "positive" && "border-success/25 bg-success-wash",
+                tone === "pending" && "border-warning/30 bg-warning-wash",
+                tone === "negative" && "border-destructive/25 bg-danger-wash",
+              )}
+            >
+              <StatusDot tone={tone} />
+              <div className="grid min-w-0 gap-0.5">
+                <strong className="text-sm font-medium">
+                  {phaseLabel(phase)}
+                </strong>
+                <span className="truncate text-xs text-text-secondary">
+                  当前状态：{phase}
+                  {recoveryHint ? ` · ${recoveryHint}` : ""}
+                </span>
+              </div>
             </div>
-          </header>
 
-          <div className="grid gap-2">
-            <SettingsToggle
-              checked={prefs.core_auto_start}
-              disabled={prefsBusy}
-              label="AstrLink 启动时自动启动 Core"
-              onChange={(core_auto_start) => void applyInstant({ core_auto_start })}
-            />
-            <SettingsToggle
-              checked={prefs.core_auto_recover}
-              disabled={prefsBusy}
-              label="Core 异常退出后自动恢复"
-              onChange={(core_auto_recover) => void applyInstant({ core_auto_recover })}
-            />
+            {snapshot?.last_error ? (
+              <code className="mt-2 block rounded-sm border bg-card px-2 py-1.5 font-mono text-xs whitespace-normal text-text-secondary [overflow-wrap:anywhere]">
+                {snapshot.last_error}
+              </code>
+            ) : null}
           </div>
 
-          <div
-            className={cn(
-              "flex min-h-14 items-center gap-[11px] rounded-xl border bg-muted px-3.5 py-3",
-              tone === "positive" && "border-success/25 bg-success-wash",
-              tone === "pending" && "border-warning/30 bg-warning-wash",
-              tone === "negative" && "border-destructive/25 bg-danger-wash",
-            )}
-          >
-            <StatusDot tone={tone} />
-            <div className="grid min-w-0 gap-0.5">
-              <strong className="text-[12.5px] font-bold">{phaseLabel(phase)}</strong>
-              <span className="overflow-hidden text-[11px] leading-[1.45] text-text-secondary text-ellipsis whitespace-nowrap">
-                当前状态：{phase}
-                {recoveryHint ? ` · ${recoveryHint}` : ""}
-              </span>
-            </div>
-          </div>
-
-          {snapshot?.last_error ? (
-            <code className="[overflow-wrap:anywhere] rounded-[10px] bg-muted px-3 py-2.5 text-[11px] leading-[1.45] whitespace-normal text-text-secondary">{snapshot.last_error}</code>
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2 [&_button]:min-w-[72px]">
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3">
             <Button
               disabled={!canStart || busy !== null}
               onClick={() => void runCoreAction("start")}
@@ -447,29 +418,27 @@ export function SettingsCenter({
               {busy === "restart" ? "重启中…" : "重启"}
             </Button>
           </div>
-        </Card>
+        </Panel>
 
-        <Card
+        <Panel
           className={cn(
-            "col-span-full grid min-w-0 content-start gap-[18px] rounded-[18px] p-5 pb-[18px] shadow-[var(--shadow-card)] max-[920px]:col-auto",
-            portDirty &&
-              "border-warning/40 shadow-[var(--shadow-card),0_0_0_3px_var(--warning-wash)]",
+            "col-span-full min-w-0 max-[920px]:col-auto",
+            portDirty && "border-warning/50",
           )}
         >
-          <header className="grid grid-cols-[40px_minmax(0,1fr)] items-start gap-3">
-            <SettingsIcon name="port" />
-            <div>
-              <SectionKicker>网络入口</SectionKicker>
-              <h3 className="mt-[3px] text-base font-[750] tracking-[-0.02em]">本地推理端口</h3>
-              <p className="mt-1 text-[11px] leading-6 text-text-secondary">修改后需保存；重启 Core 后才会切换到新端口。</p>
-            </div>
-          </header>
+          <SettingsPanelHeader
+            hint="修改后需保存；重启 Core 后才会切换到新端口。"
+            kicker="网络入口"
+            title="本地推理端口"
+          />
 
-          <div className="grid grid-cols-[minmax(140px,200px)_minmax(0,1fr)] items-end gap-3.5 max-[920px]:grid-cols-1">
-            <Label className="grid items-stretch gap-2">
-              <span className="text-[11px] font-semibold text-text-secondary">推理端口</span>
+          <div className="grid grid-cols-[minmax(140px,200px)_minmax(0,1fr)] items-end gap-3 border-b px-4 py-3 max-[920px]:grid-cols-1">
+            <Label className="grid gap-1.5">
+              <span className="text-xs font-medium text-text-secondary">
+                推理端口
+              </span>
               <Input
-                className="min-h-11 rounded-[11px] px-3 text-[15px] font-bold tracking-[0.02em] tabular-nums"
+                className="font-mono tabular-nums"
                 max={65535}
                 min={1024}
                 onChange={(event) => setPortDraft(Number(event.target.value))}
@@ -478,32 +447,42 @@ export function SettingsCenter({
               />
             </Label>
 
-            <dl className="grid grid-cols-2 gap-2.5 max-[560px]:grid-cols-1">
-              <div className="grid min-h-16 gap-1 rounded-xl border bg-muted px-3.5 py-3">
-                <dt className="text-[10.5px] font-semibold text-muted-foreground">正在使用</dt>
-                <dd className="text-lg font-[750] tracking-[-0.02em] tabular-nums">{active ?? "Core 未就绪"}</dd>
+            <dl className="grid grid-cols-2 gap-2 max-[560px]:grid-cols-1">
+              <div className="grid gap-1 rounded-md border bg-muted px-3 py-2">
+                <dt className="text-micro font-medium tracking-[0.06em] text-muted-foreground uppercase">
+                  正在使用
+                </dt>
+                <dd className="text-sm font-medium tabular-nums">
+                  {active ?? "Core 未就绪"}
+                </dd>
               </div>
-              <div className="grid min-h-16 gap-1 rounded-xl border bg-muted px-3.5 py-3">
-                <dt className="text-[10.5px] font-semibold text-muted-foreground">已保存</dt>
-                <dd className="text-lg font-[750] tracking-[-0.02em] tabular-nums">{settings.values.inference_port}</dd>
+              <div className="grid gap-1 rounded-md border bg-muted px-3 py-2">
+                <dt className="text-micro font-medium tracking-[0.06em] text-muted-foreground uppercase">
+                  已保存
+                </dt>
+                <dd className="text-sm font-medium tabular-nums">
+                  {settings.values.inference_port}
+                </dd>
               </div>
             </dl>
           </div>
 
-          <div className="flex items-center justify-between gap-3.5 pt-0.5 max-[560px]:flex-col max-[560px]:items-stretch">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 max-[560px]:flex-col max-[560px]:items-stretch">
             {portDirty ? (
-              <p className="min-w-0 flex-1 text-[11px] leading-6 text-warning-foreground">有未保存的端口修改。</p>
+              <p className="min-w-0 flex-1 text-xs text-warning-foreground">
+                有未保存的端口修改。
+              </p>
             ) : portNeedsRestart ? (
-              <p className="min-w-0 flex-1 text-[11px] leading-6 text-warning-foreground">
+              <p className="min-w-0 flex-1 text-xs text-warning-foreground">
                 端口修改尚未生效；重启 Core 后切换到已保存端口。
               </p>
             ) : (
-              <p className="min-w-0 flex-1 text-[11px] leading-6 text-muted-foreground">
+              <p className="min-w-0 flex-1 text-xs text-muted-foreground">
                 控制面始终使用仅桌面可知的 127.0.0.1 临时端口。
               </p>
             )}
             <Button
-              className="min-w-24 shrink-0 max-[560px]:w-full"
+              className="shrink-0 max-[560px]:w-full"
               disabled={!portDirty || busy !== null}
               onClick={() => void savePort()}
               type="button"
@@ -511,7 +490,7 @@ export function SettingsCenter({
               {busy === "port" ? "正在保存…" : "保存端口"}
             </Button>
           </div>
-        </Card>
+        </Panel>
       </div>
     </section>
   );

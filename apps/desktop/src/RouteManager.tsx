@@ -9,7 +9,13 @@ import {
 import { ChevronDown } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { DataRow } from "@/components/DataRow";
+import { EmptyState } from "@/components/EmptyState";
+import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
+import { Panel } from "@/components/Panel";
+import { SectionKicker } from "@/components/SectionKicker";
+import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -660,10 +666,9 @@ export function RouteManager({
       ) : null}
 
       {editor ? (
-        <form aria-busy={saving} className="mx-auto w-full max-w-[860px] min-w-0 rounded-[15px] border bg-card p-[18px] shadow-[0_10px_34px_color-mix(in_srgb,var(--foreground)_5%,transparent)] aria-busy:pointer-events-none aria-busy:opacity-70" onSubmit={save}>
-          <div className="grid grid-cols-2 gap-[11px] max-[720px]:grid-cols-1">
-            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
-              <span>路由名称</span>
+        <form aria-busy={saving} className="mx-auto w-full max-w-[860px] min-w-0 rounded-lg border bg-card p-4 aria-busy:pointer-events-none aria-busy:opacity-70" onSubmit={save}>
+          <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
+            <Field label="路由名称">
               <Input
                 autoFocus
                 maxLength={128}
@@ -675,9 +680,8 @@ export function RouteManager({
                 }
                 value={draft.name}
               />
-            </Label>
-            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
-              <span>路由优先级</span>
+            </Field>
+            <Field hint="数值越小越先匹配。" label="路由优先级">
               <Input
                 inputMode="numeric"
                 max="1000000"
@@ -691,10 +695,8 @@ export function RouteManager({
                 type="number"
                 value={draft.priority}
               />
-              <small className="text-[8px] font-normal text-muted-foreground">数值越小越先匹配。</small>
-            </Label>
-            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
-              <span>入口协议</span>
+            </Field>
+            <Field label="入口协议">
               <Select
                 onValueChange={changeProtocol}
                 value={draft.protocol}
@@ -710,9 +712,11 @@ export function RouteManager({
                 ))}
                 </SelectContent>
               </Select>
-            </Label>
-            <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
-              <span>公开模型名（可选）</span>
+            </Field>
+            <Field
+              hint="填写后可为每个目标设置真实上游模型，形成模型别名。"
+              label="公开模型名（可选）"
+            >
               <Input
                 maxLength={256}
                 onChange={(event) => {
@@ -731,11 +735,10 @@ export function RouteManager({
                 placeholder="留空匹配该协议的全部模型"
                 value={draft.publicModel}
               />
-              <small className="text-[8px] font-normal text-muted-foreground">填写后可为每个目标设置真实上游模型，形成模型别名。</small>
-            </Label>
+            </Field>
           </div>
 
-          <Label className="mt-[13px] flex items-center gap-2 rounded-[9px] border bg-muted px-[11px] py-2.5">
+          <Label className="mt-3 flex items-start gap-2 rounded-md border bg-muted px-3 py-2.5">
             <Checkbox
               checked={draft.enabled}
               onCheckedChange={(checked) =>
@@ -746,16 +749,16 @@ export function RouteManager({
               }
             />
             <span className="flex flex-col gap-0.5">
-              <strong className="text-[9.5px] text-foreground">保存后立即启用</strong>
-              <small className="text-[8px] font-normal text-muted-foreground">停用路由会保留配置，但不会参与请求匹配。</small>
+              <strong className="text-sm font-medium text-foreground">保存后立即启用</strong>
+              <small className="text-xs font-normal text-muted-foreground">停用路由会保留配置，但不会参与请求匹配。</small>
             </span>
           </Label>
 
           <section className="mt-4 border-t pt-3.5">
             <header className="flex items-center justify-between gap-2.5">
               <div className="flex flex-col gap-0.5">
-                <span className="text-[8px] text-muted-foreground">执行目标</span>
-                <strong className="text-[11px]">按优先级依次尝试</strong>
+                <SectionKicker>执行目标</SectionKicker>
+                <strong className="text-sm font-medium">按优先级依次尝试</strong>
               </div>
               <Button
                 variant="outline"
@@ -768,8 +771,8 @@ export function RouteManager({
             </header>
 
             {draft.targets.length === 0 ? (
-              <div className="mt-2.5 flex items-center justify-between gap-3 rounded-[10px] border border-dashed border-input bg-muted p-[13px] text-text-secondary">
-                <p className="text-[9px]">没有 API 服务声明 {protocolLabel(draft.protocol)} 能力。</p>
+              <div className="mt-2.5 flex items-center justify-between gap-3 rounded-md border border-dashed bg-muted p-3 text-text-secondary">
+                <p className="text-xs">没有 API 服务声明 {protocolLabel(draft.protocol)} 能力。</p>
                 <Button
                   variant="outline"
                   onClick={onManageServices}
@@ -786,13 +789,12 @@ export function RouteManager({
                   );
                   const modes = modesFor(service, draft.protocol);
                   return (
-                    <li className="grid min-w-0 grid-cols-[28px_minmax(0,1fr)_max-content] items-center gap-[9px] rounded-[10px] border bg-muted p-2.5 max-[760px]:grid-cols-[28px_minmax(0,1fr)]" key={`${target.serviceId}:${index}`}>
-                      <span className="grid size-7 place-items-center rounded-lg bg-accent text-[8.5px] font-extrabold text-accent-foreground">
+                    <li className="grid min-w-0 grid-cols-[24px_minmax(0,1fr)_max-content] items-center gap-2 rounded-md border bg-muted p-2.5 max-[760px]:grid-cols-[24px_minmax(0,1fr)]" key={`${target.serviceId}:${index}`}>
+                      <span className="grid size-6 place-items-center rounded-sm border bg-card text-micro font-medium tabular-nums">
                         {String(index + 1).padStart(2, "0")}
                       </span>
                       <div className="grid min-w-0 grid-cols-[minmax(150px,1.2fr)_minmax(100px,.7fr)_minmax(90px,.55fr)_minmax(150px,1fr)] gap-2 max-[960px]:grid-cols-2 max-[600px]:grid-cols-1">
-                        <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
-                          <span>API 服务</span>
+                        <Field label="API 服务">
                           <Select
                             onValueChange={(serviceId) => {
                               const nextService = services.find(
@@ -833,9 +835,8 @@ export function RouteManager({
                             ))}
                             </SelectContent>
                           </Select>
-                        </Label>
-                        <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
-                          <span>执行方式</span>
+                        </Field>
+                        <Field label="执行方式">
                           <Select
                             onValueChange={(value) =>
                               updateTarget(index, (current) => ({
@@ -856,9 +857,8 @@ export function RouteManager({
                             ))}
                             </SelectContent>
                           </Select>
-                        </Label>
-                        <Label className="flex min-w-0 flex-col items-stretch gap-[5px] text-[9px] font-semibold text-text-secondary">
-                          <span>目标优先级</span>
+                        </Field>
+                        <Field label="目标优先级">
                           <Input
                             inputMode="numeric"
                             max="1000000"
@@ -872,8 +872,8 @@ export function RouteManager({
                             type="number"
                             value={target.priority}
                           />
-                        </Label>
-                        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_36px] gap-x-1.5 gap-y-[5px] text-[9px] font-semibold text-text-secondary">
+                        </Field>
+                        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_32px] gap-x-1.5 gap-y-1.5 text-xs font-medium text-text-secondary">
                           <Label
                             className="contents"
                             htmlFor={`route-upstream-model-${index}`}
@@ -991,9 +991,14 @@ export function RouteManager({
           >
             <div className="flex min-w-0 items-start justify-between gap-4 max-[720px]:flex-col">
               <div className="min-w-0">
-                <span className="block text-[9px] font-bold text-muted-foreground">高级</span>
-                <h3 className="mt-1 text-sm font-[750]" id="manual-routes-title">固定路由与别名</h3>
-                <p className="mt-1.5 max-w-[560px] text-[10px] leading-[1.55] text-text-secondary">
+                <SectionKicker>高级</SectionKicker>
+                <h3
+                  className="mt-1 text-base font-semibold tracking-tight"
+                  id="manual-routes-title"
+                >
+                  固定路由与别名
+                </h3>
+                <p className="mt-1 max-w-[560px] text-xs text-text-secondary">
                   显式模型名与别名走确定性优先级，不经过任务分类。用于固定服务、fallback
                   或公开模型别名映射。
                 </p>
@@ -1019,123 +1024,144 @@ export function RouteManager({
 
             <div className="flex min-w-0 flex-col">
               {!isReady && catalog.items.length === 0 ? (
-                <div className="flex min-h-[180px] flex-col items-center justify-center rounded-[15px] border border-dashed border-input bg-card p-[30px] text-center text-text-secondary">
-                  <strong className="text-[13px] text-foreground">等待 Core 就绪</strong>
-                  <p className="mt-1.5 max-w-[520px] text-[10px] leading-[1.6]">Core 就绪后会读取本机固定路由配置。</p>
-                </div>
+                <EmptyState
+                  description="Core 就绪后会读取本机固定路由配置。"
+                  title="等待 Core 就绪"
+                />
               ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-                <div className="flex min-h-[180px] flex-col items-center justify-center rounded-[15px] border border-dashed border-input bg-card p-[30px] text-center text-text-secondary">
-                  <strong className="text-[13px] text-foreground">正在读取路由</strong>
-                </div>
+                <EmptyState title="正在读取路由" />
               ) : catalog.items.length === 0 ? (
-                <div className="flex min-h-[180px] flex-col items-center justify-center rounded-[15px] border border-dashed border-input bg-card p-[30px] text-center text-text-secondary">
-                  <strong className="text-[13px] text-foreground">还没有固定路由</strong>
-                  <p className="mt-1.5 mb-3.5 max-w-[520px] text-[10px] leading-[1.6]">
-                    默认请求走 astrlink/auto（就绪后）。创建固定路由可绕过任务分类，固定服务、安排
-                    fallback 或建立模型别名。
-                  </p>
-                  <Button
-                    disabled={!isReady}
-                    onClick={beginCreate}
-                    type="button"
-                  >
-                    创建第一条固定路由
-                  </Button>
-                </div>
+                <EmptyState
+                  action={
+                    <Button
+                      disabled={!isReady}
+                      onClick={beginCreate}
+                      type="button"
+                    >
+                      创建第一条固定路由
+                    </Button>
+                  }
+                  description="默认请求走 astrlink/auto（就绪后）。创建固定路由可绕过任务分类，固定服务、安排 fallback 或建立模型别名。"
+                  title="还没有固定路由"
+                />
               ) : (
-                <ol className="grid list-none content-start gap-2 p-0">
+                <Panel asChild>
+                  <ol className="list-none p-0">
                   {catalog.items.map((route) => {
                     const targets = route.targets ?? [];
                     const aliasTarget = targets.find(
                       (target) => target.upstream_model,
                     );
                     return (
-                      <li className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)_max-content] items-stretch overflow-hidden rounded-[13px] border bg-card shadow-[0_5px_18px_color-mix(in_srgb,var(--foreground)_3%,transparent)] max-[760px]:grid-cols-[62px_minmax(0,1fr)]" key={route.id}>
-                        <div className="flex flex-col items-center justify-center gap-[3px] border-r bg-muted p-3">
-                          <span className="text-[8px] text-muted-foreground">优先级</span>
-                          <strong className="text-base">{route.priority}</strong>
-                        </div>
-                        <div className="min-w-0 px-3.5 py-3">
-                          <header className="flex min-w-0 items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-[7px]">
-                              <strong className="overflow-hidden text-[11.5px] text-ellipsis whitespace-nowrap">{route.name}</strong>
-                              <span
-                                className={cn(
-                                  "shrink-0 text-[8px] font-bold text-success-foreground",
-                                  !route.enabled && "text-muted-foreground",
-                                )}
-                              >
-                                {route.enabled ? "已启用" : "已停用"}
-                              </span>
-                            </div>
-                            <code className="max-w-[40%] overflow-hidden rounded-md bg-accent px-1.5 py-[3px] text-[8.5px] text-accent-foreground text-ellipsis whitespace-nowrap">{route.match.model ?? "全部模型"}</code>
-                          </header>
-                          <p className="my-2 mt-[5px] overflow-hidden text-[8.5px] text-muted-foreground text-ellipsis whitespace-nowrap">
-                            {protocolLabel(route.match.protocol)} ·{" "}
-                            {targets.length} 个目标
-                            {aliasTarget
-                              ? ` · 别名映射至 ${aliasTarget.upstream_model}`
-                              : ""}
-                          </p>
-                          <div className="flex min-w-0 flex-wrap gap-[5px]">
-                            {targets.map((target, index) => {
-                              const service = services.find(
-                                (candidate) =>
-                                  candidate.id === target.service_id,
-                              );
-                              return (
-                                <span className="inline-flex min-w-0 items-center gap-[5px] overflow-hidden rounded-[7px] border bg-muted px-1.5 py-1 text-[8.5px] text-text-secondary text-ellipsis whitespace-nowrap"
-                                  key={`${target.service_id}:${target.priority}:${index}`}
-                                >
-                                  {index + 1}.{" "}
-                                  {service?.name ?? target.service_id}
-                                  <small className="text-[7.5px] text-muted-foreground">
-                                    {modeLabels[
-                                      target.plan_type as "native" | "delegated"
-                                    ] ?? target.plan_type}
-                                  </small>
-                                </span>
-                              );
-                            })}
+                      <DataRow
+                        asChild
+                        className="items-start px-3.5 py-3 max-[760px]:flex-wrap"
+                        key={route.id}
+                      >
+                        <li>
+                          <div className="flex w-11 shrink-0 flex-col items-center gap-0.5">
+                            <span className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
+                              优先级
+                            </span>
+                            <strong className="text-base tabular-nums">
+                              {route.priority}
+                            </strong>
                           </div>
-                        </div>
-                        <div className="flex items-center justify-center gap-1.5 border-l px-3 py-2.5 max-[760px]:col-span-2 max-[760px]:border-t max-[760px]:border-l-0">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={mutatingID === route.id || loadingRecord}
-                            onClick={() => void beginEdit(route)}
-                            type="button"
-                          >
-                            编辑
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={mutatingID === route.id}
-                            onClick={() => void toggleRoute(route)}
-                            type="button"
-                          >
-                            {route.enabled ? "停用" : "启用"}
-                          </Button>
-                          <Button
-                            className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-                            disabled={mutatingID === route.id}
-                            onClick={() => void askDelete(route)}
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                          >
-                            删除
-                          </Button>
-                        </div>
-                      </li>
+                          <div className="min-w-0 flex-1">
+                            <header className="flex min-w-0 items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                <StatusDot
+                                  tone={route.enabled ? "positive" : "neutral"}
+                                />
+                                <strong className="truncate text-sm font-medium">
+                                  {route.name}
+                                </strong>
+                                <span
+                                  className={cn(
+                                    "shrink-0 text-micro text-success-foreground",
+                                    !route.enabled && "text-muted-foreground",
+                                  )}
+                                >
+                                  {route.enabled ? "已启用" : "已停用"}
+                                </span>
+                              </div>
+                              <code className="max-w-[40%] truncate rounded-sm border px-1.5 py-px font-mono text-micro text-foreground">
+                                {route.match.model ?? "全部模型"}
+                              </code>
+                            </header>
+                            <p className="mt-1 truncate text-xs text-muted-foreground">
+                              {protocolLabel(route.match.protocol)} ·{" "}
+                              {targets.length} 个目标
+                              {aliasTarget
+                                ? ` · 别名映射至 ${aliasTarget.upstream_model}`
+                                : ""}
+                            </p>
+                            <div className="mt-1.5 flex min-w-0 flex-wrap gap-1">
+                              {targets.map((target, index) => {
+                                const service = services.find(
+                                  (candidate) =>
+                                    candidate.id === target.service_id,
+                                );
+                                return (
+                                  <span
+                                    className="inline-flex min-w-0 items-center gap-1 truncate rounded-sm border bg-muted px-1.5 py-px text-micro text-text-secondary"
+                                    key={`${target.service_id}:${target.priority}:${index}`}
+                                  >
+                                    {index + 1}.{" "}
+                                    {service?.name ?? target.service_id}
+                                    <small className="text-muted-foreground">
+                                      {modeLabels[
+                                        target.plan_type as
+                                          | "native"
+                                          | "delegated"
+                                      ] ?? target.plan_type}
+                                    </small>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1 max-[760px]:w-full max-[760px]:justify-end">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={mutatingID === route.id || loadingRecord}
+                              onClick={() => void beginEdit(route)}
+                              type="button"
+                            >
+                              编辑
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={mutatingID === route.id}
+                              onClick={() => void toggleRoute(route)}
+                              type="button"
+                            >
+                              {route.enabled ? "停用" : "启用"}
+                            </Button>
+                            <Button
+                              className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+                              disabled={mutatingID === route.id}
+                              onClick={() => void askDelete(route)}
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                            >
+                              删除
+                            </Button>
+                          </div>
+                        </li>
+                      </DataRow>
                     );
                   })}
-                </ol>
+                  </ol>
+                </Panel>
               )}
               {catalog.stale ? (
-                <p className="mt-2 text-[8.5px] text-warning-foreground">当前显示上次读取的路由。</p>
+                <p className="mt-2 text-xs text-warning-foreground">
+                  当前显示上次读取的路由。
+                </p>
               ) : null}
             </div>
           </section>

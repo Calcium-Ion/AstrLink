@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 
+import { SectionKicker } from "@/components/SectionKicker";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -27,10 +28,10 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "flex min-w-0 shrink-0 items-start justify-between gap-5",
+        "flex min-w-0 shrink-0 items-end justify-between gap-6",
         variant === "card"
-          ? "border-b bg-card px-[22px] pt-5 pb-[18px]"
-          : "mb-4",
+          ? "border-b bg-card px-4 pt-4 pb-3"
+          : "mb-5 border-b pb-4",
       )}
       data-slot="page-header"
     >
@@ -38,29 +39,25 @@ export function PageHeader({
         {back ? (
           <Button
             aria-label={back.label}
-            className="-mt-[3px] mb-[7px] h-auto gap-[5px] px-0 py-[3px] text-[11px] font-bold no-underline hover:bg-transparent hover:no-underline"
+            className="-mt-1 mb-1.5 h-auto gap-1 px-0 py-0.5 text-micro text-muted-foreground no-underline hover:bg-transparent hover:text-foreground hover:no-underline"
             onClick={back.onClick}
             size="sm"
             type="button"
             variant="link"
           >
-            <ArrowLeft aria-hidden="true" className="size-3.5" />
+            <ArrowLeft aria-hidden="true" className="size-3" />
             {back.label}
           </Button>
         ) : null}
-        {eyebrow ? (
-          <span className="block text-[9.5px] font-extrabold tracking-[0.12em] text-accent-foreground uppercase">
-            {eyebrow}
-          </span>
-        ) : null}
+        {eyebrow ? <SectionKicker>{eyebrow}</SectionKicker> : null}
         <h1
-          className="mt-[5px] text-xl font-[750] tracking-[-0.025em]"
+          className="mt-1 text-xl font-semibold tracking-tight"
           id={titleId}
         >
           {title}
         </h1>
         {description ? (
-          <p className="mt-1.5 max-w-[680px] overflow-hidden text-[10.5px] leading-[1.55] text-text-secondary text-ellipsis [&_code]:text-text-secondary">
+          <p className="mt-1 max-w-[64ch] truncate text-xs text-text-secondary [&_code]:text-text-secondary">
             {description}
           </p>
         ) : null}

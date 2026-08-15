@@ -40,7 +40,7 @@ export class AppErrorBoundary extends Component<
         className="grid min-h-screen place-items-center p-6"
         role="alert"
       >
-        <Card className="w-full max-w-lg shadow-[var(--shadow-card)]">
+        <Card className="w-full max-w-lg">
           <CardHeader>
             <SectionKicker>界面恢复</SectionKicker>
             <CardTitle className="text-xl">AstrLink 界面遇到问题</CardTitle>

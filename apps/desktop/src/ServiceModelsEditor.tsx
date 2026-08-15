@@ -120,8 +120,8 @@ export function ServiceModelsEditor({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
-          <strong className="text-[12.5px] font-bold" id="service-models-editor-heading">支持模型</strong>
-          <p className="text-[9px] leading-[1.4] text-muted-foreground">
+          <strong className="text-sm font-semibold" id="service-models-editor-heading">支持模型</strong>
+          <p className="text-xs text-muted-foreground">
             精确匹配白名单；空清单不参与推理路由。
           </p>
         </div>
@@ -173,7 +173,7 @@ export function ServiceModelsEditor({
       </div>
 
       {adding ? (
-        <div className="mt-2 grid gap-2 rounded-[9px] border bg-muted p-[9px]">
+        <div className="mt-2 grid gap-2 rounded-md border bg-muted p-2.5">
           {bulkPaste ? (
             <Textarea
               aria-label="待添加模型 ID"
@@ -201,7 +201,7 @@ export function ServiceModelsEditor({
           )}
           <div className="flex items-center justify-end gap-2.5">
             <Button
-              className="h-auto px-0 text-[9.5px]"
+              className="h-auto px-0 text-xs"
               onClick={() => setBulkPaste((value) => !value)}
               type="button"
               variant="link"
@@ -216,13 +216,13 @@ export function ServiceModelsEditor({
       ) : null}
 
       {models.length === 0 ? (
-        <p className="mt-2.5 rounded-[9px] border border-dashed bg-muted/70 p-3 text-center text-[10.5px] text-muted-foreground" role="status">
+        <p className="mt-2.5 rounded-md border border-dashed bg-muted/70 p-3 text-center text-xs text-muted-foreground" role="status">
           还没有模型 · 服务不会参与路由
         </p>
       ) : (
         <>
           <div className="my-1.5 mt-2 flex min-h-4 items-center justify-between gap-2.5">
-            <span className="text-[9.5px] font-semibold text-muted-foreground tabular-nums">
+            <span className="text-xs font-semibold text-muted-foreground tabular-nums">
               {hasQuery
                 ? `匹配 ${filtered.length} / ${models.length}`
                 : `${groups.length} 组 · ${models.length} 个模型`}
@@ -230,7 +230,7 @@ export function ServiceModelsEditor({
             <div className="flex flex-wrap items-center justify-end gap-2.5">
               {!hasQuery ? (
                 <Button
-                  className="h-auto px-0 text-[9.5px]"
+                  className="h-auto px-0 text-xs"
                   onClick={allCollapsed ? expandAll : collapseAll}
                   type="button"
                   variant="link"
@@ -239,7 +239,7 @@ export function ServiceModelsEditor({
                 </Button>
               ) : (
                 <Button
-                  className="h-auto px-0 text-[9.5px] text-danger-foreground"
+                  className="h-auto px-0 text-xs text-danger-foreground"
                   disabled={filtered.length === 0}
                   onClick={() =>
                     setConfirm({
@@ -254,7 +254,7 @@ export function ServiceModelsEditor({
                 </Button>
               )}
               <Button
-                className="h-auto px-0 text-[9.5px] text-danger-foreground"
+                className="h-auto px-0 text-xs text-danger-foreground"
                 onClick={() => setConfirm({ kind: "clear" })}
                 type="button"
                 variant="link"
@@ -265,7 +265,7 @@ export function ServiceModelsEditor({
           </div>
 
           {filtered.length === 0 ? (
-            <p className="mt-1.5 rounded-[9px] border border-dashed p-2.5 text-[10.5px] text-muted-foreground" role="status">
+            <p className="mt-1.5 rounded-md border border-dashed p-2.5 text-xs text-muted-foreground" role="status">
               没有匹配“{query.trim()}”的模型。
             </p>
           ) : (
@@ -277,7 +277,7 @@ export function ServiceModelsEditor({
                     <div className="group flex items-center gap-1.5 border-b px-px py-[5px]">
                       <Button
                         aria-expanded={!collapsedGroup}
-                        className="h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[11px] text-text-secondary hover:bg-transparent"
+                        className="h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-sm text-text-secondary hover:bg-transparent"
                         data-testid="service-model-group-toggle"
                         onClick={() => toggleGroup(group.key)}
                         type="button"
@@ -285,12 +285,12 @@ export function ServiceModelsEditor({
                       >
                         <span
                           aria-hidden="true"
-                          className="shrink-0 text-[8px] leading-none text-muted-foreground"
+                          className="shrink-0 text-micro leading-none text-muted-foreground"
                         >
                           {collapsedGroup ? "▸" : "▾"}
                         </span>
-                        <strong className="min-w-0 overflow-hidden text-[11px] font-bold text-foreground text-ellipsis whitespace-nowrap">{group.key}</strong>
-                        <Badge className="px-1.5 py-0 text-[8.5px] tabular-nums" variant="secondary">
+                        <strong className="min-w-0 overflow-hidden text-sm font-medium text-foreground text-ellipsis whitespace-nowrap">{group.key}</strong>
+                        <Badge className="px-1.5 py-0 text-micro tabular-nums" variant="secondary">
                           {group.models.length}
                         </Badge>
                       </Button>
@@ -316,11 +316,11 @@ export function ServiceModelsEditor({
                         {group.models.map((model) => {
                           const label = encodeModelEditorValue(model);
                           return (
-                            <div className="group/chip inline-flex min-w-0 max-w-[260px] items-center gap-1 overflow-hidden rounded-[7px] border bg-muted py-1 pr-1.5 pl-2 text-text-secondary hover:border-primary/25" data-testid="service-model-chip" key={model}>
-                              <code className="min-w-0 overflow-hidden text-[9.5px] text-ellipsis whitespace-nowrap" title={label}>{label}</code>
+                            <div className="group/chip inline-flex min-w-0 max-w-[260px] items-center gap-1 overflow-hidden rounded-sm border bg-muted py-1 pr-1.5 pl-2 text-text-secondary hover:border-primary/25" data-testid="service-model-chip" key={model}>
+                              <code className="min-w-0 overflow-hidden text-xs text-ellipsis whitespace-nowrap" title={label}>{label}</code>
                               <Button
                                 aria-label={`删除 ${label}`}
-                                className="size-6 shrink-0 rounded text-[11px] text-danger-foreground opacity-0 hover:bg-danger-wash group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"
+                                className="size-6 shrink-0 rounded text-sm text-danger-foreground opacity-0 hover:bg-danger-wash group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"
                                 onClick={() => onRemoveModels([model])}
                                 type="button"
                                 size="icon-xs"

@@ -124,33 +124,31 @@ describe("AccessTokenManager", () => {
     });
   };
 
-  it("keeps only one inline token revealed and copies only that value", async () => {
+  it("copies a token without rendering the secret and only keeps the latest copy", async () => {
     bridgeMocks.revealAccessToken
       .mockResolvedValueOnce({ access_token: firstSecret })
       .mockResolvedValueOnce({ access_token: secondSecret });
     await renderManager(readyCatalog([firstToken, secondToken]));
 
     await act(async () => {
-      button("显示", row(firstToken.name)).click();
+      button("复制", row(firstToken.name)).click();
       await Promise.resolve();
     });
-    expect(container.textContent).toContain(firstSecret);
-
-    await act(async () => {
-      button("显示", row(secondToken.name)).click();
-      await Promise.resolve();
-    });
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(firstSecret);
     expect(container.textContent).not.toContain(firstSecret);
-    expect(container.textContent).toContain(secondSecret);
+    expect(button("已复制", row(firstToken.name))).toBeTruthy();
 
     await act(async () => {
       button("复制", row(secondToken.name)).click();
       await Promise.resolve();
     });
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(secondSecret);
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(secondSecret);
+    expect(container.textContent).not.toContain(secondSecret);
+    expect(button("已复制", row(secondToken.name))).toBeTruthy();
+    expect(button("复制", row(firstToken.name))).toBeTruthy();
   });
 
-  it("clears secrets and ignores a reveal response from an old Core session", async () => {
+  it("ignores a copy response from an old Core session", async () => {
     let resolveReveal:
       | ((value: { access_token: string }) => void)
       | undefined;
@@ -162,7 +160,7 @@ describe("AccessTokenManager", () => {
     await renderManager(readyCatalog([firstToken]));
 
     await act(async () => {
-      button("显示", row(firstToken.name)).click();
+      button("复制", row(firstToken.name)).click();
       await Promise.resolve();
     });
     await renderManager(readyCatalog([firstToken]), "session-2");
@@ -172,14 +170,20 @@ describe("AccessTokenManager", () => {
     });
 
     expect(container.textContent).not.toContain(firstSecret);
-    expect(button("显示", row(firstToken.name)).disabled).toBe(false);
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(button("复制", row(firstToken.name)).disabled).toBe(false);
   });
 
-  it("hides a revealed secret before refreshing", async () => {
+  it("cancels an in-flight copy before refreshing", async () => {
     const onRefresh = vi.fn();
-    bridgeMocks.revealAccessToken.mockResolvedValueOnce({
-      access_token: firstSecret,
-    });
+    let resolveReveal:
+      | ((value: { access_token: string }) => void)
+      | undefined;
+    bridgeMocks.revealAccessToken.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveReveal = resolve;
+      }),
+    );
     await act(async () => {
       reactRoot.render(
         <AccessTokenManager
@@ -194,20 +198,25 @@ describe("AccessTokenManager", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      button("显示", row(firstToken.name)).click();
+      button("复制", row(firstToken.name)).click();
       await Promise.resolve();
     });
-    expect(container.textContent).toContain(firstSecret);
 
     await act(async () => button("刷新").click());
+    await act(async () => {
+      resolveReveal?.({ access_token: firstSecret });
+      await Promise.resolve();
+    });
 
     expect(container.textContent).not.toContain(firstSecret);
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 
-  it("hides a revealed secret as soon as deletion is confirmed", async () => {
+  it("does not render a newly created secret and still confirms deletion", async () => {
     let finishDelete: (() => void) | undefined;
-    bridgeMocks.revealAccessToken.mockResolvedValueOnce({
+    bridgeMocks.createAccessToken.mockResolvedValueOnce({
+      token: firstToken,
       access_token: firstSecret,
     });
     bridgeMocks.deleteAccessToken.mockReturnValueOnce(
@@ -215,12 +224,35 @@ describe("AccessTokenManager", () => {
         finishDelete = resolve;
       }),
     );
-    await renderManager(readyCatalog([firstToken]));
+
+    function Harness() {
+      const [items, setItems] = useState<AccessTokenSummary[]>([]);
+      return (
+        <AccessTokenManager
+          catalog={readyCatalog(items)}
+          coreSessionKey="session-1"
+          isReady
+          onRefresh={() => undefined}
+          onTokenCreated={(token) => setItems((current) => [token, ...current])}
+          onTokenDeleted={(tokenId) =>
+            setItems((current) => current.filter((token) => token.id !== tokenId))
+          }
+        />
+      );
+    }
+
     await act(async () => {
-      button("显示", row(firstToken.name)).click();
+      reactRoot.render(<Harness />);
       await Promise.resolve();
     });
-    expect(container.textContent).toContain(firstSecret);
+    await act(async () => button("创建令牌").click());
+    await setInput("#access-token-name", "VS Code");
+    await act(async () => {
+      button("创建").click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain(firstSecret);
+    expect(container.querySelector('[data-testid="revealed-access-token"]')).toBeNull();
 
     await act(async () => {
       button("删除", row(firstToken.name)).click();
@@ -228,7 +260,6 @@ describe("AccessTokenManager", () => {
     });
 
     expect(container.textContent).not.toContain(firstSecret);
-    expect(container.querySelector('[data-testid="revealed-access-token"]')).toBeNull();
     expect(bridgeMocks.deleteAccessToken).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -279,7 +310,8 @@ describe("AccessTokenManager", () => {
 
     expect(bridgeMocks.createAccessToken).toHaveBeenCalledWith("VS Code");
     expect(container.textContent).toContain(firstToken.name);
-    expect(container.textContent).toContain(firstSecret);
+    expect(container.textContent).not.toContain(firstSecret);
+    expect(container.querySelector('[data-testid="revealed-access-token"]')).toBeNull();
 
     await act(async () => {
       button("删除", row(firstToken.name)).click();
@@ -300,7 +332,7 @@ describe("AccessTokenManager", () => {
     const tokenRow = row(firstToken.name);
     expect(tokenRow.textContent).toContain("今日 Token—");
     expect(tokenRow.textContent).toContain("累计 Token—");
-    expect(container.textContent).toContain("统计待接入");
+    expect(container.textContent).not.toContain("统计待接入");
     expect(bridgeMocks.createAccessToken).not.toHaveBeenCalled();
     expect(bridgeMocks.revealAccessToken).not.toHaveBeenCalled();
     expect(bridgeMocks.deleteAccessToken).not.toHaveBeenCalled();

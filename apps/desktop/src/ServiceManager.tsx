@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ChoiceCard } from "@/components/ChoiceCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
@@ -376,12 +378,12 @@ function ModelPreviewDialog({
                     onSelectedChange(selected);
                   }}
                 />
-                <code className="min-w-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap">{encodeModelEditorValue(model)}</code>
+                <code className="min-w-0 truncate font-mono text-xs">{encodeModelEditorValue(model)}</code>
               </Label>
             ))
           )}
         </div>
-        <small className="mb-2 block text-[10px] text-muted-foreground">
+        <small className="mb-2 block text-xs text-muted-foreground">
           已选 {preview.selected.length}
           {hasQuery ? ` · 显示 ${filtered.length} / ${preview.models.length}` : ""}
         </small>
@@ -966,48 +968,60 @@ export function ServiceManager({
           <FormMessage className="mb-3" tone="success">{notice}</FormMessage>
         ) : null}
 
-        <div className="flex min-h-0 min-w-0 flex-1">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-[15px] border bg-card p-3.5 shadow-[var(--shadow-card)]" aria-label="已配置服务">
-            <div className="mb-[11px] flex items-center justify-between text-[10.5px] text-text-secondary">
-              <strong className="text-[12.5px] text-foreground">全部服务</strong>
-              <span>{catalogStatus === "blocked" ? "—" : `${services.length} 个`}</span>
-            </div>
-            <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-2 overflow-y-auto pr-[3px]">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="已配置服务">
+          <div className="mb-2 flex shrink-0 items-baseline justify-between gap-2">
+            <strong className="text-sm font-semibold tracking-tight">
+              全部服务
+            </strong>
+            <span className="text-xs text-muted-foreground">
+              {catalogStatus === "blocked" ? "—" : `${services.length} 个`}
+            </span>
+          </div>
+          {/* Cards rather than flat rows: a service carries four lines of
+              heterogeneous detail, which needs its own bounding box to read. */}
+          <div className="grid min-h-0 content-start gap-2 overflow-y-auto">
               {catalogStatus === "loading" && services.length === 0 ? (
-                <p className="flex min-h-[250px] items-center justify-center p-[30px] text-center text-[11px] leading-[1.7] text-muted-foreground">正在加载 API 服务…</p>
+                <EmptyState title="正在加载 API 服务…" />
               ) : services.length === 0 ? (
-                <p className="flex min-h-[250px] items-center justify-center p-[30px] text-center text-[11px] leading-[1.7] text-muted-foreground">
-                  尚未添加服务。可先添加 Codex 订阅，或接入 new-api 外部网关。
-                </p>
+                <EmptyState
+                  description="可先添加 Codex 订阅，或接入 new-api 外部网关。"
+                  title="尚未添加服务"
+                />
               ) : (
                 services.map((service) => {
                   const subscription = service.subscription;
                   const acting = actionID === service.id;
                   return (
-                    <article className="rounded-[11px] border bg-card px-3.5 py-[13px]" data-testid="service-card" key={service.id}>
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex shrink-0 items-center gap-[5px] text-[9px] text-muted-foreground">
-                          <StatusDot tone={serviceDot(service)} />
+                    <article
+                      className="min-w-0 rounded-md border bg-card"
+                      data-testid="service-card"
+                      key={service.id}
+                    >
+                      <div className="min-w-0 px-3.5 py-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <StatusDot tone={serviceDot(service)} />
+                        <strong className="truncate text-sm font-medium">{service.name}</strong>
+                        <span className="shrink-0 text-xs text-muted-foreground">
                           {serviceStatusLabel(service)}
                         </span>
-                        <strong className="overflow-hidden text-xs text-ellipsis whitespace-nowrap">{service.name}</strong>
-                        <Badge className="ml-auto text-[8.5px]" variant="secondary">
+                        <Badge className="ml-auto" variant="secondary">
                           {serviceKindLabel(service.kind)}
                         </Badge>
                       </div>
-                      <code className="mt-2 block overflow-hidden text-[10px] text-text-secondary text-ellipsis whitespace-nowrap">
+                      <code className="mt-1.5 block truncate font-mono text-xs text-text-secondary">
                         {service.http?.base_url ??
                           (subscription?.account_hint
                             ? `OpenAI 账户 ${subscription.account_hint}`
                             : "OpenAI Codex OAuth")}
                       </code>
-                      <p className="mt-1.5 overflow-hidden text-[9px] text-muted-foreground text-ellipsis whitespace-nowrap">
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
                         支持 {service.capabilities.length} 项 API 能力 · {service.models.length} 个模型
                         {subscription?.authorization_boundary
                           ? ` · ${subscription.authorization_boundary}`
                           : ""}
                       </p>
-                      <div className="mt-[9px] flex items-center justify-between border-t pt-2 text-[9px] text-muted-foreground max-[700px]:items-start max-[700px]:flex-col max-[700px]:gap-2">
+                      </div>
+                      <div className="flex items-center justify-between gap-3 border-t px-3.5 py-2 text-xs text-muted-foreground max-[700px]:items-start max-[700px]:flex-col max-[700px]:gap-2">
                         <span>
                           {service.http
                             ? service.http.credential_ref
@@ -1019,40 +1033,40 @@ export function ServiceManager({
                               ? "OAuth 凭据已存入系统钥匙串"
                               : "等待 OAuth 登录"}
                         </span>
-                        <div className="flex flex-wrap gap-3">
+                        <div className="flex shrink-0 flex-wrap items-center gap-1">
                           {subscription ? (
                             subscription.status === "authorizing" ? (
                               <>
                                 <Button
-                                  className="h-auto p-0 text-[10.5px]"
                                   disabled={acting}
                                   onClick={() => void showAuthorization(service)}
+                                  size="sm"
                                   type="button"
-                                  variant="link"
+                                  variant="outline"
                                 >
                                   {acting ? "处理中…" : "查看登录"}
                                 </Button>
                                 <Button
-                                  className="h-auto p-0 text-[10.5px]"
                                   disabled={acting}
                                   onClick={() => void cancelAuthorization(service)}
+                                  size="sm"
                                   type="button"
-                                  variant="link"
+                                  variant="ghost"
                                 >
                                   取消登录
                                 </Button>
                               </>
                             ) : (
                               <Button
-                                className="h-auto p-0 text-[10.5px]"
                                 disabled={acting}
                                 onClick={() => {
                                   setLoginChoice(service);
                                   setLoginChoiceFlow(null);
                                   setError(null);
                                 }}
+                                size="sm"
                                 type="button"
-                                variant="link"
+                                variant="outline"
                               >
                                 {acting
                                   ? "处理中…"
@@ -1064,19 +1078,18 @@ export function ServiceManager({
                           ) : null}
                           {subscription?.status === "connected" ? (
                             <Button
-                              className="h-auto p-0 text-[10.5px]"
                               disabled={acting}
                               onClick={() =>
                                 setConfirmAction({ kind: "logout", service })
                               }
+                              size="sm"
                               type="button"
-                              variant="link"
+                              variant="ghost"
                             >
                               退出
                             </Button>
                           ) : null}
                           <Button
-                            className="h-auto p-0 text-[10.5px]"
                             disabled={acting}
                             onClick={() =>
                               onViewChange({
@@ -1084,19 +1097,21 @@ export function ServiceManager({
                                 serviceId: service.id,
                               })
                             }
+                            size="sm"
                             type="button"
-                            variant="link"
+                            variant="outline"
                           >
                             编辑
                           </Button>
                           <Button
-                            className="h-auto p-0 text-[10.5px] text-danger-foreground"
+                            className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
                             disabled={acting}
                             onClick={() =>
                               setConfirmAction({ kind: "delete", service })
                             }
+                            size="sm"
                             type="button"
-                            variant="link"
+                            variant="ghost"
                           >
                             {acting ? "处理中…" : "删除"}
                           </Button>
@@ -1107,7 +1122,6 @@ export function ServiceManager({
                 })
               )}
             </div>
-          </div>
         </div>
         <ConfirmDialog
           confirmLabel="确认"
@@ -1144,34 +1158,22 @@ export function ServiceManager({
             </DialogHeader>
               <RadioGroup
                 aria-label="登录方式"
-                className="grid grid-cols-2 gap-[9px] max-[520px]:grid-cols-1"
+                className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
                 onValueChange={(value) => setLoginChoiceFlow(value as AuthorizationFlow)}
                 value={loginChoiceFlow ?? ""}
               >
-                <Label
-                  className={cn(
-                    "flex min-w-0 cursor-pointer items-start gap-2 rounded-[9px] border bg-card p-2.5",
-                    loginChoiceFlow === "browser" && "border-primary/65 bg-accent ring-3 ring-primary/10",
-                  )}
-                >
-                  <RadioGroupItem aria-label="浏览器 OAuth" value="browser" />
-                  <span className="grid min-w-0 gap-[3px]">
-                    <strong className="text-[10.5px]">浏览器 OAuth</strong>
-                    <small className="text-[9px] leading-[1.45] text-muted-foreground">依次使用本机回调端口 1455 和 1457。</small>
-                  </span>
-                </Label>
-                <Label
-                  className={cn(
-                    "flex min-w-0 cursor-pointer items-start gap-2 rounded-[9px] border bg-card p-2.5",
-                    loginChoiceFlow === "device_code" && "border-primary/65 bg-accent ring-3 ring-primary/10",
-                  )}
-                >
-                  <RadioGroupItem aria-label="Device Code" value="device_code" />
-                  <span className="grid min-w-0 gap-[3px]">
-                    <strong className="text-[10.5px]">Device Code</strong>
-                    <small className="text-[9px] leading-[1.45] text-muted-foreground">打开登录页并输入一次性验证码。</small>
-                  </span>
-                </Label>
+                <ChoiceCard
+                  description="依次使用本机回调端口 1455 和 1457。"
+                  label="浏览器 OAuth"
+                  selected={loginChoiceFlow === "browser"}
+                  value="browser"
+                />
+                <ChoiceCard
+                  description="打开登录页并输入一次性验证码。"
+                  label="Device Code"
+                  selected={loginChoiceFlow === "device_code"}
+                  value="device_code"
+                />
               </RadioGroup>
               <DialogFooter>
                 <Button
@@ -1219,8 +1221,8 @@ export function ServiceManager({
                     请在 OpenAI 登录页面输入下方一次性验证码。验证码将在
                     15 分钟内失效。
                   </p>
-                  <div className="flex items-center justify-between gap-3 rounded-[10px] border border-primary/20 bg-accent p-[11px]">
-                    <code className="text-xl font-[750] tracking-[0.08em] text-accent-foreground select-all">
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-primary/20 bg-accent p-3">
+                    <code className="font-mono text-xl font-semibold tracking-[0.08em] text-accent-foreground select-all">
                       {authorizationDialog.session.device_code.user_code}
                     </code>
                     <Button
@@ -1240,7 +1242,7 @@ export function ServiceManager({
                       )}
                     </Button>
                   </div>
-                  <small className="mt-[9px] block text-[9px] leading-[1.5] text-muted-foreground">
+                  <small className="mt-2 block text-xs text-muted-foreground">
                     如果账户或工作区禁用了 Device Code，请改用浏览器 OAuth，
                     或由管理员启用该登录方式。
                   </small>
@@ -1339,13 +1341,13 @@ export function ServiceManager({
       ) : (
         <form
           aria-busy={saving}
-          className="mx-auto w-full max-w-[760px] min-w-0 rounded-[15px] border bg-card p-[18px] shadow-[0_10px_34px_color-mix(in_srgb,var(--foreground)_5%,transparent)]"
+          className="mx-auto w-full max-w-[760px] min-w-0 rounded-lg border bg-card p-4"
           data-testid="service-form"
           noValidate
           onSubmit={(event) => void submit(event)}
         >
           <fieldset className="min-w-0 border-0 p-0 disabled:pointer-events-none disabled:opacity-70" disabled={!isReady || saving}>
-            <div className="grid grid-cols-2 gap-3 max-[680px]:grid-cols-1 [&>label]:flex [&>label]:min-w-0 [&>label]:flex-col [&>label]:items-stretch [&>label]:gap-[5px] [&>label>span]:text-[10.5px] [&>label>span]:font-semibold [&>label>span]:text-text-secondary [&>label>small]:text-[9px] [&>label>small]:leading-[1.45] [&>label>small]:text-muted-foreground">
+            <div className="grid grid-cols-2 gap-3 max-[680px]:grid-cols-1 [&>label]:flex [&>label]:min-w-0 [&>label]:flex-col [&>label]:items-stretch [&>label]:gap-1.5 [&>label>span]:text-xs [&>label>span]:font-medium [&>label>span]:text-text-secondary [&>label>small]:text-xs [&>label>small]:font-normal [&>label>small]:text-muted-foreground">
               <Label className="col-span-full">
                 <span>服务类型</span>
                 <Select
@@ -1419,11 +1421,11 @@ export function ServiceManager({
               </Label>
               {draft.kind === "codex_subscription" &&
               view.kind === "create" ? (
-                <fieldset className="col-span-full min-w-0 rounded-[10px] border bg-muted p-[11px]">
-                  <legend className="px-1 text-[10.5px] font-semibold text-text-secondary">登录方式</legend>
+                <fieldset className="col-span-full min-w-0 rounded-md border bg-muted p-3">
+                  <legend className="px-1 text-xs font-medium text-text-secondary">登录方式</legend>
                   <RadioGroup
                     aria-label="新服务登录方式"
-                    className="grid grid-cols-2 gap-[9px] max-[520px]:grid-cols-1"
+                    className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
                     onValueChange={(value) =>
                       setDraft((current) => ({
                         ...current,
@@ -1432,35 +1434,18 @@ export function ServiceManager({
                     }
                     value={draft.authorizationFlow ?? ""}
                   >
-                    <Label
-                      className={cn(
-                        "flex min-w-0 cursor-pointer flex-row items-start gap-2 rounded-[9px] border bg-card p-2.5",
-                        draft.authorizationFlow === "browser" && "border-primary/65 bg-accent ring-3 ring-primary/10",
-                      )}
-                    >
-                      <RadioGroupItem aria-label="浏览器 OAuth" value="browser" />
-                      <span className="grid min-w-0 gap-[3px]">
-                        <strong className="text-[10.5px]">浏览器 OAuth</strong>
-                        <small className="text-[9px] leading-[1.45] text-muted-foreground">
-                          打开系统浏览器，依次尝试本机回调端口 1455 和
-                          1457。
-                        </small>
-                      </span>
-                    </Label>
-                    <Label
-                      className={cn(
-                        "flex min-w-0 cursor-pointer flex-row items-start gap-2 rounded-[9px] border bg-card p-2.5",
-                        draft.authorizationFlow === "device_code" && "border-primary/65 bg-accent ring-3 ring-primary/10",
-                      )}
-                    >
-                      <RadioGroupItem aria-label="Device Code" value="device_code" />
-                      <span className="grid min-w-0 gap-[3px]">
-                        <strong className="text-[10.5px]">Device Code</strong>
-                        <small className="text-[9px] leading-[1.45] text-muted-foreground">
-                          打开 OpenAI 登录页并输入一次性验证码；部分工作区需要管理员启用。
-                        </small>
-                      </span>
-                    </Label>
+                    <ChoiceCard
+                      description="打开系统浏览器，依次尝试本机回调端口 1455 和 1457。"
+                      label="浏览器 OAuth"
+                      selected={draft.authorizationFlow === "browser"}
+                      value="browser"
+                    />
+                    <ChoiceCard
+                      description="打开 OpenAI 登录页并输入一次性验证码；部分工作区需要管理员启用。"
+                      label="Device Code"
+                      selected={draft.authorizationFlow === "device_code"}
+                      value="device_code"
+                    />
                   </RadioGroup>
                   {draft.authorizationFlow === null ? (
                     <small className="mt-2 block text-warning-foreground">
@@ -1590,24 +1575,24 @@ export function ServiceManager({
             />
 
             {draft.kind === "codex_subscription" ? (
-              <div className="mt-[13px] flex items-start gap-[9px] rounded-[9px] border border-success/20 bg-success-wash px-[11px] py-2.5 text-text-secondary">
-                <span aria-hidden="true" className="grid size-[18px] shrink-0 place-items-center rounded-full bg-success text-[9px] font-extrabold text-primary-foreground">✓</span>
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-success/20 bg-success-wash px-3 py-2.5 text-text-secondary">
+                <StatusDot className="mt-1.5" tone="positive" />
                 <div>
-                  <strong className="text-[10px] text-success-foreground">
+                  <strong className="text-sm font-medium text-success-foreground">
                     {view.kind === "create"
                       ? "保存后使用所选方式登录"
                       : "订阅登录在服务列表中管理"}
                   </strong>
-                  <p className="mt-0.5 text-[9.5px] leading-[1.45]">
+                  <p className="mt-0.5 text-xs">
                     每次添加都会创建独立服务，可同时管理多个 Codex 订阅账户。
                   </p>
                 </div>
               </div>
             ) : (
-              <details className="group mt-[13px] rounded-[9px] border bg-card">
-                <summary className="flex cursor-pointer list-none items-center gap-[7px] px-[11px] py-2.5 text-[10.5px] font-bold text-text-secondary before:text-[15px] before:leading-none before:text-muted-foreground before:content-['›'] group-open:before:rotate-90 [&::-webkit-details-marker]:hidden">
+              <details className="group mt-3 rounded-md border bg-card">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2.5 text-sm font-medium text-text-secondary before:text-base before:leading-none before:text-muted-foreground before:content-['›'] group-open:before:rotate-90 [&::-webkit-details-marker]:hidden">
                   <span>API 能力</span>
-                  <small className="ml-auto text-[9px] font-medium text-muted-foreground">{draft.capabilities.length} 项已启用</small>
+                  <small className="ml-auto text-xs font-normal text-muted-foreground">{draft.capabilities.length} 项已启用</small>
                 </summary>
                 <div className="border-t p-3">
                   <div className="grid grid-cols-2 gap-2 max-[600px]:grid-cols-1">
@@ -1616,8 +1601,8 @@ export function ServiceManager({
                         (item) => item.protocol === descriptor.id,
                       );
                       return (
-                        <div className="grid min-w-0 gap-[7px] rounded-[9px] border bg-card p-[9px]" key={descriptor.id}>
-                          <Label className="flex flex-row items-center gap-2 text-[10px] text-text-secondary">
+                        <div className="grid min-w-0 gap-1.5 rounded-md border bg-card p-2.5" key={descriptor.id}>
+                          <Label className="flex flex-row items-center gap-2 text-xs text-text-secondary">
                             <Checkbox
                               checked={Boolean(capability)}
                               onCheckedChange={(checked) =>
@@ -1669,7 +1654,7 @@ export function ServiceManager({
               </details>
             )}
           </fieldset>
-          <div className="sticky bottom-0 z-4 mt-[15px] border-t bg-[linear-gradient(to_bottom,color-mix(in_srgb,var(--card)_82%,transparent),var(--card)_34%)] px-0 pt-2.5 pb-1 backdrop-blur-sm">
+          <div className="sticky bottom-0 z-4 mt-[15px] border-t bg-card px-0 pt-2.5 pb-1">
             <Button
               className="w-full"
               data-testid="service-submit"

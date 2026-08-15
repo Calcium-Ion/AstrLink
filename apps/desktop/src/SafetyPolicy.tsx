@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -26,14 +26,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -59,6 +51,7 @@ import {
   type CanonicalPrivacyKind,
   type PrivacyAction,
   type PrivacyCatalogModel,
+  type PrivacyDetector,
   type PrivacyDryRunProtocol,
   type PrivacyDryRunResult,
   type PrivacyLabelMapping,
@@ -72,6 +65,7 @@ import {
 import { PageHeader } from "./PageHeader";
 
 type SafetyPolicyStatus = "blocked" | "loading" | "ready" | "error";
+type WorkspaceView = "policy" | "dryRun" | "models";
 type ModelView = "catalog" | "installed" | "custom" | "local";
 type ProbeView = Extract<ModelView, "custom" | "local">;
 
@@ -268,6 +262,23 @@ function dryRunKindLabel(kind: CanonicalPrivacyKind): string {
   );
 }
 
+function dryRunLiveSummary(result: PrivacyDryRunResult): string {
+  return `试运行完成：${actionLabels[result.decision]}，${summarizeDryRunFindings(result)}。仅本地预览。`;
+}
+
+function dryRunConfidenceReason(
+  confidence: number,
+  minConfidence: number,
+  detector: PrivacyDetector,
+  mode: "hit" | "suppressed",
+): string {
+  if (detector === "regex" && mode === "hit") {
+    return "Regex 命中（置信度门槛不适用）";
+  }
+  const comparison = mode === "hit" ? "≥" : "<";
+  return `${confidence.toFixed(2)} ${comparison} ${minConfidence.toFixed(2)}`;
+}
+
 function recommendedVariant(
   variants: PrivacyModelVariant[],
 ): PrivacyModelVariant | null {
@@ -351,7 +362,7 @@ function LabelMappingDialog({
                 htmlFor={selectID}
                 key={label.label}
               >
-                <code className="overflow-hidden text-[10px] text-ellipsis whitespace-nowrap">{label.label}</code>
+                <code className="overflow-hidden text-sm text-ellipsis whitespace-nowrap">{label.label}</code>
                 <Select
                   onValueChange={(value) => {
                     onChange(
@@ -390,7 +401,7 @@ function LabelMappingDialog({
             );
           })}
         </div>
-        <div className="rounded-lg bg-muted px-3 py-2 text-[10px] text-text-secondary">{summary}</div>
+        <div className="rounded-lg bg-muted px-3 py-2 text-sm text-text-secondary">{summary}</div>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel} type="button">
             取消
@@ -453,12 +464,12 @@ function ModelActionDialog({
         <>
           <dl className="grid grid-cols-2 gap-2.5">
             <div className="rounded-lg bg-muted p-3">
-              <dt className="text-[9px] text-muted-foreground">磁盘占用</dt>
-              <dd className="mt-1 text-sm font-bold">{formatBytes(installation.bytes_total)}</dd>
+              <dt className="text-sm text-muted-foreground">磁盘占用</dt>
+              <dd className="mt-1 text-sm font-medium">{formatBytes(installation.bytes_total)}</dd>
             </div>
             <div className="rounded-lg bg-muted p-3">
-              <dt className="text-[9px] text-muted-foreground">预计内存</dt>
-              <dd className="mt-1 text-sm font-bold">{formatBytes(installation.estimated_ram_bytes)}</dd>
+              <dt className="text-sm text-muted-foreground">预计内存</dt>
+              <dd className="mt-1 text-sm font-medium">{formatBytes(installation.estimated_ram_bytes)}</dd>
             </div>
           </dl>
           <FormMessage tone={heavy ? "warning" : "notice"}>
@@ -503,12 +514,12 @@ function InstallationResourceDialog({
           <p>{pending.name} · {pending.variant.name} 资源占用较高。</p>
         <dl className="grid grid-cols-2 gap-2.5">
           <div className="rounded-lg bg-muted p-3">
-            <dt className="text-[9px] text-muted-foreground">{local ? "导入大小" : "下载大小"}</dt>
-            <dd className="mt-1 text-sm font-bold">{formatBytes(pending.variant.bytes_total)}</dd>
+            <dt className="text-sm text-muted-foreground">{local ? "导入大小" : "下载大小"}</dt>
+            <dd className="mt-1 text-sm font-medium">{formatBytes(pending.variant.bytes_total)}</dd>
           </div>
           <div className="rounded-lg bg-muted p-3">
-            <dt className="text-[9px] text-muted-foreground">预计内存</dt>
-            <dd className="mt-1 text-sm font-bold">{formatBytes(pending.variant.estimated_ram_bytes)}</dd>
+            <dt className="text-sm text-muted-foreground">预计内存</dt>
+            <dd className="mt-1 text-sm font-medium">{formatBytes(pending.variant.estimated_ram_bytes)}</dd>
           </div>
         </dl>
         <FormMessage tone="warning">
@@ -554,37 +565,37 @@ function StreamingRestoreDemoDialog({
           ）：请求侧脱敏与占位符还原。不对响应正文或 SSE 事件做审核扫描。
           </DialogDescription>
         </DialogHeader>
-        <p className="rounded-lg bg-muted px-2.5 py-2 text-[10px] leading-[1.5] text-text-secondary">
+        <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-text-secondary">
           示例邮箱 <code>alice@example.com</code>
           为固定示例，不代表当前策略状态。
         </p>
-        <p className="rounded-lg bg-muted px-2.5 py-2 text-[10px] leading-[1.5] text-text-secondary">
+        <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-text-secondary">
           实际请求会使用随机后缀；这里固定展示
           <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>。
         </p>
         <div
           aria-label="请求脱敏与响应占位符还原数据流"
-          className="grid gap-2.5 rounded-xl border bg-[linear-gradient(180deg,color-mix(in_srgb,var(--accent)_55%,var(--card))_0%,var(--card)_42%,color-mix(in_srgb,var(--success-wash)_45%,var(--card))_100%)] p-3"
+          className="grid gap-2.5 rounded-xl border bg-card p-3"
           data-streaming-demo
           data-testid="streaming-restore-demo"
           key={replayKey}
         >
           <div className="grid grid-cols-3 gap-2.5" aria-hidden="true">
             <div
-              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-[11px] border border-input bg-card px-2.5 py-2 text-center shadow-[var(--shadow-card)] [&>strong]:text-[11px] [&>span]:text-[9px] [&>span]:text-muted-foreground"
+              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground"
             >
               <strong>客户端</strong>
               <span>OpenAI Responses</span>
             </div>
             <div
-              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-[11px] border border-primary/40 bg-accent/70 px-2.5 py-2 text-center shadow-[var(--shadow-card)] [&>strong]:text-[11px] [&>span:last-child]:text-[9px] [&>span:last-child]:text-muted-foreground"
+              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-primary/40 bg-accent/70 px-2.5 py-2 text-center [&>strong]:text-sm [&>span:last-child]:text-xs [&>span:last-child]:text-muted-foreground"
             >
-              <span className="pointer-events-none absolute -inset-1 animate-[streaming-restore-demo-shield_12s_linear_infinite] rounded-[13px] opacity-0" />
+              <span className="pointer-events-none absolute -inset-1 animate-[streaming-restore-demo-shield_12s_linear_infinite] rounded-md opacity-0" />
               <strong>AstrLink</strong>
               <span>隐私网关</span>
             </div>
             <div
-              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-[11px] border border-input bg-card px-2.5 py-2 text-center shadow-[var(--shadow-card)] [&>strong]:text-[11px] [&>span]:text-[9px] [&>span]:text-muted-foreground"
+              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground"
             >
               <strong>上游</strong>
               <span>SSE 传输</span>
@@ -597,15 +608,15 @@ function StreamingRestoreDemoDialog({
             data-lane="request"
           >
             <div className="absolute inset-x-[17%] top-1/2 h-0.5 -translate-y-1/2 overflow-hidden rounded-full bg-primary/20">
-              <span className="absolute inset-0 animate-[streaming-restore-demo-dots-ltr_4.2s_linear_infinite] bg-[radial-gradient(circle,currentColor_1.1px,transparent_1.2px)] bg-[length:14px_2px] bg-repeat-x text-primary opacity-70" />
-              <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[9px] font-bold tracking-[0.02em] whitespace-nowrap text-accent-foreground">
+              <span className="absolute inset-0 animate-[streaming-restore-demo-dots-ltr_4.2s_linear_infinite] border-t-2 border-dashed border-current text-primary opacity-70" />
+              <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-xs font-medium tracking-[0.02em] whitespace-nowrap text-accent-foreground">
                 请求 →
               </span>
             </div>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-plain_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-[9px] leading-[1.25] font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="plain">
+            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-plain_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="plain">
               alice@example.com
             </span>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-redacted_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-[9px] leading-[1.25] font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="redacted">
+            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-redacted_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="redacted">
               &lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;
             </span>
           </div>
@@ -616,27 +627,27 @@ function StreamingRestoreDemoDialog({
             data-lane="response"
           >
             <div className="absolute inset-x-[17%] top-1/2 h-0.5 -translate-y-1/2 overflow-hidden rounded-full bg-success/20">
-              <span className="absolute inset-0 animate-[streaming-restore-demo-dots-rtl_4.2s_linear_infinite] bg-[radial-gradient(circle,currentColor_1.1px,transparent_1.2px)] bg-[length:14px_2px] bg-repeat-x text-success opacity-70" />
-              <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[9px] font-bold tracking-[0.02em] whitespace-nowrap text-success-foreground">
+              <span className="absolute inset-0 animate-[streaming-restore-demo-dots-rtl_4.2s_linear_infinite] border-t-2 border-dashed border-current text-success opacity-70" />
+              <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-xs font-medium tracking-[0.02em] whitespace-nowrap text-success-foreground">
                 ← 响应
               </span>
             </div>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-a_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-[9px] leading-[1.25] font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="chunk-a">
+            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-a_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="chunk-a">
               {
                 'data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"<PRIVATE_EMAIL_7f3a"}'
               }
             </span>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-b_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-[9px] leading-[1.25] font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="chunk-b">
+            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-b_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="chunk-b">
               {
                 'data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"91c04d28be56>"}'
               }
             </span>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-restored_12s_linear_infinite] overflow-hidden rounded-full border border-success/40 bg-success-wash px-[7px] py-1 font-mono text-[9px] leading-[1.25] font-semibold text-success-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="restored">
+            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-restored_12s_linear_infinite] overflow-hidden rounded-full border border-success/40 bg-success-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-success-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="restored">
               正文: alice@example.com
             </span>
           </div>
 
-          <ol className="mt-1 grid list-none gap-1 p-0 [&>li]:flex [&>li]:items-center [&>li]:gap-[7px] [&>li]:text-[9.5px] [&>li]:leading-[1.4] [&>li]:text-text-secondary">
+          <ol className="mt-1 grid list-none gap-1 p-0 [&>li]:flex [&>li]:items-center [&>li]:gap-[7px] [&>li]:text-xs [&>li]:leading-snug [&>li]:text-text-secondary">
             <li>
               <span className="size-[9px] shrink-0 rounded-full bg-primary" />
               请求侧脱敏：原文 →
@@ -683,6 +694,7 @@ export function SafetyPolicy({
   const [installations, setInstallations] = useState<
     PrivacyModelInstallation[]
   >([]);
+  const [workspace, setWorkspace] = useState<WorkspaceView>("policy");
   const [view, setView] = useState<ModelView>("catalog");
   const [selectedVariants, setSelectedVariants] = useState<
     Record<string, string>
@@ -723,6 +735,7 @@ export function SafetyPolicy({
   const probeRequestRef = useRef(0);
   const pollRequestRef = useRef(0);
   const dryRunRequestRef = useRef(0);
+  const dryRunResultHeadingRef = useRef<HTMLHeadingElement>(null);
   const persistedMinConfidence = record?.policy.min_confidence;
 
   useEffect(() => {
@@ -732,6 +745,11 @@ export function SafetyPolicy({
         : persistedMinConfidence.toFixed(2),
     );
   }, [persistedMinConfidence]);
+
+  useEffect(() => {
+    if (dryRunResult === null) return;
+    dryRunResultHeadingRef.current?.focus();
+  }, [dryRunResult]);
 
   const load = async (generation: number) => {
     try {
@@ -779,6 +797,7 @@ export function SafetyPolicy({
     setPendingModelAction(null);
     setPendingInstallation(null);
     setStreamingDemoOpen(false);
+    setWorkspace("policy");
     setProbe(null);
     setProbeView(null);
     setCustomMappingOpen(false);
@@ -1124,7 +1143,7 @@ export function SafetyPolicy({
       }
       setDryRunResult(result);
       setDryRunError(null);
-      setNotice("试运行完成，结果仅用于本地预览。");
+      setWorkspace("dryRun");
     } catch (caught) {
       if (
         generationRef.current !== generation ||
@@ -1518,17 +1537,17 @@ export function SafetyPolicy({
 
   if (status === "blocked") {
     return (
-      <div className="grid gap-4">
+      <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
         <PageHeader
           description="在请求发送到上游前使用规则或所选本地模型检测敏感内容。"
           eyebrow="本地执行 · 全局策略"
           title="隐私保护"
           titleId="safety-policy-heading"
         />
-        <Card className="grid justify-items-start gap-2 border-dashed p-6 text-sm text-muted-foreground shadow-[var(--shadow-card)]">
-          <strong>Core 就绪后可管理安全策略</strong>
-          <span>策略和模型均由本地 Core 保存与执行。</span>
-        </Card>
+        <EmptyState
+          description="策略和模型均由本地 Core 保存与执行。"
+          title="Core 就绪后可管理安全策略"
+        />
       </div>
     );
   }
@@ -1572,23 +1591,34 @@ export function SafetyPolicy({
         ) ?? null);
 
   return (
-    <div className="grid gap-4" data-testid="safety-policy">
+    <div
+      className="@container flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden"
+      data-testid="safety-policy"
+    >
       <PageHeader
         actions={
-          <Button
-            disabled={
-              status === "loading" ||
-              saving ||
-              operationBusy !== null ||
-              probing ||
-              catalogProbeBusy !== null
-            }
-            onClick={refresh}
-            variant="outline"
-            type="button"
-          >
-            {status === "loading" ? "刷新中…" : "刷新"}
-          </Button>
+          <div className="flex items-center gap-2.5">
+            {record !== null ? (
+              <span className="text-sm text-muted-foreground">
+                {saving ? "保存中…" : "已与 Core 同步"}
+              </span>
+            ) : null}
+            <Button
+              disabled={
+                status === "loading" ||
+                saving ||
+                operationBusy !== null ||
+                probing ||
+                catalogProbeBusy !== null
+              }
+              onClick={refresh}
+              size="sm"
+              variant="outline"
+              type="button"
+            >
+              {status === "loading" ? "刷新中…" : "刷新"}
+            </Button>
+          </div>
         }
         description="在请求发送到上游前使用规则或所选本地模型检测敏感内容。"
         eyebrow="本地执行 · 全局策略"
@@ -1597,15 +1627,15 @@ export function SafetyPolicy({
       />
 
       {error ? (
-        <FormMessage tone="error">{error}</FormMessage>
+        <FormMessage className="mb-2.5 shrink-0" tone="error">{error}</FormMessage>
       ) : null}
       {notice ? (
-        <FormMessage tone="success">{notice}</FormMessage>
+        <FormMessage className="mb-2.5 shrink-0" tone="success">{notice}</FormMessage>
       ) : null}
 
       {status === "loading" && record === null ? (
         <div
-          className="grid gap-3 rounded-xl border bg-card p-5 shadow-[var(--shadow-card)]"
+          className="grid min-w-0 gap-3 rounded-lg border bg-card p-5"
           aria-label="正在读取安全策略"
         >
           <span className="h-4 w-36 animate-pulse rounded bg-muted" />
@@ -1614,38 +1644,62 @@ export function SafetyPolicy({
       ) : null}
 
       {status === "error" && record === null ? (
-        <Card className="grid justify-items-start gap-2 border-dashed p-6 text-sm text-muted-foreground shadow-[var(--shadow-card)]">
-          <strong>安全策略暂不可用</strong>
-          <span>检查 Core 状态后重试。</span>
-          <Button variant="outline" onClick={refresh} type="button">
-            重试
-          </Button>
-        </Card>
+        <EmptyState
+          action={
+            <Button variant="outline" onClick={refresh} type="button">
+              重试
+            </Button>
+          }
+          description="检查 Core 状态后重试。"
+          title="安全策略暂不可用"
+        />
       ) : null}
 
       {status === "ready" && policy !== null ? (
-        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <Card className="grid gap-4 p-5 shadow-[var(--shadow-card)]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="text-[10px] font-bold tracking-[0.14em] text-muted-foreground uppercase">策略</span>
-                <h3 className="mt-1 text-base font-bold">全局隐私保护</h3>
-              </div>
-              <Badge variant="outline" className={cn(
-                "border-border bg-muted text-muted-foreground",
-                policy.enabled && "border-success/25 bg-success-wash text-success-foreground",
-              )}>
-                {policy.enabled ? "已启用" : "已停用"}
-              </Badge>
-            </div>
+        <Tabs
+          className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+          onValueChange={(value) => setWorkspace(value as WorkspaceView)}
+          value={workspace}
+        >
+          <TabsList
+            aria-label="隐私保护工作区"
+            className="h-9 w-full max-w-[420px] shrink-0"
+          >
+            <TabsTrigger
+              onClick={() => setWorkspace("policy")}
+              value="policy"
+            >
+              策略
+            </TabsTrigger>
+            <TabsTrigger
+              aria-label="试运行结果"
+              onClick={() => setWorkspace("dryRun")}
+              value="dryRun"
+            >
+              试运行
+            </TabsTrigger>
+            <TabsTrigger
+              onClick={() => setWorkspace("models")}
+              value="models"
+            >
+              模型
+            </TabsTrigger>
+          </TabsList>
 
+          <TabsContent
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+            forceMount
+            hidden={workspace !== "policy"}
+            value="policy"
+          >
+            <div className="grid min-w-0 gap-3 pb-2">
             <Label
-              className="flex items-center justify-between gap-4 rounded-xl border bg-muted/60 p-4"
+              className="flex items-center justify-between gap-3 font-normal"
               htmlFor="privacy-enabled"
             >
-              <span>
-                <strong className="block text-sm">启用隐私保护</strong>
-                <small className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <strong className="text-sm font-medium">启用隐私保护</strong>
+                <small className="text-sm leading-snug text-muted-foreground">
                   {cannotEnableLocalModel
                     ? "需要先选择一个已就绪的本地模型"
                     : "变更会立即保存到本地 Core"}
@@ -1654,16 +1708,34 @@ export function SafetyPolicy({
               <Switch
                 aria-label="启用隐私保护"
                 checked={policy.enabled}
+                className="shrink-0"
                 disabled={saving || cannotEnableLocalModel}
                 id="privacy-enabled"
                 onCheckedChange={changeEnabled}
+                size="sm"
               />
             </Label>
 
-            <fieldset className="grid gap-2" disabled={saving}>
-              <legend className="mb-2 text-xs font-bold text-muted-foreground">检测方式</legend>
+            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+              <legend className="mb-1.5 flex items-center justify-between gap-2 px-0 text-sm font-medium text-text-secondary">
+                <span>检测方式</span>
+                {!selectedModelReady ? (
+                  <Button
+                    className="h-auto px-0 py-0 text-sm font-medium"
+                    onClick={() => {
+                      setWorkspace("models");
+                      setView(installations.length > 0 ? "installed" : "catalog");
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="link"
+                  >
+                    去模型库
+                  </Button>
+                ) : null}
+              </legend>
               <RadioGroup
-                className="grid gap-2 sm:grid-cols-2"
+                className="grid min-w-0 grid-cols-2 gap-2"
                 disabled={saving}
                 onValueChange={(value) => {
                   if (value === "regex") {
@@ -1676,39 +1748,41 @@ export function SafetyPolicy({
               >
                 <Label
                   className={cn(
-                    "flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-3 transition-colors",
-                    policy.detector === "regex" && "border-primary/45 bg-accent/60",
+                    "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors",
+                    policy.detector === "regex" && "border-primary/35 bg-accent",
                   )}
                   htmlFor="privacy-detector-regex"
                 >
                   <RadioGroupItem
                     aria-label="Regex"
-                    className="mt-0.5"
+                    className="shrink-0"
                     id="privacy-detector-regex"
                     value="regex"
                   />
-                  <span>
-                    <strong className="block text-sm">Regex</strong>
-                    <small className="mt-0.5 block text-xs text-muted-foreground">快速且始终可用</small>
+                  <span className="flex min-w-0 flex-col">
+                    <strong className="text-sm font-medium leading-none">Regex</strong>
+                    <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
+                      快速且始终可用
+                    </small>
                   </span>
                 </Label>
                 <Label
                   className={cn(
-                    "flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-3 transition-colors has-[[data-disabled]]:cursor-not-allowed has-[[data-disabled]]:opacity-50",
-                    policy.detector === "local_model" && "border-primary/45 bg-accent/60",
+                    "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors has-[[data-disabled]]:cursor-not-allowed has-[[data-disabled]]:opacity-50",
+                    policy.detector === "local_model" && "border-primary/35 bg-accent",
                   )}
                   htmlFor="privacy-detector-local-model"
                 >
                   <RadioGroupItem
                     aria-label="本地模型"
-                    className="mt-0.5"
+                    className="shrink-0"
                     disabled={!selectedModelReady}
                     id="privacy-detector-local-model"
                     value="local_model"
                   />
-                  <span>
-                    <strong className="block text-sm">本地模型</strong>
-                    <small className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                  <span className="flex min-w-0 flex-col">
+                    <strong className="text-sm font-medium leading-none">本地模型</strong>
+                    <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
                       {selectedInstallation === null
                         ? "请从已安装模型中选择"
                         : `${selectedInstallation.name} · ${selectedInstallation.variant_name}`}
@@ -1718,15 +1792,20 @@ export function SafetyPolicy({
               </RadioGroup>
             </fieldset>
 
-            <Label className="grid gap-3 rounded-xl border p-3 sm:grid-cols-[minmax(0,1fr)_132px] sm:items-center" htmlFor="privacy-min-confidence">
-              <span>
-                <strong className="block text-sm">模型最低置信度</strong>
-                <small className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+            <div className="grid min-w-0 gap-3 @[560px]:grid-cols-2">
+            <Label
+              className="grid min-w-0 gap-1.5 font-normal"
+              htmlFor="privacy-min-confidence"
+            >
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <strong className="text-sm font-medium">模型最低置信度</strong>
+                <small className="text-sm leading-snug text-muted-foreground">
                   低于此分数的模型候选会被抑制；Regex 不受此门槛影响
                 </small>
               </span>
               <Input
                 aria-label="模型最低置信度"
+                className="h-9 w-full px-3 text-sm md:text-sm"
                 disabled={saving}
                 id="privacy-min-confidence"
                 max="1"
@@ -1749,17 +1828,25 @@ export function SafetyPolicy({
               />
             </Label>
 
-            <Label className="grid gap-3 rounded-xl border p-3 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-center" htmlFor="privacy-request-action">
-              <span>
-                <strong className="block text-sm">命中后的请求动作</strong>
-                <small className="mt-0.5 block text-xs text-muted-foreground">响应审核将在后续版本提供</small>
+            <Label
+              className="grid min-w-0 gap-1.5 font-normal"
+              htmlFor="privacy-request-action"
+            >
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <strong className="text-sm font-medium">命中后的请求动作</strong>
+                <small className="text-sm leading-snug text-muted-foreground">响应审核将在后续版本提供</small>
               </span>
               <Select
                 disabled={saving}
                 onValueChange={changeAction}
                 value={policy.request_action}
               >
-                <SelectTrigger aria-label="命中后的请求动作" className="w-full" id="privacy-request-action">
+                <SelectTrigger
+                  aria-label="命中后的请求动作"
+                  className="h-9 w-full px-3 text-sm"
+                  id="privacy-request-action"
+                  size="sm"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1772,14 +1859,15 @@ export function SafetyPolicy({
                 </SelectContent>
               </Select>
             </Label>
+            </div>
 
             <Label
-              className="flex items-center justify-between gap-4 rounded-xl border bg-muted/60 p-4"
+              className="flex items-center justify-between gap-3 font-normal"
               htmlFor="privacy-response-restore"
             >
-              <span>
-                <strong className="block text-sm">响应还原占位符</strong>
-                <small className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <strong className="text-sm font-medium">响应还原占位符</strong>
+                <small className="text-sm leading-snug text-muted-foreground">
                   {policy.request_action === "redact"
                     ? "默认开启：把本请求脱敏后的占位符在模型回复中还原给客户端"
                     : "仅在请求动作为「脱敏后继续」时生效"}
@@ -1788,6 +1876,7 @@ export function SafetyPolicy({
               <Switch
                 aria-label="响应还原占位符"
                 checked={policy.response_restore}
+                className="shrink-0"
                 disabled={saving || policy.request_action !== "redact"}
                 id="privacy-response-restore"
                 onCheckedChange={(checked) =>
@@ -1795,27 +1884,62 @@ export function SafetyPolicy({
                     response_restore: checked,
                   })
                 }
+                size="sm"
               />
             </Label>
 
-            <Button
-              className="justify-self-start"
-              onClick={() => setStreamingDemoOpen(true)}
-              variant="outline"
-              type="button"
-            >
-              查看流式演示
-            </Button>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Regex 覆盖邮箱、电话、账号/银行卡、IP/URL 与常见密钥；不识别人名、地址或上下文日期。
+              {" "}
+              <Button
+                className="h-auto px-0 py-0 text-sm font-medium"
+                onClick={() => setStreamingDemoOpen(true)}
+                size="sm"
+                type="button"
+                variant="link"
+              >
+                查看流式演示
+              </Button>
+            </p>
+            </div>
+          </TabsContent>
 
-            <div className="grid gap-3 rounded-xl border bg-muted/35 p-4">
-              <div>
-                <strong className="block text-sm">试运行</strong>
-                <small className="mt-0.5 block text-xs text-muted-foreground">用样例文本预览当前策略效果，不会转发上游</small>
+          <TabsContent
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+            forceMount
+            hidden={workspace !== "dryRun"}
+            value="dryRun"
+          >
+            <div className="grid min-w-0 gap-3 pb-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold tracking-tight">
+                  试运行
+                </h3>
+                <p className="mt-1 text-sm leading-relaxed text-text-secondary">
+                  用样例文本预览当前策略效果，不会转发上游
+                </p>
               </div>
-              <Label className="grid gap-3 rounded-lg border bg-card p-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center" htmlFor="privacy-dry-run-protocol">
-                <span>
-                  <strong className="block text-sm">协议</strong>
-                  <small className="mt-0.5 block text-xs text-muted-foreground">决定样例如何包装成可检请求体</small>
+              <Button
+                className="h-auto shrink-0 px-0 py-0 text-sm font-medium"
+                onClick={() => setWorkspace("policy")}
+                size="sm"
+                type="button"
+                variant="link"
+              >
+                返回策略
+              </Button>
+            </div>
+
+              <Label
+                className="grid min-w-0 gap-2 font-normal @[560px]:grid-cols-[minmax(0,1fr)_240px] @[560px]:items-center"
+                htmlFor="privacy-dry-run-protocol"
+              >
+                <span className="flex min-w-0 flex-col gap-1">
+                  <strong className="text-sm font-medium">协议</strong>
+                  <small className="text-sm leading-snug text-muted-foreground">
+                    决定样例如何包装成可检请求体
+                  </small>
                 </span>
                 <Select
                   disabled={dryRunBusy}
@@ -1826,7 +1950,12 @@ export function SafetyPolicy({
                   }}
                   value={dryRunProtocol}
                 >
-                  <SelectTrigger aria-label="试运行协议" className="w-full" id="privacy-dry-run-protocol">
+                  <SelectTrigger
+                    aria-label="试运行协议"
+                    className="h-9 w-full px-3 text-sm"
+                    id="privacy-dry-run-protocol"
+                    size="sm"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1840,10 +1969,15 @@ export function SafetyPolicy({
               </Label>
               <div className="grid gap-2">
                 <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="privacy-dry-run-sample">
-                    <strong className="text-xs">样例文本</strong>
+                  <Label
+                    className="items-start leading-normal font-normal"
+                    htmlFor="privacy-dry-run-sample"
+                  >
+                    <strong className="text-sm font-medium">样例文本</strong>
                   </Label>
-                  <small className="text-[10px] text-muted-foreground">{dryRunSamplePresets.length} 组虚构测试用例</small>
+                  <small className="text-sm text-muted-foreground">
+                    {dryRunSamplePresets.length} 组虚构测试用例
+                  </small>
                 </div>
                 <div
                   aria-label="试运行样例"
@@ -1855,7 +1989,10 @@ export function SafetyPolicy({
                     return (
                       <Button
                         aria-pressed={selected}
-                        className={cn(selected && "border-primary/45 bg-accent text-accent-foreground")}
+                        className={cn(
+                          "h-7 px-2.5 text-sm",
+                          selected && "border-primary/45 bg-accent text-accent-foreground",
+                        )}
                         disabled={dryRunBusy}
                         key={preset.id}
                         onClick={() => changeDryRunSample(preset.text)}
@@ -1869,12 +2006,13 @@ export function SafetyPolicy({
                     );
                   })}
                 </div>
-                <small className="text-[10px] leading-4 text-muted-foreground">
+                <small className="text-sm leading-relaxed text-muted-foreground">
                   {selectedDryRunPreset?.description ??
                     "自定义样例：可以继续编辑下方文本。"}
                 </small>
                 <Textarea
                   aria-label="试运行样例文本"
+                  className="min-h-24 text-sm leading-relaxed"
                   id="privacy-dry-run-sample"
                   disabled={dryRunBusy}
                   onChange={(event) => {
@@ -1884,8 +2022,8 @@ export function SafetyPolicy({
                   value={dryRunSample}
                 />
                 <small className={cn(
-                  "justify-self-end text-[10px] text-muted-foreground",
-                  dryRunSampleOverLimit && "font-bold text-destructive",
+                  "justify-self-end text-sm text-muted-foreground",
+                  dryRunSampleOverLimit && "font-medium text-destructive",
                 )}>
                   {dryRunSampleBytes.toLocaleString()} /{" "}
                   {MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString()} 字节
@@ -1894,6 +2032,7 @@ export function SafetyPolicy({
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
+                  aria-busy={dryRunBusy}
                   disabled={
                     dryRunBusy ||
                     saving ||
@@ -1906,173 +2045,218 @@ export function SafetyPolicy({
                   onClick={() => {
                     void runDryRun();
                   }}
+                  size="sm"
                   type="button"
                 >
                   {dryRunBusy ? "试运行中…" : "试运行"}
                 </Button>
                 {dryRunSampleOverLimit ? (
-                  <small className="text-xs text-destructive">样例过长（上限 256 KiB），请缩短后再试</small>
+                  <small className="text-sm text-destructive">样例过长（上限 256 KiB），请缩短后再试</small>
                 ) : !policy.enabled ? (
-                  <small className="text-xs text-muted-foreground">隐私保护未开启，请先开启后再试运行</small>
+                  <small className="text-sm text-muted-foreground">隐私保护未开启，请先开启后再试运行</small>
                 ) : policy.enabled &&
                   policy.detector === "local_model" &&
                   !selectedModelReady ? (
-                  <small className="text-xs text-muted-foreground">需要先选择已就绪的本地模型</small>
+                  <small className="text-sm text-muted-foreground">需要先选择已就绪的本地模型</small>
                 ) : (
-                  <small className="text-xs text-muted-foreground">使用上方当前策略配置预览</small>
+                  <small className="text-sm text-muted-foreground">使用「策略」中的当前配置预览</small>
                 )}
               </div>
               {dryRunError !== null ? (
                 <FormMessage tone="error">{dryRunError}</FormMessage>
               ) : null}
-              {dryRunResult !== null ? (
+
+            <div className="grid gap-3 border-t pt-4">
+              <h3
+                className="text-base font-semibold tracking-tight outline-none"
+                id="dry-run-result-heading"
+                ref={dryRunResultHeadingRef}
+                tabIndex={-1}
+              >
+                试运行结果
+              </h3>
+            <p aria-live="polite" className="sr-only">
+              {dryRunBusy
+                ? "试运行中…"
+                : dryRunResult !== null
+                  ? dryRunLiveSummary(dryRunResult)
+                  : ""}
+            </p>
+              {dryRunBusy ? (
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  试运行中…
+                </p>
+              ) : dryRunResult !== null ? (
                 <div
-                  aria-live="polite"
-                  className="grid gap-3 rounded-lg border bg-card p-3"
+                  className="grid gap-3"
                   data-testid="safety-dry-run-result"
                 >
-                  <div className="flex items-center justify-between gap-3 rounded-md bg-accent px-3 py-2 text-xs text-accent-foreground">
+                  <p className="text-sm text-muted-foreground">仅本地预览</p>
+                  <div className="flex items-center justify-between gap-3 rounded-md bg-accent px-3 py-2 text-sm text-accent-foreground">
                     <span>决策</span>
-                    <strong className="font-bold">{actionLabels[dryRunResult.decision]}</strong>
+                    <strong className="font-medium">{actionLabels[dryRunResult.decision]}</strong>
                   </div>
-                  <div className="flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center justify-between gap-3 text-sm">
                     <span>命中类别</span>
                     <strong>{summarizeDryRunFindings(dryRunResult)}</strong>
                   </div>
                   {dryRunResult.findings.length > 0 ? (
-                    <div className="grid gap-2 overflow-x-auto">
-                      <span className="text-xs font-bold text-success-foreground">通过判定（会执行策略）</span>
-                      <Table className="min-w-[480px] border-collapse text-left text-xs [&_td]:border-t [&_td]:px-2 [&_td]:py-2 [&_td]:whitespace-normal [&_th]:h-auto [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-muted-foreground [&_tr]:border-0 [&_tr]:hover:bg-transparent">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead scope="col">类别</TableHead>
-                            <TableHead scope="col">位置</TableHead>
-                            <TableHead scope="col">命中原因</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {dryRunResult.findings.map((finding, index) => (
-                            <TableRow
-                              key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
-                            >
-                              <TableCell>{dryRunKindLabel(finding.kind)}</TableCell>
-                              <TableCell>
-                                <code>{finding.path}</code>
-                              </TableCell>
-                              <TableCell>
-                                {policy.detector === "regex"
-                                  ? "Regex 命中（置信度门槛不适用）"
-                                  : `${finding.confidence.toFixed(6)} ≥ ${policy.min_confidence.toFixed(2)}`}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                    <div className="grid gap-2">
+                      <span className="text-sm font-medium text-success-foreground">通过判定（会执行策略）</span>
+                      <ul className="grid gap-2">
+                        {dryRunResult.findings.map((finding, index) => (
+                          <li
+                            className="rounded-lg border bg-card px-3 py-2 text-sm"
+                            key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
+                          >
+                            <strong className="font-medium">{dryRunKindLabel(finding.kind)}</strong>
+                            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                              位置{" "}
+                              <code className="break-all">{finding.path}</code>
+                            </p>
+                            <p className="mt-0.5 text-sm leading-relaxed">
+                              {dryRunConfidenceReason(
+                                finding.confidence,
+                                policy.min_confidence,
+                                policy.detector,
+                                "hit",
+                              )}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   ) : null}
                   {dryRunResult.suppressed_findings.length > 0 ? (
-                    <div className="grid gap-2 overflow-x-auto rounded-lg bg-warning-wash/60 p-2">
-                      <span className="text-xs font-bold text-warning-foreground">低于门槛（已抑制，不执行策略）</span>
-                      <Table className="min-w-[480px] border-collapse text-left text-xs [&_td]:border-t [&_td]:px-2 [&_td]:py-2 [&_td]:whitespace-normal [&_th]:h-auto [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-muted-foreground [&_tr]:border-0 [&_tr]:hover:bg-transparent">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead scope="col">类别</TableHead>
-                            <TableHead scope="col">位置</TableHead>
-                            <TableHead scope="col">抑制原因</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {dryRunResult.suppressed_findings.map(
-                            (finding, index) => (
-                              <TableRow
-                                key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
-                              >
-                                <TableCell>{dryRunKindLabel(finding.kind)}</TableCell>
-                                <TableCell>
-                                  <code>{finding.path}</code>
-                                </TableCell>
-                                <TableCell>
-                                  {finding.confidence.toFixed(6)} &lt;{" "}
-                                  {policy.min_confidence.toFixed(2)}
-                                </TableCell>
-                              </TableRow>
-                            ),
-                          )}
-                        </TableBody>
-                      </Table>
+                    <div className="grid gap-2 rounded-lg bg-warning-wash/60 p-2">
+                      <span className="text-sm font-medium text-warning-foreground">低于门槛（已抑制，不执行策略）</span>
+                      <ul className="grid gap-2">
+                        {dryRunResult.suppressed_findings.map(
+                          (finding, index) => (
+                            <li
+                              className="rounded-lg border bg-card px-3 py-2 text-sm"
+                              key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
+                            >
+                              <strong className="font-medium">{dryRunKindLabel(finding.kind)}</strong>
+                              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                                位置{" "}
+                                <code className="break-all">{finding.path}</code>
+                              </p>
+                              <p className="mt-0.5 text-sm leading-relaxed">
+                                {dryRunConfidenceReason(
+                                  finding.confidence,
+                                  policy.min_confidence,
+                                  policy.detector,
+                                  "suppressed",
+                                )}
+                              </p>
+                            </li>
+                          ),
+                        )}
+                      </ul>
                     </div>
                   ) : null}
                   {dryRunResult.redactions !== undefined &&
                   dryRunResult.redactions.length > 0 ? (
-                    <div className="grid gap-2 overflow-x-auto rounded-lg bg-muted p-2">
-                      <span className="text-xs font-bold">占位符对照（仅本地预览）</span>
-                      <Table className="min-w-[480px] border-collapse text-left text-xs [&_td]:border-t [&_td]:px-2 [&_td]:py-2 [&_td]:whitespace-normal [&_th]:h-auto [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-muted-foreground [&_tr]:border-0 [&_tr]:hover:bg-transparent">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead scope="col">占位符</TableHead>
-                            <TableHead scope="col">类别</TableHead>
-                            <TableHead scope="col">原文</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {dryRunResult.redactions.map((redaction) => (
-                            <TableRow key={redaction.placeholder}>
-                              <TableCell>
-                                <code>{redaction.placeholder}</code>
-                              </TableCell>
-                              <TableCell>{dryRunKindLabel(redaction.kind)}</TableCell>
-                              <TableCell>
-                                <code>{redaction.value}</code>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                    <div className="grid gap-2">
+                      <span className="text-sm font-medium">占位符对照（仅本地预览）</span>
+                      <ul className="grid gap-2">
+                        {dryRunResult.redactions.map((redaction) => (
+                          <li
+                            className="rounded-lg border bg-card px-3 py-2 text-sm"
+                            key={redaction.placeholder}
+                          >
+                            <code className="break-all">{redaction.placeholder}</code>
+                            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                              {dryRunKindLabel(redaction.kind)}
+                            </p>
+                            <p className="mt-0.5 text-sm leading-relaxed">
+                              原文{" "}
+                              <code className="break-all">{redaction.value}</code>
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   ) : null}
                   {dryRunResult.redacted_body !== undefined ? (
-                    <div className="grid gap-2 text-xs font-bold">
-                      <span>脱敏后的请求体</span>
-                      <pre className="max-h-64 overflow-auto rounded-lg bg-foreground p-3 font-mono text-[10px] leading-5 font-normal whitespace-pre-wrap text-background">{prettyJSON(dryRunResult.redacted_body)}</pre>
+                    <div className="grid gap-1.5">
+                      <span className="text-sm font-medium">脱敏后的请求体</span>
+                      <pre className="overflow-x-auto rounded-lg bg-foreground p-3 font-mono text-xs font-normal whitespace-pre-wrap text-background">{prettyJSON(dryRunResult.redacted_body)}</pre>
                     </div>
                   ) : null}
                 </div>
-              ) : null}
+              ) : (
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  尚未试运行。结果仅用于本地预览，不会转发上游。
+                </p>
+              )}
             </div>
-
-            <div className="rounded-xl border border-warning/25 bg-warning-wash p-3 text-warning-foreground">
-              <strong className="block text-xs">Regex 覆盖限制</strong>
-              <span className="mt-1 block text-xs leading-5">
-                覆盖邮箱、电话、账号/银行卡、IP/URL
-                与常见密钥；不识别人名、地址或上下文日期，也不支持自定义规则。
-              </span>
             </div>
+          </TabsContent>
 
-            <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
-              <span>ETag 并发保护</span>
-              <strong>{saving ? "保存中…" : "已与 Core 同步"}</strong>
-            </div>
-          </Card>
-
-          <Card className="grid min-w-0 gap-4 p-5 shadow-[var(--shadow-card)]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="text-[10px] font-bold tracking-[0.14em] text-muted-foreground uppercase">模型库</span>
-                <h3 className="mt-1 text-base font-bold">本地隐私模型</h3>
+          <TabsContent
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            forceMount
+            hidden={workspace !== "models"}
+            value="models"
+          >
+            <div className="flex min-w-0 shrink-0 items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold tracking-tight">
+                  本地隐私模型
+                </h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  模型由 Core 校验并在本机运行；请求正文不会发送到模型来源。
+                </p>
               </div>
-              <Badge className="border-success/25 bg-success-wash text-success-foreground" variant="outline">
+              <Badge
+                className="shrink-0 rounded-full border-transparent bg-success-wash px-2 py-0.5 text-xs font-medium text-success-foreground"
+                variant="outline"
+              >
                 {readyCount} 个就绪
               </Badge>
             </div>
 
-            <Tabs onValueChange={(value) => setView(value as ModelView)} value={view}>
-              <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4" aria-label="模型视图">
-                <TabsTrigger onClick={() => setView("catalog")} value="catalog">内置</TabsTrigger>
-                <TabsTrigger onClick={() => setView("installed")} value="installed">已安装 {installations.length}</TabsTrigger>
-                <TabsTrigger onClick={() => setView("local")} value="local">本地导入</TabsTrigger>
-                <TabsTrigger onClick={() => setView("custom")} value="custom">自定义</TabsTrigger>
+            <Tabs
+              className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden"
+              onValueChange={(value) => setView(value as ModelView)}
+              value={view}
+            >
+              <TabsList
+                className="grid h-auto w-full shrink-0 grid-cols-2 gap-0 rounded-md bg-muted p-[3px] @[560px]:grid-cols-4"
+                aria-label="模型视图"
+              >
+                <TabsTrigger
+                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
+                  onClick={() => setView("catalog")}
+                  value="catalog"
+                >
+                  内置
+                </TabsTrigger>
+                <TabsTrigger
+                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
+                  onClick={() => setView("installed")}
+                  value="installed"
+                >
+                  已安装 {installations.length}
+                </TabsTrigger>
+                <TabsTrigger
+                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
+                  onClick={() => setView("local")}
+                  value="local"
+                >
+                  本地导入
+                </TabsTrigger>
+                <TabsTrigger
+                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
+                  onClick={() => setView("custom")}
+                  value="custom"
+                >
+                  自定义
+                </TabsTrigger>
               </TabsList>
-              <TabsContent className="min-w-0" value="catalog">
+              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="catalog">
                 <div className="grid gap-3">
                   {catalog.map((model) => {
                     const variant = variantForCatalog(
@@ -2090,94 +2274,106 @@ export function SafetyPolicy({
                           ) ?? null);
                     const variantSelectID = `privacy-catalog-variant-${model.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
                     return (
-                      <article className="grid gap-3 rounded-xl border bg-card p-4" key={model.id}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <strong className="block text-sm">{model.name}</strong>
-                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                      <article className="grid min-w-0 gap-3 rounded-md border bg-muted p-3.5" key={model.id}>
+                        <div className="flex min-w-0 items-start justify-between gap-2.5">
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <strong className="min-w-0 overflow-hidden text-sm font-medium text-ellipsis">
+                              {model.name}
+                            </strong>
+                            <span className="text-sm leading-snug text-muted-foreground">
                               {model.source === "official" ? "官方" : "社区"} ·{" "}
                               {model.license}
                             </span>
                           </div>
-                          <Badge variant="secondary">{model.languages.join(" / ")}</Badge>
-                        </div>
-                        <p className="text-xs leading-5 text-text-secondary">{model.summary}</p>
-                        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                          <Label
-                            className="grid gap-1.5 text-xs font-medium"
-                            htmlFor={variantSelectID}
+                          <Badge
+                            className="shrink-0 px-2 py-0.5 text-xs"
+                            variant="secondary"
                           >
-                            <span>版本</span>
-                            <Select
-                              onValueChange={(variantID) => {
-                                setSelectedVariants((current) => ({
-                                  ...current,
-                                  [model.id]: variantID,
-                                }));
-                                if (
-                                  catalogPreparation?.catalogID === model.id
-                                ) {
-                                  setCatalogPreparation(null);
-                                }
-                              }}
-                              value={variant?.id ?? ""}
+                            {model.languages.join(" / ")}
+                          </Badge>
+                        </div>
+                        <p className="text-sm leading-relaxed text-text-secondary">{model.summary}</p>
+                        <div className="grid gap-2.5">
+                          <div className="flex min-w-0 flex-wrap items-end justify-between gap-2.5">
+                            <Label
+                              className="grid min-w-[180px] flex-1 gap-1.5 text-sm leading-normal font-medium"
+                              htmlFor={variantSelectID}
                             >
-                              <SelectTrigger
-                                aria-label={`${model.name} 模型版本`}
-                                className="w-full"
-                                id={variantSelectID}
+                              <span>版本</span>
+                              <Select
+                                onValueChange={(variantID) => {
+                                  setSelectedVariants((current) => ({
+                                    ...current,
+                                    [model.id]: variantID,
+                                  }));
+                                  if (
+                                    catalogPreparation?.catalogID === model.id
+                                  ) {
+                                    setCatalogPreparation(null);
+                                  }
+                                }}
+                                value={variant?.id ?? ""}
                               >
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {model.variants.map((candidate) => (
-                                  <SelectItem disabled={!candidate.supported} key={candidate.id} value={candidate.id}>
-                                    {candidate.name}
-                                    {candidate.recommended ? " · 推荐" : ""}
-                                    {!candidate.supported ? " · 当前不支持" : ""}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </Label>
-                          <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground sm:justify-end">
-                            <span>
-                              下载 {formatBytes(variant?.bytes_total ?? 0)}
-                            </span>
-                            <span>
-                              内存{" "}
-                              {formatBytes(variant?.estimated_ram_bytes ?? 0)}
-                            </span>
+                                <SelectTrigger
+                                  aria-label={`${model.name} 模型版本`}
+                                  className="h-9 w-full px-3 text-sm"
+                                  id={variantSelectID}
+                                  size="sm"
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {model.variants.map((candidate) => (
+                                    <SelectItem disabled={!candidate.supported} key={candidate.id} value={candidate.id}>
+                                      {candidate.name}
+                                      {candidate.recommended ? " · 推荐" : ""}
+                                      {!candidate.supported ? " · 当前不支持" : ""}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </Label>
+                            <div className="flex flex-wrap gap-2.5 pb-1.5 text-sm text-muted-foreground">
+                              <span>
+                                下载 {formatBytes(variant?.bytes_total ?? 0)}
+                              </span>
+                              <span>
+                                内存{" "}
+                                {formatBytes(variant?.estimated_ram_bytes ?? 0)}
+                              </span>
+                            </div>
                           </div>
-                          {existing === null ? (
-                            <Button
-                              className="sm:col-span-2 sm:justify-self-end"
-                              disabled={
-                                variant === null ||
-                                operationBusy !== null ||
-                                catalogProbeBusy !== null ||
-                                probing
-                              }
-                              onClick={() => {
-                                if (variant === null) return;
-                                void prepareCatalogInstallation(model, variant);
-                              }}
-                              type="button"
-                            >
-                              {catalogProbeBusy === model.id
-                                ? "检查中…"
-                                : "检查并安装"}
-                            </Button>
-                          ) : (
-                            <Button
-                              className="sm:col-span-2 sm:justify-self-end"
-                              onClick={() => setView("installed")}
-                              type="button"
-                              variant="outline"
-                            >
-                              查看{installationStatusLabels[existing.status]}
-                            </Button>
-                          )}
+                          <div className="flex justify-end">
+                            {existing === null ? (
+                              <Button
+                                disabled={
+                                  variant === null ||
+                                  operationBusy !== null ||
+                                  catalogProbeBusy !== null ||
+                                  probing
+                                }
+                                onClick={() => {
+                                  if (variant === null) return;
+                                  void prepareCatalogInstallation(model, variant);
+                                }}
+                                size="sm"
+                                type="button"
+                              >
+                                {catalogProbeBusy === model.id
+                                  ? "检查中…"
+                                  : "检查并安装"}
+                              </Button>
+                            ) : (
+                              <Button
+                                onClick={() => setView("installed")}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                查看{installationStatusLabels[existing.status]}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </article>
                     );
@@ -2188,7 +2384,7 @@ export function SafetyPolicy({
                 </div>
               </TabsContent>
 
-              <TabsContent className="min-w-0" value="installed">
+              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="installed">
                 <div className="grid gap-3">
                   {installations.map((installation) => {
                     const selected =
@@ -2221,15 +2417,17 @@ export function SafetyPolicy({
                     return (
                       <article
                         className={cn(
-                          "grid gap-3 rounded-xl border bg-card p-4",
-                          selected && "border-primary/45 bg-accent/35 ring-1 ring-primary/10",
+                          "grid gap-3 rounded-md border bg-muted p-3.5",
+                          selected && "border-primary/40 bg-accent/50 ring-1 ring-primary/10",
                         )}
                         key={installation.id}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <strong className="block text-sm">{installation.name}</strong>
-                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                        <div className="flex min-w-0 items-start justify-between gap-2.5">
+                          <div className="min-w-0">
+                            <strong className="block min-w-0 overflow-hidden text-sm font-medium text-ellipsis">
+                              {installation.name}
+                            </strong>
+                            <span className="mt-1 block text-sm leading-snug text-muted-foreground">
                               {installation.variant_name} ·{" "}
                               {installation.quantization}
                             </span>
@@ -2253,13 +2451,13 @@ export function SafetyPolicy({
                                   ]}
                           </Badge>
                         </div>
-                        <p className="text-[10px] leading-4 text-muted-foreground">
+                        <p className="text-sm leading-relaxed text-muted-foreground">
                           {sourceLabel} · {licenseLabel} · {languageLabel} ·{" "}
                           {installation.repo_id}
                         </p>
                         {installation.status === "downloading" ? (
                           <div className="grid gap-1.5">
-                            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                            <div className="flex items-center justify-between text-sm text-muted-foreground">
                               <span>
                                 {hasDownloadTotal
                                   ? `${formatBytes(
@@ -2285,7 +2483,7 @@ export function SafetyPolicy({
                             />
                           </div>
                         ) : (
-                          <p className="text-[10px] leading-4 text-muted-foreground">
+                          <p className="text-sm leading-relaxed text-muted-foreground">
                             {installation.error === null
                               ? `磁盘 ${formatBytes(
                                   installation.bytes_total,
@@ -2296,12 +2494,12 @@ export function SafetyPolicy({
                           </p>
                         )}
                         {Object.keys(installation.label_mapping).length > 0 ? (
-                          <details className="rounded-lg border bg-muted/50 px-3 py-2 text-xs">
+                          <details className="rounded-lg border bg-card px-3 py-2.5 text-sm">
                             <summary className="cursor-pointer font-semibold">
                               标签映射 ·{" "}
                               {Object.keys(installation.label_mapping).length} 项
                             </summary>
-                            <div className="mt-2 grid gap-1 text-[10px] text-muted-foreground">
+                            <div className="mt-2 grid gap-1 text-sm text-muted-foreground">
                               {Object.entries(installation.label_mapping).map(
                                 ([label, kind]) => (
                                   <span key={label}>
@@ -2314,13 +2512,14 @@ export function SafetyPolicy({
                             </div>
                           </details>
                         ) : null}
-                        <div className="flex flex-wrap justify-end gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           {installation.status === "ready" ? (
                             <Button
                               disabled={saving || selected}
                               onClick={() =>
                                 chooseInstallation(installation)
                               }
+                              size="sm"
                               type="button"
                               variant={selected ? "secondary" : "default"}
                             >
@@ -2356,6 +2555,7 @@ export function SafetyPolicy({
                                   },
                                 );
                               }}
+                              size="sm"
                               type="button"
                               variant="outline"
                             >
@@ -2369,6 +2569,7 @@ export function SafetyPolicy({
                             onClick={() =>
                               void removeInstallation(installation)
                             }
+                            size="sm"
                             type="button"
                             variant="destructive"
                           >
@@ -2390,9 +2591,9 @@ export function SafetyPolicy({
                 </div>
               </TabsContent>
 
-              <TabsContent className="min-w-0" value="local">
-                <div className="grid gap-3 rounded-xl border bg-card p-4">
-                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="local">
+                <div className="grid gap-3.5 rounded-md border bg-muted p-3.5">
+                  <div className="grid gap-3 @[560px]:grid-cols-[minmax(0,1fr)_auto] @[560px]:items-end">
                     <Label
                       className="grid gap-1.5 text-xs font-medium"
                       htmlFor="privacy-local-model-path"
@@ -2427,13 +2628,13 @@ export function SafetyPolicy({
                       {probing ? "检查中…" : "检查本地模型"}
                     </Button>
                   </div>
-                  <p className="rounded-lg bg-muted px-3 py-2 text-[10px] leading-5 text-muted-foreground" id="local-model-mount-note">
+                  <p className="rounded-lg bg-card px-3 py-2.5 text-sm leading-relaxed text-muted-foreground" id="local-model-mount-note">
                     请先在系统中挂载网络共享，再填写本机绝对目录或 ONNX 文件路径；不接收{" "}
                     <code>smb://</code>、<code>file://</code> 或其他 URI。
                   </p>
 
                   {probe !== null && probeView === "local" ? (
-                    <div className="grid gap-3 rounded-xl border border-primary/20 bg-accent/25 p-3">
+                    <div className="grid gap-3 rounded-md border border-primary/20 bg-accent/40 p-3.5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <strong className="block text-sm">{probe.name}</strong>
@@ -2475,7 +2676,7 @@ export function SafetyPolicy({
                       </Label>
 
                       <div className="flex flex-wrap items-center justify-end gap-2">
-                        <span className="mr-auto text-[10px] leading-4 text-muted-foreground">
+                        <span className="mr-auto text-sm leading-relaxed text-muted-foreground">
                           {probeVariant === null
                             ? "没有当前设备支持的版本"
                             : `导入 ${formatBytes(
@@ -2531,9 +2732,9 @@ export function SafetyPolicy({
                 </div>
               </TabsContent>
 
-              <TabsContent className="min-w-0" value="custom">
-                <div className="grid gap-3 rounded-xl border bg-card p-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
+              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="custom">
+                <div className="grid gap-3.5 rounded-md border bg-muted p-3.5">
+                  <div className="grid gap-3 @[560px]:grid-cols-2">
                     <Label
                       className="grid gap-1.5 text-xs font-medium"
                       htmlFor="privacy-custom-repository"
@@ -2569,7 +2770,7 @@ export function SafetyPolicy({
                       />
                     </Label>
                     <Button
-                      className="sm:col-span-2 sm:justify-self-end"
+                      className="justify-self-end"
                       disabled={
                         probing ||
                         operationBusy !== null ||
@@ -2577,6 +2778,7 @@ export function SafetyPolicy({
                         customRevision.trim() === ""
                       }
                       onClick={() => void runProbe()}
+                      size="sm"
                       type="button"
                       variant="outline"
                     >
@@ -2585,7 +2787,7 @@ export function SafetyPolicy({
                   </div>
 
                   {probe !== null && probeView === "custom" ? (
-                    <div className="grid gap-3 rounded-xl border border-primary/20 bg-accent/25 p-3">
+                    <div className="grid gap-3 rounded-md border border-primary/20 bg-accent/40 p-3.5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <strong className="block text-sm">{probe.name}</strong>
@@ -2627,7 +2829,7 @@ export function SafetyPolicy({
                       </Label>
 
                       <div className="flex flex-wrap items-center justify-end gap-2">
-                        <span className="mr-auto text-[10px] leading-4 text-muted-foreground">
+                        <span className="mr-auto text-sm leading-relaxed text-muted-foreground">
                           {probeVariant === null
                             ? "没有当前设备支持的版本"
                             : `下载 ${formatBytes(
@@ -2683,12 +2885,8 @@ export function SafetyPolicy({
                 </div>
               </TabsContent>
             </Tabs>
-
-            <div className="rounded-xl border border-success/20 bg-success-wash px-3 py-2 text-xs leading-5 text-success-foreground">
-              模型由 Core 固定来源身份、校验文件并在本机运行；请求正文不会发送到模型来源。
-            </div>
-          </Card>
-        </div>
+          </TabsContent>
+        </Tabs>
       ) : null}
       {catalogPreparation !== null &&
       catalogPreparationModel !== null ? (

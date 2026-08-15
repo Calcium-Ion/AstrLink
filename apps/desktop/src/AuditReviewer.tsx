@@ -47,7 +47,7 @@ export function HTTPMetaSection({
       actions={
         meta ? (
           <Button
-            className="h-auto px-0 text-[10px]"
+            className="h-auto px-0 text-xs"
             onClick={() =>
               copyFeedback.copy(
                 copyKey,
@@ -73,16 +73,16 @@ export function HTTPMetaSection({
       title={title}
     >
       {meta === null ? (
-        <p className="text-[10px] leading-6 text-muted-foreground">
+        <p className="text-xs leading-6 text-muted-foreground">
           此记录未捕获 HTTP 元数据（记录创建时捕获未开启，或来自旧版本）。
         </p>
       ) : (
         <div className="grid gap-3">
-          <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-[10px] leading-6 text-text-secondary">
+          <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-xs leading-6 text-text-secondary">
             {meta.method} {meta.url} {meta.http_version}
           </code>
           <HeaderList headers={meta.request_headers} title="请求头" />
-          <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-[10px] leading-6 text-text-secondary">
+          <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-xs leading-6 text-text-secondary">
             {meta.response_status !== null
               ? `HTTP ${meta.response_status}`
               : "（无响应状态）"}
@@ -104,18 +104,18 @@ function HeaderList({
   if (headers.length === 0) {
     return (
       <div>
-        <h4 className="mb-1.5 text-[10px] font-bold text-text-secondary">{title}</h4>
-        <p className="text-[10px] leading-6 text-muted-foreground">（无）</p>
+        <h4 className="mb-1.5 text-xs font-medium text-text-secondary">{title}</h4>
+        <p className="text-xs leading-6 text-muted-foreground">（无）</p>
       </div>
     );
   }
   return (
     <div>
-      <h4 className="mb-1.5 text-[10px] font-bold text-text-secondary">{title}</h4>
-      <ul className="grid list-none gap-1 p-0 font-mono text-[9.5px] leading-6 text-text-secondary">
+      <h4 className="mb-1.5 text-xs font-medium text-text-secondary">{title}</h4>
+      <ul className="grid list-none gap-1 p-0 font-mono text-xs leading-6 text-text-secondary">
         {headers.map((header, index) => (
           <li key={`${header.name}:${index}`}>
-            <span className="font-bold text-foreground">{header.name}:</span>{" "}
+            <span className="font-medium text-foreground">{header.name}:</span>{" "}
             <span
               className={header.redacted ? "text-warning-foreground" : undefined}
               data-redacted={header.redacted || undefined}
@@ -147,7 +147,7 @@ export function AuditPartSection({
       actions={
         part ? (
           <Button
-            className="h-auto px-0 text-[10px]"
+            className="h-auto px-0 text-xs"
             onClick={() => copyFeedback.copy(sectionKey, part.content)}
             type="button"
             variant="link"
@@ -159,7 +159,7 @@ export function AuditPartSection({
       title={title}
     >
       {part === null ? (
-        <p className="text-[10px] leading-6 text-muted-foreground">
+        <p className="text-xs leading-6 text-muted-foreground">
           未捕获（捕获未开启，或内容已按保留期清理）。
         </p>
       ) : (
@@ -179,9 +179,9 @@ function DetailBlock({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-[11px] border bg-card p-3.5">
+    <section className="rounded-md border bg-card p-3.5">
       <header className="mb-2.5 flex items-center justify-between gap-3">
-        <h3 className="text-[11px] font-bold">{title}</h3>
+        <h3 className="text-sm font-medium">{title}</h3>
         {actions}
       </header>
       {children}
@@ -199,7 +199,7 @@ function AuditPartView({
   const isStream = part.media_type.toLowerCase().includes("text/event-stream");
   return (
     <div>
-      <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground">
+      <div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span>{part.media_type}</span>
         <span>{formatBytes(part.captured_bytes)}</span>
         {part.truncated ? <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">已截断</Badge> : null}
@@ -416,7 +416,7 @@ function EventsView({
             </SelectContent>
           </Select>
         </div>
-        <span className="ml-auto pb-2 text-[9px] text-muted-foreground max-[720px]:ml-0 max-[720px]:pb-0">
+        <span className="ml-auto pb-2 text-xs text-muted-foreground max-[720px]:ml-0 max-[720px]:pb-0">
           {filtered.length} 个匹配{parsing ? " · 仍在解析" : ""}
         </span>
       </div>
@@ -443,15 +443,15 @@ function EventsView({
 
 function EventCard({ event }: { event: SSEEvent }) {
   return (
-    <details className="group overflow-hidden rounded-[9px] border bg-card" data-testid="audit-event">
-      <summary className="grid cursor-pointer list-none grid-cols-[44px_minmax(0,1fr)_auto_auto] items-center gap-2 px-2.5 py-2 text-[9px] [&::-webkit-details-marker]:hidden max-[720px]:grid-cols-[36px_minmax(0,1fr)_auto]">
+    <details className="group overflow-hidden rounded-md border bg-card" data-testid="audit-event">
+      <summary className="grid cursor-pointer list-none grid-cols-[44px_minmax(0,1fr)_auto_auto] items-center gap-2 px-2.5 py-2 text-xs [&::-webkit-details-marker]:hidden max-[720px]:grid-cols-[36px_minmax(0,1fr)_auto]">
         <span className="text-muted-foreground">#{event.index}</span>
-        <strong className="overflow-hidden text-[10px] text-ellipsis whitespace-nowrap">{event.type}</strong>
+        <strong className="overflow-hidden text-xs text-ellipsis whitespace-nowrap">{event.type}</strong>
         {event.invalidJson ? <em className="text-warning-foreground not-italic max-[720px]:hidden">JSON 无效</em> : null}
         {event.incomplete ? <em className="text-warning-foreground not-italic max-[720px]:hidden">事件不完整</em> : null}
         <small className="text-muted-foreground">{event.data.length.toLocaleString()} 字符</small>
       </summary>
-      <pre className="max-h-[440px] overflow-auto border-t bg-muted p-3 font-mono text-[9.5px] leading-[1.55] whitespace-pre-wrap">
+      <pre className="max-h-[440px] overflow-auto border-t bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
         {event.json === null
           ? event.data || "（空 data）"
           : JSON.stringify(event.json, null, 2)}
@@ -490,7 +490,7 @@ function DocumentInspector({ part }: { part: AuditContentPart }) {
       </div>
       <TabsContent value="formatted">
         {formatted !== null ? (
-        <pre className="max-h-[520px] overflow-auto rounded-lg bg-muted p-3 font-mono text-[9.5px] leading-[1.55] whitespace-pre-wrap">{formatted}</pre>
+        <pre className="max-h-[520px] overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">{formatted}</pre>
         ) : null}
       </TabsContent>
       <TabsContent value="raw">
@@ -515,7 +515,7 @@ function RawSegmentView({ content }: { content: string }) {
   }
   return (
     <div data-testid="audit-raw">
-      <div className="mb-2 flex items-center justify-between gap-3 text-[9px] text-muted-foreground max-[720px]:items-start max-[720px]:flex-col">
+      <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground max-[720px]:items-start max-[720px]:flex-col">
         <span>
           完整原文 · {content.length.toLocaleString()} 字符 · {totalSegments} 段
         </span>
@@ -524,12 +524,12 @@ function RawSegmentView({ content }: { content: string }) {
       {segments.map((segment) => (
         <section className="mt-2 overflow-hidden rounded-lg border" data-testid="audit-raw-segment" key={segment.index}>
           {totalSegments > 1 ? (
-            <header className="border-b bg-muted px-3 py-2 text-[9px] text-muted-foreground">
+            <header className="border-b bg-muted px-3 py-2 text-xs text-muted-foreground">
               第 {segment.index + 1} 段 · 字符 {segment.start.toLocaleString()}–
               {segment.end.toLocaleString()}
             </header>
           ) : null}
-          <pre className="max-h-[520px] overflow-auto bg-muted/40 p-3 font-mono text-[9.5px] leading-[1.55] whitespace-pre-wrap">{segment.text}</pre>
+          <pre className="max-h-[520px] overflow-auto bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">{segment.text}</pre>
         </section>
       ))}
       {visibleSegments < totalSegments ? (
