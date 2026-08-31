@@ -3,7 +3,6 @@ package controlapi
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -18,7 +17,7 @@ func TestRouteControlAPICRUDAndRuntimeGate(t *testing.T) {
 		Name:    "route target",
 		Kind:    contract.ServiceKindOpenAI,
 		Enabled: true,
-		Models:  []string{"gpt-5.2"},
+		Models:  []string{"gpt-5.2", "model-code", "model-general"},
 		HTTP: &contract.HTTPConnection{
 			BaseURL: "https://api.example/v1",
 			Auth:    contract.ServiceAuth{Scheme: contract.AuthSchemeNone},
@@ -151,7 +150,7 @@ func TestRouteControlAPICRUDAndRuntimeGate(t *testing.T) {
 		"match":{"protocol":"openai.responses","model":"astrlink/auto"},
 		"selection":{"mode":"auto","taxonomy_id":"astrlink-text-v1"},
 		"categories":[
-			{"category_id":"code","targets":[{"service_id":"service_route","plan_type":"native","upstream_protocol":"openai.responses","priority":0,"upstream_model":"model-code"}]},
+			{"category_id":"coding","targets":[{"service_id":"service_route","plan_type":"native","upstream_protocol":"openai.responses","priority":0,"upstream_model":"model-code"}]},
 			{"category_id":"general","targets":[{"service_id":"service_route","plan_type":"native","upstream_protocol":"openai.responses","priority":0,"upstream_model":"model-general"}]}
 		]
 	}`
@@ -164,9 +163,8 @@ func TestRouteControlAPICRUDAndRuntimeGate(t *testing.T) {
 		autoBody,
 		"",
 	)
-	if response.Code != http.StatusUnprocessableEntity ||
-		!strings.Contains(response.Body.String(), "invalid_route") {
-		t.Fatalf("auto gate status=%d body=%s", response.Code, response.Body.String())
+	if response.Code != http.StatusCreated {
+		t.Fatalf("auto create status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

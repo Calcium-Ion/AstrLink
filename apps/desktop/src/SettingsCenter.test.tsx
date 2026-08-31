@@ -13,6 +13,14 @@ const bridge = vi.hoisted(() => ({
 }));
 vi.mock("./bridge", () => bridge);
 
+const notifyMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+}));
+vi.mock("./notify", () => ({ notify: notifyMocks }));
+
+import { applyLocale } from "./i18n";
 import type { AppSnapshot } from "./core-model";
 import { SettingsCenter } from "./SettingsCenter";
 
@@ -31,6 +39,8 @@ const settings = {
     core_auto_start: true,
     core_auto_recover: true,
     inference_port: 9000,
+    max_concurrent_inspections: 16,
+    locale: "zh-CN" as const,
   },
   load_warning: null,
   autostart_actual: false,
@@ -47,9 +57,13 @@ describe("SettingsCenter", () => {
     root = createRoot(container);
     bridge.getPreferences.mockReset().mockResolvedValue(settings);
     bridge.updatePreferences.mockReset().mockResolvedValue(settings);
+    notifyMocks.success.mockReset();
+    notifyMocks.error.mockReset();
+    notifyMocks.warning.mockReset();
   });
 
   afterEach(async () => {
+    await applyLocale("zh-CN");
     await act(async () => root.unmount());
     container.remove();
   });
@@ -68,7 +82,7 @@ describe("SettingsCenter", () => {
     });
     expect(container.textContent).toMatch(/正在使用[\s\S]*8317/);
     expect(container.textContent).toMatch(/已保存[\s\S]*9000/);
-    expect(container.textContent).toContain("端口修改尚未生效");
+    expect(container.textContent).toContain("入口修改尚未生效");
 
     const input = container.querySelector<HTMLInputElement>('input[type="number"]');
     if (!input) throw new Error("missing port input");
@@ -82,7 +96,7 @@ describe("SettingsCenter", () => {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存端口",
+      (button) => button.textContent === "保存",
     );
     if (!save) throw new Error("missing save button");
     await act(async () => {
@@ -90,7 +104,13 @@ describe("SettingsCenter", () => {
       await Promise.resolve();
     });
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({ inference_port: 9123 }),
+      expect.objectContaining({
+        inference_port: 9123,
+        max_concurrent_inspections: 16,
+      }),
+    );
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "入口设置已保存。重启网关后生效。",
     );
     expect(onDirtyChange).toHaveBeenCalledWith(true);
   });
@@ -130,5 +150,81 @@ describe("SettingsCenter", () => {
       }),
     );
     expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+  });
+
+  it("switches the interface language immediately", async () => {
+    bridge.updatePreferences.mockImplementation(async (values) => ({
+      ...settings,
+      values,
+      autostart_actual: settings.autostart_actual,
+    }));
+
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={vi.fn()}
+          snapshot={snapshot}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("推理入口");
+
+    const english = [...container.querySelectorAll('[role="radio"]')].find(
+      (node) => node.getAttribute("aria-label") === "English",
+    );
+    if (!english) throw new Error("missing English language option");
+    await act(async () => {
+      english.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(bridge.updatePreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ locale: "en" }),
+    );
+    expect(container.textContent).toContain("Inference entry");
+    await applyLocale("zh-CN");
+  });
+
+  it("saves a higher inspection concurrency for the next gateway start", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={vi.fn()}
+          snapshot={snapshot}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="检查并发"]',
+    );
+    if (!input) throw new Error("missing concurrency input");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(input, "32");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const save = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "保存",
+    );
+    if (!save) throw new Error("missing save button");
+    await act(async () => {
+      save.click();
+      await Promise.resolve();
+    });
+    expect(bridge.updatePreferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inference_port: 9000,
+        max_concurrent_inspections: 32,
+      }),
+    );
   });
 });

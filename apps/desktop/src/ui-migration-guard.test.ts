@@ -14,15 +14,18 @@ const migratedSources = [
   "AccessTokenManager.tsx",
   "App.tsx",
   "AppErrorBoundary.tsx",
+  "Overview.tsx",
   "AuditReviewer.tsx",
   "AutoRoutingShowcase.tsx",
   "PageHeader.tsx",
   "RequestRecords.tsx",
+  "RequestTrajectory.tsx",
   "RouteManager.tsx",
   "SafetyPolicy.tsx",
   "ServiceManager.tsx",
   "ServiceModelsEditor.tsx",
   "SettingsCenter.tsx",
+  "AgentDebugSettings.tsx",
   "components/AppShell.tsx",
   "components/ChoiceCard.tsx",
   "components/ConfirmDialog.tsx",
@@ -103,29 +106,29 @@ describe("paper/hairline design system", () => {
     const globals = readSource("styles/globals.css");
 
     expect(globals).toContain("--background: #ffffff;");
-    expect(globals).toContain("--foreground: #1c2340;");
-    expect(globals).toContain("--primary: #26336f;");
-    expect(globals).toContain("--primary-hover: #1b2552;");
+    expect(globals).toContain("--foreground: #1a2a3d;");
+    expect(globals).toContain("--primary: #1d4d87;");
+    expect(globals).toContain("--primary-hover: #16345c;");
     expect(globals).toContain("--destructive: #c2384f;");
     expect(globals).toContain("--success: #1f9d6b;");
     expect(globals).toContain("--warning: #d2911a;");
-    expect(globals).toContain("--violet: #6b5fd0;");
+    expect(globals).toContain("--violet: #2f6fe0;");
     expect(globals).toContain("--color-primary: var(--primary);");
     expect(globals).toContain("--color-success: var(--success);");
     expect(globals).toContain("--color-warning: var(--warning);");
     expect(globals).toContain("--color-violet: var(--violet);");
   });
 
-  it("keeps the brand ink and tide tied to the logo, and bans gradients", () => {
+  it("keeps the logo's own indigo/tide, the UI on a separate blue, and bans gradients", () => {
     const globals = readSource("styles/globals.css");
     const logo = readSource("assets/astrlink-logo.svg");
 
-    // #26336F is the top stop of the logo's structure gradient; #768DF6 is the
-    // middle stop of its tide. Changing either here must be a brand decision.
+    // Logo art stays indigo / periwinkle. UI brand ink is an independent
+    // pure blue and must not be retied to those logo stops.
     expect(logo).toContain("#26336F");
     expect(logo).toContain("#768DF6");
-    expect(globals).toContain("--primary: #26336f;");
-    expect(globals).toContain("--tide: #768df6;");
+    expect(globals).toContain("--primary: #1d4d87;");
+    expect(globals).toContain("--tide: #3b82f6;");
     expect(globals).toContain("--color-tide: var(--tide);");
 
     for (const [name, source] of [

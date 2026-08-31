@@ -3,10 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import capabilityFixture from "../../../contracts/examples/capabilities.alpha.json";
 
 const invokeMock = vi.hoisted(() => vi.fn());
+const downloadMocks = vi.hoisted(() => ({
+  downloadTextFile: vi.fn(),
+}));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
+vi.mock("./download-text-file", () => downloadMocks);
 
 import {
   cancelPrivacyModelInstallation,
@@ -25,6 +29,8 @@ import {
   getRoute,
   getService,
   getServiceAuthorization,
+  getServiceUsage,
+  resetServiceUsage,
   installPrivacyModel,
   listRoutes,
   listServices,
@@ -44,7 +50,12 @@ import {
   cancelServiceAuthorization,
   logoutService,
   openAuthorizationURL,
+  saveTextFile,
+  getAgentDebugStatus,
+  installAgentDebug,
+  uninstallAgentDebug,
 } from "./bridge";
+import { defaultPrivacyKindRules } from "./privacy-policy-model";
 
 function validSnapshot(): Record<string, unknown> {
   return {
@@ -76,6 +87,7 @@ function validSnapshot(): Record<string, unknown> {
 describe("desktop bridge contract", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    downloadMocks.downloadTextFile.mockReset();
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
   });
 
@@ -92,7 +104,7 @@ describe("desktop bridge contract", () => {
       pid: null,
     });
     expect(invokeMock).not.toHaveBeenCalled();
-    await expect(restartCore()).rejects.toThrow("desktop app");
+    await expect(restartCore()).rejects.toThrow("网关重启仅在 AstrLink 桌面应用中可用。");
   });
 
   it.each([
@@ -287,7 +299,6 @@ describe("desktop bridge contract", () => {
       id: "token_01",
       name: "VS Code",
       hint: "astr_…K8Q2",
-      source: "user",
       created_at: "2026-07-24T10:30:00Z",
     };
 
@@ -340,9 +351,15 @@ describe("desktop bridge contract", () => {
       detector: "regex",
       local_model_id: null,
       min_confidence: 0.6,
+      regex_source: "builtin",
+      custom_regex_rules: [],
       request_action: "redact",
       response_action: "allow",
       response_restore: true,
+      kind_rules: defaultPrivacyKindRules(),
+      allowlist_rules: [{ type: "domain_suffix", value: "github.com" }],
+      restore_tool_arguments: true,
+      placeholder_notice: true,
       match: {},
     };
     const etag = `"sha256:${"b".repeat(64)}"`;
@@ -655,6 +672,33 @@ describe("desktop bridge contract", () => {
       input: { protocol: "openai.models" },
     });
 
+    const usage = {
+      service_id: service.id,
+      fetched_at: "2026-08-30T11:00:00Z",
+      plan_type: "plus",
+      primary: {
+        used_percent: 34,
+        limit_window_seconds: 18_000,
+        reset_at: "2026-08-30T13:00:00Z",
+      },
+    };
+    invokeMock.mockResolvedValueOnce(usage);
+    await expect(getServiceUsage(service.id)).resolves.toEqual(usage);
+    expect(invokeMock).toHaveBeenLastCalledWith("get_service_usage", {
+      serviceId: service.id,
+    });
+
+    const reset = {
+      service_id: service.id,
+      outcome: "reset" as const,
+      windows_reset: 2,
+    };
+    invokeMock.mockResolvedValueOnce(reset);
+    await expect(resetServiceUsage(service.id)).resolves.toEqual(reset);
+    expect(invokeMock).toHaveBeenLastCalledWith("reset_service_usage", {
+      serviceId: service.id,
+    });
+
     const draftProbe = {
       service_id: "service_gateway",
       kind: "openai" as const,
@@ -689,5 +733,67 @@ describe("desktop bridge contract", () => {
     expect(invokeMock).toHaveBeenLastCalledWith("open_authorization_url", {
       url: "https://auth.openai.com/codex/device",
     });
+  });
+
+  it("parses agent debug install status and receipt", async () => {
+    const status = {
+      canonical_skill: false,
+      mcp_binary: false,
+      mcp_command: "/tmp/astrlink-mcp",
+      tools: [
+        {
+          id: "cursor",
+          detected: true,
+          skill_installed: false,
+          mcp_installed: false,
+        },
+      ],
+      preview_paths: ["/tmp/.agents/skills/astrlink-debug"],
+    };
+    invokeMock.mockResolvedValueOnce(status);
+    await expect(getAgentDebugStatus()).resolves.toEqual(status);
+    expect(invokeMock).toHaveBeenLastCalledWith("agent_debug_status");
+
+    const receipt = {
+      version: 1,
+      bundle: "astrlink-debug",
+      bundle_version: "0.1.0",
+      installed_at_unix: 1,
+      mcp_binary: "/tmp/astrlink-mcp",
+      files: ["/tmp/a"],
+    };
+    invokeMock.mockResolvedValueOnce(receipt);
+    await expect(installAgentDebug()).resolves.toEqual(receipt);
+    expect(invokeMock).toHaveBeenLastCalledWith("install_agent_debug");
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await uninstallAgentDebug();
+    expect(invokeMock).toHaveBeenLastCalledWith("uninstall_agent_debug");
+  });
+
+  it("saves text through the native dialog command", async () => {
+    invokeMock.mockResolvedValueOnce("/Users/me/Downloads/astrlink-req_1.md");
+
+    await expect(
+      saveTextFile("astrlink-req_1.md", "# bundle"),
+    ).resolves.toBe("/Users/me/Downloads/astrlink-req_1.md");
+    expect(invokeMock).toHaveBeenCalledWith("save_text_file", {
+      defaultFilename: "astrlink-req_1.md",
+      contents: "# bundle",
+    });
+    expect(downloadMocks.downloadTextFile).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a browser download when the native bridge is missing", async () => {
+    vi.stubGlobal("window", {});
+
+    await expect(saveTextFile("astrlink-req_1.txt", "plain")).resolves.toBe(
+      "astrlink-req_1.txt",
+    );
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(downloadMocks.downloadTextFile).toHaveBeenCalledWith(
+      "astrlink-req_1.txt",
+      "plain",
+    );
   });
 });

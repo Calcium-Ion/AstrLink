@@ -20,8 +20,24 @@ type policyPageResponse struct {
 
 func (handler *Handler) registerPolicyRoutes() {
 	handler.mux.HandleFunc(PolicyDryRunPath, handler.authenticated(handler.policyDryRun))
+	handler.mux.HandleFunc(PrivacyRegexBuiltinRulesPath, handler.authenticated(handler.privacyRegexBuiltinRules))
 	handler.mux.HandleFunc(PoliciesPath, handler.authenticated(handler.policyCollection))
 	handler.mux.HandleFunc(PoliciesPath+"/", handler.authenticated(handler.policyItem))
+}
+
+func (handler *Handler) privacyRegexBuiltinRules(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.RawQuery != "" {
+		writeError(writer, http.StatusBadRequest, "invalid_query", "regex builtin rules do not accept query parameters")
+		return
+	}
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	writeJSON(writer, http.StatusOK, contract.PolicyRegexBuiltinRulesResponse{
+		Rules: privacy.BuiltinRegexRules(),
+	})
 }
 
 func (handler *Handler) policyCollection(writer http.ResponseWriter, request *http.Request) {
@@ -226,6 +242,7 @@ func (handler *Handler) policyDryRun(writer http.ResponseWriter, request *http.R
 			Placeholder: redaction.Placeholder,
 			Kind:        string(redaction.Kind),
 			Value:       redaction.Value,
+			Style:       redaction.Style,
 		})
 	}
 	if result.Decision == privacy.DecisionRedact && len(result.Body) > 0 {
@@ -250,12 +267,27 @@ func (handler *Handler) requireReadyLocalModel(writer http.ResponseWriter, polic
 	return true
 }
 
+// patchablePolicyFields is the closed set of merge-patch keys the control plane
+// accepts for the singleton privacy policy. Everything else, including identity
+// and match scope, is fixed by ValidatePrivacyDefault.
+var patchablePolicyFields = map[string]bool{
+	"enabled":                true,
+	"detector":               true,
+	"local_model_id":         true,
+	"min_confidence":         true,
+	"regex_source":           true,
+	"custom_regex_rules":     true,
+	"kind_rules":             true,
+	"allowlist_rules":        true,
+	"request_action":         true,
+	"response_restore":       true,
+	"restore_tool_arguments": true,
+	"placeholder_notice":     true,
+}
+
 func applyPolicyPatch(policy contract.Policy, patch map[string]json.RawMessage) (contract.Policy, error) {
 	for name, raw := range patch {
-		if name != "enabled" && name != "detector" &&
-			name != "local_model_id" && name != "min_confidence" &&
-			name != "request_action" &&
-			name != "response_restore" {
+		if !patchablePolicyFields[name] {
 			return policy, errors.New("unknown or immutable policy field")
 		}
 		if isJSONNull(raw) && name != "local_model_id" {
@@ -278,6 +310,16 @@ func applyPolicyPatch(policy contract.Policy, patch map[string]json.RawMessage) 
 			if err := strictUnmarshal(raw, &policy.MinConfidence); err != nil {
 				return policy, err
 			}
+		case "regex_source":
+			if err := strictUnmarshal(raw, &policy.RegexSource); err != nil {
+				return policy, err
+			}
+		case "custom_regex_rules":
+			var rules []contract.PolicyRegexRule
+			if err := strictUnmarshal(raw, &rules); err != nil {
+				return policy, err
+			}
+			policy.CustomRegexRules = rules
 		case "request_action":
 			if err := strictUnmarshal(raw, &policy.RequestAction); err != nil {
 				return policy, err
@@ -286,8 +328,29 @@ func applyPolicyPatch(policy contract.Policy, patch map[string]json.RawMessage) 
 			if err := strictUnmarshal(raw, &policy.ResponseRestore); err != nil {
 				return policy, err
 			}
+		case "kind_rules":
+			var rules []contract.PolicyKindRule
+			if err := strictUnmarshal(raw, &rules); err != nil {
+				return policy, err
+			}
+			policy.KindRules = rules
+		case "allowlist_rules":
+			var rules []contract.PolicyAllowlistRule
+			if err := strictUnmarshal(raw, &rules); err != nil {
+				return policy, err
+			}
+			policy.AllowlistRules = rules
+		case "restore_tool_arguments":
+			if err := strictUnmarshal(raw, &policy.RestoreToolArguments); err != nil {
+				return policy, err
+			}
+		case "placeholder_notice":
+			if err := strictUnmarshal(raw, &policy.PlaceholderNotice); err != nil {
+				return policy, err
+			}
 		}
 	}
+	contract.NormalizePrivacyPolicyDefaults(&policy)
 	if err := contract.ValidatePrivacyDefault(policy); err != nil {
 		return policy, err
 	}

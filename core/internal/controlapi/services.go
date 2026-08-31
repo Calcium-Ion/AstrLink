@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -80,12 +82,28 @@ func (handler *Handler) serviceCollection(writer http.ResponseWriter, request *h
 func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Request) {
 	rest := strings.TrimPrefix(request.URL.Path, ServicesPath+"/")
 	parts := strings.Split(rest, "/")
-	if len(parts) < 1 || len(parts) > 2 || parts[0] == "" {
+	if len(parts) < 1 || parts[0] == "" {
 		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	id, ok := parseServiceID(writer, parts[0])
 	if !ok {
+		return
+	}
+	if len(parts) == 3 {
+		if parts[1] == "usage" && parts[2] == "reset" {
+			if request.Method != http.MethodPost {
+				writeMethodNotAllowed(writer, http.MethodPost)
+				return
+			}
+			handler.resetServiceUsage(writer, request, id)
+			return
+		}
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
+		return
+	}
+	if len(parts) > 2 {
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
 	if len(parts) == 2 {
@@ -110,6 +128,12 @@ func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Re
 				return
 			}
 			handler.probeServiceResponses(writer, request, id)
+		case "usage":
+			if request.Method != http.MethodGet {
+				writeMethodNotAllowed(writer, http.MethodGet)
+				return
+			}
+			handler.getServiceUsage(writer, request, id)
 		default:
 			writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		}
@@ -208,6 +232,10 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 			return
 		}
 		defer clear(mutation.Secret)
+		if err := handler.validateLocalConversions(capabilities); err != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", err.Error())
+			return
+		}
 		service.HTTP = &connection
 		service.Capabilities = capabilities
 		credential = mutation
@@ -260,6 +288,10 @@ func (handler *Handler) patchService(writer http.ResponseWriter, request *http.R
 	service, credential, err := applyServicePatch(current.Service, patch)
 	if err != nil {
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_patch", "service patch violates the contract")
+		return
+	}
+	if err := handler.validateLocalConversions(service.Capabilities); err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_patch", err.Error())
 		return
 	}
 	defer clear(credential.Secret)
@@ -593,6 +625,8 @@ func (handler *Handler) probeDraftServiceModels(writer http.ResponseWriter, requ
 	writeJSON(writer, http.StatusOK, response)
 }
 
+var modelProbeStatusPattern = regexp.MustCompile(`(?:status|HTTP) (\d{3})`)
+
 func writeServiceModelProbeError(writer http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -604,12 +638,142 @@ func writeServiceModelProbeError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, servicemodel.ErrNotConnected):
 		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
 	default:
-		writeError(writer, http.StatusBadGateway, "upstream_model_discovery_failed", "upstream model discovery failed")
+		writeError(writer, http.StatusBadGateway, "upstream_model_discovery_failed", sanitizedModelProbeMessage(err))
 	}
+}
+
+func sanitizedModelProbeMessage(err error) string {
+	if err == nil {
+		return "upstream model discovery failed"
+	}
+	text := err.Error()
+	if match := modelProbeStatusPattern.FindStringSubmatch(text); len(match) == 2 {
+		return "upstream model discovery failed (HTTP " + match[1] + ")"
+	}
+	if strings.Contains(text, "decode codex models") || strings.Contains(text, "invalid Codex") {
+		return "upstream model discovery failed (invalid catalog)"
+	}
+	return "upstream model discovery failed"
 }
 
 func (handler *Handler) probeServiceResponses(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
 	probeSubscriptionResponses(writer, request, id, handler.subscriptions)
+}
+
+func (handler *Handler) getServiceUsage(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
+	if handler.subscriptions == nil {
+		writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
+		return
+	}
+	record, err := handler.serviceStore.GetService(request.Context(), id)
+	if err != nil {
+		handler.writeStoreError(writer, err)
+		return
+	}
+	if !record.Service.Kind.IsSubscription() {
+		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription usage")
+		return
+	}
+	usage, err := handler.subscriptions.Usage(request.Context(), id)
+	if err != nil {
+		log.Printf("control: subscription usage %s failed: %s", id, sanitizeUsageError(err))
+		writeServiceUsageError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, usage)
+}
+
+func (handler *Handler) resetServiceUsage(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
+	if handler.subscriptions == nil {
+		writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
+		return
+	}
+	record, err := handler.serviceStore.GetService(request.Context(), id)
+	if err != nil {
+		handler.writeStoreError(writer, err)
+		return
+	}
+	if !record.Service.Kind.IsSubscription() {
+		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription usage")
+		return
+	}
+	result, err := handler.subscriptions.ConsumeReset(request.Context(), id)
+	if err != nil {
+		log.Printf("control: subscription usage reset %s failed: %s", id, sanitizeUsageError(err))
+		writeServiceResetError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func writeServiceResetError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, subscription.ErrNotConnected):
+		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
+	case errors.Is(err, subscription.ErrNoResetCredit):
+		writeError(writer, http.StatusConflict, "no_reset_credit", "no earned reset credits available")
+	case errors.Is(err, subscription.ErrNothingToReset):
+		writeError(writer, http.StatusConflict, "nothing_to_reset", "no rate-limit window is eligible for a reset")
+	case errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err):
+		writeError(writer, http.StatusGatewayTimeout, "subscription_usage_reset_timeout", "subscription usage reset timed out")
+	default:
+		writeError(writer, http.StatusBadGateway, "subscription_usage_reset_failed", sanitizeUsageError(err))
+	}
+}
+
+func writeServiceUsageError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, subscription.ErrNotConnected):
+		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
+	case errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err):
+		writeError(writer, http.StatusGatewayTimeout, "subscription_usage_timeout", "subscription usage lookup timed out")
+	default:
+		writeError(writer, http.StatusBadGateway, "subscription_usage_failed", sanitizeUsageError(err))
+	}
+}
+
+func sanitizeUsageError(err error) string {
+	message := sanitizeSubscriptionError(err)
+	if strings.Contains(message, "@") || strings.Contains(strings.ToLower(message), "email") {
+		return "subscription usage lookup failed"
+	}
+	return message
+}
+
+func isTimeoutError(err error) bool {
+	var timeout timeoutError
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
+type timeoutError interface {
+	Timeout() bool
+}
+
+func (handler *Handler) validateLocalConversions(capabilities []contract.Capability) error {
+	engine := handler.capabilities.ConversionEngine
+	for index, capability := range capabilities {
+		if capability.ConvertTo == "" {
+			continue
+		}
+		if !engine.Available {
+			return fmt.Errorf("capabilities[%d]: local conversion is unavailable", index)
+		}
+		matched := false
+		for _, edge := range engine.Edges {
+			if edge.From == capability.Protocol && edge.To == capability.ConvertTo &&
+				(!capability.Streaming || edge.Streaming) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf(
+				"capabilities[%d]: no conversion edge from %s to %s",
+				index, capability.Protocol, capability.ConvertTo,
+			)
+		}
+	}
+	return nil
 }
 
 func decodeServiceHTTP(

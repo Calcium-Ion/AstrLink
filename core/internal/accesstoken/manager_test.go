@@ -62,7 +62,7 @@ func (store *fakeAccessTokenStore) FindAccessTokenByHash(_ context.Context, hash
 
 func metadataFromCandidate(candidate storage.NewAccessToken) storage.AccessTokenMetadata {
 	return storage.AccessTokenMetadata{
-		ID: candidate.ID, Name: candidate.Name, Hint: candidate.Hint, Source: candidate.Source,
+		ID: candidate.ID, Name: candidate.Name, Hint: candidate.Hint,
 		CreatedAt: time.Date(2026, 7, 24, 1, 2, 3, 0, time.UTC),
 	}
 }
@@ -84,7 +84,7 @@ func TestCreateGeneratesCanonicalTokenAndSafeMetadata(t *testing.T) {
 	if created.Value != expectedRaw || !validRawToken(created.Value) {
 		t.Fatalf("created raw token = %q", created.Value)
 	}
-	if created.Token.Name != "Build Agent" || created.Token.Source != SourceUser {
+	if created.Token.Name != "Build Agent" {
 		t.Fatalf("created metadata = %#v", created.Token)
 	}
 	if store.created.NameKey != "BUILD AGENT" || store.created.Value != expectedRaw {
@@ -107,7 +107,7 @@ func TestCreateGeneratesCanonicalTokenAndSafeMetadata(t *testing.T) {
 	}
 }
 
-func TestEnsureDefaultUsesSystemDefaultSource(t *testing.T) {
+func TestEnsureDefaultCreatesNamedTokenOnce(t *testing.T) {
 	store := &fakeAccessTokenStore{}
 	manager, err := NewManager(store)
 	if err != nil {
@@ -118,11 +118,11 @@ func TestEnsureDefaultUsesSystemDefaultSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created || token.Name != DefaultTokenName || token.Source != SourceBootstrap {
+	if !created || token.Name != DefaultTokenName {
 		t.Fatalf("default token = %#v, created=%t", token, created)
 	}
-	if store.defaulted.Source != "system_default" {
-		t.Fatalf("default source = %q", store.defaulted.Source)
+	if store.defaulted.Name != DefaultTokenName {
+		t.Fatalf("defaulted candidate = %#v", store.defaulted)
 	}
 }
 

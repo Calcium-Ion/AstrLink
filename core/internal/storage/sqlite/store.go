@@ -33,6 +33,10 @@ const (
 	defaultListLimit = 50
 	maxListLimit     = 200
 	maxCredentialLen = 16_384
+	maxOpenConns     = 8
+	maxIdleConns     = 4
+	busyTimeoutMS    = 5000
+	slowListAfter    = time.Second
 )
 
 type Store struct {
@@ -54,7 +58,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := prepareDatabaseFiles(absolutePath); err != nil {
 		return nil, err
 	}
-	database, err := sql.Open(driverName, absolutePath)
+	database, err := sql.Open(driverName, sqliteFileDSN(absolutePath))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
@@ -74,19 +78,13 @@ func initialize(ctx context.Context, database *sql.DB) (*Store, error) {
 	if database == nil {
 		return nil, fmt.Errorf("database is required")
 	}
-	// A single connection keeps per-connection pragmas deterministic and is a
-	// suitable write-concurrency model for the local sidecar.
-	database.SetMaxOpenConns(1)
-	database.SetMaxIdleConns(1)
-	for _, pragma := range []string{
-		"PRAGMA foreign_keys = ON",
-		"PRAGMA busy_timeout = 5000",
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA synchronous = NORMAL",
-	} {
-		if _, err := database.ExecContext(ctx, pragma); err != nil {
-			return nil, fmt.Errorf("configure sqlite (%s): %w", pragma, err)
-		}
+	// WAL in the DSN applies to every pooled connection. A small pool lets
+	// request-record lists share the file with ingress upserts; SQLite still
+	// serializes writers and busy_timeout covers the wait.
+	database.SetMaxOpenConns(maxOpenConns)
+	database.SetMaxIdleConns(maxIdleConns)
+	if err := requireWALMode(ctx, database); err != nil {
+		return nil, err
 	}
 	runner, err := migrate.New(migrate.SQLDatabase{DB: database}, migrate.DefaultMigrations())
 	if err != nil {
@@ -106,6 +104,25 @@ func initialize(ctx context.Context, database *sql.DB) (*Store, error) {
 	return store, nil
 }
 
+func sqliteFileDSN(absolutePath string) string {
+	return fmt.Sprintf(
+		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)",
+		filepath.ToSlash(absolutePath),
+		busyTimeoutMS,
+	)
+}
+
+func requireWALMode(ctx context.Context, database *sql.DB) error {
+	var mode string
+	if err := database.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil {
+		return fmt.Errorf("read sqlite journal_mode: %w", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("sqlite journal_mode is %q, want wal", mode)
+	}
+	return nil
+}
+
 func (store *Store) Close() error {
 	if store == nil || store.db == nil {
 		return nil
@@ -114,9 +131,6 @@ func (store *Store) Close() error {
 }
 
 func (store *Store) EnsureDefaultAccessToken(ctx context.Context, candidate storagecontract.NewAccessToken) (record storagecontract.AccessTokenMetadata, created bool, err error) {
-	if candidate.Source != storagecontract.AccessTokenSourceBootstrap {
-		return record, false, fmt.Errorf("%w: default access token source must be system_default", storagecontract.ErrInvalidArgument)
-	}
 	if err := validateNewAccessToken(candidate); err != nil {
 		return record, false, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
@@ -158,9 +172,6 @@ func (store *Store) EnsureDefaultAccessToken(ctx context.Context, candidate stor
 }
 
 func (store *Store) CreateAccessToken(ctx context.Context, candidate storagecontract.NewAccessToken) (record storagecontract.AccessTokenMetadata, err error) {
-	if candidate.Source != storagecontract.AccessTokenSourceUser {
-		return record, fmt.Errorf("%w: created access token source must be user", storagecontract.ErrInvalidArgument)
-	}
 	if err := validateNewAccessToken(candidate); err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
@@ -510,7 +521,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		candidate.NameKey,
 		candidate.Hash[:],
 		candidate.Hint,
-		candidate.Source,
+		storagecontract.AccessTokenSourceUser,
 		createdAtText,
 	); err != nil {
 		var exists int
@@ -530,7 +541,6 @@ VALUES (?, ?)`, candidate.ID, candidate.Value); err != nil {
 		ID:        candidate.ID,
 		Name:      candidate.Name,
 		Hint:      candidate.Hint,
-		Source:    candidate.Source,
 		CreatedAt: createdAt,
 	}, nil
 }
@@ -610,7 +620,6 @@ func decodeAccessTokenMetadata(id, name, nameKey, hint, source, createdAt string
 		ID:        tokenID,
 		Name:      canonicalName,
 		Hint:      hint,
-		Source:    tokenSource,
 		CreatedAt: parsedCreatedAt,
 	}, nil
 }
@@ -622,9 +631,6 @@ func validateNewAccessToken(candidate storagecontract.NewAccessToken) error {
 	name, key, err := normalizeAccessTokenName(candidate.Name)
 	if err != nil || name != candidate.Name || key != candidate.NameKey {
 		return fmt.Errorf("access token name is not canonical")
-	}
-	if !candidate.Source.Valid() {
-		return fmt.Errorf("access token source is invalid")
 	}
 	if !validAccessTokenValue(candidate.Value) {
 		return fmt.Errorf("access token value is invalid")

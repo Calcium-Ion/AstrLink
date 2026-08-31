@@ -152,9 +152,89 @@ describe("RouteManager", () => {
     expect(container.textContent).toContain("Code alias");
     expect(container.textContent).toContain("team/code");
     expect(container.textContent).toContain("gpt-5.2");
-    expect(container.textContent).toContain("训练中 · 不可启用");
+    expect(container.textContent).toContain("未配置");
+    expect(container.textContent).not.toContain("训练中 · 不可启用");
     expect(container.textContent).not.toContain("mmBERT");
     expect(container.querySelector('[data-testid="route-auto-gate"]')).toBeNull();
+  });
+
+  it("saves an auto route from the category editor", async () => {
+    const autoRoute: Route = {
+      id: "route_auto",
+      name: "自动路由 · OpenAI Responses",
+      enabled: true,
+      priority: 0,
+      match: { protocol: "openai.responses", model: "astrlink/auto" },
+      selection: { mode: "auto", taxonomy_id: "astrlink-text-v1" },
+      categories: [
+        {
+          category_id: "coding",
+          targets: [
+            {
+              service_id: service.id,
+              plan_type: "native",
+              upstream_protocol: "openai.responses",
+              priority: 0,
+              upstream_model: "gpt-5.2",
+            },
+          ],
+        },
+        {
+          category_id: "general",
+          targets: [
+            {
+              service_id: service.id,
+              plan_type: "native",
+              upstream_protocol: "openai.responses",
+              priority: 0,
+              upstream_model: "team/code",
+            },
+          ],
+        },
+      ],
+    };
+    bridgeMocks.listRoutes.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+    });
+    bridgeMocks.createRoute.mockResolvedValue({ route: autoRoute, etag });
+    await render();
+
+    await setInput(labeledInput("编程开发模型"), "gpt-5.2");
+    await setInput(labeledInput("通用问答模型"), "team/code");
+    await act(async () => {
+      findButton("启用 astrlink/auto").click();
+      await Promise.resolve();
+    });
+
+    expect(bridgeMocks.createRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        match: { protocol: "openai.responses", model: "astrlink/auto" },
+        selection: { mode: "auto", taxonomy_id: "astrlink-text-v1" },
+        categories: expect.arrayContaining([
+          expect.objectContaining({
+            category_id: "coding",
+            targets: [
+              expect.objectContaining({
+                service_id: service.id,
+                upstream_model: "gpt-5.2",
+              }),
+            ],
+          }),
+          expect.objectContaining({
+            category_id: "general",
+            targets: [
+              expect.objectContaining({
+                service_id: service.id,
+                upstream_model: "team/code",
+              }),
+            ],
+          }),
+        ]),
+      }),
+    );
+    expect(container.textContent).toContain("已启用");
+    expect(container.textContent).not.toContain("Code alias");
   });
 
   it("creates a model-alias route from the priority editor", async () => {
@@ -196,6 +276,31 @@ describe("RouteManager", () => {
           }),
         ],
       }),
+    );
+  });
+
+  it("rejects an upstream model that is not on the service allowlist", async () => {
+    bridgeMocks.listRoutes.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+    });
+    await render();
+
+    await act(async () => {
+      findButton("新建固定路由").click();
+    });
+    await setInput(labeledInput("路由名称"), "Retired alias");
+    await setInput(labeledInput("公开模型名"), "team/code");
+    await setInput(labeledInput("上游模型"), "gpt-5.1-legacy");
+
+    await act(async () => {
+      findButton("创建固定路由").click();
+      await Promise.resolve();
+    });
+
+    expect(bridgeMocks.createRoute).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(
+      "目标 1 的有效上游模型不在该 API 服务的模型白名单内。",
     );
   });
 

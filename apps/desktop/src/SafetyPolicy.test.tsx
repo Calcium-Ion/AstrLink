@@ -11,6 +11,7 @@ const bridgeMocks = vi.hoisted(() => ({
   getPrivacyModelCatalog: vi.fn(),
   getPrivacyModelInstallation: vi.fn(),
   getPrivacyPolicy: vi.fn(),
+  getPrivacyRegexBuiltinRules: vi.fn(),
   installPrivacyModel: vi.fn(),
   listPrivacyModelInstallations: vi.fn(),
   probeLocalPrivacyModel: vi.fn(),
@@ -20,7 +21,15 @@ const bridgeMocks = vi.hoisted(() => ({
 
 vi.mock("./bridge", () => bridgeMocks);
 
+const notifyMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+}));
+vi.mock("./notify", () => ({ notify: notifyMocks }));
+
 import { SafetyPolicy } from "./SafetyPolicy";
+import { defaultPrivacyKindRules } from "./privacy-policy-model";
 import type {
   PrivacyCatalogModel,
   PrivacyModelInstallation,
@@ -68,9 +77,15 @@ function policyRecord(
       detector: "regex",
       local_model_id: null,
       min_confidence: 0.6,
+      regex_source: "builtin",
+      custom_regex_rules: [],
       request_action: "redact",
       response_action: "allow",
       response_restore: true,
+      kind_rules: defaultPrivacyKindRules(),
+      allowlist_rules: [{ type: "domain_suffix", value: "github.com" }],
+      restore_tool_arguments: true,
+      placeholder_notice: true,
       match: {},
       ...overrides,
     },
@@ -818,7 +833,7 @@ describe("SafetyPolicy", () => {
       detector: "local_model",
       local_model_id: ready.id,
     });
-    expect(container.textContent).toContain("安全策略已保存");
+    expect(notifyMocks.success).toHaveBeenCalledWith("安全策略已保存。");
   });
 
   it("shows an in-app confirmation and feedback when deleting a model", async () => {
@@ -852,7 +867,7 @@ describe("SafetyPolicy", () => {
     expect(bridgeMocks.deletePrivacyModelInstallation).toHaveBeenCalledWith(
       ready.id,
     );
-    expect(container.textContent).toContain("本地模型已删除");
+    expect(notifyMocks.success).toHaveBeenCalledWith("本地模型已删除。");
     expect(container.textContent).toContain("尚未安装本地模型");
   });
 
@@ -906,6 +921,94 @@ describe("SafetyPolicy", () => {
         '[role="switch"][aria-label="响应还原占位符"]',
       )?.getAttribute("aria-checked"),
     ).toBe("false");
+  });
+
+  // The whole kind_rules list is sent because a patch replaces it rather than
+  // merging, so a partial list would silently reset the omitted kinds.
+  it("patches the whole kind rule list when one kind is toggled", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    await renderPolicy();
+
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="脱敏URL"]',
+    );
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      toggle?.click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    const expected = defaultPrivacyKindRules().map((rule) =>
+      rule.kind === "url" ? { ...rule, enabled: true } : rule,
+    );
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
+      kind_rules: expected,
+    });
+  });
+
+  it("locks the placeholder style of kinds where the shape is a safety property", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    await renderPolicy();
+
+    const locked = container.querySelector<HTMLButtonElement>(
+      '[aria-label="常见密钥 占位符形态"]',
+    );
+    expect(locked?.getAttribute("data-disabled")).not.toBeNull();
+    expect(locked?.textContent).toContain("标记占位符");
+    expect(container.textContent).toContain("诱导模型真的拿去调用 API");
+
+    const configurable = container.querySelector<HTMLButtonElement>(
+      '[aria-label="邮箱 占位符形态"]',
+    );
+    expect(configurable?.getAttribute("data-disabled")).toBeNull();
+    expect(configurable?.textContent).toContain("保留域假值");
+  });
+
+  it("appends an allowlist rule only once it has a value", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    await renderPolicy();
+
+    await act(async () => {
+      button("添加名单").click();
+      await Promise.resolve();
+    });
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+
+    await setInput('input[aria-label="名单 2 值"]', "internal.example");
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
+    await act(async () => {
+      container
+        .querySelector<HTMLInputElement>('input[aria-label="名单 2 值"]')
+        ?.blur();
+    });
+    await flush();
+
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
+      allowlist_rules: [
+        { type: "domain_suffix", value: "github.com" },
+        { type: "domain_suffix", value: "internal.example" },
+      ],
+    });
+  });
+
+  it("ties tool argument restore to response restore", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({ response_restore: false }),
+    );
+    await renderPolicy();
+
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="还原工具调用参数"]',
+    );
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    expect(toggle?.getAttribute("disabled")).not.toBeNull();
+    expect(container.textContent).toContain(
+      "工具在本机执行；关闭后 Agent 会拿着假值去请求或写入文件",
+    );
   });
 
   it("opens a local streaming restore demo without mutating policy", async () => {
@@ -1144,7 +1247,7 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain("脱敏后继续");
     expect(container.textContent).toContain("邮箱 × 1");
     expect(container.textContent).toContain("0.91 ≥ 0.60");
-    expect(container.textContent).toContain("低于门槛（已抑制，不执行策略）");
+    expect(container.textContent).toContain("已抑制（不执行策略）");
     expect(container.textContent).toContain("0.42 < 0.60");
     expect(container.textContent).toContain("占位符对照（仅本地预览）");
     expect(container.textContent).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
@@ -1248,5 +1351,41 @@ describe("SafetyPolicy", () => {
         .querySelector('[role="tab"][aria-label="试运行结果"]')
         ?.getAttribute("data-state"),
     ).toBe("active");
+  });
+
+  it("switches regex source and can seed custom rules from the builtin catalog", async () => {
+    const builtinRules = [
+      { kind: "email" as const, pattern: `(?i)alice@[a-z.]+` },
+      { kind: "common_secret" as const, pattern: `sk-[A-Za-z0-9]+` },
+    ];
+    bridgeMocks.getPrivacyRegexBuiltinRules.mockResolvedValue({
+      rules: builtinRules,
+    });
+    bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        regex_source: "custom",
+        custom_regex_rules: builtinRules,
+      }),
+    );
+    await renderPolicy();
+
+    expect(container.textContent).toContain("Regex 规则来源");
+    expect(container.textContent).toContain("固定且不可编辑");
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[role="radio"][aria-label="自定义规则"]')
+        ?.click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(bridgeMocks.getPrivacyRegexBuiltinRules).toHaveBeenCalled();
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
+      regex_source: "custom",
+      custom_regex_rules: builtinRules,
+    });
+    expect(container.textContent).toContain("一键填入内置规则");
+    expect(container.textContent).toContain("添加规则");
   });
 });

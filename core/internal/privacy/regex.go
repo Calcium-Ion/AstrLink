@@ -2,12 +2,15 @@ package privacy
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 const maxDetectorFindings = 4_096
@@ -19,66 +22,124 @@ type regexSpec struct {
 	boundary func(string, int, int) bool
 }
 
+type builtinRegexDefinition struct {
+	kind     Kind
+	pattern  string
+	validate func(string) bool
+	boundary func(string, int, int) bool
+}
+
 type RegexDetector struct {
 	specs []regexSpec
 }
 
-func NewRegexDetector() *RegexDetector {
-	return &RegexDetector{specs: []regexSpec{
+func builtinRegexDefinitions() []builtinRegexDefinition {
+	return []builtinRegexDefinition{
 		{
 			kind:    KindCommonSecret,
-			pattern: regexp.MustCompile(`\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`),
+			pattern: `\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`,
 		},
 		{
 			kind:    KindCommonSecret,
-			pattern: regexp.MustCompile(`(?i)\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}`),
+			pattern: `(?i)\b(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}`,
 		},
 		{
 			kind:     KindPaymentCard,
-			pattern:  regexp.MustCompile(`\b[0-9](?:[ -]?[0-9]){12,18}\b`),
+			pattern:  `\b[0-9](?:[ -]?[0-9]){12,18}\b`,
 			validate: validPaymentCard,
 		},
 		{
 			kind:    KindEmail,
-			pattern: regexp.MustCompile(`(?i)\b[A-Z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+\b`),
+			pattern: `(?i)\b[A-Z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+\b`,
 		},
 		{
 			kind:     KindAccount,
-			pattern:  regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b`),
+			pattern:  `\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b`,
 			validate: validIBAN,
 		},
 		{
 			kind:     KindAccount,
-			pattern:  regexp.MustCompile(`(?i)\b(?:account|acct)\s*(?:number|no\.?|#)?\s*[:=-]\s*[0-9][0-9 -]{6,22}[0-9]\b`),
+			pattern:  `(?i)\b(?:account|acct)\s*(?:number|no\.?|#)?\s*[:=-]\s*[0-9][0-9 -]{6,22}[0-9]\b`,
 			validate: validContextAccount,
 		},
 		{
 			kind:     KindPhone,
-			pattern:  regexp.MustCompile(`\+[1-9][0-9 ()-]{8,20}[0-9]`),
+			pattern:  `\+[1-9][0-9 ()-]{8,20}[0-9]`,
 			validate: validPhone,
 		},
 		{
 			kind:     KindPhone,
-			pattern:  regexp.MustCompile(`(?:\([0-9]{2,4}\)[- .]?|\b[0-9]{2,4}[-.])[0-9]{3,4}[-.][0-9]{3,4}\b`),
+			pattern:  `(?:\([0-9]{2,4}\)[- .]?|\b[0-9]{2,4}[-.])[0-9]{3,4}[-.][0-9]{3,4}\b`,
 			validate: validPhone,
 		},
 		{
 			kind:     KindURL,
-			pattern:  regexp.MustCompile(`https?://[^\s<>"']+`),
+			pattern:  `https?://[^\s<>"']+`,
 			validate: validHTTPURL,
 		},
 		{
 			kind:     KindIPAddress,
-			pattern:  regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`),
+			pattern:  `\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`,
 			validate: validIPAddress,
 		},
 		{
 			kind:     KindIPAddress,
-			pattern:  regexp.MustCompile(`(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}`),
+			pattern:  `(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}`,
 			validate: validIPv6Address,
 			boundary: validIPv6Boundary,
 		},
-	}}
+	}
+}
+
+// BuiltinRegexRules returns the fixed Regex catalog as kind/pattern pairs for
+// control-plane seeding. Built-in validators are not included.
+func BuiltinRegexRules() []contract.PolicyRegexRule {
+	definitions := builtinRegexDefinitions()
+	rules := make([]contract.PolicyRegexRule, 0, len(definitions))
+	for _, definition := range definitions {
+		rules = append(rules, contract.PolicyRegexRule{
+			Kind:    string(definition.kind),
+			Pattern: definition.pattern,
+		})
+	}
+	return rules
+}
+
+func NewRegexDetector() *RegexDetector {
+	definitions := builtinRegexDefinitions()
+	specs := make([]regexSpec, 0, len(definitions))
+	for _, definition := range definitions {
+		specs = append(specs, regexSpec{
+			kind:     definition.kind,
+			pattern:  regexp.MustCompile(definition.pattern),
+			validate: definition.validate,
+			boundary: definition.boundary,
+		})
+	}
+	return &RegexDetector{specs: specs}
+}
+
+// NewCustomRegexDetector compiles user-authored rules without built-in
+// validators or boundary helpers.
+func NewCustomRegexDetector(rules []contract.PolicyRegexRule) (*RegexDetector, error) {
+	if len(rules) == 0 {
+		return nil, fmt.Errorf("custom regex rules are required")
+	}
+	specs := make([]regexSpec, 0, len(rules))
+	for index, rule := range rules {
+		if err := rule.Validate(); err != nil {
+			return nil, fmt.Errorf("custom regex rule %d: %w", index, err)
+		}
+		compiled, err := regexp.Compile(rule.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("custom regex rule %d: %w", index, err)
+		}
+		specs = append(specs, regexSpec{
+			kind:    Kind(rule.Kind),
+			pattern: compiled,
+		})
+	}
+	return &RegexDetector{specs: specs}, nil
 }
 
 func (detector *RegexDetector) Detect(ctx context.Context, input DetectInput) ([]Finding, error) {

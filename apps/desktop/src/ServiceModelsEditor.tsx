@@ -1,13 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
+import { useT } from "./i18n";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { DataRow } from "@/components/DataRow";
+import { ModelBrandIcon } from "@/components/ModelBrandIcon";
+import { Panel } from "@/components/Panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 import { encodeModelEditorValue } from "./model-editor";
-import { filterModels, groupModels } from "./model-groups";
+import {
+  filterModels,
+  groupModelsByCategory,
+  type ModelCategory,
+  type ModelGroup,
+} from "./model-groups";
 
 export type ServiceModelsEditorProps = {
   models: string[];
@@ -17,20 +28,222 @@ export type ServiceModelsEditorProps = {
   onAddModels: () => void;
   onDiscoverModels: () => void;
   onRemoveModels: (models: string[]) => void;
-  onReplaceModels: (models: string[]) => void;
+  onClearModels: () => void;
 };
 
 type ModelsConfirm =
   | { kind: "clear" }
   | { kind: "remove_filtered"; models: string[] }
+  | { kind: "remove_category"; category: string; models: string[] }
   | { kind: "remove_group"; group: string; models: string[] }
   | null;
 
 const COLLAPSE_THRESHOLD = 12;
 
+function categoryCollapseKey(key: string): string {
+  return `cat:${key}`;
+}
+
+function groupCollapseKey(key: string): string {
+  return `grp:${key}`;
+}
+
+function collapseKeysFor(models: readonly string[]): string[] {
+  return groupModelsByCategory(models).flatMap((category) => [
+    ...(category.groups.length > 1 ? [categoryCollapseKey(category.key)] : []),
+    ...category.groups.map((group) => groupCollapseKey(group.key)),
+  ]);
+}
+
 function initialCollapsed(models: readonly string[]): Set<string> {
   if (models.length < COLLAPSE_THRESHOLD) return new Set();
-  return new Set(groupModels(models).map((group) => group.key));
+  return new Set(collapseKeysFor(models));
+}
+
+function categoryModels(category: ModelCategory): string[] {
+  return category.groups.flatMap((group) => group.models);
+}
+
+const LIST_INSET = "px-3";
+const LIST_GAP = "gap-2";
+
+function CollapseChevron({ collapsed }: { collapsed: boolean }) {
+  return (
+    <ChevronDown
+      aria-hidden="true"
+      className={cn(
+        "size-4 shrink-0 text-muted-foreground transition-transform",
+        collapsed && "-rotate-90",
+      )}
+    />
+  );
+}
+
+function ModelListLead({ children }: { children: ReactNode }) {
+  return (
+    <span className="flex size-4 shrink-0 items-center justify-center">
+      {children}
+    </span>
+  );
+}
+
+function ModelListHeader({
+  brandModel,
+  collapsed,
+  countLabel,
+  onRemove,
+  onToggle,
+  removeLabel,
+  testId,
+  title,
+  tone,
+}: {
+  brandModel?: string;
+  collapsed: boolean;
+  countLabel: string;
+  onRemove: () => void;
+  onToggle: () => void;
+  removeLabel: string;
+  testId: "service-model-category-toggle" | "service-model-group-toggle";
+  title: string;
+  tone: "card" | "section";
+}) {
+  return (
+    <div
+      className={cn(
+        "group flex items-center",
+        LIST_GAP,
+        LIST_INSET,
+        "py-1.5",
+        tone === "card" && "bg-muted/70",
+        tone === "card" && !collapsed && "border-b",
+      )}
+    >
+      <Button
+        aria-expanded={!collapsed}
+        className="h-auto min-w-0 flex-1 justify-start gap-2 rounded-sm p-0 text-left text-sm text-text-secondary"
+        data-testid={testId}
+        onClick={onToggle}
+        type="button"
+        variant="ghost"
+      >
+        <ModelListLead>
+          <CollapseChevron collapsed={collapsed} />
+        </ModelListLead>
+        {brandModel ? <ModelBrandIcon model={brandModel} size={16} /> : null}
+        <strong
+          className={cn(
+            "min-w-0 overflow-hidden font-medium text-foreground text-ellipsis whitespace-nowrap",
+            tone === "section" ? "text-xs" : "text-sm",
+          )}
+        >
+          {title}
+        </strong>
+        <Badge className="px-1.5 py-0 text-micro tabular-nums" variant="secondary">
+          {countLabel}
+        </Badge>
+      </Button>
+      <Button
+        aria-label={removeLabel}
+        className="size-6 shrink-0 text-sm text-danger-foreground opacity-0 hover:bg-danger-wash group-hover:opacity-100 group-focus-within:opacity-100"
+        onClick={onRemove}
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+      >
+        −
+      </Button>
+    </div>
+  );
+}
+
+function ModelRow({
+  model,
+  onRemove,
+}: {
+  model: string;
+  onRemove: () => void;
+}) {
+  const t = useT();
+  const label = encodeModelEditorValue(model);
+  return (
+    <DataRow
+      className={cn("group/row py-2", LIST_GAP, LIST_INSET)}
+      data-testid="service-model-row"
+    >
+      <ModelListLead>
+        <ModelBrandIcon model={model} size={16} />
+      </ModelListLead>
+      <code
+        className="min-w-0 flex-1 overflow-hidden text-sm text-ellipsis whitespace-nowrap"
+        title={label}
+      >
+        {label}
+      </code>
+      <Button
+        aria-label={t("models.deleteNamed", { label })}
+        className="size-6 shrink-0 rounded text-sm text-danger-foreground opacity-0 hover:bg-danger-wash group-hover/row:opacity-100 group-focus-within/row:opacity-100"
+        onClick={onRemove}
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+      >
+        ×
+      </Button>
+    </DataRow>
+  );
+}
+
+function ModelGroupSection({
+  collapsed,
+  group,
+  nested = false,
+  onRemove,
+  onRemoveModel,
+  onToggle,
+}: {
+  collapsed: boolean;
+  group: ModelGroup;
+  nested?: boolean;
+  onRemove: () => void;
+  onRemoveModel: (model: string) => void;
+  onToggle: () => void;
+}) {
+  const t = useT();
+  const body = (
+    <>
+      <ModelListHeader
+        brandModel={nested ? undefined : group.models[0]}
+        collapsed={collapsed}
+        countLabel={`${group.models.length}`}
+        onRemove={onRemove}
+        onToggle={onToggle}
+        removeLabel={t("models.deleteGroup", { group: group.key })}
+        testId="service-model-group-toggle"
+        title={group.key}
+        tone={nested ? "section" : "card"}
+      />
+      {collapsed
+        ? null
+        : group.models.map((model) => (
+            <ModelRow
+              key={model}
+              model={model}
+              onRemove={() => onRemoveModel(model)}
+            />
+          ))}
+    </>
+  );
+
+  if (nested) {
+    return <section className="min-w-0">{body}</section>;
+  }
+
+  return (
+    <Panel asChild>
+      <section>{body}</section>
+    </Panel>
+  );
 }
 
 export function ServiceModelsEditor({
@@ -41,41 +254,50 @@ export function ServiceModelsEditor({
   onAddModels,
   onDiscoverModels,
   onRemoveModels,
-  onReplaceModels,
+  onClearModels,
 }: ServiceModelsEditorProps) {
+  const t = useT();
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState<Set<string>>(() =>
-    initialCollapsed(models),
-  );
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState<ModelsConfirm>(null);
   const [adding, setAdding] = useState(false);
   const [bulkPaste, setBulkPaste] = useState(false);
   const addInputRef = useRef<HTMLInputElement | null>(null);
   const seededCollapse = useRef(false);
 
+  const catalog = useMemo(() => [...models].sort(), [models]);
+
   useEffect(() => {
     if (seededCollapse.current) return;
-    if (models.length === 0) return;
+    if (catalog.length === 0) return;
     seededCollapse.current = true;
-    setCollapsed(initialCollapsed(models));
-  }, [models]);
+    setCollapsed(initialCollapsed(catalog));
+  }, [catalog]);
 
   useEffect(() => {
     if (!adding) return;
     addInputRef.current?.focus();
   }, [adding, bulkPaste]);
 
-  const filtered = useMemo(() => filterModels(models, query), [models, query]);
-  const groups = useMemo(() => groupModels(filtered), [filtered]);
-  const allGroupKeys = useMemo(
-    () => groupModels(models).map((group) => group.key),
-    [models],
+  const filtered = useMemo(() => filterModels(catalog, query), [catalog, query]);
+  const categories = useMemo(
+    () => groupModelsByCategory(filtered),
+    [filtered],
   );
+  const groupCount = useMemo(
+    () => categories.reduce((count, category) => count + category.groups.length, 0),
+    [categories],
+  );
+  const nestedCategoryCount = useMemo(
+    () => categories.filter((category) => category.groups.length > 1).length,
+    [categories],
+  );
+  const allCollapseKeys = useMemo(() => collapseKeysFor(catalog), [catalog]);
   const hasQuery = query.trim().length > 0;
   const allCollapsed =
     !hasQuery &&
-    allGroupKeys.length > 0 &&
-    allGroupKeys.every((key) => collapsed.has(key));
+    allCollapseKeys.length > 0 &&
+    allCollapseKeys.every((key) => collapsed.has(key));
 
   const isGroupCollapsed = (key: string) => {
     if (hasQuery) return false;
@@ -93,18 +315,22 @@ export function ServiceModelsEditor({
   };
 
   const expandAll = () => setCollapsed(new Set());
-  const collapseAll = () => setCollapsed(new Set(allGroupKeys));
+  const collapseAll = () => setCollapsed(new Set(allCollapseKeys));
+
+  const resetBrowsing = () => {
+    setQuery("");
+  };
 
   const applyConfirm = () => {
     if (!confirm) return;
     if (confirm.kind === "clear") {
-      onReplaceModels([]);
-      setQuery("");
+      onClearModels();
+      resetBrowsing();
       setCollapsed(new Set());
       seededCollapse.current = false;
     } else {
       onRemoveModels(confirm.models);
-      if (confirm.kind === "remove_filtered") setQuery("");
+      if (confirm.kind === "remove_filtered") resetBrowsing();
     }
     setConfirm(null);
   };
@@ -120,23 +346,21 @@ export function ServiceModelsEditor({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
-          <strong className="text-sm font-semibold" id="service-models-editor-heading">支持模型</strong>
+          <strong className="text-sm font-semibold" id="service-models-editor-heading">{t("models.title")}</strong>
           <p className="text-xs text-muted-foreground">
-            精确匹配白名单；空清单不参与推理路由。
+            {t("models.hint")}
           </p>
         </div>
         <Badge className="mt-px shrink-0 tabular-nums" aria-live="polite" variant="secondary">
-          {hasQuery && models.length > 0
-            ? `${filtered.length} / ${models.length}`
-            : `${models.length} / 2,000`}
+          {t("models.count", { count: catalog.length })}
         </Badge>
       </div>
 
       <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-2">
         <Input
-          aria-label="搜索已配置模型"
+          aria-label={t("models.searchConfigured")}
           className="h-8 min-w-0 flex-[1_1_160px]"
-          placeholder="搜索模型…"
+          placeholder={t("models.searchPlaceholder")}
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -148,11 +372,11 @@ export function ServiceModelsEditor({
           type="button"
           variant="outline"
         >
-          {probingModels ? "获取中…" : "获取模型列表"}
+          {probingModels ? t("models.fetching") : t("models.fetchList")}
         </Button>
         <Button
           aria-expanded={adding}
-          aria-label="添加模型"
+          aria-label={t("models.addModel")}
           className="size-8 shrink-0 p-0 text-base font-semibold"
           onClick={() => {
             setAdding((open) => {
@@ -176,8 +400,8 @@ export function ServiceModelsEditor({
         <div className="mt-2 grid gap-2 rounded-md border bg-muted p-2.5">
           {bulkPaste ? (
             <Textarea
-              aria-label="待添加模型 ID"
-              placeholder={"每行一个模型 ID，例如：\ngpt-5\nclaude-sonnet-4-5"}
+              aria-label={t("models.pendingIds")}
+              placeholder={t("models.bulkPlaceholder")}
               className="min-h-[72px] resize-y"
               rows={3}
               value={modelEditor}
@@ -186,8 +410,8 @@ export function ServiceModelsEditor({
           ) : (
             <Input
               ref={addInputRef}
-              aria-label="待添加模型 ID"
-              placeholder="输入模型 ID，回车添加"
+              aria-label={t("models.pendingIds")}
+              placeholder={t("models.singlePlaceholder")}
               type="text"
               value={modelEditor}
               onChange={(event) => onModelEditorChange(event.target.value)}
@@ -206,38 +430,41 @@ export function ServiceModelsEditor({
               type="button"
               variant="link"
             >
-              {bulkPaste ? "单行输入" : "批量粘贴"}
+              {bulkPaste ? t("models.singleMode") : t("models.bulkMode")}
             </Button>
             <Button variant="outline" onClick={submitAdd} type="button">
-              添加
+              {t("models.add")}
             </Button>
           </div>
         </div>
       ) : null}
 
-      {models.length === 0 ? (
+      {catalog.length === 0 ? (
         <p className="mt-2.5 rounded-md border border-dashed bg-muted/70 p-3 text-center text-xs text-muted-foreground" role="status">
-          还没有模型 · 服务不会参与路由
+          {t("models.empty")}
         </p>
       ) : (
         <>
           <div className="my-1.5 mt-2 flex min-h-4 items-center justify-between gap-2.5">
             <span className="text-xs font-semibold text-muted-foreground tabular-nums">
               {hasQuery
-                ? `匹配 ${filtered.length} / ${models.length}`
-                : `${groups.length} 组 · ${models.length} 个模型`}
+                ? t("models.matchCount", {
+                    shown: filtered.length,
+                    total: catalog.length,
+                  })
+                : nestedCategoryCount > 0
+                  ? t("models.nestedSummary", {
+                      categories: nestedCategoryCount,
+                      groups: groupCount,
+                      count: catalog.length,
+                    })
+                  : t("models.groupSummary", {
+                      groups: groupCount,
+                      count: catalog.length,
+                    })}
             </span>
             <div className="flex flex-wrap items-center justify-end gap-2.5">
-              {!hasQuery ? (
-                <Button
-                  className="h-auto px-0 text-xs"
-                  onClick={allCollapsed ? expandAll : collapseAll}
-                  type="button"
-                  variant="link"
-                >
-                  {allCollapsed ? "展开全部" : "折叠全部"}
-                </Button>
-              ) : (
+              {hasQuery ? (
                 <Button
                   className="h-auto px-0 text-xs text-danger-foreground"
                   disabled={filtered.length === 0}
@@ -250,7 +477,16 @@ export function ServiceModelsEditor({
                   type="button"
                   variant="link"
                 >
-                  删除匹配（{filtered.length}）
+                  {t("models.deleteMatches", { count: filtered.length })}
+                </Button>
+              ) : (
+                <Button
+                  className="h-auto px-0 text-xs"
+                  onClick={allCollapsed ? expandAll : collapseAll}
+                  type="button"
+                  variant="link"
+                >
+                  {allCollapsed ? t("models.expandAll") : t("models.collapseAll")}
                 </Button>
               )}
               <Button
@@ -259,81 +495,93 @@ export function ServiceModelsEditor({
                 type="button"
                 variant="link"
               >
-                清空
+                {t("models.clear")}
               </Button>
             </div>
           </div>
 
           {filtered.length === 0 ? (
             <p className="mt-1.5 rounded-md border border-dashed p-2.5 text-xs text-muted-foreground" role="status">
-              没有匹配“{query.trim()}”的模型。
+              {t("models.noMatch", { query: query.trim() })}
             </p>
           ) : (
-            <div className="grid gap-2" aria-label="已配置模型">
-              {groups.map((group) => {
-                const collapsedGroup = isGroupCollapsed(group.key);
+            <div className="grid gap-2" aria-label={t("models.configured")}>
+              {categories.map((category) => {
+                if (category.groups.length === 1) {
+                  const group = category.groups[0]!;
+                  return (
+                    <ModelGroupSection
+                      key={group.key}
+                      collapsed={isGroupCollapsed(groupCollapseKey(group.key))}
+                      group={group}
+                      onRemove={() =>
+                        setConfirm({
+                          kind: "remove_group",
+                          group: group.key,
+                          models: group.models,
+                        })
+                      }
+                      onRemoveModel={(model) => onRemoveModels([model])}
+                      onToggle={() => toggleGroup(groupCollapseKey(group.key))}
+                    />
+                  );
+                }
+
+                const models = categoryModels(category);
+                const collapsedCategory = isGroupCollapsed(
+                  categoryCollapseKey(category.key),
+                );
                 return (
-                  <section className="min-w-0" key={group.key}>
-                    <div className="group flex items-center gap-1.5 border-b px-px py-[5px]">
-                      <Button
-                        aria-expanded={!collapsedGroup}
-                        className="h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-sm text-text-secondary hover:bg-transparent"
-                        data-testid="service-model-group-toggle"
-                        onClick={() => toggleGroup(group.key)}
-                        type="button"
-                        variant="ghost"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="shrink-0 text-micro leading-none text-muted-foreground"
-                        >
-                          {collapsedGroup ? "▸" : "▾"}
-                        </span>
-                        <strong className="min-w-0 overflow-hidden text-sm font-medium text-foreground text-ellipsis whitespace-nowrap">{group.key}</strong>
-                        <Badge className="px-1.5 py-0 text-micro tabular-nums" variant="secondary">
-                          {group.models.length}
-                        </Badge>
-                      </Button>
-                      <Button
-                        aria-label={`删除分组 ${group.key}`}
-                        className="size-6 shrink-0 text-sm text-danger-foreground opacity-0 hover:bg-danger-wash group-hover:opacity-100 group-focus-within:opacity-100"
-                        onClick={() =>
+                  <Panel asChild key={category.key}>
+                    <section>
+                      <ModelListHeader
+                        brandModel={models[0]}
+                        collapsed={collapsedCategory}
+                        countLabel={`${models.length}`}
+                        onRemove={() =>
                           setConfirm({
-                            kind: "remove_group",
-                            group: group.key,
-                            models: group.models,
+                            kind: "remove_category",
+                            category: category.key,
+                            models,
                           })
                         }
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                      >
-                        −
-                      </Button>
-                    </div>
-                    {collapsedGroup ? null : (
-                      <div className="mt-[7px] flex flex-wrap gap-[5px]">
-                        {group.models.map((model) => {
-                          const label = encodeModelEditorValue(model);
-                          return (
-                            <div className="group/chip inline-flex min-w-0 max-w-[260px] items-center gap-1 overflow-hidden rounded-sm border bg-muted py-1 pr-1.5 pl-2 text-text-secondary hover:border-primary/25" data-testid="service-model-chip" key={model}>
-                              <code className="min-w-0 overflow-hidden text-xs text-ellipsis whitespace-nowrap" title={label}>{label}</code>
-                              <Button
-                                aria-label={`删除 ${label}`}
-                                className="size-6 shrink-0 rounded text-sm text-danger-foreground opacity-0 hover:bg-danger-wash group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"
-                                onClick={() => onRemoveModels([model])}
-                                type="button"
-                                size="icon-xs"
-                                variant="ghost"
-                              >
-                                ×
-                              </Button>
-                            </div>
-                          );
+                        onToggle={() =>
+                          toggleGroup(categoryCollapseKey(category.key))
+                        }
+                        removeLabel={t("models.deleteCategory", {
+                          category: category.key,
                         })}
-                      </div>
-                    )}
-                  </section>
+                        testId="service-model-category-toggle"
+                        title={category.key}
+                        tone="card"
+                      />
+                      {collapsedCategory ? null : (
+                        <div className="[&>section+section]:border-t">
+                          {category.groups.map((group) => (
+                            <ModelGroupSection
+                              key={group.key}
+                              collapsed={isGroupCollapsed(
+                                groupCollapseKey(group.key),
+                              )}
+                              group={group}
+                              nested
+                              onRemove={() =>
+                                setConfirm({
+                                  kind: "remove_group",
+                                  group: group.key,
+                                  models: group.models,
+                                })
+                              }
+                              onRemoveModel={(model) => onRemoveModels([model])}
+                              onToggle={() =>
+                                toggleGroup(groupCollapseKey(group.key))
+                              }
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  </Panel>
                 );
               })}
             </div>
@@ -342,13 +590,13 @@ export function ServiceModelsEditor({
       )}
 
       <ConfirmDialog
-        confirmLabel="确认删除"
+        confirmLabel={t("models.confirmDelete")}
         description={
           <p>
               {confirm?.kind === "clear"
-                ? `将移除全部 ${models.length} 个模型；空清单时该服务不会参与推理路由。`
+                ? t("models.clearAllBody", { count: catalog.length })
                 : confirm
-                  ? `将从白名单移除 ${confirm.models.length} 个模型。保存前可继续编辑。`
+                  ? t("models.deleteSomeBody", { count: confirm.models.length })
                   : ""}
           </p>
         }
@@ -358,10 +606,12 @@ export function ServiceModelsEditor({
         open={confirm !== null}
         title={
           confirm?.kind === "clear"
-            ? "清空支持模型？"
-            : confirm?.kind === "remove_group"
-              ? `删除分组“${confirm.group}”？`
-              : "删除匹配的模型？"
+            ? t("models.clearTitle")
+            : confirm?.kind === "remove_category"
+              ? t("models.deleteCategoryTitle", { category: confirm.category })
+              : confirm?.kind === "remove_group"
+                ? t("models.deleteGroupTitle", { group: confirm.group })
+                : t("models.deleteMatchesTitle")
         }
       />
     </fieldset>

@@ -10,6 +10,14 @@ never receives shell execution capability or the per-start control token.
 Prerequisites: Bun 1.3.14+, Go, Rust, and the platform dependencies required by
 Tauri. Bun manages dependencies, scripts, and the JavaScript tool runtime.
 
+From the repository root, one-shot local desktop:
+
+```sh
+make dev
+```
+
+Or from this directory:
+
 ```sh
 bun install --frozen-lockfile
 bun run typecheck
@@ -26,6 +34,14 @@ Tauri JavaScript wrapper to execute with Bun on every platform.
 
 `desktop:dev` builds the native Go Core for the Rust host target before Tauri
 starts. `desktop:build` performs the equivalent production build.
+`bun run dev` does not typecheck; use `bun run typecheck` or
+`bun run dev:typecheck` for a watch checker. Frontend file changes are
+rebuilt by Rsbuild. The debug Rust host polls `/__astrlink_build` and
+reloads the WebView; look for
+`[astrlink dev] frontend rebuild #N -> reloading webview` on the
+`make dev` terminal. A debug tray item **重新加载界面** forces the same
+reload. Failures of that poller also go to stderr so a silent stall is
+visible.
 Core operational diagnostics are written to stderr and forwarded to the
 terminal running `desktop:dev`; they are not sent to the WebView console.
 Privacy-model download messages contain only the model ID, catalog asset path,

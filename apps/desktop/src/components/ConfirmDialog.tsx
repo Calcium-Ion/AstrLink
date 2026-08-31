@@ -1,5 +1,7 @@
 import { useRef, type ReactNode } from "react";
 
+import { i18n } from "@/i18n";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,7 +26,7 @@ interface ConfirmDialogProps {
 }
 
 export function ConfirmDialog({
-  cancelLabel = "取消",
+  cancelLabel = i18n.t("common.cancel"),
   confirmLabel,
   description,
   destructive = false,

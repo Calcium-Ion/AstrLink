@@ -13,16 +13,20 @@ import (
 )
 
 const (
-	DefaultIssuer                = "https://auth.openai.com"
-	DefaultCodexAPIBaseURL       = "https://chatgpt.com/backend-api/codex"
-	DefaultCodexOAuthClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
-	DefaultAuthorizationTTL      = 10 * time.Minute
-	DefaultDeviceCodeTTL         = 15 * time.Minute
-	DefaultRefreshSkew           = 5 * time.Minute
-	DefaultCallbackPort          = 1455
-	DefaultFallbackCallbackPort  = 1457
-	DefaultDevicePollMinInterval = time.Second
-	DefaultDevicePollMaxInterval = 30 * time.Second
+	DefaultIssuer             = "https://auth.openai.com"
+	DefaultCodexAPIBaseURL    = "https://chatgpt.com/backend-api/codex"
+	DefaultCodexOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+	// DefaultCodexModelsClientVersion is the observed openai/codex ModelsClient
+	// query (public CLI 0.150.0). The backend may hide models below a
+	// catalog minimum; do not send a non-semver placeholder.
+	DefaultCodexModelsClientVersion = "0.150.0"
+	DefaultAuthorizationTTL         = 10 * time.Minute
+	DefaultDeviceCodeTTL            = 15 * time.Minute
+	DefaultRefreshSkew              = 5 * time.Minute
+	DefaultCallbackPort             = 1455
+	DefaultFallbackCallbackPort     = 1457
+	DefaultDevicePollMinInterval    = time.Second
+	DefaultDevicePollMaxInterval    = 30 * time.Second
 
 	// ObservedCodexCLIOAuthClientID remains as a source-compatibility alias for
 	// tests and older integrations. The public Codex client is intentionally
@@ -72,6 +76,7 @@ type OAuthConfig struct {
 	RefreshSkew           time.Duration
 	Originator            string
 	ExtraAuthQuery        url.Values
+	ModelsClientVersion   string
 }
 
 func (config OAuthConfig) Normalize() OAuthConfig {
@@ -130,7 +135,37 @@ func (config OAuthConfig) normalized() OAuthConfig {
 	if config.Originator == "" {
 		config.Originator = "astrlink"
 	}
+	if strings.TrimSpace(config.ModelsClientVersion) == "" {
+		config.ModelsClientVersion = DefaultCodexModelsClientVersion
+	}
 	return config
+}
+
+// ApplyCodexAPIHeaders writes the observed ChatGPT Codex backend request
+// headers. Official openai/codex clients always send originator plus a
+// Codex-style User-Agent; chatgpt.com otherwise treats Go's default
+// User-Agent as bot traffic. User-Agent follows the public new-api/Codex
+// CLI shape `codex-cli/{client_version}`. originator stays AstrLink's own
+// identity.
+func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, originator, clientVersion string) {
+	if header == nil {
+		return
+	}
+	if strings.TrimSpace(originator) == "" {
+		originator = "astrlink"
+	}
+	if strings.TrimSpace(clientVersion) == "" {
+		clientVersion = DefaultCodexModelsClientVersion
+	}
+	header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	if tokens.AccountID != "" {
+		header.Set("ChatGPT-Account-ID", tokens.AccountID)
+	}
+	header.Set("OAI-Product-Sku", "codex")
+	header.Set("Accept", "application/json")
+	header.Set("originator", originator)
+	header.Set("version", clientVersion)
+	header.Set("User-Agent", "codex-cli/"+clientVersion)
 }
 
 type tokenResponse struct {

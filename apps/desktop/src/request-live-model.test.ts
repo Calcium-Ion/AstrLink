@@ -6,8 +6,12 @@ import {
   liveDurationMs,
   mergeLivePage,
   recordMatchesFilters,
+  sessionElapsedMs,
 } from "./request-live-model";
-import type { RequestRecord } from "./request-record-model";
+import {
+  emptyTrajectoryFields,
+  type RequestRecord,
+} from "./request-record-model";
 
 function record(
   id: string,
@@ -43,6 +47,7 @@ function record(
       upstream_response_content_truncated: false,
     },
     privacy_restore: null,
+    ...emptyTrajectoryFields,
   };
 }
 
@@ -119,5 +124,40 @@ describe("request live merge model", () => {
     expect(
       liveDurationMs({ ...pending, latency_ms: 220 }, Date.now()),
     ).toBe(220);
+  });
+
+  it("formats durations with stable second-range decimals", () => {
+    expect(formatDuration(220)).toBe("220 ms");
+    expect(formatDuration(999)).toBe("999 ms");
+    expect(formatDuration(1000)).toBe("1.0 s");
+    expect(formatDuration(1500)).toBe("1.5 s");
+    expect(formatDuration(10_000)).toBe("10.0 s");
+    expect(formatDuration(59_900)).toBe("59.9 s");
+    expect(formatDuration(60_000)).toBe("1m 00s");
+    expect(formatDuration(125_000)).toBe("2m 05s");
+    expect(formatDuration(3_600_000)).toBe("1h 00m");
+    expect(formatDuration(50_829_000)).toBe("14h 07m");
+  });
+
+  it("freezes completed session elapsed time instead of tracking now", () => {
+    const nowMs = Date.parse("2026-08-17T04:46:00Z");
+    expect(
+      sessionElapsedMs(
+        {
+          started_at: "2026-08-16T14:41:00Z",
+          completed_at: "2026-08-16T14:41:12Z",
+        },
+        nowMs,
+      ),
+    ).toBe(12_000);
+    expect(
+      sessionElapsedMs(
+        {
+          started_at: "2026-08-16T14:41:00Z",
+          completed_at: null,
+        },
+        nowMs,
+      ),
+    ).toBe(50_700_000);
   });
 });

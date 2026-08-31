@@ -1,4 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as invokeCommand } from "@tauri-apps/api/core";
+
+import { i18n } from "./i18n";
 
 import {
   browserSnapshot,
@@ -33,6 +35,7 @@ import {
   parsePrivacyModelProbe,
   parsePrivacyPolicyPage,
   parsePrivacyPolicyRecord,
+  parsePrivacyRegexBuiltinRules,
   validateLocalProbeInput,
   validatePrivacyDryRunInput,
   validatePrivacyModelInstallationID,
@@ -50,16 +53,22 @@ import {
   type PrivacyPolicyPage,
   type PrivacyPolicyPatch,
   type PrivacyPolicyRecord,
+  type PrivacyRegexBuiltinRules,
 } from "./privacy-policy-model";
 import {
   parseAuditContent,
   parsePurgeResult,
   parseRequestRecord,
   parseRequestRecordPage,
+  parseRequestSessionDetail,
+  parseRequestSessionPage,
   type AuditContent,
   type RequestRecord,
   type RequestRecordListQuery,
   type RequestRecordPage,
+  type RequestSessionDetail,
+  type RequestSessionListQuery,
+  type RequestSessionPage,
 } from "./request-record-model";
 import {
   parseAuditSettings,
@@ -82,13 +91,44 @@ import {
   type BeginCodexAuthorizationResult,
 } from "./subscription-model";
 import {
+  parseSubscriptionUsage,
+  parseSubscriptionUsageReset,
+  type SubscriptionUsage,
+  type SubscriptionUsageReset,
+} from "./subscription-usage-model";
+import {
   parseSettingsSnapshot,
   type Preferences,
   type SettingsSnapshot,
 } from "./preferences-model";
+import { downloadTextFile } from "./download-text-file";
+import {
+  parseAgentInstallReceipt,
+  parseAgentInstallStatus,
+  type AgentInstallReceipt,
+  type AgentInstallStatus,
+} from "./agent-install-model";
 
 function hasNativeBridge(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+// A Tauri command that returns Err(String) rejects with the bare string, which
+// every screen's error handler discards in favour of its generic fallback. The
+// diagnosis then reads "无法读取…" no matter whether Core was unreachable or
+// returned a field the interface refused. Carrying the reason across keeps the
+// specific message on screen.
+async function invoke<T>(
+  ...call: Parameters<typeof invokeCommand>
+): Promise<T> {
+  try {
+    return await invokeCommand<T>(...call);
+  } catch (error) {
+    if (typeof error === "string") {
+      throw new Error(error);
+    }
+    throw error;
+  }
 }
 
 export async function getCoreStatus(): Promise<AppSnapshot> {
@@ -101,7 +141,7 @@ export async function getCoreStatus(): Promise<AppSnapshot> {
 
 export async function restartCore(): Promise<AppSnapshot> {
   if (!hasNativeBridge()) {
-    throw new Error("Core restart is only available in the AstrLink desktop app.");
+    throw new Error(i18n.t("bridge.restartDesktopOnly"));
   }
 
   return parseAppSnapshot(await invoke<unknown>("restart_core"));
@@ -133,7 +173,7 @@ export async function updatePreferences(
 
 function requireNativeBridge(): void {
   if (!hasNativeBridge()) {
-    throw new Error("该操作仅可在 AstrLink 桌面应用中使用。");
+    throw new Error(i18n.t("bridge.desktopOnly"));
   }
 }
 
@@ -170,6 +210,24 @@ export async function updateService(
 export async function deleteService(serviceId: string, etag: string): Promise<void> {
   requireNativeBridge();
   await invoke("delete_service", { serviceId, etag });
+}
+
+export async function getServiceUsage(
+  serviceId: string,
+): Promise<SubscriptionUsage> {
+  requireNativeBridge();
+  return parseSubscriptionUsage(
+    await invoke<unknown>("get_service_usage", { serviceId }),
+  );
+}
+
+export async function resetServiceUsage(
+  serviceId: string,
+): Promise<SubscriptionUsageReset> {
+  requireNativeBridge();
+  return parseSubscriptionUsageReset(
+    await invoke<unknown>("reset_service_usage", { serviceId }),
+  );
 }
 
 export async function probeServiceModels(
@@ -277,8 +335,31 @@ function compactQuery(
   if (query.to !== undefined) compact.to = query.to;
   if (query.protocol !== undefined) compact.protocol = query.protocol;
   if (query.service_id !== undefined) compact.service_id = query.service_id;
+  if (query.local_access_token_id !== undefined) {
+    compact.local_access_token_id = query.local_access_token_id;
+  }
   if (query.status !== undefined) compact.status = query.status;
   return compact;
+}
+
+export async function listRequestSessions(
+  query: RequestSessionListQuery = {},
+): Promise<RequestSessionPage> {
+  requireNativeBridge();
+  return parseRequestSessionPage(
+    await invoke<unknown>("list_request_sessions", {
+      query: compactQuery(query),
+    }),
+  );
+}
+
+export async function getRequestSession(
+  sessionId: string,
+): Promise<RequestSessionDetail> {
+  requireNativeBridge();
+  return parseRequestSessionDetail(
+    await invoke<unknown>("get_request_session", { sessionId }),
+  );
 }
 
 export async function listRequestRecords(
@@ -411,6 +492,13 @@ export async function dryRunPrivacyPolicy(
   );
 }
 
+export async function getPrivacyRegexBuiltinRules(): Promise<PrivacyRegexBuiltinRules> {
+  requireNativeBridge();
+  return parsePrivacyRegexBuiltinRules(
+    await invoke<unknown>("get_privacy_regex_builtin_rules"),
+  );
+}
+
 export async function getPrivacyModelCatalog(): Promise<PrivacyModelCatalog> {
   requireNativeBridge();
   return parsePrivacyModelCatalog(
@@ -487,4 +575,33 @@ export async function deletePrivacyModelInstallation(
   installationId: string,
 ): Promise<void> {
   await removePrivacyModelInstallation(installationId);
+}
+
+export async function getAgentDebugStatus(): Promise<AgentInstallStatus> {
+  requireNativeBridge();
+  return parseAgentInstallStatus(await invoke<unknown>("agent_debug_status"));
+}
+
+export async function installAgentDebug(): Promise<AgentInstallReceipt> {
+  requireNativeBridge();
+  return parseAgentInstallReceipt(await invoke<unknown>("install_agent_debug"));
+}
+
+export async function uninstallAgentDebug(): Promise<void> {
+  requireNativeBridge();
+  await invoke("uninstall_agent_debug");
+}
+
+export async function saveTextFile(
+  defaultFilename: string,
+  contents: string,
+): Promise<string | null> {
+  if (!hasNativeBridge()) {
+    downloadTextFile(defaultFilename, contents);
+    return defaultFilename;
+  }
+  return invoke<string | null>("save_text_file", {
+    defaultFilename,
+    contents,
+  });
 }

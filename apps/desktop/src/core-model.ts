@@ -1,3 +1,5 @@
+import { i18n } from "./i18n";
+
 export const SUPPORTED_CONTROL_API_VERSION = "v1";
 export const SUPPORTED_PROTOCOL_CONTRACT_VERSION = "v1";
 
@@ -513,23 +515,23 @@ export function failedSnapshot(
 export function phaseLabel(phase: CorePhase): string {
   switch (phase) {
     case "ready":
-      return "已就绪";
+      return i18n.t("core.phase.ready");
     case "spawning":
-      return "启动中";
+      return i18n.t("core.phase.spawning");
     case "waiting_for_ready":
-      return "等待 Core";
+      return i18n.t("core.phase.waiting_for_ready");
     case "handshaking":
-      return "校验中";
+      return i18n.t("core.phase.handshaking");
     case "stopping":
-      return "停止中";
+      return i18n.t("core.phase.stopping");
     case "exited":
-      return "已退出";
+      return i18n.t("core.phase.exited");
     case "error":
-      return "需要处理";
+      return i18n.t("core.phase.error");
     case "unavailable":
-      return "浏览器预览";
+      return i18n.t("core.phase.unavailable");
     default:
-      return "已停止";
+      return i18n.t("core.phase.stopped");
   }
 }
 

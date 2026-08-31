@@ -16,7 +16,7 @@ func TestRestoringWriterRecomputesContentLength(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writer := newRestoringResponseWriter(recorder, []privacy.Redaction{
 		{Placeholder: "<PRIVATE_EMAIL>", Kind: privacy.KindEmail, Value: "alice@example.com"},
-	}, false, contract.ProtocolOpenAIChat)
+	}, false, contract.ProtocolOpenAIChat, true)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Content-Length", "12")
 	writer.WriteHeader(http.StatusOK)
@@ -42,7 +42,7 @@ func TestRestoringWriterDoesNotCommitBufferedResponseOnTransportFlush(t *testing
 	downstream := newCommitTrackingWriter(recorder)
 	writer := newRestoringResponseWriter(downstream, []privacy.Redaction{
 		{Placeholder: "<PRIVATE_EMAIL>", Kind: privacy.KindEmail, Value: "alice@example.com"},
-	}, false, contract.ProtocolOpenAIChat)
+	}, false, contract.ProtocolOpenAIChat, true)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusCreated)
 	writer.Flush()
@@ -68,7 +68,7 @@ func TestRestoringWriterFailsClosedOnGzip(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writer := newRestoringResponseWriter(recorder, []privacy.Redaction{
 		{Placeholder: "<PRIVATE_EMAIL>", Kind: privacy.KindEmail, Value: "alice@example.com"},
-	}, false, contract.ProtocolOpenAIChat)
+	}, false, contract.ProtocolOpenAIChat, true)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Content-Encoding", "gzip")
 	writer.WriteHeader(http.StatusOK)
@@ -88,7 +88,7 @@ func TestRestoringWriterStreamingCarryAndDropsContentLength(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writer := newRestoringResponseWriter(recorder, []privacy.Redaction{
 		{Placeholder: "<PRIVATE_EMAIL>", Kind: privacy.KindEmail, Value: "alice@example.com"},
-	}, true, contract.ProtocolOpenAIChat)
+	}, true, contract.ProtocolOpenAIChat, true)
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.Header().Set("Content-Length", "999")
 	writer.WriteHeader(http.StatusOK)
@@ -116,7 +116,7 @@ func TestRestoringWriterPassthroughUnknownContentType(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writer := newRestoringResponseWriter(recorder, []privacy.Redaction{
 		{Placeholder: "<PRIVATE_EMAIL>", Kind: privacy.KindEmail, Value: "alice@example.com"},
-	}, false, contract.ProtocolOpenAIChat)
+	}, false, contract.ProtocolOpenAIChat, true)
 	writer.Header().Set("Content-Type", "application/octet-stream")
 	writer.WriteHeader(http.StatusOK)
 	payload := []byte(`opaque <PRIVATE_EMAIL>`)
@@ -174,6 +174,7 @@ func TestRestoringWriterRestoresRealChatPlaceholderAcrossSSEEvents(t *testing.T)
 		redactions,
 		true,
 		contract.ProtocolOpenAIChat,
+		true,
 	)
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.WriteHeader(http.StatusOK)
@@ -224,6 +225,12 @@ func TestRestoringWriterRestoresRealChatPlaceholderAcrossSSEEvents(t *testing.T)
 			writer.restoredCount(),
 			writer.fallbackCount(),
 		)
+	}
+	summary := writer.privacyRestoreSummary()
+	if len(summary.Hits) != 2 ||
+		summary.Hits[0] != (contract.PrivacyHitCount{Kind: contract.CanonicalKindEmail, Count: 2}) ||
+		summary.Hits[1] != (contract.PrivacyHitCount{Kind: contract.CanonicalKindPhone, Count: 2}) {
+		t.Fatalf("privacy hits=%#v", summary.Hits)
 	}
 }
 
@@ -304,7 +311,7 @@ func TestRestoringWriterRestoresVisibleFieldsAcrossAlphaSSEProtocols(t *testing.
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			writer := newRestoringResponseWriter(recorder, redactions, true, test.protocol)
+			writer := newRestoringResponseWriter(recorder, redactions, true, test.protocol, true)
 			writer.Header().Set("Content-Type", "text/event-stream")
 			writer.WriteHeader(http.StatusOK)
 			split := len(placeholder) / 2
@@ -336,7 +343,12 @@ func TestRestoringWriterRestoresVisibleFieldsAcrossAlphaSSEProtocols(t *testing.
 	}
 }
 
-func TestRestoringWriterLeavesReasoningThinkingAndToolArgumentsRedacted(t *testing.T) {
+// TestRestoringWriterRestoresToolArgumentsButNotReasoning separates the two
+// channels. Tool arguments are executed by the local agent, so they must carry
+// the real value. Reasoning text is upstream scratch space that no local code
+// acts on, and rewriting it would put plaintext into a field clients frequently
+// log verbatim.
+func TestRestoringWriterRestoresToolArgumentsButNotReasoning(t *testing.T) {
 	const placeholder = "<PRIVATE_EMAIL_7f3a91c04d28be56>"
 	redactions := []privacy.Redaction{{
 		Placeholder: placeholder,
@@ -346,7 +358,7 @@ func TestRestoringWriterLeavesReasoningThinkingAndToolArgumentsRedacted(t *testi
 	body := `{"choices":[{"index":0,"message":{` +
 		`"content":"` + placeholder + `",` +
 		`"reasoning_content":"` + placeholder + `",` +
-		`"tool_calls":[{"function":{"arguments":"{\"email\":\"` + placeholder + `\"}"}}]` +
+		`"tool_calls":[{"index":0,"function":{"arguments":"{\"email\":\"` + placeholder + `\"}"}}]` +
 		`}}]}`
 	recorder := httptest.NewRecorder()
 	writer := newRestoringResponseWriter(
@@ -354,6 +366,7 @@ func TestRestoringWriterLeavesReasoningThinkingAndToolArgumentsRedacted(t *testi
 		redactions,
 		false,
 		contract.ProtocolOpenAIChat,
+		true,
 	)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
@@ -363,28 +376,400 @@ func TestRestoringWriterLeavesReasoningThinkingAndToolArgumentsRedacted(t *testi
 	if err := writer.Finish(); err != nil {
 		t.Fatal(err)
 	}
-	var decoded struct {
-		Choices []struct {
-			Message struct {
-				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"`
-				ToolCalls        []struct {
-					Function struct {
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
+	message := decodeChatToolMessage(t, recorder.Body.Bytes())
+	if message.Content != "alice@example.com" ||
+		message.ReasoningContent != placeholder {
+		t.Fatalf("unexpected visible restore: %s", recorder.Body.String())
 	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+	if message.ToolCalls[0].Function.Arguments != `{"email":"alice@example.com"}` {
+		t.Fatalf("tool arguments not restored: %s", recorder.Body.String())
+	}
+	summary := writer.privacyRestoreSummary()
+	if summary.VisibleRestoredCount != 1 || summary.ToolArgumentRestoredCount != 1 ||
+		summary.RestoredCount != 2 {
+		t.Fatalf("restore summary=%#v", summary)
+	}
+}
+
+// TestRestoringWriterHonoursDisabledToolArgumentRestore pins the opt-out: with
+// the policy off, a tool argument keeps its placeholder.
+func TestRestoringWriterHonoursDisabledToolArgumentRestore(t *testing.T) {
+	const placeholder = "<PRIVATE_EMAIL_7f3a91c04d28be56>"
+	body := `{"choices":[{"index":0,"message":{` +
+		`"tool_calls":[{"index":0,"function":{"arguments":"{\"email\":\"` + placeholder + `\"}"}}]` +
+		`}}]}`
+	recorder := httptest.NewRecorder()
+	writer := newRestoringResponseWriter(
+		recorder,
+		[]privacy.Redaction{{
+			Placeholder: placeholder,
+			Kind:        privacy.KindEmail,
+			Value:       "alice@example.com",
+		}},
+		false,
+		contract.ProtocolOpenAIChat,
+		false,
+	)
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	if _, err := writer.Write([]byte(body)); err != nil {
 		t.Fatal(err)
 	}
-	message := decoded.Choices[0].Message
-	if message.Content != "alice@example.com" ||
-		message.ReasoningContent != placeholder ||
-		!strings.Contains(message.ToolCalls[0].Function.Arguments, placeholder) {
-		t.Fatalf("unexpected response: %s", recorder.Body.String())
+	if err := writer.Finish(); err != nil {
+		t.Fatal(err)
 	}
+	message := decodeChatToolMessage(t, recorder.Body.Bytes())
+	if !strings.Contains(message.ToolCalls[0].Function.Arguments, placeholder) {
+		t.Fatalf("tool arguments restored while disabled: %s", recorder.Body.String())
+	}
+	if writer.privacyRestoreSummary().ToolArgumentRestoredCount != 0 {
+		t.Fatalf("restore summary=%#v", writer.privacyRestoreSummary())
+	}
+}
+
+// TestRestoringWriterEscapesRestoredToolArguments covers a value that needs JSON
+// escaping. The argument payload is a string holding JSON, so an unescaped quote
+// or backslash would leave the inner document unparseable for the agent.
+func TestRestoringWriterEscapesRestoredToolArguments(t *testing.T) {
+	const placeholder = "<PRIVATE_PERSON_7f3a91c04d28be56>"
+	const value = `A "B" \ C`
+	body := `{"choices":[{"index":0,"message":{` +
+		`"tool_calls":[{"index":0,"function":{"arguments":"{\"who\":\"` + placeholder + `\"}"}}]` +
+		`}}]}`
+	recorder := httptest.NewRecorder()
+	writer := newRestoringResponseWriter(
+		recorder,
+		[]privacy.Redaction{{
+			Placeholder: placeholder,
+			Kind:        privacy.KindPerson,
+			Value:       value,
+		}},
+		false,
+		contract.ProtocolOpenAIChat,
+		true,
+	)
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	if _, err := writer.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	message := decodeChatToolMessage(t, recorder.Body.Bytes())
+	var arguments struct {
+		Who string `json:"who"`
+	}
+	if err := json.Unmarshal([]byte(message.ToolCalls[0].Function.Arguments), &arguments); err != nil {
+		t.Fatalf("restored arguments are not valid JSON: %q: %v",
+			message.ToolCalls[0].Function.Arguments, err)
+	}
+	if arguments.Who != value {
+		t.Fatalf("restored argument = %q want %q", arguments.Who, value)
+	}
+}
+
+// TestRestoringWriterRestoresToolArgumentsSplitAcrossStreamDeltas is the case
+// tool-argument restoration exists for. An upstream emits arguments a few
+// characters at a time, so a placeholder routinely straddles two deltas; the
+// agent then executes the reassembled arguments on the operator's own machine,
+// where a stand-in is exactly the wrong value to act on.
+func TestRestoringWriterRestoresToolArgumentsSplitAcrossStreamDeltas(t *testing.T) {
+	const placeholder = "<PRIVATE_EMAIL_b76ad3c71b07c2e5>"
+	redactions := []privacy.Redaction{{
+		Placeholder: placeholder,
+		Kind:        privacy.KindEmail,
+		Value:       "alice@example.com",
+	}}
+	// The payload is JSON inside a JSON string, and the placeholder is cut in
+	// three so both the carry and the trailing-prefix paths are exercised.
+	fragments := []string{
+		`{"to":"<PRIVATE`,
+		`_EMAIL_b76ad`,
+		`3c71b07c2e5>","subject":"hi"}`,
+	}
+	for _, test := range []struct {
+		name     string
+		protocol contract.ProtocolID
+		event    func(fragment string) map[string]any
+		collect  func(*testing.T, []byte) string
+	}{
+		{
+			name:     "chat",
+			protocol: contract.ProtocolOpenAIChat,
+			event: func(fragment string) map[string]any {
+				return map[string]any{"choices": []any{map[string]any{
+					"index": 0,
+					"delta": map[string]any{"tool_calls": []any{map[string]any{
+						"index":    0,
+						"function": map[string]any{"arguments": fragment},
+					}}},
+				}}}
+			},
+			collect: func(t *testing.T, body []byte) string {
+				return concatSSEStrings(t, body, func(event map[string]any) []string {
+					var parts []string
+					choices, _ := event["choices"].([]any)
+					for _, value := range choices {
+						choice, _ := value.(map[string]any)
+						delta, _ := choice["delta"].(map[string]any)
+						calls, _ := delta["tool_calls"].([]any)
+						for _, callValue := range calls {
+							call, _ := callValue.(map[string]any)
+							function, _ := call["function"].(map[string]any)
+							if arguments, ok := function["arguments"].(string); ok {
+								parts = append(parts, arguments)
+							}
+						}
+					}
+					return parts
+				})
+			},
+		},
+		{
+			name:     "responses",
+			protocol: contract.ProtocolOpenAIResponses,
+			event: func(fragment string) map[string]any {
+				return map[string]any{
+					"type":     "response.function_call_arguments.delta",
+					"item_id":  "fc_1",
+					"delta":    fragment,
+					"sequence": 1,
+				}
+			},
+			collect: func(t *testing.T, body []byte) string {
+				return concatSSEStrings(t, body, func(event map[string]any) []string {
+					if delta, ok := event["delta"].(string); ok {
+						return []string{delta}
+					}
+					return nil
+				})
+			},
+		},
+		{
+			name:     "anthropic",
+			protocol: contract.ProtocolAnthropicMessages,
+			event: func(fragment string) map[string]any {
+				return map[string]any{
+					"type":  "content_block_delta",
+					"index": 0,
+					"delta": map[string]any{
+						"type":         "input_json_delta",
+						"partial_json": fragment,
+					},
+				}
+			},
+			collect: func(t *testing.T, body []byte) string {
+				return concatSSEStrings(t, body, func(event map[string]any) []string {
+					delta, _ := event["delta"].(map[string]any)
+					if partial, ok := delta["partial_json"].(string); ok {
+						return []string{partial}
+					}
+					return nil
+				})
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writer := newRestoringResponseWriter(
+				recorder, redactions, true, test.protocol, true,
+			)
+			writer.Header().Set("Content-Type", "text/event-stream")
+			writer.WriteHeader(http.StatusOK)
+			for _, fragment := range fragments {
+				payload, err := json.Marshal(test.event(fragment))
+				if err != nil {
+					t.Fatal(err)
+				}
+				wire := append([]byte("data: "), payload...)
+				wire = append(wire, '\n', '\n')
+				// Splitting the transport write as well proves the reassembly does
+				// not depend on an event arriving in one Write call.
+				middle := len(wire) / 2
+				if _, err := writer.Write(wire[:middle]); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := writer.Write(wire[middle:]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.Finish(); err != nil {
+				t.Fatal(err)
+			}
+			arguments := test.collect(t, recorder.Body.Bytes())
+			var decoded struct {
+				To      string `json:"to"`
+				Subject string `json:"subject"`
+			}
+			if err := json.Unmarshal([]byte(arguments), &decoded); err != nil {
+				t.Fatalf("reassembled arguments %q are not valid JSON: %v", arguments, err)
+			}
+			if decoded.To != "alice@example.com" {
+				t.Fatalf("tool argument = %q", decoded.To)
+			}
+			if strings.Contains(recorder.Body.String(), "PRIVATE_EMAIL") {
+				t.Fatalf("placeholder reached the agent: %s", recorder.Body.String())
+			}
+			summary := writer.privacyRestoreSummary()
+			if summary.ToolArgumentRestoredCount != 1 || summary.VisibleRestoredCount != 0 {
+				t.Fatalf("restore summary=%#v", summary)
+			}
+		})
+	}
+}
+
+// TestRestoringWriterRestoresStructuredToolArguments covers the protocols that
+// deliver a completed tool call as a parsed object rather than a serialized
+// string, where the leaf values must be rewritten in place without collapsing
+// the surrounding structure.
+func TestRestoringWriterRestoresStructuredToolArguments(t *testing.T) {
+	const placeholder = "<PRIVATE_EMAIL_7f3a91c04d28be56>"
+	redactions := []privacy.Redaction{{
+		Placeholder: placeholder,
+		Kind:        privacy.KindEmail,
+		Value:       "alice@example.com",
+	}}
+	for _, test := range []struct {
+		name     string
+		protocol contract.ProtocolID
+		body     string
+		read     func(*testing.T, []byte) []string
+	}{
+		{
+			name:     "anthropic tool_use",
+			protocol: contract.ProtocolAnthropicMessages,
+			body: `{"type":"message","content":[{"type":"tool_use","id":"tu_1","name":"send",` +
+				`"input":{"to":["` + placeholder + `"],"cc":{"first":"` + placeholder + `"}}}]}`,
+			read: func(t *testing.T, body []byte) []string {
+				var decoded struct {
+					Content []struct {
+						Input struct {
+							To []string `json:"to"`
+							CC struct {
+								First string `json:"first"`
+							} `json:"cc"`
+						} `json:"input"`
+					} `json:"content"`
+				}
+				if err := json.Unmarshal(body, &decoded); err != nil {
+					t.Fatalf("decode %s: %v", body, err)
+				}
+				if len(decoded.Content) == 0 || len(decoded.Content[0].Input.To) == 0 {
+					t.Fatalf("tool input lost its shape: %s", body)
+				}
+				return []string{decoded.Content[0].Input.To[0], decoded.Content[0].Input.CC.First}
+			},
+		},
+		{
+			name:     "gemini functionCall",
+			protocol: contract.ProtocolGoogleGenerateContent,
+			body: `{"candidates":[{"index":0,"content":{"parts":[{"functionCall":{"name":"send",` +
+				`"args":{"to":"` + placeholder + `","bcc":["` + placeholder + `"]}}}]}}]}`,
+			read: func(t *testing.T, body []byte) []string {
+				var decoded struct {
+					Candidates []struct {
+						Content struct {
+							Parts []struct {
+								FunctionCall struct {
+									Args struct {
+										To  string   `json:"to"`
+										BCC []string `json:"bcc"`
+									} `json:"args"`
+								} `json:"functionCall"`
+							} `json:"parts"`
+						} `json:"content"`
+					} `json:"candidates"`
+				}
+				if err := json.Unmarshal(body, &decoded); err != nil {
+					t.Fatalf("decode %s: %v", body, err)
+				}
+				if len(decoded.Candidates) == 0 ||
+					len(decoded.Candidates[0].Content.Parts) == 0 {
+					t.Fatalf("tool args lost their shape: %s", body)
+				}
+				args := decoded.Candidates[0].Content.Parts[0].FunctionCall.Args
+				if len(args.BCC) == 0 {
+					t.Fatalf("tool args lost their shape: %s", body)
+				}
+				return []string{args.To, args.BCC[0]}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writer := newRestoringResponseWriter(
+				recorder, redactions, false, test.protocol, true,
+			)
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			if _, err := writer.Write([]byte(test.body)); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Finish(); err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range test.read(t, recorder.Body.Bytes()) {
+				if got != "alice@example.com" {
+					t.Fatalf("tool argument = %q: %s", got, recorder.Body.String())
+				}
+			}
+			if writer.privacyRestoreSummary().ToolArgumentRestoredCount != 2 {
+				t.Fatalf("restore summary=%#v", writer.privacyRestoreSummary())
+			}
+		})
+	}
+}
+
+// concatSSEStrings joins the selected string fields of every data event, which
+// is what the client's own reassembly produces.
+func concatSSEStrings(
+	t *testing.T,
+	body []byte,
+	pick func(map[string]any) []string,
+) string {
+	t.Helper()
+	var builder strings.Builder
+	for _, line := range strings.Split(string(body), "\n") {
+		payload, found := strings.CutPrefix(line, "data: ")
+		if !found || payload == "[DONE]" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			t.Fatalf("decode event %q: %v", payload, err)
+		}
+		for _, part := range pick(event) {
+			builder.WriteString(part)
+		}
+	}
+	return builder.String()
+}
+
+type chatToolMessage struct {
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+	ToolCalls        []struct {
+		Function struct {
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	} `json:"tool_calls"`
+}
+
+func decodeChatToolMessage(t *testing.T, body []byte) chatToolMessage {
+	t.Helper()
+	var decoded struct {
+		Choices []struct {
+			Message chatToolMessage `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode response %s: %v", body, err)
+	}
+	if len(decoded.Choices) == 0 {
+		t.Fatalf("response has no choices: %s", body)
+	}
+	return decoded.Choices[0].Message
 }
 
 func TestRestoringWriterLeavesGeminiThoughtTextRedacted(t *testing.T) {
@@ -399,6 +784,7 @@ func TestRestoringWriterLeavesGeminiThoughtTextRedacted(t *testing.T) {
 		}},
 		false,
 		contract.ProtocolGoogleGenerateContent,
+		true,
 	)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
@@ -446,6 +832,7 @@ func TestRestoringWriterNonStreamingEscapesOriginalValueSafely(t *testing.T) {
 		}},
 		false,
 		contract.ProtocolOpenAIChat,
+		true,
 	)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Content-Length", "999")
@@ -530,6 +917,7 @@ func TestRestoringWriterNonStreamingVisibleFieldsAcrossAlphaProtocols(t *testing
 				}},
 				false,
 				test.protocol,
+				true,
 			)
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusOK)
@@ -567,6 +955,7 @@ func TestRestoringWriterGeminiJSONArrayAndGracefulFallback(t *testing.T) {
 		redactions,
 		true,
 		contract.ProtocolGoogleGenerateContent,
+		true,
 	)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
@@ -602,6 +991,7 @@ func TestRestoringWriterGeminiJSONArrayAndGracefulFallback(t *testing.T) {
 		redactions,
 		true,
 		contract.ProtocolOpenAIChat,
+		true,
 	)
 	fallback.Header().Set("Content-Type", "text/event-stream")
 	fallback.WriteHeader(http.StatusOK)
@@ -633,6 +1023,7 @@ func TestRestoringWriterNeverCombinesDifferentChoices(t *testing.T) {
 		}},
 		true,
 		contract.ProtocolOpenAIChat,
+		true,
 	)
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.WriteHeader(http.StatusOK)
@@ -686,6 +1077,7 @@ func TestRestoringWriterDoesNotRestoreLegacyFixedPlaceholder(t *testing.T) {
 		}},
 		false,
 		contract.ProtocolOpenAIChat,
+		true,
 	)
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)

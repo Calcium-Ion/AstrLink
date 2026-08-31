@@ -38,7 +38,8 @@ func BuildRelayKit(input RelayKitInput) (contract.ExecutionPlan, error) {
 	if !service.Enabled {
 		return contract.ExecutionPlan{}, ErrEndpointDisabled
 	}
-	if !supportsNative(service, input.UpstreamProtocol, input.Streaming) {
+	if !supportsNative(service, input.UpstreamProtocol, input.Streaming) &&
+		!hasDeclaredConversion(service, input.InputProtocol, input.UpstreamProtocol, input.Streaming) {
 		return contract.ExecutionPlan{}, &CapabilityUnavailableError{
 			Protocol: input.UpstreamProtocol, Mode: contract.CapabilityModeNative, Streaming: input.Streaming,
 		}
@@ -70,7 +71,22 @@ func BuildRelayKit(input RelayKitInput) (contract.ExecutionPlan, error) {
 
 func supportsNative(endpoint contract.Service, protocol contract.ProtocolID, streaming bool) bool {
 	for _, capability := range endpoint.Capabilities {
-		if capability.Protocol == protocol && capability.Mode == contract.CapabilityModeNative &&
+		if capability.Protocol == protocol && capability.ConvertTo == "" &&
+			(!streaming || capability.Streaming) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDeclaredConversion(
+	endpoint contract.Service,
+	from contract.ProtocolID,
+	to contract.ProtocolID,
+	streaming bool,
+) bool {
+	for _, capability := range endpoint.Capabilities {
+		if capability.Protocol == from && capability.ConvertTo == to &&
 			(!streaming || capability.Streaming) {
 			return true
 		}

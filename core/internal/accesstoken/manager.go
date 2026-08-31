@@ -40,15 +40,6 @@ var (
 	ErrInvalidRecord = storage.ErrInvalidRecord
 )
 
-type Source = storage.AccessTokenSource
-
-const (
-	SourceSystemDefault = storage.AccessTokenSourceSystemDefault
-	SourceUser          = storage.AccessTokenSourceUser
-
-	SourceBootstrap = SourceSystemDefault
-)
-
 type Token = storage.AccessTokenMetadata
 
 type CreatedToken struct {
@@ -72,7 +63,7 @@ func NewManager(store storage.AccessTokenStore) (*Manager, error) {
 // initialization has completed. Once completed, deleting every token does not
 // cause another bootstrap token to be created.
 func (manager *Manager) EnsureDefault(ctx context.Context) (Token, bool, error) {
-	candidate, err := manager.newToken(DefaultTokenName, SourceSystemDefault)
+	candidate, err := manager.newToken(DefaultTokenName)
 	if err != nil {
 		return Token{}, false, err
 	}
@@ -84,7 +75,7 @@ func (manager *Manager) EnsureDefault(ctx context.Context) (Token, bool, error) 
 }
 
 func (manager *Manager) Create(ctx context.Context, name string) (CreatedToken, error) {
-	candidate, err := manager.newToken(name, SourceUser)
+	candidate, err := manager.newToken(name)
 	if err != nil {
 		return CreatedToken{}, err
 	}
@@ -142,13 +133,10 @@ func (manager *Manager) Authenticate(ctx context.Context, raw string) (contract.
 	return token.ID, nil
 }
 
-func (manager *Manager) newToken(name string, source Source) (storage.NewAccessToken, error) {
+func (manager *Manager) newToken(name string) (storage.NewAccessToken, error) {
 	canonicalName, nameKey, err := normalizeName(name)
 	if err != nil {
 		return storage.NewAccessToken{}, err
-	}
-	if !source.Valid() {
-		return storage.NewAccessToken{}, fmt.Errorf("access token source %q is invalid", source)
 	}
 
 	idBytes := make([]byte, idRandomBytes)
@@ -171,7 +159,6 @@ func (manager *Manager) newToken(name string, source Source) (storage.NewAccessT
 		NameKey: nameKey,
 		Hash:    storage.AccessTokenHash(hash),
 		Hint:    tokenHint(raw),
-		Source:  source,
 		Value:   raw,
 	}, nil
 }

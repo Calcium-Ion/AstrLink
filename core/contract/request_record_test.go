@@ -81,6 +81,39 @@ func TestRequestRecordValidation(t *testing.T) {
 			wantErr: "privacy restore counts",
 		},
 		{
+			name: "accepts request-time privacy hit counts",
+			mutate: func(record *RequestRecord) {
+				record.PrivacyRestore = &PrivacyRestoreSummary{
+					Enabled: true, MappingCount: 3, RestoredCount: 3,
+					Hits: []PrivacyHitCount{
+						{Kind: CanonicalKindEmail, Count: 2},
+						{Kind: CanonicalKindURL, Count: 1},
+					},
+				}
+			},
+		},
+		{
+			name: "rejects invalid privacy hit kind",
+			mutate: func(record *RequestRecord) {
+				record.PrivacyRestore = &PrivacyRestoreSummary{
+					Hits: []PrivacyHitCount{{Kind: "ssn", Count: 1}},
+				}
+			},
+			wantErr: "privacy restore hit kind",
+		},
+		{
+			name: "rejects duplicate privacy hit kinds",
+			mutate: func(record *RequestRecord) {
+				record.PrivacyRestore = &PrivacyRestoreSummary{
+					Hits: []PrivacyHitCount{
+						{Kind: CanonicalKindEmail, Count: 1},
+						{Kind: CanonicalKindEmail, Count: 2},
+					},
+				}
+			},
+			wantErr: "privacy restore hit kinds must be unique",
+		},
+		{
 			name: "accepts null optional attribution fields",
 			mutate: func(record *RequestRecord) {
 				record.RouteID = nil
@@ -91,6 +124,49 @@ func TestRequestRecordValidation(t *testing.T) {
 				record.Error = nil
 				record.RequestedModel = nil
 			},
+		},
+		{
+			name: "accepts session trajectory fields",
+			mutate: func(record *RequestRecord) {
+				sessionID := SessionID("session_01")
+				previous := "resp_prev"
+				output := "resp_out"
+				preview := "创建启动快捷方式"
+				ended := started.Add(time.Millisecond)
+				record.SessionID = &sessionID
+				record.PreviousResponseID = &previous
+				record.OutputResponseID = &output
+				record.InputPreview = &preview
+				record.Events = []RequestEvent{{
+					Kind: RequestEventAccepted, StartedAt: started, EndedAt: &ended,
+					Status: RequestStatusPending, Summary: "gpt-4.1 · openai.responses",
+				}}
+			},
+		},
+		{
+			name: "rejects invalid session id",
+			mutate: func(record *RequestRecord) {
+				sessionID := SessionID("SESSION")
+				record.SessionID = &sessionID
+			},
+			wantErr: "session_id",
+		},
+		{
+			name: "rejects oversized input preview",
+			mutate: func(record *RequestRecord) {
+				preview := strings.Repeat("字", MaxInputPreviewRunes+1)
+				record.InputPreview = &preview
+			},
+			wantErr: "input_preview",
+		},
+		{
+			name: "rejects unknown event kind",
+			mutate: func(record *RequestRecord) {
+				record.Events = []RequestEvent{{
+					Kind: "tool", StartedAt: started, Status: RequestStatusSucceeded,
+				}}
+			},
+			wantErr: "event kind",
 		},
 	}
 	for _, test := range tests {
@@ -165,7 +241,10 @@ func TestUsageValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	negative := -1
-	if err := (Usage{CachedInputTokens: &negative}).Validate(); err == nil {
-		t.Fatal("expected negative cached token rejection")
+	if err := (Usage{CacheReadTokens: &negative}).Validate(); err == nil {
+		t.Fatal("expected negative cache_read_tokens rejection")
+	}
+	if err := (Usage{CacheWriteTokens: &negative}).Validate(); err == nil {
+		t.Fatal("expected negative cache_write_tokens rejection")
 	}
 }

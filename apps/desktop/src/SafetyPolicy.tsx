@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
@@ -37,23 +36,38 @@ import {
   getPrivacyModelCatalog,
   getPrivacyModelInstallation,
   getPrivacyPolicy,
+  getPrivacyRegexBuiltinRules,
   installPrivacyModel,
   listPrivacyModelInstallations,
   probeLocalPrivacyModel,
   probePrivacyModel,
   updatePrivacyPolicy,
 } from "./bridge";
+import { i18n, useT } from "./i18n";
+import { notify } from "./notify";
 import {
   isResourceHeavyVariant,
+  MAX_PRIVACY_ALLOWLIST_RULES,
+  MAX_PRIVACY_ALLOWLIST_VALUE_CHARS,
+  MAX_PRIVACY_CUSTOM_REGEX_RULES,
   MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES,
+  MAX_PRIVACY_REGEX_PATTERN_CHARS,
+  PLACEHOLDER_STYLE_LOCKED_KINDS,
+  PRIVACY_KINDS,
+  PRIVACY_REGEX_DETECTOR_KINDS,
   utf8ByteLength,
   validateLocalProbeInput,
   type CanonicalPrivacyKind,
+  type PlaceholderStyle,
   type PrivacyAction,
+  type PrivacyAllowlistRule,
+  type PrivacyAllowlistType,
   type PrivacyCatalogModel,
   type PrivacyDetector,
+  type PrivacyDryRunFinding,
   type PrivacyDryRunProtocol,
   type PrivacyDryRunResult,
+  type PrivacyKindRule,
   type PrivacyLabelMapping,
   type PrivacyModelInstallation,
   type PrivacyModelInstallInput,
@@ -61,6 +75,10 @@ import {
   type PrivacyModelVariant,
   type PrivacyPolicyPatch,
   type PrivacyPolicyRecord,
+  type PrivacyRegexDetectorKind,
+  type PrivacyRegexRule,
+  type PrivacyRegexSource,
+  type PrivacySuppressionReason,
 } from "./privacy-policy-model";
 import { PageHeader } from "./PageHeader";
 
@@ -100,12 +118,9 @@ export interface SafetyPolicyProps {
   isReady: boolean;
 }
 
-const actionLabels: Record<PrivacyAction, string> = {
-  allow: "允许",
-  warn: "警告并继续",
-  block: "阻止请求",
-  redact: "脱敏后继续",
-};
+function actionLabel(action: PrivacyAction): string {
+  return i18n.t(`privacy.${action}`);
+}
 
 const dryRunProtocolOptions: ReadonlyArray<{
   value: PrivacyDryRunProtocol;
@@ -121,104 +136,169 @@ const dryRunProtocolOptions: ReadonlyArray<{
 
 interface DryRunSamplePreset {
   id: string;
-  label: string;
-  description: string;
   text: string;
+}
+
+function dryRunSampleLabel(id: string): string {
+  return i18n.t(`safety.sample.${id}.label`);
+}
+
+function dryRunSampleDescription(id: string): string {
+  return i18n.t(`safety.sample.${id}.description`);
 }
 
 const dryRunSamplePresets: ReadonlyArray<DryRunSamplePreset> = [
   {
     id: "mixed-contact",
-    label: "综合联系方式",
-    description: "邮箱、国际电话和测试银行卡，适合快速检查多类别命中。",
     text: "请联系虚构用户 Alice：alice@example.com，电话 +65 6123 4567；测试卡号 4242 4242 4242 4242。",
   },
   {
     id: "account",
-    label: "账号与 IBAN",
-    description: "上下文账号和标准测试 IBAN，用于检查账号类识别。",
     text: "请将退款打到测试账户，account number: 12345678901；IBAN 为 GB82WEST12345698765432。",
   },
   {
     id: "network",
-    label: "IP 与链接",
-    description: "保留用途 IPv4 和 .example 链接，不包含真实网络目标。",
     text: "故障信息：客户端 IP 192.0.2.10，回调地址 https://private.example/callback?ticket=demo。",
   },
   {
     id: "secret",
-    label: "测试密钥",
-    description: "明确标记为虚构的 API Key 和密码赋值格式。",
     text: '以下均为虚构测试值：api_key=example_test_key_1234567890，password="demo_password_123456"。',
   },
   {
     id: "zh-profile",
-    label: "中文个人资料",
-    description: "中文姓名、地址、日期和邮箱，更适合验证本地模型。",
     text: "以下为虚构资料：李明住在上海市测试区示例路 88 号，出生日期为 1990-01-02，邮箱 liming@example.cn。",
   },
   {
     id: "en-profile",
-    label: "英文个人资料",
-    description: "英文姓名、地址和出生日期，更适合验证本地模型。",
     text: "Fictional profile: Alice Doe lives at 123 Example Street, Testville, and was born on January 2, 1990.",
   },
   {
     id: "mixed-language",
-    label: "中英混合多实体",
-    description: "姓名、日期、电话、邮箱和链接混合在同一段文本中。",
     text: "虚构客户王小明于 2025-08-01 提交 ticket，电话 +86 138 0013 8000，邮箱 wang@example.com，访问 https://support.example/ticket/42。",
   },
   {
     id: "clean",
-    label: "无敏感信息",
-    description: "不包含 PII 的正常文本，用于检查误报。",
     text: "请把这段公开产品说明总结成三点，并给出一个简短标题。",
   },
   {
     id: "numeric-boundary",
-    label: "数字边界反例",
-    description: "无效卡号、无效 IP 和普通订单号，用于检查数字误报。",
     text: "订单号 1234567890，测试卡号 4242 4242 4242 4241，地址 999.999.1.1；这些都不应按高置信度 PII 处理。",
   },
 ];
 
 const defaultDryRunSample = dryRunSamplePresets[0].text;
 
-const installationStatusLabels: Record<
-  PrivacyModelInstallation["status"],
-  string
-> = {
-  downloading: "下载中",
-  ready: "已就绪",
-  error: "不可用",
-};
+function installationStatusLabel(
+  status: PrivacyModelInstallation["status"],
+): string {
+  if (status === "error") return i18n.t("safety.unavailableStatus");
+  return i18n.t(`safety.${status}`);
+}
 
-const installationErrorLabels: Record<
-  NonNullable<PrivacyModelInstallation["error"]>,
-  string
-> = {
-  download_failed: "下载失败",
-  integrity_failed: "完整性校验失败",
-  incompatible_model: "模型不兼容",
-};
+function installationErrorLabel(
+  error: NonNullable<PrivacyModelInstallation["error"]>,
+): string {
+  switch (error) {
+    case "download_failed":
+      return i18n.t("safety.downloadFailed");
+    case "integrity_failed":
+      return i18n.t("safety.integrityFailed");
+    case "incompatible_model":
+      return i18n.t("safety.incompatible");
+  }
+}
 
-const canonicalKindOptions: ReadonlyArray<{
-  value: CanonicalPrivacyKind;
-  label: string;
-}> = [
-  { value: "email", label: "邮箱" },
-  { value: "phone", label: "电话" },
-  { value: "account", label: "账号" },
-  { value: "payment_card", label: "银行卡" },
-  { value: "ip_address", label: "IP 地址" },
-  { value: "url", label: "URL" },
-  { value: "common_secret", label: "常见密钥" },
-  { value: "private_address", label: "私人地址" },
-  { value: "private_date", label: "私人日期" },
-  { value: "private_person", label: "人名" },
+const CANONICAL_KIND_VALUES: readonly CanonicalPrivacyKind[] = [
+  "email",
+  "phone",
+  "account",
+  "payment_card",
+  "ip_address",
+  "url",
+  "common_secret",
+  "private_address",
+  "private_date",
+  "private_person",
 ];
 
+function canonicalKindOptions(): ReadonlyArray<{
+  value: CanonicalPrivacyKind;
+  label: string;
+}> {
+  return CANONICAL_KIND_VALUES.map((value) => ({
+    value,
+    label: i18n.t(`privacy.${value}`),
+  }));
+}
+
+function regexKindOptions(): ReadonlyArray<{
+  value: CanonicalPrivacyKind;
+  label: string;
+}> {
+  return canonicalKindOptions().filter((option) =>
+    (PRIVACY_REGEX_DETECTOR_KINDS as readonly string[]).includes(option.value),
+  );
+}
+
+function canonicalKindLabel(kind: CanonicalPrivacyKind): string {
+  return i18n.t(`privacy.${kind}`);
+}
+
+/** Only produced by the local model, so a Regex policy cannot hit these. */
+const localModelOnlyKinds: ReadonlySet<CanonicalPrivacyKind> = new Set([
+  "private_person",
+  "private_address",
+  "private_date",
+]);
+
+function placeholderStyleLabel(style: PlaceholderStyle): string {
+  return i18n.t(`privacy.${style}`);
+}
+
+/**
+ * Shown as a tooltip on rows whose style cannot be changed. The shape of these
+ * placeholders is a safety property, not a preference.
+ */
+function placeholderStyleLockReason(
+  kind: CanonicalPrivacyKind,
+): string | undefined {
+  switch (kind) {
+    case "common_secret":
+      return i18n.t("safety.secretLock");
+    case "private_person":
+      return i18n.t("safety.personLock");
+    case "private_address":
+      return i18n.t("safety.addressLock");
+    case "private_date":
+      return i18n.t("safety.dateLock");
+    default:
+      return undefined;
+  }
+}
+
+const ALLOWLIST_TYPES: readonly PrivacyAllowlistType[] = [
+  "literal",
+  "domain_suffix",
+  "cidr",
+];
+
+function allowlistTypeLabel(type: PrivacyAllowlistType): string {
+  return i18n.t(`privacy.${type}`);
+}
+
+const allowlistTypePlaceholders: Record<PrivacyAllowlistType, string> = {
+  literal: "ops@your-company.example",
+  domain_suffix: "github.com",
+  cidr: "10.0.0.0/8",
+};
+
+function defaultAllowlistRule(): PrivacyAllowlistRule {
+  return { type: "domain_suffix", value: "" };
+}
+
+function defaultCustomRegexRule(): PrivacyRegexRule {
+  return { kind: "email", pattern: `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b` };
+}
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -244,26 +324,27 @@ function prettyJSON(value: string): string {
 
 function summarizeDryRunFindings(result: PrivacyDryRunResult): string {
   if (result.findings.length === 0) {
-    return "未命中";
+    return i18n.t("privacy.noHit");
   }
   const counts = new Map<CanonicalPrivacyKind, number>();
   for (const finding of result.findings) {
     counts.set(finding.kind, (counts.get(finding.kind) ?? 0) + 1);
   }
-  return canonicalKindOptions
+  return canonicalKindOptions()
     .filter((option) => counts.has(option.value))
     .map((option) => `${option.label} × ${counts.get(option.value)}`)
     .join(" · ");
 }
 
 function dryRunKindLabel(kind: CanonicalPrivacyKind): string {
-  return (
-    canonicalKindOptions.find((option) => option.value === kind)?.label ?? kind
-  );
+  return canonicalKindLabel(kind);
 }
 
 function dryRunLiveSummary(result: PrivacyDryRunResult): string {
-  return `试运行完成：${actionLabels[result.decision]}，${summarizeDryRunFindings(result)}。仅本地预览。`;
+  return i18n.t("safety.dryRunDone", {
+    action: actionLabel(result.decision),
+    summary: summarizeDryRunFindings(result),
+  });
 }
 
 function dryRunConfidenceReason(
@@ -273,10 +354,47 @@ function dryRunConfidenceReason(
   mode: "hit" | "suppressed",
 ): string {
   if (detector === "regex" && mode === "hit") {
-    return "Regex 命中（置信度门槛不适用）";
+    return i18n.t("safety.regexConfidenceN/A");
   }
   const comparison = mode === "hit" ? "≥" : "<";
   return `${confidence.toFixed(2)} ${comparison} ${minConfidence.toFixed(2)}`;
+}
+
+function suppressionReasonLabel(reason: PrivacySuppressionReason): string {
+  switch (reason) {
+    case "low_confidence":
+      return i18n.t("safety.belowConfidence");
+    case "kind_disabled":
+      return i18n.t("safety.kindDisabled");
+    case "allowlisted":
+      return i18n.t("safety.allowlisted");
+    case "placeholder":
+      return i18n.t("safety.alreadyFake");
+    case "unrepresentable":
+      return i18n.t("safety.poolExhausted");
+  }
+}
+
+/**
+ * A suppressed finding used to mean exactly one thing—too low a confidence—so
+ * the reason was derivable from the score. It now has several causes, and only
+ * the low-confidence one is about the score.
+ */
+function dryRunSuppressionReason(
+  finding: PrivacyDryRunFinding,
+  minConfidence: number,
+  detector: PrivacyDetector,
+): string {
+  const reason = finding.reason;
+  if (reason === undefined || reason === "low_confidence") {
+    return dryRunConfidenceReason(
+      finding.confidence,
+      minConfidence,
+      detector,
+      "suppressed",
+    );
+  }
+  return suppressionReasonLabel(reason);
 }
 
 function recommendedVariant(
@@ -341,13 +459,14 @@ function LabelMappingDialog({
   onChange,
   onConfirm,
 }: LabelMappingDialogProps) {
+  const t = useT();
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="max-w-xl sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-          将模型基础标签映射到 AstrLink 的稳定隐私类别；不需要处理的标签可明确忽略。
+          {t("safety.mappingHint")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid max-h-[52vh] gap-2 overflow-auto pr-1">
@@ -377,7 +496,7 @@ function LabelMappingDialog({
                   }
                 >
                   <SelectTrigger
-                    aria-label={`${label.label} 标签映射`}
+                    aria-label={t("safety.labelMapping", { label: label.label })}
                     className="w-full"
                     id={selectID}
                   >
@@ -386,11 +505,11 @@ function LabelMappingDialog({
                   <SelectContent>
                   {unresolved ? (
                     <SelectItem disabled value="__unresolved__">
-                      请选择
+                      {t("safety.pleaseSelect")}
                     </SelectItem>
                   ) : null}
-                  <SelectItem value="__ignore__">忽略此标签</SelectItem>
-                  {canonicalKindOptions.map((kind) => (
+                  <SelectItem value="__ignore__">{t("safety.ignoreLabel")}</SelectItem>
+                  {canonicalKindOptions().map((kind) => (
                     <SelectItem key={kind.value} value={kind.value}>
                       {kind.label}
                     </SelectItem>
@@ -404,7 +523,7 @@ function LabelMappingDialog({
         <div className="rounded-lg bg-muted px-3 py-2 text-sm text-text-secondary">{summary}</div>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel} type="button">
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             disabled={confirmDisabled}
@@ -432,50 +551,60 @@ function ModelActionDialog({
   onCancel,
   onConfirm,
 }: ModelActionDialogProps) {
+  const t = useT();
   const activating = action.kind === "activate";
   const downloading = installation.status === "downloading";
   const local = installation.source === "local";
   const heavy = isResourceHeavyVariant(installation);
   const title = activating
-    ? "确认使用本地模型"
+    ? t("safety.confirmUse")
     : downloading
       ? local
-        ? "取消模型导入"
-        : "取消模型下载"
-      : "删除本地模型";
+        ? t("safety.cancelImport")
+        : t("safety.cancelDownload")
+      : t("safety.deleteModel");
   const confirmLabel = activating
-    ? "确认用于策略"
+    ? t("safety.confirmForPolicy")
     : downloading
       ? local
-        ? "确认取消导入"
-        : "确认取消下载"
-      : "确认删除";
+        ? t("safety.confirmCancelImport")
+        : t("safety.confirmCancelDownload")
+      : t("safety.confirmDelete");
+  const transferAction = local ? t("safety.importAction") : t("safety.downloadAction");
 
   const description = (
     <>
       <p>
         {activating
-            ? `将使用 ${installation.name} · ${installation.variant_name} 进行本地检测。`
+            ? t("safety.useBody", {
+                name: installation.name,
+                variant: installation.variant_name,
+              })
             : downloading
-              ? `将停止 ${installation.name} 的${local ? "导入" : "下载"}并清理临时文件。`
-              : `将从本机删除 ${installation.name} · ${installation.variant_name}，再次使用时需要重新${local ? "导入" : "下载"}。`}
+              ? t("safety.stopBody", {
+                  name: installation.name,
+                  action: transferAction,
+                })
+              : t("safety.deleteBody", {
+                  name: installation.name,
+                  variant: installation.variant_name,
+                  action: transferAction,
+                })}
       </p>
       {activating ? (
         <>
           <dl className="grid grid-cols-2 gap-2.5">
             <div className="rounded-lg bg-muted p-3">
-              <dt className="text-sm text-muted-foreground">磁盘占用</dt>
+              <dt className="text-sm text-muted-foreground">{t("safety.diskUsage")}</dt>
               <dd className="mt-1 text-sm font-medium">{formatBytes(installation.bytes_total)}</dd>
             </div>
             <div className="rounded-lg bg-muted p-3">
-              <dt className="text-sm text-muted-foreground">预计内存</dt>
+              <dt className="text-sm text-muted-foreground">{t("safety.estimatedRam")}</dt>
               <dd className="mt-1 text-sm font-medium">{formatBytes(installation.estimated_ram_bytes)}</dd>
             </div>
           </dl>
           <FormMessage tone={heavy ? "warning" : "notice"}>
-            {heavy
-              ? "该模型资源占用较高，性能较低的设备可能明显变慢。确认后会立即更新全局策略，并在首个受保护请求时加载模型。"
-              : "确认后会立即更新全局策略，并在首个受保护请求时加载模型。"}
+            {heavy ? t("safety.heavyConfirm") : t("safety.normalConfirm")}
           </FormMessage>
         </>
       ) : null}
@@ -483,7 +612,7 @@ function ModelActionDialog({
   );
   return (
     <ConfirmDialog
-      cancelLabel="返回"
+      cancelLabel={t("safety.back")}
       confirmLabel={confirmLabel}
       description={description}
       destructive={!activating}
@@ -504,33 +633,37 @@ function InstallationResourceDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   const local = pending.key === "local";
   return (
     <ConfirmDialog
-      cancelLabel="返回"
-      confirmLabel="继续安装"
+      cancelLabel={t("safety.back")}
+      confirmLabel={t("safety.continueInstall")}
       description={
         <>
-          <p>{pending.name} · {pending.variant.name} 资源占用较高。</p>
+          <p>{t("safety.heavyResource", {
+            name: pending.name,
+            variant: pending.variant.name,
+          })}</p>
         <dl className="grid grid-cols-2 gap-2.5">
           <div className="rounded-lg bg-muted p-3">
-            <dt className="text-sm text-muted-foreground">{local ? "导入大小" : "下载大小"}</dt>
+            <dt className="text-sm text-muted-foreground">{local ? t("safety.importSize") : t("safety.downloadSize")}</dt>
             <dd className="mt-1 text-sm font-medium">{formatBytes(pending.variant.bytes_total)}</dd>
           </div>
           <div className="rounded-lg bg-muted p-3">
-            <dt className="text-sm text-muted-foreground">预计内存</dt>
+            <dt className="text-sm text-muted-foreground">{t("safety.estimatedRam")}</dt>
             <dd className="mt-1 text-sm font-medium">{formatBytes(pending.variant.estimated_ram_bytes)}</dd>
           </div>
         </dl>
         <FormMessage tone="warning">
-          性能较低的设备可能明显变慢。
+          {t("safety.slowDevice")}
         </FormMessage>
         </>
       }
       onCancel={onCancel}
       onConfirm={onConfirm}
       open
-      title="确认安装本地模型"
+      title={t("safety.confirmInstallTitle")}
     />
   );
 }
@@ -542,6 +675,7 @@ interface StreamingRestoreDemoDialogProps {
 function StreamingRestoreDemoDialog({
   onClose,
 }: StreamingRestoreDemoDialogProps) {
+  const t = useT();
   const [replayKey, setReplayKey] = useState(0);
 
   useEffect(() => {
@@ -559,22 +693,22 @@ function StreamingRestoreDemoDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[calc(100dvh-36px)] max-w-[720px] overflow-auto sm:max-w-[720px]">
         <DialogHeader>
-          <DialogTitle id="streaming-restore-demo-title">流式响应还原演示</DialogTitle>
+          <DialogTitle id="streaming-restore-demo-title">{t("safety.demoTitle")}</DialogTitle>
           <DialogDescription>
-          固定教学示例（OpenAI Responses · <code>stream: true</code>
-          ）：请求侧脱敏与占位符还原。不对响应正文或 SSE 事件做审核扫描。
+          {t("safety.demoDescriptionLead")}<code>stream: true</code>
+          {t("safety.demoDescriptionTail")}
           </DialogDescription>
         </DialogHeader>
         <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-text-secondary">
-          示例邮箱 <code>alice@example.com</code>
-          为固定示例，不代表当前策略状态。
+          {t("safety.demoEmailLead")}<code>alice@example.com</code>
+          {t("safety.demoEmailTail")}
         </p>
         <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-text-secondary">
-          实际请求会使用随机后缀；这里固定展示
-          <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>。
+          {t("safety.demoTokenNote")}
+          <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>{t("safety.demoTokenNoteEnd")}
         </p>
         <div
-          aria-label="请求脱敏与响应占位符还原数据流"
+          aria-label={t("safety.flowTitle")}
           className="grid gap-2.5 rounded-xl border bg-card p-3"
           data-streaming-demo
           data-testid="streaming-restore-demo"
@@ -584,7 +718,7 @@ function StreamingRestoreDemoDialog({
             <div
               className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground"
             >
-              <strong>客户端</strong>
+              <strong>{t("safety.demoClient")}</strong>
               <span>OpenAI Responses</span>
             </div>
             <div
@@ -592,13 +726,13 @@ function StreamingRestoreDemoDialog({
             >
               <span className="pointer-events-none absolute -inset-1 animate-[streaming-restore-demo-shield_12s_linear_infinite] rounded-md opacity-0" />
               <strong>AstrLink</strong>
-              <span>隐私网关</span>
+              <span>{t("safety.demoGateway")}</span>
             </div>
             <div
               className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground"
             >
-              <strong>上游</strong>
-              <span>SSE 传输</span>
+              <strong>{t("safety.demoUpstream")}</strong>
+              <span>{t("safety.demoSse")}</span>
             </div>
           </div>
 
@@ -610,7 +744,7 @@ function StreamingRestoreDemoDialog({
             <div className="absolute inset-x-[17%] top-1/2 h-0.5 -translate-y-1/2 overflow-hidden rounded-full bg-primary/20">
               <span className="absolute inset-0 animate-[streaming-restore-demo-dots-ltr_4.2s_linear_infinite] border-t-2 border-dashed border-current text-primary opacity-70" />
               <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-xs font-medium tracking-[0.02em] whitespace-nowrap text-accent-foreground">
-                请求 →
+                {t("safety.demoRequest")}
               </span>
             </div>
             <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-plain_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="plain">
@@ -629,7 +763,7 @@ function StreamingRestoreDemoDialog({
             <div className="absolute inset-x-[17%] top-1/2 h-0.5 -translate-y-1/2 overflow-hidden rounded-full bg-success/20">
               <span className="absolute inset-0 animate-[streaming-restore-demo-dots-rtl_4.2s_linear_infinite] border-t-2 border-dashed border-current text-success opacity-70" />
               <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-xs font-medium tracking-[0.02em] whitespace-nowrap text-success-foreground">
-                ← 响应
+                {t("safety.demoResponse")}
               </span>
             </div>
             <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-a_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="chunk-a">
@@ -643,23 +777,23 @@ function StreamingRestoreDemoDialog({
               }
             </span>
             <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-restored_12s_linear_infinite] overflow-hidden rounded-full border border-success/40 bg-success-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-success-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="restored">
-              正文: alice@example.com
+              {t("safety.demoBody", { email: "alice@example.com" })}
             </span>
           </div>
 
           <ol className="mt-1 grid list-none gap-1 p-0 [&>li]:flex [&>li]:items-center [&>li]:gap-[7px] [&>li]:text-xs [&>li]:leading-snug [&>li]:text-text-secondary">
             <li>
               <span className="size-[9px] shrink-0 rounded-full bg-primary" />
-              请求侧脱敏：原文 →
+              {t("safety.demoStepRedact")}
               <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>
             </li>
             <li>
               <span className="size-[9px] shrink-0 rounded-full bg-warning" />
-              上游把占位符拆到两个 SSE delta event
+              {t("safety.demoStepSplit")}
             </li>
             <li>
               <span className="size-[9px] shrink-0 rounded-full bg-success" />
-              网关拼完整后还原给客户端
+              {t("safety.demoStepRestore")}
             </li>
           </ol>
         </div>
@@ -669,14 +803,14 @@ function StreamingRestoreDemoDialog({
             onClick={() => setReplayKey((current) => current + 1)}
             type="button"
           >
-            重新播放
+            {t("safety.replay")}
           </Button>
           <Button
             autoFocus
             onClick={onClose}
             type="button"
           >
-            关闭
+            {t("common.close")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -688,6 +822,7 @@ export function SafetyPolicy({
   coreSessionKey,
   isReady,
 }: SafetyPolicyProps) {
+  const t = useT();
   const [status, setStatus] = useState<SafetyPolicyStatus>("blocked");
   const [record, setRecord] = useState<PrivacyPolicyRecord | null>(null);
   const [catalog, setCatalog] = useState<PrivacyCatalogModel[]>([]);
@@ -711,7 +846,6 @@ export function SafetyPolicy({
   const [catalogPreparation, setCatalogPreparation] =
     useState<CatalogPreparation | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [operationBusy, setOperationBusy] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
@@ -727,6 +861,15 @@ export function SafetyPolicy({
   const [minConfidenceDraft, setMinConfidenceDraft] = useState("");
   const [pendingModelAction, setPendingModelAction] =
     useState<PendingModelAction | null>(null);
+  const [confirmFillBuiltinRules, setConfirmFillBuiltinRules] = useState(false);
+  const [regexPatternDrafts, setRegexPatternDrafts] = useState<string[]>([]);
+  const [allowlistDrafts, setAllowlistDrafts] = useState<string[]>([]);
+  // A new allowlist row is held locally until it has a value, because an empty
+  // value would be rejected by the contract.
+  const [allowlistPending, setAllowlistPending] = useState(false);
+  const [allowlistPendingType, setAllowlistPendingType] =
+    useState<PrivacyAllowlistType>(defaultAllowlistRule().type);
+  const [fillingBuiltinRules, setFillingBuiltinRules] = useState(false);
   const [pendingInstallation, setPendingInstallation] =
     useState<PendingInstallation | null>(null);
   const [streamingDemoOpen, setStreamingDemoOpen] = useState(false);
@@ -737,6 +880,8 @@ export function SafetyPolicy({
   const dryRunRequestRef = useRef(0);
   const dryRunResultHeadingRef = useRef<HTMLHeadingElement>(null);
   const persistedMinConfidence = record?.policy.min_confidence;
+  const persistedCustomRegexRules = record?.policy.custom_regex_rules;
+  const persistedAllowlistRules = record?.policy.allowlist_rules;
 
   useEffect(() => {
     setMinConfidenceDraft(
@@ -745,6 +890,23 @@ export function SafetyPolicy({
         : persistedMinConfidence.toFixed(2),
     );
   }, [persistedMinConfidence]);
+
+  useEffect(() => {
+    setRegexPatternDrafts(
+      persistedCustomRegexRules === undefined
+        ? []
+        : persistedCustomRegexRules.map((rule) => rule.pattern),
+    );
+  }, [persistedCustomRegexRules]);
+
+  useEffect(() => {
+    setAllowlistDrafts(
+      persistedAllowlistRules === undefined
+        ? []
+        : persistedAllowlistRules.map((rule) => rule.value),
+    );
+    setAllowlistPending(false);
+  }, [persistedAllowlistRules]);
 
   useEffect(() => {
     if (dryRunResult === null) return;
@@ -774,7 +936,7 @@ export function SafetyPolicy({
     } catch (loadError) {
       if (generationRef.current !== generation) return;
       setStatus("error");
-      setError(messageOf(loadError, "无法读取安全策略与模型目录。"));
+      setError(messageOf(loadError, t("safety.readFailed")));
     }
   };
 
@@ -786,7 +948,6 @@ export function SafetyPolicy({
     pollRequestRef.current += 1;
     dryRunRequestRef.current += 1;
     setError(null);
-    setNotice(null);
     setSaving(false);
     setOperationBusy(null);
     setProbing(false);
@@ -880,7 +1041,7 @@ export function SafetyPolicy({
         );
       } catch (pollError) {
         if (!stillCurrent()) return;
-        setError(messageOf(pollError, "无法刷新模型下载进度。"));
+        setError(messageOf(pollError, t("safety.progressFailed")));
       } finally {
         schedule();
       }
@@ -917,7 +1078,6 @@ export function SafetyPolicy({
     setCatalog([]);
     setInstallations([]);
     setError(null);
-    setNotice(null);
     setProbe(null);
     setProbeView(null);
     setCustomMappingOpen(false);
@@ -926,8 +1086,11 @@ export function SafetyPolicy({
     void load(generation);
   };
 
-  const patchPolicy = async (patch: PrivacyPolicyPatch) => {
-    if (record === null || saving || status !== "ready") return;
+  const patchPolicy = async (
+    patch: PrivacyPolicyPatch,
+    successNotice = i18n.t("safety.saved"),
+  ): Promise<boolean> => {
+    if (record === null || saving || status !== "ready") return false;
     const generation = generationRef.current;
     const previous = record;
     setRecord({
@@ -939,17 +1102,17 @@ export function SafetyPolicy({
     });
     setSaving(true);
     setError(null);
-    setNotice(null);
     setDryRunResult(null);
     setDryRunError(null);
 
     try {
       const next = await updatePrivacyPolicy(record.etag, patch);
-      if (generationRef.current !== generation) return;
+      if (generationRef.current !== generation) return false;
       setRecord(next);
-      setNotice("安全策略已保存。");
+      notify.success(successNotice);
+      return true;
     } catch (patchError) {
-      if (generationRef.current !== generation) return;
+      if (generationRef.current !== generation) return false;
       let authoritative = previous;
       let reconciled = false;
       try {
@@ -958,14 +1121,15 @@ export function SafetyPolicy({
       } catch {
         // Keep the last known-good record when Core cannot be queried.
       }
-      if (generationRef.current !== generation) return;
+      if (generationRef.current !== generation) return false;
       setRecord(authoritative);
-      const failure = messageOf(patchError, "无法保存安全策略。");
+      const failure = messageOf(patchError, t("safety.saveFailed"));
       setError(
         reconciled
-          ? `${failure}；已重新读取 Core 当前设置。`
-          : `${failure}；已恢复上次设置。`,
+          ? t("safety.saveFailedReread", { failure })
+          : t("safety.saveFailedRestore", { failure }),
       );
+      return false;
     } finally {
       if (generationRef.current === generation) setSaving(false);
     }
@@ -986,7 +1150,6 @@ export function SafetyPolicy({
     patch: PrivacyPolicyPatch,
   ) => {
     setError(null);
-    setNotice(null);
     setPendingModelAction({
       kind: "activate",
       installationID: installation.id,
@@ -1000,7 +1163,7 @@ export function SafetyPolicy({
       record?.policy.detector === "local_model" &&
       !selectedModelReady
     ) {
-      setError("请选择一个已就绪的本地模型后再启用策略。");
+      setError(t("safety.needModel"));
       setView("installed");
       return;
     }
@@ -1019,9 +1182,193 @@ export function SafetyPolicy({
     void patchPolicy({ detector: "regex", local_model_id: null });
   };
 
+  const changeRegexSource = (source: PrivacyRegexSource) => {
+    if (record === null || saving) return;
+    if (source === "custom" && record.policy.custom_regex_rules.length === 0) {
+      void (async () => {
+        setFillingBuiltinRules(true);
+        setError(null);
+        try {
+          const catalog = await getPrivacyRegexBuiltinRules();
+          await patchPolicy({
+            regex_source: "custom",
+            custom_regex_rules: catalog.rules,
+          });
+        } catch (fillError) {
+          setError(messageOf(fillError, t("safety.switchCustomFailed")));
+        } finally {
+          setFillingBuiltinRules(false);
+        }
+      })();
+      return;
+    }
+    void patchPolicy({ regex_source: source });
+  };
+
+  const saveCustomRegexRules = (rules: PrivacyRegexRule[]) => {
+    void patchPolicy({ custom_regex_rules: rules });
+  };
+
+  const addCustomRegexRule = () => {
+    if (record === null) return;
+    if (record.policy.custom_regex_rules.length >= MAX_PRIVACY_CUSTOM_REGEX_RULES) {
+      setError(t("safety.tooManyCustom", { max: MAX_PRIVACY_CUSTOM_REGEX_RULES }));
+      return;
+    }
+    saveCustomRegexRules([
+      ...record.policy.custom_regex_rules,
+      defaultCustomRegexRule(),
+    ]);
+  };
+
+  const removeCustomRegexRule = (index: number) => {
+    if (record === null) return;
+    const next = record.policy.custom_regex_rules.filter((_, i) => i !== index);
+    if (record.policy.regex_source === "custom" && next.length === 0) {
+      setError(t("safety.needOneCustom"));
+      return;
+    }
+    saveCustomRegexRules(next);
+  };
+
+  const changeCustomRegexKind = (
+    index: number,
+    kind: PrivacyRegexDetectorKind,
+  ) => {
+    if (record === null) return;
+    const next = record.policy.custom_regex_rules.map((rule, i) =>
+      i === index ? { ...rule, kind } : rule,
+    );
+    saveCustomRegexRules(next);
+  };
+
+  const commitCustomRegexPattern = (index: number) => {
+    if (record === null) return;
+    const draft = regexPatternDrafts[index] ?? "";
+    const length = [...draft].length;
+    if (length < 1 || length > MAX_PRIVACY_REGEX_PATTERN_CHARS) {
+      setError(
+        t("safety.regexLength", { max: MAX_PRIVACY_REGEX_PATTERN_CHARS }),
+      );
+      setRegexPatternDrafts(
+        record.policy.custom_regex_rules.map((rule) => rule.pattern),
+      );
+      return;
+    }
+    if (draft === record.policy.custom_regex_rules[index]?.pattern) return;
+    const next = record.policy.custom_regex_rules.map((rule, i) =>
+      i === index ? { ...rule, pattern: draft } : rule,
+    );
+    saveCustomRegexRules(next);
+  };
+
+  const kindRuleFor = (kind: CanonicalPrivacyKind): PrivacyKindRule =>
+    record?.policy.kind_rules.find((rule) => rule.kind === kind) ?? {
+      kind,
+      enabled: false,
+      style: "token",
+    };
+
+  const saveKindRule = (kind: CanonicalPrivacyKind, patch: Partial<PrivacyKindRule>) => {
+    if (record === null) return;
+    // The whole list is sent because kind_rules is replaced, not merged.
+    const next = PRIVACY_KINDS.map((candidate) => {
+      const rule = kindRuleFor(candidate);
+      return candidate === kind ? { ...rule, ...patch } : rule;
+    });
+    void patchPolicy({ kind_rules: next });
+  };
+
+  const saveAllowlistRules = (rules: PrivacyAllowlistRule[]) => {
+    void patchPolicy({ allowlist_rules: rules });
+  };
+
+  const addAllowlistRule = () => {
+    if (record === null) return;
+    if (record.policy.allowlist_rules.length >= MAX_PRIVACY_ALLOWLIST_RULES) {
+      setError(t("safety.tooManyAllowlist", { max: MAX_PRIVACY_ALLOWLIST_RULES }));
+      return;
+    }
+    setAllowlistDrafts((current) => [...current, ""]);
+    setAllowlistPending(true);
+  };
+
+  const removeAllowlistRule = (index: number) => {
+    if (record === null) return;
+    if (allowlistPending && index === record.policy.allowlist_rules.length) {
+      setAllowlistPending(false);
+      setAllowlistDrafts(record.policy.allowlist_rules.map((rule) => rule.value));
+      return;
+    }
+    saveAllowlistRules(
+      record.policy.allowlist_rules.filter((_, position) => position !== index),
+    );
+  };
+
+  const changeAllowlistType = (index: number, type: PrivacyAllowlistType) => {
+    if (record === null) return;
+    if (allowlistPending && index === record.policy.allowlist_rules.length) {
+      setAllowlistPendingType(type);
+      return;
+    }
+    saveAllowlistRules(
+      record.policy.allowlist_rules.map((rule, position) =>
+        position === index ? { ...rule, type } : rule,
+      ),
+    );
+  };
+
+  const commitAllowlistValue = (index: number) => {
+    if (record === null) return;
+    const rules = record.policy.allowlist_rules;
+    const draft = (allowlistDrafts[index] ?? "").trim();
+    const isNew = allowlistPending && index === rules.length;
+    if (draft.length === 0) {
+      if (isNew) return;
+      setAllowlistDrafts(rules.map((rule) => rule.value));
+      return;
+    }
+    if ([...draft].length > MAX_PRIVACY_ALLOWLIST_VALUE_CHARS) {
+      setError(t("safety.allowlistLength", { max: MAX_PRIVACY_ALLOWLIST_VALUE_CHARS }));
+      return;
+    }
+    if (isNew) {
+      setAllowlistPending(false);
+      saveAllowlistRules([...rules, { type: allowlistPendingType, value: draft }]);
+      return;
+    }
+    if (draft === rules[index]?.value) return;
+    saveAllowlistRules(
+      rules.map((rule, position) =>
+        position === index ? { ...rule, value: draft } : rule,
+      ),
+    );
+  };
+
+  const fillBuiltinRules = async () => {
+    if (record === null || fillingBuiltinRules) return;
+    setConfirmFillBuiltinRules(false);
+    setFillingBuiltinRules(true);
+    setError(null);
+    try {
+      const catalog = await getPrivacyRegexBuiltinRules();
+      await patchPolicy(
+        {
+          regex_source: "custom",
+          custom_regex_rules: catalog.rules,
+        },
+        t("safety.filledBuiltin"),
+      );
+    } catch (fillError) {
+      setError(messageOf(fillError, t("safety.fillBuiltinFailed")));
+    } finally {
+      setFillingBuiltinRules(false);
+    }
+  };
+
   const chooseInstallation = (installation: PrivacyModelInstallation) => {
     if (installation.status !== "ready") {
-      setError("模型下载并校验完成后才能用于检测。");
+      setError(t("safety.modelNotReady"));
       return;
     }
     if (
@@ -1056,7 +1403,7 @@ export function SafetyPolicy({
       minConfidence > 1
     ) {
       setMinConfidenceDraft(record.policy.min_confidence.toFixed(2));
-      setError("模型最低置信度必须是 0 到 1 之间的数字。");
+      setError(t("safety.confidenceRange"));
       return;
     }
     setMinConfidenceDraft(minConfidence.toFixed(2));
@@ -1089,7 +1436,7 @@ export function SafetyPolicy({
       return;
     }
     if (!record.policy.enabled) {
-      const message = "隐私保护未开启，请先开启后再试运行。";
+      const message = t("safety.dryRunOff");
       setDryRunResult(null);
       setDryRunError(message);
       setError(message);
@@ -1097,12 +1444,14 @@ export function SafetyPolicy({
     }
     const sample = dryRunSample.trim();
     if (sample === "") {
-      setDryRunError("请输入用于试运行的样例文本。");
-      setError("请输入用于试运行的样例文本。");
+      setDryRunError(t("privacy.sampleRequired"));
+      setError(t("privacy.sampleRequired"));
       return;
     }
     if (utf8ByteLength(sample) > MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES) {
-      const message = `样例过长（上限 ${MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES / 1024} KiB），请缩短后再试。`;
+      const message = t("safety.sampleTooLongKib", {
+        kib: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES / 1024,
+      });
       setDryRunError(message);
       setError(message);
       return;
@@ -1112,8 +1461,8 @@ export function SafetyPolicy({
       record.policy.detector === "local_model" &&
       !selectedModelReady
     ) {
-      setDryRunError("本地模型未就绪，无法试运行当前策略。");
-      setError("本地模型未就绪，无法试运行当前策略。");
+      setDryRunError(t("safety.dryRunModelNotReady"));
+      setError(t("safety.dryRunModelNotReady"));
       return;
     }
     const generation = generationRef.current;
@@ -1122,7 +1471,6 @@ export function SafetyPolicy({
     setDryRunBusy(true);
     setDryRunError(null);
     setError(null);
-    setNotice(null);
     try {
       const result = await dryRunPrivacyPolicy({
         protocol: dryRunProtocol,
@@ -1152,7 +1500,7 @@ export function SafetyPolicy({
         return;
       }
       setDryRunResult(null);
-      const message = messageOf(caught, "无法完成安全策略试运行。");
+      const message = messageOf(caught, t("safety.dryRunFailed"));
       setDryRunError(message);
       setError(message);
     } finally {
@@ -1183,7 +1531,6 @@ export function SafetyPolicy({
     operationRequestRef.current = request;
     setOperationBusy(key);
     setError(null);
-    setNotice(null);
     try {
       const installation = await installPrivacyModel(input);
       if (
@@ -1198,10 +1545,10 @@ export function SafetyPolicy({
       setCatalogPreparation(null);
       setCustomMappingOpen(false);
       setView("installed");
-      setNotice(
+      notify.success(
         key === "local"
-          ? "本地模型导入已开始，可在“已安装”中查看进度。"
-          : "模型安装已开始，可在“已安装”中查看进度。",
+          ? t("safety.importStarted")
+          : t("safety.installStarted"),
       );
     } catch (installError) {
       if (
@@ -1210,7 +1557,7 @@ export function SafetyPolicy({
       ) {
         return;
       }
-      setError(messageOf(installError, "无法开始安装本地模型。"));
+      setError(messageOf(installError, t("safety.installFailed")));
     } finally {
       if (
         generationRef.current === generation &&
@@ -1262,7 +1609,6 @@ export function SafetyPolicy({
     setCatalogProbeBusy(model.id);
     setCatalogPreparation(null);
     setError(null);
-    setNotice(null);
     try {
       const result = await probePrivacyModel({
         repo_id: model.repo_id,
@@ -1279,14 +1625,14 @@ export function SafetyPolicy({
         result.requested_revision !== model.revision ||
         result.revision !== model.revision
       ) {
-        throw new Error("Core 返回的探测结果与内置模型固定版本不一致。");
+        throw new Error(t("safety.probeMismatch"));
       }
       const probedVariant = result.variants.find(
         (candidate) =>
           candidate.id === variant.id && candidate.supported,
       );
       if (probedVariant === undefined) {
-        throw new Error("所选内置模型版本未通过当前设备兼容性检查。");
+        throw new Error(t("safety.variantIncompatible"));
       }
       setCatalogPreparation({
         catalogID: model.id,
@@ -1295,7 +1641,7 @@ export function SafetyPolicy({
         labelMapping: initialLabelMapping(result),
         touchedLabels: [],
       });
-      setNotice("已校验固定模型版本，请确认标签映射与资源占用。");
+      notify.success(t("safety.probeReady"));
     } catch (probeError) {
       if (
         generationRef.current !== generation ||
@@ -1303,7 +1649,7 @@ export function SafetyPolicy({
       ) {
         return;
       }
-      setError(messageOf(probeError, "无法检查内置模型兼容性。"));
+      setError(messageOf(probeError, t("safety.probeFailed")));
     } finally {
       if (
         generationRef.current === generation &&
@@ -1317,11 +1663,10 @@ export function SafetyPolicy({
   const removeInstallation = (installation: PrivacyModelInstallation) => {
     if (operationBusy !== null) return;
     if (record?.policy.local_model_id === installation.id) {
-      setError("该模型已被策略选中，请先切换到 Regex 或选择其他模型。");
+      setError(t("safety.inUseSwitch"));
       return;
     }
     setError(null);
-    setNotice(null);
     setPendingModelAction({
       kind: "remove",
       installationID: installation.id,
@@ -1335,13 +1680,13 @@ export function SafetyPolicy({
     );
     if (installation === undefined) {
       setPendingModelAction(null);
-      setError("模型状态已发生变化，请刷新后重试。");
+      setError(t("safety.statusChanged"));
       return;
     }
     if (pendingModelAction.kind === "activate") {
       if (installation.status !== "ready") {
         setPendingModelAction(null);
-        setError("模型下载并校验完成后才能用于检测。");
+        setError(t("safety.modelNotReady"));
         return;
       }
       const patch = pendingModelAction.patch;
@@ -1351,7 +1696,7 @@ export function SafetyPolicy({
     }
     if (record?.policy.local_model_id === installation.id) {
       setPendingModelAction(null);
-      setError("该模型已被策略选中，请先切换到 Regex 或选择其他模型。");
+      setError(t("safety.inUseSwitch"));
       return;
     }
     setPendingModelAction(null);
@@ -1367,7 +1712,6 @@ export function SafetyPolicy({
     operationRequestRef.current = request;
     setOperationBusy(installation.id);
     setError(null);
-    setNotice(null);
     try {
       if (downloading) {
         await cancelPrivacyModelInstallation(installation.id);
@@ -1384,7 +1728,7 @@ export function SafetyPolicy({
       setInstallations((current) =>
         current.filter((item) => item.id !== installation.id),
       );
-      setNotice(downloading ? "模型下载已取消。" : "本地模型已删除。");
+      notify.success(downloading ? t("safety.downloadCancelled") : t("safety.modelDeleted"));
     } catch (removeError) {
       if (
         generationRef.current !== generation ||
@@ -1392,7 +1736,7 @@ export function SafetyPolicy({
       ) {
         return;
       }
-      setError(messageOf(removeError, "无法取消或删除本地模型。"));
+      setError(messageOf(removeError, t("safety.cancelDeleteFailed")));
     } finally {
       if (
         generationRef.current === generation &&
@@ -1428,7 +1772,6 @@ export function SafetyPolicy({
     setProbing(true);
     resetProbedModel();
     setError(null);
-    setNotice(null);
     try {
       const result = await probePrivacyModel({
         repo_id: requestedRepoID,
@@ -1444,7 +1787,7 @@ export function SafetyPolicy({
         result.repo_id !== requestedRepoID ||
         result.requested_revision !== requestedRevision
       ) {
-        throw new Error("Core 返回的探测结果与当前自定义模型输入不一致。");
+        throw new Error(t("safety.customProbeMismatch"));
       }
       setProbe(result);
       setProbeView("custom");
@@ -1452,7 +1795,7 @@ export function SafetyPolicy({
       setLabelMapping(initialLabelMapping(result));
       setLabelMappingTouched([]);
       setProbeVariantID(recommendedVariant(result.variants)?.id ?? "");
-      setNotice("模型元数据与兼容性检查完成，尚未下载权重。");
+      notify.success(t("safety.customProbed"));
     } catch (probeError) {
       if (
         generationRef.current !== generation ||
@@ -1460,7 +1803,7 @@ export function SafetyPolicy({
       ) {
         return;
       }
-      setError(messageOf(probeError, "无法检查自定义模型。"));
+      setError(messageOf(probeError, t("safety.customProbeFailed")));
     } finally {
       if (
         generationRef.current === generation &&
@@ -1483,14 +1826,13 @@ export function SafetyPolicy({
     try {
       input = validateLocalProbeInput({ path: localPath });
     } catch (validationError) {
-      setNotice(null);
       setError(
         validationError instanceof Error &&
           validationError.message.includes("not a URI")
-          ? "本地导入不接收 URI；请先在系统中挂载共享目录，再填写本机路径。"
+          ? t("safety.localNoUri")
           : messageOf(
               validationError,
-              "请输入已挂载到本机的模型目录或 ONNX 文件路径。",
+              t("safety.localPathRequired"),
             ),
       );
       return;
@@ -1501,7 +1843,6 @@ export function SafetyPolicy({
     setProbing(true);
     resetProbedModel();
     setError(null);
-    setNotice(null);
     try {
       const result = await probeLocalPrivacyModel(input);
       if (
@@ -1516,7 +1857,7 @@ export function SafetyPolicy({
       setLabelMapping(initialLabelMapping(result));
       setLabelMappingTouched([]);
       setProbeVariantID(recommendedVariant(result.variants)?.id ?? "");
-      setNotice("本地模型检查完成，请确认版本、标签映射与资源占用。");
+      notify.success(t("safety.localProbed"));
     } catch (probeError) {
       if (
         generationRef.current !== generation ||
@@ -1524,7 +1865,7 @@ export function SafetyPolicy({
       ) {
         return;
       }
-      setError(messageOf(probeError, "无法检查本地模型路径。"));
+      setError(messageOf(probeError, t("safety.localProbeFailed")));
     } finally {
       if (
         generationRef.current === generation &&
@@ -1539,14 +1880,13 @@ export function SafetyPolicy({
     return (
       <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
         <PageHeader
-          description="在请求发送到上游前使用规则或所选本地模型检测敏感内容。"
-          eyebrow="本地执行 · 全局策略"
-          title="隐私保护"
+          description={t("safety.description")}
+          title={t("safety.title")}
           titleId="safety-policy-heading"
         />
         <EmptyState
-          description="策略和模型均由本地 Core 保存与执行。"
-          title="Core 就绪后可管理安全策略"
+          description={t("safety.readyHint")}
+          title={t("safety.waiting")}
         />
       </div>
     );
@@ -1597,11 +1937,51 @@ export function SafetyPolicy({
     >
       <PageHeader
         actions={
-          <div className="flex items-center gap-2.5">
-            {record !== null ? (
-              <span className="text-sm text-muted-foreground">
-                {saving ? "保存中…" : "已与 Core 同步"}
+          <>
+            {record !== null && saving ? (
+              <span className="mr-[3px] text-xs font-semibold text-muted-foreground">
+                {t("common.saving")}
               </span>
+            ) : null}
+            {policy !== null ? (
+              <>
+                <Label className="mr-1 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted-foreground">
+                  <span>{t("safety.enable")}</span>
+                  <Switch
+                    aria-label={t("safety.enable")}
+                    checked={policy.enabled}
+                    disabled={saving || cannotEnableLocalModel}
+                    id="privacy-enabled"
+                    onCheckedChange={changeEnabled}
+                    size="sm"
+                    title={
+                      cannotEnableLocalModel
+                        ? t("safety.needReadyModel")
+                        : undefined
+                    }
+                  />
+                </Label>
+                <Label className="mr-1 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted-foreground">
+                  <span>{t("safety.restore")}</span>
+                  <Switch
+                    aria-label={t("safety.restore")}
+                    checked={policy.response_restore}
+                    disabled={saving || policy.request_action !== "redact"}
+                    id="privacy-response-restore"
+                    onCheckedChange={(checked) =>
+                      void patchPolicy({
+                        response_restore: checked,
+                      })
+                    }
+                    size="sm"
+                    title={
+                      policy.request_action !== "redact"
+                        ? t("safety.restoreHint")
+                        : undefined
+                    }
+                  />
+                </Label>
+              </>
             ) : null}
             <Button
               disabled={
@@ -1616,27 +1996,23 @@ export function SafetyPolicy({
               variant="outline"
               type="button"
             >
-              {status === "loading" ? "刷新中…" : "刷新"}
+              {status === "loading" ? t("common.refreshing") : t("common.refresh")}
             </Button>
-          </div>
+          </>
         }
-        description="在请求发送到上游前使用规则或所选本地模型检测敏感内容。"
-        eyebrow="本地执行 · 全局策略"
-        title="隐私保护"
+        description={t("safety.description")}
+        title={t("safety.title")}
         titleId="safety-policy-heading"
       />
 
       {error ? (
         <FormMessage className="mb-2.5 shrink-0" tone="error">{error}</FormMessage>
       ) : null}
-      {notice ? (
-        <FormMessage className="mb-2.5 shrink-0" tone="success">{notice}</FormMessage>
-      ) : null}
 
       {status === "loading" && record === null ? (
         <div
           className="grid min-w-0 gap-3 rounded-lg border bg-card p-5"
-          aria-label="正在读取安全策略"
+          aria-label={t("safety.loading")}
         >
           <span className="h-4 w-36 animate-pulse rounded bg-muted" />
           <span className="h-20 animate-pulse rounded-lg bg-muted" />
@@ -1647,11 +2023,11 @@ export function SafetyPolicy({
         <EmptyState
           action={
             <Button variant="outline" onClick={refresh} type="button">
-              重试
+              {t("safety.retry")}
             </Button>
           }
-          description="检查 Core 状态后重试。"
-          title="安全策略暂不可用"
+          description={t("safety.unavailableHint")}
+          title={t("safety.unavailable")}
         />
       ) : null}
 
@@ -1662,27 +2038,27 @@ export function SafetyPolicy({
           value={workspace}
         >
           <TabsList
-            aria-label="隐私保护工作区"
+            aria-label={t("safety.workspace")}
             className="h-9 w-full max-w-[420px] shrink-0"
           >
             <TabsTrigger
               onClick={() => setWorkspace("policy")}
               value="policy"
             >
-              策略
+              {t("safety.tabPolicy")}
             </TabsTrigger>
             <TabsTrigger
-              aria-label="试运行结果"
+              aria-label={t("safety.dryRunResult")}
               onClick={() => setWorkspace("dryRun")}
               value="dryRun"
             >
-              试运行
+              {t("safety.run")}
             </TabsTrigger>
             <TabsTrigger
               onClick={() => setWorkspace("models")}
               value="models"
             >
-              模型
+              {t("safety.tabModels")}
             </TabsTrigger>
           </TabsList>
 
@@ -1693,32 +2069,9 @@ export function SafetyPolicy({
             value="policy"
           >
             <div className="grid min-w-0 gap-3 pb-2">
-            <Label
-              className="flex items-center justify-between gap-3 font-normal"
-              htmlFor="privacy-enabled"
-            >
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <strong className="text-sm font-medium">启用隐私保护</strong>
-                <small className="text-sm leading-snug text-muted-foreground">
-                  {cannotEnableLocalModel
-                    ? "需要先选择一个已就绪的本地模型"
-                    : "变更会立即保存到本地 Core"}
-                </small>
-              </span>
-              <Switch
-                aria-label="启用隐私保护"
-                checked={policy.enabled}
-                className="shrink-0"
-                disabled={saving || cannotEnableLocalModel}
-                id="privacy-enabled"
-                onCheckedChange={changeEnabled}
-                size="sm"
-              />
-            </Label>
-
             <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
               <legend className="mb-1.5 flex items-center justify-between gap-2 px-0 text-sm font-medium text-text-secondary">
-                <span>检测方式</span>
+                <span>{t("safety.detector")}</span>
                 {!selectedModelReady ? (
                   <Button
                     className="h-auto px-0 py-0 text-sm font-medium"
@@ -1730,7 +2083,7 @@ export function SafetyPolicy({
                     type="button"
                     variant="link"
                   >
-                    去模型库
+                    {t("safety.goToModels")}
                   </Button>
                 ) : null}
               </legend>
@@ -1762,7 +2115,7 @@ export function SafetyPolicy({
                   <span className="flex min-w-0 flex-col">
                     <strong className="text-sm font-medium leading-none">Regex</strong>
                     <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
-                      快速且始终可用
+                      {t("safety.regexAlways")}
                     </small>
                   </span>
                 </Label>
@@ -1774,17 +2127,17 @@ export function SafetyPolicy({
                   htmlFor="privacy-detector-local-model"
                 >
                   <RadioGroupItem
-                    aria-label="本地模型"
+                    aria-label={t("safety.localModels")}
                     className="shrink-0"
                     disabled={!selectedModelReady}
                     id="privacy-detector-local-model"
                     value="local_model"
                   />
                   <span className="flex min-w-0 flex-col">
-                    <strong className="text-sm font-medium leading-none">本地模型</strong>
+                    <strong className="text-sm font-medium leading-none">{t("safety.localModels")}</strong>
                     <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
                       {selectedInstallation === null
-                        ? "请从已安装模型中选择"
+                        ? t("safety.chooseInstalled")
                         : `${selectedInstallation.name} · ${selectedInstallation.variant_name}`}
                     </small>
                   </span>
@@ -1792,19 +2145,195 @@ export function SafetyPolicy({
               </RadioGroup>
             </fieldset>
 
+            {policy.detector === "regex" ? (
+              <fieldset className="min-w-0 border-0 p-0" disabled={saving || fillingBuiltinRules}>
+                <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
+                  {t("safety.regexSource")}
+                </legend>
+                <RadioGroup
+                  className="grid min-w-0 grid-cols-2 gap-2"
+                  disabled={saving || fillingBuiltinRules}
+                  onValueChange={(value) => {
+                    if (value === "builtin" || value === "custom") {
+                      changeRegexSource(value);
+                    }
+                  }}
+                  value={policy.regex_source}
+                >
+                  <Label
+                    className={cn(
+                      "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors",
+                      policy.regex_source === "builtin" && "border-primary/35 bg-accent",
+                    )}
+                    htmlFor="privacy-regex-source-builtin"
+                  >
+                    <RadioGroupItem
+                      aria-label={t("safety.builtinRules")}
+                      className="shrink-0"
+                      id="privacy-regex-source-builtin"
+                      value="builtin"
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <strong className="text-sm font-medium leading-none">{t("safety.builtinRules")}</strong>
+                      <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
+                        {t("safety.builtinFixed")}
+                      </small>
+                    </span>
+                  </Label>
+                  <Label
+                    className={cn(
+                      "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors",
+                      policy.regex_source === "custom" && "border-primary/35 bg-accent",
+                    )}
+                    htmlFor="privacy-regex-source-custom"
+                  >
+                    <RadioGroupItem
+                      aria-label={t("safety.customRules")}
+                      className="shrink-0"
+                      id="privacy-regex-source-custom"
+                      value="custom"
+                    />
+                    <span className="flex min-w-0 flex-col">
+                      <strong className="text-sm font-medium leading-none">{t("safety.customRules")}</strong>
+                      <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
+                        {t("safety.customListOnly")}
+                      </small>
+                    </span>
+                  </Label>
+                </RadioGroup>
+
+                {policy.regex_source === "builtin" ? (
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                    {t("safety.builtinCoverage", {
+                      kinds: regexKindOptions()
+                        .map((option) => option.label)
+                        .join(t("safety.listJoin")),
+                    })}
+                  </p>
+                ) : (
+                  <div className="mt-3 grid min-w-0 gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        disabled={saving || fillingBuiltinRules}
+                        onClick={addCustomRegexRule}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        {t("safety.addRule")}
+                      </Button>
+                      <Button
+                        disabled={saving || fillingBuiltinRules}
+                        onClick={() => {
+                          if (policy.custom_regex_rules.length > 0) {
+                            setConfirmFillBuiltinRules(true);
+                          } else {
+                            void fillBuiltinRules();
+                          }
+                        }}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        {t("safety.fillBuiltin")}
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        {policy.custom_regex_rules.length}/{MAX_PRIVACY_CUSTOM_REGEX_RULES}
+                      </span>
+                    </div>
+                    {policy.custom_regex_rules.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {t("safety.noCustomRules")}
+                      </p>
+                    ) : (
+                      <ul className="grid min-w-0 gap-2">
+                        {policy.custom_regex_rules.map((rule, index) => (
+                          <li
+                            className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[640px]:grid-cols-[8.5rem_minmax(0,1fr)_auto] @[640px]:items-start"
+                            key={`regex-rule-${index}`}
+                          >
+                            <Select
+                              disabled={saving || fillingBuiltinRules}
+                              onValueChange={(value) =>
+                                changeCustomRegexKind(
+                                  index,
+                                  value as PrivacyRegexDetectorKind,
+                                )
+                              }
+                              value={rule.kind}
+                            >
+                              <SelectTrigger
+                                aria-label={t("safety.ruleKind", { index: index + 1 })}
+                                className="h-9 w-full px-3 text-sm"
+                                size="sm"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {regexKindOptions().map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Input
+                              aria-label={t("safety.rulePattern", { index: index + 1 })}
+                              className="h-9 min-w-0 font-mono text-sm md:text-sm"
+                              disabled={saving || fillingBuiltinRules}
+                              onBlur={() => commitCustomRegexPattern(index)}
+                              onChange={(event) => {
+                                const value = event.currentTarget.value;
+                                setRegexPatternDrafts((current) => {
+                                  const next = [...current];
+                                  next[index] = value;
+                                  return next;
+                                });
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.currentTarget.blur();
+                                } else if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  setRegexPatternDrafts(
+                                    policy.custom_regex_rules.map((item) => item.pattern),
+                                  );
+                                }
+                              }}
+                              placeholder={t("safety.re2Hint")}
+                              value={regexPatternDrafts[index] ?? rule.pattern}
+                            />
+                            <Button
+                              disabled={saving || fillingBuiltinRules}
+                              onClick={() => removeCustomRegexRule(index)}
+                              size="sm"
+                              type="button"
+                              variant="ghost"
+                            >
+                              {t("common.delete")}
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </fieldset>
+            ) : null}
+
             <div className="grid min-w-0 gap-3 @[560px]:grid-cols-2">
             <Label
               className="grid min-w-0 gap-1.5 font-normal"
               htmlFor="privacy-min-confidence"
             >
               <span className="flex min-w-0 flex-col gap-0.5">
-                <strong className="text-sm font-medium">模型最低置信度</strong>
+                <strong className="text-sm font-medium">{t("safety.minConfidence")}</strong>
                 <small className="text-sm leading-snug text-muted-foreground">
-                  低于此分数的模型候选会被抑制；Regex 不受此门槛影响
+                  {t("safety.minConfidenceHint")}
                 </small>
               </span>
               <Input
-                aria-label="模型最低置信度"
+                aria-label={t("safety.minConfidence")}
                 className="h-9 w-full px-3 text-sm md:text-sm"
                 disabled={saving}
                 id="privacy-min-confidence"
@@ -1833,8 +2362,8 @@ export function SafetyPolicy({
               htmlFor="privacy-request-action"
             >
               <span className="flex min-w-0 flex-col gap-0.5">
-                <strong className="text-sm font-medium">命中后的请求动作</strong>
-                <small className="text-sm leading-snug text-muted-foreground">响应审核将在后续版本提供</small>
+                <strong className="text-sm font-medium">{t("safety.requestAction")}</strong>
+                <small className="text-sm leading-snug text-muted-foreground">{t("safety.reviewLater")}</small>
               </span>
               <Select
                 disabled={saving}
@@ -1842,7 +2371,7 @@ export function SafetyPolicy({
                 value={policy.request_action}
               >
                 <SelectTrigger
-                  aria-label="命中后的请求动作"
+                  aria-label={t("safety.requestAction")}
                   className="h-9 w-full px-3 text-sm"
                   id="privacy-request-action"
                   size="sm"
@@ -1851,45 +2380,20 @@ export function SafetyPolicy({
                 </SelectTrigger>
                 <SelectContent>
                   {policy.request_action === "allow" ? (
-                    <SelectItem disabled value="allow">允许（兼容值）</SelectItem>
+                    <SelectItem disabled value="allow">{t("safety.allowCompat")}</SelectItem>
                   ) : null}
-                  <SelectItem value="redact">{actionLabels.redact}</SelectItem>
-                  <SelectItem value="block">{actionLabels.block}</SelectItem>
-                  <SelectItem value="warn">{actionLabels.warn}</SelectItem>
+                  <SelectItem value="redact">{actionLabel("redact")}</SelectItem>
+                  <SelectItem value="block">{actionLabel("block")}</SelectItem>
+                  <SelectItem value="warn">{actionLabel("warn")}</SelectItem>
                 </SelectContent>
               </Select>
             </Label>
             </div>
 
-            <Label
-              className="flex items-center justify-between gap-3 font-normal"
-              htmlFor="privacy-response-restore"
-            >
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <strong className="text-sm font-medium">响应还原占位符</strong>
-                <small className="text-sm leading-snug text-muted-foreground">
-                  {policy.request_action === "redact"
-                    ? "默认开启：把本请求脱敏后的占位符在模型回复中还原给客户端"
-                    : "仅在请求动作为「脱敏后继续」时生效"}
-                </small>
-              </span>
-              <Switch
-                aria-label="响应还原占位符"
-                checked={policy.response_restore}
-                className="shrink-0"
-                disabled={saving || policy.request_action !== "redact"}
-                id="privacy-response-restore"
-                onCheckedChange={(checked) =>
-                  void patchPolicy({
-                    response_restore: checked,
-                  })
-                }
-                size="sm"
-              />
-            </Label>
-
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Regex 覆盖邮箱、电话、账号/银行卡、IP/URL 与常见密钥；不识别人名、地址或上下文日期。
+              {policy.detector === "regex" && policy.regex_source === "custom"
+                ? t("safety.customHint")
+                : t("safety.builtinHint")}
               {" "}
               <Button
                 className="h-auto px-0 py-0 text-sm font-medium"
@@ -1898,9 +2402,240 @@ export function SafetyPolicy({
                 type="button"
                 variant="link"
               >
-                查看流式演示
+                {t("safety.viewStreamingDemo")}
               </Button>
             </p>
+
+            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+              <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
+                {t("safety.perKindRedact")}
+              </legend>
+              <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
+                {t("safety.styleHintLead", {
+                  natural: placeholderStyleLabel("natural"),
+                  token: placeholderStyleLabel("token"),
+                })}
+                <code className="font-mono">&lt;PRIVATE_…&gt;</code>
+                {t("safety.styleHintTail")}
+              </p>
+              <ul className="grid min-w-0 gap-1.5">
+                {PRIVACY_KINDS.map((kind) => {
+                  const rule = kindRuleFor(kind);
+                  const lockReason = placeholderStyleLockReason(kind);
+                  const styleLocked = PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind);
+                  const unreachable =
+                    policy.detector === "regex" && localModelOnlyKinds.has(kind);
+                  return (
+                    <li
+                      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-card px-2.5 py-2"
+                      data-testid={`privacy-kind-rule-${kind}`}
+                      key={kind}
+                    >
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <strong className="text-sm font-medium leading-none">
+                          {canonicalKindLabel(kind)}
+                        </strong>
+                        <small className="text-sm leading-snug text-muted-foreground">
+                          {unreachable
+                            ? t("safety.localOnlyKind")
+                            : (lockReason ?? t("safety.chooseStyle"))}
+                        </small>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <Select
+                          disabled={saving || styleLocked || !rule.enabled}
+                          onValueChange={(value) =>
+                            saveKindRule(kind, { style: value as PlaceholderStyle })
+                          }
+                          value={rule.style}
+                        >
+                          <SelectTrigger
+                            aria-label={t("safety.styleFor", { kind: canonicalKindLabel(kind) })}
+                            className="h-8 w-[132px] px-2.5 text-sm"
+                            size="sm"
+                            title={styleLocked ? lockReason : undefined}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="natural">
+                              {placeholderStyleLabel("natural")}
+                            </SelectItem>
+                            <SelectItem value="token">
+                              {placeholderStyleLabel("token")}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Switch
+                          aria-label={t("safety.redactKind", { kind: canonicalKindLabel(kind) })}
+                          checked={rule.enabled}
+                          disabled={saving}
+                          onCheckedChange={(enabled) =>
+                            saveKindRule(kind, { enabled })
+                          }
+                          size="sm"
+                        />
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </fieldset>
+
+            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+              <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
+                {t("safety.allowlist")}
+              </legend>
+              <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
+                {t("safety.allowlistHint")}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  disabled={saving || allowlistPending}
+                  onClick={addAllowlistRule}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {t("safety.addAllowlist")}
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  {policy.allowlist_rules.length}/{MAX_PRIVACY_ALLOWLIST_RULES}
+                </span>
+              </div>
+              {policy.allowlist_rules.length === 0 && !allowlistPending ? (
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  {t("safety.allowlistEmpty")}
+                </p>
+              ) : (
+                <ul className="mt-2 grid min-w-0 gap-1.5">
+                  {[
+                    ...policy.allowlist_rules,
+                    ...(allowlistPending
+                      ? [{ type: allowlistPendingType, value: "" }]
+                      : []),
+                  ].map((rule, index) => (
+                    <li
+                      className="grid min-w-0 grid-cols-[132px_minmax(0,1fr)_auto] items-center gap-2"
+                      key={`${rule.type}-${index}`}
+                    >
+                      <Select
+                        disabled={saving}
+                        onValueChange={(value) =>
+                          changeAllowlistType(index, value as PrivacyAllowlistType)
+                        }
+                        value={rule.type}
+                      >
+                        <SelectTrigger
+                          aria-label={t("safety.allowlistKind", { index: index + 1 })}
+                          className="h-9 px-2.5 text-sm"
+                          size="sm"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ALLOWLIST_TYPES.map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {allowlistTypeLabel(type)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        aria-label={t("safety.allowlistValue", { index: index + 1 })}
+                        autoFocus={allowlistPending && index === policy.allowlist_rules.length}
+                        className="h-9 min-w-0 font-mono text-sm md:text-sm"
+                        disabled={saving}
+                        onBlur={() => commitAllowlistValue(index)}
+                        onChange={(event) => {
+                          const value = event.currentTarget.value;
+                          setAllowlistDrafts((current) => {
+                            const next = [...current];
+                            next[index] = value;
+                            return next;
+                          });
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            setAllowlistDrafts(
+                              policy.allowlist_rules.map((item) => item.value),
+                            );
+                            setAllowlistPending(false);
+                          }
+                        }}
+                        placeholder={allowlistTypePlaceholders[rule.type]}
+                        value={allowlistDrafts[index] ?? rule.value}
+                      />
+                      <Button
+                        disabled={saving}
+                        onClick={() => removeAllowlistRule(index)}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        {t("safety.remove")}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </fieldset>
+
+            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+              <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
+                {t("safety.restoreScope")}
+              </legend>
+              <div className="grid min-w-0 gap-1.5">
+                <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 rounded-md border bg-card px-2.5 py-2 font-normal">
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <strong className="text-sm font-medium leading-none">
+                      {t("safety.restoreTools")}
+                    </strong>
+                    <small className="text-sm leading-snug text-muted-foreground">
+                      {t("safety.restoreToolsDetail")}
+                    </small>
+                  </span>
+                  <Switch
+                    aria-label={t("safety.restoreTools")}
+                    checked={policy.restore_tool_arguments}
+                    disabled={saving || !policy.response_restore}
+                    onCheckedChange={(checked) =>
+                      void patchPolicy({ restore_tool_arguments: checked })
+                    }
+                    size="sm"
+                    title={
+                      policy.response_restore
+                        ? undefined
+                        : t("safety.restoreToolsHint")
+                    }
+                  />
+                </Label>
+                <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 rounded-md border bg-card px-2.5 py-2 font-normal">
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <strong className="text-sm font-medium leading-none">
+                      {t("safety.injectNotice")}
+                    </strong>
+                    <small className="text-sm leading-snug text-muted-foreground">
+                      {t("safety.injectNoticeHint", {
+                        style: placeholderStyleLabel("token"),
+                      })}
+                    </small>
+                  </span>
+                  <Switch
+                    aria-label={t("safety.injectNotice")}
+                    checked={policy.placeholder_notice}
+                    disabled={saving}
+                    onCheckedChange={(checked) =>
+                      void patchPolicy({ placeholder_notice: checked })
+                    }
+                    size="sm"
+                  />
+                </Label>
+              </div>
+            </fieldset>
             </div>
           </TabsContent>
 
@@ -1914,10 +2649,10 @@ export function SafetyPolicy({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="text-base font-semibold tracking-tight">
-                  试运行
+                  {t("safety.run")}
                 </h3>
                 <p className="mt-1 text-sm leading-relaxed text-text-secondary">
-                  用样例文本预览当前策略效果，不会转发上游
+                  {t("safety.dryRunHint")}
                 </p>
               </div>
               <Button
@@ -1927,7 +2662,7 @@ export function SafetyPolicy({
                 type="button"
                 variant="link"
               >
-                返回策略
+                {t("safety.backToPolicy")}
               </Button>
             </div>
 
@@ -1936,9 +2671,9 @@ export function SafetyPolicy({
                 htmlFor="privacy-dry-run-protocol"
               >
                 <span className="flex min-w-0 flex-col gap-1">
-                  <strong className="text-sm font-medium">协议</strong>
+                  <strong className="text-sm font-medium">{t("safety.protocol")}</strong>
                   <small className="text-sm leading-snug text-muted-foreground">
-                    决定样例如何包装成可检请求体
+                    {t("safety.protocolHint")}
                   </small>
                 </span>
                 <Select
@@ -1951,7 +2686,7 @@ export function SafetyPolicy({
                   value={dryRunProtocol}
                 >
                   <SelectTrigger
-                    aria-label="试运行协议"
+                    aria-label={t("safety.dryRunProtocol")}
                     className="h-9 w-full px-3 text-sm"
                     id="privacy-dry-run-protocol"
                     size="sm"
@@ -1973,14 +2708,14 @@ export function SafetyPolicy({
                     className="items-start leading-normal font-normal"
                     htmlFor="privacy-dry-run-sample"
                   >
-                    <strong className="text-sm font-medium">样例文本</strong>
+                    <strong className="text-sm font-medium">{t("safety.sampleTextShort")}</strong>
                   </Label>
                   <small className="text-sm text-muted-foreground">
-                    {dryRunSamplePresets.length} 组虚构测试用例
+                    {t("safety.sampleCount", { count: dryRunSamplePresets.length })}
                   </small>
                 </div>
                 <div
-                  aria-label="试运行样例"
+                  aria-label={t("safety.dryRunSample")}
                   className="flex flex-wrap gap-1.5"
                   role="group"
                 >
@@ -1997,21 +2732,22 @@ export function SafetyPolicy({
                         key={preset.id}
                         onClick={() => changeDryRunSample(preset.text)}
                         size="xs"
-                        title={preset.description}
+                        title={dryRunSampleDescription(preset.id)}
                         type="button"
                         variant="outline"
                       >
-                        {preset.label}
+                        {dryRunSampleLabel(preset.id)}
                       </Button>
                     );
                   })}
                 </div>
                 <small className="text-sm leading-relaxed text-muted-foreground">
-                  {selectedDryRunPreset?.description ??
-                    "自定义样例：可以继续编辑下方文本。"}
+                  {selectedDryRunPreset
+                    ? dryRunSampleDescription(selectedDryRunPreset.id)
+                    : t("safety.customSample")}
                 </small>
                 <Textarea
-                  aria-label="试运行样例文本"
+                  aria-label={t("safety.sampleText")}
                   className="min-h-24 text-sm leading-relaxed"
                   id="privacy-dry-run-sample"
                   disabled={dryRunBusy}
@@ -2025,9 +2761,10 @@ export function SafetyPolicy({
                   "justify-self-end text-sm text-muted-foreground",
                   dryRunSampleOverLimit && "font-medium text-destructive",
                 )}>
-                  {dryRunSampleBytes.toLocaleString()} /{" "}
-                  {MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString()} 字节
-                  （256 KiB）
+                  {t("safety.sampleBytes", {
+                    used: dryRunSampleBytes.toLocaleString(),
+                    max: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString(),
+                  })}
                 </small>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -2048,18 +2785,18 @@ export function SafetyPolicy({
                   size="sm"
                   type="button"
                 >
-                  {dryRunBusy ? "试运行中…" : "试运行"}
+                  {dryRunBusy ? t("safety.running") : t("safety.run")}
                 </Button>
                 {dryRunSampleOverLimit ? (
-                  <small className="text-sm text-destructive">样例过长（上限 256 KiB），请缩短后再试</small>
+                  <small className="text-sm text-destructive">{t("safety.sampleTooLongHint")}</small>
                 ) : !policy.enabled ? (
-                  <small className="text-sm text-muted-foreground">隐私保护未开启，请先开启后再试运行</small>
+                  <small className="text-sm text-muted-foreground">{t("safety.dryRunOffHint")}</small>
                 ) : policy.enabled &&
                   policy.detector === "local_model" &&
                   !selectedModelReady ? (
-                  <small className="text-sm text-muted-foreground">需要先选择已就绪的本地模型</small>
+                  <small className="text-sm text-muted-foreground">{t("safety.needReadyModelHint")}</small>
                 ) : (
-                  <small className="text-sm text-muted-foreground">使用「策略」中的当前配置预览</small>
+                  <small className="text-sm text-muted-foreground">{t("safety.previewCurrent")}</small>
                 )}
               </div>
               {dryRunError !== null ? (
@@ -2073,36 +2810,36 @@ export function SafetyPolicy({
                 ref={dryRunResultHeadingRef}
                 tabIndex={-1}
               >
-                试运行结果
+                {t("safety.dryRunResult")}
               </h3>
             <p aria-live="polite" className="sr-only">
               {dryRunBusy
-                ? "试运行中…"
+                ? t("safety.running")
                 : dryRunResult !== null
                   ? dryRunLiveSummary(dryRunResult)
                   : ""}
             </p>
               {dryRunBusy ? (
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  试运行中…
+                  {t("safety.running")}
                 </p>
               ) : dryRunResult !== null ? (
                 <div
                   className="grid gap-3"
                   data-testid="safety-dry-run-result"
                 >
-                  <p className="text-sm text-muted-foreground">仅本地预览</p>
+                  <p className="text-sm text-muted-foreground">{t("safety.localPreviewOnly")}</p>
                   <div className="flex items-center justify-between gap-3 rounded-md bg-accent px-3 py-2 text-sm text-accent-foreground">
-                    <span>决策</span>
-                    <strong className="font-medium">{actionLabels[dryRunResult.decision]}</strong>
+                    <span>{t("safety.decision")}</span>
+                    <strong className="font-medium">{actionLabel(dryRunResult.decision)}</strong>
                   </div>
                   <div className="flex items-center justify-between gap-3 text-sm">
-                    <span>命中类别</span>
+                    <span>{t("safety.hitKinds")}</span>
                     <strong>{summarizeDryRunFindings(dryRunResult)}</strong>
                   </div>
                   {dryRunResult.findings.length > 0 ? (
                     <div className="grid gap-2">
-                      <span className="text-sm font-medium text-success-foreground">通过判定（会执行策略）</span>
+                      <span className="text-sm font-medium text-success-foreground">{t("safety.passedJudgment")}</span>
                       <ul className="grid gap-2">
                         {dryRunResult.findings.map((finding, index) => (
                           <li
@@ -2111,7 +2848,7 @@ export function SafetyPolicy({
                           >
                             <strong className="font-medium">{dryRunKindLabel(finding.kind)}</strong>
                             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                              位置{" "}
+                              {t("safety.position")}{" "}
                               <code className="break-all">{finding.path}</code>
                             </p>
                             <p className="mt-0.5 text-sm leading-relaxed">
@@ -2129,7 +2866,7 @@ export function SafetyPolicy({
                   ) : null}
                   {dryRunResult.suppressed_findings.length > 0 ? (
                     <div className="grid gap-2 rounded-lg bg-warning-wash/60 p-2">
-                      <span className="text-sm font-medium text-warning-foreground">低于门槛（已抑制，不执行策略）</span>
+                      <span className="text-sm font-medium text-warning-foreground">{t("safety.suppressed")}</span>
                       <ul className="grid gap-2">
                         {dryRunResult.suppressed_findings.map(
                           (finding, index) => (
@@ -2139,15 +2876,14 @@ export function SafetyPolicy({
                             >
                               <strong className="font-medium">{dryRunKindLabel(finding.kind)}</strong>
                               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                                位置{" "}
+                                {t("safety.position")}{" "}
                                 <code className="break-all">{finding.path}</code>
                               </p>
                               <p className="mt-0.5 text-sm leading-relaxed">
-                                {dryRunConfidenceReason(
-                                  finding.confidence,
+                                {dryRunSuppressionReason(
+                                  finding,
                                   policy.min_confidence,
                                   policy.detector,
-                                  "suppressed",
                                 )}
                               </p>
                             </li>
@@ -2159,7 +2895,7 @@ export function SafetyPolicy({
                   {dryRunResult.redactions !== undefined &&
                   dryRunResult.redactions.length > 0 ? (
                     <div className="grid gap-2">
-                      <span className="text-sm font-medium">占位符对照（仅本地预览）</span>
+                      <span className="text-sm font-medium">{t("safety.placeholderCompare")}</span>
                       <ul className="grid gap-2">
                         {dryRunResult.redactions.map((redaction) => (
                           <li
@@ -2168,10 +2904,11 @@ export function SafetyPolicy({
                           >
                             <code className="break-all">{redaction.placeholder}</code>
                             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                              {dryRunKindLabel(redaction.kind)}
+                              {dryRunKindLabel(redaction.kind)} ·{" "}
+                              {placeholderStyleLabel(redaction.style)}
                             </p>
                             <p className="mt-0.5 text-sm leading-relaxed">
-                              原文{" "}
+                              {t("safety.original")}{" "}
                               <code className="break-all">{redaction.value}</code>
                             </p>
                           </li>
@@ -2181,14 +2918,14 @@ export function SafetyPolicy({
                   ) : null}
                   {dryRunResult.redacted_body !== undefined ? (
                     <div className="grid gap-1.5">
-                      <span className="text-sm font-medium">脱敏后的请求体</span>
+                      <span className="text-sm font-medium">{t("safety.redactedBody")}</span>
                       <pre className="overflow-x-auto rounded-lg bg-foreground p-3 font-mono text-xs font-normal whitespace-pre-wrap text-background">{prettyJSON(dryRunResult.redacted_body)}</pre>
                     </div>
                   ) : null}
                 </div>
               ) : (
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  尚未试运行。结果仅用于本地预览，不会转发上游。
+                  {t("safety.notYetRun")}
                 </p>
               )}
             </div>
@@ -2204,17 +2941,17 @@ export function SafetyPolicy({
             <div className="flex min-w-0 shrink-0 items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="text-base font-semibold tracking-tight">
-                  本地隐私模型
+                  {t("safety.localPrivacyModels")}
                 </h3>
                 <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  模型由 Core 校验并在本机运行；请求正文不会发送到模型来源。
+                  {t("safety.modelsStayLocal")}
                 </p>
               </div>
               <Badge
                 className="shrink-0 rounded-full border-transparent bg-success-wash px-2 py-0.5 text-xs font-medium text-success-foreground"
                 variant="outline"
               >
-                {readyCount} 个就绪
+                {t("safety.readyCount", { count: readyCount })}
               </Badge>
             </div>
 
@@ -2225,35 +2962,35 @@ export function SafetyPolicy({
             >
               <TabsList
                 className="grid h-auto w-full shrink-0 grid-cols-2 gap-0 rounded-md bg-muted p-[3px] @[560px]:grid-cols-4"
-                aria-label="模型视图"
+                aria-label={t("safety.modelView")}
               >
                 <TabsTrigger
                   className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("catalog")}
                   value="catalog"
                 >
-                  内置
+                  {t("safety.builtin")}
                 </TabsTrigger>
                 <TabsTrigger
                   className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("installed")}
                   value="installed"
                 >
-                  已安装 {installations.length}
+                  {t("safety.installedCount", { count: installations.length })}
                 </TabsTrigger>
                 <TabsTrigger
                   className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("local")}
                   value="local"
                 >
-                  本地导入
+                  {t("safety.localImport")}
                 </TabsTrigger>
                 <TabsTrigger
                   className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("custom")}
                   value="custom"
                 >
-                  自定义
+                  {t("safety.custom")}
                 </TabsTrigger>
               </TabsList>
               <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="catalog">
@@ -2281,7 +3018,7 @@ export function SafetyPolicy({
                               {model.name}
                             </strong>
                             <span className="text-sm leading-snug text-muted-foreground">
-                              {model.source === "official" ? "官方" : "社区"} ·{" "}
+                              {model.source === "official" ? t("safety.official") : t("safety.community")} ·{" "}
                               {model.license}
                             </span>
                           </div>
@@ -2299,7 +3036,7 @@ export function SafetyPolicy({
                               className="grid min-w-[180px] flex-1 gap-1.5 text-sm leading-normal font-medium"
                               htmlFor={variantSelectID}
                             >
-                              <span>版本</span>
+                              <span>{t("safety.version")}</span>
                               <Select
                                 onValueChange={(variantID) => {
                                   setSelectedVariants((current) => ({
@@ -2315,7 +3052,7 @@ export function SafetyPolicy({
                                 value={variant?.id ?? ""}
                               >
                                 <SelectTrigger
-                                  aria-label={`${model.name} 模型版本`}
+                                  aria-label={t("safety.versionsFor", { name: model.name })}
                                   className="h-9 w-full px-3 text-sm"
                                   id={variantSelectID}
                                   size="sm"
@@ -2326,8 +3063,8 @@ export function SafetyPolicy({
                                   {model.variants.map((candidate) => (
                                     <SelectItem disabled={!candidate.supported} key={candidate.id} value={candidate.id}>
                                       {candidate.name}
-                                      {candidate.recommended ? " · 推荐" : ""}
-                                      {!candidate.supported ? " · 当前不支持" : ""}
+                                      {candidate.recommended ? t("safety.recommended") : ""}
+                                      {!candidate.supported ? t("safety.unsupported") : ""}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -2335,11 +3072,14 @@ export function SafetyPolicy({
                             </Label>
                             <div className="flex flex-wrap gap-2.5 pb-1.5 text-sm text-muted-foreground">
                               <span>
-                                下载 {formatBytes(variant?.bytes_total ?? 0)}
+                                {t("safety.downloadSizeInline", {
+                                  size: formatBytes(variant?.bytes_total ?? 0),
+                                })}
                               </span>
                               <span>
-                                内存{" "}
-                                {formatBytes(variant?.estimated_ram_bytes ?? 0)}
+                                {t("safety.memoryInline", {
+                                  size: formatBytes(variant?.estimated_ram_bytes ?? 0),
+                                })}
                               </span>
                             </div>
                           </div>
@@ -2360,8 +3100,8 @@ export function SafetyPolicy({
                                 type="button"
                               >
                                 {catalogProbeBusy === model.id
-                                  ? "检查中…"
-                                  : "检查并安装"}
+                                  ? t("common.checking")
+                                  : t("safety.checkAndInstall")}
                               </Button>
                             ) : (
                               <Button
@@ -2370,7 +3110,9 @@ export function SafetyPolicy({
                                 type="button"
                                 variant="outline"
                               >
-                                查看{installationStatusLabels[existing.status]}
+                                {t("safety.viewStatus", {
+                                  status: installationStatusLabel(existing.status),
+                                })}
                               </Button>
                             )}
                           </div>
@@ -2379,7 +3121,7 @@ export function SafetyPolicy({
                     );
                   })}
                   {catalog.length === 0 ? (
-                    <p className="rounded-xl border border-dashed p-5 text-center text-xs text-muted-foreground">目录中暂无可用模型。</p>
+                    <p className="rounded-xl border border-dashed p-5 text-center text-xs text-muted-foreground">{t("safety.catalogEmpty")}</p>
                   ) : null}
                 </div>
               </TabsContent>
@@ -2402,18 +3144,18 @@ export function SafetyPolicy({
                       : 0;
                     const sourceLabel =
                       installation.source === "local"
-                        ? "本地导入"
+                        ? t("safety.localImport")
                         : installation.catalog_source === "official"
-                        ? "官方目录"
+                        ? t("safety.officialCatalog")
                         : installation.catalog_source === "community"
-                          ? "社区目录"
-                          : "自定义公开仓库";
+                          ? t("safety.communityCatalog")
+                          : t("safety.customRepo");
                     const licenseLabel =
-                      installation.license ?? "未声明许可证";
+                      installation.license ?? t("safety.licenseUnknown");
                     const languageLabel =
                       installation.languages.length > 0
                         ? installation.languages.join(" / ")
-                        : "语言未声明";
+                        : t("safety.languageUnknown");
                     return (
                       <article
                         className={cn(
@@ -2442,13 +3184,11 @@ export function SafetyPolicy({
                             )}
                           >
                             {selected
-                              ? "策略已选择"
+                              ? t("safety.policySelected")
                               : installation.source === "local" &&
                                   installation.status === "downloading"
-                                ? "导入中"
-                                : installationStatusLabels[
-                                    installation.status
-                                  ]}
+                                ? t("safety.importing")
+                                : installationStatusLabel(installation.status)}
                           </Badge>
                         </div>
                         <p className="text-sm leading-relaxed text-muted-foreground">
@@ -2466,38 +3206,40 @@ export function SafetyPolicy({
                                       installation.bytes_total,
                                     )}`
                                   : installation.source === "local"
-                                    ? "正在准备导入"
-                                    : "正在准备下载"}
+                                    ? t("safety.preparingImport")
+                                    : t("safety.preparingDownload")}
                               </span>
                               <strong>
-                                {hasDownloadTotal ? `${progress}%` : "准备中"}
+                                {hasDownloadTotal ? `${progress}%` : t("safety.preparing")}
                               </strong>
                             </div>
                             <Progress
-                              aria-label={`${installation.name} ${
-                                installation.source === "local"
-                                  ? "导入"
-                                  : "下载"
-                              }进度`}
+                              aria-label={t("safety.progressAria", {
+                                name: installation.name,
+                                action:
+                                  installation.source === "local"
+                                    ? t("safety.import")
+                                    : t("safety.download"),
+                              })}
                               value={progress}
                             />
                           </div>
                         ) : (
                           <p className="text-sm leading-relaxed text-muted-foreground">
                             {installation.error === null
-                              ? `磁盘 ${formatBytes(
-                                  installation.bytes_total,
-                                )} · 预计内存 ${formatBytes(
-                                  installation.estimated_ram_bytes,
-                                )}`
-                              : installationErrorLabels[installation.error]}
+                              ? t("safety.diskAndRam", {
+                                  disk: formatBytes(installation.bytes_total),
+                                  ram: formatBytes(installation.estimated_ram_bytes),
+                                })
+                              : installationErrorLabel(installation.error)}
                           </p>
                         )}
                         {Object.keys(installation.label_mapping).length > 0 ? (
                           <details className="rounded-lg border bg-card px-3 py-2.5 text-sm">
                             <summary className="cursor-pointer font-semibold">
-                              标签映射 ·{" "}
-                              {Object.keys(installation.label_mapping).length} 项
+                              {t("safety.labelMappingCount", {
+                                count: Object.keys(installation.label_mapping).length,
+                              })}
                             </summary>
                             <div className="mt-2 grid gap-1 text-sm text-muted-foreground">
                               {Object.entries(installation.label_mapping).map(
@@ -2505,7 +3247,7 @@ export function SafetyPolicy({
                                   <span key={label}>
                                     <code>{label}</code>
                                     {" → "}
-                                    {kind ?? "忽略"}
+                                    {kind ?? t("safety.ignore")}
                                   </span>
                                 ),
                               )}
@@ -2523,7 +3265,7 @@ export function SafetyPolicy({
                               type="button"
                               variant={selected ? "secondary" : "default"}
                             >
-                              {selected ? "当前模型" : "用于策略"}
+                              {selected ? t("safety.currentModel") : t("safety.usedByPolicy")}
                             </Button>
                           ) : null}
                           {installation.status === "error" &&
@@ -2559,7 +3301,7 @@ export function SafetyPolicy({
                               type="button"
                               variant="outline"
                             >
-                              重试
+                              {t("safety.retry")}
                             </Button>
                           ) : null}
                           <Button
@@ -2574,10 +3316,10 @@ export function SafetyPolicy({
                             variant="destructive"
                           >
                             {operationBusy === installation.id
-                              ? "处理中…"
+                              ? t("common.processing")
                               : installation.status === "downloading"
-                                ? "取消"
-                                : "删除"}
+                                ? t("common.cancel")
+                                : t("common.delete")}
                           </Button>
                         </div>
                       </article>
@@ -2585,7 +3327,7 @@ export function SafetyPolicy({
                   })}
                   {installations.length === 0 ? (
                     <p className="rounded-xl border border-dashed p-5 text-center text-xs text-muted-foreground">
-                      尚未安装本地模型，可从“内置”“本地导入”或“自定义”开始。
+                      {t("safety.noneInstalled")}
                     </p>
                   ) : null}
                 </div>
@@ -2598,10 +3340,10 @@ export function SafetyPolicy({
                       className="grid gap-1.5 text-xs font-medium"
                       htmlFor="privacy-local-model-path"
                     >
-                      <span>已挂载的模型目录或 ONNX 文件</span>
+                      <span>{t("safety.localPathField")}</span>
                       <Input
                         aria-describedby="local-model-mount-note"
-                        aria-label="本地模型路径"
+                        aria-label={t("safety.localPath")}
                         autoComplete="off"
                         disabled={probing}
                         id="privacy-local-model-path"
@@ -2610,7 +3352,7 @@ export function SafetyPolicy({
                           setLocalPath(event.currentTarget.value);
                           resetProbedModel();
                         }}
-                        placeholder="例如 /Volumes/models/privacy/model_int8.onnx"
+                        placeholder={t("safety.localPathPlaceholder")}
                         spellCheck={false}
                         value={localPath}
                       />
@@ -2625,12 +3367,13 @@ export function SafetyPolicy({
                       type="button"
                       variant="outline"
                     >
-                      {probing ? "检查中…" : "检查本地模型"}
+                      {probing ? t("common.checking") : t("safety.checkLocal")}
                     </Button>
                   </div>
                   <p className="rounded-lg bg-card px-3 py-2.5 text-sm leading-relaxed text-muted-foreground" id="local-model-mount-note">
-                    请先在系统中挂载网络共享，再填写本机绝对目录或 ONNX 文件路径；不接收{" "}
-                    <code>smb://</code>、<code>file://</code> 或其他 URI。
+                    {t("safety.localMountNoteLead")}
+                    <code>smb://</code>、<code>file://</code>
+                    {t("safety.localMountNoteTail")}
                   </p>
 
                   {probe !== null && probeView === "local" ? (
@@ -2639,10 +3382,12 @@ export function SafetyPolicy({
                         <div>
                           <strong className="block text-sm">{probe.name}</strong>
                           <span className="mt-0.5 block text-xs text-muted-foreground">
-                            已检查此路径 ·{" "}
-                            {probe.license === null
-                              ? "未声明许可证"
-                              : probe.license}
+                            {t("safety.pathChecked", {
+                              license:
+                                probe.license === null
+                                  ? t("safety.licenseUnknown")
+                                  : probe.license,
+                            })}
                           </span>
                         </div>
                         <Badge variant="secondary">{probe.languages.join(" / ")}</Badge>
@@ -2651,13 +3396,13 @@ export function SafetyPolicy({
                         className="grid gap-1.5 text-xs font-medium"
                         htmlFor="privacy-local-model-variant"
                       >
-                        <span>本地运行版本</span>
+                        <span>{t("safety.localRunVersion")}</span>
                         <Select
                           onValueChange={setProbeVariantID}
                           value={probeVariant?.id ?? ""}
                         >
                           <SelectTrigger
-                            aria-label="本地模型版本"
+                            aria-label={t("safety.localVersion")}
                             className="w-full"
                             id="privacy-local-model-variant"
                           >
@@ -2667,8 +3412,8 @@ export function SafetyPolicy({
                             {probe.variants.map((variant) => (
                               <SelectItem disabled={!variant.supported} key={variant.id} value={variant.id}>
                                 {variant.name}
-                                {variant.recommended ? " · 推荐" : ""}
-                                {!variant.supported ? " · 当前不支持" : ""}
+                                {variant.recommended ? t("safety.recommended") : ""}
+                                {!variant.supported ? t("safety.unsupported") : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -2678,14 +3423,15 @@ export function SafetyPolicy({
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <span className="mr-auto text-sm leading-relaxed text-muted-foreground">
                           {probeVariant === null
-                            ? "没有当前设备支持的版本"
-                            : `导入 ${formatBytes(
-                                probeVariant.bytes_total,
-                              )} · 预计内存 ${formatBytes(
-                                probeVariant.estimated_ram_bytes,
-                              )}${
+                            ? t("safety.noSupportedVariant")
+                            : `${t("safety.importAndRam", {
+                                size: formatBytes(probeVariant.bytes_total),
+                                ram: formatBytes(probeVariant.estimated_ram_bytes),
+                              })}${
                                 unresolvedCustomLabels.length > 0
-                                  ? ` · 还有 ${unresolvedCustomLabels.length} 个标签待确认`
+                                  ? t("safety.labelsPending", {
+                                      count: unresolvedCustomLabels.length,
+                                    })
                                   : ""
                               }`}
                         </span>
@@ -2694,7 +3440,7 @@ export function SafetyPolicy({
                           type="button"
                           variant="outline"
                         >
-                          配置标签
+                          {t("safety.configureLabelsShort")}
                         </Button>
                         <Button
                           disabled={
@@ -2719,14 +3465,14 @@ export function SafetyPolicy({
                           type="button"
                         >
                           {operationBusy === "local"
-                            ? "处理中…"
-                            : "导入本地模型"}
+                            ? t("common.processing")
+                            : t("safety.importLocal")}
                         </Button>
                       </div>
                     </div>
                   ) : (
                     <p className="text-xs leading-5 text-muted-foreground">
-                      指定 ONNX 文件时只检查该版本及其配置、Tokenizer 和外部数据；确认后才会导入到 AstrLink 的受管模型目录。
+                      {t("safety.localOnnxHint")}
                     </p>
                   )}
                 </div>
@@ -2739,16 +3485,16 @@ export function SafetyPolicy({
                       className="grid gap-1.5 text-xs font-medium"
                       htmlFor="privacy-custom-repository"
                     >
-                      <span>Hugging Face 仓库</span>
+                      <span>{t("safety.hfRepo")}</span>
                       <Input
-                        aria-label="Hugging Face 仓库"
+                        aria-label={t("safety.hfRepo")}
                         disabled={probing}
                         id="privacy-custom-repository"
                         onChange={(event) => {
                           setCustomRepoID(event.currentTarget.value);
                           resetProbedModel();
                         }}
-                        placeholder="组织/模型"
+                        placeholder={t("safety.orgModel")}
                         value={customRepoID}
                       />
                     </Label>
@@ -2758,14 +3504,14 @@ export function SafetyPolicy({
                     >
                       <span>Revision</span>
                       <Input
-                        aria-label="模型 Revision"
+                        aria-label={t("safety.revision")}
                         disabled={probing}
                         id="privacy-custom-revision"
                         onChange={(event) => {
                           setCustomRevision(event.currentTarget.value);
                           resetProbedModel();
                         }}
-                        placeholder="main、标签或 commit"
+                        placeholder={t("safety.revisionPlaceholder")}
                         value={customRevision}
                       />
                     </Label>
@@ -2782,7 +3528,7 @@ export function SafetyPolicy({
                       type="button"
                       variant="outline"
                     >
-                      {probing ? "检查中…" : "检查兼容性"}
+                      {probing ? t("common.checking") : t("safety.checkCompat")}
                     </Button>
                   </div>
 
@@ -2794,7 +3540,7 @@ export function SafetyPolicy({
                           <span className="mt-0.5 block text-xs text-muted-foreground">
                             {probe.repo_id} ·{" "}
                             {probe.license === null
-                              ? "未声明许可证"
+                              ? t("safety.licenseUnknown")
                               : probe.license}
                           </span>
                         </div>
@@ -2804,13 +3550,13 @@ export function SafetyPolicy({
                         className="grid gap-1.5 text-xs font-medium"
                         htmlFor="privacy-custom-model-variant"
                       >
-                        <span>本地运行版本</span>
+                        <span>{t("safety.localRunVersion")}</span>
                         <Select
                           onValueChange={setProbeVariantID}
                           value={probeVariant?.id ?? ""}
                         >
                           <SelectTrigger
-                            aria-label="自定义模型版本"
+                            aria-label={t("safety.customVersion")}
                             className="w-full"
                             id="privacy-custom-model-variant"
                           >
@@ -2820,8 +3566,8 @@ export function SafetyPolicy({
                             {probe.variants.map((variant) => (
                               <SelectItem disabled={!variant.supported} key={variant.id} value={variant.id}>
                                 {variant.name}
-                                {variant.recommended ? " · 推荐" : ""}
-                                {!variant.supported ? " · 当前不支持" : ""}
+                                {variant.recommended ? t("safety.recommended") : ""}
+                                {!variant.supported ? t("safety.unsupported") : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -2831,14 +3577,15 @@ export function SafetyPolicy({
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <span className="mr-auto text-sm leading-relaxed text-muted-foreground">
                           {probeVariant === null
-                            ? "没有当前设备支持的版本"
-                            : `下载 ${formatBytes(
-                                probeVariant.bytes_total,
-                              )} · 预计内存 ${formatBytes(
-                                probeVariant.estimated_ram_bytes,
-                              )}${
+                            ? t("safety.noSupportedVariant")
+                            : `${t("safety.downloadAndRam", {
+                                size: formatBytes(probeVariant.bytes_total),
+                                ram: formatBytes(probeVariant.estimated_ram_bytes),
+                              })}${
                                 unresolvedCustomLabels.length > 0
-                                  ? ` · 还有 ${unresolvedCustomLabels.length} 个标签待确认`
+                                  ? t("safety.labelsPending", {
+                                      count: unresolvedCustomLabels.length,
+                                    })
                                   : ""
                               }`}
                         </span>
@@ -2847,7 +3594,7 @@ export function SafetyPolicy({
                           type="button"
                           variant="outline"
                         >
-                          配置标签
+                          {t("safety.configureLabelsShort")}
                         </Button>
                         <Button
                           disabled={
@@ -2872,14 +3619,14 @@ export function SafetyPolicy({
                           type="button"
                         >
                           {operationBusy === "custom"
-                            ? "处理中…"
-                            : "安装自定义模型"}
+                            ? t("common.processing")
+                            : t("safety.installCustom")}
                         </Button>
                       </div>
                     </div>
                   ) : (
                     <p className="text-xs leading-5 text-muted-foreground">
-                      仅探测元数据和兼容性，不加载仓库代码；确认版本、资源占用和标签映射后才会下载权重。
+                      {t("safety.customProbeHint")}
                     </p>
                   )}
                 </div>
@@ -2897,8 +3644,8 @@ export function SafetyPolicy({
           }
           confirmLabel={
             operationBusy === catalogPreparation.catalogID
-              ? "处理中…"
-              : "确认安装"
+              ? t("common.processing")
+              : t("safety.confirmInstall")
           }
           labels={catalogPreparation.probe.labels}
           mapping={catalogPreparation.labelMapping}
@@ -2932,23 +3679,26 @@ export function SafetyPolicy({
               },
             );
           }}
-          summary={`下载 ${formatBytes(
-            catalogPreparation.variant.bytes_total,
-          )} · 预计内存 ${formatBytes(
-            catalogPreparation.variant.estimated_ram_bytes,
-          )}${
+          summary={`${t("safety.downloadAndRam", {
+            size: formatBytes(catalogPreparation.variant.bytes_total),
+            ram: formatBytes(catalogPreparation.variant.estimated_ram_bytes),
+          })}${
             unresolvedCatalogLabels.length > 0
-              ? ` · 还有 ${unresolvedCatalogLabels.length} 个标签待确认`
+              ? t("safety.labelsPending", {
+                  count: unresolvedCatalogLabels.length,
+                })
               : ""
           }`}
-          title={`配置 ${catalogPreparationModel.name} 标签映射`}
+          title={t("safety.configureLabels", {
+            name: catalogPreparationModel.name,
+          })}
           touchedLabels={catalogPreparation.touchedLabels}
         />
       ) : null}
       {customMappingOpen && probe !== null ? (
         <LabelMappingDialog
           confirmDisabled={unresolvedCustomLabels.length > 0}
-          confirmLabel="应用映射"
+          confirmLabel={t("safety.applyMapping")}
           labels={probe.labels}
           mapping={labelMapping}
           onCancel={() => setCustomMappingOpen(false)}
@@ -2962,13 +3712,27 @@ export function SafetyPolicy({
             ]);
           }}
           onConfirm={() => setCustomMappingOpen(false)}
-          summary={`${probe.labels.length} 个基础标签${
+          summary={`${t("safety.labelCount", { count: probe.labels.length })}${
             unresolvedCustomLabels.length > 0
-              ? ` · 还有 ${unresolvedCustomLabels.length} 个标签待确认`
-              : " · 映射已完整"
+              ? t("safety.labelsPending", {
+                  count: unresolvedCustomLabels.length,
+                })
+              : t("safety.mappingComplete")
           }`}
-          title={`配置 ${probe.name} 标签映射`}
+          title={t("safety.configureLabels", { name: probe.name })}
           touchedLabels={labelMappingTouched}
+        />
+      ) : null}
+      {confirmFillBuiltinRules ? (
+        <ConfirmDialog
+          confirmLabel={t("safety.overwriteFill")}
+          description={t("safety.overwriteHint")}
+          onCancel={() => setConfirmFillBuiltinRules(false)}
+          onConfirm={() => {
+            void fillBuiltinRules();
+          }}
+          open={confirmFillBuiltinRules}
+          title={t("safety.fillBuiltin")}
         />
       ) : null}
       {pendingModelAction !== null &&

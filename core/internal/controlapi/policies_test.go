@@ -268,21 +268,58 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 		result.Redactions[0].Value != "alice@example.com" {
 		t.Fatalf("redactions=%#v", result.Redactions)
 	}
+	// email ships with the natural style, so the stand-in is a well-formed
+	// address under the permanently unresolvable .invalid TLD.
 	placeholder := result.Redactions[0].Placeholder
-	const emailPlaceholderPrefix = "<PRIVATE_EMAIL_"
-	if !strings.HasPrefix(placeholder, emailPlaceholderPrefix) ||
-		!strings.HasSuffix(placeholder, ">") {
-		t.Fatalf("random placeholder=%q", placeholder)
-	}
-	suffix := strings.TrimSuffix(strings.TrimPrefix(placeholder, emailPlaceholderPrefix), ">")
-	if len(suffix) != 16 {
-		t.Fatalf("random placeholder suffix=%q", suffix)
-	}
-	if _, err := hex.DecodeString(suffix); err != nil {
-		t.Fatalf("random placeholder suffix=%q: %v", suffix, err)
+	if result.Redactions[0].Style != contract.PlaceholderStyleNatural ||
+		!strings.HasPrefix(placeholder, "redacted-") ||
+		!strings.HasSuffix(placeholder, "@private.invalid") {
+		t.Fatalf("natural placeholder=%q style=%q", placeholder, result.Redactions[0].Style)
 	}
 	if !strings.Contains(*result.RedactedBody, placeholder) {
 		t.Fatalf("redacted body does not contain generated placeholder: %s", *result.RedactedBody)
+	}
+
+	response = policyRequest(
+		t, handler, http.MethodPost, PolicyDryRunPath, "application/json",
+		`{"protocol":"openai.chat","sample_text":"email alice@example.com",`+
+			`"policy":{"enabled":true,"request_action":"redact",`+
+			`"kind_rules":[{"kind":"email","enabled":true,"style":"token"}]}}`,
+		"",
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("token dry-run status=%d body=%s", response.Code, response.Body.String())
+	}
+	var tokenStyle contract.PolicyDryRunResponse
+	decode(t, response, &tokenStyle)
+	if len(tokenStyle.Redactions) != 1 ||
+		tokenStyle.Redactions[0].Style != contract.PlaceholderStyleToken {
+		t.Fatalf("token override redactions=%#v", tokenStyle.Redactions)
+	}
+	const emailPlaceholderPrefix = "<PRIVATE_EMAIL_"
+	tokenPlaceholder := tokenStyle.Redactions[0].Placeholder
+	if !strings.HasPrefix(tokenPlaceholder, emailPlaceholderPrefix) ||
+		!strings.HasSuffix(tokenPlaceholder, ">") {
+		t.Fatalf("token placeholder=%q", tokenPlaceholder)
+	}
+	suffix := strings.TrimSuffix(strings.TrimPrefix(tokenPlaceholder, emailPlaceholderPrefix), ">")
+	if len(suffix) != 16 {
+		t.Fatalf("token placeholder suffix=%q", suffix)
+	}
+	if _, err := hex.DecodeString(suffix); err != nil {
+		t.Fatalf("token placeholder suffix=%q: %v", suffix, err)
+	}
+
+	// A patch that tries to dress a credential up as a usable-looking value must
+	// be refused: the shape of a secret placeholder is a safety property.
+	response = policyRequest(
+		t, handler, http.MethodPost, PolicyDryRunPath, "application/json",
+		`{"protocol":"openai.chat","sample_text":"x",`+
+			`"policy":{"kind_rules":[{"kind":"common_secret","enabled":true,"style":"natural"}]}}`,
+		"",
+	)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("natural secret dry-run status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	response = policyRequest(
@@ -442,4 +479,56 @@ func policyRequest(
 		t.Fatalf("Cache-Control=%q", response.Header().Get("Cache-Control"))
 	}
 	return response
+}
+
+func TestPrivacyRegexBuiltinRulesEndpoint(t *testing.T) {
+	_, handler, _ := newPolicyHandler(t)
+	response := policyRequest(t, handler, http.MethodGet, PrivacyRegexBuiltinRulesPath, "", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload contract.PolicyRegexBuiltinRulesResponse
+	decode(t, response, &payload)
+	if len(payload.Rules) == 0 {
+		t.Fatal("expected builtin rules")
+	}
+	builtin := privacy.BuiltinRegexRules()
+	if !reflect.DeepEqual(payload.Rules, builtin) {
+		t.Fatalf("rules=%#v want %#v", payload.Rules, builtin)
+	}
+}
+
+func TestPolicyControlAPIAcceptsCustomRegexRules(t *testing.T) {
+	_, handler, _ := newPolicyHandler(t)
+	response := policyRequest(
+		t, handler, http.MethodGet,
+		PoliciesPath+"/"+string(contract.DefaultPrivacyPolicyID), "", "", "",
+	)
+	etag := response.Header().Get("ETag")
+	response = policyRequest(
+		t, handler, http.MethodPatch,
+		PoliciesPath+"/"+string(contract.DefaultPrivacyPolicyID),
+		"application/merge-patch+json",
+		`{"regex_source":"custom","custom_regex_rules":[{"kind":"email","pattern":"(?i)custom@[a-z.]+"}]}`,
+		etag,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("custom patch status=%d body=%s", response.Code, response.Body.String())
+	}
+	var policy contract.Policy
+	decode(t, response, &policy)
+	if policy.RegexSource != contract.PolicyRegexSourceCustom || len(policy.CustomRegexRules) != 1 {
+		t.Fatalf("policy=%#v", policy)
+	}
+
+	response = policyRequest(
+		t, handler, http.MethodPatch,
+		PoliciesPath+"/"+string(contract.DefaultPrivacyPolicyID),
+		"application/merge-patch+json",
+		`{"regex_source":"custom","custom_regex_rules":[]}`,
+		response.Header().Get("ETag"),
+	)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty custom rules status=%d body=%s", response.Code, response.Body.String())
+	}
 }

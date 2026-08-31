@@ -2,10 +2,8 @@ package privacy
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"unicode/utf8"
@@ -14,10 +12,11 @@ import (
 )
 
 type Engine struct {
-	provider           PolicyProvider
-	regexDetector      Detector
-	modelDetector      Detector
-	placeholderEntropy io.Reader
+	provider      PolicyProvider
+	regexDetector Detector
+	modelDetector Detector
+	// derivationKey keys the placeholder HMAC. Empty means the process-wide key.
+	derivationKey []byte
 }
 
 func New(provider PolicyProvider, modelDetector Detector) (*Engine, error) {
@@ -25,10 +24,9 @@ func New(provider PolicyProvider, modelDetector Detector) (*Engine, error) {
 		return nil, fmt.Errorf("privacy policy provider is required")
 	}
 	return &Engine{
-		provider:           provider,
-		regexDetector:      NewRegexDetector(),
-		modelDetector:      modelDetector,
-		placeholderEntropy: rand.Reader,
+		provider:      provider,
+		regexDetector: NewRegexDetector(),
+		modelDetector: modelDetector,
 	}, nil
 }
 
@@ -85,6 +83,12 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 		if detector == nil {
 			return Result{}, ErrDetectorUnavailable
 		}
+	} else if policy.RegexSource == contract.PolicyRegexSourceCustom {
+		custom, err := NewCustomRegexDetector(policy.CustomRegexRules)
+		if err != nil {
+			return Result{}, ErrPolicyUnavailable
+		}
+		detector = custom
 	}
 	findings, err := detector.Detect(ctx, DetectInput{
 		Protocol:             protocol,
@@ -101,19 +105,7 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 		}
 		return Result{}, ErrDetectorUnavailable
 	}
-	accepted := findings
-	var suppressed []Finding
-	if policy.Mode == ModeLocalModel {
-		accepted = make([]Finding, 0, len(findings))
-		suppressed = make([]Finding, 0, len(findings))
-		for _, finding := range findings {
-			if finding.Confidence >= policy.MinConfidence {
-				accepted = append(accepted, finding)
-			} else {
-				suppressed = append(suppressed, finding)
-			}
-		}
-	}
+	accepted, suppressed := engine.partitionFindings(policy, findings, segments)
 	if len(accepted) == 0 {
 		return Result{
 			Decision:           DecisionAllow,
@@ -142,11 +134,14 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 				SuppressedFindings: suppressed,
 			}, ErrUnsafeRewrite
 		}
-		redacted, redactions, err := rewriteDocument(
+		allocator := newPlaceholderAllocator(engine.derivationKey, policy.KindRule, body)
+		outcome, err := rewriteDocument(
 			document,
 			extracted,
 			accepted,
-			newPlaceholderAllocator(engine.placeholderEntropy),
+			allocator,
+			protocol,
+			policy.PlaceholderNotice,
 		)
 		if err != nil {
 			return Result{
@@ -157,14 +152,77 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 		}
 		return Result{
 			Decision:           DecisionRedact,
-			Body:               redacted,
-			Findings:           accepted,
+			Body:               outcome.Body,
+			Findings:           markExhaustedKinds(accepted, allocator.exhaustedKinds()),
 			SuppressedFindings: suppressed,
-			Redactions:         redactions,
+			Redactions:         outcome.Redactions,
+			NoticeInjected:     outcome.NoticeInjected,
 		}, nil
 	default:
 		return Result{}, ErrPolicyUnavailable
 	}
+}
+
+// partitionFindings applies every suppression rule through one path so that a
+// dry-run and the desktop inspector can always report why a match was left
+// alone rather than showing an unexplained gap.
+func (engine *Engine) partitionFindings(
+	policy Policy,
+	findings []Finding,
+	segments []Segment,
+) ([]Finding, []Finding) {
+	list := newAllowlist(policy.Allowlist)
+	accepted := make([]Finding, 0, len(findings))
+	suppressed := make([]Finding, 0)
+	for _, finding := range findings {
+		if reason := suppressionFor(policy, list, finding, segments); reason != "" {
+			finding.Suppression = reason
+			suppressed = append(suppressed, finding)
+			continue
+		}
+		accepted = append(accepted, finding)
+	}
+	return accepted, suppressed
+}
+
+func suppressionFor(
+	policy Policy,
+	list *allowlist,
+	finding Finding,
+	segments []Segment,
+) SuppressionReason {
+	if !policy.KindRule(finding.Kind).Enabled {
+		return SuppressionKindDisabled
+	}
+	if policy.Mode == ModeLocalModel && finding.Confidence < policy.MinConfidence {
+		return SuppressionLowConfidence
+	}
+	if finding.Segment < 0 || finding.Segment >= len(segments) {
+		return ""
+	}
+	value := segments[finding.Segment].Value[finding.Start:finding.End]
+	if isNaturalPlaceholder(finding.Kind, value) || isTokenPlaceholder(value) {
+		return SuppressionPlaceholder
+	}
+	if list.allows(finding.Kind, value) {
+		return SuppressionAllowlisted
+	}
+	return ""
+}
+
+// markExhaustedKinds annotates accepted findings whose kind ran out of reserved
+// stand-ins, so the operator can see that those spans silently reverted to token
+// placeholders instead of the configured natural shape.
+func markExhaustedKinds(findings []Finding, exhausted map[Kind]bool) []Finding {
+	if len(exhausted) == 0 {
+		return findings
+	}
+	for index := range findings {
+		if exhausted[findings[index].Kind] {
+			findings[index].Suppression = SuppressionUnrepresentable
+		}
+	}
+	return findings
 }
 
 func normalizeDetectorError(ctx context.Context, err error) error {

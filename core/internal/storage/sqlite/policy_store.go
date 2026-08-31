@@ -76,6 +76,7 @@ func (store *Store) UpdatePolicy(
 	if err := contract.ValidatePrivacyDefault(policy); err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
+	contract.NormalizePrivacyPolicyDefaults(&policy)
 	document, err := json.Marshal(policy)
 	if err != nil {
 		return record, fmt.Errorf("encode policy: %w", err)
@@ -158,6 +159,7 @@ func decodePolicyRecord(rowID string, document []byte) (storagecontract.PolicyRe
 			storagecontract.ErrInvalidRecord,
 		)
 	}
+	contract.NormalizePrivacyPolicyDefaults(&policy)
 	if err := contract.ValidatePrivacyDefault(policy); err != nil {
 		return storagecontract.PolicyRecord{}, fmt.Errorf(
 			"%w: policy %q violates the fixed privacy contract",

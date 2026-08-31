@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { SectionKicker } from "@/components/SectionKicker";
+import { i18n } from "./i18n";
 
 interface AppErrorBoundaryProps {
   children: ReactNode;
@@ -42,15 +43,15 @@ export class AppErrorBoundary extends Component<
       >
         <Card className="w-full max-w-lg">
           <CardHeader>
-            <SectionKicker>界面恢复</SectionKicker>
-            <CardTitle className="text-xl">AstrLink 界面遇到问题</CardTitle>
+            <SectionKicker>{i18n.t("errorBoundary.kicker")}</SectionKicker>
+            <CardTitle className="text-xl">{i18n.t("errorBoundary.title")}</CardTitle>
             <CardDescription>
-              Core 与本地配置不会因此被删除。重新加载界面即可继续。
+              {i18n.t("errorBoundary.description")}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Button onClick={() => window.location.reload()} type="button">
-              重新加载
+              {i18n.t("errorBoundary.reload")}
             </Button>
           </CardContent>
         </Card>

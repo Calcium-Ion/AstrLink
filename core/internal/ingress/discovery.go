@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
+	"github.com/QuantumNous/astrlink/core/internal/subscription"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -294,6 +295,9 @@ func (handler *Handler) fetchModelDiscovery(
 		if fetchRequest.URL.RawPath != "" {
 			fetchRequest.URL.RawPath = strings.TrimPrefix(fetchRequest.URL.RawPath, "/v1")
 		}
+		query := fetchRequest.URL.Query()
+		subscription.ApplyCodexModelsQuery(query, "")
+		fetchRequest.URL.RawQuery = query.Encode()
 	}
 
 	controller, healthAware := handler.resolver.(endpoint.AttemptController)
@@ -341,7 +345,28 @@ func (handler *Handler) fetchModelDiscovery(
 			endpointID: candidate.Service.ID,
 		}}
 	}
-	entries, entriesErr := parseDiscoveryEntries(classified.Protocol, recorder.body.Bytes())
+	discoveryBody := recorder.body.Bytes()
+	if candidate.Service.Kind.IsSubscription() {
+		list, decodeErr := subscription.DecodeCodexModels(discoveryBody)
+		if decodeErr != nil {
+			health.Failure()
+			return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
+				kind:       executionFailureUpstream,
+				err:        decodeErr,
+				endpointID: candidate.Service.ID,
+			}}
+		}
+		discoveryBody, decodeErr = subscription.EncodeOpenAIModelDiscovery(list)
+		if decodeErr != nil {
+			health.Failure()
+			return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
+				kind:       executionFailureUpstream,
+				err:        decodeErr,
+				endpointID: candidate.Service.ID,
+			}}
+		}
+	}
+	entries, entriesErr := parseDiscoveryEntries(classified.Protocol, discoveryBody)
 	if entriesErr != nil {
 		health.Failure()
 		return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{

@@ -14,10 +14,6 @@ type AccessTokenSource string
 const (
 	AccessTokenSourceSystemDefault AccessTokenSource = "system_default"
 	AccessTokenSourceUser          AccessTokenSource = "user"
-
-	// AccessTokenSourceBootstrap names the creation path while preserving the
-	// public wire value system_default.
-	AccessTokenSourceBootstrap = AccessTokenSourceSystemDefault
 )
 
 func (source AccessTokenSource) Valid() bool {
@@ -30,7 +26,6 @@ type AccessTokenMetadata struct {
 	ID        contract.AccessTokenID `json:"id"`
 	Name      string                 `json:"name"`
 	Hint      string                 `json:"hint"`
-	Source    AccessTokenSource      `json:"source"`
 	CreatedAt time.Time              `json:"created_at"`
 }
 
@@ -45,7 +40,6 @@ type NewAccessToken struct {
 	NameKey string
 	Hash    AccessTokenHash
 	Hint    string
-	Source  AccessTokenSource
 	Value   string
 }
 

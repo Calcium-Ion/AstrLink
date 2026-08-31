@@ -34,6 +34,11 @@ variable. The desktop keeps it out of normal snapshots and proxies fixed
 control operations without exposing it to the WebView. It is never an
 inference credential.
 
+On Unix, persistent mode also binds `{data-dir}/control.sock` (mode `0600`,
+same-uid peer credentials). Local tools such as `astrlink-mcp` call the same
+Control API over that socket without holding the per-start token. Windows has
+no socket; the desktop writes a user-only session locator instead.
+
 The first M1 slice recognizes all eight Alpha protocol IDs and includes a
 protocol-preserving HTTP/SSE forwarder with cancellation and per-request
 Endpoint authentication seams. Persistent mode now installs a deterministic
@@ -158,7 +163,8 @@ cache. Damage remains fail closed on use. These checks do not claim continuous
 runtime integrity against a same-user process modifying files after
 verification.
 
-Tauri packages the Rust `astrlink-privacy-worker` executable and its pinned
+Tauri packages the Rust `astrlink-privacy-worker` and
+`astrlink-classifier-worker` executables and their shared pinned
 ONNX Runtime 1.23.2 CPU runtime alongside Core, but not the model assets. On
 macOS, the arm64 and x64 release archives are accepted only after their pinned
 SHA-256 digest is verified, and the worker loads the fixed-version library only

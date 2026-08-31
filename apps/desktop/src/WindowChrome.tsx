@@ -16,6 +16,7 @@ import {
   loadLinuxWindowControlLayout,
   parseLinuxDecorationLayout,
 } from "./window-chrome";
+import { i18n } from "./i18n";
 import { cn } from "@/lib/utils";
 
 type ResizeDirection =
@@ -91,9 +92,9 @@ function ControlIcon({
 }
 
 function controlLabel(control: WindowControl, maximized: boolean): string {
-  if (control === "close") return "关闭窗口";
-  if (control === "minimize") return "最小化窗口";
-  return maximized ? "还原窗口" : "最大化窗口";
+  if (control === "close") return i18n.t("chrome.close");
+  if (control === "minimize") return i18n.t("chrome.minimize");
+  return maximized ? i18n.t("chrome.restore") : i18n.t("chrome.maximize");
 }
 
 export function WindowChrome({
@@ -302,7 +303,7 @@ export function WindowChrome({
   return (
     <>
       <header
-        aria-label="窗口控制栏"
+        aria-label={i18n.t("chrome.bar")}
         className={cn(
           "fixed inset-x-0 top-0 z-80 grid h-[var(--window-chrome-height)] grid-cols-[max-content_minmax(0,1fr)_max-content] select-none text-text-secondary",
           windowState.fullscreen && "hidden",

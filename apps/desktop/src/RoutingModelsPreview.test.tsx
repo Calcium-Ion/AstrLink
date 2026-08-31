@@ -24,17 +24,18 @@ describe("RoutingModelsPreview", () => {
     expect(container.querySelector('[data-testid="routing-classifier-card"]')).toBeNull();
     expect(container.querySelector("form")).toBeNull();
     expect(container.querySelector("a")).toBeNull();
+    expect(container.textContent).toContain("未配置");
   });
 
-  it("marks taxonomy categories as preview-only without fake model targets", () => {
+  it("renders taxonomy categories without fake model targets", () => {
     const container = document.createElement("div");
     container.innerHTML = renderToStaticMarkup(<AutoRoutingShowcase />);
 
     expect(container.textContent).toContain("astrlink/auto");
-    expect(container.textContent).toContain("示意，不可配置");
+    expect(container.textContent).not.toContain("示意，不可配置");
     expect(container.textContent).not.toContain("demo/");
 
-    for (const category of ["general", "code", "writing", "reasoning"]) {
+    for (const category of ["general", "research", "coding", "architect"]) {
       expect(container.textContent).toContain(category);
     }
 

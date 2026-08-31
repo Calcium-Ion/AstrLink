@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -268,6 +269,7 @@ func TestProductionInferenceGateRequiresCanonicalHostOriginBoundaryAndLocalToken
 		{name: "missing token", host: "127.0.0.1:8317", status: http.StatusUnauthorized, code: "invalid_access_token"},
 		{name: "wrong token", host: "127.0.0.1:8317", headerName: "Authorization", header: "Bearer wrong_token_0123456789abcdef", status: http.StatusUnauthorized, code: "invalid_access_token"},
 		{name: "ambiguous token", host: "127.0.0.1:8317", headerName: "Authorization", header: "Bearer " + token, status: http.StatusUnauthorized, code: "invalid_access_token"},
+		{name: "identical Bearer and X-Api-Key", host: "127.0.0.1:8317", headerName: "Authorization", header: "Bearer " + token, status: http.StatusUnprocessableEntity, code: "missing_protocol_capability", resolves: true},
 		{name: "query token", host: "127.0.0.1:8317", path: "?key=" + token, headerName: "X-Goog-Api-Key", header: token, status: http.StatusUnauthorized, code: "token_query_forbidden"},
 		{name: "Bearer token", host: "127.0.0.1:8317", headerName: "Authorization", header: "Bearer " + token, status: http.StatusUnprocessableEntity, code: "missing_protocol_capability", resolves: true},
 		{name: "Anthropic token", host: "127.0.0.1:8317", headerName: "X-Api-Key", header: token, status: http.StatusUnprocessableEntity, code: "missing_protocol_capability", resolves: true},
@@ -289,6 +291,9 @@ func TestProductionInferenceGateRequiresCanonicalHostOriginBoundaryAndLocalToken
 				request.Header.Set(test.headerName, test.header)
 			}
 			if test.name == "ambiguous token" {
+				request.Header.Set("X-Api-Key", token+"-other")
+			}
+			if test.name == "identical Bearer and X-Api-Key" {
 				request.Header.Set("X-Api-Key", token)
 			}
 			response := httptest.NewRecorder()
@@ -301,6 +306,54 @@ func TestProductionInferenceGateRequiresCanonicalHostOriginBoundaryAndLocalToken
 				if strings.HasPrefix(http.CanonicalHeaderKey(name), "Access-Control-") {
 					t.Fatalf("CORS header leaked: %s", name)
 				}
+			}
+		})
+	}
+}
+
+func TestLocalClientCredentialAcceptsIdenticalAnthropicHeaders(t *testing.T) {
+	const token = "astr_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+	tests := []struct {
+		name   string
+		header http.Header
+		want   string
+		wantOK bool
+	}{
+		{
+			name:   "bearer only",
+			header: http.Header{"Authorization": {"Bearer " + token}},
+			want:   token, wantOK: true,
+		},
+		{
+			name:   "x-api-key only",
+			header: http.Header{"X-Api-Key": {token}},
+			want:   token, wantOK: true,
+		},
+		{
+			name: "cherry studio anthropic pair",
+			header: http.Header{
+				"Authorization": {"Bearer " + token},
+				"X-Api-Key":     {token},
+			},
+			want: token, wantOK: true,
+		},
+		{
+			name: "differing bearer and x-api-key",
+			header: http.Header{
+				"Authorization": {"Bearer " + token},
+				"X-Api-Key":     {token + "-other"},
+			},
+		},
+		{
+			name:   "missing",
+			header: http.Header{},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := localClientCredential(test.header)
+			if ok != test.wantOK || got != test.want {
+				t.Fatalf("got (%q,%t), want (%q,%t)", got, ok, test.want, test.wantOK)
 			}
 		})
 	}
@@ -867,6 +920,78 @@ func TestInferencePlaneRecordsMetadataWithoutChangingClientBytes(t *testing.T) {
 	if record.Audit.RequestBodyCaptured || record.Audit.ResponseContentCaptured {
 		t.Fatalf("5a audit flags should report not captured: %#v", record.Audit)
 	}
+	if record.SessionID == nil || *record.SessionID == "" {
+		t.Fatal("missing session id")
+	}
+	if record.InputPreview == nil || *record.InputPreview != "hi" {
+		t.Fatalf("preview=%v", record.InputPreview)
+	}
+	if record.OutputResponseID == nil || *record.OutputResponseID != "resp" {
+		t.Fatalf("output id=%v", record.OutputResponseID)
+	}
+	kinds := make([]contract.RequestEventKind, 0, len(record.Events))
+	for _, event := range record.Events {
+		kinds = append(kinds, event.Kind)
+	}
+	if !containsEventKinds(kinds, contract.RequestEventAccepted, contract.RequestEventPrivacy, contract.RequestEventRouted, contract.RequestEventUpstream, contract.RequestEventCompleted) {
+		t.Fatalf("events=%v", kinds)
+	}
+}
+
+func TestInferencePlaneLogsSanitizedAccessLine(t *testing.T) {
+	var logs []string
+	store := &memoryRequestRecordStore{}
+	handler := NewWithDependencies(Dependencies{
+		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
+			Endpoint:      validEndpoint(contract.ProtocolOpenAIResponses, false),
+			UpstreamModel: "provider/secret-upstream",
+		}}},
+		RequestRecords: store,
+		RecordLogger: func(format string, args ...any) {
+			logs = append(logs, fmt.Sprintf(format, args...))
+		},
+		Forwarder: forwarderFunc(func(writer http.ResponseWriter, _ *http.Request, _ transport.Target) error {
+			writer.WriteHeader(http.StatusOK)
+			_, err := writer.Write([]byte(`{"id":"resp"}`))
+			return err
+		}),
+	})
+	handler.ServeHTTP(
+		httptest.NewRecorder(),
+		httptest.NewRequest(
+			http.MethodPost,
+			"/v1/responses",
+			strings.NewReader(`{"model":"public-alias","input":"secret-preview"}`),
+		),
+	)
+	if len(logs) == 0 {
+		t.Fatal("missing ingress access log")
+	}
+	line := logs[len(logs)-1]
+	if !strings.Contains(line, "ingress openai.responses succeeded") {
+		t.Fatalf("access log = %q", line)
+	}
+	if !strings.Contains(line, "request=") || !strings.Contains(line, "session=") {
+		t.Fatalf("access log missing ids: %q", line)
+	}
+	if strings.Contains(line, "provider/secret-upstream") ||
+		strings.Contains(line, "secret-preview") ||
+		strings.Contains(line, "http://") {
+		t.Fatalf("access log leaked request data: %q", line)
+	}
+}
+
+func containsEventKinds(got []contract.RequestEventKind, want ...contract.RequestEventKind) bool {
+	seen := map[contract.RequestEventKind]bool{}
+	for _, kind := range got {
+		seen[kind] = true
+	}
+	for _, kind := range want {
+		if !seen[kind] {
+			return false
+		}
+	}
+	return true
 }
 
 type memoryRequestRecordStore struct {
@@ -876,6 +1001,25 @@ type memoryRequestRecordStore struct {
 func (store *memoryRequestRecordStore) InsertRequestRecord(_ context.Context, record contract.RequestRecord) error {
 	store.records = append(store.records, record)
 	return nil
+}
+
+func (store *memoryRequestRecordStore) FindSessionLink(_ context.Context, cursor string) (contract.SessionID, error) {
+	if cursor == "" {
+		return "", fmt.Errorf("session cursor not found")
+	}
+	for index := len(store.records) - 1; index >= 0; index-- {
+		record := store.records[index]
+		if record.ParentRequestID != nil || record.SessionID == nil {
+			continue
+		}
+		if record.OutputResponseID != nil && *record.OutputResponseID == cursor {
+			return *record.SessionID, nil
+		}
+		if record.PreviousResponseID != nil && *record.PreviousResponseID == cursor {
+			return *record.SessionID, nil
+		}
+	}
+	return "", fmt.Errorf("session cursor not found")
 }
 
 func (store *memoryRequestRecordStore) UpsertRequestRecord(_ context.Context, record contract.RequestRecord) error {
@@ -1729,6 +1873,170 @@ func TestInferencePlaneRecordsInterruptedStreamAsFailed(t *testing.T) {
 	}
 }
 
+func TestInferencePlaneRecordsBoundaryAndClassifyErrors(t *testing.T) {
+	rejectToken := AccessTokenAuthenticatorFunc(func(context.Context, string) (contract.AccessTokenID, error) {
+		return "", errors.New("not found")
+	})
+
+	t.Run("invalid_access_token", func(t *testing.T) {
+		store := &memoryRequestRecordStore{}
+		handler := NewWithDependencies(Dependencies{
+			AccessTokenAuthenticator: rejectToken,
+			RequestRecords:           store,
+		})
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/responses",
+			strings.NewReader(`{"model":"m","input":"hi"}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertInferenceError(t, response, http.StatusUnauthorized, "invalid_access_token")
+		if len(store.records) != 1 {
+			t.Fatalf("records=%#v", store.records)
+		}
+		record := store.records[0]
+		if record.Status != contract.RequestStatusFailed {
+			t.Fatalf("status=%q", record.Status)
+		}
+		if record.Error == nil ||
+			record.Error.Code != "invalid_access_token" ||
+			record.Error.Category != "auth" ||
+			record.Error.Retryable {
+			t.Fatalf("error=%#v", record.Error)
+		}
+		if record.HTTPStatus == nil || *record.HTTPStatus != http.StatusUnauthorized {
+			t.Fatalf("http_status=%v", record.HTTPStatus)
+		}
+		if record.InputProtocol != contract.ProtocolOpenAIResponses {
+			t.Fatalf("protocol=%q", record.InputProtocol)
+		}
+		if record.LocalAccessTokenID != nil {
+			t.Fatalf("token id leaked: %v", record.LocalAccessTokenID)
+		}
+	})
+
+	t.Run("wrong token does not persist the credential", func(t *testing.T) {
+		const presented = "astr_wrongtoken0123456789abcdefghijklmnopqrstuv"
+		store := &memoryRequestRecordStore{}
+		handler := NewWithDependencies(Dependencies{
+			AccessTokenAuthenticator: rejectToken,
+			RequestRecords:           store,
+		})
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/chat/completions",
+			strings.NewReader(`{"model":"m"}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+presented)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertInferenceError(t, response, http.StatusUnauthorized, "invalid_access_token")
+		if len(store.records) != 1 || store.records[0].Error == nil ||
+			store.records[0].Error.Code != "invalid_access_token" {
+			t.Fatalf("records=%#v", store.records)
+		}
+		if store.records[0].InputProtocol != contract.ProtocolOpenAIChat {
+			t.Fatalf("protocol=%q", store.records[0].InputProtocol)
+		}
+		encoded, err := json.Marshal(store.records[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), presented) {
+			t.Fatalf("presented token leaked into record: %s", encoded)
+		}
+	})
+
+	t.Run("invalid_request", func(t *testing.T) {
+		store := &memoryRequestRecordStore{}
+		handler := NewWithDependencies(Dependencies{RequestRecords: store})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(
+			response,
+			httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"stream":`)),
+		)
+		assertInferenceError(t, response, http.StatusBadRequest, "invalid_request")
+		if len(store.records) != 1 ||
+			store.records[0].Status != contract.RequestStatusFailed ||
+			store.records[0].Error == nil ||
+			store.records[0].Error.Code != "invalid_request" {
+			t.Fatalf("records=%#v", store.records)
+		}
+	})
+
+	t.Run("method_not_allowed", func(t *testing.T) {
+		store := &memoryRequestRecordStore{}
+		handler := NewWithDependencies(Dependencies{RequestRecords: store})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/responses", nil))
+		assertInferenceError(t, response, http.StatusMethodNotAllowed, "method_not_allowed")
+		if len(store.records) != 1 ||
+			store.records[0].Error == nil ||
+			store.records[0].Error.Code != "method_not_allowed" {
+			t.Fatalf("records=%#v", store.records)
+		}
+	})
+
+	t.Run("unknown path is not recorded", func(t *testing.T) {
+		store := &memoryRequestRecordStore{}
+		handler := NewWithDependencies(Dependencies{RequestRecords: store})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{}`)))
+		assertInferenceError(t, response, http.StatusNotFound, "not_found")
+		if len(store.records) != 0 {
+			t.Fatalf("unknown path recorded: %#v", store.records)
+		}
+	})
+
+	t.Run("captures error response when audit is enabled", func(t *testing.T) {
+		store := &memoryRequestRecordStore{}
+		blobs := &memoryAuditBlobs{}
+		handler := NewWithDependencies(Dependencies{
+			AccessTokenAuthenticator: rejectToken,
+			RequestRecords:           store,
+			AuditSettings: &memoryAuditSettings{settings: contract.AuditSettings{
+				ResponseContentEnabled:  true,
+				ResponseContentMaxBytes: 1024,
+				MetadataRetentionDays:   30,
+				ContentRetentionDays:    7,
+			}},
+			AuditBlobs: blobs,
+		})
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/responses",
+			strings.NewReader(`{"model":"m"}`),
+		)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertInferenceError(t, response, http.StatusUnauthorized, "invalid_access_token")
+		if len(store.records) != 1 || !store.records[0].Audit.ResponseContentCaptured {
+			t.Fatalf("record=%#v", store.records)
+		}
+		var sawResponse bool
+		for _, blob := range blobs.blobs {
+			if blob.Direction != storage.AuditDirectionResponse {
+				continue
+			}
+			plain, err := storage.OpenAuditBlob(blobs.key, blob.Nonce, blob.Ciphertext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(plain), `"invalid_access_token"`) {
+				t.Fatalf("error response blob=%q", plain)
+			}
+			sawResponse = true
+		}
+		if !sawResponse {
+			t.Fatalf("missing response blob among %#v", blobs.blobs)
+		}
+	})
+}
+
 func TestInferencePlaneDoesNotWriteAfterClientCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1749,11 +2057,11 @@ func TestInferencePlaneDoesNotWriteAfterClientCancellation(t *testing.T) {
 
 func TestInferencePlaneMetadataConcurrencyWaitHonorsCancellation(t *testing.T) {
 	handler := New()
-	for range maxConcurrentMetadataInspections {
+	for range DefaultMaxConcurrentInspections {
 		handler.metadataSlots <- struct{}{}
 	}
 	defer func() {
-		for range maxConcurrentMetadataInspections {
+		for range DefaultMaxConcurrentInspections {
 			<-handler.metadataSlots
 		}
 	}()
@@ -1776,77 +2084,73 @@ func TestInferencePlaneMetadataConcurrencyWaitHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestInferencePlaneHoldsMetadataPermitAcrossSafeFallbackWindow(t *testing.T) {
-	resolverEntered := make(chan struct{}, maxConcurrentMetadataInspections+1)
-	allowResolve := make(chan struct{})
-	allowForward := make(chan struct{})
-	done := make(chan struct{}, maxConcurrentMetadataInspections+1)
-	var resolveOnce sync.Once
-	var forwardOnce sync.Once
-	defer func() {
-		resolveOnce.Do(func() { close(allowResolve) })
-		forwardOnce.Do(func() { close(allowForward) })
-	}()
+func TestInferencePlaneDoesNotHoldInspectionPermitDuringUpstreamStream(t *testing.T) {
+	const inFlight = DefaultMaxConcurrentInspections + 4
+	forwardEntered := make(chan struct{}, inFlight)
+	releaseForward := make(chan struct{})
+	done := make(chan struct{}, inFlight)
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(releaseForward) })
 
 	handler := NewWithDependencies(Dependencies{
 		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
-			resolverEntered <- struct{}{}
-			<-allowResolve
 			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
 		}),
 		Forwarder: forwarderFunc(func(_ http.ResponseWriter, request *http.Request, _ transport.Target) error {
 			if _, err := io.Copy(io.Discard, request.Body); err != nil {
 				return err
 			}
-			<-allowForward
+			forwardEntered <- struct{}{}
+			<-releaseForward
 			return nil
 		}),
 	})
-	start := func() {
+	for range inFlight {
 		go func() {
-			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`)))
+			handler.ServeHTTP(
+				httptest.NewRecorder(),
+				httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"hi"}`)),
+			)
 			done <- struct{}{}
 		}()
 	}
-
-	for range maxConcurrentMetadataInspections {
-		start()
-	}
-	for range maxConcurrentMetadataInspections {
+	for range inFlight {
 		select {
-		case <-resolverEntered:
+		case <-forwardEntered:
 		case <-time.After(time.Second):
-			t.Fatal("initial request did not reach resolver")
+			t.Fatal("inspection permit blocked concurrent in-flight AI requests")
 		}
 	}
-
-	start()
-	select {
-	case <-resolverEntered:
-		t.Fatal("fifth buffered request passed the metadata memory bound")
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	resolveOnce.Do(func() { close(allowResolve) })
-	select {
-	case <-resolverEntered:
-		t.Fatal("retry buffer escaped the four-request residency bound")
-	case <-time.After(50 * time.Millisecond):
-	}
-	forwardOnce.Do(func() { close(allowForward) })
-	select {
-	case <-resolverEntered:
-		// The exact replay copy is no longer needed once one of the bounded
-		// attempts completes, so the next request may acquire the permit.
-	case <-time.After(time.Second):
-		t.Fatal("completed fallback window did not release a metadata permit")
-	}
-	for range maxConcurrentMetadataInspections + 1 {
+	releaseOnce.Do(func() { close(releaseForward) })
+	for range inFlight {
 		select {
 		case <-done:
 		case <-time.After(time.Second):
 			t.Fatal("inference request did not finish")
 		}
+	}
+}
+
+func TestNewWithDependenciesHonorsConfiguredInspectionLimit(t *testing.T) {
+	handler := NewWithDependencies(Dependencies{MaxConcurrentInspections: 2})
+	if cap(handler.metadataSlots) != 2 {
+		t.Fatalf("configured cap = %d, want 2", cap(handler.metadataSlots))
+	}
+	handler = NewWithDependencies(Dependencies{})
+	if cap(handler.metadataSlots) != DefaultMaxConcurrentInspections {
+		t.Fatalf("default cap = %d, want %d", cap(handler.metadataSlots), DefaultMaxConcurrentInspections)
+	}
+}
+
+func TestValidateMaxConcurrentInspectionsRejectsOutOfRange(t *testing.T) {
+	if err := ValidateMaxConcurrentInspections(DefaultMaxConcurrentInspections); err != nil {
+		t.Fatalf("default: %v", err)
+	}
+	if err := ValidateMaxConcurrentInspections(3); err == nil {
+		t.Fatal("expected error for 3")
+	}
+	if err := ValidateMaxConcurrentInspections(129); err == nil {
+		t.Fatal("expected error for 129")
 	}
 }
 

@@ -62,7 +62,7 @@ func TestAccessTokenControlAPICRUDSeparatesMetadataFromExplicitSecrets(t *testin
 	createdAt := time.Date(2026, time.July, 24, 12, 30, 0, 0, time.UTC)
 	token := accesstoken.Token{
 		ID: "token_primary", Name: "Primary", Hint: "astr_…CDEF",
-		Source: accesstoken.SourceUser, CreatedAt: createdAt,
+		CreatedAt: createdAt,
 	}
 	manager := &fakeAccessTokenManager{
 		tokens:   []accesstoken.Token{token},
@@ -85,7 +85,6 @@ func TestAccessTokenControlAPICRUDSeparatesMetadataFromExplicitSecrets(t *testin
 	decode(t, response, &listed)
 	if len(listed.Items) != 1 || listed.Items[0].ID != token.ID ||
 		listed.Items[0].Name != token.Name || listed.Items[0].Hint != token.Hint ||
-		listed.Items[0].Source != string(accesstoken.SourceUser) ||
 		!listed.Items[0].CreatedAt.Equal(createdAt) || listed.NextCursor != nil {
 		t.Fatalf("list = %#v", listed)
 	}

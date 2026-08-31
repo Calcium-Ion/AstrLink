@@ -51,6 +51,9 @@ type ResolveRequest struct {
 	Protocol  contract.ProtocolID
 	Model     string
 	Streaming bool
+	// Category is the classifier label for auto routes. Empty means fail-open
+	// across every category's targets in document order.
+	Category string
 }
 
 type Resolved struct {

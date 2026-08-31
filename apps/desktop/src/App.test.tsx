@@ -12,14 +12,16 @@ describe("desktop application shell", () => {
     expect(markup).toContain("API 服务");
     expect(markup).toContain("访问令牌");
     expect(markup).toContain("路由与模型");
+    expect(markup).toContain("Agent 工具");
     expect(markup).toContain("设置");
-    expect(markup).toContain("连接 AstrLink");
-    expect(markup).toContain("今日用量");
+    expect(markup).toContain("API 地址");
+    expect(markup).toContain("今日消耗");
     expect(markup).toContain("预估费用");
     expect(markup).toContain("请求记录");
-    expect(markup).toContain("上游服务");
+    expect(markup).toContain("按服务");
+    expect(markup).toContain("按模型");
     expect(markup).toContain("系统详情");
-    expect(markup).toContain("Core 就绪后显示已配置服务");
+    expect(markup).toContain("网关就绪后显示已配置服务");
 
     expect(markup).not.toContain("统一 API 网关");
     expect(markup).not.toContain("运行在你的桌面");

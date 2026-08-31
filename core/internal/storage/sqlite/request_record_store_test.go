@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -84,6 +85,28 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 		t.Fatalf("privacy restore = %#v", filtered.Items[0].PrivacyRestore)
 	}
 
+	tokenA := contract.AccessTokenID("token_alpha")
+	tokenB := contract.AccessTokenID("token_beta")
+	withToken := records[0]
+	withToken.ID = "request_token_a"
+	withToken.StartedAt = start.Add(3 * time.Minute)
+	withToken.LocalAccessTokenID = &tokenA
+	otherToken := records[0]
+	otherToken.ID = "request_token_b"
+	otherToken.StartedAt = start.Add(4 * time.Minute)
+	otherToken.LocalAccessTokenID = &tokenB
+	for _, record := range []contract.RequestRecord{withToken, otherToken} {
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatalf("InsertRequestRecord(%s): %v", record.ID, err)
+		}
+	}
+	tokenFiltered, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{
+		LocalAccessTokenID: &tokenA,
+	})
+	if err != nil || len(tokenFiltered.Items) != 1 || tokenFiltered.Items[0].ID != "request_token_a" {
+		t.Fatalf("token filtered = %#v err=%v", tokenFiltered, err)
+	}
+
 	got, err := store.GetRequestRecord(ctx, "request_a")
 	if err != nil || got.ID != "request_a" {
 		t.Fatalf("GetRequestRecord: %#v %v", got, err)
@@ -103,7 +126,7 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 		t.Fatalf("purge before = %#v err=%v", result, err)
 	}
 	result, err = store.PurgeRequestRecords(ctx, contract.PurgeRequest{Scope: contract.PurgeScopeAll, Confirm: true})
-	if err != nil || result.DeletedRecords != 1 {
+	if err != nil || result.DeletedRecords != 3 {
 		t.Fatalf("purge all = %#v err=%v", result, err)
 	}
 
@@ -176,4 +199,118 @@ func TestRequestRecordStoreLiveUpsertAndStartupRecovery(t *testing.T) {
 	}
 }
 
+func TestRequestSessionStoreGroupsTurnsAndLinksCursors(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "sessions.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 8, 16, 10, 0, 0, 0, time.UTC)
+	sessionID := contract.SessionID("session_linked")
+	previous := "resp_one"
+	output := "resp_two"
+	preview := "创建快捷方式"
+	first := contract.RequestRecord{
+		ID: "request_turn_a", StartedAt: start, Status: contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		SessionID: &sessionID, OutputResponseID: &previous, InputPreview: &preview,
+	}
+	second := first
+	second.ID = "request_turn_b"
+	second.StartedAt = start.Add(time.Minute)
+	secondCompleted := start.Add(90 * time.Second)
+	second.CompletedAt = &secondCompleted
+	second.PreviousResponseID = &previous
+	second.OutputResponseID = &output
+	legacy := first
+	legacy.ID = "request_legacy"
+	legacy.StartedAt = start.Add(2 * time.Minute)
+	legacy.SessionID = nil
+	legacy.OutputResponseID = nil
+	legacy.InputPreview = nil
+	legacy.RequestedModel = ptrString("solo-model")
+	for _, record := range []contract.RequestRecord{first, second, legacy} {
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	linked, err := store.FindSessionLink(ctx, "resp_one")
+	if err != nil || linked != sessionID {
+		t.Fatalf("link=%q err=%v", linked, err)
+	}
+
+	page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Limit: 10})
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("sessions=%#v err=%v", page, err)
+	}
+	if page.Items[0].ID != contract.SessionID("request_legacy") || page.Items[1].ID != sessionID {
+		t.Fatalf("order=%#v", page.Items)
+	}
+	if page.Items[1].TurnCount != 2 || page.Items[1].Title != preview {
+		t.Fatalf("linked session=%#v", page.Items[1])
+	}
+	if page.Items[1].CompletedAt == nil || !page.Items[1].CompletedAt.Equal(secondCompleted) {
+		t.Fatalf("linked session completed_at=%v", page.Items[1].CompletedAt)
+	}
+
+	detail, err := store.GetRequestSession(ctx, string(sessionID))
+	if err != nil || len(detail.Turns) != 2 || detail.Turns[0].ID != "request_turn_a" {
+		t.Fatalf("detail=%#v err=%v", detail, err)
+	}
+	if detail.CompletedAt == nil || !detail.CompletedAt.Equal(secondCompleted) {
+		t.Fatalf("detail completed_at=%v", detail.CompletedAt)
+	}
+	legacyDetail, err := store.GetRequestSession(ctx, "request_legacy")
+	if err != nil || legacyDetail.ID != "request_legacy" || len(legacyDetail.Turns) != 1 {
+		t.Fatalf("legacy=%#v err=%v", legacyDetail, err)
+	}
+}
+
+func TestListRequestSessionsHonorsSQLLimitWithManyRoots(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "sessions-limit.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
+	for index := 0; index < 180; index++ {
+		record := contract.RequestRecord{
+			ID:            contract.RequestID(fmt.Sprintf("request_lim_%03d", index)),
+			StartedAt:     start.Add(time.Duration(index) * time.Second),
+			Status:        contract.RequestStatusSucceeded,
+			InputProtocol: contract.ProtocolOpenAIResponses,
+			Audit:         contract.NotCapturedAuditSummary(),
+		}
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatalf("InsertRequestRecord(%s): %v", record.ID, err)
+		}
+		child := record
+		child.ID = contract.RequestID(fmt.Sprintf("request_lim_%03d_c", index))
+		child.ParentRequestID = &record.ID
+		child.AttemptIndex = 1
+		if err := store.InsertRequestRecord(ctx, child); err != nil {
+			t.Fatalf("InsertRequestRecord(%s): %v", child.ID, err)
+		}
+	}
+
+	page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 10 || page.NextCursor == "" {
+		t.Fatalf("first page = %#v", page)
+	}
+	if page.Items[0].ID != "request_lim_179" || page.Items[0].CallCount != 2 {
+		t.Fatalf("newest session = %#v", page.Items[0])
+	}
+	second, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{
+		Limit: 10, Cursor: page.NextCursor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 10 || second.Items[0].ID == page.Items[0].ID {
+		t.Fatalf("second page = %#v", second)
+	}
+}
+
 func ptrTime(value time.Time) *time.Time { return &value }
+
+func ptrString(value string) *string { return &value }

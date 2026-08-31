@@ -18,15 +18,26 @@ apps/desktop/node_modules/
 apps/desktop/dist/
 apps/desktop/src-tauri/icons/.branding-hash
 
+# Local desktop installers (unsigned debug/dev DMGs)
+/*.dmg
+
+# Accidental root install / cargo target leftovers
+/node_modules/
+/src-tauri/
+
 # Tauri / Rust
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/target-dmg/
 apps/desktop/src-tauri/binaries/astrlink-core-*
 apps/desktop/src-tauri/binaries/astrlink-privacy-worker-*
+apps/desktop/src-tauri/binaries/astrlink-classifier-worker-*
 apps/desktop/src-tauri/binaries/libonnxruntime.*.dylib
 apps/desktop/src-tauri/binaries/libonnxruntime.so.*
 apps/desktop/src-tauri/binaries/onnxruntime-*-LICENSE.txt
 apps/desktop/src-tauri/binaries/onnxruntime-*-ThirdPartyNotices.txt
 apps/privacy-worker/target/
+apps/classifier-worker/target/
+apps/classifier-worker/.venv/
 
 # Local runtime data
 /core.[0-9]*

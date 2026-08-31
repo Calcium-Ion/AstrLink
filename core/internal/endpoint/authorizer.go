@@ -58,11 +58,7 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 			return nil, fmt.Errorf("load subscription credential: %w", err)
 		}
 		headers := make(http.Header)
-		headers.Set("Authorization", "Bearer "+tokens.AccessToken)
-		if tokens.AccountID != "" {
-			headers.Set("ChatGPT-Account-ID", tokens.AccountID)
-		}
-		headers.Set("OAI-Product-Sku", "codex")
+		accountauth.ApplyCodexAPIHeaders(headers, tokens, "", "")
 		return headers, nil
 	}
 	return nil, fmt.Errorf("unsupported service kind %q", endpoint.Kind)

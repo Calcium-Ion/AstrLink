@@ -4,10 +4,13 @@ import {
   httpServicePreset,
   httpServicePresetIDs,
   httpServicePresetLabel,
+  localConversionTargets,
+  protocolEntryPath,
+  supportsLocalConversion,
 } from "./service-presets";
 
 describe("HTTP service product presets", () => {
-  it("configures new-api as a bearer-authenticated delegated multi-protocol gateway", () => {
+  it("configures new-api as a bearer-authenticated passthrough multi-protocol gateway", () => {
     const preset = httpServicePreset("newapi");
 
     expect(preset.kind).toBe("newapi");
@@ -15,7 +18,7 @@ describe("HTTP service product presets", () => {
     expect(preset.baseURL).toBe("");
     expect(preset.capabilities).toHaveLength(8);
     expect(new Set(preset.capabilities.map(({ mode }) => mode))).toEqual(
-      new Set(["delegated"]),
+      new Set(["native"]),
     );
     expect(preset.capabilities.map(({ protocol }) => protocol)).toEqual([
       "openai.responses",
@@ -104,6 +107,48 @@ describe("HTTP service product presets", () => {
         { protocol: "google.models", mode: "native", streaming: false },
       ],
     });
+  });
+
+  it("lists local conversion targets and enables only advertised edges", () => {
+    expect(supportsLocalConversion("openai.chat")).toBe(true);
+    expect(supportsLocalConversion("openai.models")).toBe(false);
+    // Neither variant has an advertised edge, so offering them would only ever
+    // render permanently disabled options.
+    expect(supportsLocalConversion("openai.responses.compact")).toBe(false);
+    expect(supportsLocalConversion("openai.completions")).toBe(false);
+    expect(
+      localConversionTargets("anthropic.messages", {
+        available: true,
+        edges: [
+          {
+            from: "anthropic.messages",
+            to: "openai.chat",
+            quality: "fair",
+            streaming: true,
+          },
+        ],
+      }).filter((target) => target.enabled),
+    ).toEqual([
+      { id: "openai.chat", enabled: true, quality: "fair", streaming: true },
+    ]);
+    expect(
+      localConversionTargets("openai.chat", { available: false, edges: [] }).every(
+        (target) => !target.enabled && target.quality === null,
+      ),
+    ).toBe(true);
+  });
+
+  it("maps protocol IDs to the inference-plane entry path", () => {
+    expect(protocolEntryPath("anthropic.messages")).toBe("/v1/messages");
+    expect(protocolEntryPath("openai.responses")).toBe("/v1/responses");
+    expect(protocolEntryPath("openai.chat")).toBe("/v1/chat/completions");
+    expect(protocolEntryPath("google.generate_content")).toBe(
+      "/v1beta/models/:model:generateContent",
+    );
+    expect(
+      protocolEntryPath("google.generate_content", { streaming: true }),
+    ).toBe("/v1beta/models/:model:streamGenerateContent");
+    expect(protocolEntryPath("vendor.custom")).toBe("vendor.custom");
   });
 
   it("opens advanced settings and requires an explicit capability for custom services", () => {

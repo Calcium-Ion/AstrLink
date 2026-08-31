@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -32,6 +33,7 @@ func recordSessionFromContext(ctx context.Context) *recordSession {
 type RequestRecordStore interface {
 	UpsertRequestRecord(context.Context, contract.RequestRecord) error
 	InsertRequestRecord(context.Context, contract.RequestRecord) error
+	FindSessionLink(context.Context, string) (contract.SessionID, error)
 }
 
 // AuditSettingsProvider supplies the capture switches for one request.
@@ -116,6 +118,11 @@ type recordSession struct {
 	upstreamHTTPMetaCaptured bool
 	upstreamHTTPMeta         contract.AuditHTTPMeta
 	settings                 contract.AuditSettings
+	sessionID                contract.SessionID
+	previousResponseID       string
+	outputResponseID         string
+	inputPreview             string
+	events                   []contract.RequestEvent
 }
 
 func newRecordSession(
@@ -190,7 +197,7 @@ func (session *recordSession) recordSnapshot(
 		status := session.upstreamHTTPStatus
 		httpStatus = &status
 	}
-	return contract.RequestRecord{
+	record := contract.RequestRecord{
 		ID:                 session.id,
 		ParentRequestID:    nil,
 		AttemptIndex:       session.attemptIndex,
@@ -211,7 +218,25 @@ func (session *recordSession) recordSnapshot(
 		Error:              session.errorSummary,
 		Audit:              contract.NotCapturedAuditSummary(),
 		PrivacyRestore:     session.privacyRestore,
+		Events:             append([]contract.RequestEvent(nil), session.events...),
 	}
+	if session.sessionID != "" {
+		id := session.sessionID
+		record.SessionID = &id
+	}
+	if session.previousResponseID != "" {
+		value := session.previousResponseID
+		record.PreviousResponseID = &value
+	}
+	if session.outputResponseID != "" {
+		value := session.outputResponseID
+		record.OutputResponseID = &value
+	}
+	if session.inputPreview != "" {
+		value := session.inputPreview
+		record.InputPreview = &value
+	}
+	return record
 }
 
 func (session *recordSession) attemptUsage() *contract.Usage {
@@ -327,6 +352,9 @@ func (session *recordSession) beginNetworkAttempt(
 	session.networkAttemptOpen = true
 	session.upstreamScanner = newUsageScanner(plan.UpstreamProtocol, session.classified.Streaming)
 	session.noteSelected(candidate, plan)
+	serviceName := string(candidate.Service.ID)
+	session.addEvent(contract.RequestEventRouted, contract.RequestStatusSucceeded, string(plan.Type)+" · "+serviceName)
+	session.addEvent(contract.RequestEventUpstream, contract.RequestStatusPending, string(plan.UpstreamProtocol))
 	if store == nil {
 		return
 	}
@@ -437,13 +465,18 @@ func (session *recordSession) beginPrivacyAttempt() {
 	session.privacyRestore = nil
 }
 
-func (session *recordSession) notePrivacyMapping(enabled bool, mappingCount int) {
+func (session *recordSession) notePrivacyMapping(
+	enabled bool,
+	mappingCount int,
+	hits []contract.PrivacyHitCount,
+) {
 	if session == nil || mappingCount <= 0 {
 		return
 	}
 	session.privacyRestore = &contract.PrivacyRestoreSummary{
 		Enabled:      enabled,
 		MappingCount: mappingCount,
+		Hits:         hits,
 	}
 }
 
@@ -506,6 +539,8 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 		return
 	}
 	session.noteFailed(summary)
+	session.closeEventKind(contract.RequestEventUpstream, contract.RequestStatusFailed, summary.Code)
+	session.captureOutputID()
 	completed := time.Now().UTC()
 	latency := int(completed.Sub(session.startedAt).Milliseconds())
 	if latency < 0 {
@@ -518,6 +553,7 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 	child.ID = childID
 	child.ParentRequestID = &parentID
 	child.ChildCount = 0
+	child.Events = eventsForAttempt(session.events, session.attemptIndex)
 	child.Audit = session.upstreamAuditSummary()
 
 	pendingBlobs := make([]storage.AuditBlob, 0, 3)
@@ -558,6 +594,7 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 			}
 		}
 	}
+	session.events = eventsWithoutAttempt(session.events, session.attemptIndex)
 	session.childCount++
 	session.resetAttemptLocal()
 	if store != nil {
@@ -607,9 +644,14 @@ func (session *recordSession) finish(
 	blobs AuditBlobPersister,
 	logf func(string, ...any),
 ) {
-	if session == nil || store == nil {
+	if session == nil {
 		return
 	}
+	if store == nil {
+		logIngressAccess(logf, session)
+		return
+	}
+	defer logIngressAccess(logf, session)
 	if session.status == contract.RequestStatusPending {
 		session.status = contract.RequestStatusFailed
 		session.errorSummary = &contract.ErrorSummary{
@@ -619,6 +661,19 @@ func (session *recordSession) finish(
 			Retryable: true,
 		}
 	}
+	session.captureOutputID()
+	if session.networkAttemptOpen {
+		session.closeEventKind(contract.RequestEventUpstream, session.status, session.completedSummary())
+	}
+	if session.privacyRestore != nil && session.privacyRestore.Enabled {
+		session.addEvent(
+			contract.RequestEventRestore,
+			session.status,
+			privacyRestoreSummaryText(*session.privacyRestore),
+		)
+	}
+	session.addEvent(contract.RequestEventCompleted, session.status, session.completedSummary())
+	session.closeOpenEvents(time.Now().UTC())
 	completed := time.Now().UTC()
 	latency := int(completed.Sub(session.startedAt).Milliseconds())
 	if latency < 0 {
@@ -817,6 +872,192 @@ func logRequestRecordFailure(logf func(string, ...any), op string, err error) {
 	logf("request record %s failed: %v", op, err)
 }
 
+func logIngressAccess(logf func(string, ...any), session *recordSession) {
+	if session == nil {
+		return
+	}
+	if logf == nil {
+		logf = log.Printf
+	}
+	durationMs := time.Since(session.startedAt).Milliseconds()
+	if durationMs < 0 {
+		durationMs = 0
+	}
+	status := session.status
+	if status == "" {
+		status = contract.RequestStatusPending
+	}
+	protocol := session.classified.Protocol
+	if protocol == "" {
+		protocol = "unknown"
+	}
+	sessionID := session.sessionID
+	if sessionID == "" {
+		sessionID = contract.SessionID(session.id)
+	}
+	logf(
+		"ingress %s %s %dms request=%s session=%s",
+		protocol,
+		status,
+		durationMs,
+		session.id,
+		sessionID,
+	)
+}
+
+func (session *recordSession) resolveSession(ctx context.Context, store RequestRecordStore) {
+	if session == nil {
+		return
+	}
+	cursor := session.classified.PreviousResponseID
+	if cursor == "" {
+		cursor = session.classified.ConversationID
+	}
+	if cursor != "" {
+		session.previousResponseID = cursor
+		if store != nil {
+			if linked, err := store.FindSessionLink(ctx, cursor); err == nil && linked != "" {
+				session.sessionID = linked
+			}
+		}
+	}
+	if session.sessionID == "" {
+		session.sessionID = newSessionID()
+	}
+	session.inputPreview = session.classified.InputPreview
+	session.addEvent(contract.RequestEventAccepted, contract.RequestStatusPending, session.acceptedSummary())
+}
+
+func (session *recordSession) completedSummary() string {
+	if session == nil {
+		return ""
+	}
+	if session.errorSummary != nil {
+		return session.errorSummary.Code
+	}
+	parts := make([]string, 0, 3)
+	if session.hasHTTPStatus {
+		parts = append(parts, fmt.Sprintf("HTTP %d", session.httpStatus))
+	} else if session.hasUpstreamHTTPStatus {
+		parts = append(parts, fmt.Sprintf("HTTP %d", session.upstreamHTTPStatus))
+	}
+	if usage := session.attemptUsage(); usage != nil {
+		parts = append(parts, fmt.Sprintf("%d → %d", usage.InputTokens, usage.OutputTokens))
+	}
+	if len(parts) == 0 {
+		return string(session.status)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (session *recordSession) acceptedSummary() string {
+	model := session.classified.Model
+	if model == "" {
+		model = "未指定模型"
+	}
+	summary := model + " · " + string(session.classified.Protocol)
+	if session.inputPreview != "" {
+		summary += " · " + session.inputPreview
+	}
+	return summary
+}
+
+func (session *recordSession) addEvent(kind contract.RequestEventKind, status contract.RequestStatus, summary string) {
+	if session == nil {
+		return
+	}
+	now := time.Now().UTC()
+	session.closeOpenEvents(now)
+	session.events = append(session.events, contract.RequestEvent{
+		Kind:         kind,
+		StartedAt:    now,
+		Status:       status,
+		Summary:      sanitizeSummary(summary),
+		AttemptIndex: session.attemptIndex,
+	})
+}
+
+func (session *recordSession) closeOpenEvents(ended time.Time) {
+	if session == nil {
+		return
+	}
+	for index := range session.events {
+		if session.events[index].EndedAt == nil {
+			end := ended
+			session.events[index].EndedAt = &end
+		}
+	}
+}
+
+func (session *recordSession) closeEventKind(kind contract.RequestEventKind, status contract.RequestStatus, summary string) {
+	if session == nil {
+		return
+	}
+	now := time.Now().UTC()
+	for index := len(session.events) - 1; index >= 0; index-- {
+		if session.events[index].Kind != kind || session.events[index].EndedAt != nil {
+			continue
+		}
+		session.events[index].EndedAt = &now
+		session.events[index].Status = status
+		if summary != "" {
+			session.events[index].Summary = sanitizeSummary(summary)
+		}
+		return
+	}
+	session.addEvent(kind, status, summary)
+}
+
+func (session *recordSession) notePrivacyDecision(summary string, status contract.RequestStatus) {
+	session.addEvent(contract.RequestEventPrivacy, status, summary)
+}
+
+func (session *recordSession) captureOutputID() {
+	if session == nil {
+		return
+	}
+	if session.scanner != nil {
+		_ = session.scanner.Usage()
+		if id := session.scanner.OutputID(); id != "" {
+			session.outputResponseID = id
+		}
+	}
+	if session.outputResponseID == "" && session.upstreamScanner != nil {
+		_ = session.upstreamScanner.Usage()
+		if id := session.upstreamScanner.OutputID(); id != "" {
+			session.outputResponseID = id
+		}
+	}
+}
+
+func eventsForAttempt(events []contract.RequestEvent, attempt int) []contract.RequestEvent {
+	filtered := make([]contract.RequestEvent, 0, 2)
+	for _, event := range events {
+		if event.AttemptIndex == attempt {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+func eventsWithoutAttempt(events []contract.RequestEvent, attempt int) []contract.RequestEvent {
+	filtered := make([]contract.RequestEvent, 0, len(events))
+	for _, event := range events {
+		if event.AttemptIndex != attempt {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+func newSessionID() contract.SessionID {
+	var value [12]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return contract.SessionID("session_unavailable")
+	}
+	return contract.SessionID("session_" + hex.EncodeToString(value[:]))
+}
+
 func newRequestRecordID() contract.RequestID {
 	var value [12]byte
 	if _, err := rand.Read(value[:]); err != nil {
@@ -892,6 +1133,8 @@ func errorSummaryFromInference(code, message string, retryable bool) contract.Er
 	switch code {
 	case "policy_blocked":
 		category = "privacy"
+	case "invalid_access_token", "token_query_forbidden":
+		category = "auth"
 	case "upstream_unavailable", "upstream_timeout", "credential_unavailable",
 		"upstream_stream_interrupted":
 		category = "upstream"

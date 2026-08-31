@@ -422,11 +422,15 @@
             "native",
             "delegated"
           ],
-          "description": "RelayKit is intentionally absent: it is a local execution engine rather than an upstream service capability."
+          "description": "Legacy passthrough label. native and delegated both forward ingress bytes unchanged; new writes use native. Local conversion is convert_to."
         },
         "streaming": {
           "type": "boolean",
           "default": false
+        },
+        "convert_to": {
+          "$ref": "#/$defs/ProtocolId",
+          "description": "When set, AstrLink converts this ingress protocol to the named upstream protocol locally. Omitted means passthrough."
         }
       },
       "additionalProperties": false,

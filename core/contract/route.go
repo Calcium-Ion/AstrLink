@@ -182,13 +182,10 @@ func (route Route) ValidateForAlpha() error {
 	if err := route.Validate(); err != nil {
 		return err
 	}
-	if route.selectionMode() == RouteSelectionModeAuto {
-		return fmt.Errorf("route selection mode %q is not implemented in this build", RouteSelectionModeAuto)
-	}
 	if !route.Match.Protocol.AvailableInAlpha() {
 		return fmt.Errorf("match protocol %q is not available in Alpha", route.Match.Protocol)
 	}
-	for index, target := range route.Targets {
+	for index, target := range route.ExecutableTargets() {
 		if !target.PlanType.AvailableInAlpha() {
 			return fmt.Errorf("targets[%d]: plan type %q is not available in Alpha", index, target.PlanType)
 		}
@@ -203,13 +200,10 @@ func (route Route) ValidateForRuntime(profile RuntimeProfile) error {
 	if err := route.Validate(); err != nil {
 		return err
 	}
-	if route.selectionMode() == RouteSelectionModeAuto {
-		return fmt.Errorf("route selection mode %q is not implemented in this build", RouteSelectionModeAuto)
-	}
 	if !route.Match.Protocol.AvailableInAlpha() {
 		return fmt.Errorf("match protocol %q is not available in Alpha", route.Match.Protocol)
 	}
-	for index, target := range route.Targets {
+	for index, target := range route.ExecutableTargets() {
 		if target.PlanType == PlanTypeRelayKit && !profile.RelayKitAvailable {
 			return fmt.Errorf("targets[%d]: plan type %q is not available in this runtime", index, target.PlanType)
 		}
@@ -218,6 +212,31 @@ func (route Route) ValidateForRuntime(profile RuntimeProfile) error {
 		}
 	}
 	return nil
+}
+
+func (route Route) ExecutableTargets() []RouteTarget {
+	if route.selectionMode() != RouteSelectionModeAuto {
+		return append([]RouteTarget(nil), route.Targets...)
+	}
+	targets := make([]RouteTarget, 0, len(route.Categories))
+	for _, category := range route.Categories {
+		targets = append(targets, category.Targets...)
+	}
+	return targets
+}
+
+func (route Route) TargetsForCategory(categoryID string) []RouteTarget {
+	if route.selectionMode() != RouteSelectionModeAuto {
+		return append([]RouteTarget(nil), route.Targets...)
+	}
+	if categoryID != "" {
+		for _, category := range route.Categories {
+			if category.CategoryID == categoryID {
+				return append([]RouteTarget(nil), category.Targets...)
+			}
+		}
+	}
+	return route.ExecutableTargets()
 }
 
 func (route Route) selectionMode() RouteSelectionMode {

@@ -1,4 +1,10 @@
+import { isLocale, type Locale } from "./i18n/locale";
+
 export type CloseBehavior = "hide_to_tray" | "quit";
+
+export const DEFAULT_MAX_CONCURRENT_INSPECTIONS = 16;
+export const MIN_MAX_CONCURRENT_INSPECTIONS = 4;
+export const MAX_MAX_CONCURRENT_INSPECTIONS = 128;
 
 export interface Preferences {
   close_behavior: CloseBehavior;
@@ -6,6 +12,8 @@ export interface Preferences {
   core_auto_start: boolean;
   core_auto_recover: boolean;
   inference_port: number;
+  max_concurrent_inspections: number;
+  locale: Locale;
 }
 
 export interface SettingsSnapshot {
@@ -60,11 +68,16 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "core_auto_start",
       "core_auto_recover",
       "inference_port",
+      "max_concurrent_inspections",
+      "locale",
     ],
     "$.values",
   );
   if (values.close_behavior !== "hide_to_tray" && values.close_behavior !== "quit") {
     invalid("$.values.close_behavior", "unknown close behavior");
+  }
+  if (!isLocale(values.locale)) {
+    invalid("$.values.locale", "unknown locale");
   }
   for (const field of ["autostart", "core_auto_start", "core_auto_recover"] as const) {
     if (typeof values[field] !== "boolean") invalid(`$.values.${field}`, "expected boolean");
@@ -76,6 +89,17 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     values.inference_port > 65535
   ) {
     invalid("$.values.inference_port", "expected an integer from 1024 through 65535");
+  }
+  if (
+    typeof values.max_concurrent_inspections !== "number" ||
+    !Number.isInteger(values.max_concurrent_inspections) ||
+    values.max_concurrent_inspections < MIN_MAX_CONCURRENT_INSPECTIONS ||
+    values.max_concurrent_inspections > MAX_MAX_CONCURRENT_INSPECTIONS
+  ) {
+    invalid(
+      "$.values.max_concurrent_inspections",
+      `expected an integer from ${MIN_MAX_CONCURRENT_INSPECTIONS} through ${MAX_MAX_CONCURRENT_INSPECTIONS}`,
+    );
   }
   if (root.autostart_actual !== null && typeof root.autostart_actual !== "boolean") {
     invalid("$.autostart_actual", "expected null or boolean");

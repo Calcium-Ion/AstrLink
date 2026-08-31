@@ -1,3 +1,6 @@
 /target/
 /gen/schemas/
 /binaries/astrlink-core-*
+/binaries/astrlink-privacy-worker-*
+/binaries/astrlink-classifier-worker-*
+/binaries/astrlink-mcp-*

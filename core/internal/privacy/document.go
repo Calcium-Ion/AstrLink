@@ -77,18 +77,27 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 	return document, extracted, nil
 }
 
+// protocolRoots lists the request fields whose strings are inspected.
+//
+// Tool declarations are deliberately excluded. A tools array carries schemas and
+// author-written descriptions belonging to the agent harness, not text the
+// operator typed, yet it is dense with documentation links and sample addresses
+// that the detectors match. Redacting it inflated placeholder counts by an order
+// of magnitude while protecting nothing. Real user data travelling through tools
+// lives in call arguments and results, which remain covered under the input and
+// messages roots.
 func protocolRoots(protocol contract.ProtocolID) ([]string, bool) {
 	switch protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
-		return []string{"instructions", "input", "prompt", "tools"}, true
+		return []string{"instructions", "input", "prompt"}, true
 	case contract.ProtocolOpenAIChat:
-		return []string{"messages", "tools", "functions"}, true
+		return []string{"messages"}, true
 	case contract.ProtocolOpenAICompletions:
 		return []string{"prompt", "suffix"}, true
 	case contract.ProtocolAnthropicMessages:
-		return []string{"system", "messages", "tools"}, true
+		return []string{"system", "messages"}, true
 	case contract.ProtocolGoogleGenerateContent:
-		return []string{"systemInstruction", "contents", "tools"}, true
+		return []string{"systemInstruction", "contents"}, true
 	default:
 		return nil, false
 	}
@@ -407,15 +416,23 @@ type placedFinding struct {
 	Placeholder string
 }
 
+type rewriteOutcome struct {
+	Body           []byte
+	Redactions     []Redaction
+	NoticeInjected bool
+}
+
 func rewriteDocument(
 	document jsonDocument,
 	extracted []extractedSegment,
 	findings []Finding,
 	allocator *placeholderAllocator,
-) ([]byte, []Redaction, error) {
+	protocol contract.ProtocolID,
+	notice bool,
+) (rewriteOutcome, error) {
 	placed, redactions, err := assignPlaceholders(extracted, findings, allocator)
 	if err != nil {
-		return nil, nil, err
+		return rewriteOutcome{}, err
 	}
 	grouped := make(map[int][]placedFinding)
 	for _, item := range placed {
@@ -423,25 +440,44 @@ func rewriteDocument(
 	}
 	for segmentIndex, segmentFindings := range grouped {
 		if segmentIndex < 0 || segmentIndex >= len(extracted) {
-			return nil, nil, ErrUnsafeRewrite
+			return rewriteOutcome{}, ErrUnsafeRewrite
 		}
 		redacted, err := redactStringWithPlaceholders(extracted[segmentIndex].Value, segmentFindings)
 		if err != nil {
-			return nil, nil, err
+			return rewriteOutcome{}, err
 		}
 		if extracted[segmentIndex].validateStructuredJSON &&
 			!validStructuredJSON(redacted) {
-			return nil, nil, ErrUnsafeRewrite
+			return rewriteOutcome{}, ErrUnsafeRewrite
 		}
 		extracted[segmentIndex].set(redacted)
+	}
+	// The note is only worth its tokens when an opaque marker actually reached
+	// the wire, so it is decided after allocation rather than from policy alone.
+	injected := false
+	if notice && anyTokenPlaceholder(redactions) {
+		injected = injectPlaceholderNotice(document, protocol)
 	}
 	var rewritten bytes.Buffer
 	encoder := json.NewEncoder(&rewritten)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(document.root); err != nil {
-		return nil, nil, ErrUnsafeRewrite
+		return rewriteOutcome{}, ErrUnsafeRewrite
 	}
-	return bytes.TrimSuffix(rewritten.Bytes(), []byte{'\n'}), redactions, nil
+	return rewriteOutcome{
+		Body:           bytes.TrimSuffix(rewritten.Bytes(), []byte{'\n'}),
+		Redactions:     redactions,
+		NoticeInjected: injected,
+	}, nil
+}
+
+func anyTokenPlaceholder(redactions []Redaction) bool {
+	for _, redaction := range redactions {
+		if redaction.Style == contract.PlaceholderStyleToken {
+			return true
+		}
+	}
+	return false
 }
 
 func looksLikeStructuredJSON(value string) bool {
@@ -498,33 +534,38 @@ func assignPlaceholders(
 		kind  Kind
 		value string
 	}
-	placeholderFor := make(map[kindKey]string, len(selected))
+	type allocation struct {
+		placeholder string
+		style       contract.PlaceholderStyle
+	}
+	placeholderFor := make(map[kindKey]allocation, len(selected))
 	for _, item := range selected {
 		key := kindKey{kind: item.Kind, value: item.Value}
 		if _, exists := placeholderFor[key]; exists {
 			continue
 		}
-		placeholder, err := allocator.allocate(item.Kind)
+		placeholder, style, err := allocator.allocate(item.Kind, item.Value)
 		if err != nil {
 			return nil, nil, err
 		}
-		placeholderFor[key] = placeholder
+		placeholderFor[key] = allocation{placeholder: placeholder, style: style}
 	}
 
 	redactions := make([]Redaction, 0, len(placeholderFor))
 	seenPlaceholder := make(map[string]struct{}, len(placeholderFor))
 	for index := range selected {
 		key := kindKey{kind: selected[index].Kind, value: selected[index].Value}
-		placeholder := placeholderFor[key]
-		selected[index].Placeholder = placeholder
-		if _, exists := seenPlaceholder[placeholder]; exists {
+		assigned := placeholderFor[key]
+		selected[index].Placeholder = assigned.placeholder
+		if _, exists := seenPlaceholder[assigned.placeholder]; exists {
 			continue
 		}
-		seenPlaceholder[placeholder] = struct{}{}
+		seenPlaceholder[assigned.placeholder] = struct{}{}
 		redactions = append(redactions, Redaction{
-			Placeholder: placeholder,
+			Placeholder: assigned.placeholder,
 			Kind:        selected[index].Kind,
 			Value:       selected[index].Value,
+			Style:       assigned.style,
 		})
 	}
 	sort.Slice(redactions, func(left, right int) bool {

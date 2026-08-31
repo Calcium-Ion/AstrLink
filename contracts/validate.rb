@@ -174,6 +174,16 @@ expected_service_fields = %w[id name kind enabled models capabilities created_at
 raise "Service response shape drifted" unless service.fetch("required") == expected_service_fields
 raise "Service must expose both connection variants" unless service.fetch("properties").key?("http") &&
                                                        service.fetch("properties").key?("subscription")
+raise "disabled_models remains on Service" if service.fetch("properties").key?("disabled_models")
+
+service_patch = openapi.dig("components", "schemas", "ServicePatch")
+%w[ServiceCreate ServicePatch].each do |name|
+  properties = openapi.dig("components", "schemas", name).fetch("properties")
+  if properties.key?("disabled_models")
+    raise "#{name} still accepts disabled_models"
+  end
+end
+raise "ServicePatch must keep models patchable" unless service_patch.fetch("properties").key?("models")
 raise "ServiceCreate must require name and kind" unless service_create.fetch("required") == %w[name kind]
 raise "ServiceCreate must model subscription and HTTP variants" unless service_create.fetch("oneOf").length == 2
 raise "legacy lossy auth_scheme field remains" if service_create.fetch("properties").key?("auth_scheme")
@@ -223,7 +233,7 @@ raise "RouteSelection classification shape drifted" unless route_selection.fetch
                                                            route_selection.fetch("additionalProperties") == false
 
 classification_id_pattern = Regexp.new(route_selection.dig("properties", "taxonomy_id", "pattern"))
-%w[astrlink-text-v1 code code.reasoning code_generation].each do |identifier|
+%w[astrlink-text-v1 code code.reasoning code_generation coding research architect].each do |identifier|
   raise "classification identifier rejects #{identifier}" unless classification_id_pattern.match?(identifier)
 end
 ["", "Code", "code generation", "-code", "code/reasoning"].each do |identifier|
@@ -345,6 +355,8 @@ implemented_operations = openapi.dig("x-astrlink-implementation", "implemented_o
   GET\ /control/v1/services/{service_id}/authorization
   DELETE\ /control/v1/services/{service_id}/authorization
   POST\ /control/v1/services/{service_id}/logout
+  GET\ /control/v1/services/{service_id}/usage
+  POST\ /control/v1/services/{service_id}/usage/reset
 ].each do |operation|
   raise "missing implemented service operation #{operation}" unless implemented_operations.include?(operation)
 end
@@ -361,8 +373,8 @@ end
 end
 
 access_token = openapi.dig("components", "schemas", "AccessToken")
-raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint source created_at]
-raise "access-token source wire values drifted" unless access_token.dig("properties", "source", "enum") == %w[system_default user]
+raise "access-token metadata shape drifted" unless access_token.fetch("required") == %w[id name hint created_at]
+raise "access-token source remains on the public contract" if access_token.fetch("properties").key?("source")
 
 access_token_list = openapi.dig("components", "schemas", "AccessTokenList")
 raise "access-token list must reserve a null cursor" unless access_token_list.fetch("required") == %w[items next_cursor] &&
@@ -410,6 +422,22 @@ raise "privacy-model collection methods drifted: #{privacy_collection_methods}" 
 privacy_item_methods = openapi.dig("paths", "/control/v1/privacy-models/{installation_id}").keys
 raise "privacy-model item methods drifted: #{privacy_item_methods}" unless privacy_item_methods == %w[parameters get delete]
 
+%w[
+  POST\ /control/v1/auto-classifier/local/probe
+  GET\ /control/v1/auto-classifier
+  POST\ /control/v1/auto-classifier
+  POST\ /control/v1/auto-classifier/classify-preview
+].each do |operation|
+  raise "missing implemented auto-classifier operation #{operation}" unless implemented_operations.include?(operation)
+end
+auto_probe_methods = openapi.dig("paths", "/control/v1/auto-classifier/local/probe").keys
+raise "auto-classifier local probe methods drifted: #{auto_probe_methods}" unless auto_probe_methods == %w[post]
+auto_collection_methods = openapi.dig("paths", "/control/v1/auto-classifier").keys
+raise "auto-classifier collection methods drifted: #{auto_collection_methods}" unless auto_collection_methods == %w[get post]
+auto_preview_methods = openapi.dig("paths", "/control/v1/auto-classifier/classify-preview").keys
+raise "auto-classifier preview methods drifted: #{auto_preview_methods}" unless auto_preview_methods == %w[post]
+raise "auto-classifier taxonomy must freeze coding" unless openapi.dig("components", "schemas", "AutoClassifierProbe", "properties", "id2label", "items", "enum") == %w[general research coding architect]
+
 policy = openapi.dig("components", "schemas", "Policy")
 raise "Policy must require detector" unless policy.fetch("required").include?("detector") &&
                                            policy.dig("properties", "detector", "$ref") == "#/components/schemas/PolicyDetector"
@@ -424,7 +452,26 @@ raise "Policy min_confidence contract drifted" unless policy.fetch("required").i
 raise "PolicyAction wire values drifted" unless openapi.dig("components", "schemas", "PolicyAction", "enum") == %w[allow warn block redact]
 raise "PolicyDetector wire values drifted" unless openapi.dig("components", "schemas", "PolicyDetector", "enum") == %w[regex local_model]
 policy_patch_fields = openapi.dig("components", "schemas", "PolicyPatch", "properties").keys
-raise "fixed policy patch fields drifted: #{policy_patch_fields}" unless policy_patch_fields == %w[enabled detector local_model_id min_confidence request_action response_restore]
+raise "fixed policy patch fields drifted: #{policy_patch_fields}" unless policy_patch_fields == %w[
+  enabled detector local_model_id min_confidence regex_source custom_regex_rules
+  kind_rules allowlist_rules request_action response_restore
+  restore_tool_arguments placeholder_notice
+]
+raise "PlaceholderStyle wire values drifted" unless openapi.dig("components", "schemas", "PlaceholderStyle", "enum") == %w[natural token]
+raise "PrivacyKind wire values drifted" unless openapi.dig("components", "schemas", "PrivacyKind", "enum") == %w[
+  common_secret payment_card account email phone url ip_address
+  private_person private_address private_date
+]
+policy_kind_rule = openapi.dig("components", "schemas", "PolicyKindRule")
+raise "PolicyKindRule contract drifted" unless policy_kind_rule.fetch("required") == %w[kind enabled style] &&
+                                              policy_kind_rule.dig("properties", "style", "$ref") == "#/components/schemas/PlaceholderStyle"
+raise "PolicyAllowlistRule type values drifted" unless openapi.dig("components", "schemas", "PolicyAllowlistRule", "properties", "type", "enum") == %w[literal domain_suffix cidr]
+# A natural stand-in that is never restored inside a tool argument is acted on by
+# the local agent as if it were real, so the two fields must stay paired.
+policy_properties = policy.fetch("properties")
+raise "Policy must carry per-kind rules and tool-argument restoration" unless policy.fetch("required").include?("kind_rules") &&
+                                                                             policy.fetch("required").include?("restore_tool_arguments") &&
+                                                                             policy_properties.dig("restore_tool_arguments", "default") == true
 policy_patch_confidence = openapi.dig("components", "schemas", "PolicyPatch", "properties", "min_confidence")
 raise "PolicyPatch min_confidence contract drifted" unless policy_patch_confidence == {
   "type" => "number",

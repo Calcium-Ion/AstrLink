@@ -195,14 +195,19 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	responseBody := `{"data":[{"id":"gpt-z"},{"id":"gpt-a"}]}`
+	responseBody := `{"models":[{"slug":"gpt-z","visibility":"list"},{"slug":"gpt-a","visibility":"list"}]}`
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.String() != "https://codex.example/backend-api/codex/models" {
-			t.Fatalf("URL = %q", request.URL.String())
+		wantURL := "https://codex.example/backend-api/codex/models?client_version=" +
+			accountauth.DefaultCodexModelsClientVersion
+		if request.URL.String() != wantURL {
+			t.Fatalf("URL = %q, want %q", request.URL.String(), wantURL)
 		}
 		if request.Header.Get("Authorization") != "Bearer codex-access" ||
 			request.Header.Get("ChatGPT-Account-ID") != "acct_codex" ||
-			request.Header.Get("OAI-Product-Sku") != "codex" {
+			request.Header.Get("OAI-Product-Sku") != "codex" ||
+			request.Header.Get("originator") != "astrlink" ||
+			request.Header.Get("User-Agent") != "codex-cli/"+accountauth.DefaultCodexModelsClientVersion ||
+			request.Header.Get("Accept") != "application/json" {
 			t.Fatalf("headers = %#v", request.Header)
 		}
 		return probeResponse(responseBody), nil
@@ -244,6 +249,11 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 	models, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels)
 	if err != nil || strings.Join(models, ",") != "gpt-a,gpt-z" {
 		t.Fatalf("models=%v err=%v", models, err)
+	}
+	responseBody = `{"models":[]}`
+	empty, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty Codex catalog = %v err=%v", empty, err)
 	}
 	responseBody = `{}`
 	if _, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels); !errors.Is(err, ErrUpstream) {

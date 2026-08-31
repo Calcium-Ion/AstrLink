@@ -2,39 +2,38 @@
 @import "tw-animate-css";
 
 /*
- * Palette derived from astrlink-logo.svg: the constellation "A" is drawn in a
- * #26336F -> #4656A6 indigo, and a cyan/periwinkle/pink tide crosses it. The
- * indigo becomes the ink for every surface; the tide's periwinkle is kept as a
- * flat signature accent. No gradients anywhere in the UI.
+ * UI brand ink is a flat pure blue, independent of the logo's indigo /
+ * periwinkle / pink tide. Paper surfaces stay white or cool gray. No
+ * gradients anywhere in the UI.
  */
 :root {
   /* White paper: separation comes from hairlines, never from fills */
   --background: #ffffff;
-  --foreground: #1c2340;
+  --foreground: #1a2a3d;
   --card: #ffffff;
-  --card-foreground: #1c2340;
+  --card-foreground: #1a2a3d;
   --popover: #ffffff;
-  --popover-foreground: #1c2340;
+  --popover-foreground: #1a2a3d;
   --secondary: #f4f5fa;
-  --secondary-foreground: #1c2340;
+  --secondary-foreground: #1a2a3d;
   --muted: #f4f5fa;
-  --muted-foreground: #6e7391;
+  --muted-foreground: #6b788c;
   --border: #e5e7f0;
   --input: #d5d8e6;
-  --ring: #768df6;
+  --ring: #3b82f6;
 
-  /* Brand ink, straight off the logo's structure gradient */
-  --primary: #26336f;
+  /* Brand ink: navy-blue, not the logo's indigo */
+  --primary: #1d4d87;
   --primary-foreground: #ffffff;
-  --primary-hover: #1b2552;
-  --accent: #edeff9;
-  --accent-foreground: #35428d;
+  --primary-hover: #16345c;
+  --accent: #e8f1fb;
+  --accent-foreground: #2456a0;
 
   /* The tide, flattened: navigation indicator and focus only */
-  --tide: #768df6;
-  --tide-wash: #eef1fe;
+  --tide: #3b82f6;
+  --tide-wash: #e8f1fe;
 
-  /* Semantic states, tuned to sit beside indigo */
+  /* Semantic states, tuned to sit beside blue */
   --destructive: #c2384f;
   --destructive-foreground: #ffffff;
   --danger-foreground: #a52c43;
@@ -45,24 +44,24 @@
   --warning: #d2911a;
   --warning-foreground: #8a6013;
   --warning-wash: #fcf4e4;
-  --violet: #6b5fd0;
-  --violet-foreground: #5749ae;
-  --violet-wash: #efedfc;
+  --violet: #2f6fe0;
+  --violet-foreground: #1f5cc4;
+  --violet-wash: #eaf2fc;
 
   /* Navigation */
   --sidebar: #ffffff;
-  --sidebar-foreground: #1c2340;
-  --sidebar-primary: #26336f;
+  --sidebar-foreground: #1a2a3d;
+  --sidebar-primary: #1d4d87;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #edeff9;
-  --sidebar-accent-foreground: #35428d;
+  --sidebar-accent: #e8f1fb;
+  --sidebar-accent-foreground: #2456a0;
   --sidebar-border: #e5e7f0;
-  --sidebar-ring: #768df6;
+  --sidebar-ring: #3b82f6;
 
   /* Details */
-  --text-secondary: #4b5273;
+  --text-secondary: #45566d;
   --shadow-card: none;
-  --shadow-overlay: 0 1px 3px rgb(28 35 64 / 10%), 0 10px 30px rgb(28 35 64 / 8%);
+  --shadow-overlay: 0 1px 3px rgb(26 42 61 / 10%), 0 10px 30px rgb(26 42 61 / 8%);
   --radius: 0.5rem;
   --window-chrome-height: 0px;
 }
@@ -239,8 +238,10 @@
   body,
   #root {
     min-width: 320px;
-    min-height: 100%;
+    height: 100%;
     margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   html {
@@ -248,7 +249,7 @@
   }
 
   body {
-    @apply min-h-screen bg-background font-sans text-sm text-foreground antialiased;
+    @apply h-full bg-background font-sans text-sm text-foreground antialiased;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
   }

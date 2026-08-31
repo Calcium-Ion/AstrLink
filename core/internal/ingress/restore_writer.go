@@ -50,6 +50,7 @@ type restoringResponseWriter struct {
 	engine        *visibleRestoreEngine
 	textRestored  int
 	textFallbacks int
+	hits          []contract.PrivacyHitCount
 }
 
 func newRestoringResponseWriter(
@@ -57,12 +58,14 @@ func newRestoringResponseWriter(
 	redactions []privacy.Redaction,
 	streaming bool,
 	protocol contract.ProtocolID,
+	toolArguments bool,
 ) *restoringResponseWriter {
 	copied := append([]privacy.Redaction(nil), redactions...)
 	return &restoringResponseWriter{
 		ResponseWriter: writer,
 		streaming:      streaming,
-		engine:         newVisibleRestoreEngine(protocol, copied),
+		engine:         newVisibleRestoreEngine(protocol, copied, toolArguments),
+		hits:           privacyHitCounts(copied),
 	}
 }
 
@@ -416,11 +419,22 @@ func (writer *restoringResponseWriter) mappingCount() int {
 	return len(writer.engine.replacements)
 }
 
-func (writer *restoringResponseWriter) restoredCount() int {
+func (writer *restoringResponseWriter) visibleRestoredCount() int {
 	if writer == nil || writer.engine == nil {
 		return 0
 	}
 	return writer.engine.restored + writer.textRestored
+}
+
+func (writer *restoringResponseWriter) toolArgumentRestoredCount() int {
+	if writer == nil || writer.engine == nil {
+		return 0
+	}
+	return writer.engine.restoredToolArgs
+}
+
+func (writer *restoringResponseWriter) restoredCount() int {
+	return writer.visibleRestoredCount() + writer.toolArgumentRestoredCount()
 }
 
 func (writer *restoringResponseWriter) fallbackCount() int {
@@ -432,10 +446,13 @@ func (writer *restoringResponseWriter) fallbackCount() int {
 
 func (writer *restoringResponseWriter) privacyRestoreSummary() contract.PrivacyRestoreSummary {
 	return contract.PrivacyRestoreSummary{
-		Enabled:       true,
-		MappingCount:  writer.mappingCount(),
-		RestoredCount: writer.restoredCount(),
-		FallbackCount: writer.fallbackCount(),
+		Enabled:                   true,
+		MappingCount:              writer.mappingCount(),
+		RestoredCount:             writer.restoredCount(),
+		VisibleRestoredCount:      writer.visibleRestoredCount(),
+		ToolArgumentRestoredCount: writer.toolArgumentRestoredCount(),
+		FallbackCount:             writer.fallbackCount(),
+		Hits:                      append([]contract.PrivacyHitCount(nil), writer.hits...),
 	}
 }
 

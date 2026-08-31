@@ -1,4 +1,9 @@
-import type { RequestRecord, RequestStatus } from "./request-record-model";
+import { i18n } from "./i18n";
+import type {
+  RequestRecord,
+  RequestSession,
+  RequestStatus,
+} from "./request-record-model";
 
 export interface RecordFilters {
   status: RequestStatus | "";
@@ -97,9 +102,9 @@ export function groupRecordsByDate(
     key,
     label:
       key === today
-        ? "今天"
+        ? i18n.t("common.today")
         : key === yesterday
-          ? "昨天"
+          ? i18n.t("common.yesterday")
           : formatDateLabel(grouped[0]?.started_at ?? key),
     records: grouped,
   }));
@@ -115,7 +120,7 @@ function localDateKey(date: Date): string {
 function formatDateLabel(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(i18n.language === "zh-CN" ? "zh-CN" : "en", {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -132,12 +137,30 @@ export function liveDurationMs(record: RequestRecord, nowMs: number): number {
   return Math.max(0, completed - started);
 }
 
+export function sessionElapsedMs(
+  session: Pick<RequestSession, "started_at" | "completed_at">,
+  nowMs: number,
+): number {
+  const start = Date.parse(session.started_at);
+  if (Number.isNaN(start)) return 0;
+  if (session.completed_at) {
+    const end = Date.parse(session.completed_at);
+    if (!Number.isNaN(end)) return Math.max(0, end - start);
+  }
+  return Math.max(0, nowMs - start);
+}
+
 export function formatDuration(milliseconds: number): string {
   if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
   if (milliseconds < 60_000) {
-    return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)} s`;
+    return `${(milliseconds / 1000).toFixed(1)} s`;
   }
-  const minutes = Math.floor(milliseconds / 60_000);
-  const seconds = Math.floor((milliseconds % 60_000) / 1000);
-  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  if (milliseconds < 3_600_000) {
+    const minutes = Math.floor(milliseconds / 60_000);
+    const seconds = Math.floor((milliseconds % 60_000) / 1000);
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  }
+  const hours = Math.floor(milliseconds / 3_600_000);
+  const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
 }

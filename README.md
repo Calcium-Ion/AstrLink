@@ -59,6 +59,14 @@ platform-specific [Tauri prerequisites](https://v2.tauri.app/start/prerequisites
 Bun owns frontend dependency installation, script orchestration, and the
 JavaScript tool runtime.
 
+Start the local desktop (install deps, build sidecars, launch Tauri):
+
+```sh
+make dev
+```
+
+Run checks:
+
 ```sh
 make core-check
 make core-race

@@ -119,7 +119,7 @@ func TestRouteAutoSelectionValidation(t *testing.T) {
 					},
 				},
 				{
-					CategoryID: "code",
+					CategoryID: "coding",
 					Targets: []RouteTarget{{
 						ServiceID: "endpoint_01", PlanType: PlanTypeNative,
 						UpstreamProtocol: ProtocolOpenAIResponses,
@@ -246,10 +246,9 @@ func TestRouteAutoSelectionValidation(t *testing.T) {
 			wantErr: `unknown route selection mode "semantic"`,
 		},
 		{
-			name:          "rejects auto mode from the current runtime guard",
+			name:          "accepts auto mode in Alpha when the document is valid",
 			mutate:        func(*Route) {},
 			validateAlpha: true,
-			wantErr:       "not implemented in this build",
 		},
 	}
 

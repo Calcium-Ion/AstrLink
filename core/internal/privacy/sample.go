@@ -75,6 +75,7 @@ func LocateFindings(protocol contract.ProtocolID, body []byte, findings []Findin
 			Start:      finding.Start,
 			End:        finding.End,
 			Confidence: finding.Confidence,
+			Reason:     string(finding.Suppression),
 		})
 	}
 	return locations, nil

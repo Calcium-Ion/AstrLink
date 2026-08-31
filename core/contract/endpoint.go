@@ -23,9 +23,9 @@ const (
 	EndpointKindCustom           = ServiceKindCustom
 )
 
-// CapabilityMode states how a Service accepts the original ingress
-// protocol. RelayKit is intentionally not a Service mode; it is a local
-// execution-plan type.
+// CapabilityMode is a legacy passthrough label. Native and delegated both
+// forward the ingress protocol unchanged; new writes use native. Local
+// conversion is declared on Capability.ConvertTo, not as a mode.
 type CapabilityMode string
 
 const (
@@ -108,6 +108,7 @@ type Capability struct {
 	Protocol  ProtocolID     `json:"protocol"`
 	Mode      CapabilityMode `json:"mode"`
 	Streaming bool           `json:"streaming"`
+	ConvertTo ProtocolID     `json:"convert_to,omitempty"`
 }
 
 func (capability Capability) Validate() error {
@@ -119,6 +120,14 @@ func (capability Capability) Validate() error {
 	}
 	if descriptor, known := LookupProtocolDescriptor(capability.Protocol); known && capability.Streaming && !descriptor.Streaming {
 		return fmt.Errorf("protocol %q does not support streaming", capability.Protocol)
+	}
+	if capability.ConvertTo != "" {
+		if err := capability.ConvertTo.Validate(); err != nil {
+			return fmt.Errorf("convert_to: %w", err)
+		}
+		if capability.ConvertTo == capability.Protocol {
+			return fmt.Errorf("convert_to must change protocol")
+		}
 	}
 	return nil
 }

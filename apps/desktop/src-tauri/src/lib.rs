@@ -1,3 +1,8 @@
+mod agent_install;
+mod control_session;
+#[cfg(debug_assertions)]
+mod dev_reload;
+mod i18n;
 mod preferences;
 mod sidecar;
 
@@ -6,6 +11,7 @@ use std::sync::{
     Arc,
 };
 
+use i18n::Locale;
 use preferences::{CloseBehavior, Preferences, PreferencesSnapshot, PreferencesStore};
 use serde::{Deserialize, Serialize};
 use sidecar::{
@@ -17,6 +23,7 @@ use tauri::{
     Manager, RunEvent, State, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_dialog::DialogExt;
 
 #[derive(Debug, Serialize)]
 struct AppSnapshot {
@@ -47,6 +54,8 @@ struct PreferencesInput {
     core_auto_start: bool,
     core_auto_recover: bool,
     inference_port: u16,
+    max_concurrent_inspections: u16,
+    locale: Locale,
 }
 
 impl From<PreferencesInput> for Preferences {
@@ -57,6 +66,8 @@ impl From<PreferencesInput> for Preferences {
             core_auto_start: input.core_auto_start,
             core_auto_recover: input.core_auto_recover,
             inference_port: input.inference_port,
+            max_concurrent_inspections: input.max_concurrent_inspections,
+            locale: input.locale,
         }
     }
 }
@@ -139,7 +150,11 @@ fn settings_snapshot(app: &tauri::AppHandle, store: &PreferencesStore) -> Settin
         Err(error) => SettingsSnapshot {
             preferences: store.snapshot(),
             autostart_actual: None,
-            autostart_error: Some(format!("无法读取系统开机启动状态：{error}")),
+            autostart_error: Some(i18n::t(
+                store.snapshot().values.locale,
+                "host.autostart.readFailed",
+                &[("error", &error.to_string())],
+            )),
         },
     }
 }
@@ -152,6 +167,33 @@ fn get_preferences(
     settings_snapshot(&app, store.inner())
 }
 
+fn agent_install_context() -> Result<agent_install::InstallContext, String> {
+    Ok(agent_install::InstallContext {
+        home: control_session::user_home()?,
+        mcp_source: agent_install::resolve_sidecar_binary("astrlink-mcp")?,
+    })
+}
+
+#[tauri::command]
+fn agent_debug_status() -> Result<agent_install::AgentInstallStatus, String> {
+    let home = control_session::user_home()?;
+    let mcp_source = agent_install::resolve_sidecar_binary("astrlink-mcp").unwrap_or_default();
+    Ok(agent_install::status(&agent_install::InstallContext {
+        home,
+        mcp_source,
+    }))
+}
+
+#[tauri::command]
+fn install_agent_debug() -> Result<agent_install::InstallReceipt, String> {
+    agent_install::install(&agent_install_context()?)
+}
+
+#[tauri::command]
+fn uninstall_agent_debug() -> Result<(), String> {
+    agent_install::uninstall(&agent_install_context()?)
+}
+
 #[tauri::command]
 fn update_preferences(
     app: tauri::AppHandle,
@@ -161,25 +203,42 @@ fn update_preferences(
 ) -> Result<SettingsSnapshot, String> {
     let values = Preferences::from(input);
     values.validate()?;
+    let locale = values.locale;
     let autostart = app.autolaunch();
-    let actual = autostart
-        .is_enabled()
-        .map_err(|error| format!("无法读取系统开机启动状态，设置未保存：{error}"))?;
+    let actual = autostart.is_enabled().map_err(|error| {
+        i18n::t(
+            locale,
+            "host.autostart.readFailedUnsaved",
+            &[("error", &error.to_string())],
+        )
+    })?;
     if values.autostart != actual {
         if values.autostart {
-            autostart
-                .enable()
-                .map_err(|error| format!("无法启用系统开机启动，设置未保存：{error}"))?;
+            autostart.enable().map_err(|error| {
+                i18n::t(
+                    locale,
+                    "host.autostart.enableFailed",
+                    &[("error", &error.to_string())],
+                )
+            })?;
         } else {
-            autostart
-                .disable()
-                .map_err(|error| format!("无法关闭系统开机启动，设置未保存：{error}"))?;
+            autostart.disable().map_err(|error| {
+                i18n::t(
+                    locale,
+                    "host.autostart.disableFailed",
+                    &[("error", &error.to_string())],
+                )
+            })?;
         }
-        let reconciled = autostart
-            .is_enabled()
-            .map_err(|error| format!("无法验证系统开机启动状态，设置未保存：{error}"))?;
+        let reconciled = autostart.is_enabled().map_err(|error| {
+            i18n::t(
+                locale,
+                "host.autostart.verifyFailed",
+                &[("error", &error.to_string())],
+            )
+        })?;
         if reconciled != values.autostart {
-            return Err("系统开机启动状态与请求不一致，设置未保存。".to_string());
+            return Err(i18n::t(locale, "host.autostart.mismatch", &[]));
         }
     }
     if let Err(persist_error) = store.replace(values.clone()) {
@@ -190,18 +249,72 @@ fn update_preferences(
                 autostart.disable()
             };
             return match rollback {
-                Ok(()) => Err(format!(
-                    "{persist_error}；系统开机启动状态已回滚，其他设置未生效。"
+                Ok(()) => Err(i18n::t(
+                    locale,
+                    "host.autostart.rollbackOk",
+                    &[("persist_error", &persist_error)],
                 )),
-                Err(rollback_error) => Err(format!(
-                    "{persist_error}；系统开机启动状态回滚失败：{rollback_error}。请在系统设置中核对。"
+                Err(rollback_error) => Err(i18n::t(
+                    locale,
+                    "host.autostart.rollbackFailed",
+                    &[
+                        ("persist_error", &persist_error),
+                        ("rollback_error", &rollback_error.to_string()),
+                    ],
                 )),
             };
         }
         return Err(persist_error);
     }
-    manager.configure(values.inference_port, values.core_auto_recover);
+    manager.configure(
+        values.inference_port,
+        values.max_concurrent_inspections,
+        values.core_auto_recover,
+        locale,
+    );
+    if let Err(error) = rebuild_tray_menu(&app, locale) {
+        eprintln!("unable to rebuild AstrLink tray menu: {error}");
+    }
     Ok(settings_snapshot(&app, store.inner()))
+}
+
+fn tray_menu(app: &tauri::AppHandle, locale: Locale) -> tauri::Result<Menu<tauri::Wry>> {
+    let show = MenuItem::with_id(
+        app,
+        "show",
+        i18n::t(locale, "host.tray.show", &[]),
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(
+        app,
+        "quit",
+        i18n::t(locale, "host.tray.quit", &[]),
+        true,
+        None::<&str>,
+    )?;
+    #[cfg(debug_assertions)]
+    let reload = MenuItem::with_id(
+        app,
+        "reload",
+        i18n::t(locale, "host.tray.reload", &[]),
+        true,
+        None::<&str>,
+    )?;
+    #[cfg(debug_assertions)]
+    let menu = Menu::with_items(app, &[&show, &reload, &quit])?;
+    #[cfg(not(debug_assertions))]
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+    Ok(menu)
+}
+
+fn rebuild_tray_menu(app: &tauri::AppHandle, locale: Locale) -> Result<(), String> {
+    let menu = tray_menu(app, locale).map_err(|error| error.to_string())?;
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_menu(Some(menu))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
@@ -253,6 +366,22 @@ async fn delete_service(
 }
 
 #[tauri::command]
+async fn get_service_usage(
+    service_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_service_usage(&service_id).await
+}
+
+#[tauri::command]
+async fn reset_service_usage(
+    service_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.reset_service_usage(&service_id).await
+}
+
+#[tauri::command]
 async fn probe_service_models(
     service_id: String,
     input: serde_json::Value,
@@ -283,6 +412,29 @@ async fn begin_service_authorization(
 #[tauri::command]
 fn open_authorization_url(url: String) -> Result<(), String> {
     sidecar::open_authorization_url(Some(&url))
+}
+
+#[tauri::command]
+async fn save_text_file(
+    app: tauri::AppHandle,
+    default_filename: String,
+    contents: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_file_name(&default_filename)
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = file.into_path().map_err(|error| error.to_string())?;
+        std::fs::write(&path, contents).map_err(|error| error.to_string())?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -355,6 +507,22 @@ async fn list_request_records(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
     manager.list_request_records(query).await
+}
+
+#[tauri::command]
+async fn list_request_sessions(
+    query: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.list_request_sessions(query).await
+}
+
+#[tauri::command]
+async fn get_request_session(
+    session_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_request_session(&session_id).await
 }
 
 #[tauri::command]
@@ -475,6 +643,13 @@ async fn dry_run_privacy_policy(
 }
 
 #[tauri::command]
+async fn get_privacy_regex_builtin_rules(
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_privacy_regex_builtin_rules().await
+}
+
+#[tauri::command]
 async fn get_privacy_model_catalog(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
@@ -561,6 +736,7 @@ pub fn run() {
         ))
         .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(manager)
         .manage(explicit_quit)
         .invoke_handler(tauri::generate_handler![
@@ -576,10 +752,13 @@ pub fn run() {
             create_service,
             update_service,
             delete_service,
+            get_service_usage,
+            reset_service_usage,
             probe_service_models,
             probe_draft_service_models,
             begin_service_authorization,
             open_authorization_url,
+            save_text_file,
             get_service_authorization,
             cancel_service_authorization,
             logout_service,
@@ -589,6 +768,8 @@ pub fn run() {
             update_route,
             delete_route,
             list_request_records,
+            list_request_sessions,
+            get_request_session,
             get_request_record,
             list_request_record_children,
             delete_request_record,
@@ -604,13 +785,17 @@ pub fn run() {
             get_privacy_policy,
             update_privacy_policy,
             dry_run_privacy_policy,
+            get_privacy_regex_builtin_rules,
             get_privacy_model_catalog,
             probe_privacy_model,
             probe_local_privacy_model,
             list_privacy_model_installations,
             install_privacy_model,
             get_privacy_model_installation,
-            delete_privacy_model_installation
+            delete_privacy_model_installation,
+            agent_debug_status,
+            install_agent_debug,
+            uninstall_agent_debug
         ])
         .setup(move |app| {
             let config_directory = app
@@ -619,7 +804,12 @@ pub fn run() {
                 .map_err(|error| format!("unable to resolve AstrLink config directory: {error}"))?;
             let preferences = Arc::new(PreferencesStore::load(&config_directory));
             let values = preferences.snapshot().values;
-            setup_manager.configure(values.inference_port, values.core_auto_recover);
+            setup_manager.configure(
+                values.inference_port,
+                values.max_concurrent_inspections,
+                values.core_auto_recover,
+                values.locale,
+            );
             let autostart = app.autolaunch();
             let reconciliation = autostart
                 .is_enabled()
@@ -635,14 +825,16 @@ pub fn run() {
                     }
                 });
             if let Err(error) = reconciliation {
-                preferences.report_warning(format!("无法在启动时核对系统开机启动状态：{error}"));
+                preferences.report_warning(i18n::t(
+                    values.locale,
+                    "host.autostart.startupCheckFailed",
+                    &[("error", &error)],
+                ));
             }
             app.manage(preferences);
 
-            let show = MenuItem::with_id(app, "show", "显示 AstrLink", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
-            TrayIconBuilder::new()
+            let menu = tray_menu(app.handle(), values.locale)?;
+            TrayIconBuilder::with_id("main")
                 .icon(
                     app.default_window_icon()
                         .cloned()
@@ -657,6 +849,8 @@ pub fn run() {
                 })
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => show_main_window(app),
+                    #[cfg(debug_assertions)]
+                    "reload" => dev_reload::reload_main_window(app),
                     "quit" => {
                         quit_state.store(true, Ordering::SeqCst);
                         app.exit(0);
@@ -664,6 +858,15 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            #[cfg(debug_assertions)]
+            dev_reload::start(app.handle());
+
+            if let Ok(home) = control_session::user_home() {
+                if let Err(error) = agent_install::sync_installed_skills(&home) {
+                    eprintln!("failed to sync AstrLink agent skills: {error}");
+                }
+            }
 
             if values.core_auto_start {
                 if let Err(error) = setup_manager.start(app.handle()) {
@@ -779,9 +982,6 @@ mod tests {
             &manager,
         ))
         .expect_err("a valid input should reach the stopped Core manager");
-        assert_eq!(
-            delegated,
-            "Core is not ready for authenticated control operations"
-        );
+        assert_eq!(delegated, "The gateway is not ready yet.");
     }
 }

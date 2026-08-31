@@ -17,7 +17,8 @@ import (
 const requestRecordSelectColumns = `
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
     requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
-    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json, created_at,
+    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
+    session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
     (SELECT COUNT(*) FROM request_records children
      WHERE children.parent_request_id = request_records.id) AS child_count`
 
@@ -32,12 +33,14 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
     requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
-    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
+    session_id, previous_response_id, output_response_id, input_preview, events_json, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
 		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
 		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
-		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.createdAt,
+		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.sessionID, row.previousResponseID,
+		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert request record: %w", err)
@@ -60,8 +63,9 @@ func (store *Store) UpsertRequestRecord(ctx context.Context, record contract.Req
 	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
     requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
-    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
+    session_id, previous_response_id, output_response_id, input_preview, events_json, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     parent_request_id = excluded.parent_request_id,
     attempt_index = excluded.attempt_index,
@@ -80,12 +84,18 @@ ON CONFLICT(id) DO UPDATE SET
     usage_json = excluded.usage_json,
     error_json = excluded.error_json,
     audit_json = excluded.audit_json,
-    privacy_restore_json = excluded.privacy_restore_json
+    privacy_restore_json = excluded.privacy_restore_json,
+    session_id = excluded.session_id,
+    previous_response_id = excluded.previous_response_id,
+    output_response_id = excluded.output_response_id,
+    input_preview = excluded.input_preview,
+    events_json = excluded.events_json
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
 		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
 		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
-		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.createdAt,
+		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.sessionID, row.previousResponseID,
+		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert request record: %w", err)
@@ -227,6 +237,10 @@ FROM request_records WHERE parent_request_id IS NULL`)
 		query.WriteString(` AND started_at < ?`)
 		args = append(args, options.To.UTC().Format(time.RFC3339Nano))
 	}
+	if options.LocalAccessTokenID != nil {
+		query.WriteString(` AND local_access_token_id = ?`)
+		args = append(args, string(*options.LocalAccessTokenID))
+	}
 	if options.Protocol != nil || options.ServiceID != nil || options.Status != nil {
 		query.WriteString(` AND (`)
 		directParts := make([]string, 0, 3)
@@ -264,7 +278,8 @@ FROM request_records WHERE parent_request_id IS NULL`)
 		query.WriteString(` AND (started_at < ? OR (started_at = ? AND id < ?))`)
 		args = append(args, cursorStarted, cursorStarted, cursorID)
 	}
-	query.WriteString(` ORDER BY started_at DESC, id DESC`)
+	query.WriteString(` ORDER BY started_at DESC, id DESC LIMIT ?`)
+	args = append(args, limit+1)
 
 	rows, err := store.db.QueryContext(ctx, query.String(), args...)
 	if err != nil {
@@ -446,6 +461,11 @@ type requestRecordRow struct {
 	errorJSON          any
 	auditJSON          string
 	privacyRestoreJSON any
+	sessionID          any
+	previousResponseID any
+	outputResponseID   any
+	inputPreview       any
+	eventsJSON         any
 	createdAt          string
 }
 
@@ -516,6 +536,25 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 		}
 		row.privacyRestoreJSON = string(encoded)
 	}
+	if record.SessionID != nil {
+		row.sessionID = string(*record.SessionID)
+	}
+	if record.PreviousResponseID != nil {
+		row.previousResponseID = *record.PreviousResponseID
+	}
+	if record.OutputResponseID != nil {
+		row.outputResponseID = *record.OutputResponseID
+	}
+	if record.InputPreview != nil {
+		row.inputPreview = *record.InputPreview
+	}
+	if record.Events != nil {
+		encoded, err := json.Marshal(record.Events)
+		if err != nil {
+			return requestRecordRow{}, fmt.Errorf("encode request events: %w", err)
+		}
+		row.eventsJSON = string(encoded)
+	}
 	return row, nil
 }
 
@@ -531,12 +570,15 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		completedAt, requestedModel, routeID, endpointID           sql.NullString
 		localAccessTokenID, planJSON, usageJSON, errorJSON         sql.NullString
 		privacyRestoreJSON                                         sql.NullString
+		sessionID, previousResponseID, outputResponseID            sql.NullString
+		inputPreview, eventsJSON                                   sql.NullString
 		httpStatus, latencyMs                                      sql.NullInt64
 	)
 	if err := row.Scan(
 		&id, &parentRequestID, &attemptIndex, &startedAt, &completedAt, &status, &inputProtocol,
 		&requestedModel, &streaming, &routeID, &endpointID, &localAccessTokenID, &planJSON,
 		&httpStatus, &latencyMs, &usageJSON, &errorJSON, &auditJSON, &privacyRestoreJSON,
+		&sessionID, &previousResponseID, &outputResponseID, &inputPreview, &eventsJSON,
 		&createdAt, &childCount,
 	); err != nil {
 		return contract.RequestRecord{}, err
@@ -624,6 +666,29 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 			)
 		}
 		record.PrivacyRestore = &summary
+	}
+	if sessionID.Valid {
+		value := contract.SessionID(sessionID.String)
+		record.SessionID = &value
+	}
+	if previousResponseID.Valid {
+		value := previousResponseID.String
+		record.PreviousResponseID = &value
+	}
+	if outputResponseID.Valid {
+		value := outputResponseID.String
+		record.OutputResponseID = &value
+	}
+	if inputPreview.Valid {
+		value := inputPreview.String
+		record.InputPreview = &value
+	}
+	if eventsJSON.Valid && eventsJSON.String != "" {
+		var events []contract.RequestEvent
+		if err := json.Unmarshal([]byte(eventsJSON.String), &events); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf("%w: request %q events", storagecontract.ErrInvalidRecord, id)
+		}
+		record.Events = events
 	}
 	if _, err := time.Parse(time.RFC3339Nano, createdAt); err != nil {
 		return contract.RequestRecord{}, fmt.Errorf("%w: request %q created_at", storagecontract.ErrInvalidRecord, id)

@@ -93,6 +93,53 @@ func TestRequestRecordControlAPI(t *testing.T) {
 	}
 }
 
+func TestRequestSessionControlAPI(t *testing.T) {
+	store, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	handler, err := NewWithDependencies(contract.VersionResponse{
+		CoreVersion: "0.0.0-test", ControlAPIVersion: "v1", ProtocolContractVersion: "v1",
+	}, Dependencies{
+		ServiceStore:   store,
+		RequestRecords: store,
+		ControlToken:   "control-token-123456",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	sessionID := contract.SessionID("session_ctrl")
+	preview := "会话标题"
+	record := contract.RequestRecord{
+		ID: "request_sess", StartedAt: start, Status: contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		SessionID: &sessionID, InputPreview: &preview,
+	}
+	if err := store.InsertRequestRecord(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	response := requestRecordHTTP(t, handler, http.MethodGet, RequestSessionsPath, "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("list sessions status=%d body=%s", response.Code, response.Body.String())
+	}
+	var page requestSessionPageResponse
+	decode(t, response, &page)
+	if len(page.Items) != 1 || page.Items[0].ID != sessionID || page.Items[0].Title != preview {
+		t.Fatalf("page=%#v", page)
+	}
+	response = requestRecordHTTP(t, handler, http.MethodGet, RequestSessionsPath+"/session_ctrl", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("get session status=%d body=%s", response.Code, response.Body.String())
+	}
+	var detail contract.RequestSessionDetail
+	decode(t, response, &detail)
+	if len(detail.Turns) != 1 || detail.Turns[0].ID != "request_sess" {
+		t.Fatalf("detail=%#v", detail)
+	}
+}
+
 func requestRecordHTTP(
 	t *testing.T,
 	handler *Handler,

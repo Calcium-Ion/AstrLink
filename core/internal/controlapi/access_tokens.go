@@ -20,7 +20,6 @@ type accessTokenResponse struct {
 	ID        contract.AccessTokenID `json:"id"`
 	Name      string                 `json:"name"`
 	Hint      string                 `json:"hint"`
-	Source    string                 `json:"source"`
 	CreatedAt time.Time              `json:"created_at"`
 }
 
@@ -170,7 +169,7 @@ func (handler *Handler) deleteAccessToken(
 func accessTokenMetadata(token accesstoken.Token) accessTokenResponse {
 	return accessTokenResponse{
 		ID: token.ID, Name: token.Name, Hint: token.Hint,
-		Source: string(token.Source), CreatedAt: token.CreatedAt,
+		CreatedAt: token.CreatedAt,
 	}
 }
 

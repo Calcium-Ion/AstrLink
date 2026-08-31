@@ -298,8 +298,28 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	if err := database.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 15 {
-		t.Fatalf("schema version = %d, want 15", version)
+	if version != 21 {
+		t.Fatalf("schema version = %d, want 21", version)
+	}
+	var privacyDefaults string
+	if err := database.QueryRow(
+		`SELECT document_json FROM policies WHERE id = 'policy_privacy_default'`,
+	).Scan(&privacyDefaults); err != nil {
+		t.Fatalf("read default privacy policy: %v", err)
+	}
+	for _, required := range []string{
+		`"restore_tool_arguments":true`,
+		`"placeholder_notice":true`,
+		`"domain_suffix"`,
+	} {
+		if !strings.Contains(privacyDefaults, required) {
+			t.Fatalf("upgraded privacy policy lacks %s: %s", required, privacyDefaults)
+		}
+	}
+	var sessionColumns int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('request_records')
+WHERE name IN ('session_id', 'previous_response_id', 'output_response_id', 'input_preview', 'events_json')`).Scan(&sessionColumns); err != nil || sessionColumns != 5 {
+		t.Fatalf("session trajectory columns = %d err=%v", sessionColumns, err)
 	}
 	var requestRecordsTable int
 	if err := database.QueryRow(
@@ -312,6 +332,15 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='services'`,
 	).Scan(&servicesTable); err != nil || servicesTable != 1 {
 		t.Fatalf("services missing after upgrade: count=%d err=%v", servicesTable, err)
+	}
+	var serviceDocument string
+	if err := database.QueryRow(
+		`SELECT document_json FROM services WHERE id = 'endpoint_existing'`,
+	).Scan(&serviceDocument); err != nil {
+		t.Fatalf("read migrated service: %v", err)
+	}
+	if strings.Contains(serviceDocument, `"disabled_models"`) {
+		t.Fatalf("migrated service still has disabled_models: %s", serviceDocument)
 	}
 	var auditTables int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master
@@ -354,6 +383,8 @@ WHERE type = 'table'
 		`"detector":"regex"`,
 		`"local_model_id":null`,
 		`"min_confidence":0.6`,
+		`"regex_source":"builtin"`,
+		`"custom_regex_rules":[]`,
 		`"match":{}`,
 		`"request_action":"redact"`,
 		`"response_action":"allow"`,
@@ -719,5 +750,63 @@ func TestHTTPMetaMigrationPreservesAuditBlobsAndWidensDirection(t *testing.T) {
 		`SELECT http_meta_enabled FROM audit_settings WHERE id = 1`,
 	).Scan(&httpMetaEnabled); err != nil || httpMetaEnabled != 1 {
 		t.Fatalf("http_meta_enabled=%d err=%v, want backfilled 1", httpMetaEnabled, err)
+	}
+}
+
+func TestPassthroughCapabilityModesMergeToNative(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	migrations := DefaultMigrations()
+	throughSixteen, err := New(SQLDatabase{DB: database}, migrations[:16])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := throughSixteen.Up(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO services (id, document_json, created_at, updated_at) VALUES (?, ?, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')`,
+		"service_gateway",
+		`{"id":"service_gateway","name":"gw","kind":"newapi","enabled":true,"capabilities":[{"protocol":"openai.responses","mode":"native","streaming":true},{"protocol":"openai.responses","mode":"delegated","streaming":true},{"protocol":"openai.chat","mode":"delegated","streaming":true}],"http":{"base_url":"https://example.test","auth":{"scheme":"none"}},"created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO routes (id, document_json, created_at, updated_at) VALUES (?, ?, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')`,
+		"route_gateway",
+		`{"id":"route_gateway","name":"gw","priority":0,"match":{"protocol":"openai.chat"},"targets":[{"service_id":"service_gateway","plan_type":"delegated","upstream_protocol":"openai.chat","priority":0}]}`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := New(SQLDatabase{DB: database}, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := latest.Up(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var capabilityCount, delegatedCount int
+	if err := database.QueryRow(
+		`SELECT json_array_length(json_extract(document_json, '$.capabilities')),
+                (SELECT COUNT(*) FROM json_each(document_json, '$.capabilities') WHERE json_extract(value, '$.mode') = 'delegated')
+         FROM services WHERE id = 'service_gateway'`,
+	).Scan(&capabilityCount, &delegatedCount); err != nil {
+		t.Fatal(err)
+	}
+	if capabilityCount != 2 || delegatedCount != 0 {
+		t.Fatalf("capabilities=%d delegated=%d, want 2 native passthrough rows", capabilityCount, delegatedCount)
+	}
+	var delegatedTargets int
+	if err := database.QueryRow(
+		`SELECT (SELECT COUNT(*) FROM json_each(document_json, '$.targets') WHERE json_extract(value, '$.plan_type') = 'delegated')
+         FROM routes WHERE id = 'route_gateway'`,
+	).Scan(&delegatedTargets); err != nil {
+		t.Fatal(err)
+	}
+	if delegatedTargets != 0 {
+		t.Fatalf("delegated route targets=%d, want 0", delegatedTargets)
 	}
 }

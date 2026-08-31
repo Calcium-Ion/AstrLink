@@ -458,6 +458,126 @@ func TestStoreResolverAppliesServiceAllowlistToEffectiveRouteModel(t *testing.T)
 	})
 }
 
+func TestStoreResolverAutoRouteUsesCategoryThenFailOpen(t *testing.T) {
+	auto := contract.Route{
+		ID:       "route_auto",
+		Name:     "auto",
+		Enabled:  true,
+		Priority: 0,
+		Match: contract.RouteMatch{
+			Protocol: contract.ProtocolOpenAIResponses,
+			Model:    contract.AstrLinkAutoModelID,
+		},
+		Selection: &contract.RouteSelection{
+			Mode:       contract.RouteSelectionModeAuto,
+			TaxonomyID: contract.AstrLinkTextClassificationV1,
+		},
+		Categories: []contract.RouteCategory{
+			{
+				CategoryID: "coding",
+				Targets: []contract.RouteTarget{{
+					ServiceID: "endpoint_code", PlanType: contract.PlanTypeNative,
+					UpstreamProtocol: contract.ProtocolOpenAIResponses,
+					UpstreamModel:    "model-code",
+				}},
+			},
+			{
+				CategoryID: "general",
+				Targets: []contract.RouteTarget{{
+					ServiceID: "endpoint_general", PlanType: contract.PlanTypeNative,
+					UpstreamProtocol: contract.ProtocolOpenAIResponses,
+					UpstreamModel:    "model-general",
+				}},
+			},
+		},
+	}
+	resolver, err := NewStoreResolver(resolverStore{
+		endpoints: []contract.Endpoint{
+			resolverEndpoint("endpoint_code", contract.CapabilityModeNative, true, []string{"model-code"}),
+			resolverEndpoint("endpoint_general", contract.CapabilityModeNative, true, []string{"model-general"}),
+		},
+		routes: []contract.Route{auto},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	coded, err := resolver.ResolveCandidates(context.Background(), ResolveRequest{
+		Protocol: contract.ProtocolOpenAIResponses,
+		Model:    contract.AstrLinkAutoModelID,
+		Category: "coding",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(coded) != 1 || coded[0].Endpoint.ID != "endpoint_code" || coded[0].UpstreamModel != "model-code" {
+		t.Fatalf("coding candidates = %#v", coded)
+	}
+
+	fallback, err := resolver.ResolveCandidates(context.Background(), ResolveRequest{
+		Protocol: contract.ProtocolOpenAIResponses,
+		Model:    contract.AstrLinkAutoModelID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fallback) != 2 {
+		t.Fatalf("fail-open candidates = %#v", fallback)
+	}
+
+	sameService := contract.Route{
+		ID:       "route_auto_same",
+		Name:     "auto same service",
+		Enabled:  true,
+		Priority: 0,
+		Match: contract.RouteMatch{
+			Protocol: contract.ProtocolOpenAIResponses,
+			Model:    contract.AstrLinkAutoModelID,
+		},
+		Selection: &contract.RouteSelection{
+			Mode:       contract.RouteSelectionModeAuto,
+			TaxonomyID: contract.AstrLinkTextClassificationV1,
+		},
+		Categories: []contract.RouteCategory{
+			{
+				CategoryID: "coding",
+				Targets: []contract.RouteTarget{{
+					ServiceID: "endpoint_shared", PlanType: contract.PlanTypeNative,
+					UpstreamProtocol: contract.ProtocolOpenAIResponses,
+					UpstreamModel:    "model-code",
+				}},
+			},
+			{
+				CategoryID: "general",
+				Targets: []contract.RouteTarget{{
+					ServiceID: "endpoint_shared", PlanType: contract.PlanTypeNative,
+					UpstreamProtocol: contract.ProtocolOpenAIResponses,
+					UpstreamModel:    "model-general",
+				}},
+			},
+		},
+	}
+	shared, err := NewStoreResolver(resolverStore{
+		endpoints: []contract.Endpoint{
+			resolverEndpoint("endpoint_shared", contract.CapabilityModeNative, true, []string{"model-code", "model-general"}),
+		},
+		routes: []contract.Route{sameService},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, err := shared.ResolveCandidates(context.Background(), ResolveRequest{
+		Protocol: contract.ProtocolOpenAIResponses,
+		Model:    contract.AstrLinkAutoModelID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 2 {
+		t.Fatalf("same-service auto models must stay distinct, got %#v", open)
+	}
+}
+
 func TestStoreResolverRejectsAlphaIneligibleRouteAndRouteReadFailure(t *testing.T) {
 	relayRoute := resolverRoute(
 		"route_relay",

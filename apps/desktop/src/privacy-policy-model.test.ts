@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  defaultPrivacyKindRules,
   isResourceHeavyVariant,
   parsePrivacyDryRunResult,
   parsePrivacyModelCatalog,
@@ -24,9 +25,15 @@ const policy = {
   detector: "regex",
   local_model_id: null,
   min_confidence: 0.6,
+  regex_source: "builtin",
+  custom_regex_rules: [],
   request_action: "redact",
   response_action: "allow",
   response_restore: true,
+  kind_rules: defaultPrivacyKindRules(),
+  allowlist_rules: [{ type: "domain_suffix", value: "github.com" }],
+  restore_tool_arguments: true,
+  placeholder_notice: true,
   match: {},
 } as const;
 const variant = {
@@ -93,6 +100,58 @@ describe("privacy-policy IPC contract", () => {
       policy: localPolicy,
       etag: `"sha256:${"a".repeat(64)}"`,
     });
+
+    const {
+      regex_source: _regexSource,
+      custom_regex_rules: _customRules,
+      ...legacy
+    } = policy;
+    expect(
+      parsePrivacyPolicyPage({ items: [legacy], next_cursor: null }),
+    ).toEqual({
+      items: [{ ...legacy, regex_source: "builtin", custom_regex_rules: [] }],
+      next_cursor: null,
+    });
+  });
+
+  it("parses custom regex rules and rejects model-only kinds", () => {
+    const custom = {
+      ...policy,
+      regex_source: "custom",
+      custom_regex_rules: [
+        { kind: "email", pattern: `(?i)alice@[a-z.]+` },
+      ],
+    } as const;
+    expect(parsePrivacyPolicyRecord({
+      policy: custom,
+      etag: `"sha256:${"a".repeat(64)}"`,
+    }).policy.custom_regex_rules).toEqual(custom.custom_regex_rules);
+
+    expect(() =>
+      parsePrivacyPolicyPage({
+        items: [
+          {
+            ...policy,
+            regex_source: "custom",
+            custom_regex_rules: [],
+          },
+        ],
+        next_cursor: null,
+      }),
+    ).toThrow(/custom regex rules/);
+
+    expect(() =>
+      parsePrivacyPolicyPage({
+        items: [
+          {
+            ...policy,
+            regex_source: "custom",
+            custom_regex_rules: [{ kind: "private_person", pattern: "alice" }],
+          },
+        ],
+        next_cursor: null,
+      }),
+    ).toThrow(/regex detector kind/);
   });
 
   it("strictly parses dry-run results and validates dry-run inputs", () => {
@@ -113,6 +172,7 @@ describe("privacy-policy IPC contract", () => {
         {
           placeholder: "<PRIVATE_EMAIL_7f3a91c04d28be56>",
           kind: "email",
+          style: "token",
           value: "alice@example.com",
         },
       ],
@@ -164,6 +224,95 @@ describe("privacy-policy IPC contract", () => {
         policy: { min_confidence: -0.01 },
       }),
     ).toThrow("between 0 and 1");
+  });
+
+  it("parses kind rules and refuses to unlock a locked placeholder style", () => {
+    const {
+      kind_rules: _kindRules,
+      allowlist_rules: _allowlistRules,
+      ...legacy
+    } = policy;
+    const parsed = parsePrivacyPolicyPage({
+      items: [legacy],
+      next_cursor: null,
+    }).items[0];
+    expect(parsed.kind_rules).toEqual(defaultPrivacyKindRules());
+    expect(parsed.allowlist_rules).toEqual([]);
+
+    for (const kind of ["common_secret", "private_person"] as const) {
+      expect(() =>
+        parsePrivacyPolicyPage({
+          items: [
+            {
+              ...policy,
+              kind_rules: [{ kind, enabled: true, style: "natural" }],
+            },
+          ],
+          next_cursor: null,
+        }),
+      ).toThrow("token placeholder style");
+    }
+
+    expect(() =>
+      parsePrivacyPolicyPage({
+        items: [
+          {
+            ...policy,
+            kind_rules: [
+              { kind: "email", enabled: true, style: "natural" },
+              { kind: "email", enabled: false, style: "token" },
+            ],
+          },
+        ],
+        next_cursor: null,
+      }),
+    ).toThrow("duplicate kind rule");
+
+    expect(() =>
+      parsePrivacyPolicyPage({
+        items: [
+          { ...policy, allowlist_rules: [{ type: "regex", value: "x" }] },
+        ],
+        next_cursor: null,
+      }),
+    ).toThrow("unknown allowlist type");
+  });
+
+  it("carries kind rules, allowlist, and restore flags through a dry-run patch", () => {
+    const patch = {
+      kind_rules: [{ kind: "email", enabled: true, style: "token" }] as const,
+      allowlist_rules: [
+        { type: "domain_suffix", value: "github.com" },
+      ] as const,
+      restore_tool_arguments: false,
+      placeholder_notice: false,
+    };
+    expect(
+      validatePrivacyDryRunInput({
+        protocol: "openai.chat",
+        sample_text: "hello",
+        policy: {
+          kind_rules: [...patch.kind_rules],
+          allowlist_rules: [...patch.allowlist_rules],
+          restore_tool_arguments: patch.restore_tool_arguments,
+          placeholder_notice: patch.placeholder_notice,
+        },
+      }).policy,
+    ).toEqual({
+      kind_rules: [...patch.kind_rules],
+      allowlist_rules: [...patch.allowlist_rules],
+      restore_tool_arguments: false,
+      placeholder_notice: false,
+    });
+    expect(() =>
+      validatePrivacyDryRunInput({
+        protocol: "openai.chat",
+        sample_text: "hello",
+        policy: {
+          kind_rules: [{ kind: "common_secret", enabled: true, style: "natural" }],
+        },
+      }),
+    ).toThrow("token placeholder style");
   });
 
   it("rejects policy drift and unknown detectors", () => {

@@ -2,14 +2,13 @@ use std::{
     collections::HashSet,
     fmt::Write as _,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 
-#[cfg(target_os = "linux")]
-use std::path::PathBuf;
-
+use crate::control_session;
+use crate::i18n::{self, Locale};
 use reqwest::{header, Client, Method};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -25,6 +24,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(12);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 const STOP_POLL_DELAY: Duration = Duration::from_millis(25);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const REQUEST_LIST_TIMEOUT: Duration = Duration::from_secs(8);
+const SUBSCRIPTION_USAGE_TIMEOUT: Duration = Duration::from_secs(20);
 const SERVICE_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(65);
 // Policy changes may synchronously stop a worker for up to five seconds, and
 // model deletion also waits for download cancellation and filesystem cleanup.
@@ -49,10 +50,37 @@ const PRIVACY_MODEL_CATALOG_PATH: &str = "/control/v1/privacy-model-catalog";
 const PRIVACY_MODELS_PATH: &str = "/control/v1/privacy-models";
 const PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/probe";
 const LOCAL_PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/local/probe";
+const PRIVACY_REGEX_BUILTIN_RULES_PATH: &str = "/control/v1/privacy/regex-builtin-rules";
 const POLICY_DRY_RUN_PATH: &str = "/control/v1/policies/policy_privacy_default/dry-run";
 const ROUTES_PATH: &str = "/control/v1/routes";
 const SERVICES_PATH: &str = "/control/v1/services";
 const SERVICE_MODEL_PROBES_PATH: &str = "/control/v1/service-model-probes";
+// Every kind a detector may emit. The Regex detector emits the first seven and
+// the local model adds the rest.
+const PRIVACY_KINDS: &[&str] = &[
+    "common_secret",
+    "payment_card",
+    "account",
+    "email",
+    "phone",
+    "url",
+    "ip_address",
+    "private_person",
+    "private_address",
+    "private_date",
+];
+// Kinds whose placeholder shape is a safety property rather than a preference:
+// a credential dressed up as a usable-looking key invites the model to call an
+// API with it, and the person, address, and date kinds have no reserved
+// namespace to draw a stand-in from that cannot collide with a real one.
+const PLACEHOLDER_STYLE_LOCKED_KINDS: &[&str] = &[
+    "common_secret",
+    "private_person",
+    "private_address",
+    "private_date",
+];
+const MAX_PRIVACY_ALLOWLIST_RULES: usize = 128;
+const MAX_PRIVACY_ALLOWLIST_VALUE_CHARS: usize = 256;
 #[cfg(target_os = "linux")]
 const LINUX_ONNX_RUNTIME_PATH_ENV: &str = "ASTRLINK_ONNX_RUNTIME_PATH";
 #[cfg(target_os = "linux")]
@@ -193,6 +221,7 @@ fn sidecar_args(
     parent_pid: u32,
     data_directory: &Path,
     inference_port: u16,
+    max_concurrent_inspections: u16,
 ) -> Result<Vec<String>, String> {
     let data_directory = data_directory
         .to_str()
@@ -207,18 +236,24 @@ fn sidecar_args(
         "--control-listen".to_string(),
         "127.0.0.1:0".to_string(),
         "--control-token-stdin".to_string(),
+        "--max-concurrent-inspections".to_string(),
+        max_concurrent_inspections.to_string(),
     ])
 }
 
-fn ensure_inference_port_available(port: u16) -> Result<(), String> {
+fn ensure_inference_port_available(port: u16, locale: Locale) -> Result<(), String> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     TcpListener::bind(address)
         .map(drop)
-        .map_err(|error| inference_port_error(port, &error))
+        .map_err(|error| inference_port_error(port, &error, locale))
 }
 
-fn inference_port_error(port: u16, error: &std::io::Error) -> String {
-    format!("推理端口 {port} 已被占用或不可用：{error}")
+fn inference_port_error(port: u16, error: &std::io::Error, locale: Locale) -> String {
+    i18n::t(
+        locale,
+        "host.sidecar.portBusy",
+        &[("port", &port.to_string()), ("error", &error.to_string())],
+    )
 }
 
 fn recovery_delay(attempt: u8) -> Duration {
@@ -228,6 +263,35 @@ fn recovery_delay(attempt: u8) -> Duration {
 #[cfg(target_os = "linux")]
 fn linux_onnx_runtime_path(resource_directory: &Path) -> PathBuf {
     resource_directory.join(LINUX_ONNX_RUNTIME_RESOURCE)
+}
+
+fn publish_control_session_from_inner(inner: &CoreInner) {
+    let Ok(home) = control_session::user_home() else {
+        return;
+    };
+    let Some(data_directory) = inner.data_directory.as_ref() else {
+        return;
+    };
+    let Some(ready) = inner.ready.as_ref() else {
+        return;
+    };
+    if let Err(error) = control_session::publish_control_session(
+        &home,
+        data_directory,
+        &ready.control_url,
+        inner.control_token.as_deref(),
+        inner.pid,
+    ) {
+        eprintln!("unable to publish AstrLink control session: {error}");
+    }
+}
+
+fn clear_published_control_session() {
+    if let Ok(home) = control_session::user_home() {
+        if let Err(error) = control_session::clear_control_session(&home) {
+            eprintln!("unable to clear AstrLink control session: {error}");
+        }
+    }
 }
 
 fn generate_control_token() -> Result<String, String> {
@@ -330,9 +394,12 @@ struct CoreInner {
     last_error: Option<String>,
     app_handle: Option<AppHandle>,
     inference_port: u16,
+    max_concurrent_inspections: u16,
+    locale: Locale,
     auto_recover: bool,
     recovery_attempt: u8,
     recovery_scheduled_at: Option<Instant>,
+    data_directory: Option<PathBuf>,
     #[cfg(windows)]
     job: Option<windows_job::JobObject>,
 }
@@ -352,9 +419,12 @@ impl Default for CoreInner {
             last_error: None,
             app_handle: None,
             inference_port: 8317,
+            max_concurrent_inspections: 16,
+            locale: Locale::En,
             auto_recover: true,
             recovery_attempt: 0,
             recovery_scheduled_at: None,
+            data_directory: None,
             #[cfg(windows)]
             job: None,
         }
@@ -450,6 +520,7 @@ impl CoreManager {
             inner.clear_handshake();
             inner.last_error = None;
             inner.clear_process_guard();
+            clear_published_control_session();
             let generation = inner.generation;
             let data_directory = match app.path().app_data_dir() {
                 Ok(path) => path,
@@ -459,6 +530,7 @@ impl CoreManager {
                     return Err(message);
                 }
             };
+            inner.data_directory = Some(data_directory.clone());
             let control_token = match generate_control_token() {
                 Ok(token) => token,
                 Err(message) => {
@@ -466,15 +538,21 @@ impl CoreManager {
                     return Err(message);
                 }
             };
-            let arguments =
-                match sidecar_args(std::process::id(), &data_directory, inner.inference_port) {
-                    Ok(arguments) => arguments,
-                    Err(message) => {
-                        Self::fail_generation_locked(&mut inner, generation, message.clone());
-                        return Err(message);
-                    }
-                };
-            if let Err(message) = ensure_inference_port_available(inner.inference_port) {
+            let arguments = match sidecar_args(
+                std::process::id(),
+                &data_directory,
+                inner.inference_port,
+                inner.max_concurrent_inspections,
+            ) {
+                Ok(arguments) => arguments,
+                Err(message) => {
+                    Self::fail_generation_locked(&mut inner, generation, message.clone());
+                    return Err(message);
+                }
+            };
+            if let Err(message) =
+                ensure_inference_port_available(inner.inference_port, inner.locale)
+            {
                 Self::fail_generation_locked(&mut inner, generation, message.clone());
                 return Err(message);
             }
@@ -609,9 +687,17 @@ impl CoreManager {
         Ok(())
     }
 
-    pub fn configure(&self, inference_port: u16, auto_recover: bool) {
+    pub fn configure(
+        &self,
+        inference_port: u16,
+        max_concurrent_inspections: u16,
+        auto_recover: bool,
+        locale: Locale,
+    ) {
         let mut inner = self.lock_inner();
         inner.inference_port = inference_port;
+        inner.max_concurrent_inspections = max_concurrent_inspections;
+        inner.locale = locale;
         inner.auto_recover = auto_recover;
         if !auto_recover {
             inner.recovery_scheduled_at = None;
@@ -896,6 +982,7 @@ impl CoreManager {
                 inner.capabilities = Some(capabilities);
                 inner.phase = CorePhase::Ready;
                 inner.last_error = None;
+                publish_control_session_from_inner(&inner);
                 let stable = Arc::clone(self);
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(RECOVERY_STABILITY_THRESHOLD).await;
@@ -1153,6 +1240,13 @@ impl CoreManager {
         parse_privacy_dry_run_result(&body)
     }
 
+    pub async fn get_privacy_regex_builtin_rules(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, PRIVACY_REGEX_BUILTIN_RULES_PATH, None, None)
+            .await?;
+        parse_privacy_regex_builtin_rules(&body)
+    }
+
     pub async fn get_privacy_model_catalog(&self) -> Result<serde_json::Value, String> {
         let (_, body) = self
             .authenticated_control(Method::GET, PRIVACY_MODEL_CATALOG_PATH, None, None)
@@ -1291,6 +1385,32 @@ impl CoreManager {
         Ok(())
     }
 
+    pub async fn get_service_usage(&self, service_id: &str) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let path = format!("{SERVICES_PATH}/{service_id}/usage");
+        let (_, body) = self
+            .authenticated_control(Method::GET, &path, None, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|error| {
+            let message = format!("service usage returned invalid JSON: {error}");
+            eprintln!("astrlink: GET {path} failed: {message}");
+            message
+        })
+    }
+
+    pub async fn reset_service_usage(&self, service_id: &str) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let path = format!("{SERVICES_PATH}/{service_id}/usage/reset");
+        let (_, body) = self
+            .authenticated_control(Method::POST, &path, None, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|error| {
+            let message = format!("service usage reset returned invalid JSON: {error}");
+            eprintln!("astrlink: POST {path} failed: {message}");
+            message
+        })
+    }
+
     pub async fn probe_service_models(
         &self,
         service_id: &str,
@@ -1413,6 +1533,37 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("request record list returned invalid JSON: {error}"))
+    }
+
+    pub async fn list_request_sessions(
+        &self,
+        query: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let qs = build_request_record_query(&query)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/request-sessions{qs}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request session list returned invalid JSON: {error}"))
+    }
+
+    pub async fn get_request_session(&self, session_id: &str) -> Result<serde_json::Value, String> {
+        validate_resource_id(session_id)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/request-sessions/{session_id}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request session returned invalid JSON: {error}"))
     }
 
     pub async fn get_request_record(&self, request_id: &str) -> Result<serde_json::Value, String> {
@@ -1556,7 +1707,7 @@ impl CoreManager {
         let (base_url, control_token) = {
             let inner = self.lock_inner();
             if inner.phase != CorePhase::Ready {
-                return Err("Core is not ready for authenticated control operations".to_string());
+                return Err(i18n::t(inner.locale, "host.sidecar.notReady", &[]));
             }
             let base_url = inner
                 .ready
@@ -1571,17 +1722,68 @@ impl CoreManager {
         };
 
         let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+        let encoded_body = match body {
+            Some(value) => Some(
+                serde_json::to_vec(&value)
+                    .map_err(|error| format!("unable to encode control request: {error}"))?,
+            ),
+            None => None,
+        };
+        let timeout = control_request_timeout(&method, path);
+        let mut last_error = None;
+        for attempt in 0..2 {
+            match self
+                .dispatch_control_request(
+                    method.clone(),
+                    &url,
+                    path,
+                    encoded_body.as_deref(),
+                    if_match,
+                    &control_token,
+                    timeout,
+                )
+                .await
+            {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if attempt == 0 && is_control_transport_error(&error) {
+                        last_error = Some(error);
+                        continue;
+                    }
+                    eprintln!("astrlink: {} {path} failed: {error}", method.as_str());
+                    return Err(error);
+                }
+            }
+        }
+        let error = last_error.unwrap_or_else(|| {
+            format!(
+                "{} {path} failed: control request retry exhausted",
+                method.as_str()
+            )
+        });
+        eprintln!("astrlink: {} {path} failed: {error}", method.as_str());
+        Err(error)
+    }
+
+    async fn dispatch_control_request(
+        &self,
+        method: Method,
+        url: &str,
+        path: &str,
+        encoded_body: Option<&[u8]>,
+        if_match: Option<&str>,
+        control_token: &str,
+        timeout: Duration,
+    ) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), String> {
         let mut request = self
             .client
-            .request(method.clone(), &url)
-            .timeout(control_request_timeout(&method, path))
+            .request(method.clone(), url)
+            .timeout(timeout)
             .header(header::AUTHORIZATION, format!("Bearer {control_token}"));
         if let Some(etag) = if_match {
             request = request.header(header::IF_MATCH, etag);
         }
-        if let Some(body) = body {
-            let encoded = serde_json::to_vec(&body)
-                .map_err(|error| format!("unable to encode control request: {error}"))?;
+        if let Some(body) = encoded_body {
             let content_type = if method == Method::PATCH {
                 "application/merge-patch+json"
             } else {
@@ -1589,7 +1791,7 @@ impl CoreManager {
             };
             request = request
                 .header(header::CONTENT_TYPE, content_type)
-                .body(encoded);
+                .body(body.to_vec());
         }
         let response = request
             .send()
@@ -1643,6 +1845,7 @@ impl CoreManager {
         inner.apply_lifecycle(next);
         inner.clear_handshake();
         inner.clear_process_guard();
+        clear_published_control_session();
         let should_recover = inner.phase != CorePhase::Stopped && inner.auto_recover;
         drop(inner);
         if should_recover {
@@ -1658,10 +1861,15 @@ impl CoreManager {
             }
             if inner.recovery_attempt >= MAX_RECOVERY_ATTEMPTS {
                 inner.recovery_scheduled_at = None;
-                inner.last_error = Some(format!(
-                    "{}；自动恢复已在 {} 次尝试后停止。",
-                    inner.last_error.as_deref().unwrap_or("Core 异常退出"),
-                    MAX_RECOVERY_ATTEMPTS
+                let fallback = i18n::t(inner.locale, "host.sidecar.exited", &[]);
+                let message = inner.last_error.as_deref().unwrap_or(&fallback).to_string();
+                inner.last_error = Some(i18n::t(
+                    inner.locale,
+                    "host.sidecar.recoveryStopped",
+                    &[
+                        ("message", &message),
+                        ("attempts", &MAX_RECOVERY_ATTEMPTS.to_string()),
+                    ],
                 ));
                 return;
             }
@@ -1688,7 +1896,11 @@ impl CoreManager {
             if let Err(error) = manager.start(&app) {
                 {
                     let mut inner = manager.lock_inner();
-                    inner.last_error = Some(format!("Core 自动恢复失败：{error}"));
+                    inner.last_error = Some(i18n::t(
+                        inner.locale,
+                        "host.sidecar.recoveryFailed",
+                        &[("error", &error)],
+                    ));
                 }
                 manager.schedule_recovery();
             }
@@ -1711,6 +1923,7 @@ impl CoreManager {
             inner.apply_lifecycle(next);
             inner.clear_handshake();
             inner.clear_process_guard();
+            clear_published_control_session();
             return;
         }
 
@@ -1725,6 +1938,7 @@ impl CoreManager {
             inner.clear_handshake();
             inner.last_error = Some(message);
             inner.clear_process_guard();
+            clear_published_control_session();
         }
     }
 
@@ -1746,6 +1960,7 @@ impl CoreManager {
 
     fn fail_generation_and_stop_locked(inner: &mut CoreInner, generation: u64, message: String) {
         inner.clear_handshake();
+        clear_published_control_session();
         let next = match inner.child.take() {
             Some(child) => match child.kill() {
                 Ok(()) => {
@@ -1781,7 +1996,37 @@ impl CoreManager {
     }
 }
 
+fn control_path(path: &str) -> &str {
+    path.split_once('?').map(|(head, _)| head).unwrap_or(path)
+}
+
+fn is_control_transport_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("error sending request")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("connection refused")
+}
+
+fn is_subscription_usage_path(path: &str) -> bool {
+    path.starts_with(&format!("{SERVICES_PATH}/"))
+        && (path.ends_with("/usage") || path.ends_with("/usage/reset"))
+}
+
+fn is_request_record_list_path(path: &str) -> bool {
+    if path.starts_with("/control/v1/requests/") && path.ends_with("/audit") {
+        return false;
+    }
+    path == "/control/v1/requests"
+        || path.starts_with("/control/v1/requests/")
+        || path == "/control/v1/request-sessions"
+        || path.starts_with("/control/v1/request-sessions/")
+}
+
 fn control_request_timeout(method: &Method, path: &str) -> Duration {
+    let path = control_path(path);
     if method == Method::POST
         && (path == SERVICE_MODEL_PROBES_PATH
             || (path.starts_with(&format!("{SERVICES_PATH}/")) && path.ends_with("/probe-models")))
@@ -1808,6 +2053,12 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
         && path.ends_with("/audit")
     {
         return AUDIT_CONTENT_TIMEOUT;
+    }
+    if (*method == Method::GET || *method == Method::POST) && is_subscription_usage_path(path) {
+        return SUBSCRIPTION_USAGE_TIMEOUT;
+    }
+    if *method == Method::GET && is_request_record_list_path(path) {
+        return REQUEST_LIST_TIMEOUT;
     }
     REQUEST_TIMEOUT
 }
@@ -2143,37 +2394,67 @@ fn policy_record(etag: Option<String>, body: &[u8]) -> Result<PolicyRecordRespon
 }
 
 fn parse_privacy_policy_page(body: &[u8]) -> Result<serde_json::Value, String> {
-    let page: serde_json::Value = serde_json::from_slice(body)
+    let mut page: serde_json::Value = serde_json::from_slice(body)
         .map_err(|error| format!("policy list returned invalid JSON: {error}"))?;
     validate_exact_object_keys(&page, &["items", "next_cursor"], "policy list")?;
     let object = page
-        .as_object()
+        .as_object_mut()
         .ok_or_else(|| "policy list must be an object".to_string())?;
-    let items = object["items"]
-        .as_array()
+    if object.get("next_cursor") != Some(&serde_json::Value::Null) {
+        return Err("policy list next_cursor must be null".to_string());
+    }
+    let items = object
+        .get_mut("items")
+        .and_then(|value| value.as_array_mut())
         .ok_or_else(|| "policy list items must be an array".to_string())?;
     if items.len() != 1 {
         return Err("policy list must contain the singleton privacy policy".to_string());
     }
-    if object["next_cursor"] != serde_json::Value::Null {
-        return Err("policy list next_cursor must be null".to_string());
-    }
-    for item in items {
+    for item in items.iter_mut() {
+        normalize_privacy_policy_defaults(item)?;
         validate_privacy_policy_value(item)?;
     }
     Ok(page)
 }
 
 fn parse_privacy_policy(body: &[u8]) -> Result<serde_json::Value, String> {
-    let policy: serde_json::Value = serde_json::from_slice(body)
+    let mut policy: serde_json::Value = serde_json::from_slice(body)
         .map_err(|error| format!("policy response returned invalid JSON: {error}"))?;
+    normalize_privacy_policy_defaults(&mut policy)?;
     validate_privacy_policy_value(&policy)?;
     Ok(policy)
 }
 
+fn normalize_privacy_policy_defaults(policy: &mut serde_json::Value) -> Result<(), String> {
+    let object = policy
+        .as_object_mut()
+        .ok_or_else(|| "privacy policy must be an object".to_string())?;
+    if !object.contains_key("regex_source") {
+        object.insert(
+            "regex_source".to_string(),
+            serde_json::Value::String("builtin".to_string()),
+        );
+    }
+    if !object.contains_key("custom_regex_rules") {
+        object.insert(
+            "custom_regex_rules".to_string(),
+            serde_json::Value::Array(Vec::new()),
+        );
+    }
+    Ok(())
+}
+
 fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), String> {
-    validate_exact_object_keys(
-        policy,
+    let object = policy
+        .as_object()
+        .ok_or_else(|| "privacy policy must be an object".to_string())?;
+    // The per-kind, allowlist, and restore-scope fields are optional on the wire
+    // so a Core predating them still parses; the interface falls back to the same
+    // defaults Core would have applied. The required fields are indexed directly
+    // below, and normalize_privacy_policy_defaults has already filled the two
+    // regex fields a legacy Core omits.
+    validate_allowed_object_keys(
+        object,
         &[
             "id",
             "name",
@@ -2182,6 +2463,27 @@ fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), Strin
             "detector",
             "local_model_id",
             "min_confidence",
+            "regex_source",
+            "custom_regex_rules",
+            "kind_rules",
+            "allowlist_rules",
+            "match",
+            "request_action",
+            "response_action",
+            "response_restore",
+            "restore_tool_arguments",
+            "placeholder_notice",
+        ],
+        &[
+            "id",
+            "name",
+            "enabled",
+            "priority",
+            "detector",
+            "local_model_id",
+            "min_confidence",
+            "regex_source",
+            "custom_regex_rules",
             "match",
             "request_action",
             "response_action",
@@ -2189,9 +2491,6 @@ fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), Strin
         ],
         "privacy policy",
     )?;
-    let object = policy
-        .as_object()
-        .ok_or_else(|| "privacy policy must be an object".to_string())?;
     if object["id"] != "policy_privacy_default"
         || object["name"] != "隐私保护"
         || object["priority"] != 0
@@ -2218,12 +2517,116 @@ fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), Strin
         (Some("regex"), None) | (Some("local_model"), Some(_)) => {}
         _ => return Err("privacy policy detector and local_model_id are inconsistent".to_string()),
     }
+    validate_privacy_regex_source(&object["regex_source"])?;
+    validate_privacy_custom_regex_rules(&object["custom_regex_rules"])?;
+    if object["detector"] == "regex"
+        && object["regex_source"] == "custom"
+        && object["custom_regex_rules"]
+            .as_array()
+            .map(|rules| rules.is_empty())
+            .unwrap_or(true)
+    {
+        return Err(
+            "privacy policy custom_regex_rules must contain at least one rule when regex_source is custom"
+                .to_string(),
+        );
+    }
     validate_privacy_action(&object["request_action"])?;
     validate_privacy_action(&object["response_action"])?;
     if object["response_action"] != "allow" {
         return Err("privacy policy response_action must remain allow".to_string());
     }
+    if let Some(kind_rules) = object.get("kind_rules") {
+        validate_privacy_kind_rules(kind_rules)?;
+    }
+    if let Some(allowlist_rules) = object.get("allowlist_rules") {
+        validate_privacy_allowlist_rules(allowlist_rules)?;
+    }
+    for field in ["restore_tool_arguments", "placeholder_notice"] {
+        if let Some(value) = object.get(field) {
+            if !value.is_boolean() {
+                return Err(format!("privacy policy {field} must be a boolean"));
+            }
+        }
+    }
     validate_exact_object_keys(&object["match"], &[], "privacy policy match")?;
+    Ok(())
+}
+
+fn validate_privacy_kind_rules(value: &serde_json::Value) -> Result<(), String> {
+    let rules = value
+        .as_array()
+        .ok_or_else(|| "privacy policy kind_rules must be an array".to_string())?;
+    if rules.len() > PRIVACY_KINDS.len() {
+        return Err("privacy policy kind_rules must hold at most one rule per kind".to_string());
+    }
+    let mut kinds = HashSet::new();
+    for (index, rule) in rules.iter().enumerate() {
+        let context = format!("privacy policy kind rule {index}");
+        validate_exact_object_keys(rule, &["kind", "enabled", "style"], &context)?;
+        let object = rule
+            .as_object()
+            .ok_or_else(|| format!("{context} must be an object"))?;
+        let kind = object["kind"]
+            .as_str()
+            .ok_or_else(|| format!("{context} kind must be a string"))?;
+        if !PRIVACY_KINDS.contains(&kind) {
+            return Err(format!("{context} kind is unknown"));
+        }
+        if !kinds.insert(kind) {
+            return Err(format!("{context} repeats kind {kind}"));
+        }
+        if !object["enabled"].is_boolean() {
+            return Err(format!("{context} enabled must be a boolean"));
+        }
+        let style = object["style"]
+            .as_str()
+            .ok_or_else(|| format!("{context} style must be a string"))?;
+        if style != "natural" && style != "token" {
+            return Err(format!("{context} style must be natural or token"));
+        }
+        if PLACEHOLDER_STYLE_LOCKED_KINDS.contains(&kind) && style != "token" {
+            return Err(format!("{context} must keep the token placeholder style"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_privacy_allowlist_rules(value: &serde_json::Value) -> Result<(), String> {
+    let rules = value
+        .as_array()
+        .ok_or_else(|| "privacy policy allowlist_rules must be an array".to_string())?;
+    if rules.len() > MAX_PRIVACY_ALLOWLIST_RULES {
+        return Err(format!(
+            "privacy policy allowlist_rules must contain at most {MAX_PRIVACY_ALLOWLIST_RULES} rules"
+        ));
+    }
+    for (index, rule) in rules.iter().enumerate() {
+        let context = format!("privacy policy allowlist rule {index}");
+        validate_exact_object_keys(rule, &["type", "value"], &context)?;
+        let object = rule
+            .as_object()
+            .ok_or_else(|| format!("{context} must be an object"))?;
+        let rule_type = object["type"]
+            .as_str()
+            .ok_or_else(|| format!("{context} type must be a string"))?;
+        match rule_type {
+            // The grammar of a CIDR block is Core's to enforce, so that the
+            // interface has one definition of a valid range rather than two that
+            // can disagree about which addresses an operator exempted.
+            "literal" | "domain_suffix" | "cidr" => {}
+            _ => return Err(format!("{context} type is unknown")),
+        }
+        let text = object["value"]
+            .as_str()
+            .ok_or_else(|| format!("{context} value must be a string"))?;
+        let length = text.chars().count();
+        if !(1..=MAX_PRIVACY_ALLOWLIST_VALUE_CHARS).contains(&length) {
+            return Err(format!(
+                "{context} value must contain 1 to {MAX_PRIVACY_ALLOWLIST_VALUE_CHARS} characters"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -2249,13 +2652,27 @@ fn validate_privacy_policy_patch(patch: serde_json::Value) -> Result<serde_json:
             "min_confidence" => {
                 validate_privacy_confidence(value, "privacy policy min_confidence patch")?
             }
+            "regex_source" => validate_privacy_regex_source(value)?,
+            "custom_regex_rules" => validate_privacy_custom_regex_rules(value)?,
+            "kind_rules" => validate_privacy_kind_rules(value)?,
+            "allowlist_rules" => validate_privacy_allowlist_rules(value)?,
             "request_action" => validate_privacy_action(value)?,
             "response_restore" if value.is_boolean() => {}
+            "restore_tool_arguments" if value.is_boolean() => {}
+            "placeholder_notice" if value.is_boolean() => {}
             "enabled" => {
                 return Err("privacy policy enabled patch must be a boolean".to_string());
             }
             "response_restore" => {
                 return Err("privacy policy response_restore patch must be a boolean".to_string());
+            }
+            "restore_tool_arguments" => {
+                return Err(
+                    "privacy policy restore_tool_arguments patch must be a boolean".to_string(),
+                );
+            }
+            "placeholder_notice" => {
+                return Err("privacy policy placeholder_notice patch must be a boolean".to_string());
             }
             _ => {
                 return Err(format!(
@@ -2265,6 +2682,62 @@ fn validate_privacy_policy_patch(patch: serde_json::Value) -> Result<serde_json:
         }
     }
     Ok(patch)
+}
+
+fn validate_privacy_regex_source(value: &serde_json::Value) -> Result<(), String> {
+    match value.as_str() {
+        Some("builtin") | Some("custom") => Ok(()),
+        _ => Err("privacy policy regex_source must be builtin or custom".to_string()),
+    }
+}
+
+fn validate_privacy_custom_regex_rules(value: &serde_json::Value) -> Result<(), String> {
+    let rules = value
+        .as_array()
+        .ok_or_else(|| "privacy policy custom_regex_rules must be an array".to_string())?;
+    if rules.len() > 64 {
+        return Err("privacy policy custom_regex_rules must contain at most 64 rules".to_string());
+    }
+    for (index, rule) in rules.iter().enumerate() {
+        validate_exact_object_keys(
+            rule,
+            &["kind", "pattern"],
+            &format!("custom regex rule {index}"),
+        )?;
+        let object = rule
+            .as_object()
+            .ok_or_else(|| format!("custom regex rule {index} must be an object"))?;
+        let kind = object["kind"]
+            .as_str()
+            .ok_or_else(|| format!("custom regex rule {index} kind must be a string"))?;
+        match kind {
+            "email" | "phone" | "account" | "payment_card" | "ip_address" | "url"
+            | "common_secret" => {}
+            _ => {
+                return Err(format!(
+                    "custom regex rule {index} kind is not a Regex detector kind"
+                ));
+            }
+        }
+        let pattern = object["pattern"]
+            .as_str()
+            .ok_or_else(|| format!("custom regex rule {index} pattern must be a string"))?;
+        let length = pattern.chars().count();
+        if !(1..=512).contains(&length) {
+            return Err(format!(
+                "custom regex rule {index} pattern must contain 1 to 512 characters"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_privacy_regex_builtin_rules(body: &[u8]) -> Result<serde_json::Value, String> {
+    let response: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| format!("regex builtin rules returned invalid JSON: {error}"))?;
+    validate_exact_object_keys(&response, &["rules"], "regex builtin rules")?;
+    validate_privacy_custom_regex_rules(&response["rules"])?;
+    Ok(response)
 }
 
 fn validate_privacy_dry_run_input(input: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -2368,14 +2841,18 @@ fn parse_privacy_dry_run_result(body: &[u8]) -> Result<serde_json::Value, String
             return Err("privacy policy dry-run redactions exceed the limit".to_string());
         }
         for redaction in redactions {
-            validate_exact_object_keys(
-                redaction,
-                &["placeholder", "kind", "value"],
-                "privacy policy dry-run redaction",
-            )?;
             let redaction = redaction
                 .as_object()
                 .ok_or_else(|| "privacy policy dry-run redaction must be an object".to_string())?;
+            validate_allowed_object_keys(
+                redaction,
+                &["placeholder", "kind", "value", "style"],
+                &["placeholder", "kind", "value"],
+                "privacy policy dry-run redaction",
+            )?;
+            if let Some(style) = redaction.get("style") {
+                validate_privacy_placeholder_style(style)?;
+            }
             if redaction["placeholder"]
                 .as_str()
                 .filter(|placeholder| !placeholder.is_empty())
@@ -2403,14 +2880,18 @@ fn parse_privacy_dry_run_result(body: &[u8]) -> Result<serde_json::Value, String
             return Err(format!("privacy policy dry-run {field} exceed the limit"));
         }
         for finding in findings {
-            validate_exact_object_keys(
-                finding,
-                &["kind", "path", "start", "end", "confidence"],
-                "privacy policy dry-run finding",
-            )?;
             let finding = finding
                 .as_object()
                 .ok_or_else(|| "privacy policy dry-run finding must be an object".to_string())?;
+            validate_allowed_object_keys(
+                finding,
+                &["kind", "path", "start", "end", "confidence", "reason"],
+                &["kind", "path", "start", "end", "confidence"],
+                "privacy policy dry-run finding",
+            )?;
+            if let Some(reason) = finding.get("reason") {
+                validate_privacy_suppression_reason(reason)?;
+            }
             let kind = finding["kind"].as_str().ok_or_else(|| {
                 "privacy policy dry-run finding kind must be a string".to_string()
             })?;
@@ -2445,10 +2926,25 @@ fn parse_privacy_dry_run_result(body: &[u8]) -> Result<serde_json::Value, String
 }
 
 fn validate_privacy_dry_run_kind(kind: &str) -> Result<(), String> {
-    match kind {
-        "email" | "phone" | "account" | "payment_card" | "ip_address" | "url" | "common_secret"
-        | "private_address" | "private_date" | "private_person" => Ok(()),
-        _ => Err("privacy policy dry-run kind is unknown".to_string()),
+    if PRIVACY_KINDS.contains(&kind) {
+        return Ok(());
+    }
+    Err("privacy policy dry-run kind is unknown".to_string())
+}
+
+fn validate_privacy_suppression_reason(value: &serde_json::Value) -> Result<(), String> {
+    match value.as_str() {
+        Some(
+            "low_confidence" | "kind_disabled" | "allowlisted" | "placeholder" | "unrepresentable",
+        ) => Ok(()),
+        _ => Err("privacy policy dry-run finding reason is unknown".to_string()),
+    }
+}
+
+fn validate_privacy_placeholder_style(value: &serde_json::Value) -> Result<(), String> {
+    match value.as_str() {
+        Some("natural" | "token") => Ok(()),
+        _ => Err("privacy policy placeholder style must be natural or token".to_string()),
     }
 }
 
@@ -3530,6 +4026,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     let mut to: Option<&str> = None;
     let mut protocol: Option<&str> = None;
     let mut service_id: Option<&str> = None;
+    let mut local_access_token_id: Option<&str> = None;
     let mut status: Option<&str> = None;
 
     for (key, value) in object {
@@ -3599,6 +4096,13 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                 validate_resource_id(text)?;
                 service_id = Some(text);
             }
+            "local_access_token_id" => {
+                let text = value.as_str().ok_or_else(|| {
+                    "request record query local_access_token_id must be a string".to_string()
+                })?;
+                validate_resource_id(text)?;
+                local_access_token_id = Some(text);
+            }
             "status" => {
                 let text = value
                     .as_str()
@@ -3634,6 +4138,12 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     }
     if let Some(value) = service_id {
         pairs.push(format!("service_id={}", percent_encode_query(value)));
+    }
+    if let Some(value) = local_access_token_id {
+        pairs.push(format!(
+            "local_access_token_id={}",
+            percent_encode_query(value)
+        ));
     }
     if let Some(value) = status {
         pairs.push(format!("status={}", percent_encode_query(value)));
@@ -4174,6 +4684,34 @@ mod tests {
             ),
             AUDIT_CONTENT_TIMEOUT
         );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/request-sessions?limit=50"),
+            REQUEST_LIST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/requests?limit=200"),
+            REQUEST_LIST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(
+                &Method::GET,
+                "/control/v1/services/service_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/usage"
+            ),
+            SUBSCRIPTION_USAGE_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(
+                &Method::POST,
+                "/control/v1/services/service_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/usage/reset"
+            ),
+            SUBSCRIPTION_USAGE_TIMEOUT
+        );
+        assert!(is_control_transport_error(
+            "GET /control/v1/request-sessions failed: error sending request for url (http://127.0.0.1:1/control/v1/request-sessions)"
+        ));
+        assert!(!is_control_transport_error(
+            "GET /control/v1/request-sessions returned 500 Internal Server Error"
+        ));
         assert!(PRIVACY_MUTATION_TIMEOUT >= Duration::from_secs(10));
         assert!(PRIVACY_MODEL_METADATA_TIMEOUT >= Duration::from_secs(5 * 60));
         assert!(READY_TIMEOUT >= Duration::from_secs(120));
@@ -4200,6 +4738,7 @@ mod tests {
             build_request_record_query(&serde_json::json!({
                 "status": "succeeded",
                 "service_id": "service_01",
+                "local_access_token_id": "token_01",
                 "protocol": "openai_responses",
                 "to": "2026-07-25T12:00:00Z",
                 "from": "2026-07-24T00:00:00Z",
@@ -4207,7 +4746,7 @@ mod tests {
                 "limit": 50
             }))
             .unwrap(),
-            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&status=succeeded"
+            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&status=succeeded"
         );
         assert!(
             build_request_record_query(&serde_json::json!({"unknown": 1}))
@@ -4474,6 +5013,9 @@ mod tests {
         assert!(error.contains("non-empty version"));
     }
 
+    // Mirrors the shape Core serves today, including the per-kind defaults, so
+    // that a field added to the policy on the Core side fails here rather than
+    // reaching an operator as a blank Safety Policy page.
     fn privacy_policy_value() -> serde_json::Value {
         serde_json::json!({
             "id": "policy_privacy_default",
@@ -4483,10 +5025,31 @@ mod tests {
             "detector": "regex",
             "local_model_id": null,
             "min_confidence": 0.6,
+            "regex_source": "builtin",
+            "custom_regex_rules": [],
+            "kind_rules": [
+                {"kind": "common_secret", "enabled": true, "style": "token"},
+                {"kind": "payment_card", "enabled": true, "style": "natural"},
+                {"kind": "account", "enabled": true, "style": "natural"},
+                {"kind": "email", "enabled": true, "style": "natural"},
+                {"kind": "phone", "enabled": true, "style": "natural"},
+                {"kind": "url", "enabled": false, "style": "natural"},
+                {"kind": "ip_address", "enabled": false, "style": "natural"},
+                {"kind": "private_person", "enabled": true, "style": "token"},
+                {"kind": "private_address", "enabled": true, "style": "token"},
+                {"kind": "private_date", "enabled": true, "style": "token"}
+            ],
+            "allowlist_rules": [
+                {"type": "domain_suffix", "value": "github.com"},
+                {"type": "cidr", "value": "127.0.0.0/8"},
+                {"type": "literal", "value": "support@astrlink.invalid"}
+            ],
             "match": {},
             "request_action": "redact",
             "response_action": "allow",
-            "response_restore": true
+            "response_restore": true,
+            "restore_tool_arguments": true,
+            "placeholder_notice": true
         })
     }
 
@@ -4505,6 +5068,31 @@ mod tests {
         )
         .expect("the frozen policy response should parse");
         assert_eq!(record.policy["id"], "policy_privacy_default");
+        assert_eq!(record.policy["regex_source"], "builtin");
+
+        let legacy = serde_json::json!({
+            "id": "policy_privacy_default",
+            "name": "隐私保护",
+            "enabled": false,
+            "priority": 0,
+            "detector": "regex",
+            "local_model_id": null,
+            "min_confidence": 0.6,
+            "match": {},
+            "request_action": "redact",
+            "response_action": "allow",
+            "response_restore": true
+        });
+        let legacy_record = policy_record(
+            Some(format!("\"sha256:{}\"", "b".repeat(64))),
+            &serde_json::to_vec(&legacy).unwrap(),
+        )
+        .expect("legacy policy without regex fields should normalize");
+        assert_eq!(legacy_record.policy["regex_source"], "builtin");
+        assert_eq!(
+            legacy_record.policy["custom_regex_rules"],
+            serde_json::json!([])
+        );
 
         let mut unexpected = privacy_policy_value();
         unexpected["secret"] = serde_json::json!("must-not-cross-ipc");
@@ -4514,6 +5102,68 @@ mod tests {
             &serde_json::to_vec(&privacy_policy_value()).unwrap(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn rejects_privacy_kind_rules_that_break_a_safety_invariant() {
+        let mut policy = privacy_policy_value();
+        policy["kind_rules"] = serde_json::json!([
+            {"kind": "common_secret", "enabled": true, "style": "natural"}
+        ]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["kind_rules"] = serde_json::json!([
+            {"kind": "email", "enabled": true, "style": "natural"},
+            {"kind": "email", "enabled": false, "style": "token"}
+        ]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["kind_rules"] = serde_json::json!([
+            {"kind": "postal_code", "enabled": true, "style": "token"}
+        ]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["kind_rules"] = serde_json::json!([
+            {"kind": "email", "enabled": true, "style": "plausible"}
+        ]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["kind_rules"] = serde_json::json!([
+            {"kind": "email", "enabled": true}
+        ]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_privacy_allowlist_rules() {
+        let mut policy = privacy_policy_value();
+        policy["allowlist_rules"] = serde_json::json!([{"type": "regex", "value": ".*"}]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["allowlist_rules"] = serde_json::json!([{"type": "literal", "value": ""}]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["allowlist_rules"] = serde_json::json!([{"type": "literal"}]);
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["allowlist_rules"] = serde_json::Value::Array(
+            (0..MAX_PRIVACY_ALLOWLIST_RULES + 1)
+                .map(|index| serde_json::json!({"type": "literal", "value": index.to_string()}))
+                .collect(),
+        );
+        assert!(validate_privacy_policy_value(&policy).is_err());
+
+        policy["allowlist_rules"] = serde_json::json!([]);
+        assert!(validate_privacy_policy_value(&policy).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_boolean_privacy_restore_scope_flags() {
+        for field in ["restore_tool_arguments", "placeholder_notice"] {
+            let mut policy = privacy_policy_value();
+            policy[field] = serde_json::json!("yes");
+            assert!(validate_privacy_policy_value(&policy).is_err());
+        }
     }
 
     #[test]
@@ -4529,9 +5179,35 @@ mod tests {
         .is_ok());
         assert!(validate_privacy_policy_patch(serde_json::json!({
             "detector": "regex",
+            "local_model_id": null,
+            "regex_source": "custom",
+            "custom_regex_rules": [{"kind": "email", "pattern": "alice@example\\.com"}]
+        }))
+        .is_ok());
+        assert!(validate_privacy_policy_patch(serde_json::json!({
+            "detector": "regex",
             "local_model_id": null
         }))
         .is_ok());
+        assert!(validate_privacy_policy_patch(serde_json::json!({
+            "kind_rules": [{"kind": "url", "enabled": true, "style": "natural"}],
+            "allowlist_rules": [{"type": "domain_suffix", "value": "internal.example"}],
+            "restore_tool_arguments": false,
+            "placeholder_notice": false
+        }))
+        .is_ok());
+        assert!(validate_privacy_policy_patch(serde_json::json!({
+            "kind_rules": [{"kind": "private_date", "enabled": true, "style": "natural"}]
+        }))
+        .is_err());
+        assert!(validate_privacy_policy_patch(serde_json::json!({
+            "restore_tool_arguments": "yes"
+        }))
+        .is_err());
+        assert!(validate_privacy_policy_patch(serde_json::json!({
+            "custom_regex_rules": [{"kind": "private_person", "pattern": "alice"}]
+        }))
+        .is_err());
         assert!(validate_privacy_policy_patch(serde_json::json!({
             "enabled": null
         }))
@@ -4557,6 +5233,25 @@ mod tests {
         }))
         .is_err());
         assert!(validate_privacy_policy_patch(serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn parses_privacy_regex_builtin_rules() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "rules": [
+                {"kind": "email", "pattern": "(?i)alice"},
+                {"kind": "common_secret", "pattern": "sk-[A-Za-z0-9]+"}
+            ]
+        }))
+        .unwrap();
+        assert!(parse_privacy_regex_builtin_rules(&body).is_ok());
+        assert!(parse_privacy_regex_builtin_rules(
+            &serde_json::to_vec(&serde_json::json!({
+                "rules": [{"kind": "private_person", "pattern": "alice"}]
+            }))
+            .unwrap()
+        )
+        .is_err());
     }
 
     #[test]
@@ -4661,6 +5356,62 @@ mod tests {
             parse_privacy_dry_run_result(&serde_json::to_vec(&invalid_confidence).unwrap())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn strictly_parses_privacy_dry_run_suppression_and_placeholder_styles() {
+        let result = serde_json::json!({
+            "decision": "redact",
+            "findings_summary": "email 1",
+            "findings": [{
+                "kind": "email",
+                "path": "/messages/0/content",
+                "start": 3,
+                "end": 20,
+                "confidence": 0.99
+            }],
+            "suppressed_findings": [{
+                "kind": "url",
+                "path": "/messages/0/content",
+                "start": 30,
+                "end": 52,
+                "confidence": 0.99,
+                "reason": "kind_disabled"
+            }],
+            "inspected_body": "{}",
+            "redacted_body": "{}",
+            "redactions": [{
+                "placeholder": "redacted-9f2c1d@private.invalid",
+                "kind": "email",
+                "value": "alice@corp.example",
+                "style": "natural"
+            }]
+        });
+        assert!(parse_privacy_dry_run_result(&serde_json::to_vec(&result).unwrap()).is_ok());
+
+        let mut unknown_reason = result.clone();
+        unknown_reason["suppressed_findings"][0]["reason"] = serde_json::json!("vibes");
+        assert!(
+            parse_privacy_dry_run_result(&serde_json::to_vec(&unknown_reason).unwrap()).is_err()
+        );
+
+        let mut unknown_style = result.clone();
+        unknown_style["redactions"][0]["style"] = serde_json::json!("plausible");
+        assert!(
+            parse_privacy_dry_run_result(&serde_json::to_vec(&unknown_style).unwrap()).is_err()
+        );
+
+        // A Core predating the styles omits both additive fields.
+        let mut legacy = result;
+        legacy["suppressed_findings"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("reason");
+        legacy["redactions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("style");
+        assert!(parse_privacy_dry_run_result(&serde_json::to_vec(&legacy).unwrap()).is_ok());
     }
 
     fn privacy_variant_value() -> serde_json::Value {
@@ -5034,7 +5785,7 @@ mod tests {
 
     #[test]
     fn sidecar_receives_pid_and_data_path_but_not_control_token_in_arguments() {
-        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317)
+        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16)
             .expect("test path should be valid UTF-8");
         assert_eq!(
             arguments,
@@ -5048,6 +5799,8 @@ mod tests {
                 "--control-listen".to_string(),
                 "127.0.0.1:0".to_string(),
                 "--control-token-stdin".to_string(),
+                "--max-concurrent-inspections".to_string(),
+                "16".to_string(),
             ]
         );
     }
@@ -5067,6 +5820,7 @@ mod tests {
         let error = inference_port_error(
             8317,
             &std::io::Error::new(std::io::ErrorKind::AddrInUse, "address in use"),
+            Locale::ZhCN,
         );
         assert!(error.contains("8317"));
         assert!(error.contains("占用或不可用"));

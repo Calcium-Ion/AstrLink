@@ -1,10 +1,7 @@
-export type AccessTokenSource = "system_default" | "user";
-
 export interface AccessTokenSummary {
   id: string;
   name: string;
   hint: string;
-  source: AccessTokenSource;
   created_at: string;
 }
 
@@ -29,8 +26,6 @@ const rfc3339Pattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const accessTokenPattern =
   /^astr_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
-const sources = new Set<AccessTokenSource>(["system_default", "user"]);
-
 function invalid(path: string, message: string): never {
   throw new Error(`Invalid access-token IPC response at ${path}: ${message}`);
 }
@@ -77,7 +72,7 @@ function parseAccessToken(
   path: string,
 ): AccessTokenSummary {
   const token = objectAt(value, path);
-  exactKeys(token, ["id", "name", "hint", "source", "created_at"], path);
+  exactKeys(token, ["id", "name", "hint", "created_at"], path);
 
   const id = stringAt(token.id, `${path}.id`, 3, 96);
   if (!resourceIDPattern.test(id)) invalid(`${path}.id`, "invalid token ID");
@@ -85,12 +80,6 @@ function parseAccessToken(
   const hint = stringAt(token.hint, `${path}.hint`, 1, 32);
   if (accessTokenPattern.test(hint)) {
     invalid(`${path}.hint`, "must be a non-secret display hint");
-  }
-  if (
-    typeof token.source !== "string" ||
-    !sources.has(token.source as AccessTokenSource)
-  ) {
-    invalid(`${path}.source`, "unknown token source");
   }
   const createdAt = stringAt(token.created_at, `${path}.created_at`, 20, 64);
   if (!rfc3339Pattern.test(createdAt) || Number.isNaN(Date.parse(createdAt))) {
@@ -101,7 +90,6 @@ function parseAccessToken(
     id,
     name,
     hint,
-    source: token.source as AccessTokenSource,
     created_at: createdAt,
   };
 }

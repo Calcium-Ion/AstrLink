@@ -14,11 +14,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { buildHeadersText } from "./audit-bundle";
+import { i18n } from "./i18n";
 import { copyButtonLabel, type CopyFeedback } from "./copy-feedback";
 import type {
   AuditContentPart,
   AuditHTTPMeta,
 } from "./request-record-model";
+import { splitPrivacyHighlights } from "./request-trajectory-model";
 import {
   parseSSEIncremental,
   SSEParseCancelledError,
@@ -42,6 +44,7 @@ export function HTTPMetaSection({
   title?: string;
   copyKey?: string;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
     <DetailBlock
       actions={
@@ -74,20 +77,20 @@ export function HTTPMetaSection({
     >
       {meta === null ? (
         <p className="text-xs leading-6 text-muted-foreground">
-          此记录未捕获 HTTP 元数据（记录创建时捕获未开启，或来自旧版本）。
+          {t("audit.noHttpDetail")}
         </p>
       ) : (
         <div className="grid gap-3">
           <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-xs leading-6 text-text-secondary">
             {meta.method} {meta.url} {meta.http_version}
           </code>
-          <HeaderList headers={meta.request_headers} title="请求头" />
+          <HeaderList headers={meta.request_headers} title={t("audit.requestHeaders")} />
           <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-xs leading-6 text-text-secondary">
             {meta.response_status !== null
               ? `HTTP ${meta.response_status}`
-              : "（无响应状态）"}
+              : t("audit.noStatus")}
           </code>
-          <HeaderList headers={meta.response_headers} title="响应头" />
+          <HeaderList headers={meta.response_headers} title={t("audit.responseHeaders")} />
         </div>
       )}
     </DetailBlock>
@@ -101,11 +104,12 @@ function HeaderList({
   headers: AuditHTTPMeta["request_headers"];
   title: string;
 }) {
+  const t = i18n.t.bind(i18n);
   if (headers.length === 0) {
     return (
       <div>
         <h4 className="mb-1.5 text-xs font-medium text-text-secondary">{title}</h4>
-        <p className="text-xs leading-6 text-muted-foreground">（无）</p>
+        <p className="text-xs leading-6 text-muted-foreground">{t("audit.none")}</p>
       </div>
     );
   }
@@ -142,6 +146,7 @@ export function AuditPartSection({
   sectionKey: string;
   copyFeedback: CopyFeedback;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
     <DetailBlock
       actions={
@@ -160,7 +165,7 @@ export function AuditPartSection({
     >
       {part === null ? (
         <p className="text-xs leading-6 text-muted-foreground">
-          未捕获（捕获未开启，或内容已按保留期清理）。
+          {t("audit.uncapturedDetail")}
         </p>
       ) : (
         <AuditPartView part={part} protocol={protocol} />
@@ -196,13 +201,14 @@ function AuditPartView({
   part: AuditContentPart;
   protocol: string;
 }) {
+  const t = i18n.t.bind(i18n);
   const isStream = part.media_type.toLowerCase().includes("text/event-stream");
   return (
     <div>
       <div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span>{part.media_type}</span>
         <span>{formatBytes(part.captured_bytes)}</span>
-        {part.truncated ? <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">已截断</Badge> : null}
+        {part.truncated ? <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">{t("audit.truncatedBadge")}</Badge> : null}
       </div>
       {isStream ? (
         <StreamInspector part={part} protocol={protocol} />
@@ -269,18 +275,23 @@ function StreamInspector({
     return () => controller.abort();
   }, [mode, parseState, part.content, part.truncated]);
 
+  const t = i18n.t.bind(i18n);
   return (
     <Tabs value={mode} onValueChange={(value) => setMode(value as StreamViewMode)}>
       <div className="mb-2.5 flex items-center justify-between gap-3 max-[720px]:items-stretch max-[720px]:flex-col">
-        <TabsList aria-label="流内容视图">
+        <TabsList aria-label={t("audit.streamView")}>
           <ModeTab
             active={mode === "raw"}
-            label="原文"
+            label={t("audit.original")}
             value="raw"
           />
           <ModeTab
             active={mode === "events"}
-            label={parseState === "idle" ? "事件" : `事件 · ${events.length}`}
+            label={
+              parseState === "idle"
+                ? t("audit.events")
+                : t("audit.eventsCount", { count: events.length })
+            }
             value="events"
           />
         </TabsList>
@@ -330,31 +341,32 @@ function ParseStatus({
   progress: number;
   summary: { invalidJsonCount: number; incompleteLastEvent: boolean };
 }) {
+  const t = i18n.t.bind(i18n);
   if (state === "parsing") {
     return (
       <Badge variant="secondary" role="status">
-        解析中 {Math.round(progress * 100)}%
+        {t("audit.parsingPercent", { percent: Math.round(progress * 100) })}
       </Badge>
     );
   }
   if (state === "error") {
-    return <Badge className="bg-danger-wash text-danger-foreground" variant="secondary">解析失败，可查看原文</Badge>;
+    return <Badge className="bg-danger-wash text-danger-foreground" variant="secondary">{t("audit.parseFailed")}</Badge>;
   }
   if (state === "cancelled") {
-    return <Badge variant="secondary">解析已取消</Badge>;
+    return <Badge variant="secondary">{t("audit.parseCancelled")}</Badge>;
   }
   if (summary.invalidJsonCount > 0 || summary.incompleteLastEvent) {
     return (
       <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
         {summary.invalidJsonCount > 0
-          ? `${summary.invalidJsonCount} 个无效 JSON`
+          ? t("audit.invalidJson", { count: summary.invalidJsonCount })
           : ""}
         {summary.invalidJsonCount > 0 && summary.incompleteLastEvent ? " · " : ""}
-        {summary.incompleteLastEvent ? "末尾事件不完整" : ""}
+        {summary.incompleteLastEvent ? t("audit.incompleteTail") : ""}
       </Badge>
     );
   }
-  return <Badge variant="secondary">解析完成</Badge>;
+  return <Badge variant="secondary">{t("audit.parseDone")}</Badge>;
 }
 
 function EventsView({
@@ -384,30 +396,31 @@ function EventsView({
 
   useEffect(() => setRenderLimit(EVENT_RENDER_BATCH), [query, type]);
 
+  const t = i18n.t.bind(i18n);
   return (
     <div>
       <div className="mb-3 flex items-end gap-2.5 max-[720px]:items-stretch max-[720px]:flex-col">
         <div className="grid gap-1.5">
-          <Label htmlFor="audit-event-search">搜索事件</Label>
+          <Label htmlFor="audit-event-search">{t("audit.searchEvents")}</Label>
           <Input
             id="audit-event-search"
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="类型或内容"
+            placeholder={t("audit.typeOrContent")}
             type="search"
             value={query}
           />
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor="audit-event-type">事件类型</Label>
+          <Label htmlFor="audit-event-type">{t("audit.eventType")}</Label>
           <Select
             onValueChange={(value) => setType(value === "__all__" ? "" : value)}
             value={type}
           >
             <SelectTrigger id="audit-event-type" className="min-w-36 max-[720px]:w-full">
-              <SelectValue placeholder="全部类型" />
+              <SelectValue placeholder={t("audit.allTypes")} />
             </SelectTrigger>
             <SelectContent>
-            <SelectItem value="__all__">全部类型</SelectItem>
+            <SelectItem value="__all__">{t("audit.allTypes")}</SelectItem>
             {types.map((eventType) => (
               <SelectItem key={eventType} value={eventType}>
                 {eventType}
@@ -417,7 +430,8 @@ function EventsView({
           </Select>
         </div>
         <span className="ml-auto pb-2 text-xs text-muted-foreground max-[720px]:ml-0 max-[720px]:pb-0">
-          {filtered.length} 个匹配{parsing ? " · 仍在解析" : ""}
+          {t("audit.matchCount", { count: filtered.length })}
+          {parsing ? t("audit.stillParsing") : ""}
         </span>
       </div>
       <div className="grid gap-2">
@@ -434,7 +448,9 @@ function EventsView({
           }
           type="button"
         >
-          再显示 {Math.min(EVENT_RENDER_BATCH, filtered.length - renderLimit)} 个事件
+          {t("audit.showMoreEvents", {
+            count: Math.min(EVENT_RENDER_BATCH, filtered.length - renderLimit),
+          })}
         </Button>
       ) : null}
     </div>
@@ -442,18 +458,19 @@ function EventsView({
 }
 
 function EventCard({ event }: { event: SSEEvent }) {
+  const t = i18n.t.bind(i18n);
   return (
     <details className="group overflow-hidden rounded-md border bg-card" data-testid="audit-event">
       <summary className="grid cursor-pointer list-none grid-cols-[44px_minmax(0,1fr)_auto_auto] items-center gap-2 px-2.5 py-2 text-xs [&::-webkit-details-marker]:hidden max-[720px]:grid-cols-[36px_minmax(0,1fr)_auto]">
         <span className="text-muted-foreground">#{event.index}</span>
         <strong className="overflow-hidden text-xs text-ellipsis whitespace-nowrap">{event.type}</strong>
-        {event.invalidJson ? <em className="text-warning-foreground not-italic max-[720px]:hidden">JSON 无效</em> : null}
-        {event.incomplete ? <em className="text-warning-foreground not-italic max-[720px]:hidden">事件不完整</em> : null}
-        <small className="text-muted-foreground">{event.data.length.toLocaleString()} 字符</small>
+        {event.invalidJson ? <em className="text-warning-foreground not-italic max-[720px]:hidden">{t("audit.invalidJsonBadge")}</em> : null}
+        {event.incomplete ? <em className="text-warning-foreground not-italic max-[720px]:hidden">{t("audit.incompleteEvent")}</em> : null}
+        <small className="text-muted-foreground">{t("audit.charCount", { count: event.data.length.toLocaleString() })}</small>
       </summary>
       <pre className="max-h-[440px] overflow-auto border-t bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
         {event.json === null
-          ? event.data || "（空 data）"
+          ? event.data || t("audit.emptyData")
           : JSON.stringify(event.json, null, 2)}
       </pre>
     </details>
@@ -477,20 +494,21 @@ function DocumentInspector({ part }: { part: AuditContentPart }) {
     formatted === null ? "raw" : "formatted",
   );
 
+  const t = i18n.t.bind(i18n);
   return (
     <Tabs value={mode} onValueChange={(value) => setMode(value as DocumentViewMode)}>
       <div className="mb-2.5 flex items-center justify-between gap-3">
-        <TabsList aria-label="内容视图">
-          <TabsTrigger disabled={formatted === null} value="formatted">格式化</TabsTrigger>
-          <TabsTrigger value="raw">原文</TabsTrigger>
+        <TabsList aria-label={t("audit.contentView")}>
+          <TabsTrigger disabled={formatted === null} value="formatted">{t("audit.formatted")}</TabsTrigger>
+          <TabsTrigger value="raw">{t("audit.original")}</TabsTrigger>
         </TabsList>
         {formatted === null && canFormat ? (
-          <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">JSON 无效</Badge>
+          <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">{t("audit.invalidJsonBadge")}</Badge>
         ) : null}
       </div>
       <TabsContent value="formatted">
         {formatted !== null ? (
-        <pre className="max-h-[520px] overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">{formatted}</pre>
+          <HighlightedAuditText content={formatted} />
         ) : null}
       </TabsContent>
       <TabsContent value="raw">
@@ -513,23 +531,33 @@ function RawSegmentView({ content }: { content: string }) {
       text: content.slice(start, start + RAW_SEGMENT_SIZE),
     });
   }
+  const t = i18n.t.bind(i18n);
   return (
     <div data-testid="audit-raw">
       <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground max-[720px]:items-start max-[720px]:flex-col">
         <span>
-          完整原文 · {content.length.toLocaleString()} 字符 · {totalSegments} 段
+          {t("audit.rawFull", {
+            chars: content.length.toLocaleString(),
+            segments: totalSegments,
+          })}
         </span>
-        {totalSegments > 1 ? <span>每段最多 256KB，按需渲染</span> : null}
+        {totalSegments > 1 ? <span>{t("audit.segmentHint")}</span> : null}
       </div>
       {segments.map((segment) => (
         <section className="mt-2 overflow-hidden rounded-lg border" data-testid="audit-raw-segment" key={segment.index}>
           {totalSegments > 1 ? (
             <header className="border-b bg-muted px-3 py-2 text-xs text-muted-foreground">
-              第 {segment.index + 1} 段 · 字符 {segment.start.toLocaleString()}–
-              {segment.end.toLocaleString()}
+              {t("audit.segmentHeader", {
+                index: segment.index + 1,
+                start: segment.start.toLocaleString(),
+                end: segment.end.toLocaleString(),
+              })}
             </header>
           ) : null}
-          <pre className="max-h-[520px] overflow-auto bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">{segment.text}</pre>
+          <HighlightedAuditText
+            className="max-h-[520px] overflow-auto bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+            content={segment.text}
+          />
         </section>
       ))}
       {visibleSegments < totalSegments ? (
@@ -539,10 +567,39 @@ function RawSegmentView({ content }: { content: string }) {
           onClick={() => setVisibleSegments((current) => current + 1)}
           type="button"
         >
-          加载下一段
+          {t("audit.loadNextSegment")}
         </Button>
       ) : null}
     </div>
+  );
+}
+
+function HighlightedAuditText({
+  content,
+  className = "max-h-[520px] overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap",
+}: {
+  content: string;
+  className?: string;
+}) {
+  const spans = splitPrivacyHighlights(content);
+  return (
+    <pre className={className}>
+      {spans.map((span, index) =>
+        span.kind ? (
+          <mark
+            className="rounded-sm bg-warning-wash px-0.5 text-warning-foreground"
+            data-kind={span.kind}
+            data-placeholder={span.text}
+            data-testid="privacy-mark"
+            key={`${span.text}:${index}`}
+          >
+            {span.text}
+          </mark>
+        ) : (
+          <span key={index}>{span.text}</span>
+        ),
+      )}
+    </pre>
   );
 }
 

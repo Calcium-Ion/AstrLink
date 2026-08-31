@@ -1,6 +1,7 @@
 import {
   type FormEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -18,7 +19,6 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FormMessage } from "@/components/FormMessage";
 import { StatusDot } from "@/components/StatusDot";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,10 +35,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   createAccessToken,
   deleteAccessToken,
+  listRequestRecords,
   revealAccessToken,
 } from "./bridge";
 import type { AccessTokenSummary } from "./access-token-model";
+import type { RequestRecord } from "./request-record-model";
+import { i18n } from "./i18n";
+import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
+import { aggregateTodayUsage, startOfTodayIso } from "./today-usage";
 
 export type AccessTokenCatalogStatus =
   | "blocked"
@@ -53,20 +58,64 @@ export interface AccessTokenCatalog {
   stale: boolean;
 }
 
+type TokenUsageSlice = {
+  total_tokens: number;
+  capped: boolean;
+};
+
+type TokenUsageStats = {
+  status: "loading" | "ready" | "error";
+  today: TokenUsageSlice | null;
+  lifetime: TokenUsageSlice | null;
+};
+
+const USAGE_PAGE_LIMIT = 200;
+const USAGE_MAX_PAGES = 5;
+
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
 function createdAtLabel(value: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "未知";
-  return new Intl.DateTimeFormat("zh-CN", {
+  if (Number.isNaN(date.getTime())) return i18n.t("tokens.unknown");
+  return new Intl.DateTimeFormat(i18n.language === "zh-CN" ? "zh-CN" : "en", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatTokenCount(slice: TokenUsageSlice | null, status: TokenUsageStats["status"]): string {
+  if (status === "loading" && slice === null) return "…";
+  if (slice === null) return "—";
+  const base = slice.total_tokens.toLocaleString();
+  return slice.capped ? `${base}+` : base;
+}
+
+async function loadTokenUsageSlice(
+  tokenId: string,
+  from: string | undefined,
+): Promise<TokenUsageSlice> {
+  const accumulated: RequestRecord[] = [];
+  let cursor: string | undefined;
+  let nextCursor: string | null = null;
+  for (let pageIndex = 0; pageIndex < USAGE_MAX_PAGES; pageIndex += 1) {
+    const page = await listRequestRecords({
+      local_access_token_id: tokenId,
+      limit: USAGE_PAGE_LIMIT,
+      ...(from ? { from } : {}),
+      ...(cursor ? { cursor } : {}),
+    });
+    accumulated.push(...page.items);
+    nextCursor = page.next_cursor;
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+  const summary = aggregateTodayUsage(accumulated, nextCursor !== null);
+  return { total_tokens: summary.total_tokens, capped: summary.capped };
 }
 
 export function AccessTokenManager({
@@ -84,6 +133,7 @@ export function AccessTokenManager({
   onTokenCreated: (token: AccessTokenSummary) => void;
   onTokenDeleted: (tokenId: string) => void;
 }) {
+  const t = i18n.t.bind(i18n);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -93,14 +143,18 @@ export function AccessTokenManager({
   const [copyingID, setCopyingID] = useState<string | null>(null);
   const [copiedID, setCopiedID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [usageByToken, setUsageByToken] = useState<
+    Record<string, TokenUsageStats>
+  >({});
   const sessionGeneration = useRef(0);
   const revealGeneration = useRef(0);
+  const usageGeneration = useRef(0);
   const nameInput = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     sessionGeneration.current += 1;
     revealGeneration.current += 1;
+    usageGeneration.current += 1;
     setCreateOpen(false);
     setName("");
     setCreating(false);
@@ -109,23 +163,74 @@ export function AccessTokenManager({
     setCopyingID(null);
     setCopiedID(null);
     setError(null);
-    setNotice(null);
+    setUsageByToken({});
   }, [coreSessionKey]);
 
   useEffect(() => {
     if (createOpen) nameInput.current?.focus();
   }, [createOpen]);
 
+  const refreshTokenUsage = useCallback(async () => {
+    const generation = usageGeneration.current + 1;
+    usageGeneration.current = generation;
+    if (!isReady || catalog.status !== "ready" || catalog.items.length === 0) {
+      setUsageByToken({});
+      return;
+    }
+
+    const tokenIds = catalog.items.map((token) => token.id);
+    setUsageByToken((current) => {
+      const next: Record<string, TokenUsageStats> = {};
+      for (const id of tokenIds) {
+        next[id] = {
+          status: "loading",
+          today: current[id]?.today ?? null,
+          lifetime: current[id]?.lifetime ?? null,
+        };
+      }
+      return next;
+    });
+
+    const todayFrom = startOfTodayIso(new Date());
+    for (const tokenId of tokenIds) {
+      if (usageGeneration.current !== generation) return;
+      try {
+        const today = await loadTokenUsageSlice(tokenId, todayFrom);
+        if (usageGeneration.current !== generation) return;
+        const lifetime = await loadTokenUsageSlice(tokenId, undefined);
+        if (usageGeneration.current !== generation) return;
+        setUsageByToken((current) => ({
+          ...current,
+          [tokenId]: { status: "ready", today, lifetime },
+        }));
+      } catch {
+        if (usageGeneration.current !== generation) return;
+        setUsageByToken((current) => ({
+          ...current,
+          [tokenId]: {
+            status: "error",
+            today: current[tokenId]?.today ?? null,
+            lifetime: current[tokenId]?.lifetime ?? null,
+          },
+        }));
+      }
+    }
+  }, [catalog.items, catalog.status, isReady]);
+
+  useEffect(() => {
+    void refreshTokenUsage();
+  }, [refreshTokenUsage, coreSessionKey]);
+
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError("请输入令牌名称。");
+      setError(i18n.t("tokens.nameRequired"));
       nameInput.current?.focus();
       return;
     }
     if ([...trimmedName].length > 64) {
-      setError("令牌名称最多 64 个字符。");
+      setError(i18n.t("tokens.nameTooLong"));
       nameInput.current?.focus();
       return;
     }
@@ -134,7 +239,6 @@ export function AccessTokenManager({
     const generation = sessionGeneration.current;
     setCreating(true);
     setError(null);
-    setNotice(null);
     try {
       const result = await createAccessToken(trimmedName);
       if (sessionGeneration.current !== generation) return;
@@ -142,10 +246,10 @@ export function AccessTokenManager({
       setCopiedID(null);
       setCreateOpen(false);
       setName("");
-      setNotice(`已创建“${result.token.name}”。`);
+      notify.success(i18n.t("tokens.created", { name: result.token.name }));
     } catch (requestError) {
       if (sessionGeneration.current === generation) {
-        setError(messageOf(requestError, "无法创建访问令牌。"));
+        setError(messageOf(requestError, i18n.t("tokens.createFailed")));
       }
     } finally {
       if (sessionGeneration.current === generation) setCreating(false);
@@ -158,7 +262,7 @@ export function AccessTokenManager({
       setCopiedID(tokenId);
     } catch {
       setCopiedID(null);
-      setError("无法自动复制，请手动选择令牌。");
+      setError(i18n.t("tokens.copyManual"));
     }
   };
 
@@ -185,7 +289,7 @@ export function AccessTokenManager({
         sessionGeneration.current === session &&
         revealGeneration.current === generation
       ) {
-        setError(messageOf(requestError, "无法复制访问令牌。"));
+        setError(messageOf(requestError, i18n.t("tokens.copyFailed")));
       }
     } finally {
       if (
@@ -213,16 +317,15 @@ export function AccessTokenManager({
     setCopiedID(null);
     setDeletingID(token.id);
     setError(null);
-    setNotice(null);
     try {
       await deleteAccessToken(token.id);
       if (sessionGeneration.current !== generation) return;
       onTokenDeleted(token.id);
       setPendingDelete(null);
-      setNotice(`已删除“${token.name}”。`);
+      notify.success(i18n.t("tokens.deleted", { name: token.name }));
     } catch (requestError) {
       if (sessionGeneration.current === generation) {
-        setError(messageOf(requestError, "无法删除访问令牌。"));
+        setError(messageOf(requestError, i18n.t("tokens.deleteFailed")));
       }
     } finally {
       if (sessionGeneration.current === generation) setDeletingID(null);
@@ -248,7 +351,7 @@ export function AccessTokenManager({
               type="button"
             >
               <Plus />
-              创建令牌
+              {t("tokens.createToken")}
             </Button>
             <Button
               variant="outline"
@@ -257,21 +360,20 @@ export function AccessTokenManager({
               type="button"
             >
               <RefreshCw className={catalog.status === "loading" ? "animate-spin motion-reduce:animate-none" : undefined} />
-              {catalog.status === "loading" ? "刷新中…" : "刷新"}
+              {catalog.status === "loading" ? t("common.refreshing") : t("common.refresh")}
             </Button>
           </>
         }
-        description="为 IDE、CLI 或其他本机客户端分配独立令牌。"
-        eyebrow="本地接入"
-        title="管理访问令牌"
+        description={t("tokens.description")}
+        title={t("tokens.title")}
         titleId="token-manager-heading"
       />
 
       {(!isReady || catalog.status === "blocked") && (
         <FormMessage className="mb-3" tone="notice">
           {catalog.items.length
-            ? "Core 尚未就绪，当前显示上次读取的令牌。"
-            : "Core 就绪后才能管理访问令牌。"}
+            ? t("tokens.stale")
+            : t("tokens.blocked")}
         </FormMessage>
       )}
       {catalog.status === "error" && catalog.error ? (
@@ -284,25 +386,20 @@ export function AccessTokenManager({
           {error}
         </FormMessage>
       ) : null}
-      {notice ? (
-        <FormMessage className="mb-3" tone="success">
-          {notice}
-        </FormMessage>
-      ) : null}
 
       <ScrollArea
         aria-busy={catalog.status === "loading"}
-        aria-label="访问令牌列表"
+        aria-label={t("tokens.listLabel")}
         className="min-h-0"
       >
         <div className="grid content-start gap-2">
           {catalog.status === "blocked" && catalog.items.length === 0 ? (
             <TokenBoardState
-              description="Core 就绪后将读取访问令牌。"
-              title="等待本地网关"
+              description={t("tokens.waitingHint")}
+              title={t("tokens.waiting")}
             />
           ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-            <div className="grid gap-2" aria-label="正在加载访问令牌">
+            <div className="grid gap-2" aria-label={t("tokens.loading")}>
               <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
               <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
               <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
@@ -316,11 +413,11 @@ export function AccessTokenManager({
                   onClick={refresh}
                   type="button"
                 >
-                  重试
+                  {t("common.retry")}
                 </Button>
               }
-              description="请检查 Core 连接后重试。"
-              title="暂时无法显示访问令牌。"
+              description={t("tokens.unavailableHint")}
+              title={t("tokens.unavailable")}
             />
           ) : catalog.items.length === 0 ? (
             <TokenBoardState
@@ -331,16 +428,18 @@ export function AccessTokenManager({
                   type="button"
                 >
                   <Plus />
-                  创建令牌
+                  {t("tokens.createToken")}
                 </Button>
               }
-              description="创建一个令牌即可连接本机客户端。"
-              title="还没有访问令牌。"
+              description={t("tokens.emptyHint")}
+              title={t("tokens.empty")}
             />
           ) : (
             catalog.items.map((token) => {
               const isCopying = copyingID === token.id;
               const isCopied = copiedID === token.id;
+              const usage = usageByToken[token.id];
+              const usageStatus = usage?.status ?? (isReady ? "loading" : "error");
               return (
                 <article
                   className="min-w-0 rounded-md border bg-card"
@@ -348,13 +447,8 @@ export function AccessTokenManager({
                   key={token.id}
                 >
                   <div className="flex min-w-0 items-center gap-2 px-3.5 py-3 max-[560px]:flex-wrap">
-                    <StatusDot
-                      tone={token.source === "system_default" ? "neutral" : "positive"}
-                    />
+                    <StatusDot tone="positive" />
                     <strong className="truncate text-sm font-medium">{token.name}</strong>
-                    {token.source === "system_default" ? (
-                      <Badge variant="outline">默认</Badge>
-                    ) : null}
                     <code className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
                       {token.hint}
                     </code>
@@ -373,7 +467,7 @@ export function AccessTokenManager({
                       ) : (
                         <Copy />
                       )}
-                      {isCopying ? "复制中…" : isCopied ? "已复制" : "复制"}
+                      {isCopying ? t("common.copying") : isCopied ? t("common.copied") : t("common.copy")}
                     </Button>
                     <Button
                       className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
@@ -384,33 +478,36 @@ export function AccessTokenManager({
                         setCopiedID(null);
                         setPendingDelete(token);
                         setError(null);
-                        setNotice(null);
                       }}
                       type="button"
                       size="sm"
                       variant="ghost"
                     >
                       <Trash2 />
-                      {deletingID === token.id ? "删除中…" : "删除"}
+                      {deletingID === token.id ? t("tokens.deleting") : t("common.delete")}
                     </Button>
                     </div>
                   </div>
                   <dl className="grid grid-cols-3 gap-3 border-t px-3.5 py-2 max-[560px]:grid-cols-1">
                     <div className="min-w-0">
                       <dt className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
-                        今日 Token
+                        {t("tokens.todayTokens")}
                       </dt>
-                      <dd className="mt-0.5 text-xs tabular-nums">—</dd>
+                      <dd className="mt-0.5 text-xs tabular-nums">
+                        {formatTokenCount(usage?.today ?? null, usageStatus)}
+                      </dd>
                     </div>
                     <div className="min-w-0">
                       <dt className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
-                        累计 Token
+                        {t("tokens.lifetimeTokens")}
                       </dt>
-                      <dd className="mt-0.5 text-xs tabular-nums">—</dd>
+                      <dd className="mt-0.5 text-xs tabular-nums">
+                        {formatTokenCount(usage?.lifetime ?? null, usageStatus)}
+                      </dd>
                     </div>
                     <div className="min-w-0">
                       <dt className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
-                        创建时间
+                        {t("tokens.createdAt")}
                       </dt>
                       <dd className="mt-0.5 text-xs tabular-nums">
                         {createdAtLabel(token.created_at)}
@@ -440,18 +537,18 @@ export function AccessTokenManager({
               className="mb-1 size-5 text-muted-foreground"
               strokeWidth={1.5}
             />
-            <DialogTitle>创建访问令牌</DialogTitle>
-            <DialogDescription>用客户端名称标记用途，创建后可随时从列表复制。</DialogDescription>
+            <DialogTitle>{t("tokens.createTitle")}</DialogTitle>
+            <DialogDescription>{t("tokens.createHint")}</DialogDescription>
           </DialogHeader>
             <form onSubmit={(event) => void submitCreate(event)}>
               <div className="grid gap-2">
-              <Label htmlFor="access-token-name">令牌名称</Label>
+              <Label htmlFor="access-token-name">{t("tokens.name")}</Label>
               <Input
                 autoComplete="off"
                 id="access-token-name"
                 maxLength={64}
                 onChange={(event) => setName(event.currentTarget.value)}
-                placeholder="例如：VS Code"
+                placeholder={t("tokens.namePlaceholder")}
                 ref={nameInput}
                 value={name}
               />
@@ -466,26 +563,26 @@ export function AccessTokenManager({
                   }}
                   type="button"
                 >
-                  取消
+                  {t("common.cancel")}
                 </Button>
                 <Button disabled={creating} type="submit">
-                  {creating ? "创建中…" : "创建"}
+                  {creating ? t("tokens.creating") : t("tokens.create")}
                 </Button>
               </DialogFooter>
             </form>
         </DialogContent>
       </Dialog>
       <ConfirmDialog
-        cancelLabel="取消"
-        confirmLabel={deletingID === pendingDelete?.id ? "删除中…" : "确认删除"}
+        cancelLabel={t("common.cancel")}
+        confirmLabel={deletingID === pendingDelete?.id ? t("tokens.deleting") : t("tokens.confirmDelete")}
         description={
           <>
             <p>
               {catalog.items.length === 1
-                ? `“${pendingDelete?.name ?? ""}”是最后一个访问令牌。删除后，所有客户端都将无法连接，直到创建新令牌。`
-                : `删除“${pendingDelete?.name ?? ""}”后，使用它的客户端将立即无法连接。`}
+                ? t("tokens.deleteLast", { name: pendingDelete?.name ?? "" })
+                : t("tokens.deleteBody", { name: pendingDelete?.name ?? "" })}
             </p>
-            <p>此操作无法撤销。</p>
+            <p>{t("tokens.irreversible")}</p>
           </>
         }
         destructive
@@ -493,7 +590,7 @@ export function AccessTokenManager({
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => void remove()}
         open={pendingDelete !== null}
-        title="删除访问令牌？"
+        title={t("tokens.deleteTitle")}
       />
     </section>
   );

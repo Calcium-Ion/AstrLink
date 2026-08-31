@@ -39,6 +39,8 @@ jobs:
         run: go test ./...
       - name: Build Core
         run: go build -trimpath -o astrlink-core${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/astrlink-core
+      - name: Build MCP sidecar
+        run: go build -trimpath -o astrlink-mcp${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/astrlink-mcp
       - name: Archive Core executable
         if: runner.os != 'Windows'
         run: tar -czf astrlink-core-${{ runner.arch }}.tar.gz astrlink-core
@@ -150,11 +152,12 @@ jobs:
           workspaces: |
             apps/desktop/src-tauri
             apps/privacy-worker
+            apps/classifier-worker
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
       - name: Check frontend on target platform
         run: bun run check
-      - name: Stage Core and privacy sidecars
+      - name: Stage Core and worker sidecars
         run: bun run sidecar:build
       - name: Reject model artifacts from staged application inputs
         run: >-
@@ -167,6 +170,16 @@ jobs:
         run: cargo clippy --locked --manifest-path ../privacy-worker/Cargo.toml --all-targets -- -D warnings
       - name: Test privacy worker
         run: cargo test --locked --manifest-path ../privacy-worker/Cargo.toml --all-targets
+        env:
+          ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
+      - name: Check classifier worker formatting
+        run: cargo fmt --manifest-path ../classifier-worker/Cargo.toml --all -- --check
+      - name: Lint classifier worker
+        run: cargo clippy --locked --manifest-path ../classifier-worker/Cargo.toml --all-targets -- -D warnings
+      - name: Test classifier worker
+        run: cargo test --locked --manifest-path ../classifier-worker/Cargo.toml --all-targets
+        env:
+          ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - name: Lint Rust
@@ -201,9 +214,10 @@ jobs:
           fi
 
           worker="$bundle_scan_dir/usr/bin/astrlink-privacy-worker"
+          classifier="$bundle_scan_dir/usr/bin/astrlink-classifier-worker"
           core="$bundle_scan_dir/usr/bin/astrlink-core"
           desktop="$bundle_scan_dir/usr/bin/astrlink-desktop"
-          for executable in "$worker" "$core" "$desktop"; do
+          for executable in "$worker" "$classifier" "$core" "$desktop"; do
             if [[ ! -x "$executable" ]]; then
               echo "Missing packaged executable: $executable" >&2
               exit 1
@@ -214,8 +228,12 @@ jobs:
             echo "Linux privacy worker must load ONNX Runtime dynamically." >&2
             exit 1
           fi
+          if readelf -d "$classifier" | grep -Fq "libonnxruntime"; then
+            echo "Linux classifier worker must load ONNX Runtime dynamically." >&2
+            exit 1
+          fi
 
-          for executable in "$worker" "$core" "$desktop" "${runtimes[0]}"; do
+          for executable in "$worker" "$classifier" "$core" "$desktop" "${runtimes[0]}"; do
             maximum_glibc="$(
               readelf --version-info "$executable" |
                 sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' |

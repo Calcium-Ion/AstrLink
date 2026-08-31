@@ -99,6 +99,52 @@ describe("AuditReviewer sections", () => {
     );
   });
 
+  it("highlights privacy placeholders without marking originals", async () => {
+    const copied: string[] = [];
+    const copyFeedback: CopyFeedback = {
+      activeKey: null,
+      state: "idle",
+      copy: (_key, text) => {
+        copied.push(text);
+      },
+    };
+    const part: AuditContentPart = {
+      media_type: "application/json",
+      content: `{"input":"alice@example.com <PRIVATE_EMAIL_aaaaaaaaaaaaaaaa>"}`,
+      truncated: false,
+      captured_bytes: 64,
+    };
+    await act(async () => {
+      root.render(
+        <AuditPartSection
+          copyFeedback={copyFeedback}
+          part={part}
+          protocol="openai.responses"
+          sectionKey="upstream-request"
+          title="脱敏后请求"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const marks = [...container.querySelectorAll('[data-testid="privacy-mark"]')];
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.textContent).toBe("<PRIVATE_EMAIL_aaaaaaaaaaaaaaaa>");
+    expect(marks[0]?.getAttribute("data-kind")).toBe("email");
+    expect(marks[0]?.closest("pre")?.textContent).toContain("alice@example.com");
+    expect(marks[0]?.textContent).not.toContain("alice@");
+
+    const copyButton = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("复制"),
+    );
+    expect(copyButton).toBeDefined();
+    await act(async () => {
+      (copyButton as HTMLButtonElement).click();
+    });
+    expect(copied[0]).toBe(part.content);
+    expect(copied[0]).not.toContain("<mark");
+  });
+
   it("pages large raw content in 256KB segments", async () => {
     const content = "y".repeat(300 * 1024);
     const part: AuditContentPart = {

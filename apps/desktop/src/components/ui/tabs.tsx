@@ -75,12 +75,43 @@ function TabsTrigger({
 
 function TabsContent({
   className,
+  onFocus,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Content>) {
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
       className={cn("flex-1 outline-none", className)}
+      onFocus={(event) => {
+        // Radix focuses the newly selected panel. The browser then
+        // scrollIntoView's it, which jumps any ancestor overflow scroller.
+        // Start from the parent: the panel itself may be a tab scroller.
+        const snapshots: Array<{
+          el: HTMLElement;
+          top: number;
+          left: number;
+        }> = [];
+        let node: HTMLElement | null = event.currentTarget.parentElement;
+        while (node) {
+          if (node.matches("[data-slot='workspace'], [data-tab-scroller]")) {
+            snapshots.push({
+              el: node,
+              top: node.scrollTop,
+              left: node.scrollLeft,
+            });
+          }
+          node = node.parentElement;
+        }
+        if (snapshots.length > 0) {
+          requestAnimationFrame(() => {
+            for (const { el, top, left } of snapshots) {
+              el.scrollTop = top;
+              el.scrollLeft = left;
+            }
+          });
+        }
+        onFocus?.(event);
+      }}
       {...props}
     />
   )

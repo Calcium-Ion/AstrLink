@@ -13,11 +13,16 @@ const bridgeMocks = vi.hoisted(() => ({
   deleteService: vi.fn(),
   deleteRoute: vi.fn(),
   deletePrivacyModelInstallation: vi.fn(),
+  getAgentDebugStatus: vi.fn(),
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
   getPreferences: vi.fn(),
+  installAgentDebug: vi.fn(),
+  uninstallAgentDebug: vi.fn(),
   getService: vi.fn(),
   getServiceAuthorization: vi.fn(),
+  getServiceUsage: vi.fn(),
+  resetServiceUsage: vi.fn(),
   getRoute: vi.fn(),
   getPrivacyModelCatalog: vi.fn(),
   getPrivacyModelInstallation: vi.fn(),
@@ -30,6 +35,8 @@ const bridgeMocks = vi.hoisted(() => ({
   listPrivacyModelInstallations: vi.fn(),
   listPrivacyPolicies: vi.fn(),
   listRequestRecords: vi.fn(),
+  listRequestSessions: vi.fn(),
+  getRequestSession: vi.fn(),
   probePrivacyModel: vi.fn(),
   purgeRequestRecords: vi.fn(),
   revealAccessToken: vi.fn(),
@@ -55,6 +62,7 @@ vi.mock("./bridge", () => bridgeMocks);
 
 import App from "./App";
 import type { AppSnapshot } from "./core-model";
+import { defaultPrivacyKindRules } from "./privacy-policy-model";
 
 const readySnapshot: AppSnapshot = {
   app_version: "0.1.0",
@@ -227,7 +235,6 @@ describe("App workspace navigation", () => {
           id: "token_01",
           name: "VS Code",
           hint: "astr_…K8Q2",
-          source: "user",
           created_at: "2026-07-24T10:30:00Z",
         },
       ],
@@ -242,9 +249,15 @@ describe("App workspace navigation", () => {
         detector: "regex",
         local_model_id: null,
         min_confidence: 0.6,
+        regex_source: "builtin",
+        custom_regex_rules: [],
         request_action: "redact",
         response_action: "allow",
         response_restore: true,
+        kind_rules: defaultPrivacyKindRules(),
+        allowlist_rules: [],
+        restore_tool_arguments: true,
+        placeholder_notice: true,
         match: {},
       },
       etag: `"sha256:${"a".repeat(64)}"`,
@@ -281,6 +294,10 @@ describe("App workspace navigation", () => {
       items: [],
       next_cursor: null,
     });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
     bridgeMocks.listRoutes.mockResolvedValue({
       items: [],
       next_cursor: null,
@@ -295,6 +312,32 @@ describe("App workspace navigation", () => {
       response_content_max_bytes: 8192,
       metadata_retention_days: 30,
       content_retention_days: 7,
+    });
+    bridgeMocks.getAgentDebugStatus.mockResolvedValue({
+      canonical_skill: false,
+      mcp_binary: false,
+      mcp_command: null,
+      tools: [
+        {
+          id: "cursor",
+          detected: true,
+          skill_installed: false,
+          mcp_installed: false,
+        },
+        {
+          id: "claude",
+          detected: false,
+          skill_installed: false,
+          mcp_installed: false,
+        },
+        {
+          id: "codex",
+          detected: true,
+          skill_installed: true,
+          mcp_installed: true,
+        },
+      ],
+      preview_paths: [],
     });
     container = document.createElement("div");
     document.body.append(container);
@@ -328,8 +371,11 @@ describe("App workspace navigation", () => {
     ).toContain("概览");
     expect(container.querySelectorAll('[data-slot="page-header"]')).toHaveLength(1);
     expect(workspaceHeading().textContent).toBe("概览");
-    expect(container.textContent).toContain("连接 AstrLink");
-    expect(container.textContent).toContain("今日用量");
+    expect(container.textContent).toContain("API 地址");
+    expect(container.textContent).toContain("今日消耗");
+    expect(container.textContent).toContain("按服务");
+    expect(container.textContent).toContain("按模型");
+    expect(container.textContent).toContain("Primary gateway");
 
     await act(async () => {
       button("访问令牌").click();
@@ -361,7 +407,9 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("管理 API 服务");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("Codex 订阅");
-    expect(container.textContent).toContain("等待 OAuth 登录");
+    expect(
+      container.querySelector('[aria-label="更多 Codex 订阅 操作"]'),
+    ).not.toBeNull();
     expect(container.textContent).not.toContain("ADR 0009");
 
     await act(async () => {
@@ -369,6 +417,9 @@ describe("App workspace navigation", () => {
     });
     expect(workspaceHeading().textContent).toBe("添加服务");
     expect(container.querySelector('[data-testid="service-form"]')).not.toBeNull();
+    expect(container.querySelector('[data-slot="workspace"]')?.className).toContain(
+      "overflow-hidden",
+    );
 
     const back = container.querySelector<HTMLButtonElement>(
       'button[aria-label="返回服务列表"]',
@@ -378,6 +429,50 @@ describe("App workspace navigation", () => {
       back?.click();
     });
     expect(workspaceHeading().textContent).toBe("管理 API 服务");
+  });
+
+  it("opens a service editor from the overview usage list", async () => {
+    bridgeMocks.getService.mockResolvedValue({
+      service: {
+        id: "service_gateway_01",
+        name: "Primary gateway",
+        kind: "newapi",
+        enabled: true,
+        models: ["gpt-5"],
+        capabilities: [
+          {
+            protocol: "openai.responses",
+            mode: "delegated",
+            streaming: true,
+          },
+        ],
+        http: {
+          base_url: "https://gateway.example",
+          auth: { scheme: "bearer" },
+          credential_ref: "local://service/service_gateway_01",
+        },
+        created_at: "2026-07-28T08:00:00Z",
+        updated_at: "2026-07-28T08:00:00Z",
+      },
+      etag: `"sha256:${"c".repeat(64)}"`,
+    });
+    await renderApp();
+
+    const serviceRow = [...container.querySelectorAll("button")].find(
+      (candidate) =>
+        candidate.textContent?.includes("Primary gateway") &&
+        candidate.textContent?.includes("次"),
+    );
+    if (!(serviceRow instanceof HTMLButtonElement)) {
+      throw new Error("Missing overview service usage row");
+    }
+    await act(async () => {
+      serviceRow.click();
+      await Promise.resolve();
+    });
+
+    expect(workspaceHeading().textContent).toBe("编辑服务");
+    expect(bridgeMocks.getService).toHaveBeenCalledWith("service_gateway_01");
   });
 
   it("keeps Codex subscription inside API services instead of the sidebar", async () => {
@@ -397,7 +492,9 @@ describe("App workspace navigation", () => {
     ).toContain("API 服务");
     expect(workspaceHeading().textContent).toBe("管理 API 服务");
     expect(container.textContent).toContain("Codex 订阅");
-    expect(container.textContent).toContain("等待 OAuth 登录");
+    expect(
+      container.querySelector('[aria-label="更多 Codex 订阅 操作"]'),
+    ).not.toBeNull();
     expect(container.textContent).not.toContain("ADR 0009");
     expect(bridgeMocks.listServices).toHaveBeenCalled();
   });
@@ -410,6 +507,8 @@ describe("App workspace navigation", () => {
         core_auto_start: true,
         core_auto_recover: true,
         inference_port: 8317,
+        max_concurrent_inspections: 16,
+        locale: "zh-CN",
       },
       load_warning: null,
       autostart_actual: false,
@@ -425,7 +524,29 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
     expect(workspaceHeading().textContent).toBe("设置");
-    expect(container.textContent).toContain("本地推理端口");
+    expect(container.textContent).toContain("推理入口");
+    expect(container.textContent).toContain("检查并发");
+    expect(container.textContent).not.toContain("一键安装调试 Skill 与 MCP");
+  });
+
+  it("opens the agent tools page from the system nav", async () => {
+    await renderApp();
+
+    await act(async () => {
+      button("Agent 工具").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      document.querySelector('[aria-current="page"]')?.textContent,
+    ).toContain("Agent 工具");
+    expect(workspaceHeading().textContent).toBe("Agent 工具");
+    expect(container.textContent).toContain("一键安装调试 Skill 与 MCP");
+    expect(container.textContent).toContain("Cursor");
+    expect(container.textContent).toContain("Claude Code");
+    expect(container.textContent).toContain("Codex");
+    expect(bridgeMocks.getAgentDebugStatus).toHaveBeenCalled();
   });
 
   it("protects unsaved desktop preferences during navigation", async () => {
@@ -436,6 +557,8 @@ describe("App workspace navigation", () => {
         core_auto_start: true,
         core_auto_recover: true,
         inference_port: 8317,
+        max_concurrent_inspections: 16,
+        locale: "zh-CN",
       },
       load_warning: null,
       autostart_actual: false,
@@ -462,7 +585,7 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("设置");
   });
 
-  it("navigates to route management while keeping astrlink/auto gated", async () => {
+  it("navigates to route management with astrlink/auto configurable", async () => {
     await renderApp();
     const serviceCalls = bridgeMocks.listServices.mock.calls.length;
     const requestCalls = bridgeMocks.listRequestRecords.mock.calls.length;
@@ -480,8 +603,9 @@ describe("App workspace navigation", () => {
       container.querySelector('[data-testid="auto-routing-showcase"]'),
     ).not.toBeNull();
     expect(container.textContent).toContain("astrlink/auto");
-    expect(container.textContent).toContain("通过验收前不可启用");
-    expect(container.textContent).toContain("训练中 · 不可启用");
+    expect(container.textContent).toContain("未配置");
+    expect(container.textContent).not.toContain("通过验收前不可启用");
+    expect(container.textContent).not.toContain("训练中 · 不可启用");
     expect(container.textContent).toContain("固定路由与别名");
     expect(container.textContent).toContain("还没有固定路由");
     expect(container.textContent).not.toContain("mmBERT");
@@ -523,7 +647,6 @@ describe("App workspace navigation", () => {
             id: string;
             name: string;
             hint: string;
-            source: "user";
             created_at: string;
           }>;
           next_cursor: null;
@@ -541,7 +664,6 @@ describe("App workspace navigation", () => {
             id: "token_new",
             name: "New session token",
             hint: "astr_…NEW2",
-            source: "user",
             created_at: "2026-07-24T10:32:00Z",
           },
         ],
@@ -560,7 +682,6 @@ describe("App workspace navigation", () => {
             id: "token_old",
             name: "Old session token",
             hint: "astr_…OLD1",
-            source: "user",
             created_at: "2026-07-24T10:30:00Z",
           },
         ],
@@ -603,7 +724,7 @@ describe("App workspace navigation", () => {
 
     await act(async () => button("API 服务").click());
     await act(async () => button("添加服务").click());
-    await chooseOption("服务类型", "new-api");
+    await chooseOption("服务类型", "New API");
     await setInput('[data-testid="service-form"] input[type="url"]', "https://saved.example");
     await setInput('[data-testid="service-form"] input[type="password"]', "secret-key");
     await act(async () => {

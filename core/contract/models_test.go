@@ -189,6 +189,7 @@ func TestCapabilityRejectsInvalidMode(t *testing.T) {
 		want   string
 	}{
 		{name: "mode", mutate: func(value *Capability) { value.Mode = "relaykit" }, want: "mode"},
+		{name: "same convert_to", mutate: func(value *Capability) { value.ConvertTo = ProtocolOpenAIResponses }, want: "convert_to"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

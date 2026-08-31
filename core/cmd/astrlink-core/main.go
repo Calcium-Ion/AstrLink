@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
+	"github.com/QuantumNous/astrlink/core/internal/automodel"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
@@ -37,17 +40,25 @@ func main() {
 	parentPID := 0
 	dataDirectory := ""
 	privacyWorkerPath := ""
+	classifierWorkerPath := ""
 	controlTokenStdin := false
+	maxConcurrentInspections := ingress.DefaultMaxConcurrentInspections
 	flag.StringVar(&config.InferenceListen, "inference-listen", config.InferenceListen, "loopback inference listen address")
 	flag.StringVar(&config.ControlListen, "control-listen", config.ControlListen, "loopback control listen address")
 	flag.IntVar(&parentPID, "parent-pid", 0, "optional desktop parent PID to watch on Unix")
 	flag.StringVar(&dataDirectory, "data-dir", "", "optional persistent application data directory")
 	flag.StringVar(&privacyWorkerPath, "privacy-worker", "", "optional bundled privacy worker executable")
+	flag.StringVar(&classifierWorkerPath, "classifier-worker", "", "optional bundled classifier worker executable")
 	flag.BoolVar(&controlTokenStdin, "control-token-stdin", false, "read the per-start control token from stdin")
+	flag.IntVar(&maxConcurrentInspections, "max-concurrent-inspections", maxConcurrentInspections, "maximum requests that may parse and classify at once")
 	flag.CommandLine.SetOutput(os.Stderr)
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "astrlink-core: ", log.LstdFlags)
+	if err := ingress.ValidateMaxConcurrentInspections(maxConcurrentInspections); err != nil {
+		logger.Printf("%v", err)
+		os.Exit(2)
+	}
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	ctx, stopParentWatch, err := parentwatch.NotifyContext(signalCtx, parentPID, time.Second)
@@ -73,6 +84,9 @@ func main() {
 		if err != nil {
 			logger.Printf("open persistent store: %v", err)
 			os.Exit(1)
+		}
+		if runtime.GOOS != "windows" {
+			config.ControlSocketPath = filepath.Join(dataDirectory, "control.sock")
 		}
 		closeStore = store.Close
 		if recovered, recoverErr := store.RecoverPendingRequestRecords(ctx); recoverErr != nil {
@@ -104,6 +118,32 @@ func main() {
 				os.Exit(1)
 			}
 		}
+		autoClassifierRegistry, err := automodel.NewRegistry(
+			filepath.Join(dataDirectory, "auto-classifier"),
+		)
+		if err != nil {
+			_ = store.Close()
+			logger.Printf("configure local classifier model: %v", err)
+			os.Exit(1)
+		}
+		if classifierWorkerPath == "" {
+			classifierWorkerPath, err = autoclassifier.SiblingExecutablePath()
+			if err != nil {
+				_ = store.Close()
+				logger.Printf("locate local classifier worker: %v", err)
+				os.Exit(1)
+			}
+		}
+		classifierWorker, err := autoclassifier.New(autoclassifier.Config{
+			ExecutablePath: classifierWorkerPath,
+			Model:          autoClassifierRegistry,
+		})
+		if err != nil {
+			_ = store.Close()
+			logger.Printf("configure local classifier worker: %v", err)
+			os.Exit(1)
+		}
+		defer classifierWorker.Close()
 		privacyWorker, err := privacyworker.New(privacyworker.Config{
 			ExecutablePath: privacyWorkerPath,
 			Model:          privacyModel,
@@ -154,6 +194,8 @@ func main() {
 			AuditBlobs:         store,
 			Subscriptions:      subscriptionManager,
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
+			AutoClassifiers:    autoClassifierRegistry,
+			AutoClassifier:     classifierWorker,
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,
@@ -195,12 +237,14 @@ func main() {
 					)
 				},
 			),
-			RequestRecords:   store,
-			AuditSettings:    store,
-			AuditBlobs:       store,
-			RecordLogger:     logger.Printf,
-			AllowedHost:      config.InferenceListen,
-			ConversionEngine: conversionEngine,
+			RequestRecords:           store,
+			AuditSettings:            store,
+			AuditBlobs:               store,
+			RecordLogger:             logger.Printf,
+			AllowedHost:              config.InferenceListen,
+			ConversionEngine:         conversionEngine,
+			Classifier:               classifierWorker,
+			MaxConcurrentInspections: maxConcurrentInspections,
 		})
 		if err != nil {
 			_ = store.Close()

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { i18n } from "./i18n";
+
 export type CopyState = "idle" | "copied" | "failed";
 
 export interface CopyFeedback {
@@ -71,9 +73,9 @@ export function useCopyFeedback(): CopyFeedback {
 export function copyButtonLabel(
   feedback: CopyFeedback,
   key: string,
-  idleLabel = "复制",
-  copiedLabel = "已复制",
+  idleLabel = i18n.t("common.copy"),
+  copiedLabel = i18n.t("common.copied"),
 ): string {
   if (feedback.activeKey !== key) return idleLabel;
-  return feedback.state === "failed" ? "复制失败" : copiedLabel;
+  return feedback.state === "failed" ? i18n.t("common.copyFailed") : copiedLabel;
 }

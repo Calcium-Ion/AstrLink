@@ -43,7 +43,7 @@ describe("route IPC model", () => {
       selection: { mode: "auto", taxonomy_id: "astrlink-text-v1" },
       categories: [
         {
-          category_id: "code",
+          category_id: "coding",
           targets: [
             {
               service_id: "service_primary",
@@ -70,7 +70,7 @@ describe("route IPC model", () => {
     });
     expect(route.selection?.mode).toBe("auto");
     expect(route.categories?.map((category) => category.category_id)).toEqual([
-      "code",
+      "coding",
       "general",
     ]);
   });

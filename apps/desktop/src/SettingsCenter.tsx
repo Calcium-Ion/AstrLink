@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 
 import { ChoiceCard } from "@/components/ChoiceCard";
 import { DataRow } from "@/components/DataRow";
+import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { SectionKicker } from "@/components/SectionKicker";
@@ -21,13 +22,20 @@ import {
   updatePreferences,
 } from "./bridge";
 import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
-import type { Preferences, SettingsSnapshot } from "./preferences-model";
+import { applyLocale, i18n, useT, type Locale } from "./i18n";
+import {
+  MAX_MAX_CONCURRENT_INSPECTIONS,
+  MIN_MAX_CONCURRENT_INSPECTIONS,
+  type Preferences,
+  type SettingsSnapshot,
+} from "./preferences-model";
+import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 
-type InstantPatch = Omit<Preferences, "inference_port">;
+type InstantPatch = Omit<Preferences, "inference_port" | "max_concurrent_inspections">;
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : "设置操作失败。";
+  return error instanceof Error ? error.message : i18n.t("settings.failed");
 }
 
 function activePort(snapshot: AppSnapshot | null): number | null {
@@ -108,11 +116,12 @@ export function SettingsCenter({
   onCoreSnapshot: (snapshot: AppSnapshot) => void;
   onDirtyChange: (dirty: boolean) => void;
 }) {
+  const t = useT();
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null);
   const [portDraft, setPortDraft] = useState<number | null>(null);
+  const [concurrencyDraft, setConcurrencyDraft] = useState<number | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [busy, setBusy] = useState<
     "prefs" | "port" | "start" | "stop" | "restart" | null
   >(null);
@@ -124,6 +133,7 @@ export function SettingsCenter({
         if (!cancelled) {
           setSettings(next);
           setPortDraft(next.values.inference_port);
+          setConcurrencyDraft(next.values.max_concurrent_inspections);
           setLoadingError(null);
         }
       })
@@ -143,10 +153,18 @@ export function SettingsCenter({
       portDraft !== settings.values.inference_port,
     [portDraft, settings],
   );
+  const concurrencyDirty = useMemo(
+    () =>
+      settings !== null &&
+      concurrencyDraft !== null &&
+      concurrencyDraft !== settings.values.max_concurrent_inspections,
+    [concurrencyDraft, settings],
+  );
+  const entryDirty = portDirty || concurrencyDirty;
   useEffect(() => {
-    onDirtyChange(portDirty);
+    onDirtyChange(entryDirty);
     return () => onDirtyChange(false);
-  }, [portDirty, onDirtyChange]);
+  }, [entryDirty, onDirtyChange]);
 
   const applyInstant = async (patch: Partial<InstantPatch>): Promise<void> => {
     if (!settings || busy !== null) return;
@@ -155,14 +173,17 @@ export function SettingsCenter({
       ...settings.values,
       ...patch,
       inference_port: settings.values.inference_port,
+      max_concurrent_inspections: settings.values.max_concurrent_inspections,
     };
     setBusy("prefs");
     setActionError(null);
-    setFeedback(null);
     setSettings({ ...settings, values });
     try {
       const next = await updatePreferences(values);
       setSettings(next);
+      if (patch.locale && patch.locale !== previous.values.locale) {
+        await applyLocale(patch.locale);
+      }
     } catch (error) {
       setSettings(previous);
       setActionError(messageOf(error));
@@ -176,7 +197,6 @@ export function SettingsCenter({
   ): Promise<void> => {
     setBusy(action);
     setActionError(null);
-    setFeedback(null);
     try {
       const next =
         action === "start"
@@ -185,12 +205,12 @@ export function SettingsCenter({
             ? await stopCore()
             : await restartCore();
       onCoreSnapshot(next);
-      setFeedback(
+      notify.success(
         action === "start"
-          ? "Core 正在启动。"
+          ? i18n.t("settings.notifyStart")
           : action === "stop"
-            ? "Core 已停止。"
-            : "Core 正在使用已保存设置重启。",
+            ? i18n.t("settings.notifyStop")
+            : i18n.t("settings.notifyRestart"),
       );
     } catch (error) {
       setActionError(messageOf(error));
@@ -200,21 +220,27 @@ export function SettingsCenter({
   };
 
   const savePort = async (): Promise<void> => {
-    if (!settings || portDraft === null || !portDirty) return;
+    if (!settings || portDraft === null || concurrencyDraft === null || !entryDirty) {
+      return;
+    }
     setBusy("port");
     setActionError(null);
-    setFeedback(null);
     try {
       const next = await updatePreferences({
         ...settings.values,
         inference_port: portDraft,
+        max_concurrent_inspections: concurrencyDraft,
       });
       setSettings(next);
       setPortDraft(next.values.inference_port);
-      setFeedback(
-        active !== null && active !== next.values.inference_port
-          ? "端口已保存。重启 Core 后生效。"
-          : "端口已保存并与系统状态核对。",
+      setConcurrencyDraft(next.values.max_concurrent_inspections);
+      const gatewayRunning =
+        snapshot != null &&
+        !["stopped", "exited", "error", "unavailable"].includes(snapshot.phase);
+      notify.success(
+        gatewayRunning
+          ? i18n.t("settings.notifyPortSavedRestart")
+          : i18n.t("settings.notifyPortSaved"),
       );
     } catch (error) {
       setActionError(messageOf(error));
@@ -226,9 +252,9 @@ export function SettingsCenter({
   if (loadingError) {
     return (
       <section className="grid gap-4 pb-2">
-        <PageHeader eyebrow="桌面偏好" title="设置" />
+        <PageHeader title={t("settings.title")} />
         <Panel className="grid gap-2.5 border-destructive/35 bg-danger-wash p-4 text-danger-foreground">
-          <strong className="text-sm font-semibold">无法加载设置</strong>
+          <strong className="text-sm font-semibold">{t("settings.loadFailed")}</strong>
           <p className="text-xs">{loadingError}</p>
           <Button
             className="justify-self-start"
@@ -236,17 +262,17 @@ export function SettingsCenter({
             onClick={() => window.location.reload()}
             type="button"
           >
-            重新加载
+            {t("settings.reload")}
           </Button>
         </Panel>
       </section>
     );
   }
-  if (!settings || portDraft === null) {
+  if (!settings || portDraft === null || concurrencyDraft === null) {
     return (
       <section className="grid gap-4 pb-2">
-        <PageHeader eyebrow="桌面偏好" title="设置" />
-        <p className="text-xs text-text-secondary">正在读取桌面与系统设置…</p>
+        <PageHeader title={t("settings.title")} />
+        <p className="text-xs text-text-secondary">{t("settings.loading")}</p>
       </section>
     );
   }
@@ -260,9 +286,12 @@ export function SettingsCenter({
   const recoveryHint =
     snapshot?.recovery_scheduled_in_ms !== null &&
     snapshot?.recovery_scheduled_in_ms !== undefined
-      ? `第 ${snapshot.recovery_attempt}/5 次恢复将在约 ${Math.ceil(snapshot.recovery_scheduled_in_ms / 1000)} 秒后进行`
+      ? t("settings.recoveryScheduled", {
+          attempt: snapshot.recovery_attempt,
+          seconds: Math.ceil(snapshot.recovery_scheduled_in_ms / 1000),
+        })
       : snapshot?.recovery_attempt
-        ? `已尝试恢复 ${snapshot.recovery_attempt}/5 次`
+        ? t("settings.recoveryAttempted", { attempt: snapshot.recovery_attempt })
         : null;
   const portNeedsRestart =
     active !== null && active !== settings.values.inference_port;
@@ -270,9 +299,8 @@ export function SettingsCenter({
   return (
     <section className="grid gap-4 pb-2">
       <PageHeader
-        eyebrow="桌面偏好"
-        title="设置"
-        description="窗口与 Core 偏好会立即生效；推理端口需单独保存。"
+        title={t("settings.title")}
+        description={t("settings.description")}
       />
 
       {settings.load_warning ? (
@@ -282,32 +310,62 @@ export function SettingsCenter({
         <FormMessage tone="warning">{settings.autostart_error}</FormMessage>
       ) : settings.autostart_actual !== prefs.autostart ? (
         <FormMessage tone="warning">
-          偏好与系统开机启动状态不一致；可再次切换以重新核对。
+          {t("settings.autostartMismatch")}
         </FormMessage>
       ) : null}
       {actionError ? (
         <FormMessage tone="error">{actionError}</FormMessage>
       ) : null}
-      {feedback ? <FormMessage tone="success">{feedback}</FormMessage> : null}
 
       <div className="grid grid-cols-2 gap-3 max-[920px]:grid-cols-1">
         <Panel className="min-w-0">
           <SettingsPanelHeader
-            hint="更改后立即生效，无需手动保存。"
-            kicker="窗口与启动"
-            title="桌面行为"
+            hint={t("settings.instantHint")}
+            kicker={t("settings.windowKicker")}
+            title={t("settings.desktopBehavior")}
           />
 
           <div className="grid gap-2 border-b px-4 py-3">
             <span className="text-xs font-medium text-text-secondary">
-              关闭主窗口时
+              {t("settings.language")}
             </span>
             <RadioGroup
               className={cn(
                 "grid grid-cols-2 gap-2 max-[560px]:grid-cols-1",
                 prefsBusy && "pointer-events-none opacity-60",
               )}
-              aria-label="关闭主窗口时"
+              aria-label={t("settings.language")}
+              disabled={prefsBusy}
+              onValueChange={(value) =>
+                void applyInstant({ locale: value as Locale })
+              }
+              value={prefs.locale}
+            >
+              <ChoiceCard
+                description={t("settings.languageHint")}
+                label="English"
+                selected={prefs.locale === "en"}
+                value="en"
+              />
+              <ChoiceCard
+                description={t("settings.languageHint")}
+                label="简体中文"
+                selected={prefs.locale === "zh-CN"}
+                value="zh-CN"
+              />
+            </RadioGroup>
+          </div>
+
+          <div className="grid gap-2 border-b px-4 py-3">
+            <span className="text-xs font-medium text-text-secondary">
+              {t("settings.onClose")}
+            </span>
+            <RadioGroup
+              className={cn(
+                "grid grid-cols-2 gap-2 max-[560px]:grid-cols-1",
+                prefsBusy && "pointer-events-none opacity-60",
+              )}
+              aria-label={t("settings.onClose")}
               disabled={prefsBusy}
               onValueChange={(value) =>
                 void applyInstant({
@@ -317,14 +375,14 @@ export function SettingsCenter({
               value={prefs.close_behavior}
             >
               <ChoiceCard
-                description="后台继续运行"
-                label="隐藏到托盘"
+                description={t("settings.hideToTrayHint")}
+                label={t("settings.hideToTray")}
                 selected={prefs.close_behavior === "hide_to_tray"}
                 value="hide_to_tray"
               />
               <ChoiceCard
-                description="结束全部进程"
-                label="退出 AstrLink"
+                description={t("settings.quitHint")}
+                label={t("settings.quit")}
                 selected={prefs.close_behavior === "quit"}
                 value="quit"
               />
@@ -334,32 +392,32 @@ export function SettingsCenter({
           <SettingsToggle
             checked={prefs.autostart}
             disabled={prefsBusy}
-            label="登录系统后自动启动 AstrLink"
+            label={t("settings.autostart")}
             onChange={(autostart) => void applyInstant({ autostart })}
           />
 
           <p className="px-4 py-2.5 text-xs text-muted-foreground">
-            系统托盘始终提供“显示 AstrLink”和“退出”。
+            {t("settings.trayHint")}
           </p>
         </Panel>
 
         <Panel className="min-w-0">
           <SettingsPanelHeader
-            hint="更改后立即生效，无需手动保存。"
-            kicker="本地运行时"
-            title="Core 启动与恢复"
+            hint={t("settings.instantHint")}
+            kicker={t("settings.runtimeKicker")}
+            title={t("settings.gatewayTitle")}
           />
 
           <SettingsToggle
             checked={prefs.core_auto_start}
             disabled={prefsBusy}
-            label="AstrLink 启动时自动启动 Core"
+            label={t("settings.coreAutoStart")}
             onChange={(core_auto_start) => void applyInstant({ core_auto_start })}
           />
           <SettingsToggle
             checked={prefs.core_auto_recover}
             disabled={prefsBusy}
-            label="Core 异常退出后自动恢复"
+            label={t("settings.coreAutoRecover")}
             onChange={(core_auto_recover) =>
               void applyInstant({ core_auto_recover })
             }
@@ -380,7 +438,7 @@ export function SettingsCenter({
                   {phaseLabel(phase)}
                 </strong>
                 <span className="truncate text-xs text-text-secondary">
-                  当前状态：{phase}
+                  {t("settings.currentStatus", { phase })}
                   {recoveryHint ? ` · ${recoveryHint}` : ""}
                 </span>
               </div>
@@ -399,7 +457,7 @@ export function SettingsCenter({
               onClick={() => void runCoreAction("start")}
               type="button"
             >
-              {busy === "start" ? "启动中…" : "启动"}
+              {busy === "start" ? t("settings.starting") : t("settings.start")}
             </Button>
             <Button
               variant="outline"
@@ -407,7 +465,7 @@ export function SettingsCenter({
               onClick={() => void runCoreAction("stop")}
               type="button"
             >
-              {busy === "stop" ? "停止中…" : "停止"}
+              {busy === "stop" ? t("settings.stopping") : t("settings.stop")}
             </Button>
             <Button
               variant="outline"
@@ -415,7 +473,7 @@ export function SettingsCenter({
               onClick={() => void runCoreAction("restart")}
               type="button"
             >
-              {busy === "restart" ? "重启中…" : "重启"}
+              {busy === "restart" ? t("settings.restarting") : t("settings.restart")}
             </Button>
           </div>
         </Panel>
@@ -423,20 +481,17 @@ export function SettingsCenter({
         <Panel
           className={cn(
             "col-span-full min-w-0 max-[920px]:col-auto",
-            portDirty && "border-warning/50",
+            entryDirty && "border-warning/50",
           )}
         >
           <SettingsPanelHeader
-            hint="修改后需保存；重启 Core 后才会切换到新端口。"
-            kicker="网络入口"
-            title="本地推理端口"
+            hint={t("settings.portHint")}
+            kicker={t("settings.portKicker")}
+            title={t("settings.portTitle")}
           />
 
-          <div className="grid grid-cols-[minmax(140px,200px)_minmax(0,1fr)] items-end gap-3 border-b px-4 py-3 max-[920px]:grid-cols-1">
-            <Label className="grid gap-1.5">
-              <span className="text-xs font-medium text-text-secondary">
-                推理端口
-              </span>
+          <div className="grid grid-cols-3 gap-3 border-b px-4 py-3 max-[560px]:grid-cols-1">
+            <Field label={t("settings.portField")}>
               <Input
                 className="font-mono tabular-nums"
                 max={65535}
@@ -445,49 +500,64 @@ export function SettingsCenter({
                 type="number"
                 value={portDraft}
               />
-            </Label>
+            </Field>
+            <Field label={t("settings.portActive")}>
+              <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
+                {active ?? t("settings.portNotReady")}
+              </span>
+            </Field>
+            <Field label={t("settings.portSaved")}>
+              <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
+                {settings.values.inference_port}
+              </span>
+            </Field>
+          </div>
 
-            <dl className="grid grid-cols-2 gap-2 max-[560px]:grid-cols-1">
-              <div className="grid gap-1 rounded-md border bg-muted px-3 py-2">
-                <dt className="text-micro font-medium tracking-[0.06em] text-muted-foreground uppercase">
-                  正在使用
-                </dt>
-                <dd className="text-sm font-medium tabular-nums">
-                  {active ?? "Core 未就绪"}
-                </dd>
-              </div>
-              <div className="grid gap-1 rounded-md border bg-muted px-3 py-2">
-                <dt className="text-micro font-medium tracking-[0.06em] text-muted-foreground uppercase">
-                  已保存
-                </dt>
-                <dd className="text-sm font-medium tabular-nums">
-                  {settings.values.inference_port}
-                </dd>
-              </div>
-            </dl>
+          <div className="grid grid-cols-3 gap-3 border-b px-4 py-3 max-[560px]:grid-cols-1">
+            <Field label={t("settings.concurrencyField")}>
+              <Input
+                aria-label={t("settings.concurrencyField")}
+                className="font-mono tabular-nums"
+                max={MAX_MAX_CONCURRENT_INSPECTIONS}
+                min={MIN_MAX_CONCURRENT_INSPECTIONS}
+                onChange={(event) =>
+                  setConcurrencyDraft(Number(event.target.value))
+                }
+                type="number"
+                value={concurrencyDraft}
+              />
+            </Field>
+            <Field label={t("settings.concurrencySaved")}>
+              <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
+                {settings.values.max_concurrent_inspections}
+              </span>
+            </Field>
+            <p className="col-span-1 flex items-end text-xs text-muted-foreground max-[560px]:items-start">
+              {t("settings.concurrencyHint")}
+            </p>
           </div>
 
           <div className="flex items-center justify-between gap-3 px-4 py-3 max-[560px]:flex-col max-[560px]:items-stretch">
-            {portDirty ? (
+            {entryDirty ? (
               <p className="min-w-0 flex-1 text-xs text-warning-foreground">
-                有未保存的端口修改。
+                {t("settings.portDirty")}
               </p>
             ) : portNeedsRestart ? (
               <p className="min-w-0 flex-1 text-xs text-warning-foreground">
-                端口修改尚未生效；重启 Core 后切换到已保存端口。
+                {t("settings.portNeedsRestart")}
               </p>
             ) : (
               <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-                控制面始终使用仅桌面可知的 127.0.0.1 临时端口。
+                {t("settings.portControlHint")}
               </p>
             )}
             <Button
               className="shrink-0 max-[560px]:w-full"
-              disabled={!portDirty || busy !== null}
+              disabled={!entryDirty || busy !== null}
               onClick={() => void savePort()}
               type="button"
             >
-              {busy === "port" ? "正在保存…" : "保存端口"}
+              {busy === "port" ? t("settings.savingPort") : t("settings.savePort")}
             </Button>
           </div>
         </Panel>

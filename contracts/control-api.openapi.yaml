@@ -59,6 +59,8 @@ x-astrlink-implementation:
     - POST /control/v1/services/{service_id}/probe-models
     - POST /control/v1/service-model-probes
     - POST /control/v1/services/{service_id}/probe-responses
+    - GET /control/v1/services/{service_id}/usage
+    - POST /control/v1/services/{service_id}/usage/reset
     - GET /control/v1/access-tokens
     - POST /control/v1/access-tokens
     - GET /control/v1/access-tokens/{token_id}/secret
@@ -67,6 +69,7 @@ x-astrlink-implementation:
     - GET /control/v1/policies/{policy_id}
     - PATCH /control/v1/policies/{policy_id}
     - POST /control/v1/policies/{policy_id}/dry-run
+    - GET /control/v1/privacy/regex-builtin-rules
     - GET /control/v1/privacy-model-catalog
     - POST /control/v1/privacy-models/probe
     - POST /control/v1/privacy-models/local/probe
@@ -82,6 +85,10 @@ x-astrlink-implementation:
     - GET /control/v1/requests/{request_id}/audit
     - GET /control/v1/audit-settings
     - PATCH /control/v1/audit-settings
+    - POST /control/v1/auto-classifier/local/probe
+    - GET /control/v1/auto-classifier
+    - POST /control/v1/auto-classifier
+    - POST /control/v1/auto-classifier/classify-preview
   planned_operations: all other operations in this document
 x-astrlink-ready-announcement:
   transport: single JSON line on stdout after both listeners bind
@@ -102,6 +109,8 @@ tags:
     description: Content safety policies and privileged encrypted body-audit settings.
   - name: Privacy Model
     description: Integrity-checked catalog and lifecycle for selectable local privacy-model installations.
+  - name: Auto Classifier
+    description: Local-directory inspect, install, and dry-run classify for the frozen astrlink-text-v1 worker. An installed experimental or released artifact is routing-eligible.
   - name: Events
     description: Sanitized operational events.
   - name: Requests
@@ -589,6 +598,78 @@ paths:
           $ref: "#/components/responses/Conflict"
         "502":
           $ref: "#/components/responses/BadGateway"
+  /control/v1/services/{service_id}/usage:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    get:
+      tags: [Services]
+      operationId: getServiceUsage
+      summary: Read the live Codex subscription rolling-quota snapshot.
+      description: |
+        Fetches the official ChatGPT `/wham/usage` snapshot for a connected
+        `codex_subscription` service. The response is sanitized: email, user_id,
+        account_id, and credential material never appear. This lookup does not
+        consume quota and does not redeem reset credits.
+      responses:
+        "200":
+          description: Sanitized live usage snapshot.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionUsage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /control/v1/services/{service_id}/usage/reset:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    post:
+      tags: [Services]
+      operationId: resetServiceUsage
+      summary: Redeem one official Codex rate-limit reset credit.
+      description: |
+        Calls the official openai/codex consume path
+        (`POST /wham/rate-limit-reset-credits/consume` on ChatGPT backend-api
+        hosts, or `POST /api/codex/rate-limit-reset-credits/consume` otherwise)
+        with a Core-generated `redeem_request_id`. The upstream `credit` object
+        is dropped. Clients should refetch usage after `reset` or
+        `already_redeemed`.
+      responses:
+        "200":
+          description: Official consume outcome after a credit was applied.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionUsageReset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
   /control/v1/access-tokens:
     x-astrlink-implementation-status: implemented
     get:
@@ -973,6 +1054,29 @@ paths:
           $ref: "#/components/responses/UnprocessableEntity"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /control/v1/privacy/regex-builtin-rules:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Policies]
+      operationId: listPrivacyRegexBuiltinRules
+      summary: Read the built-in Regex detector catalog.
+      description: |
+        Returns the fixed kind and pattern pairs used by the builtin Regex
+        detector. Intended to seed custom_regex_rules; the catalog itself is
+        not editable. Custom mode compiles patterns only and does not reuse
+        built-in validators such as Luhn or IBAN checks.
+      responses:
+        "200":
+          description: Built-in Regex rules.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyRegexBuiltinRulesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /control/v1/privacy-model-catalog:
     get:
       x-astrlink-implementation-status: implemented
@@ -1154,6 +1258,127 @@ paths:
           $ref: "#/components/responses/Conflict"
         "500":
           $ref: "#/components/responses/InternalServerError"
+  /control/v1/auto-classifier/local/probe:
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Auto Classifier]
+      operationId: probeLocalAutoClassifier
+      summary: Inspect a sequence-classification package from an already-mounted local path.
+      description: |
+        The path identifies a package directory or one ONNX file within it. The
+        source path is used only for the authenticated probe and is never
+        returned, logged, or persisted. Installation copies pinned assets into
+        AstrLink private storage before the worker may load them. Non-released
+        artifact tiers stay ineligible for routing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoClassifierLocalProbeRequest"
+      responses:
+        "200":
+          description: Content-pinned local package identity and frozen taxonomy mapping.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoClassifierProbe"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/auto-classifier:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Auto Classifier]
+      operationId: listAutoClassifierInstallations
+      summary: List local classifier installations.
+      responses:
+        "200":
+          description: Installed classifier packages.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoClassifierInstallationList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Auto Classifier]
+      operationId: installAutoClassifier
+      summary: Copy one probed local classifier package into private storage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoClassifierInstallRequest"
+      responses:
+        "202":
+          description: Installation accepted and ready.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoClassifierInstallation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/auto-classifier/classify-preview:
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Auto Classifier]
+      operationId: classifyPreviewAutoClassifier
+      summary: Dry-run classify a text snippet or a protocol request body.
+      description: |
+        Control-plane only. The extracted current-user-text-v3 payload is not
+        persisted, logged, or cached. Softmax is not returned and is not a
+        routing gate. `eligible_for_routing` is true when a ready
+        installation exists. Auto Route classifies `astrlink/auto` and
+        fail-opens when the worker is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoClassifierClassifyPreviewRequest"
+      responses:
+        "200":
+          description: Category, logits, latency, and routing eligibility.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoClassifierClassifyPreviewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /control/v1/audit-settings:
     x-astrlink-implementation-status: implemented
     get:
@@ -1262,6 +1487,11 @@ paths:
             $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
         - name: service_id
           in: query
+          schema:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        - name: local_access_token_id
+          in: query
+          description: Restrict to root records attributed to this local access token.
           schema:
             $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         - name: status
@@ -1395,6 +1625,73 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /control/v1/request-sessions:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Requests]
+      operationId: listRequestSessions
+      summary: List conversation sessions aggregated from root request records.
+      description: |
+        Groups root records that share a session_id. Roots with a null session_id
+        appear as singleton sessions whose id is the request id. Does not return
+        request or response body content.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: protocol
+          in: query
+          schema:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        - name: service_id
+          in: query
+          schema:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        - name: local_access_token_id
+          in: query
+          schema:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/RequestStatus"
+      responses:
+        "200":
+          description: Request-session page.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestSessionPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/request-sessions/{session_id}:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [Requests]
+      operationId: getRequestSession
+      summary: Read one session summary and its root turns in time order.
+      responses:
+        "200":
+          description: Session detail without body content.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestSessionDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     controlToken:
@@ -1460,6 +1757,12 @@ components:
         $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
     RequestId:
       name: request_id
+      in: path
+      required: true
+      schema:
+        $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    SessionId:
+      name: session_id
       in: path
       required: true
       schema:
@@ -1620,7 +1923,7 @@ components:
       additionalProperties: false
     AccessToken:
       type: object
-      required: [id, name, hint, source, created_at]
+      required: [id, name, hint, created_at]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -1633,9 +1936,6 @@ components:
           minLength: 1
           maxLength: 32
           description: Non-secret display hint that cannot be used to authenticate.
-        source:
-          type: string
-          enum: [system_default, user]
         created_at:
           type: string
           format: date-time
@@ -2241,10 +2541,16 @@ components:
         - detector
         - local_model_id
         - min_confidence
+        - regex_source
+        - custom_regex_rules
+        - kind_rules
+        - allowlist_rules
         - match
         - request_action
         - response_action
         - response_restore
+        - restore_tool_arguments
+        - placeholder_notice
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -2288,7 +2594,112 @@ components:
           description: >
             When request_action is redact, restore this request's placeholders in
             the upstream response before returning to the client. Default true.
+        regex_source:
+          $ref: "#/components/schemas/PolicyRegexSource"
+        custom_regex_rules:
+          type: array
+          maxItems: 64
+          default: []
+          items:
+            $ref: "#/components/schemas/PolicyRegexRule"
+          description: >
+            Persisted even when regex_source is builtin so switching modes does
+            not discard edits. Applied only when detector is regex and
+            regex_source is custom; replaces the built-in Regex catalog.
+        kind_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyKindRule"
+          description: >
+            Normalized by Core to exactly one entry per PrivacyKind, so a
+            partial patch never leaves the effective shape of a kind ambiguous.
+        allowlist_rules:
+          type: array
+          maxItems: 128
+          default: []
+          items:
+            $ref: "#/components/schemas/PolicyAllowlistRule"
+          description: >
+            Matched values are exempt from redaction and reach the upstream and
+            the local agent unchanged.
+        restore_tool_arguments:
+          type: boolean
+          default: true
+          description: >
+            Restore placeholders inside tool and function call arguments as well
+            as visible text. The tool call runs in the operator's own agent
+            harness, so it needs the real value; leaving this off while any kind
+            uses the natural style lets a plausible-looking stand-in be written
+            to disk or fetched over the network as if it were genuine.
+        placeholder_notice:
+          type: boolean
+          default: true
+          description: >
+            When a request emits at least one token-shaped placeholder, prepend a
+            short note to the upstream system instruction explaining that the
+            markers are opaque and must be copied verbatim. The note never
+            carries the mapping. Requests that emit only natural stand-ins skip
+            it, since those need no explanation.
       additionalProperties: false
+    PolicyKindRule:
+      type: object
+      required: [kind, enabled, style]
+      properties:
+        kind:
+          $ref: "#/components/schemas/PrivacyKind"
+        enabled:
+          type: boolean
+        style:
+          $ref: "#/components/schemas/PlaceholderStyle"
+      additionalProperties: false
+      description: >
+        Per-kind detection switch and placeholder shape. url and ip_address ship
+        disabled because they are the dominant false-positive source for coding
+        agents. common_secret, private_person, private_address, and private_date
+        are rejected with any style other than token.
+    PlaceholderStyle:
+      type: string
+      enum: [natural, token]
+      default: token
+      description: >
+        token emits an opaque marker such as <PRIVATE_EMAIL_hex>: an unrestored
+        leak is obvious, but the marker is out-of-distribution text that violates
+        typed tool-argument schemas. natural emits a syntactically valid stand-in
+        from a permanently reserved namespace, such as an address under the
+        .invalid TLD: a model copies it without instruction and schemas accept
+        it, but an unrestored leak looks plausible, so it is only safe alongside
+        restore_tool_arguments.
+    PolicyAllowlistRule:
+      type: object
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          enum: [literal, domain_suffix, cidr]
+        value:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: >
+            An exact string for literal, a registrable suffix for domain_suffix,
+            or CIDR notation for cidr. domain_suffix and cidr resolve the matched
+            value to a host or address first, so one rule covers a bare host, a
+            URL on that host, and an address at that domain.
+      additionalProperties: false
+    PrivacyKind:
+      type: string
+      description: Every kind a detector may emit; the local model adds the private_ kinds.
+      enum:
+        - common_secret
+        - payment_card
+        - account
+        - email
+        - phone
+        - url
+        - ip_address
+        - private_person
+        - private_address
+        - private_date
     PolicyCreate:
       type: object
       required: [name, priority, detector, match, request_action]
@@ -2339,11 +2750,69 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        regex_source:
+          $ref: "#/components/schemas/PolicyRegexSource"
+        custom_regex_rules:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/PolicyRegexRule"
+        kind_rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyKindRule"
+        allowlist_rules:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/PolicyAllowlistRule"
         request_action:
           $ref: "#/components/schemas/PolicyAction"
         response_restore:
           type: boolean
+        restore_tool_arguments:
+          type: boolean
+        placeholder_notice:
+          type: boolean
       additionalProperties: false
+    PolicyRegexSource:
+      type: string
+      enum: [builtin, custom]
+      default: builtin
+      description: >
+        When detector is regex, builtin uses the fixed high-confidence catalog;
+        custom uses only custom_regex_rules.
+    PolicyRegexRule:
+      type: object
+      required: [kind, pattern]
+      properties:
+        kind:
+          $ref: "#/components/schemas/PrivacyRegexDetectorKind"
+        pattern:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Go RE2 regular expression; compiled by Core on save and inspect.
+      additionalProperties: false
+    PolicyRegexBuiltinRulesResponse:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyRegexRule"
+      additionalProperties: false
+    PrivacyRegexDetectorKind:
+      type: string
+      enum:
+        - email
+        - phone
+        - account
+        - payment_card
+        - ip_address
+        - url
+        - common_secret
     PolicyDryRunRequest:
       type: object
       required: [protocol, sample_text]
@@ -2383,10 +2852,24 @@ components:
           minimum: 0
           maximum: 1
           description: Detector confidence retained from the local worker; Regex findings use 1.
+        reason:
+          type: string
+          enum:
+            - low_confidence
+            - kind_disabled
+            - allowlisted
+            - placeholder
+            - unrepresentable
+          description: >
+            Why the span was left in the request. Absent on accepted findings.
+            placeholder means the value already belonged to a placeholder
+            namespace, so redacting it again would make the innermost original
+            unrecoverable. unrepresentable means the kind ran out of reserved
+            stand-ins and fell back to a token placeholder.
       additionalProperties: false
     PolicyDryRunRedaction:
       type: object
-      required: [placeholder, kind, value]
+      required: [placeholder, kind, value, style]
       properties:
         placeholder:
           type: string
@@ -2396,6 +2879,11 @@ components:
         value:
           type: string
           description: Original sample text for this placeholder; dry-run only.
+        style:
+          $ref: "#/components/schemas/PlaceholderStyle"
+          description: >
+            The shape actually emitted, which falls back to token when the kind's
+            reserved namespace is exhausted.
       additionalProperties: false
     PolicyDryRunResponse:
       type: object
@@ -2415,7 +2903,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PolicyDryRunFinding"
-          description: Local-model candidates rejected for being below min_confidence.
+          description: >
+            Detected spans that were left untouched, each carrying the reason.
+            Covers disabled kinds, allowlist matches, values already inside a
+            placeholder namespace, and local-model candidates below
+            min_confidence.
         redactions:
           type: array
           items:
@@ -2830,6 +3322,159 @@ components:
           items:
             $ref: "#/components/schemas/PrivacyModelInstallation"
       additionalProperties: false
+    AutoClassifierInstallationId:
+      type: string
+      pattern: "^classifier_[0-9a-f]{32}$"
+    AutoClassifierArtifactTier:
+      type: string
+      enum: [experimental, released]
+    AutoClassifierLocalProbeRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Absolute path to an already-mounted classifier package directory or `.onnx` file.
+      additionalProperties: false
+    AutoClassifierInstallRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 4096
+      additionalProperties: false
+    AutoClassifierProbe:
+      type: object
+      required:
+        - repo_id
+        - revision
+        - name
+        - artifact_tier
+        - eligible_for_routing
+        - taxonomy_id
+        - taxonomy_sha256
+        - bytes_total
+        - id2label
+      properties:
+        repo_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{40}$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        artifact_tier:
+          $ref: "#/components/schemas/AutoClassifierArtifactTier"
+        eligible_for_routing:
+          type: boolean
+        taxonomy_id:
+          type: string
+          const: astrlink-text-v1
+        taxonomy_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        bytes_total:
+          type: integer
+          minimum: 1
+        id2label:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: string
+            enum: [general, research, coding, architect]
+      additionalProperties: false
+    AutoClassifierInstallation:
+      type: object
+      required:
+        - id
+        - identity
+        - name
+        - artifact_tier
+        - eligible_for_routing
+        - taxonomy_id
+        - status
+        - bytes_total
+      properties:
+        id:
+          $ref: "#/components/schemas/AutoClassifierInstallationId"
+        identity:
+          type: string
+          minLength: 1
+          maxLength: 256
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        artifact_tier:
+          $ref: "#/components/schemas/AutoClassifierArtifactTier"
+        eligible_for_routing:
+          type: boolean
+        taxonomy_id:
+          type: string
+          const: astrlink-text-v1
+        status:
+          type: string
+          enum: [ready]
+        bytes_total:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    AutoClassifierInstallationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/AutoClassifierInstallation"
+      additionalProperties: false
+    AutoClassifierClassifyPreviewRequest:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 1048576
+        protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        body:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    AutoClassifierClassifyPreviewResponse:
+      type: object
+      required: [latency_ms, artifact_tier, eligible_for_routing]
+      properties:
+        category:
+          type: string
+          enum: [general, research, coding, architect]
+        logits:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+        latency_ms:
+          type: integer
+          minimum: 0
+        artifact_tier:
+          $ref: "#/components/schemas/AutoClassifierArtifactTier"
+        eligible_for_routing:
+          type: boolean
+        fallback_reason:
+          type: string
+          enum: [empty_text, classifier_unavailable, timeout, invalid_text]
+      additionalProperties: false
     AuditSettingsPatch:
       type: object
       minProperties: 1
@@ -2965,6 +3610,11 @@ components:
         - error
         - audit
         - privacy_restore
+        - session_id
+        - previous_response_id
+        - output_response_id
+        - input_preview
+        - events
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -3039,11 +3689,139 @@ components:
             - $ref: "#/components/schemas/PrivacyRestoreSummary"
             - type: "null"
           description: Non-sensitive request-scoped placeholder restoration diagnostics; null for legacy records and requests without redactions.
+        session_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+          description: Conversation session this root belongs to. Null on legacy rows.
+        previous_response_id:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 256
+          description: Inbound protocol cursor (previous_response_id, conversation_id, conversation.id, Claude metadata session, or prompt_cache_key).
+        output_response_id:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 256
+          description: Client-facing response or message id extracted from the completed stream.
+        input_preview:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 80
+          description: Bounded first-user-text title. URLs and obvious secrets are stripped.
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestEvent"
+          description: Gateway phase events for this attempt. Empty on legacy rows.
         extensions:
           $ref: ./protocol-capabilities.schema.json#/$defs/Extensions
       additionalProperties: false
+    RequestEvent:
+      type: object
+      required: [kind, started_at, ended_at, status, summary, attempt_index]
+      properties:
+        kind:
+          type: string
+          enum: [accepted, privacy, routed, upstream, restore, completed]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: [string, "null"]
+          format: date-time
+        status:
+          $ref: "#/components/schemas/RequestStatus"
+        summary:
+          type: string
+          maxLength: 256
+        attempt_index:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    RequestSession:
+      type: object
+      required:
+        - id
+        - title
+        - started_at
+        - last_started_at
+        - completed_at
+        - turn_count
+        - call_count
+        - status
+        - requested_model
+        - input_protocol
+        - service_id
+        - local_access_token_id
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        started_at:
+          type: string
+          format: date-time
+        last_started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+        turn_count:
+          type: integer
+          minimum: 1
+        call_count:
+          type: integer
+          minimum: 1
+        status:
+          $ref: "#/components/schemas/RequestStatus"
+        requested_model:
+          type: [string, "null"]
+          maxLength: 256
+        input_protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        service_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+        local_access_token_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+      additionalProperties: false
+    RequestSessionPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestSession"
+        next_cursor:
+          type: [string, "null"]
+      additionalProperties: false
+    RequestSessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/RequestSession"
+        - type: object
+          required: [turns]
+          properties:
+            turns:
+              type: array
+              items:
+                $ref: "#/components/schemas/RequestRecord"
+          additionalProperties: false
     Usage:
       type: object
+      description: |
+        OpenAI-style input accounting. input_tokens includes all prompt-side
+        tokens (uncached, cache read, cache write/creation, and multimodal
+        input). cache_read_tokens / cache_write_tokens are optional subsets.
+        Anthropic upstream fields are normalized by summing
+        input + cache_read + cache_creation into input_tokens.
       required: [input_tokens, output_tokens, total_tokens]
       properties:
         input_tokens:
@@ -3055,7 +3833,10 @@ components:
         total_tokens:
           type: integer
           minimum: 0
-        cached_input_tokens:
+        cache_read_tokens:
+          type: integer
+          minimum: 0
+        cache_write_tokens:
           type: integer
           minimum: 0
       additionalProperties: false
@@ -3122,9 +3903,38 @@ components:
         restored_count:
           type: integer
           minimum: 0
+          description: Total placeholders restored across both channels.
+        visible_restored_count:
+          type: integer
+          minimum: 0
+          description: >
+            Restored in text the reader sees. Zero on records written before the
+            channel split, which report only restored_count.
+        tool_argument_restored_count:
+          type: integer
+          minimum: 0
+          description: >
+            Restored inside tool or function call arguments. A non-zero value
+            means the local agent harness was handed real values to act on, which
+            is a materially different event from the model quoting one back.
         fallback_count:
           type: integer
           minimum: 0
+        hits:
+          type: array
+          description: Request-time unique placeholder counts by kind. Absent on records written before this field existed.
+          items:
+            $ref: "#/components/schemas/PrivacyHitCount"
+      additionalProperties: false
+    PrivacyHitCount:
+      type: object
+      required: [kind, count]
+      properties:
+        kind:
+          $ref: "#/components/schemas/PrivacyCanonicalKind"
+        count:
+          type: integer
+          minimum: 1
       additionalProperties: false
     AuditContent:
       type: object
@@ -3526,3 +4336,104 @@ components:
           type: string
           maxLength: 256
       additionalProperties: false
+    RateLimitWindow:
+      type: object
+      required: [used_percent]
+      additionalProperties: false
+      properties:
+        used_percent:
+          type: number
+          minimum: 0
+          maximum: 1000
+        limit_window_seconds:
+          type: integer
+          minimum: 1
+          maximum: 31622400
+        reset_at:
+          type: string
+          format: date-time
+        reset_after_seconds:
+          type: integer
+          minimum: 0
+          maximum: 31622400
+    AdditionalRateLimit:
+      type: object
+      required: [limit_name]
+      additionalProperties: false
+      properties:
+        limit_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        metered_feature:
+          type: string
+          minLength: 1
+          maxLength: 128
+        primary:
+          $ref: "#/components/schemas/RateLimitWindow"
+        secondary:
+          $ref: "#/components/schemas/RateLimitWindow"
+    UsageCredits:
+      type: object
+      required: [has_credits, unlimited]
+      additionalProperties: false
+      properties:
+        has_credits:
+          type: boolean
+        unlimited:
+          type: boolean
+        balance:
+          type: string
+          maxLength: 32
+    RateLimitResetCredits:
+      type: object
+      required: [available_count]
+      additionalProperties: false
+      properties:
+        available_count:
+          type: integer
+          minimum: 0
+          maximum: 1000
+    SubscriptionUsage:
+      type: object
+      required: [service_id, fetched_at]
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        fetched_at:
+          type: string
+          format: date-time
+        plan_type:
+          type: string
+          maxLength: 64
+        allowed:
+          type: boolean
+        limit_reached:
+          type: boolean
+        primary:
+          $ref: "#/components/schemas/RateLimitWindow"
+        secondary:
+          $ref: "#/components/schemas/RateLimitWindow"
+        additional_rate_limits:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/AdditionalRateLimit"
+        credits:
+          $ref: "#/components/schemas/UsageCredits"
+        rate_limit_reset_credits:
+          $ref: "#/components/schemas/RateLimitResetCredits"
+    SubscriptionUsageReset:
+      type: object
+      required: [service_id, outcome]
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        outcome:
+          type: string
+          enum: [reset, nothing_to_reset, no_credit, already_redeemed]
+        windows_reset:
+          type: integer
+          minimum: 0

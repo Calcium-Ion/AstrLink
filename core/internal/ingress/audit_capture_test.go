@@ -319,6 +319,11 @@ func TestIngressAuditCapturesRestoredCrossEventPrivacyResponse(t *testing.T) {
 		restore.FallbackCount != 0 {
 		t.Fatalf("privacy restore=%#v", restore)
 	}
+	if len(restore.Hits) != 2 ||
+		restore.Hits[0] != (contract.PrivacyHitCount{Kind: contract.CanonicalKindEmail, Count: 2}) ||
+		restore.Hits[1] != (contract.PrivacyHitCount{Kind: contract.CanonicalKindPhone, Count: 2}) {
+		t.Fatalf("privacy hits=%#v", restore.Hits)
+	}
 	if len(blobs.blobs) != 1 ||
 		blobs.blobs[0].Direction != storage.AuditDirectionResponse {
 		t.Fatalf("blobs=%#v", blobs.blobs)

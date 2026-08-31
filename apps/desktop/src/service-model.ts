@@ -1,3 +1,4 @@
+import { i18n } from "./i18n";
 import type {
   SubscriptionError,
   SubscriptionProvider,
@@ -28,6 +29,7 @@ export interface ServiceCapability {
   protocol: string;
   mode: "native" | "delegated";
   streaming: boolean;
+  convert_to?: string;
 }
 
 export type ModelDiscoveryProtocol = "openai.models" | "google.models";
@@ -238,7 +240,7 @@ function parseAuth(value: unknown, path: string): ServiceAuth {
 
 function parseCapability(value: unknown, path: string): ServiceCapability {
   const capability = objectAt(value, path);
-  keysAt(capability, ["protocol", "mode", "streaming"], [], path);
+  keysAt(capability, ["protocol", "mode", "streaming"], ["convert_to"], path);
   const protocol = stringAt(capability.protocol, `${path}.protocol`, 3, 96);
   if (!protocolIDPattern.test(protocol)) invalid(`${path}.protocol`, "invalid protocol ID");
   if (capability.mode !== "native" && capability.mode !== "delegated") {
@@ -247,11 +249,22 @@ function parseCapability(value: unknown, path: string): ServiceCapability {
   if (typeof capability.streaming !== "boolean") {
     invalid(`${path}.streaming`, "expected a boolean");
   }
-  return {
+  const parsed: ServiceCapability = {
     protocol,
     mode: capability.mode,
     streaming: capability.streaming,
   };
+  if (Object.hasOwn(capability, "convert_to")) {
+    const convertTo = stringAt(capability.convert_to, `${path}.convert_to`, 3, 96);
+    if (!protocolIDPattern.test(convertTo)) {
+      invalid(`${path}.convert_to`, "invalid protocol ID");
+    }
+    if (convertTo === protocol) {
+      invalid(`${path}.convert_to`, "must change protocol");
+    }
+    parsed.convert_to = convertTo;
+  }
+  return parsed;
 }
 
 function parseModels(value: unknown, path: string, maximum = 2_000): string[] {
@@ -498,29 +511,11 @@ export function parseServiceRecord(value: unknown): ServiceRecord {
 }
 
 export function serviceKindLabel(kind: ServiceKind): string {
-  return (
-    {
-      codex_subscription: "Codex 订阅",
-      newapi: "new-api",
-      openai: "OpenAI API",
-      anthropic: "Anthropic API",
-      gemini: "Gemini API",
-      openai_compatible: "OpenAI 兼容",
-      custom: "自定义 API",
-    } satisfies Record<ServiceKind, string>
-  )[kind];
+  return i18n.t(`kind.${kind}`);
 }
 
 export function serviceStatusLabel(service: Service): string {
-  if (!service.enabled) return "已停用";
-  if (!service.subscription) return "已启用";
-  return (
-    {
-      disconnected: "待登录",
-      authorizing: "正在登录",
-      connected: "已连接",
-      needs_reauth: "需要重新登录",
-      error: "连接异常",
-    } satisfies Record<SubscriptionStatus, string>
-  )[service.subscription.status];
+  if (!service.enabled) return i18n.t("common.disabled");
+  if (!service.subscription) return i18n.t("common.enabled");
+  return i18n.t(`subscription.${service.subscription.status}`);
 }

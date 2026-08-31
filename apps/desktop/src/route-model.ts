@@ -340,6 +340,20 @@ export function parseRoutePage(value: unknown): RoutePage {
   };
 }
 
+export function isAutoRoute(route: Route): boolean {
+  return route.selection?.mode === "auto" || route.match.model === "astrlink/auto";
+}
+
+export function autoRoutingStatus(
+  routes: Route[],
+): "enabled" | "disabled" | "unset" {
+  const autos = routes.filter(isAutoRoute);
+  if (autos.length === 0) {
+    return "unset";
+  }
+  return autos.some((route) => route.enabled) ? "enabled" : "disabled";
+}
+
 export function parseRouteRecord(value: unknown): RouteRecord {
   const record = objectAt(value, "$");
   keysAt(record, ["route", "etag"], [], "$");

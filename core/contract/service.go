@@ -198,7 +198,7 @@ func equalCapabilities(left, right []Capability) bool {
 	}
 	for index := range left {
 		a, b := left[index], right[index]
-		if a.Protocol != b.Protocol || a.Mode != b.Mode || a.Streaming != b.Streaming {
+		if a.Protocol != b.Protocol || a.Mode != b.Mode || a.Streaming != b.Streaming || a.ConvertTo != b.ConvertTo {
 			return false
 		}
 	}
@@ -235,16 +235,20 @@ func (service Service) EndpointView() (Endpoint, error) {
 }
 
 func validateServiceModels(models []string) error {
+	return validateModelList("models", models)
+}
+
+func validateModelList(field string, models []string) error {
 	if len(models) > MaxServiceModels {
-		return fmt.Errorf("service models must contain at most %d items", MaxServiceModels)
+		return fmt.Errorf("service %s must contain at most %d items", field, MaxServiceModels)
 	}
 	seen := make(map[string]struct{}, len(models))
 	for index, model := range models {
 		if model == "" || utf8.RuneCountInString(model) > 256 {
-			return fmt.Errorf("models[%d] must contain 1 to 256 characters", index)
+			return fmt.Errorf("%s[%d] must contain 1 to 256 characters", field, index)
 		}
 		if _, duplicate := seen[model]; duplicate {
-			return fmt.Errorf("models[%d] duplicates model %q", index, model)
+			return fmt.Errorf("%s[%d] duplicates model %q", field, index, model)
 		}
 		seen[model] = struct{}{}
 	}

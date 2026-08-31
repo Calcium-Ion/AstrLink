@@ -71,6 +71,27 @@ describe("service model", () => {
     );
   });
 
+  it("rejects a leftover disabled_models field", () => {
+    expect(() =>
+      parseService({
+        id: "service_gateway",
+        name: "new-api",
+        kind: "newapi",
+        enabled: true,
+        models: ["gpt-5"],
+        disabled_models: ["gpt-4o"],
+        capabilities: [],
+        http: {
+          base_url: "https://gateway.example/v1",
+          auth: { scheme: "bearer" },
+          credential_ref: "local://service/service_gateway",
+        },
+        created_at: createdAt,
+        updated_at: createdAt,
+      }),
+    ).toThrow(/disabled_models: unexpected field/);
+  });
+
   it("requires the connection variant selected by kind", () => {
     expect(() =>
       parseService({
@@ -88,6 +109,36 @@ describe("service model", () => {
         updated_at: createdAt,
       }),
     ).toThrow(/requires only subscription/);
+  });
+
+  it("parses optional local conversion targets", () => {
+    const service = parseService({
+      id: "service_http",
+      name: "HTTP",
+      kind: "openai",
+      enabled: true,
+      models: [],
+      capabilities: [
+        {
+          protocol: "anthropic.messages",
+          mode: "native",
+          streaming: true,
+          convert_to: "openai.chat",
+        },
+      ],
+      http: {
+        base_url: "https://example.com",
+        auth: { scheme: "none" },
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    expect(service.capabilities[0]).toEqual({
+      protocol: "anthropic.messages",
+      mode: "native",
+      streaming: true,
+      convert_to: "openai.chat",
+    });
   });
 
   it("rejects retired capability-level model lists", () => {

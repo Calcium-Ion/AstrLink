@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
@@ -751,6 +752,51 @@ func TestModelDiscoveryBoundsConcurrentFanOut(t *testing.T) {
 	if response.Code != http.StatusOK ||
 		response.Body.String() != `{"object":"list","data":[],"first_id":null,"has_more":false,"last_id":null}` {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestModelDiscoveryDecodesOfficialCodexCatalogAndAddsClientVersion(t *testing.T) {
+	service := contract.Service{
+		ID: "service_codex_models", Name: "Codex", Kind: contract.ServiceKindCodexSubscription,
+		Enabled: true, Models: []string{"gpt-5"},
+		Capabilities: contract.DefaultOpenAICodexCapabilities(),
+		Subscription: &contract.SubscriptionConnection{
+			Provider:      contract.SubscriptionProviderOpenAICodex,
+			Status:        contract.SubscriptionStatusConnected,
+			CredentialRef: accountauth.CredentialRefFor("service_codex_models"),
+		},
+	}
+	var sawURL string
+	handler := NewWithDependencies(Dependencies{
+		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
+			Service: service,
+			BaseURL: "https://chatgpt.example/backend-api/codex",
+		}}},
+		Authorizer: authorizerFunc(func(context.Context, contract.Endpoint) (http.Header, error) {
+			return make(http.Header), nil
+		}),
+		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			sawURL = request.URL.String()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"models":[{"slug":"gpt-5","visibility":"list"},{"slug":"hidden","visibility":"hide"}]}`,
+				)),
+			}, nil
+		})),
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	wantURL := "https://chatgpt.example/backend-api/codex/models?client_version=" +
+		accountauth.DefaultCodexModelsClientVersion
+	if sawURL != wantURL {
+		t.Fatalf("upstream URL = %q, want %q", sawURL, wantURL)
+	}
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"id":"gpt-5"`) ||
+		strings.Contains(response.Body.String(), "hidden") {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -25,9 +26,10 @@ const (
 )
 
 type Config struct {
-	InferenceListen string
-	ControlListen   string
-	Version         contract.VersionResponse
+	InferenceListen   string
+	ControlListen     string
+	ControlSocketPath string
+	Version           contract.VersionResponse
 }
 
 type Dependencies struct {
@@ -151,7 +153,25 @@ func runWithDependencies(
 		BaseContext:       baseContext,
 	}
 
-	serverErrors := make(chan error, 2)
+	servers := []*http.Server{inferenceServer, controlServer}
+	var controlSocket net.Listener
+	if config.ControlSocketPath != "" {
+		controlSocket, err = listenControlSocket(config.ControlSocketPath)
+		if err != nil {
+			return fmt.Errorf("listen on local control socket: %w", err)
+		}
+		defer func() {
+			_ = controlSocket.Close()
+			_ = os.Remove(config.ControlSocketPath)
+		}()
+		servers = append(servers, &http.Server{
+			Handler:           controlapi.LocalSocketHandler(controlHandler),
+			ReadHeaderTimeout: 5 * time.Second,
+			BaseContext:       baseContext,
+		})
+	}
+
+	serverErrors := make(chan error, 3)
 	var serveGroup sync.WaitGroup
 	serve := func(name string, server *http.Server, listener net.Listener) {
 		defer serveGroup.Done()
@@ -162,6 +182,10 @@ func runWithDependencies(
 	serveGroup.Add(2)
 	go serve("inference", inferenceServer, inferenceListener)
 	go serve("control", controlServer, controlListener)
+	if controlSocket != nil {
+		serveGroup.Add(1)
+		go serve("control socket", servers[2], controlSocket)
+	}
 
 	ready := contract.ReadyEvent{
 		Event:                   "ready",
@@ -174,7 +198,7 @@ func runWithDependencies(
 	if err := ready.Validate(); err != nil {
 		cancelRequests()
 		return shutdownAndCollect(
-			[]*http.Server{inferenceServer, controlServer},
+			servers,
 			&serveGroup,
 			serverErrors,
 			fmt.Errorf("validate ready event: %w", err),
@@ -183,7 +207,7 @@ func runWithDependencies(
 	if err := json.NewEncoder(readyWriter).Encode(ready); err != nil {
 		cancelRequests()
 		return shutdownAndCollect(
-			[]*http.Server{inferenceServer, controlServer},
+			servers,
 			&serveGroup,
 			serverErrors,
 			fmt.Errorf("write ready event: %w", err),
@@ -196,12 +220,7 @@ func runWithDependencies(
 	case triggerErr = <-serverErrors:
 	}
 	cancelRequests()
-	return shutdownAndCollect(
-		[]*http.Server{inferenceServer, controlServer},
-		&serveGroup,
-		serverErrors,
-		triggerErr,
-	)
+	return shutdownAndCollect(servers, &serveGroup, serverErrors, triggerErr)
 }
 
 const retentionSweepInterval = time.Hour

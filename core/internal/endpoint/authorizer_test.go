@@ -186,9 +186,6 @@ func TestServiceAuthorizerBuildsSubscriptionHeaders(t *testing.T) {
 	if source.id != serviceID {
 		t.Fatalf("AccessToken() service ID = %q, want %q", source.id, serviceID)
 	}
-	if len(headers) != 3 {
-		t.Fatalf("Headers() count = %d, want 3", len(headers))
-	}
 	if got := headers.Get("Authorization"); got != "Bearer test-access-token" {
 		t.Fatal("Headers() did not inject the subscription bearer credential")
 	}
@@ -197,6 +194,15 @@ func TestServiceAuthorizerBuildsSubscriptionHeaders(t *testing.T) {
 	}
 	if got := headers.Get("OAI-Product-Sku"); got != "codex" {
 		t.Fatalf("OAI-Product-Sku = %q, want codex", got)
+	}
+	if got := headers.Get("originator"); got != "astrlink" {
+		t.Fatalf("originator = %q", got)
+	}
+	if got := headers.Get("User-Agent"); got != "codex-cli/"+accountauth.DefaultCodexModelsClientVersion {
+		t.Fatalf("User-Agent = %q", got)
+	}
+	if got := headers.Get("version"); got != accountauth.DefaultCodexModelsClientVersion {
+		t.Fatalf("version = %q", got)
 	}
 }
 

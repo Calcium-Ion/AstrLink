@@ -5,6 +5,8 @@ import {
   parsePurgeResult,
   parseRequestRecord,
   parseRequestRecordPage,
+  parseRequestSession,
+  parseRequestSessionDetail,
   statusLabel,
   statusTone,
 } from "./request-record-model";
@@ -27,7 +29,7 @@ const fullRecord = {
     input_tokens: 10,
     output_tokens: 20,
     total_tokens: 30,
-    cached_input_tokens: 2,
+    cache_read_tokens: 2,
   },
   error: null,
   audit: {
@@ -40,6 +42,8 @@ const fullRecord = {
     enabled: true,
     mapping_count: 4,
     restored_count: 5,
+    visible_restored_count: 3,
+    tool_argument_restored_count: 2,
     fallback_count: 0,
   },
   extensions: { note: "ignored" },
@@ -77,6 +81,11 @@ describe("request-record IPC contract", () => {
       parent_request_id: null,
       attempt_index: 1,
       child_count: 0,
+      session_id: null,
+      previous_response_id: null,
+      output_response_id: null,
+      input_preview: null,
+      events: [],
       started_at: fullRecord.started_at,
       completed_at: fullRecord.completed_at,
       status: "succeeded",
@@ -92,7 +101,7 @@ describe("request-record IPC contract", () => {
         input_tokens: 10,
         output_tokens: 20,
         total_tokens: 30,
-        cached_input_tokens: 2,
+        cache_read_tokens: 2,
       },
       error: null,
       audit: {
@@ -109,6 +118,11 @@ describe("request-record IPC contract", () => {
       parent_request_id: null,
       attempt_index: 1,
       child_count: 0,
+      session_id: null,
+      previous_response_id: null,
+      output_response_id: null,
+      input_preview: null,
+      events: [],
       audit: {
         ...nullOptionalRecord.audit,
         upstream_request_body_captured: false,
@@ -116,6 +130,41 @@ describe("request-record IPC contract", () => {
         upstream_request_body_truncated: false,
         upstream_response_content_truncated: false,
       },
+    });
+  });
+
+  it("parses request-time privacy hit counts", () => {
+    const parsed = parseRequestRecord({
+      ...fullRecord,
+      privacy_restore: {
+        ...fullRecord.privacy_restore,
+        hits: [
+          { kind: "email", count: 2 },
+          { kind: "url", count: 1 },
+        ],
+      },
+    });
+    expect(parsed.privacy_restore?.hits).toEqual([
+      { kind: "email", count: 2 },
+      { kind: "url", count: 1 },
+    ]);
+  });
+
+  it("maps legacy cached_input_tokens to cache_read_tokens", () => {
+    const parsed = parseRequestRecord({
+      ...fullRecord,
+      usage: {
+        input_tokens: 10,
+        output_tokens: 20,
+        total_tokens: 30,
+        cached_input_tokens: 7,
+      },
+    });
+    expect(parsed.usage).toEqual({
+      input_tokens: 10,
+      output_tokens: 20,
+      total_tokens: 30,
+      cache_read_tokens: 7,
     });
   });
 
@@ -132,6 +181,11 @@ describe("request-record IPC contract", () => {
           parent_request_id: null,
           attempt_index: 1,
           child_count: 0,
+          session_id: null,
+          previous_response_id: null,
+          output_response_id: null,
+          input_preview: null,
+          events: [],
           audit: {
             ...nullOptionalRecord.audit,
             upstream_request_body_captured: false,
@@ -143,6 +197,56 @@ describe("request-record IPC contract", () => {
       ],
       next_cursor: "cursor-1",
     });
+  });
+
+  it("parses a session detail and defaults missing trajectory fields", () => {
+    expect(
+      parseRequestSession({
+        id: "session_keep",
+        title: "创建快捷方式",
+        started_at: "2026-08-16T10:00:00Z",
+        last_started_at: "2026-08-16T10:01:00Z",
+        completed_at: "2026-08-16T10:01:30Z",
+        turn_count: 2,
+        call_count: 3,
+        status: "succeeded",
+        requested_model: "gpt-4.1",
+        input_protocol: "openai.responses",
+        service_id: "service_01",
+        local_access_token_id: null,
+      }),
+    ).toEqual({
+      id: "session_keep",
+      title: "创建快捷方式",
+      started_at: "2026-08-16T10:00:00Z",
+      last_started_at: "2026-08-16T10:01:00Z",
+      completed_at: "2026-08-16T10:01:30Z",
+      turn_count: 2,
+      call_count: 3,
+      status: "succeeded",
+      requested_model: "gpt-4.1",
+      input_protocol: "openai.responses",
+      service_id: "service_01",
+      local_access_token_id: null,
+    });
+    const detail = parseRequestSessionDetail({
+      id: "session_keep",
+      title: "创建快捷方式",
+      started_at: "2026-08-16T10:00:00Z",
+      last_started_at: "2026-08-16T10:00:00Z",
+      completed_at: "2026-08-16T10:00:01Z",
+      turn_count: 1,
+      call_count: 1,
+      status: "succeeded",
+      requested_model: "gpt-4.1",
+      input_protocol: "openai.responses",
+      service_id: null,
+      local_access_token_id: null,
+      turns: [fullRecord],
+    });
+    expect(detail.turns).toHaveLength(1);
+    expect(detail.turns[0].events).toEqual([]);
+    expect(detail.turns[0].session_id).toBeNull();
   });
 
   it("rejects missing id, bad status, and non-array items", () => {

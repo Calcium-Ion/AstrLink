@@ -5,12 +5,20 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 
 import { ConfirmDialog as AppConfirmDialog } from "@/components/ConfirmDialog";
 import { FormMessage } from "@/components/FormMessage";
+import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -30,31 +38,37 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 import { AuditPartSection, HTTPMetaSection } from "./AuditReviewer";
-import { buildRecordBundle } from "./audit-bundle";
+import {
+  buildRecordBundle,
+  bundleFilename,
+  type BundleFormat,
+} from "./audit-bundle";
 import type { AuditSettings, AuditSettingsPatch } from "./audit-settings-model";
 import {
   deleteRequestRecord,
   getAuditSettings,
   getRequestAuditContent,
-  getRequestRecord,
+  getRequestSession,
   listRequestRecordChildren,
-  listRequestRecords,
+  listRequestSessions,
   purgeRequestRecords,
+  saveTextFile,
   updateAuditSettings,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback, type CopyFeedback } from "./copy-feedback";
+import { i18n } from "./i18n";
+import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import type { RoutableService } from "./service-model";
 import {
-  applyQueuedRecords,
   formatDuration,
-  groupRecordsByDate,
   liveDurationMs,
-  mergeLivePage,
-  recordMatchesFilters,
+  sessionElapsedMs,
   type RecordFilters,
 } from "./request-live-model";
 import {
@@ -63,11 +77,23 @@ import {
   type AuditContent,
   type AuditContentPart,
   type RequestRecord,
+  type RequestSession,
+  type RequestSessionDetail,
   type RequestStatus,
 } from "./request-record-model";
+import { RequestTrajectory } from "./RequestTrajectory";
+import {
+  applyQueuedSessions,
+  groupSessionsByDate,
+  mergeLiveSessions,
+  sessionMatchesFilters,
+} from "./session-live-model";
+import { formatSessionDuration } from "./request-trajectory-model";
+import { protocolEntryPath } from "./service-presets";
 
 const PAGE_LIMIT = 50;
 const POLL_INTERVAL_MS = 1000;
+const LIVE_CLOCK_INTERVAL_MS = 100;
 const AUDIT_CACHE_MAX_RECORDS = 5;
 const AUDIT_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 const STATUSES: RequestStatus[] = [
@@ -84,6 +110,7 @@ const EMPTY_FILTERS: RecordFilters = {
 };
 
 type RecordsView = "monitor" | "detail";
+type DetailTab = "trajectory" | "content" | "audit";
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
   | { kind: "delete"; requestId: string }
@@ -91,8 +118,8 @@ type PendingConfirm =
   | { kind: "purge-before"; before: string };
 
 interface LiveState {
-  items: RequestRecord[];
-  queued: RequestRecord[];
+  items: RequestSession[];
+  queued: RequestSession[];
   nextCursor: string | null;
 }
 
@@ -114,6 +141,7 @@ export function RequestRecords({
   isReady: boolean;
   services: RoutableService[];
 }) {
+  const t = i18n.t.bind(i18n);
   const [view, setView] = useState<RecordsView>("monitor");
   const [live, setLive] = useState<LiveState>({
     items: [],
@@ -128,14 +156,16 @@ export function RequestRecords({
   const [loadingMore, setLoadingMore] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
+  const [overlaySessions, setOverlaySessions] = useState<
+    Record<string, RequestSessionDetail>
+  >({});
   const [overlayRecords, setOverlayRecords] = useState<
     Record<string, RequestRecord>
   >({});
-  const [navigationIds, setNavigationIds] = useState<string[]>([]);
   const [auditContent, setAuditContent] = useState<AuditContent | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -174,39 +204,58 @@ export function RequestRecords({
     [live.items, live.queued],
   );
   const visibleItems = useMemo(
-    () => live.items.filter((record) => recordMatchesFilters(record, filters)),
+    () => live.items.filter((session) => sessionMatchesFilters(session, filters)),
     [filters, live.items],
   );
   const queuedVisibleCount = useMemo(
     () =>
-      live.queued.filter((record) => recordMatchesFilters(record, filters))
+      live.queued.filter((session) => sessionMatchesFilters(session, filters))
         .length,
     [filters, live.queued],
   );
-  const selected = useMemo(() => {
+  const selectedSession = useMemo(() => {
     if (!selectedId) return null;
     return (
-      allRecords.find((record) => record.id === selectedId) ??
-      overlayRecords[selectedId] ??
+      overlaySessions[selectedId] ??
+      allRecords.find((session) => session.id === selectedId) ??
       null
     );
-  }, [allRecords, overlayRecords, selectedId]);
+  }, [allRecords, overlaySessions, selectedId]);
+  const selectedTurns = useMemo(
+    () => overlaySessions[selectedId ?? ""]?.turns ?? [],
+    [overlaySessions, selectedId],
+  );
+  const selected = useMemo(() => {
+    if (!selectedTurnId) return selectedTurns[selectedTurns.length - 1] ?? null;
+    return (
+      selectedTurns.find((record) => record.id === selectedTurnId) ??
+      overlayRecords[selectedTurnId] ??
+      selectedTurns[selectedTurns.length - 1] ??
+      null
+    );
+  }, [overlayRecords, selectedTurnId, selectedTurns]);
 
   useEffect(() => {
-    if (!selectedId || selected) return;
+    if (!selectedId) return;
     let cancelled = false;
-    void getRequestRecord(selectedId)
-      .then((record) => {
+    void getRequestSession(selectedId)
+      .then((detail) => {
         if (cancelled) return;
-        setOverlayRecords((current) => ({ ...current, [record.id]: record }));
+        setOverlaySessions((current) => ({ ...current, [detail.id]: detail }));
+        setSelectedTurnId((current) => {
+          if (current && detail.turns.some((turn) => turn.id === current)) {
+            return current;
+          }
+          return detail.turns[detail.turns.length - 1]?.id ?? null;
+        });
       })
       .catch(() => {
-        /* detail view shows missing via selected === null */
+        /* detail view shows missing via selectedSession === null */
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedId, selected]);
+  }, [selectedId, live.items]);
   const protocolOptions = useMemo(() => {
     const protocols = new Set<string>();
     services.forEach((service) =>
@@ -214,14 +263,26 @@ export function RequestRecords({
         protocols.add(capability.protocol),
       ),
     );
-    allRecords.forEach((record) => protocols.add(record.input_protocol));
+    allRecords.forEach((session) => protocols.add(session.input_protocol));
     return [...protocols].sort();
   }, [allRecords, services]);
 
+  const needsLiveClock = useMemo(() => {
+    if (allRecords.some((session) => session.status === "pending")) return true;
+    return selectedTurns.some(
+      (record) => record.status === "pending" || record.latency_ms === null,
+    );
+  }, [allRecords, selectedTurns]);
+
   useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    if (!needsLiveClock) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(
+      () => setNowMs(Date.now()),
+      LIVE_CLOCK_INTERVAL_MS,
+    );
     return () => window.clearInterval(timer);
-  }, []);
+  }, [needsLiveClock]);
 
   useEffect(() => {
     const generation = generationRef.current + 1;
@@ -234,16 +295,20 @@ export function RequestRecords({
     viewRef.current = "monitor";
     setView("monitor");
     setSelectedId(null);
+    setSelectedTurnId(null);
+    setOverlaySessions({});
     setOverlayRecords({});
-    setNavigationIds([]);
     setAuditContent(null);
     setAuditLoading(false);
     setAuditError(null);
     setFilters(EMPTY_FILTERS);
     setSettingsOpen(false);
+    setSettings(null);
+    setSettingsDraft(null);
+    setSettingsError(null);
+    setSettingsNotice(null);
     setPurgeOpen(false);
     setPendingConfirm(null);
-    setNotice(null);
     setError(null);
     setSyncWarning(null);
 
@@ -256,7 +321,7 @@ export function RequestRecords({
     setLive({ items: [], queued: [], nextCursor: null });
     setListStatus("loading");
     setListError(null);
-    void listRequestRecords({ limit: PAGE_LIMIT })
+    void listRequestSessions({ limit: PAGE_LIMIT })
       .then((page) => {
         if (generationRef.current !== generation) return;
         setLive({
@@ -269,7 +334,17 @@ export function RequestRecords({
       .catch((requestError: unknown) => {
         if (generationRef.current !== generation) return;
         setListStatus("error");
-        setListError(messageOf(requestError, "无法读取请求记录。"));
+        setListError(listErrorMessage(requestError));
+      });
+    void getAuditSettings()
+      .then((current) => {
+        if (generationRef.current !== generation) return;
+        setSettings({ ...current });
+        setSettingsDraft({ ...current });
+      })
+      .catch((requestError: unknown) => {
+        if (generationRef.current !== generation) return;
+        setError(messageOf(requestError, i18n.t("records.auditReadFailed")));
       });
   }, [coreSessionKey, isReady]);
 
@@ -285,14 +360,14 @@ export function RequestRecords({
       }
       pollInFlightRef.current = true;
       try {
-        const page = await listRequestRecords({ limit: PAGE_LIMIT });
+        const page = await listRequestSessions({ limit: PAGE_LIMIT });
         if (generationRef.current !== generation) return;
         setLive((current) => {
           const queueNew =
             current.queued.length > 0 ||
             viewRef.current !== "monitor" ||
             !atTopRef.current;
-          const merged = mergeLivePage(
+          const merged = mergeLiveSessions(
             current.items,
             current.queued,
             page.items,
@@ -309,16 +384,21 @@ export function RequestRecords({
         });
         pollFailureRef.current = 0;
         setSyncWarning(null);
+        setListError(null);
         setListStatus("ready");
-        if (manual) setNotice("已同步最新记录。");
+        if (manual) notify.success(i18n.t("records.synced"));
       } catch (requestError: unknown) {
         if (generationRef.current !== generation) return;
         pollFailureRef.current += 1;
         if (manual) {
-          setError(messageOf(requestError, "无法刷新请求记录。"));
+          setError(
+            isControlTransportError(requestError)
+              ? i18n.t("records.controlUnavailable")
+              : messageOf(requestError, i18n.t("records.refreshFailed")),
+          );
         }
         if (pollFailureRef.current >= 3) {
-          setSyncWarning("实时同步暂时中断，正在保留当前记录并继续重试。");
+          setSyncWarning(i18n.t("records.liveInterrupted"));
         }
       } finally {
         pollInFlightRef.current = false;
@@ -327,7 +407,6 @@ export function RequestRecords({
     const timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
     manualPollRef.current = () => {
       setError(null);
-      setNotice(null);
       void poll(true);
     };
     const onVisibilityChange = () => {
@@ -341,52 +420,22 @@ export function RequestRecords({
     };
   }, [coreSessionKey, isReady]);
 
-  const selectedIndex = selectedId ? navigationIds.indexOf(selectedId) : -1;
-  const previousId =
-    selectedIndex > 0 ? navigationIds[selectedIndex - 1] : null;
-  const nextId =
-    selectedIndex >= 0 && selectedIndex < navigationIds.length - 1
-      ? navigationIds[selectedIndex + 1]
-      : null;
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (pendingConfirm) {
-          setPendingConfirm(null);
-          return;
-        }
-        if (settingsOpen) {
-          setSettingsOpen(false);
-          return;
-        }
-        if (purgeOpen) {
-          setPurgeOpen(false);
-          return;
-        }
-        if (viewRef.current === "detail") returnToMonitor();
+      if (event.key !== "Escape") return;
+      if (pendingConfirm) {
+        setPendingConfirm(null);
         return;
       }
-      if (
-        viewRef.current !== "detail" ||
-        pendingConfirm ||
-        settingsOpen ||
-        purgeOpen
-      ) {
+      if (settingsOpen) {
+        setSettingsOpen(false);
         return;
       }
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
+      if (purgeOpen) {
+        setPurgeOpen(false);
         return;
       }
-      if (event.key === "[" && previousId) selectFromSnapshot(previousId);
-      if (event.key === "]" && nextId) selectFromSnapshot(nextId);
+      if (viewRef.current === "detail") returnToMonitor();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -424,9 +473,9 @@ export function RequestRecords({
   };
 
   // Detail auto-decrypt: cached content shows instantly; a generation
-  // counter drops stale responses when the user pages quickly with
-  // 上一条/下一条. Pending records are never cached so the content refreshes
-  // once the record reaches a terminal status.
+  // counter drops stale responses when the selected turn changes quickly.
+  // Pending records are never cached so the content refreshes once the
+  // record reaches a terminal status.
   const selectedIsPending = selected?.status === "pending";
   useEffect(() => {
     if (view !== "detail" || !selected) return;
@@ -450,10 +499,10 @@ export function RequestRecords({
       })
       .catch((requestError: unknown) => {
         if (auditGenerationRef.current !== generation) return;
-        const message = messageOf(requestError, "无法读取审计内容。");
+        const message = messageOf(requestError, i18n.t("records.auditContentFailed"));
         setAuditError(
           message.includes("409")
-            ? "审计密钥缺失或损坏，无法解密该记录。"
+            ? i18n.t("records.auditKeyBroken")
             : message,
         );
       })
@@ -461,19 +510,13 @@ export function RequestRecords({
         if (auditGenerationRef.current === generation) setAuditLoading(false);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, selectedId, selectedIsPending]);
+  }, [view, selectedId, selected?.id, selectedIsPending]);
 
-  const openDetail = (requestId: string) => {
-    selectedFocusRef.current = requestId;
-    setNavigationIds(visibleItems.map((record) => record.id));
-    setSelectedId(requestId);
+  const openDetail = (sessionId: string) => {
+    selectedFocusRef.current = sessionId;
+    setSelectedId(sessionId);
+    setSelectedTurnId(null);
     setViewAndRef("detail");
-  };
-
-  const selectFromSnapshot = (requestId: string) => {
-    if (requestId === selectedId) return;
-    selectedFocusRef.current = requestId;
-    setSelectedId(requestId);
   };
 
   const returnToMonitor = () => {
@@ -486,7 +529,7 @@ export function RequestRecords({
           ? CSS.escape(requestId)
           : requestId.replace(/["\\]/g, "\\$&");
       const target = monitorScrollRef.current?.querySelector(
-        `[data-record-id="${escaped}"]`,
+        `[data-session-id="${escaped}"]`,
       );
       if (target instanceof HTMLButtonElement) {
         target.focus({ preventScroll: true });
@@ -500,14 +543,14 @@ export function RequestRecords({
     setAuditContent(null);
     setAuditError(null);
     setAuditLoading(false);
-    setNotice("已清除内存中的解密内容。");
+    notify.success(i18n.t("records.clearedMemory"));
     returnToMonitor();
   };
 
   const applyQueue = () => {
     setLive((current) => ({
       ...current,
-      items: applyQueuedRecords(current.items, current.queued),
+      items: applyQueuedSessions(current.items, current.queued),
       queued: [],
     }));
     atTopRef.current = true;
@@ -521,26 +564,26 @@ export function RequestRecords({
     setLoadingMore(true);
     setError(null);
     try {
-      const page = await listRequestRecords({
+      const page = await listRequestSessions({
         limit: PAGE_LIMIT,
         cursor,
       });
       if (generationRef.current !== generation) return;
       setLive((current) => {
         const known = new Set(
-          [...current.items, ...current.queued].map((record) => record.id),
+          [...current.items, ...current.queued].map((session) => session.id),
         );
         return {
           ...current,
           items: [
             ...current.items,
-            ...page.items.filter((record) => !known.has(record.id)),
+            ...page.items.filter((session) => !known.has(session.id)),
           ],
           nextCursor: page.next_cursor,
         };
       });
     } catch (requestError: unknown) {
-      setError(messageOf(requestError, "无法加载更多请求记录。"));
+      setError(messageOf(requestError, i18n.t("records.loadMoreFailed")));
     } finally {
       setLoadingMore(false);
     }
@@ -560,15 +603,23 @@ export function RequestRecords({
           ),
         ),
       );
-      setLive((current) => ({
-        ...current,
-        items: current.items.filter((record) => record.id !== requestId),
-        queued: current.queued.filter((record) => record.id !== requestId),
-      }));
+      const page = await listRequestSessions({ limit: PAGE_LIMIT });
+      setLive({
+        items: page.items,
+        queued: [],
+        nextCursor: page.next_cursor,
+      });
+      if (selectedId) {
+        setOverlaySessions((current) => {
+          const next = { ...current };
+          delete next[selectedId];
+          return next;
+        });
+      }
       returnToMonitor();
-      setNotice("已删除该记录。");
+      notify.success(i18n.t("records.deleted"));
     } catch (requestError: unknown) {
-      setError(messageOf(requestError, "无法删除请求记录。"));
+      setError(messageOf(requestError, i18n.t("records.deleteFailed")));
     } finally {
       setDeleting(false);
     }
@@ -583,17 +634,21 @@ export function RequestRecords({
       const result = await purgeRequestRecords(input);
       auditCacheRef.current.clear();
       setPurgeOpen(false);
-      setNotice(
-        `已删除 ${result.deleted_records} 条记录、${result.deleted_audit_blobs} 个加密内容块。`,
+      notify.success(
+        i18n.t("records.purged", {
+          records: result.deleted_records,
+          blobs: result.deleted_audit_blobs,
+        }),
       );
-      const page = await listRequestRecords({ limit: PAGE_LIMIT });
+      const page = await listRequestSessions({ limit: PAGE_LIMIT });
       setLive({
         items: page.items,
         queued: [],
         nextCursor: page.next_cursor,
       });
+      setOverlaySessions({});
     } catch (requestError: unknown) {
-      setError(messageOf(requestError, "无法清理请求记录。"));
+      setError(messageOf(requestError, i18n.t("records.purgeFailed")));
     } finally {
       setPurgeBusy(false);
     }
@@ -609,13 +664,16 @@ export function RequestRecords({
       setSettings({ ...current });
       setSettingsDraft({ ...current });
     } catch (requestError: unknown) {
-      setSettingsError(messageOf(requestError, "无法读取审计设置。"));
+      setSettingsError(messageOf(requestError, i18n.t("records.auditReadFailed")));
     } finally {
       setSettingsBusy(false);
     }
   };
 
-  const commitSettings = async (patch: AuditSettingsPatch) => {
+  const commitSettings = async (
+    patch: AuditSettingsPatch,
+    successNotice = i18n.t("records.auditSaved"),
+  ) => {
     setSettingsBusy(true);
     setSettingsError(null);
     setSettingsNotice(null);
@@ -623,9 +681,18 @@ export function RequestRecords({
       const updated = await updateAuditSettings(patch);
       setSettings({ ...updated });
       setSettingsDraft({ ...updated });
-      setSettingsNotice("审计设置已保存。");
+      if (settingsOpen) {
+        setSettingsNotice(successNotice);
+      } else {
+        notify.success(successNotice);
+      }
     } catch (requestError: unknown) {
-      setSettingsError(messageOf(requestError, "无法保存审计设置。"));
+      const message = messageOf(requestError, i18n.t("records.auditSaveFailed"));
+      if (settingsOpen) {
+        setSettingsError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setSettingsBusy(false);
     }
@@ -633,27 +700,47 @@ export function RequestRecords({
 
   const saveSettings = () => {
     if (!settings || !settingsDraft) {
-      setSettingsError("审计设置尚未加载完成。");
+      setSettingsError(i18n.t("records.auditNotReady"));
       return;
     }
     const patch = diffSettings(settings, settingsDraft);
     if (Object.keys(patch).length === 0) {
-      setSettingsNotice("没有需要保存的更改。");
-      return;
-    }
-    const enabling =
-      (patch.request_body_enabled === true &&
-        !settings.request_body_enabled) ||
-      (patch.response_content_enabled === true &&
-        !settings.response_content_enabled);
-    if (enabling) {
-      setPendingConfirm({
-        kind: "audit-risk",
-        patch: { ...patch, audit_risk_acknowledged: true },
-      });
+      setSettingsNotice(i18n.t("records.auditNoChanges"));
       return;
     }
     void commitSettings(patch);
+  };
+
+  const bodyCaptureEnabled = Boolean(
+    settings?.request_body_enabled || settings?.response_content_enabled,
+  );
+
+  const toggleBodyCapture = (enabled: boolean) => {
+    if (!settings || settingsBusy) return;
+    if (enabled) {
+      if (settings.request_body_enabled && settings.response_content_enabled) {
+        return;
+      }
+      setPendingConfirm({
+        kind: "audit-risk",
+        patch: {
+          request_body_enabled: true,
+          response_content_enabled: true,
+          audit_risk_acknowledged: true,
+        },
+      });
+      return;
+    }
+    if (!settings.request_body_enabled && !settings.response_content_enabled) {
+      return;
+    }
+    void commitSettings(
+      {
+        request_body_enabled: false,
+        response_content_enabled: false,
+      },
+      i18n.t("records.captureOff"),
+    );
   };
 
   const resolveConfirm = () => {
@@ -661,7 +748,7 @@ export function RequestRecords({
     setPendingConfirm(null);
     if (!pending) return;
     if (pending.kind === "audit-risk") {
-      void commitSettings(pending.patch);
+      void commitSettings(pending.patch, i18n.t("records.captureOn"));
     } else if (pending.kind === "delete") {
       void commitDelete(pending.requestId);
     } else if (pending.kind === "purge-all") {
@@ -679,15 +766,29 @@ export function RequestRecords({
             <>
               <span className="mr-[3px] inline-flex items-center gap-[7px] text-xs font-semibold text-muted-foreground max-[720px]:mr-auto">
                 <StatusDot tone="positive" />
-                每秒同步
+                {t("records.syncEverySecond")}
               </span>
+              <Label className="mr-1 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted-foreground">
+                <span>{t("records.captureTitle")}</span>
+                {settings ? (
+                  <Switch
+                    aria-label={t("records.captureTitle")}
+                    checked={bodyCaptureEnabled}
+                    disabled={!isReady || settingsBusy}
+                    onCheckedChange={toggleBodyCapture}
+                    size="sm"
+                  />
+                ) : (
+                  <span aria-hidden className="inline-block h-5 w-9" />
+                )}
+              </Label>
               <Button
                 variant="outline"
                 disabled={!isReady}
                 onClick={() => setPurgeOpen(true)}
                 type="button"
               >
-                清理…
+                {t("records.purgeEllipsis")}
               </Button>
               <Button
                 variant="outline"
@@ -695,34 +796,28 @@ export function RequestRecords({
                 onClick={() => void openSettings()}
                 type="button"
               >
-                审计设置
+                {t("records.auditSettings")}
               </Button>
             </>
           }
-          description="已认证的推理请求会在开始后立即进入日志流。"
-          eyebrow="实时监控"
-          title="请求记录"
+          description={t("records.description")}
+          title={t("records.title")}
           titleId="request-records-heading"
         />
       ) : null}
       <div className="flex h-full min-h-0 min-w-0 flex-1">
         <section
           aria-labelledby="request-records-heading"
-          className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card"
+          className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           hidden={view !== "monitor"}
         >
-          {notice ? (
-            <FormMessage className="mx-[22px] mt-2.5 shrink-0" tone="success">
-              {notice}
-            </FormMessage>
-          ) : null}
           {error ? (
-            <FormMessage className="mx-[22px] mt-2.5 shrink-0" tone="error">
+            <FormMessage className="mt-2.5 shrink-0" tone="error">
               {error}
             </FormMessage>
           ) : null}
           {syncWarning ? (
-            <FormMessage className="mx-[22px] mt-2.5 flex shrink-0 items-center gap-2" tone="warning">
+            <FormMessage className="mt-2.5 flex shrink-0 items-center gap-2" tone="warning">
               <StatusDot tone="pending" />
               {syncWarning}
             </FormMessage>
@@ -736,10 +831,10 @@ export function RequestRecords({
             }}
             ref={monitorScrollRef}
           >
-            <div className="sticky top-0 z-7 flex items-end justify-between border-b bg-card px-4 py-3 @max-[720px]:items-stretch @max-[720px]:flex-col @max-[720px]:gap-2">
+            <div className="sticky top-0 z-7 flex items-end justify-between border-b bg-background py-3 @max-[720px]:items-stretch @max-[720px]:flex-col @max-[720px]:gap-2">
               <div className="flex items-end gap-2 @max-[720px]:grid @max-[720px]:grid-cols-2">
                 <FilterSelect
-                  label="状态"
+                  label={t("records.status")}
                   onChange={(status) =>
                     setFilters((current) => ({
                       ...current,
@@ -747,7 +842,7 @@ export function RequestRecords({
                     }))
                   }
                   options={[
-                    { label: "全部", value: "" },
+                    { label: t("common.all"), value: "" },
                     ...STATUSES.map((status) => ({
                       label: statusLabel(status),
                       value: status,
@@ -756,12 +851,12 @@ export function RequestRecords({
                   value={filters.status}
                 />
                 <FilterSelect
-                  label="服务"
+                  label={t("records.service")}
                   onChange={(serviceId) =>
                     setFilters((current) => ({ ...current, serviceId }))
                   }
                   options={[
-                    { label: "全部", value: "" },
+                    { label: t("common.all"), value: "" },
                     ...services.map((service) => ({
                       label: service.name,
                       value: service.id,
@@ -770,14 +865,14 @@ export function RequestRecords({
                   value={filters.serviceId}
                 />
                 <FilterSelect
-                  label="协议"
+                  label={t("records.protocol")}
                   onChange={(protocol) =>
                     setFilters((current) => ({ ...current, protocol }))
                   }
                   options={[
-                    { label: "全部", value: "" },
+                    { label: t("common.all"), value: "" },
                     ...protocolOptions.map((protocol) => ({
-                      label: protocol,
+                      label: protocolEntryPath(protocol),
                       value: protocol,
                     })),
                   ]}
@@ -791,7 +886,7 @@ export function RequestRecords({
                 onClick={() => manualPollRef.current?.()}
                 type="button"
               >
-                刷新
+                {t("common.refresh")}
               </Button>
             </div>
 
@@ -801,34 +896,34 @@ export function RequestRecords({
                 onClick={applyQueue}
                 type="button"
               >
-                ↑ {queuedVisibleCount} 条新记录
+                {t("records.newRecords", { count: queuedVisibleCount })}
               </Button>
             ) : null}
 
             {!isReady || listStatus === "blocked" ? (
               <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
-                <strong className="text-xs">等待 Core 就绪</strong>
-                <span className="mt-1.5 text-xs text-muted-foreground">连接成功后，请求会自动出现在这里。</span>
+                <strong className="text-xs">{t("records.waitingReady")}</strong>
+                <span className="mt-1.5 text-xs text-muted-foreground">{t("records.waitingHint")}</span>
               </div>
             ) : listStatus === "error" && listError ? (
               <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
-                <strong className="text-xs">无法读取请求记录</strong>
+                <strong className="text-xs">{t("records.readFailedTitle")}</strong>
                 <span className="mt-1.5 text-xs text-muted-foreground">{listError}</span>
               </div>
             ) : listStatus === "loading" && live.items.length === 0 ? (
               <RecordSkeleton />
             ) : visibleItems.length === 0 ? (
               <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
-                <strong className="text-xs">没有匹配的请求</strong>
-                <span className="mt-1.5 text-xs text-muted-foreground">调整筛选条件，或发起一次新的推理请求。</span>
+                <strong className="text-xs">{t("records.empty")}</strong>
+                <span className="mt-1.5 text-xs text-muted-foreground">{t("records.emptyHint")}</span>
               </div>
             ) : (
-              <RecordStream
-                services={services}
+              <SessionStream
                 nowMs={nowMs}
                 onOpen={openDetail}
-                records={visibleItems}
                 selectedId={selectedId}
+                services={services}
+                sessions={visibleItems}
               />
             )}
 
@@ -840,32 +935,32 @@ export function RequestRecords({
                 onClick={() => void loadMore()}
                 type="button"
               >
-                {loadingMore ? "加载中…" : "加载更早记录"}
+                {loadingMore ? t("common.loading") : t("records.loadEarlier")}
               </Button>
             ) : null}
           </div>
         </section>
 
-        {view === "detail" && selected ? (
+        {view === "detail" && selectedSession && selected ? (
           <RecordDetail
             auditContent={auditContent}
             auditError={auditError}
             auditLoading={auditLoading}
             deleting={deleting}
-            serviceName={serviceLabel(selected.service_id, services)}
-            index={selectedIndex}
-            navigationCount={navigationIds.length}
-            nextId={nextId}
             nowMs={nowMs}
             onBack={returnToMonitor}
             onClearDecrypted={clearDecrypted}
             onDelete={() =>
               setPendingConfirm({ kind: "delete", requestId: selected.id })
             }
-            onNext={() => nextId && selectFromSnapshot(nextId)}
-            onPrevious={() => previousId && selectFromSnapshot(previousId)}
-            previousId={previousId}
+            onRegisterRecords={(records) =>
+              setOverlayRecords((current) => ({ ...current, ...records }))
+            }
+            onSelectTurn={setSelectedTurnId}
             record={selected}
+            serviceName={serviceLabel(selected.service_id, services)}
+            session={selectedSession}
+            turns={selectedTurns}
           />
         ) : null}
       </div>
@@ -902,7 +997,7 @@ export function RequestRecords({
               return;
             }
             if (!purgeBefore) {
-              setError("请选择清除截止时间。");
+              setError(i18n.t("records.needCutoff"));
               return;
             }
             setPendingConfirm({
@@ -917,17 +1012,22 @@ export function RequestRecords({
         <AppConfirmDialog
           confirmLabel={
             pendingConfirm.kind === "audit-risk"
-              ? "确认开启"
+              ? t("records.confirmEnable")
               : pendingConfirm.kind === "delete"
-                ? "确定删除"
-                : "确定清理"
+                ? t("records.confirmDelete")
+                : t("records.confirmPurge")
           }
           description={<p>{confirmMessage(pendingConfirm)}</p>}
           destructive={pendingConfirm.kind !== "audit-risk"}
           disabled={settingsBusy || deleting || purgeBusy}
           onCancel={() => {
             if (pendingConfirm.kind === "audit-risk") {
-              setSettingsNotice("已取消开启正文捕获。");
+              const cancelled = i18n.t("records.captureCancelled");
+              if (settingsOpen) {
+                setSettingsNotice(cancelled);
+              } else {
+                notify.success(cancelled);
+              }
             }
             setPendingConfirm(null);
           }}
@@ -935,10 +1035,10 @@ export function RequestRecords({
           open
           title={
             pendingConfirm.kind === "audit-risk"
-              ? "确认开启正文捕获"
+              ? t("records.enableCaptureTitle")
               : pendingConfirm.kind === "delete"
-                ? "删除请求记录"
-                : "清理请求记录"
+                ? t("records.deleteTitle")
+                : t("records.purgeTitle")
           }
         />
       ) : null}
@@ -946,294 +1046,197 @@ export function RequestRecords({
   );
 }
 
-function RecordStream({
-  records,
+function SessionStream({
+  sessions,
   services,
   selectedId,
   nowMs,
   onOpen,
 }: {
-  records: RequestRecord[];
+  sessions: RequestSession[];
   services: RoutableService[];
   selectedId: string | null;
   nowMs: number;
-  onOpen: (requestId: string) => void;
+  onOpen: (sessionId: string) => void;
 }) {
-  const [expandedRoots, setExpandedRoots] = useState<Set<string>>(() => new Set());
-  const [childrenByRoot, setChildrenByRoot] = useState<
-    Record<string, RequestRecord[]>
-  >({});
-  const [childrenLoading, setChildrenLoading] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const fetchedRootsRef = useRef<Set<string>>(new Set());
-  const groups = groupRecordsByDate(records, new Date(nowMs));
-
-  const loadChildren = (rootId: string, force = false) => {
-    if (!force && fetchedRootsRef.current.has(rootId)) return;
-    if (childrenLoading.has(rootId)) return;
-    setChildrenLoading((current) => new Set(current).add(rootId));
-    void listRequestRecordChildren(rootId)
-      .then((page) => {
-        fetchedRootsRef.current.add(rootId);
-        setChildrenByRoot((current) => ({
-          ...current,
-          [rootId]: page.items,
-        }));
-      })
-      .catch(() => {
-        fetchedRootsRef.current.add(rootId);
-        setChildrenByRoot((current) => ({
-          ...current,
-          [rootId]: current[rootId] ?? [],
-        }));
-      })
-      .finally(() => {
-        setChildrenLoading((current) => {
-          const next = new Set(current);
-          next.delete(rootId);
-          return next;
-        });
-      });
-  };
-
-  const toggleRoot = (rootId: string, childCount: number) => {
-    setExpandedRoots((current) => {
-      const next = new Set(current);
-      if (next.has(rootId)) {
-        next.delete(rootId);
-        return next;
-      }
-      next.add(rootId);
-      return next;
-    });
-    if (childCount > 0) {
-      loadChildren(rootId);
-    }
-  };
-
-  // Refresh expanded groups when live polling changes child_count.
-  useEffect(() => {
-    for (const root of records) {
-      if (!expandedRoots.has(root.id) || root.child_count <= 0) continue;
-      const cached = childrenByRoot[root.id];
-      if (cached && cached.length === root.child_count) continue;
-      fetchedRootsRef.current.delete(root.id);
-      loadChildren(root.id, true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, expandedRoots]);
-
+  const t = i18n.t.bind(i18n);
+  const groups = groupSessionsByDate(sessions, new Date(nowMs));
   return (
-    <div className="px-3 pb-3" role="feed" aria-label="实时请求流">
+    <div className="px-3 pb-3" role="feed" aria-label={t("records.sessionFlow")}>
       {groups.map((group) => (
         <section className="mt-3 first:mt-0" key={group.key}>
           <div className="flex items-center gap-2.5 py-2 text-xs font-medium text-muted-foreground after:h-px after:flex-1 after:bg-border">
             <span>{group.label}</span>
-            <small className="font-medium">{group.records.length} 条</small>
+            <small className="font-medium">
+              {t("records.countItems", { count: group.sessions.length })}
+            </small>
           </div>
-          {group.records.map((record) => {
-            const expanded = expandedRoots.has(record.id);
-            const children = childrenByRoot[record.id] ?? [];
-            return (
-              <div key={record.id}>
-                <RecordRow
-                  serviceName={serviceLabel(record.service_id, services)}
-                  nowMs={nowMs}
-                  onOpen={() => onOpen(record.id)}
-                  onToggleRetries={
-                    record.child_count > 0
-                      ? () => toggleRoot(record.id, record.child_count)
-                      : undefined
-                  }
-                  record={record}
-                  retriesExpanded={expanded}
-                  selected={record.id === selectedId}
-                />
-                {expanded ? (
-                  <div className="ml-6 border-l pl-2" data-testid="request-record-children">
-                    {childrenLoading.has(record.id) && children.length === 0 ? (
-                      <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
-                        正在加载重试记录…
-                      </p>
-                    ) : (
-                      children.map((child, childIndex) => (
-                        <RecordRow
-                          child
-                          childOrdinal={childIndex + 1}
-                          key={child.id}
-                          nowMs={nowMs}
-                          onOpen={() => onOpen(child.id)}
-                          record={child}
-                          selected={child.id === selectedId}
-                          serviceName={serviceLabel(child.service_id, services)}
-                        />
-                      ))
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          {group.sessions.map((session) => (
+            <SessionRow
+              key={session.id}
+              nowMs={nowMs}
+              onOpen={() => onOpen(session.id)}
+              selected={session.id === selectedId}
+              serviceName={serviceLabel(session.service_id, services)}
+              session={session}
+            />
+          ))}
         </section>
       ))}
     </div>
   );
 }
 
-function RecordRow({
-  record,
+function SessionRow({
+  session,
   serviceName,
   nowMs,
   selected,
   onOpen,
-  child = false,
-  childOrdinal,
-  retriesExpanded = false,
-  onToggleRetries,
 }: {
-  record: RequestRecord;
+  session: RequestSession;
   serviceName: string | null;
   nowMs: number;
   selected: boolean;
   onOpen: () => void;
-  child?: boolean;
-  childOrdinal?: number;
-  retriesExpanded?: boolean;
-  onToggleRetries?: () => void;
 }) {
-  const captured =
-    record.audit.request_body_captured ||
-    record.audit.response_content_captured ||
-    record.audit.upstream_request_body_captured ||
-    record.audit.upstream_response_content_captured;
-  const time = new Date(record.started_at);
+  const t = i18n.t.bind(i18n);
+  const last = new Date(session.last_started_at);
   return (
-    <div className={cn("relative", child && "opacity-95")}>
-      <Button
-        aria-current={selected ? "true" : undefined}
+    <Button
+      aria-current={selected ? "true" : undefined}
+      className="grid h-auto w-full grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 rounded-none border-b bg-transparent px-3 py-2.5 text-left text-foreground shadow-none hover:bg-muted focus-visible:bg-accent aria-[current=true]:bg-accent"
+      data-session-id={session.id}
+      data-testid="request-session-row"
+      onClick={onOpen}
+      type="button"
+      variant="ghost"
+    >
+      <span
         className={cn(
-          "grid h-auto w-full grid-cols-1 gap-1 rounded-none border-b bg-transparent px-3 py-2.5 text-left text-foreground shadow-none hover:bg-muted focus-visible:bg-accent aria-[current=true]:bg-accent",
-          child && "pl-2",
+          "inline-flex h-5 items-center justify-center rounded-sm px-1 text-micro font-semibold tracking-wide",
+          session.status === "succeeded" && "bg-success text-primary-foreground",
+          session.status === "failed" && "bg-destructive text-primary-foreground",
+          session.status === "blocked" && "bg-warning text-primary-foreground",
+          session.status === "pending" && "bg-warning text-primary-foreground",
+          session.status === "cancelled" && "bg-muted text-muted-foreground",
         )}
-        data-record-id={record.id}
-        data-testid="request-record-row"
-        onClick={onOpen}
-        type="button"
-        variant="ghost"
       >
-        <span className="grid min-w-0 grid-cols-[8px_74px_minmax(120px,1fr)_minmax(100px,.7fr)_auto_auto] items-center gap-2 @max-[720px]:grid-cols-[8px_66px_minmax(90px,1fr)_auto_auto]">
-          <StatusDot tone={statusTone(record.status)} />
-          <time className="text-xs tabular-nums text-muted-foreground" dateTime={record.started_at}>
-            {Number.isNaN(time.getTime())
-              ? record.started_at
-              : time.toLocaleTimeString("zh-CN", { hour12: false })}
-          </time>
-          <strong className="truncate text-sm font-medium">{record.requested_model ?? "未指定模型"}</strong>
-          <span className="overflow-hidden text-xs text-muted-foreground text-ellipsis whitespace-nowrap @max-[720px]:hidden">
-            {serviceName ?? record.service_id ?? "正在选择服务"}
+        {statusLabel(session.status)}
+      </span>
+      <span className="grid min-w-0 gap-1">
+        <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+          <strong className="truncate text-sm font-medium">
+            {session.title}
+          </strong>
+          <span className="inline-flex max-w-[10rem] min-w-0 items-center gap-1 overflow-hidden text-sm font-medium">
+            <ModelBrandIcon model={session.requested_model} />
+            <span className="min-w-0 truncate">
+              {session.requested_model ?? t("records.unspecifiedModel")}
+            </span>
           </span>
-          {child ? (
-            <Badge className="text-micro" variant="secondary">
-              子请求 {childOrdinal ?? record.attempt_index}
-            </Badge>
-          ) : record.child_count > 0 ? (
-            <Badge className="text-micro" variant="secondary">最后一次记录</Badge>
-          ) : null}
-          <span className="text-right text-xs font-semibold tabular-nums">
-            {formatDuration(liveDurationMs(record, nowMs))}
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {Number.isNaN(last.getTime())
+              ? session.last_started_at
+              : last.toLocaleTimeString(dateTimeLocale(), { hour12: false })}
           </span>
         </span>
-        <span className="flex min-w-0 items-center gap-2 overflow-hidden pl-4 text-micro text-muted-foreground [&>*]:max-w-[190px] [&>*]:overflow-hidden [&>*]:text-ellipsis [&>*]:whitespace-nowrap">
-          <StatusText record={record} />
-          <span>HTTP {record.http_status ?? "—"}</span>
-          <code>{record.input_protocol}</code>
+        <span className="flex min-w-0 items-center gap-2 overflow-hidden text-micro text-muted-foreground">
+          <code className="shrink-0 font-mono text-micro">
+            {protocolEntryPath(session.input_protocol)}
+          </code>
+          <span className="truncate">{serviceName ?? session.service_id ?? t("records.selectingService")}</span>
           <span>
-            {record.streaming ? "流式" : "非流式"}
-          </span>
-          <span>
-            {record.usage
-              ? `${record.usage.input_tokens.toLocaleString()} → ${record.usage.output_tokens.toLocaleString()} Token`
-              : "Token —"}
-          </span>
-          <span>
-            {captured ? "已捕获" : "未捕获正文"}
+            →{" "}
+            {t("records.sessionMeta", {
+              turns: session.turn_count,
+              calls: session.call_count,
+              duration: formatDuration(sessionElapsedMs(session, nowMs)),
+            })}
           </span>
         </span>
-      </Button>
-      {onToggleRetries ? (
-        <Button
-          aria-expanded={retriesExpanded}
-          className="absolute top-1/2 right-2 h-6 -translate-y-1/2 px-2 text-micro"
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleRetries();
-          }}
-          type="button"
-          variant="outline"
-        >
-          {retriesExpanded
-            ? "收起子请求"
-            : `子请求 ${record.child_count} 条`}
-        </Button>
-      ) : null}
-    </div>
+      </span>
+    </Button>
   );
-}
-
-function StatusText({ record }: { record: RequestRecord }) {
-  if (record.error && record.status !== "pending") {
-    return (
-      <strong className="text-danger-foreground">
-        {record.error.category} · {record.error.code}
-      </strong>
-    );
-  }
-  return <strong>{statusLabel(record.status)}</strong>;
 }
 
 function RecordDetail({
   record,
+  session,
+  turns,
   serviceName,
   nowMs,
   auditContent,
   auditLoading,
   auditError,
   deleting,
-  previousId,
-  nextId,
-  index,
-  navigationCount,
   onBack,
-  onPrevious,
-  onNext,
   onDelete,
   onClearDecrypted,
+  onSelectTurn,
+  onRegisterRecords,
 }: {
   record: RequestRecord;
+  session: RequestSession;
+  turns: RequestRecord[];
   serviceName: string | null;
   nowMs: number;
   auditContent: AuditContent | null;
   auditLoading: boolean;
   auditError: string | null;
   deleting: boolean;
-  previousId: string | null;
-  nextId: string | null;
-  index: number;
-  navigationCount: number;
   onBack: () => void;
-  onPrevious: () => void;
-  onNext: () => void;
   onDelete: () => void;
   onClearDecrypted: () => void;
+  onSelectTurn: (requestId: string) => void;
+  onRegisterRecords: (records: Record<string, RequestRecord>) => void;
 }) {
+  const t = i18n.t.bind(i18n);
   const copyFeedback = useCopyFeedback();
   const [bundleSize, setBundleSize] = useState<number | null>(null);
+  const [detailTab, setDetailTab] = useState<DetailTab>("trajectory");
+  const [childrenByRoot, setChildrenByRoot] = useState<
+    Record<string, RequestRecord[]>
+  >({});
   const isChild = record.parent_request_id !== null;
   const requestPart = auditContent?.request_body ?? null;
   const responsePart = auditContent?.response_content ?? null;
   const upstreamRequestPart = auditContent?.upstream_request_body ?? null;
   const upstreamResponsePart = auditContent?.upstream_response_content ?? null;
+
+  useEffect(() => {
+    setDetailTab("trajectory");
+  }, [session.id]);
+
+  useEffect(() => {
+    const roots = turns.filter((turn) => turn.child_count > 0);
+    if (roots.length === 0) {
+      setChildrenByRoot({});
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      roots.map(async (turn) => {
+        const page = await listRequestRecordChildren(turn.id);
+        return [turn.id, page.items] as const;
+      }),
+    )
+      .then((entries) => {
+        if (cancelled) return;
+        setChildrenByRoot(Object.fromEntries(entries));
+        const registered: Record<string, RequestRecord> = {};
+        for (const [, items] of entries) {
+          for (const child of items) registered[child.id] = child;
+        }
+        if (Object.keys(registered).length > 0) onRegisterRecords(registered);
+      })
+      .catch(() => {
+        if (!cancelled) setChildrenByRoot({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [turns]);
 
   const copyBundle = (includeBodies: boolean) => {
     const bundle = buildRecordBundle(record, auditContent, {
@@ -1244,303 +1247,454 @@ function RecordDetail({
     copyFeedback.copy(includeBodies ? "bundle" : "bundle-meta", bundle);
   };
 
+  const exportBundle = (format: BundleFormat) => {
+    const bundle = buildRecordBundle(record, auditContent, {
+      includeBodies: true,
+      serviceLabel: serviceName,
+      format,
+    });
+    const filename = bundleFilename(record.id, format);
+    void saveTextFile(filename, bundle)
+      .then((path) => {
+        if (path) notify.success(t("records.exported", { path }));
+      })
+      .catch(() => {
+        notify.error(t("records.exportFailed"));
+      });
+  };
+
   return (
     <section
       aria-labelledby="request-detail-heading"
-      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card"
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
     >
-      <PageHeader
-        actions={
-          <>
+      <header
+        className="flex min-w-0 shrink-0 items-center justify-between gap-3 border-b py-2"
+        data-slot="page-header"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <Button
+            aria-label={t("records.live")}
+            className="h-auto gap-1 px-0 py-0.5 text-micro text-muted-foreground no-underline hover:bg-transparent hover:text-foreground hover:no-underline has-[>svg]:px-0"
+            onClick={onBack}
+            size="sm"
+            type="button"
+            variant="link"
+          >
+            <ArrowLeft aria-hidden="true" className="size-3" />
+            {t("records.live")}
+          </Button>
+          <span aria-hidden="true" className="text-border">
+            /
+          </span>
+          <h1
+            className="truncate text-sm font-semibold tracking-tight"
+            id="request-detail-heading"
+          >
+            {session.title}
+          </h1>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-0.5">
+            <StatusDot tone={statusTone(record.status)} />
+            <strong className="text-xs font-medium">
+              {statusLabel(record.status)}
+            </strong>
+            {record.status === "pending" ? (
+              <span className="text-micro text-muted-foreground">
+                {formatDuration(liveDurationMs(record, nowMs))}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          <div className="inline-flex">
             <Button
-              variant="outline"
-              disabled={!previousId}
-              onClick={onPrevious}
-              title="快捷键 ["
-              type="button"
-            >
-              上一条
-            </Button>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {index >= 0 ? index + 1 : "—"} / {navigationCount || "—"}
-            </span>
-            <Button
-              variant="outline"
-              disabled={!nextId}
-              onClick={onNext}
-              title="快捷键 ]"
-              type="button"
-            >
-              下一条
-            </Button>
-            <Button
+              className="rounded-r-none"
               onClick={() => copyBundle(true)}
+              size="sm"
               type="button"
             >
               {copyButtonLabel(
                 copyFeedback,
                 "bundle",
-                "一键复制全部",
+                t("records.copyAll"),
                 bundleSize !== null
-                  ? `已复制 ${formatBytes(bundleSize)}`
-                  : "已复制",
+                  ? t("records.copiedBytes", { size: formatBytes(bundleSize) })
+                  : t("common.copied"),
               )}
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => copyBundle(false)}
-              type="button"
-            >
-              {copyButtonLabel(
-                copyFeedback,
-                "bundle-meta",
-                "仅复制元数据 + HTTP",
-              )}
-            </Button>
-            <Button
-              className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-              disabled={deleting || record.status === "pending"}
-              onClick={onDelete}
-              title={
-                record.status === "pending"
-                  ? "进行中的记录结束后才能删除"
-                  : undefined
-              }
-              type="button"
-              variant="outline"
-            >
-              {deleting ? "删除中…" : "删除"}
-            </Button>
-          </>
-        }
-        back={{ label: "实时监控", onClick: onBack }}
-        description="状态与指标会随实时监控中的同一条记录自动更新。"
-        eyebrow="请求记录"
-        title="记录详情"
-        titleId="request-detail-heading"
-        variant="card"
-      />
-
-      <div className="min-h-0 min-w-0 flex-1 space-y-3 overflow-auto overscroll-contain p-[22px]">
-        <DetailSection title="身份">
-          <div className="grid grid-cols-4 gap-3 @max-[720px]:grid-cols-2">
-            <div className="col-span-full flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
-              <StatusDot tone={statusTone(record.status)} />
-              <strong className="text-sm">{statusLabel(record.status)}</strong>
-              {record.status === "pending" ? (
-                <span className="text-xs text-muted-foreground">
-                  已运行 {formatDuration(liveDurationMs(record, nowMs))}
-                </span>
-              ) : null}
-            </div>
-            <DetailField label="模型" value={record.requested_model ?? "—"} />
-            <DetailField label="协议" value={record.input_protocol} code />
-            <DetailField
-              label="传输"
-              value={record.streaming ? "流式" : "非流式"}
-            />
-            <DetailField
-              label="服务"
-              value={serviceName ?? record.service_id ?? "—"}
-            />
-            <DetailField label="开始" value={formatDateTime(record.started_at)} />
-            <DetailField
-              label="完成"
-              value={
-                record.completed_at ? formatDateTime(record.completed_at) : "—"
-              }
-            />
-            <div className="col-span-full min-w-0">
-              <dt className="text-xs font-medium text-muted-foreground">ID</dt>
-              <dd className="mt-1 flex min-w-0 items-center gap-2 text-xs text-text-secondary">
-                <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{record.id}</code>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
-                  className="h-auto px-0 text-xs"
-                  onClick={() => copyFeedback.copy("record-id", record.id)}
+                  aria-label={t("records.exportRecord")}
+                  className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
+                  size="sm"
                   type="button"
-                  variant="link"
                 >
-                  {copyButtonLabel(copyFeedback, "record-id")}
+                  <ChevronDown aria-hidden="true" />
                 </Button>
-              </dd>
-            </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => exportBundle("markdown")}>
+                  {t("records.exportMarkdown")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => exportBundle("txt")}>
+                  {t("records.exportTxt")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-        </DetailSection>
+          <Button
+            onClick={() => copyBundle(false)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {copyButtonLabel(
+              copyFeedback,
+              "bundle-meta",
+              t("records.copyMetaHttp"),
+            )}
+          </Button>
+          <Button
+            className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+            disabled={deleting || record.status === "pending"}
+            onClick={onDelete}
+            size="sm"
+            title={
+              record.status === "pending"
+                ? t("records.deletePending")
+                : undefined
+            }
+            type="button"
+            variant="outline"
+          >
+            {deleting ? t("records.deleting") : t("common.delete")}
+          </Button>
+        </div>
+      </header>
 
-        <DetailSection title="指标">
-          <dl className="grid grid-cols-3 @max-[720px]:grid-cols-2 [&>div]:border-l [&>div]:px-3 [&>div:nth-child(3n+1)]:border-l-0 [&>div:nth-child(3n+1)]:pl-0 @max-[720px]:[&>div:nth-child(3n+1)]:border-l @max-[720px]:[&>div:nth-child(3n+1)]:pl-3 @max-[720px]:[&>div:nth-child(odd)]:border-l-0 @max-[720px]:[&>div:nth-child(odd)]:pl-0">
-            <Metric label="HTTP" value={record.http_status ?? "—"} />
-            <Metric
-              label="延迟"
-              value={formatDuration(liveDurationMs(record, nowMs))}
-              live={record.status === "pending"}
-            />
-            <Metric
-              label="输入 Token"
-              value={record.usage?.input_tokens ?? "—"}
-            />
-            <Metric
-              label="输出 Token"
-              value={record.usage?.output_tokens ?? "—"}
-            />
-            <Metric
-              label="总 Token"
-              value={record.usage?.total_tokens ?? "—"}
-            />
-            <Metric
-              label="缓存 Token"
-              value={record.usage?.cached_input_tokens ?? "—"}
-            />
+      <Tabs
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"
+        onValueChange={(value) => setDetailTab(value as DetailTab)}
+        value={detailTab}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b py-2">
+          <TabsList aria-label={t("records.sections")} className="h-8">
+            <TabsTrigger
+              onClick={() => setDetailTab("trajectory")}
+              value="trajectory"
+            >
+              {t("records.tabTrajectory")}
+            </TabsTrigger>
+            <TabsTrigger
+              onClick={() => setDetailTab("content")}
+              value="content"
+            >
+              {t("records.tabContent")}
+            </TabsTrigger>
+            <TabsTrigger onClick={() => setDetailTab("audit")} value="audit">
+              {t("records.tabAudit")}
+            </TabsTrigger>
+          </TabsList>
+          <dl className="flex shrink-0 items-center gap-3 text-micro text-muted-foreground">
+            <div>
+              {t("records.entry")}{" "}
+              <code className="font-mono text-foreground">
+                {protocolEntryPath(record.input_protocol, {
+                  streaming: record.streaming,
+                })}
+              </code>
+            </div>
+            <div>
+              Duration{" "}
+              <strong className="text-foreground">
+                {formatSessionDuration(
+                  session.started_at,
+                  session.last_started_at,
+                  turns,
+                  nowMs,
+                )}
+              </strong>
+            </div>
+            <div>
+              Turns <strong className="text-foreground">{session.turn_count}</strong>
+            </div>
+            <div>
+              Calls <strong className="text-foreground">{session.call_count}</strong>
+            </div>
           </dl>
-        </DetailSection>
+        </div>
 
-        <DetailSection title="隐私还原">
-          {record.privacy_restore ? (
-            <dl className="grid grid-cols-4 @max-[720px]:grid-cols-2 [&>div]:border-l [&>div]:px-3 [&>div:first-child]:border-l-0 [&>div:first-child]:pl-0">
+        <TabsContent
+          className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          value="trajectory"
+        >
+          <RequestTrajectory
+            auditContent={auditContent}
+            auditError={auditError}
+            auditLoading={auditLoading}
+            childrenByRoot={childrenByRoot}
+            copyFeedback={copyFeedback}
+            nowMs={nowMs}
+            onSelectRequest={onSelectTurn}
+            selectedRequestId={record.id}
+            turns={turns}
+          />
+        </TabsContent>
+
+        <TabsContent
+          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-auto overscroll-contain py-4"
+          value="overview"
+        >
+          <DetailSection title={t("records.identity")}>
+            <div className="grid grid-cols-4 gap-3 @max-[720px]:grid-cols-2">
+              <DetailField
+                label={t("records.model")}
+                value={
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <ModelBrandIcon model={record.requested_model} />
+                    {record.requested_model ?? "—"}
+                  </span>
+                }
+              />
+              <DetailField
+                label={t("records.entry")}
+                value={protocolEntryPath(record.input_protocol, {
+                  streaming: record.streaming,
+                })}
+                code
+              />
+              <DetailField label={t("records.protocol")} value={record.input_protocol} code />
+              <DetailField
+                label={t("records.transport")}
+                value={record.streaming ? t("records.streaming") : t("records.notStreaming")}
+              />
+              <DetailField
+                label={t("records.service")}
+                value={serviceName ?? record.service_id ?? "—"}
+              />
+              <DetailField
+                label={t("records.started")}
+                value={formatDateTime(record.started_at)}
+              />
+              <DetailField
+                label={t("records.finished")}
+                value={
+                  record.completed_at
+                    ? formatDateTime(record.completed_at)
+                    : "—"
+                }
+              />
+              <div className="col-span-full min-w-0">
+                <dt className="text-xs font-medium text-muted-foreground">
+                  ID
+                </dt>
+                <dd className="mt-1 flex min-w-0 items-center gap-2 text-xs text-text-secondary">
+                  <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                    {record.id}
+                  </code>
+                  <Button
+                    className="h-auto px-0 text-xs"
+                    onClick={() => copyFeedback.copy("record-id", record.id)}
+                    type="button"
+                    variant="link"
+                  >
+                    {copyButtonLabel(copyFeedback, "record-id")}
+                  </Button>
+                </dd>
+              </div>
+            </div>
+          </DetailSection>
+
+          <DetailSection title={t("records.metrics")}>
+            <dl className="grid grid-cols-3 @max-[720px]:grid-cols-2 [&>div]:border-l [&>div]:px-3 [&>div:nth-child(3n+1)]:border-l-0 [&>div:nth-child(3n+1)]:pl-0 @max-[720px]:[&>div:nth-child(3n+1)]:border-l @max-[720px]:[&>div:nth-child(3n+1)]:pl-3 @max-[720px]:[&>div:nth-child(odd)]:border-l-0 @max-[720px]:[&>div:nth-child(odd)]:pl-0">
+              <Metric label="HTTP" value={record.http_status ?? "—"} />
               <Metric
-                label="状态"
-                value={record.privacy_restore.enabled ? "已开启" : "已关闭"}
+                label={t("records.latency")}
+                value={formatDuration(liveDurationMs(record, nowMs))}
+                live={record.status === "pending"}
               />
               <Metric
-                label="映射数"
-                value={record.privacy_restore.mapping_count}
+                label={t("records.inputTokens")}
+                value={record.usage?.input_tokens ?? "—"}
               />
               <Metric
-                label="已还原"
-                value={record.privacy_restore.restored_count}
+                label={t("records.outputTokens")}
+                value={record.usage?.output_tokens ?? "—"}
               />
               <Metric
-                label="安全降级"
-                value={record.privacy_restore.fallback_count}
+                label={t("records.totalTokens")}
+                value={record.usage?.total_tokens ?? "—"}
+              />
+              <Metric
+                label={t("records.cacheRead")}
+                value={record.usage?.cache_read_tokens ?? "—"}
+              />
+              <Metric
+                label={t("records.cacheWrite")}
+                value={record.usage?.cache_write_tokens ?? "—"}
               />
             </dl>
-          ) : (
-            <p className="text-xs text-success-foreground">本次未触发请求脱敏，或属于旧版记录。</p>
-          )}
-        </DetailSection>
+          </DetailSection>
 
-        {record.error ? (
-          <DetailSection tone="error" title="错误">
+          <DetailSection title={t("records.privacyRestore")}>
+            {record.privacy_restore ? (
+              <dl className="grid grid-cols-4 @max-[720px]:grid-cols-2 [&>div]:border-l [&>div]:px-3 [&>div:first-child]:border-l-0 [&>div:first-child]:pl-0">
+                <Metric
+                  label={t("records.status")}
+                  value={record.privacy_restore.enabled ? t("records.on") : t("records.off")}
+                />
+                <Metric
+                  label={t("records.mappings")}
+                  value={record.privacy_restore.mapping_count}
+                />
+                <Metric
+                  label={t("records.restored")}
+                  value={record.privacy_restore.restored_count}
+                />
+                <Metric
+                  label={t("records.safeFallback")}
+                  value={record.privacy_restore.fallback_count}
+                />
+              </dl>
+            ) : (
+              <p className="text-xs text-success-foreground">
+                {t("records.noPrivacyRestore")}
+              </p>
+            )}
+          </DetailSection>
+
+          {record.error ? (
+            <DetailSection tone="error" title={t("records.error")}>
+              <dl className="grid grid-cols-3 gap-3 @max-[720px]:grid-cols-2">
+                <DetailField label={t("records.category")} value={record.error.category} code />
+                <DetailField label={t("records.code")} value={record.error.code} code />
+                <DetailField
+                  label={t("records.retryable")}
+                  value={record.error.retryable ? t("common.yes") : t("common.no")}
+                />
+                <DetailField
+                  className="col-span-full"
+                  label={t("records.message")}
+                  value={record.error.message}
+                />
+              </dl>
+            </DetailSection>
+          ) : null}
+
+          <DetailSection title={t("records.related")}>
             <dl className="grid grid-cols-3 gap-3 @max-[720px]:grid-cols-2">
-              <DetailField label="类别" value={record.error.category} code />
-              <DetailField label="代码" value={record.error.code} code />
               <DetailField
-                label="可重试"
-                value={record.error.retryable ? "是" : "否"}
+                label={t("records.attempt")}
+                value={
+                  record.attempt_index === 0
+                    ? t("records.neverReachedUpstream")
+                    : String(record.attempt_index)
+                }
               />
               <DetailField
-                className="col-span-full"
-                label="信息"
-                value={record.error.message}
+                label={t("records.parent")}
+                value={record.parent_request_id ?? t("records.rootRecord")}
+                code
+              />
+              <DetailField
+                label={t("records.retryChildren")}
+                value={String(record.child_count)}
+              />
+              <DetailField label={t("records.route")} value={record.route_id ?? "—"} code />
+              <DetailField
+                label={t("records.service")}
+                value={serviceName ?? record.service_id ?? "—"}
+              />
+              <DetailField
+                label={t("records.token")}
+                value={record.local_access_token_id ?? "—"}
+                code
               />
             </dl>
           </DetailSection>
-        ) : null}
+        </TabsContent>
 
-        {auditError ? (
-          <p className="text-xs text-danger-foreground" role="alert">
-            {auditError}
-          </p>
-        ) : null}
-        {auditLoading ? (
-          <DetailSection title="内容">
-            <p className="text-xs text-muted-foreground" role="status">
-              正在解密内容…
+        <TabsContent
+          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-auto overscroll-contain py-4"
+          value="content"
+        >
+          {auditError ? (
+            <p className="text-xs text-danger-foreground" role="alert">
+              {auditError}
             </p>
-          </DetailSection>
-        ) : auditContent ? (
-          <>
-            {!isChild ? (
-              <>
-                <HTTPMetaSection
-                  copyFeedback={copyFeedback}
-                  meta={auditContent.http_meta}
-                  title="客户端 HTTP"
-                />
-                <AuditPartSection
-                  copyFeedback={copyFeedback}
-                  part={requestPart}
-                  protocol={record.input_protocol}
-                  sectionKey="request-body"
-                  title="客户端请求体"
-                />
-                <AuditPartSection
-                  copyFeedback={copyFeedback}
-                  part={responsePart}
-                  protocol={record.input_protocol}
-                  sectionKey="response-content"
-                  title="客户端响应内容"
-                />
-              </>
-            ) : null}
-            <HTTPMetaSection
-              copyFeedback={copyFeedback}
-              copyKey="upstream-http-meta"
-              meta={auditContent.upstream_http_meta}
-              title="上游 HTTP"
-            />
-            <AuditPartSection
-              copyFeedback={copyFeedback}
-              part={upstreamRequestPart}
-              protocol={record.input_protocol}
-              sectionKey="upstream-request-body"
-              title="上游请求体"
-            />
-            <AuditPartSection
-              copyFeedback={copyFeedback}
-              part={upstreamResponsePart}
-              protocol={record.input_protocol}
-              sectionKey="upstream-response-content"
-              title="上游响应内容"
-            />
-          </>
-        ) : null}
+          ) : null}
+          {auditLoading ? (
+            <p className="text-xs text-muted-foreground" role="status">
+              {t("records.decrypting")}
+            </p>
+          ) : auditContent ? (
+            <>
+              {!isChild ? (
+                <>
+                  <HTTPMetaSection
+                    copyFeedback={copyFeedback}
+                    meta={auditContent.http_meta}
+                    title={t("records.clientHttp")}
+                  />
+                  <AuditPartSection
+                    copyFeedback={copyFeedback}
+                    part={requestPart}
+                    protocol={record.input_protocol}
+                    sectionKey="request-body"
+                    title={t("records.clientBody")}
+                  />
+                  <AuditPartSection
+                    copyFeedback={copyFeedback}
+                    part={responsePart}
+                    protocol={record.input_protocol}
+                    sectionKey="response-content"
+                    title={t("records.clientResponseContent")}
+                  />
+                </>
+              ) : null}
+              <HTTPMetaSection
+                copyFeedback={copyFeedback}
+                copyKey="upstream-http-meta"
+                meta={auditContent.upstream_http_meta}
+                title={t("records.upstreamHttp")}
+              />
+              <AuditPartSection
+                copyFeedback={copyFeedback}
+                part={upstreamRequestPart}
+                protocol={record.input_protocol}
+                sectionKey="upstream-request-body"
+                title={t("records.upstreamBody")}
+              />
+              <AuditPartSection
+                copyFeedback={copyFeedback}
+                part={upstreamResponsePart}
+                protocol={record.input_protocol}
+                sectionKey="upstream-response-content"
+                title={t("records.upstreamResponseContent")}
+              />
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t("records.noDecrypted")}</p>
+          )}
+        </TabsContent>
 
-        <DetailSection title="关联">
-          <dl className="grid grid-cols-3 gap-3 @max-[720px]:grid-cols-2">
-            <DetailField
-              label="尝试序号"
-              value={
-                record.attempt_index === 0
-                  ? "未到达上游"
-                  : String(record.attempt_index)
-              }
-            />
-            <DetailField
-              label="父记录"
-              value={record.parent_request_id ?? "（根记录）"}
-              code
-            />
-            <DetailField
-              label="重试子记录"
-              value={String(record.child_count)}
-            />
-            <DetailField label="路由" value={record.route_id ?? "—"} code />
-            <DetailField
-              label="服务"
-              value={serviceName ?? record.service_id ?? "—"}
-            />
-            <DetailField
-              label="访问令牌"
-              value={record.local_access_token_id ?? "—"}
-              code
-            />
-          </dl>
-        </DetailSection>
-
-        <DetailSection title="审计">
+        <TabsContent
+          className="min-h-0 min-w-0 flex-1 space-y-3 overflow-auto overscroll-contain py-4"
+          value="audit"
+        >
           <div className="grid grid-cols-2 gap-2.5 @max-[720px]:grid-cols-1">
             {!isChild ? (
               <>
                 <AuditSummaryCard
                   captured={record.audit.request_body_captured}
-                  label="客户端请求体"
+                  label={t("records.clientBody")}
                   part={requestPart}
                   truncated={record.audit.request_body_truncated}
                 />
                 <AuditSummaryCard
                   captured={record.audit.response_content_captured}
-                  label="客户端响应"
+                  label={t("records.clientResponse")}
                   part={responsePart}
                   truncated={record.audit.response_content_truncated}
                 />
@@ -1548,29 +1702,29 @@ function RecordDetail({
             ) : null}
             <AuditSummaryCard
               captured={record.audit.upstream_request_body_captured}
-              label="上游请求体"
+              label={t("records.upstreamBody")}
               part={upstreamRequestPart}
               truncated={record.audit.upstream_request_body_truncated}
             />
             <AuditSummaryCard
               captured={record.audit.upstream_response_content_captured}
-              label="上游响应"
+              label={t("records.upstreamResponse")}
               part={upstreamResponsePart}
               truncated={record.audit.upstream_response_content_truncated}
             />
           </div>
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
-            <span>解密内容仅保存在当前会话内存中。</span>
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+            <span>{t("records.decryptMemoryOnly")}</span>
             <Button
-              variant="outline"
               onClick={onClearDecrypted}
               type="button"
+              variant="outline"
             >
-              清除已解密内容
+              {t("records.clearDecrypted")}
             </Button>
           </div>
-        </DetailSection>
-      </div>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }
@@ -1625,12 +1779,13 @@ function Metric({
   value: ReactNode;
   live?: boolean;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
     <div className="min-w-0">
       <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
       <dd className="mt-1 text-base font-semibold tabular-nums">
         {value}
-        {live ? <small className="ml-1 text-micro font-medium text-warning-foreground">实时</small> : null}
+        {live ? <small className="ml-1 text-micro font-medium text-warning-foreground">{t("records.liveBadge")}</small> : null}
       </dd>
     </div>
   );
@@ -1647,21 +1802,25 @@ function AuditSummaryCard({
   truncated: boolean;
   part: AuditContentPart | null;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
     <article className="rounded-md border bg-muted p-3">
       <header className="mb-2 flex items-center justify-between gap-2">
         <strong className="text-sm font-medium">{label}</strong>
         <span className={cn("text-micro text-muted-foreground", captured && "text-success-foreground")}>
-          {captured ? "已捕获" : "未捕获"}
+          {captured ? t("records.captured") : t("records.notCaptured")}
         </span>
       </header>
       <dl className="grid grid-cols-3 gap-2">
-        <DetailField label="类型" value={part?.media_type ?? "—"} />
+        <DetailField label={t("records.type")} value={part?.media_type ?? "—"} />
         <DetailField
-          label="大小"
+          label={t("records.size")}
           value={part ? formatBytes(part.captured_bytes) : "—"}
         />
-        <DetailField label="截断" value={truncated ? "是" : "否"} />
+        <DetailField
+          label={t("records.truncated")}
+          value={truncated ? t("common.yes") : t("common.no")}
+        />
       </dl>
     </article>
   );
@@ -1678,6 +1837,7 @@ function FilterSelect({
   onChange: (value: string) => void;
   options: Array<{ label: string; value: string }>;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
     <Label className="grid items-stretch gap-1.5 text-xs font-semibold text-text-secondary @max-[720px]:last:col-span-full">
       <span>{label}</span>
@@ -1685,7 +1845,7 @@ function FilterSelect({
         onValueChange={(next) => onChange(next === "__all__" ? "" : next)}
         value={value || "__all__"}
       >
-        <SelectTrigger aria-label={`${label}筛选`} className="h-8 min-w-[120px] @max-[720px]:w-full">
+        <SelectTrigger aria-label={t("records.filter", { label })} className="h-8 min-w-[120px] @max-[720px]:w-full">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -1704,8 +1864,9 @@ function FilterSelect({
 }
 
 function RecordSkeleton() {
+  const t = i18n.t.bind(i18n);
   return (
-    <div aria-label="正在加载请求记录" className="grid gap-2 p-3">
+    <div aria-label={t("records.loading")} className="grid gap-2 p-3">
       {Array.from({ length: 6 }, (_, index) => (
         <div className="grid animate-pulse gap-2 rounded-md border p-3" key={index}>
           <span className="h-3 w-2/3 rounded bg-muted" />
@@ -1736,60 +1897,50 @@ function SettingsDialog({
   onCancel: () => void;
   onSave: () => void;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
-    <ModalDialog onCancel={onCancel} title="审计设置">
+    <ModalDialog onCancel={onCancel} title={t("records.auditSettings")}>
       {draft ? (
         <div className="grid grid-cols-2 gap-3 max-[600px]:grid-cols-1">
           <CheckField
             checked={draft.http_meta_enabled}
-            label="HTTP 元数据捕获（方法 / URL / 请求头，敏感值已脱敏）"
+            label={t("records.httpMeta")}
             onChange={(value) => onChange("http_meta_enabled", value)}
           />
-          <CheckField
-            checked={draft.request_body_enabled}
-            label="请求体捕获"
-            onChange={(value) => onChange("request_body_enabled", value)}
-          />
-          <CheckField
-            checked={draft.response_content_enabled}
-            label="响应内容捕获"
-            onChange={(value) => onChange("response_content_enabled", value)}
-          />
           <NumberField
-            label="请求体上限（字节）"
+            label={t("records.requestLimit")}
             max={16_777_216}
             min={1024}
             onChange={(value) => onChange("request_body_max_bytes", value)}
             value={draft.request_body_max_bytes}
           />
           <NumberField
-            label="响应内容上限（字节）"
+            label={t("records.responseLimit")}
             max={67_108_864}
             min={1024}
             onChange={(value) => onChange("response_content_max_bytes", value)}
             value={draft.response_content_max_bytes}
           />
           <NumberField
-            label="元数据保留（天）"
+            label={t("records.metaRetention")}
             max={3650}
             min={1}
             onChange={(value) => onChange("metadata_retention_days", value)}
             value={draft.metadata_retention_days}
           />
           <NumberField
-            label="内容保留（天）"
+            label={t("records.contentRetention")}
             max={365}
             min={1}
             onChange={(value) => onChange("content_retention_days", value)}
             value={draft.content_retention_days}
           />
           <FormMessage className="col-span-full" tone="notice">
-            开启后仅捕获新请求；正文以密文保存在本机。开启正文捕获需进行第二步风险确认；HTTP
-            元数据在捕获时即脱敏（Authorization 等敏感值不落盘），无需额外确认。
+            {t("records.settingsHint")}
           </FormMessage>
         </div>
       ) : busy ? (
-        <p>加载中…</p>
+        <p>{t("common.loading")}</p>
       ) : null}
       {error ? <FormMessage tone="error">{error}</FormMessage> : null}
       {notice ? <FormMessage tone="success">{notice}</FormMessage> : null}
@@ -1800,14 +1951,14 @@ function SettingsDialog({
           onClick={onCancel}
           type="button"
         >
-          关闭
+          {t("common.close")}
         </Button>
         <Button
           disabled={busy || !draft}
           onClick={onSave}
           type="button"
         >
-          {busy ? "保存中…" : "保存"}
+          {busy ? t("common.saving") : t("common.save")}
         </Button>
       </DialogFooter>
     </ModalDialog>
@@ -1831,8 +1982,9 @@ function PurgeDialog({
   onCancel: () => void;
   onSubmit: () => void;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
-    <ModalDialog onCancel={onCancel} title="清理请求记录">
+    <ModalDialog onCancel={onCancel} title={t("records.purgeTitle")}>
       <RadioGroup
         className="grid gap-2"
         disabled={busy}
@@ -1841,11 +1993,11 @@ function PurgeDialog({
       >
         <Label className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-sm">
           <RadioGroupItem value="all" />
-          <span>清空全部记录及加密内容</span>
+          <span>{t("records.purgeAllOption")}</span>
         </Label>
         <Label className="flex items-center gap-2 rounded-lg border bg-muted px-3 py-2 text-sm">
           <RadioGroupItem value="before" />
-          <span>清除指定时间之前的记录</span>
+          <span>{t("records.purgeBeforeOption")}</span>
         </Label>
         {mode === "before" ? (
           <Input
@@ -1862,14 +2014,14 @@ function PurgeDialog({
           onClick={onCancel}
           type="button"
         >
-          取消
+          {t("common.cancel")}
         </Button>
         <Button
           disabled={busy}
           onClick={onSubmit}
           type="button"
         >
-          {busy ? "清理中…" : "执行清理"}
+          {busy ? t("records.purging") : t("records.runPurge")}
         </Button>
       </DialogFooter>
     </ModalDialog>
@@ -1885,13 +2037,14 @@ function ModalDialog({
   children: ReactNode;
   onCancel: () => void;
 }) {
+  const t = i18n.t.bind(i18n);
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent className="max-w-xl sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            配置请求记录的捕获范围、保留期限或清理条件。
+            {t("records.dialogDescription")}
           </DialogDescription>
         </DialogHeader>
         {children}
@@ -1950,15 +2103,17 @@ function NumberField({
 
 function confirmMessage(pending: PendingConfirm): string {
   if (pending.kind === "audit-risk") {
-    return "开启正文捕获后，请求/响应原文将以密文形式保存在本机数据库中，密钥也位于本机。在本机被攻破的威胁模型下，这接近明文保存。确认开启？";
+    return i18n.t("records.enableCaptureBody");
   }
   if (pending.kind === "delete") {
-    return "删除后该记录及其加密审计内容将不可恢复，确定删除？";
+    return i18n.t("records.deleteBody");
   }
   if (pending.kind === "purge-all") {
-    return "确定清空全部请求记录及其加密审计内容？此操作不可恢复。";
+    return i18n.t("records.purgeAllBody");
   }
-  return `确定清除 ${formatDateTime(pending.before)} 之前的全部请求记录及其加密审计内容？此操作不可恢复。`;
+  return i18n.t("records.purgeBeforeBody", {
+    time: formatDateTime(pending.before),
+  });
 }
 
 function diffSettings(
@@ -1982,10 +2137,14 @@ function serviceLabel(
   return services.find((service) => service.id === serviceId)?.name ?? null;
 }
 
+function dateTimeLocale(): string {
+  return i18n.language === "zh-CN" ? "zh-CN" : "en";
+}
+
 function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { hour12: false });
+  return date.toLocaleString(dateTimeLocale(), { hour12: false });
 }
 
 function formatBytes(bytes: number): string {
@@ -1996,4 +2155,18 @@ function formatBytes(bytes: number): string {
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function isControlTransportError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /error sending request|timed out|timeout|connection reset|connection refused|connection closed/i.test(
+    message,
+  );
+}
+
+function listErrorMessage(error: unknown): string {
+  if (isControlTransportError(error)) {
+    return i18n.t("records.controlUnavailable");
+  }
+  return messageOf(error, i18n.t("records.readFailed"));
 }

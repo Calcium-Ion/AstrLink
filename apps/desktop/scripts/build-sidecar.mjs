@@ -59,6 +59,11 @@ const desktopDirectory = path.resolve(scriptDirectory, "..");
 const repositoryRoot = path.resolve(desktopDirectory, "../..");
 const coreDirectory = path.join(repositoryRoot, "core");
 const workerDirectory = path.join(repositoryRoot, "apps", "privacy-worker");
+const classifierWorkerDirectory = path.join(
+  repositoryRoot,
+  "apps",
+  "classifier-worker",
+);
 
 const rustVersion = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
 const target = rustVersion.match(/^host:\s+(.+)$/m)?.[1]?.trim();
@@ -76,6 +81,14 @@ const output = path.join(
 const workerOutput = path.join(
   binariesDirectory,
   `astrlink-privacy-worker-${target}${executableSuffix}`,
+);
+const classifierWorkerOutput = path.join(
+  binariesDirectory,
+  `astrlink-classifier-worker-${target}${executableSuffix}`,
+);
+const mcpOutput = path.join(
+  binariesDirectory,
+  `astrlink-mcp-${target}${executableSuffix}`,
 );
 
 mkdirSync(binariesDirectory, { recursive: true });
@@ -208,6 +221,12 @@ async function stageMacOSRuntime() {
       "release",
       macOSRuntimeLibraryName,
     ),
+    path.join(
+      classifierWorkerDirectory,
+      "target",
+      "release",
+      macOSRuntimeLibraryName,
+    ),
     path.join(binariesDirectory, macOSRuntimeLibraryName),
   ];
   return { runtimeSource, runtimeDestinations };
@@ -289,6 +308,12 @@ async function stageLinuxRuntime() {
       "release",
       linuxRuntimeLibraryName,
     ),
+    path.join(
+      classifierWorkerDirectory,
+      "target",
+      "release",
+      linuxRuntimeLibraryName,
+    ),
     path.join(binariesDirectory, linuxRuntimeLibraryName),
   ];
   return { runtimeSource, runtimeDestinations };
@@ -317,6 +342,19 @@ execFileSync(
 );
 
 console.log(`Staged astrlink-core for Tauri: ${output}`);
+
+execFileSync(
+  "go",
+  ["build", "-trimpath", "-o", mcpOutput, "./cmd/astrlink-mcp"],
+  {
+    cwd: coreDirectory,
+    stdio: "inherit",
+  },
+);
+if (!target.includes("windows")) {
+  chmodSync(mcpOutput, 0o755);
+}
+console.log(`Staged astrlink-mcp for Tauri: ${mcpOutput}`);
 
 const macOSRuntime = await stageMacOSRuntime();
 const linuxRuntime = await stageLinuxRuntime();
@@ -368,3 +406,33 @@ if (!target.includes("windows")) {
 }
 
 console.log(`Staged astrlink-privacy-worker for Tauri: ${workerOutput}`);
+
+execFileSync(
+  "cargo",
+  [
+    "build",
+    "--locked",
+    "--release",
+    "--manifest-path",
+    path.join(classifierWorkerDirectory, "Cargo.toml"),
+  ],
+  {
+    cwd: classifierWorkerDirectory,
+    stdio: "inherit",
+  },
+);
+
+const builtClassifierWorker = path.join(
+  classifierWorkerDirectory,
+  "target",
+  "release",
+  `astrlink-classifier-worker${executableSuffix}`,
+);
+copyFileSync(builtClassifierWorker, classifierWorkerOutput);
+if (!target.includes("windows")) {
+  chmodSync(classifierWorkerOutput, 0o755);
+}
+
+console.log(
+  `Staged astrlink-classifier-worker for Tauri: ${classifierWorkerOutput}`,
+);

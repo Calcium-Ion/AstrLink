@@ -1,52 +1,60 @@
 package privacy
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
-func TestAssignPlaceholdersUsesRequestScopedRandomSuffixes(t *testing.T) {
+func testDerivationKey(seed byte) []byte {
+	key := make([]byte, 32)
+	for index := range key {
+		key[index] = seed + byte(index)
+	}
+	return key
+}
+
+func tokenKindRule(Kind) KindRule {
+	return KindRule{Enabled: true, Style: contract.PlaceholderStyleToken}
+}
+
+func TestAssignPlaceholdersReusesOnePlaceholderPerDistinctValue(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":"a alice@example.com b +1-415-555-0001 c +1-415-555-0002 d alice@example.com"}]}`)
-	document, extracted, err := extractDocument(contract.ProtocolOpenAIChat, body)
-	if err != nil || len(extracted) == 0 {
-		t.Fatalf("extract: %#v %v", extracted, err)
-	}
 	engine := mustTestEngine(t)
-	entropy := make([]byte, 3*placeholderRandomBytes)
-	for index := range entropy {
-		entropy[index] = byte(index)
-	}
-	engine.placeholderEntropy = bytes.NewReader(entropy)
-	result, err := engine.Inspect(t.Context(), Policy{
-		Enabled: true, Mode: ModeRegex, Action: ActionRedact,
-	}, contract.ProtocolOpenAIChat, body)
+	result, err := engine.Inspect(t.Context(), tokenPolicy(), contract.ProtocolOpenAIChat, body)
 	if err != nil || result.Decision != DecisionRedact {
 		t.Fatalf("inspect: %#v %v", result, err)
 	}
 	redacted := string(result.Body)
-	const emailPlaceholder = "<PRIVATE_EMAIL_0001020304050607>"
-	const firstPhonePlaceholder = "<PRIVATE_PHONE_08090a0b0c0d0e0f>"
-	const secondPhonePlaceholder = "<PRIVATE_PHONE_1011121314151617>"
-	if !strings.Contains(redacted, emailPlaceholder) ||
-		strings.Count(redacted, emailPlaceholder) != 2 ||
-		strings.Contains(redacted, "<PRIVATE_EMAIL>") {
-		t.Fatalf("email placeholders = %s", redacted)
-	}
-	if !strings.Contains(redacted, firstPhonePlaceholder) ||
-		!strings.Contains(redacted, secondPhonePlaceholder) ||
-		strings.Contains(redacted, "<PRIVATE_PHONE>") {
-		t.Fatalf("phone placeholders = %s", redacted)
-	}
 	if len(result.Redactions) != 3 {
 		t.Fatalf("redactions=%#v", result.Redactions)
 	}
-	_ = document
+	emails := 0
+	phones := 0
+	for _, redaction := range result.Redactions {
+		switch redaction.Kind {
+		case KindEmail:
+			emails++
+			// The same address occurs twice and must collapse onto one
+			// placeholder, otherwise restoration would have to disambiguate
+			// identical text.
+			if strings.Count(redacted, redaction.Placeholder) != 2 {
+				t.Fatalf("email placeholder count = %s", redacted)
+			}
+		case KindPhone:
+			phones++
+		}
+	}
+	if emails != 1 || phones != 2 {
+		t.Fatalf("kind distribution emails=%d phones=%d", emails, phones)
+	}
+	if strings.Contains(redacted, "<PRIVATE_EMAIL>") ||
+		strings.Contains(redacted, "<PRIVATE_PHONE>") {
+		t.Fatalf("unsuffixed placeholders leaked: %s", redacted)
+	}
 }
 
 func TestAssignPlaceholdersIgnoresOverlappingDiscardedFindings(t *testing.T) {
@@ -64,13 +72,13 @@ func TestAssignPlaceholdersIgnoresOverlappingDiscardedFindings(t *testing.T) {
 	placed, redactions, err := assignPlaceholders(
 		extracted,
 		findings,
-		newPlaceholderAllocator(bytes.NewReader(make([]byte, placeholderRandomBytes))),
+		newPlaceholderAllocator(testDerivationKey(1), tokenKindRule, nil),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(placed) != 1 || placed[0].Kind != KindCommonSecret ||
-		placed[0].Placeholder != "<SECRET_0000000000000000>" {
+		!strings.HasPrefix(placed[0].Placeholder, "<SECRET_") {
 		t.Fatalf("placed=%#v", placed)
 	}
 	for _, item := range redactions {
@@ -80,7 +88,7 @@ func TestAssignPlaceholdersIgnoresOverlappingDiscardedFindings(t *testing.T) {
 	}
 }
 
-func TestPlaceholderAllocatorUsesRandomSuffixForEveryKind(t *testing.T) {
+func TestPlaceholderAllocatorPreservesTokenShapeForEveryKind(t *testing.T) {
 	kinds := []Kind{
 		KindEmail,
 		KindPhone,
@@ -93,16 +101,15 @@ func TestPlaceholderAllocatorUsesRandomSuffixForEveryKind(t *testing.T) {
 		KindDate,
 		KindPerson,
 	}
-	entropy := make([]byte, len(kinds)*placeholderRandomBytes)
-	for index := range entropy {
-		entropy[index] = byte(index)
-	}
-	allocator := newPlaceholderAllocator(bytes.NewReader(entropy))
+	allocator := newPlaceholderAllocator(testDerivationKey(2), tokenKindRule, nil)
 	seen := make(map[string]struct{}, len(kinds))
 	for _, kind := range kinds {
-		placeholder, err := allocator.allocate(kind)
+		placeholder, style, err := allocator.allocate(kind, "value-"+string(kind))
 		if err != nil {
 			t.Fatalf("allocate %q: %v", kind, err)
+		}
+		if style != contract.PlaceholderStyleToken {
+			t.Fatalf("style for %q = %q", kind, style)
 		}
 		base := replacementFor(kind)
 		prefix := base[:len(base)-1] + "_"
@@ -110,7 +117,7 @@ func TestPlaceholderAllocatorUsesRandomSuffixForEveryKind(t *testing.T) {
 			t.Fatalf("placeholder %q does not preserve %q", placeholder, base)
 		}
 		suffix := strings.TrimSuffix(strings.TrimPrefix(placeholder, prefix), ">")
-		if len(suffix) != placeholderRandomBytes*2 || suffix != strings.ToLower(suffix) {
+		if len(suffix) != placeholderTokenHexLength || suffix != strings.ToLower(suffix) {
 			t.Fatalf("placeholder suffix = %q", suffix)
 		}
 		if _, err := hex.DecodeString(suffix); err != nil {
@@ -123,40 +130,14 @@ func TestPlaceholderAllocatorUsesRandomSuffixForEveryKind(t *testing.T) {
 	}
 }
 
-func TestPlaceholderAllocatorAndEngineFailClosedOnEntropyProblems(t *testing.T) {
-	allocator := newPlaceholderAllocator(failingPlaceholderEntropy{})
-	if _, err := allocator.allocate(KindEmail); !errors.Is(err, ErrUnsafeRewrite) {
-		t.Fatalf("entropy failure error = %v", err)
-	}
-
-	collisionEntropy := bytes.Repeat(
-		[]byte{0x42},
-		placeholderRandomBytes*(placeholderAllocationTrials+1),
+func TestTokenPlaceholdersRestoreThroughExistingMapping(t *testing.T) {
+	engine := mustTestEngine(t)
+	result, err := engine.Inspect(
+		t.Context(),
+		tokenPolicy(),
+		contract.ProtocolOpenAIResponses,
+		[]byte(`{"input":"alice@example.com"}`),
 	)
-	allocator = newPlaceholderAllocator(bytes.NewReader(collisionEntropy))
-	if _, err := allocator.allocate(KindEmail); err != nil {
-		t.Fatalf("initial allocation: %v", err)
-	}
-	if _, err := allocator.allocate(KindEmail); !errors.Is(err, ErrUnsafeRewrite) {
-		t.Fatalf("collision exhaustion error = %v", err)
-	}
-
-	engine := mustTestEngine(t)
-	engine.placeholderEntropy = failingPlaceholderEntropy{}
-	result, err := engine.Inspect(t.Context(), Policy{
-		Enabled: true, Mode: ModeRegex, Action: ActionRedact,
-	}, contract.ProtocolOpenAIResponses, []byte(`{"input":"alice@example.com"}`))
-	if !errors.Is(err, ErrUnsafeRewrite) || result.Decision != DecisionBlock {
-		t.Fatalf("entropy failure result=%#v error=%v", result, err)
-	}
-}
-
-func TestRandomPlaceholdersRestoreThroughExistingMapping(t *testing.T) {
-	engine := mustTestEngine(t)
-	engine.placeholderEntropy = bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})
-	result, err := engine.Inspect(t.Context(), Policy{
-		Enabled: true, Mode: ModeRegex, Action: ActionRedact,
-	}, contract.ProtocolOpenAIResponses, []byte(`{"input":"alice@example.com"}`))
 	if err != nil || len(result.Redactions) != 1 {
 		t.Fatalf("inspect result=%#v error=%v", result, err)
 	}
@@ -166,14 +147,14 @@ func TestRandomPlaceholdersRestoreThroughExistingMapping(t *testing.T) {
 	}
 }
 
-func TestEngineUsesFreshPlaceholderAllocatorForEachInspection(t *testing.T) {
+// TestPlaceholdersAreStableAcrossInspections pins the behaviour that replaced
+// per-request random suffixes. A client resends the whole conversation each
+// turn, so a value that changed placeholder every turn left the model unable to
+// tell that two markers meant the same thing, and invalidated the upstream
+// prefix cache from the first redacted span onwards.
+func TestPlaceholdersAreStableAcrossInspections(t *testing.T) {
 	engine := mustTestEngine(t)
-	entropy := make([]byte, 2*placeholderRandomBytes)
-	for index := range entropy {
-		entropy[index] = byte(index)
-	}
-	engine.placeholderEntropy = bytes.NewReader(entropy)
-	policy := Policy{Enabled: true, Mode: ModeRegex, Action: ActionRedact}
+	policy := tokenPolicy()
 	body := []byte(`{"input":"alice@example.com"}`)
 	first, err := engine.Inspect(t.Context(), policy, contract.ProtocolOpenAIResponses, body)
 	if err != nil || len(first.Redactions) != 1 {
@@ -183,15 +164,72 @@ func TestEngineUsesFreshPlaceholderAllocatorForEachInspection(t *testing.T) {
 	if err != nil || len(second.Redactions) != 1 {
 		t.Fatalf("second result=%#v error=%v", second, err)
 	}
-	if first.Redactions[0].Placeholder == second.Redactions[0].Placeholder {
-		t.Fatalf("placeholder reused across inspections: %q", first.Redactions[0].Placeholder)
+	if first.Redactions[0].Placeholder != second.Redactions[0].Placeholder {
+		t.Fatalf(
+			"placeholder changed across inspections: %q then %q",
+			first.Redactions[0].Placeholder,
+			second.Redactions[0].Placeholder,
+		)
+	}
+	if !bytesEqual(first.Body, second.Body) {
+		t.Fatalf("redacted body is not byte-stable across inspections")
 	}
 }
 
-type failingPlaceholderEntropy struct{}
+// TestPlaceholdersDifferAcrossDerivationKeys shows the suffix is not a bare
+// digest of the value: without the key, an email or an IP placeholder would be
+// reversible by enumeration.
+func TestPlaceholdersDifferAcrossDerivationKeys(t *testing.T) {
+	body := []byte(`{"input":"alice@example.com"}`)
+	first := mustTestEngine(t)
+	first.derivationKey = testDerivationKey(3)
+	second := mustTestEngine(t)
+	second.derivationKey = testDerivationKey(9)
+	left, err := first.Inspect(t.Context(), tokenPolicy(), contract.ProtocolOpenAIResponses, body)
+	if err != nil || len(left.Redactions) != 1 {
+		t.Fatalf("left result=%#v error=%v", left, err)
+	}
+	right, err := second.Inspect(t.Context(), tokenPolicy(), contract.ProtocolOpenAIResponses, body)
+	if err != nil || len(right.Redactions) != 1 {
+		t.Fatalf("right result=%#v error=%v", right, err)
+	}
+	if left.Redactions[0].Placeholder == right.Redactions[0].Placeholder {
+		t.Fatalf("placeholder is independent of the derivation key")
+	}
+}
 
-func (failingPlaceholderEntropy) Read([]byte) (int, error) {
-	return 0, errors.New("placeholder entropy unavailable")
+func bytesEqual(left, right []byte) bool {
+	return string(left) == string(right)
+}
+
+func tokenPolicy() Policy {
+	rules := make(map[Kind]KindRule, len(contract.PrivacyKinds()))
+	for _, kind := range contract.PrivacyKinds() {
+		rules[Kind(kind)] = KindRule{Enabled: true, Style: contract.PlaceholderStyleToken}
+	}
+	return Policy{
+		Enabled:   true,
+		Mode:      ModeRegex,
+		Action:    ActionRedact,
+		KindRules: rules,
+	}
+}
+
+func naturalPolicy() Policy {
+	rules := make(map[Kind]KindRule, len(contract.PrivacyKinds()))
+	for _, kind := range contract.PrivacyKinds() {
+		style := contract.PlaceholderStyleNatural
+		if contract.PlaceholderStyleLocked(kind) {
+			style = contract.PlaceholderStyleToken
+		}
+		rules[Kind(kind)] = KindRule{Enabled: true, Style: style}
+	}
+	return Policy{
+		Enabled:   true,
+		Mode:      ModeRegex,
+		Action:    ActionRedact,
+		KindRules: rules,
+	}
 }
 
 func mustTestEngine(t *testing.T) *Engine {
@@ -202,5 +240,6 @@ func mustTestEngine(t *testing.T) *Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
+	engine.derivationKey = testDerivationKey(0)
 	return engine
 }

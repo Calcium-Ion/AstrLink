@@ -5,11 +5,14 @@ import (
 	"compress/gzip"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 )
+
+func intPtr(value int) *int { return &value }
 
 func TestUsageScannerProtocols(t *testing.T) {
 	tests := []struct {
@@ -22,8 +25,30 @@ func TestUsageScannerProtocols(t *testing.T) {
 		{
 			name:     "openai responses non-streaming",
 			protocol: contract.ProtocolOpenAIResponses,
-			chunks:   []string{`{"id":"r","usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}}`},
+			chunks:   []string{`{"id":"resp_out","usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}}`},
 			want:     &contract.Usage{InputTokens: 3, OutputTokens: 5, TotalTokens: 8},
+		},
+		{
+			name:     "openai responses input_tokens_details cached",
+			protocol: contract.ProtocolOpenAIResponses,
+			chunks: []string{
+				`{"id":"r","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cached_tokens":4}}}`,
+			},
+			want: &contract.Usage{
+				InputTokens: 10, OutputTokens: 2, TotalTokens: 12,
+				CacheReadTokens: intPtr(4),
+			},
+		},
+		{
+			name:     "openai responses top-level cached_input_tokens fallback",
+			protocol: contract.ProtocolOpenAIResponses,
+			chunks: []string{
+				`{"id":"r","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"cached_input_tokens":3}}`,
+			},
+			want: &contract.Usage{
+				InputTokens: 10, OutputTokens: 2, TotalTokens: 12,
+				CacheReadTokens: intPtr(3),
+			},
 		},
 		{
 			name:      "openai responses sse completed event",
@@ -47,6 +72,17 @@ func TestUsageScannerProtocols(t *testing.T) {
 			want: &contract.Usage{InputTokens: 4, OutputTokens: 6, TotalTokens: 10},
 		},
 		{
+			name:     "chat prompt_tokens_details cached",
+			protocol: contract.ProtocolOpenAIChat,
+			chunks: []string{
+				`{"id":"c","usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25,"prompt_tokens_details":{"cached_tokens":8}}}`,
+			},
+			want: &contract.Usage{
+				InputTokens: 20, OutputTokens: 5, TotalTokens: 25,
+				CacheReadTokens: intPtr(8),
+			},
+		},
+		{
 			name:      "anthropic input plus output deltas",
 			protocol:  contract.ProtocolAnthropicMessages,
 			streaming: true,
@@ -58,6 +94,32 @@ func TestUsageScannerProtocols(t *testing.T) {
 			want: &contract.Usage{InputTokens: 11, OutputTokens: 5, TotalTokens: 16},
 		},
 		{
+			name:      "anthropic stream normalizes cache into input",
+			protocol:  contract.ProtocolAnthropicMessages,
+			streaming: true,
+			chunks: []string{
+				"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":50,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":20}}}\n",
+				"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n",
+			},
+			want: &contract.Usage{
+				InputTokens: 170, OutputTokens: 7, TotalTokens: 177,
+				CacheReadTokens:  intPtr(100),
+				CacheWriteTokens: intPtr(20),
+			},
+		},
+		{
+			name:     "anthropic non-stream normalizes cache into input",
+			protocol: contract.ProtocolAnthropicMessages,
+			chunks: []string{
+				`{"id":"m","type":"message","usage":{"input_tokens":5,"output_tokens":2,"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}`,
+			},
+			want: &contract.Usage{
+				InputTokens: 7, OutputTokens: 2, TotalTokens: 9,
+				CacheReadTokens:  intPtr(1),
+				CacheWriteTokens: intPtr(1),
+			},
+		},
+		{
 			name:      "gemini last usageMetadata wins",
 			protocol:  contract.ProtocolGoogleGenerateContent,
 			streaming: true,
@@ -66,6 +128,17 @@ func TestUsageScannerProtocols(t *testing.T) {
 				"data: {\"usageMetadata\":{\"promptTokenCount\":9,\"candidatesTokenCount\":7,\"totalTokenCount\":16}}\n",
 			},
 			want: &contract.Usage{InputTokens: 9, OutputTokens: 7, TotalTokens: 16},
+		},
+		{
+			name:     "gemini cachedContentTokenCount",
+			protocol: contract.ProtocolGoogleGenerateContent,
+			chunks: []string{
+				`{"usageMetadata":{"promptTokenCount":30,"candidatesTokenCount":4,"totalTokenCount":34,"cachedContentTokenCount":12}}`,
+			},
+			want: &contract.Usage{
+				InputTokens: 30, OutputTokens: 4, TotalTokens: 34,
+				CacheReadTokens: intPtr(12),
+			},
 		},
 		{
 			name:     "absent usage yields null",
@@ -85,6 +158,19 @@ func TestUsageScannerProtocols(t *testing.T) {
 			want: &contract.Usage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5},
 		},
 	}
+	t.Run("extracts responses output id", func(t *testing.T) {
+		scanner := newUsageScanner(contract.ProtocolOpenAIResponses, false)
+		recorder := httptest.NewRecorder()
+		writer := scanner.wrap(recorder)
+		if _, err := writer.Write([]byte(`{"id":"resp_out","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)); err != nil {
+			t.Fatal(err)
+		}
+		_ = scanner.Usage()
+		if scanner.OutputID() != "resp_out" {
+			t.Fatalf("output id = %q", scanner.OutputID())
+		}
+	})
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			scanner := newUsageScanner(test.protocol, test.streaming)
@@ -102,13 +188,28 @@ func TestUsageScannerProtocols(t *testing.T) {
 				}
 				return
 			}
-			if got == nil || *got != *test.want {
+			if !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("usage = %#v, want %#v", got, test.want)
 			}
 			if recorder.Body.String() != strings.Join(test.chunks, "") {
 				t.Fatalf("scanner altered response bytes")
 			}
 		})
+	}
+}
+
+func TestNormalizeAnthropicUsage(t *testing.T) {
+	got := normalizeAnthropicUsage(intPtr(50), intPtr(7), intPtr(100), intPtr(20))
+	want := &contract.Usage{
+		InputTokens: 170, OutputTokens: 7, TotalTokens: 177,
+		CacheReadTokens:  intPtr(100),
+		CacheWriteTokens: intPtr(20),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalize = %#v, want %#v", got, want)
+	}
+	if got.CacheReadTokens == nil || *got.CacheReadTokens > got.InputTokens {
+		t.Fatal("cache_read must be a subset of normalized input")
 	}
 }
 
@@ -139,7 +240,7 @@ func TestUsageScannerGzipNonStreaming(t *testing.T) {
 		}
 		got := scanner.Usage()
 		want := &contract.Usage{InputTokens: 3, OutputTokens: 5, TotalTokens: 8}
-		if got == nil || *got != *want {
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("usage = %#v, want %#v", got, want)
 		}
 		if !bytes.Equal(recorder.Body.Bytes(), compressed) {

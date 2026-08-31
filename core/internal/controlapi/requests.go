@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	RequestsPath      = "/control/v1/requests"
-	RequestsPurgePath = RequestsPath + "/purge"
+	RequestsPath         = "/control/v1/requests"
+	RequestsPurgePath    = RequestsPath + "/purge"
+	RequestSessionsPath  = "/control/v1/request-sessions"
 )
 
 type requestRecordPageResponse struct {
@@ -28,8 +29,82 @@ type requestRecordPageResponse struct {
 
 func (handler *Handler) registerRequestRecordRoutes() {
 	handler.mux.HandleFunc(RequestsPurgePath, handler.authenticated(handler.purgeRequestRecords))
+	handler.mux.HandleFunc(RequestSessionsPath, handler.authenticated(handler.requestSessionCollection))
+	handler.mux.HandleFunc(RequestSessionsPath+"/", handler.authenticated(handler.requestSessionItem))
 	handler.mux.HandleFunc(RequestsPath, handler.authenticated(handler.requestRecordCollection))
 	handler.mux.HandleFunc(RequestsPath+"/", handler.authenticated(handler.requestRecordItem))
+}
+
+type requestSessionPageResponse struct {
+	Items      []contract.RequestSession `json:"items"`
+	NextCursor *string                   `json:"next_cursor"`
+}
+
+func (handler *Handler) requestSessionCollection(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	options, err := parseRequestSessionListOptions(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+	page, err := handler.requestRecords.ListRequestSessions(request.Context(), options)
+	if err != nil {
+		handler.writeRequestRecordStoreError(writer, err)
+		return
+	}
+	response := requestSessionPageResponse{Items: page.Items}
+	if response.Items == nil {
+		response.Items = []contract.RequestSession{}
+	}
+	if page.NextCursor != "" {
+		response.NextCursor = &page.NextCursor
+	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
+func (handler *Handler) requestSessionItem(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	rawID := strings.TrimPrefix(request.URL.Path, RequestSessionsPath+"/")
+	if rawID == "" || strings.Contains(rawID, "/") {
+		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
+		return
+	}
+	decodedID, err := url.PathUnescape(rawID)
+	if err != nil || decodedID != rawID {
+		writeError(writer, http.StatusBadRequest, "invalid_session_id", "session_id must use its canonical form")
+		return
+	}
+	detail, err := handler.requestRecords.GetRequestSession(request.Context(), decodedID)
+	if err != nil {
+		handler.writeRequestRecordStoreError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, detail)
+}
+
+func parseRequestSessionListOptions(request *http.Request) (storage.RequestSessionListOptions, error) {
+	recordOptions, err := parseRequestRecordListOptions(request)
+	if err != nil {
+		return storage.RequestSessionListOptions{}, err
+	}
+	return storage.RequestSessionListOptions{
+		Limit:              recordOptions.Limit,
+		Cursor:             recordOptions.Cursor,
+		From:               recordOptions.From,
+		To:                 recordOptions.To,
+		Protocol:           recordOptions.Protocol,
+		ServiceID:          recordOptions.ServiceID,
+		LocalAccessTokenID: recordOptions.LocalAccessTokenID,
+		Status:             recordOptions.Status,
+	}, nil
 }
 
 func (handler *Handler) requestRecordCollection(writer http.ResponseWriter, request *http.Request) {
@@ -285,7 +360,7 @@ func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecord
 	query := request.URL.Query()
 	for name := range query {
 		switch name {
-		case "limit", "cursor", "from", "to", "protocol", "service_id", "status":
+		case "limit", "cursor", "from", "to", "protocol", "service_id", "local_access_token_id", "status":
 		default:
 			return storage.RequestRecordListOptions{}, fmt.Errorf("unknown query parameter")
 		}
@@ -339,6 +414,13 @@ func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecord
 			return options, fmt.Errorf("invalid service_id filter")
 		}
 		options.ServiceID = &serviceID
+	}
+	if value := query.Get("local_access_token_id"); value != "" {
+		tokenID := contract.AccessTokenID(value)
+		if err := tokenID.Validate(); err != nil {
+			return options, fmt.Errorf("invalid local_access_token_id filter")
+		}
+		options.LocalAccessTokenID = &tokenID
 	}
 	if value := query.Get("status"); value != "" {
 		status := contract.RequestStatus(value)

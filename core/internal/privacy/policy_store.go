@@ -31,10 +31,24 @@ func FromContractPolicy(policy contract.Policy) (Policy, error) {
 	if err := contract.ValidatePrivacyDefault(policy); err != nil {
 		return Policy{}, err
 	}
+	contract.NormalizePrivacyPolicyDefaults(&policy)
+	kindRules := make(map[Kind]KindRule, len(policy.KindRules))
+	for _, rule := range policy.KindRules {
+		kindRules[Kind(rule.Kind)] = KindRule{
+			Enabled: rule.Enabled,
+			Style:   rule.Style.Effective(),
+		}
+	}
 	result := Policy{
-		Enabled:         policy.Enabled,
-		MinConfidence:   policy.MinConfidence,
-		ResponseRestore: policy.ResponseRestore,
+		Enabled:              policy.Enabled,
+		MinConfidence:        policy.MinConfidence,
+		RegexSource:          policy.RegexSource.Effective(),
+		CustomRegexRules:     append([]contract.PolicyRegexRule(nil), policy.CustomRegexRules...),
+		KindRules:            kindRules,
+		Allowlist:            append([]contract.PolicyAllowlistRule(nil), policy.AllowlistRules...),
+		ResponseRestore:      policy.ResponseRestore,
+		RestoreToolArguments: policy.RestoreToolArguments,
+		PlaceholderNotice:    policy.PlaceholderNotice,
 	}
 	if policy.LocalModelID != nil {
 		result.LocalModelID = *policy.LocalModelID

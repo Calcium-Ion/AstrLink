@@ -10,7 +10,6 @@ const token = {
   id: "token_01",
   name: "VS Code",
   hint: "astr_…K8Q2",
-  source: "user",
   created_at: "2026-07-24T10:30:00Z",
 };
 
@@ -60,13 +59,7 @@ describe("access-token IPC contract", () => {
     );
   });
 
-  it("rejects malformed sources, timestamps, tokens, and extra secret fields", () => {
-    expect(() =>
-      parseAccessTokenPage({
-        items: [{ ...token, source: "external" }],
-        next_cursor: null,
-      }),
-    ).toThrow("unknown token source");
+  it("rejects malformed timestamps, tokens, and extra secret fields", () => {
     expect(() =>
       parseAccessTokenPage({
         items: [{ ...token, created_at: "2026-07-24 10:30:00Z" }],

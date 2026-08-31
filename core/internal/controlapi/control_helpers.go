@@ -32,10 +32,15 @@ type serviceCapabilityInput struct {
 	Protocol  *contract.ProtocolID     `json:"protocol"`
 	Mode      *contract.CapabilityMode `json:"mode"`
 	Streaming *bool                    `json:"streaming"`
+	ConvertTo *contract.ProtocolID     `json:"convert_to,omitempty"`
 }
 
 func (handler *Handler) authenticated(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		if LocalSocketAuthenticated(request) {
+			next(writer, request)
+			return
+		}
 		const prefix = "Bearer "
 		authorization := request.Header.Get("Authorization")
 		provided := []byte("")
@@ -73,11 +78,15 @@ func decodeServiceCapabilities(raw json.RawMessage) ([]contract.Capability, erro
 				index,
 			)
 		}
-		capabilities = append(capabilities, contract.Capability{
+		capability := contract.Capability{
 			Protocol:  *input.Protocol,
 			Mode:      *input.Mode,
 			Streaming: *input.Streaming,
-		})
+		}
+		if input.ConvertTo != nil {
+			capability.ConvertTo = *input.ConvertTo
+		}
+		capabilities = append(capabilities, capability)
 	}
 	return capabilities, nil
 }

@@ -3,6 +3,7 @@ package controlapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -201,6 +202,19 @@ func TestSavedCodexModelProbeRequiresConnectedSubscription(t *testing.T) {
 	)
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "service_not_connected") {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestSanitizedModelProbeMessageKeepsStatusWithoutBody(t *testing.T) {
+	if got, want := sanitizedModelProbeMessage(
+		fmt.Errorf("%w: %v", servicemodel.ErrUpstream, fmt.Errorf("codex models returned status 403")),
+	), "upstream model discovery failed (HTTP 403)"; got != want {
+		t.Fatalf("status message = %q, want %q", got, want)
+	}
+	if got, want := sanitizedModelProbeMessage(
+		fmt.Errorf("%w: %v", servicemodel.ErrUpstream, fmt.Errorf("decode codex models: unexpected")),
+	), "upstream model discovery failed (invalid catalog)"; got != want {
+		t.Fatalf("decode message = %q, want %q", got, want)
 	}
 }
 

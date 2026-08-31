@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 func TestRegexDetectorFindsHighConfidenceKinds(t *testing.T) {
@@ -104,5 +106,40 @@ func TestRegexDetectorEnforcesFindingLimit(t *testing.T) {
 	})
 	if err != ErrDetectorLimit {
 		t.Fatalf("Detect error = %v", err)
+	}
+}
+
+func TestCustomRegexDetectorMatchesOnlyConfiguredRules(t *testing.T) {
+	detector, err := NewCustomRegexDetector([]contract.PolicyRegexRule{{
+		Kind:    "email",
+		Pattern: `(?i)\bcustom-[a-z0-9]+@example\.com\b`,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := detector.Detect(context.Background(), DetectInput{
+		Segments: []Segment{{Path: "/input", Value: "mail custom-user@example.com and alice@example.com"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Kind != KindEmail {
+		t.Fatalf("findings = %#v", findings)
+	}
+	matched := "mail custom-user@example.com and alice@example.com"[findings[0].Start:findings[0].End]
+	if matched != "custom-user@example.com" {
+		t.Fatalf("matched = %q", matched)
+	}
+}
+
+func TestBuiltinRegexRulesExportMatchesCatalog(t *testing.T) {
+	rules := BuiltinRegexRules()
+	if len(rules) == 0 {
+		t.Fatal("expected builtin rules")
+	}
+	for index, rule := range rules {
+		if err := rule.Validate(); err != nil {
+			t.Fatalf("rule[%d]: %v", index, err)
+		}
 	}
 }

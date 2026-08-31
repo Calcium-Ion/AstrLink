@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -404,6 +405,71 @@ func TestPrivacyRedactSkipsResponseRestoreWhenDisabled(t *testing.T) {
 		records.records[0].PrivacyRestore.RestoredCount != 0 {
 		t.Fatalf("privacy diagnostics=%#v", records.records)
 	}
+	hits := records.records[0].PrivacyRestore.Hits
+	if len(hits) != 1 || hits[0].Kind != contract.CanonicalKindEmail || hits[0].Count != 1 {
+		t.Fatalf("privacy hits=%#v", hits)
+	}
+}
+
+func TestPrivacyRedactRecordsHitKindsAndKeepsThemAfterPolicyChange(t *testing.T) {
+	const original = `{"model":"gpt-5","input":"alice@example.com bob@example.com https://example.com/docs"}`
+	filter := testPrivacyEngine(t, privacy.Policy{
+		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact, ResponseRestore: true,
+	}, nil)
+	records := &memoryRequestRecordStore{}
+	handler := NewWithDependencies(Dependencies{
+		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
+		}),
+		PrivacyFilter:  filter,
+		RequestRecords: records,
+		Forwarder: forwarderFunc(func(writer http.ResponseWriter, request *http.Request, _ transport.Target) error {
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(body), "alice@example.com") ||
+				strings.Contains(string(body), "https://example.com") {
+				t.Fatalf("request should be redacted: %s", body)
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			_, err = writer.Write([]byte(`{"id":"resp_1"}`))
+			return err
+		}),
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(original))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(records.records) != 1 || records.records[0].PrivacyRestore == nil {
+		t.Fatalf("record=%#v", records.records)
+	}
+	got := records.records[0].PrivacyRestore.Hits
+	want := []contract.PrivacyHitCount{
+		{Kind: contract.CanonicalKindEmail, Count: 2},
+		{Kind: contract.CanonicalKindURL, Count: 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("hits=%#v want=%#v", got, want)
+	}
+
+	allow := testPrivacyEngine(t, privacy.Policy{
+		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionAllow,
+	}, nil)
+	_ = NewWithDependencies(Dependencies{
+		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
+		}),
+		PrivacyFilter:  allow,
+		RequestRecords: records,
+	})
+	if !reflect.DeepEqual(records.records[0].PrivacyRestore.Hits, want) {
+		t.Fatalf("hits changed after policy swap: %#v", records.records[0].PrivacyRestore.Hits)
+	}
 }
 
 func TestPrivacyBlockRunsBeforeCredentialLoadingAndDoesNotLeakMatch(t *testing.T) {
@@ -543,9 +609,9 @@ func TestInspectedRetryBodyBorrowsOnePrivacyResidencyPermit(t *testing.T) {
 		Mode:    privacy.ModeRegex,
 		Action:  privacy.ActionWarn,
 	}, nil)
-	entered := make(chan struct{}, maxConcurrentMetadataInspections+1)
+	entered := make(chan struct{}, DefaultMaxConcurrentInspections+1)
 	release := make(chan struct{})
-	done := make(chan struct{}, maxConcurrentMetadataInspections+1)
+	done := make(chan struct{}, DefaultMaxConcurrentInspections+1)
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
 	handler := NewWithDependencies(Dependencies{
@@ -582,10 +648,10 @@ func TestInspectedRetryBodyBorrowsOnePrivacyResidencyPermit(t *testing.T) {
 		}()
 	}
 
-	for range maxConcurrentMetadataInspections {
+	for range DefaultMaxConcurrentInspections {
 		start()
 	}
-	for range maxConcurrentMetadataInspections {
+	for range DefaultMaxConcurrentInspections {
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
@@ -596,16 +662,11 @@ func TestInspectedRetryBodyBorrowsOnePrivacyResidencyPermit(t *testing.T) {
 	start()
 	select {
 	case <-entered:
-		t.Fatal("fifth retry buffer escaped the four-request residency bound")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(time.Second):
+		t.Fatal("extra concurrent request stayed queued behind in-flight streams")
 	}
 	releaseOnce.Do(func() { close(release) })
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("released retry permit did not admit the fifth request")
-	}
-	for range maxConcurrentMetadataInspections + 1 {
+	for range DefaultMaxConcurrentInspections + 1 {
 		select {
 		case <-done:
 		case <-time.After(time.Second):
@@ -700,9 +761,9 @@ func TestPrivacyReusesFourBufferedBodyPermitsForGemini(t *testing.T) {
 	filter := testPrivacyEngine(t, privacy.Policy{
 		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionWarn,
 	}, nil)
-	entered := make(chan struct{}, maxConcurrentMetadataInspections+1)
+	entered := make(chan struct{}, DefaultMaxConcurrentInspections+1)
 	releaseForwarders := make(chan struct{})
-	done := make(chan struct{}, maxConcurrentMetadataInspections+1)
+	done := make(chan struct{}, DefaultMaxConcurrentInspections+1)
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(releaseForwarders) })
 
@@ -730,10 +791,10 @@ func TestPrivacyReusesFourBufferedBodyPermitsForGemini(t *testing.T) {
 			done <- struct{}{}
 		}()
 	}
-	for range maxConcurrentMetadataInspections {
+	for range DefaultMaxConcurrentInspections {
 		start()
 	}
-	for range maxConcurrentMetadataInspections {
+	for range DefaultMaxConcurrentInspections {
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
@@ -743,11 +804,11 @@ func TestPrivacyReusesFourBufferedBodyPermitsForGemini(t *testing.T) {
 	start()
 	select {
 	case <-entered:
-		t.Fatal("fifth privacy buffer bypassed the four-buffer bound")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(time.Second):
+		t.Fatal("extra privacy-buffered request stayed queued behind in-flight streams")
 	}
 	releaseOnce.Do(func() { close(releaseForwarders) })
-	for range maxConcurrentMetadataInspections + 1 {
+	for range DefaultMaxConcurrentInspections + 1 {
 		select {
 		case <-done:
 		case <-time.After(time.Second):

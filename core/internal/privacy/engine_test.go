@@ -229,6 +229,7 @@ func TestProtocolExtractionExcludesStructuralStringsButKeepsArgumentValues(t *te
 	for index := range extracted {
 		values[index] = extracted[index].Value
 	}
+	// Tool call arguments carry data the operator supplied and stay inspectable.
 	for _, want := range []string{
 		"message text",
 		"Alice",
@@ -239,7 +240,6 @@ func TestProtocolExtractionExcludesStructuralStringsButKeepsArgumentValues(t *te
 		"argument-model@example.com",
 		"argument-stream@example.com",
 		"argument-format@example.com",
-		"Look up a customer",
 	} {
 		if !containsString(values, want) {
 			t.Fatalf("content value %q not extracted: %#v", want, values)
@@ -257,6 +257,10 @@ func TestProtocolExtractionExcludesStructuralStringsButKeepsArgumentValues(t *te
 		"email",
 		"business",
 		"personal",
+		// A tool declaration is written by the harness author, not the operator.
+		// Inspecting it produced placeholders for documentation prose and links
+		// while protecting nothing.
+		"Look up a customer",
 	} {
 		if containsString(values, excluded) {
 			t.Fatalf("structural value %q was extracted: %#v", excluded, values)

@@ -10,6 +10,7 @@ import { ChevronDown } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataRow } from "@/components/DataRow";
+import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { EmptyState } from "@/components/EmptyState";
 import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
@@ -44,6 +45,8 @@ import {
   listRoutes,
   updateRoute,
 } from "./bridge";
+import { i18n } from "./i18n";
+import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import { type RoutableService } from "./service-model";
 import { protocolLabel, type ProtocolDescriptor } from "./service-presets";
@@ -53,6 +56,7 @@ import type {
   RouteRecord,
   RouteTarget,
 } from "./route-model";
+import { autoRoutingStatus, isAutoRoute } from "./route-model";
 
 interface RouteDraftTarget {
   serviceId: string;
@@ -106,10 +110,9 @@ const emptyCatalog: CatalogState = {
   stale: false,
 };
 
-const modeLabels: Record<"native" | "delegated", string> = {
-  native: "原生",
-  delegated: "委托",
-};
+function modeLabel(_mode: "native" | "delegated"): string {
+  return i18n.t("routes.passthrough");
+}
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -203,7 +206,7 @@ function createDraft(
     : (protocolIDs[0] ?? "openai.responses");
   const target = nextTarget(services, protocol);
   return {
-    name: "默认路由",
+    name: i18n.t("routes.defaultRoute"),
     enabled: true,
     priority: "100",
     protocol,
@@ -215,7 +218,7 @@ function createDraft(
 function draftFromRecord(record: RouteRecord): RouteDraft {
   const route = record.route;
   if (route.selection?.mode === "auto" || !route.targets) {
-    throw new Error("自动分类路由仍在训练门槛内，当前客户端不会编辑它。");
+    throw new Error(i18n.t("routes.autoTraining"));
   }
   return {
     name: route.name,
@@ -249,28 +252,28 @@ function validateDraft(
 ): string | null {
   const name = draft.name.trim();
   if (name.length === 0 || [...name].length > 128) {
-    return "路由名称需要包含 1 到 128 个字符。";
+    return i18n.t("routes.nameInvalid");
   }
   if (draft.publicModel === "astrlink/auto") {
-    return "astrlink/auto 仍在分类器训练门槛内，不能作为普通路由或别名保存。";
+    return i18n.t("routes.autoReserved");
   }
   if ([...draft.publicModel].length > 256) {
-    return "公开模型名不能超过 256 个字符。";
+    return i18n.t("routes.publicTooLong");
   }
   if (parsePriority(draft.priority) === null) {
-    return "路由优先级需要是 0 到 1000000 之间的整数。";
+    return i18n.t("routes.priorityRange");
   }
   if (draft.targets.length === 0) {
-    return "至少需要一个可执行目标。";
+    return i18n.t("routes.needTarget");
   }
   const seenServices = new Set<string>();
   for (const [index, target] of draft.targets.entries()) {
     const service = services.find(
       (candidate) => candidate.id === target.serviceId,
     );
-    if (!service) return `目标 ${index + 1} 引用的 API 服务不存在。`;
+    if (!service) return i18n.t("routes.missingService", { index: index + 1 });
     if (seenServices.has(service.id)) {
-      return "同一路由中每个 API 服务只能出现一次；多个模型请创建独立别名路由。";
+      return i18n.t("routes.duplicateService");
     }
     seenServices.add(service.id);
     const capability = capabilityFor(
@@ -279,23 +282,23 @@ function validateDraft(
       target.planType,
     );
     if (!capability) {
-      return `目标 ${index + 1} 不支持所选协议与执行方式。`;
+      return i18n.t("routes.unsupported", { index: index + 1 });
     }
     if (parsePriority(target.priority) === null) {
-      return `目标 ${index + 1} 的优先级需要是 0 到 1000000 之间的整数。`;
+      return i18n.t("routes.targetPriority", { index: index + 1 });
     }
     if ([...target.upstreamModel].length > 256) {
-      return `目标 ${index + 1} 的上游模型名不能超过 256 个字符。`;
+      return i18n.t("routes.upstreamTooLong", { index: index + 1 });
     }
     if (!draft.publicModel && target.upstreamModel) {
-      return "只有精确公开模型路由才能重写上游模型。";
+      return i18n.t("routes.rewriteExactOnly");
     }
     const effectiveModel = target.upstreamModel || draft.publicModel;
     if (
       effectiveModel &&
       !service.models.includes(effectiveModel)
     ) {
-      return `目标 ${index + 1} 的有效上游模型不在该 API 服务的模型白名单内。`;
+      return i18n.t("routes.upstreamNotListed", { index: index + 1 });
     }
   }
   return null;
@@ -342,6 +345,7 @@ export function RouteManager({
   onManageServices,
   protocols,
 }: RouteManagerProps) {
+  const t = i18n.t.bind(i18n);
   const protocolIDs = useMemo(
     () => availableProtocolIDs(services, protocols),
     [services, protocols],
@@ -356,14 +360,17 @@ export function RouteManager({
   const [saving, setSaving] = useState(false);
   const [mutatingID, setMutatingID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [cancelPending, setCancelPending] = useState(false);
   const [deletePending, setDeletePending] = useState<RouteRecord | null>(null);
+  const [autoDirty, setAutoDirty] = useState(false);
   const generation = useRef(0);
-  const dirty =
+  const editorDirty =
     editor !== null &&
     baseline !== null &&
     draftSignature(draft) !== baseline;
+  const dirty = editorDirty || (editor === null && autoDirty);
+  const priorityRoutes = catalog.items.filter((route) => !isAutoRoute(route));
+  const autoStatus = autoRoutingStatus(catalog.items);
 
   useEffect(() => {
     onDirtyChange(dirty);
@@ -410,7 +417,7 @@ export function RouteManager({
       setCatalog((current) => ({
         ...current,
         status: "error",
-        error: messageOf(loadError, "无法读取路由。"),
+        error: messageOf(loadError, i18n.t("routes.readFailed")),
         stale: current.items.length > 0,
       }));
     }
@@ -444,7 +451,6 @@ export function RouteManager({
     setBaseline(draftSignature(next));
     setEditor({ kind: "create", record: null });
     setError(null);
-    setNotice(null);
   };
 
   const beginEdit = async (route: Route) => {
@@ -456,9 +462,8 @@ export function RouteManager({
       setDraft(next);
       setBaseline(draftSignature(next));
       setEditor({ kind: "edit", record });
-      setNotice(null);
     } catch (loadError) {
-      setError(messageOf(loadError, "无法读取路由详情。"));
+      setError(messageOf(loadError, i18n.t("routes.detailFailed")));
     } finally {
       setLoadingRecord(false);
     }
@@ -497,10 +502,10 @@ export function RouteManager({
         error: null,
         stale: false,
       }));
-      setNotice(editor.kind === "create" ? "路由已创建。" : "路由已保存。");
+      notify.success(editor.kind === "create" ? i18n.t("routes.created") : i18n.t("routes.saved"));
       closeEditor();
     } catch (saveError) {
-      setError(messageOf(saveError, "无法保存路由。"));
+      setError(messageOf(saveError, i18n.t("routes.saveFailed")));
     } finally {
       setSaving(false);
     }
@@ -525,9 +530,9 @@ export function RouteManager({
         error: null,
         stale: false,
       }));
-      setNotice(updated.route.enabled ? "路由已启用。" : "路由已停用。");
+      notify.success(updated.route.enabled ? i18n.t("routes.enabledToast") : i18n.t("routes.disabledToast"));
     } catch (toggleError) {
-      setError(messageOf(toggleError, "无法更新路由状态。"));
+      setError(messageOf(toggleError, i18n.t("routes.statusFailed")));
     } finally {
       setMutatingID(null);
     }
@@ -539,7 +544,7 @@ export function RouteManager({
     try {
       setDeletePending(await getRoute(route.id));
     } catch (loadError) {
-      setError(messageOf(loadError, "无法读取待删除路由。"));
+      setError(messageOf(loadError, i18n.t("routes.deleteReadFailed")));
     } finally {
       setMutatingID(null);
     }
@@ -559,9 +564,9 @@ export function RouteManager({
         stale: false,
       }));
       setDeletePending(null);
-      setNotice("路由已删除。");
+      notify.success(i18n.t("routes.deleted"));
     } catch (deleteError) {
-      setError(messageOf(deleteError, "无法删除路由。"));
+      setError(messageOf(deleteError, i18n.t("routes.deleteFailed")));
     } finally {
       setMutatingID(null);
     }
@@ -629,36 +634,49 @@ export function RouteManager({
     <section aria-labelledby="route-manager-title" className="mx-auto flex min-h-0 w-full max-w-[1120px] flex-1 flex-col overflow-y-auto">
       <PageHeader
         actions={
-          editor ? (
-            <Button
-              variant="outline"
-              disabled={saving}
-              onClick={() => (dirty ? setCancelPending(true) : closeEditor())}
-              type="button"
+          editor ? undefined : (
+            <Badge
+              className={
+                autoStatus === "enabled"
+                  ? "bg-success-wash text-success-foreground"
+                  : autoStatus === "disabled"
+                    ? "bg-muted text-muted-foreground"
+                    : undefined
+              }
+              variant="secondary"
             >
-              返回
-            </Button>
-          ) : (
-            <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">训练中 · 不可启用</Badge>
+              {autoStatus === "enabled"
+                ? t("common.enabled")
+                : autoStatus === "disabled"
+                  ? t("common.disabled")
+                  : t("routes.unconfigured")}
+            </Badge>
           )
+        }
+        back={
+          editor
+            ? {
+                label: t("routes.back"),
+                onClick: () => (dirty ? setCancelPending(true) : closeEditor()),
+              }
+            : undefined
         }
         description={
           editor
-            ? "用确定性优先级连接 API 服务、设置 fallback，或把公开模型别名映射到真实上游模型。"
-            : "客户端使用 astrlink/auto，AstrLink 按任务分类从对应模型池中选择。"
+            ? undefined
+            : t("routes.autoHint")
         }
-        eyebrow="本地执行策略"
         title={
           editor
             ? editor.kind === "create"
-              ? "新建固定路由"
-              : "编辑固定路由"
-            : "自动选择合适的模型"
+              ? t("routes.newFixed")
+              : t("routes.editFixed")
+            : t("routes.autoTitle")
         }
         titleId="route-manager-title"
+        variant={editor ? "compact" : "plain"}
       />
 
-      {notice ? <FormMessage className="mb-2.5" tone="success">{notice}</FormMessage> : null}
       {error || catalog.error ? (
         <FormMessage className="mb-2.5" tone="error">
           {error ?? catalog.error}
@@ -666,9 +684,9 @@ export function RouteManager({
       ) : null}
 
       {editor ? (
-        <form aria-busy={saving} className="mx-auto w-full max-w-[860px] min-w-0 rounded-lg border bg-card p-4 aria-busy:pointer-events-none aria-busy:opacity-70" onSubmit={save}>
+        <form aria-busy={saving} className="w-full min-w-0 aria-busy:pointer-events-none aria-busy:opacity-70" onSubmit={save}>
           <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
-            <Field label="路由名称">
+            <Field label={t("routes.name")}>
               <Input
                 autoFocus
                 maxLength={128}
@@ -681,7 +699,7 @@ export function RouteManager({
                 value={draft.name}
               />
             </Field>
-            <Field hint="数值越小越先匹配。" label="路由优先级">
+            <Field hint={t("routes.priorityHint")} label={t("routes.priority")}>
               <Input
                 inputMode="numeric"
                 max="1000000"
@@ -696,7 +714,7 @@ export function RouteManager({
                 value={draft.priority}
               />
             </Field>
-            <Field label="入口协议">
+            <Field label={t("routes.entryProtocol")}>
               <Select
                 onValueChange={changeProtocol}
                 value={draft.protocol}
@@ -714,8 +732,8 @@ export function RouteManager({
               </Select>
             </Field>
             <Field
-              hint="填写后可为每个目标设置真实上游模型，形成模型别名。"
-              label="公开模型名（可选）"
+              hint={t("routes.publicModelHint")}
+              label={t("routes.publicModel")}
             >
               <Input
                 maxLength={256}
@@ -732,7 +750,7 @@ export function RouteManager({
                         })),
                   }));
                 }}
-                placeholder="留空匹配该协议的全部模型"
+                placeholder={t("routes.publicPlaceholder")}
                 value={draft.publicModel}
               />
             </Field>
@@ -749,16 +767,16 @@ export function RouteManager({
               }
             />
             <span className="flex flex-col gap-0.5">
-              <strong className="text-sm font-medium text-foreground">保存后立即启用</strong>
-              <small className="text-xs font-normal text-muted-foreground">停用路由会保留配置，但不会参与请求匹配。</small>
+              <strong className="text-sm font-medium text-foreground">{t("routes.enableOnSave")}</strong>
+              <small className="text-xs font-normal text-muted-foreground">{t("routes.enableOnSaveHint")}</small>
             </span>
           </Label>
 
           <section className="mt-4 border-t pt-3.5">
             <header className="flex items-center justify-between gap-2.5">
               <div className="flex flex-col gap-0.5">
-                <SectionKicker>执行目标</SectionKicker>
-                <strong className="text-sm font-medium">按优先级依次尝试</strong>
+                <SectionKicker>{t("routes.targets")}</SectionKicker>
+                <strong className="text-sm font-medium">{t("routes.tryByPriority")}</strong>
               </div>
               <Button
                 variant="outline"
@@ -766,19 +784,19 @@ export function RouteManager({
                 onClick={addTarget}
                 type="button"
               >
-                添加 fallback
+                {t("routes.addFallback")}
               </Button>
             </header>
 
             {draft.targets.length === 0 ? (
               <div className="mt-2.5 flex items-center justify-between gap-3 rounded-md border border-dashed bg-muted p-3 text-text-secondary">
-                <p className="text-xs">没有 API 服务声明 {protocolLabel(draft.protocol)} 能力。</p>
+                <p className="text-xs">{t("routes.noProtocolCapability", { protocol: protocolLabel(draft.protocol) })}</p>
                 <Button
                   variant="outline"
                   onClick={onManageServices}
                   type="button"
                 >
-                  管理 API 服务
+                  {t("routes.manageServices")}
                 </Button>
               </div>
             ) : (
@@ -793,8 +811,13 @@ export function RouteManager({
                       <span className="grid size-6 place-items-center rounded-sm border bg-card text-micro font-medium tabular-nums">
                         {String(index + 1).padStart(2, "0")}
                       </span>
-                      <div className="grid min-w-0 grid-cols-[minmax(150px,1.2fr)_minmax(100px,.7fr)_minmax(90px,.55fr)_minmax(150px,1fr)] gap-2 max-[960px]:grid-cols-2 max-[600px]:grid-cols-1">
-                        <Field label="API 服务">
+                      <div className={cn(
+                        "grid min-w-0 gap-2 max-[960px]:grid-cols-2 max-[600px]:grid-cols-1",
+                        modes.length > 1
+                          ? "grid-cols-[minmax(150px,1.2fr)_minmax(100px,.7fr)_minmax(90px,.55fr)_minmax(150px,1fr)]"
+                          : "grid-cols-[minmax(150px,1.2fr)_minmax(90px,.55fr)_minmax(150px,1fr)]",
+                      )}>
+                        <Field label={t("routes.apiService")}>
                           <Select
                             onValueChange={(serviceId) => {
                               const nextService = services.find(
@@ -830,13 +853,14 @@ export function RouteManager({
                                 value={candidate.id}
                               >
                                 {candidate.name}
-                                {candidate.enabled ? "" : "（已停用）"}
+                                {candidate.enabled ? "" : t("routes.disabledSuffix")}
                               </SelectItem>
                             ))}
                             </SelectContent>
                           </Select>
                         </Field>
-                        <Field label="执行方式">
+                        {modes.length > 1 ? (
+                        <Field label={t("routes.planType")}>
                           <Select
                             onValueChange={(value) =>
                               updateTarget(index, (current) => ({
@@ -852,13 +876,14 @@ export function RouteManager({
                             <SelectContent>
                             {modes.map((mode) => (
                               <SelectItem key={mode} value={mode}>
-                                {modeLabels[mode]}
+                                {modeLabel(mode)}
                               </SelectItem>
                             ))}
                             </SelectContent>
                           </Select>
                         </Field>
-                        <Field label="目标优先级">
+                        ) : null}
+                        <Field label={t("routes.targetPriorityField")}>
                           <Input
                             inputMode="numeric"
                             max="1000000"
@@ -878,7 +903,7 @@ export function RouteManager({
                             className="contents"
                             htmlFor={`route-upstream-model-${index}`}
                           >
-                            <span className="col-span-full">上游模型</span>
+                            <span className="col-span-full">{t("routes.upstreamModel")}</span>
                             <Input
                               className="min-w-0 flex-1"
                               disabled={!draft.publicModel}
@@ -892,8 +917,8 @@ export function RouteManager({
                               }
                               placeholder={
                                 draft.publicModel
-                                  ? "例如 gpt-5.2"
-                                  : "先填写公开模型名"
+                                  ? t("routes.upstreamPlaceholder")
+                                  : t("routes.needPublicFirst")
                               }
                               value={target.upstreamModel}
                             />
@@ -901,7 +926,7 @@ export function RouteManager({
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button
-                                aria-label={`选择目标 ${index + 1} 的上游模型`}
+                                aria-label={t("routes.chooseUpstream", { index: index + 1 })}
                                 disabled={
                                   !draft.publicModel ||
                                   (service?.models.length ?? 0) === 0
@@ -927,6 +952,7 @@ export function RouteManager({
                                     }))
                                   }
                                 >
+                                  <ModelBrandIcon model={model} />
                                   <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                                     {model}
                                   </span>
@@ -937,7 +963,7 @@ export function RouteManager({
                         </div>
                       </div>
                       <Button
-                        aria-label={`移除目标 ${index + 1}`}
+                        aria-label={t("routes.removeTarget", { index: index + 1 })}
                         className="text-danger-foreground max-[760px]:col-start-2 max-[760px]:justify-self-end"
                         disabled={draft.targets.length === 1}
                         onClick={() =>
@@ -951,7 +977,7 @@ export function RouteManager({
                         type="button"
                         variant="ghost"
                       >
-                        移除
+                        {t("routes.remove")}
                       </Button>
                     </li>
                   );
@@ -967,23 +993,40 @@ export function RouteManager({
               onClick={() => (dirty ? setCancelPending(true) : closeEditor())}
               type="button"
             >
-              取消
+              {t("common.cancel")}
             </Button>
             <Button
               disabled={saving || draft.targets.length === 0}
               type="submit"
             >
               {saving
-                ? "保存中…"
+                ? t("common.saving")
                 : editor.kind === "create"
-                  ? "创建固定路由"
-                  : "保存修改"}
+                  ? t("routes.createFixed")
+                  : t("routes.saveChanges")}
             </Button>
           </div>
         </form>
       ) : (
         <div className="flex min-w-0 flex-1 flex-col gap-[22px] pb-6">
-          <AutoRoutingShowcase />
+          <AutoRoutingShowcase
+            isReady={isReady}
+            onDirtyChange={setAutoDirty}
+            onRouteSaved={(route) => {
+              setCatalog((current) => ({
+                status: "ready",
+                items: sortRoutes([
+                  ...current.items.filter((item) => item.id !== route.id),
+                  route,
+                ]),
+                error: null,
+                stale: false,
+              }));
+            }}
+            protocolIDs={protocolIDs}
+            routes={catalog.items}
+            services={services}
+          />
 
           <section
             aria-labelledby="manual-routes-title"
@@ -991,16 +1034,15 @@ export function RouteManager({
           >
             <div className="flex min-w-0 items-start justify-between gap-4 max-[720px]:flex-col">
               <div className="min-w-0">
-                <SectionKicker>高级</SectionKicker>
+                <SectionKicker>{t("routes.advanced")}</SectionKicker>
                 <h3
                   className="mt-1 text-base font-semibold tracking-tight"
                   id="manual-routes-title"
                 >
-                  固定路由与别名
+                  {t("routes.fixedAndAliases")}
                 </h3>
                 <p className="mt-1 max-w-[560px] text-xs text-text-secondary">
-                  显式模型名与别名走确定性优先级，不经过任务分类。用于固定服务、fallback
-                  或公开模型别名映射。
+                  {t("routes.fixedHint")}
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
@@ -1010,14 +1052,14 @@ export function RouteManager({
                   onClick={() => void refresh()}
                   type="button"
                 >
-                  刷新
+                  {t("common.refresh")}
                 </Button>
                 <Button
                   disabled={!isReady || loadingRecord}
                   onClick={beginCreate}
                   type="button"
                 >
-                  新建固定路由
+                  {t("routes.newFixed")}
                 </Button>
               </div>
             </div>
@@ -1025,12 +1067,12 @@ export function RouteManager({
             <div className="flex min-w-0 flex-col">
               {!isReady && catalog.items.length === 0 ? (
                 <EmptyState
-                  description="Core 就绪后会读取本机固定路由配置。"
-                  title="等待 Core 就绪"
+                  description={t("routes.waitingHint")}
+                  title={t("routes.waiting")}
                 />
-              ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-                <EmptyState title="正在读取路由" />
-              ) : catalog.items.length === 0 ? (
+              ) : catalog.status === "loading" && priorityRoutes.length === 0 ? (
+                <EmptyState title={t("routes.loading")} />
+              ) : priorityRoutes.length === 0 ? (
                 <EmptyState
                   action={
                     <Button
@@ -1038,16 +1080,16 @@ export function RouteManager({
                       onClick={beginCreate}
                       type="button"
                     >
-                      创建第一条固定路由
+                      {t("routes.createFirst")}
                     </Button>
                   }
-                  description="默认请求走 astrlink/auto（就绪后）。创建固定路由可绕过任务分类，固定服务、安排 fallback 或建立模型别名。"
-                  title="还没有固定路由"
+                  description={t("routes.emptyHint")}
+                  title={t("routes.empty")}
                 />
               ) : (
                 <Panel asChild>
                   <ol className="list-none p-0">
-                  {catalog.items.map((route) => {
+                  {priorityRoutes.map((route) => {
                     const targets = route.targets ?? [];
                     const aliasTarget = targets.find(
                       (target) => target.upstream_model,
@@ -1061,7 +1103,7 @@ export function RouteManager({
                         <li>
                           <div className="flex w-11 shrink-0 flex-col items-center gap-0.5">
                             <span className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
-                              优先级
+                              {t("routes.priorityShort")}
                             </span>
                             <strong className="text-base tabular-nums">
                               {route.priority}
@@ -1082,18 +1124,21 @@ export function RouteManager({
                                     !route.enabled && "text-muted-foreground",
                                   )}
                                 >
-                                  {route.enabled ? "已启用" : "已停用"}
+                                  {route.enabled ? t("common.enabled") : t("common.disabled")}
                                 </span>
                               </div>
-                              <code className="max-w-[40%] truncate rounded-sm border px-1.5 py-px font-mono text-micro text-foreground">
-                                {route.match.model ?? "全部模型"}
+                              <code className="inline-flex max-w-[40%] items-center gap-1 overflow-hidden rounded-sm border px-1.5 py-px font-mono text-micro text-foreground">
+                                <ModelBrandIcon model={route.match.model} />
+                                <span className="min-w-0 truncate">
+                                  {route.match.model ?? t("routes.allModels")}
+                                </span>
                               </code>
                             </header>
                             <p className="mt-1 truncate text-xs text-muted-foreground">
                               {protocolLabel(route.match.protocol)} ·{" "}
-                              {targets.length} 个目标
+                              {t("routes.targetCount", { count: targets.length })}
                               {aliasTarget
-                                ? ` · 别名映射至 ${aliasTarget.upstream_model}`
+                                ? t("routes.aliasTo", { model: aliasTarget.upstream_model })
                                 : ""}
                             </p>
                             <div className="mt-1.5 flex min-w-0 flex-wrap gap-1">
@@ -1110,11 +1155,10 @@ export function RouteManager({
                                     {index + 1}.{" "}
                                     {service?.name ?? target.service_id}
                                     <small className="text-muted-foreground">
-                                      {modeLabels[
-                                        target.plan_type as
-                                          | "native"
-                                          | "delegated"
-                                      ] ?? target.plan_type}
+                                      {target.plan_type === "native" ||
+                                      target.plan_type === "delegated"
+                                        ? modeLabel(target.plan_type)
+                                        : target.plan_type}
                                     </small>
                                   </span>
                                 );
@@ -1129,7 +1173,7 @@ export function RouteManager({
                               onClick={() => void beginEdit(route)}
                               type="button"
                             >
-                              编辑
+                              {t("routes.edit")}
                             </Button>
                             <Button
                               size="sm"
@@ -1138,7 +1182,7 @@ export function RouteManager({
                               onClick={() => void toggleRoute(route)}
                               type="button"
                             >
-                              {route.enabled ? "停用" : "启用"}
+                              {route.enabled ? t("routes.disable") : t("routes.enable")}
                             </Button>
                             <Button
                               className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
@@ -1148,7 +1192,7 @@ export function RouteManager({
                               size="sm"
                               variant="ghost"
                             >
-                              删除
+                              {t("common.delete")}
                             </Button>
                           </div>
                         </li>
@@ -1160,7 +1204,7 @@ export function RouteManager({
               )}
               {catalog.stale ? (
                 <p className="mt-2 text-xs text-warning-foreground">
-                  当前显示上次读取的路由。
+                  {t("routes.stale")}
                 </p>
               ) : null}
             </div>
@@ -1169,22 +1213,22 @@ export function RouteManager({
       )}
 
       <ConfirmDialog
-        cancelLabel="继续编辑"
-        confirmLabel="放弃修改"
-        description={<p>本次修改尚未写入 Core。</p>}
+        cancelLabel={t("common.continueEditing")}
+        confirmLabel={t("routes.discard")}
+        description={<p>{t("routes.unsavedBody")}</p>}
         onCancel={() => setCancelPending(false)}
         onConfirm={closeEditor}
         open={cancelPending}
-        title="放弃未保存的路由修改？"
+        title={t("routes.discardTitle")}
       />
 
       <ConfirmDialog
         confirmLabel={
-          mutatingID === deletePending?.route.id ? "删除中…" : "确认删除"
+          mutatingID === deletePending?.route.id ? t("routes.deleting") : t("routes.confirmDelete")
         }
         description={
           <p>
-            “{deletePending?.route.name ?? ""}”将被永久删除，后续请求不再匹配它。
+            {t("routes.deleteBody", { name: deletePending?.route.name ?? "" })}
           </p>
         }
         destructive
@@ -1192,7 +1236,7 @@ export function RouteManager({
         onCancel={() => setDeletePending(null)}
         onConfirm={() => void confirmDelete()}
         open={deletePending !== null}
-        title="删除路由？"
+        title={t("routes.deleteTitle")}
       />
     </section>
   );

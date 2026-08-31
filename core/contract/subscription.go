@@ -353,3 +353,188 @@ func validateAuthorizationURL(value, field string) error {
 		return fmt.Errorf("%s must use https", field)
 	}
 }
+
+const (
+	maxUsagePlanTypeLength         = 64
+	maxUsageLimitNameLength        = 128
+	maxUsageFeatureLength          = 128
+	maxUsageBalanceLength          = 32
+	maxUsageAdditionalLimits       = 16
+	maxUsageUsedPercent            = 1000
+	maxUsageResetCredits           = 1000
+	maxUsageWindowSeconds    int64 = 366 * 24 * 3600
+)
+
+// SubscriptionUsage is the sanitized live quota snapshot for a connected
+// Codex subscription. It never includes email, user_id, account_id, or tokens.
+type SubscriptionUsage struct {
+	ServiceID             ServiceID              `json:"service_id"`
+	FetchedAt             time.Time              `json:"fetched_at"`
+	PlanType              string                 `json:"plan_type,omitempty"`
+	Allowed               *bool                  `json:"allowed,omitempty"`
+	LimitReached          *bool                  `json:"limit_reached,omitempty"`
+	Primary               *RateLimitWindow       `json:"primary,omitempty"`
+	Secondary             *RateLimitWindow       `json:"secondary,omitempty"`
+	AdditionalRateLimits  []AdditionalRateLimit  `json:"additional_rate_limits,omitempty"`
+	Credits               *UsageCredits          `json:"credits,omitempty"`
+	RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits,omitempty"`
+}
+
+func (usage SubscriptionUsage) Validate() error {
+	if err := usage.ServiceID.Validate(); err != nil {
+		return fmt.Errorf("service_id: %w", err)
+	}
+	if usage.FetchedAt.IsZero() {
+		return fmt.Errorf("fetched_at is required")
+	}
+	if usage.PlanType != "" {
+		if utf8.RuneCountInString(usage.PlanType) > maxUsagePlanTypeLength {
+			return fmt.Errorf("plan_type must be at most %d characters", maxUsagePlanTypeLength)
+		}
+		if containsCredentialLeak(usage.PlanType) || strings.Contains(usage.PlanType, "@") {
+			return fmt.Errorf("plan_type must not contain credential material")
+		}
+	}
+	if err := usage.Primary.validate("primary"); err != nil {
+		return err
+	}
+	if err := usage.Secondary.validate("secondary"); err != nil {
+		return err
+	}
+	if len(usage.AdditionalRateLimits) > maxUsageAdditionalLimits {
+		return fmt.Errorf("additional_rate_limits must contain at most %d items", maxUsageAdditionalLimits)
+	}
+	for index, extra := range usage.AdditionalRateLimits {
+		if err := extra.Validate(); err != nil {
+			return fmt.Errorf("additional_rate_limits[%d]: %w", index, err)
+		}
+	}
+	if usage.Credits != nil {
+		if err := usage.Credits.Validate(); err != nil {
+			return fmt.Errorf("credits: %w", err)
+		}
+	}
+	if usage.RateLimitResetCredits != nil {
+		if usage.RateLimitResetCredits.AvailableCount < 0 ||
+			usage.RateLimitResetCredits.AvailableCount > maxUsageResetCredits {
+			return fmt.Errorf("rate_limit_reset_credits.available_count is out of range")
+		}
+	}
+	return nil
+}
+
+// RateLimitWindow is one rolling quota window from the official Codex usage API.
+type RateLimitWindow struct {
+	UsedPercent        float64    `json:"used_percent"`
+	LimitWindowSeconds *int64     `json:"limit_window_seconds,omitempty"`
+	ResetAt            *time.Time `json:"reset_at,omitempty"`
+	ResetAfterSeconds  *int64     `json:"reset_after_seconds,omitempty"`
+}
+
+func (window *RateLimitWindow) validate(field string) error {
+	if window == nil {
+		return nil
+	}
+	if window.UsedPercent < 0 || window.UsedPercent > maxUsageUsedPercent {
+		return fmt.Errorf("%s.used_percent is out of range", field)
+	}
+	if window.LimitWindowSeconds != nil {
+		if *window.LimitWindowSeconds < 1 || *window.LimitWindowSeconds > maxUsageWindowSeconds {
+			return fmt.Errorf("%s.limit_window_seconds is out of range", field)
+		}
+	}
+	if window.ResetAfterSeconds != nil {
+		if *window.ResetAfterSeconds < 0 || *window.ResetAfterSeconds > maxUsageWindowSeconds {
+			return fmt.Errorf("%s.reset_after_seconds is out of range", field)
+		}
+	}
+	return nil
+}
+
+// AdditionalRateLimit is a model- or feature-specific quota besides the
+// default Codex windows.
+type AdditionalRateLimit struct {
+	LimitName      string           `json:"limit_name"`
+	MeteredFeature string           `json:"metered_feature,omitempty"`
+	Primary        *RateLimitWindow `json:"primary,omitempty"`
+	Secondary      *RateLimitWindow `json:"secondary,omitempty"`
+}
+
+func (limit AdditionalRateLimit) Validate() error {
+	name := strings.TrimSpace(limit.LimitName)
+	if name == "" || utf8.RuneCountInString(name) > maxUsageLimitNameLength {
+		return fmt.Errorf("limit_name is required and must be at most %d characters", maxUsageLimitNameLength)
+	}
+	if containsCredentialLeak(name) || strings.Contains(name, "@") {
+		return fmt.Errorf("limit_name must not contain credential material")
+	}
+	if limit.MeteredFeature != "" {
+		if utf8.RuneCountInString(limit.MeteredFeature) > maxUsageFeatureLength {
+			return fmt.Errorf("metered_feature must be at most %d characters", maxUsageFeatureLength)
+		}
+		if containsCredentialLeak(limit.MeteredFeature) || strings.Contains(limit.MeteredFeature, "@") {
+			return fmt.Errorf("metered_feature must not contain credential material")
+		}
+	}
+	if err := limit.Primary.validate("primary"); err != nil {
+		return err
+	}
+	return limit.Secondary.validate("secondary")
+}
+
+// UsageCredits is the optional paid-credit remainder on a ChatGPT account.
+type UsageCredits struct {
+	HasCredits bool   `json:"has_credits"`
+	Unlimited  bool   `json:"unlimited"`
+	Balance    string `json:"balance,omitempty"`
+}
+
+func (credits UsageCredits) Validate() error {
+	if credits.Balance == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(credits.Balance) > maxUsageBalanceLength {
+		return fmt.Errorf("balance must be at most %d characters", maxUsageBalanceLength)
+	}
+	if containsCredentialLeak(credits.Balance) {
+		return fmt.Errorf("balance must not contain credential material")
+	}
+	return nil
+}
+
+// RateLimitResetCredits is the count of banked window resets from
+// `/wham/usage`. Redeeming one uses the official consume path.
+type RateLimitResetCredits struct {
+	AvailableCount int `json:"available_count"`
+}
+
+const (
+	UsageResetOutcomeReset           = "reset"
+	UsageResetOutcomeNothingToReset  = "nothing_to_reset"
+	UsageResetOutcomeNoCredit        = "no_credit"
+	UsageResetOutcomeAlreadyRedeemed = "already_redeemed"
+)
+
+// SubscriptionUsageReset is the sanitized consume outcome. The upstream
+// `credit` object is dropped.
+type SubscriptionUsageReset struct {
+	ServiceID    ServiceID `json:"service_id"`
+	Outcome      string    `json:"outcome"`
+	WindowsReset *int64    `json:"windows_reset,omitempty"`
+}
+
+func (result SubscriptionUsageReset) Validate() error {
+	if err := result.ServiceID.Validate(); err != nil {
+		return fmt.Errorf("service_id: %w", err)
+	}
+	switch result.Outcome {
+	case UsageResetOutcomeReset, UsageResetOutcomeNothingToReset,
+		UsageResetOutcomeNoCredit, UsageResetOutcomeAlreadyRedeemed:
+	default:
+		return fmt.Errorf("outcome is invalid")
+	}
+	if result.WindowsReset != nil && *result.WindowsReset < 0 {
+		return fmt.Errorf("windows_reset is out of range")
+	}
+	return nil
+}

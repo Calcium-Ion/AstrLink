@@ -1,4 +1,7 @@
+import { i18n } from "./i18n";
+
 export type PrivacyDetector = "regex" | "local_model";
+export type PrivacyRegexSource = "builtin" | "custom";
 export type PrivacyAction = "allow" | "warn" | "block" | "redact";
 export type PrivacyModelAdapter =
   | "openai_bioes_viterbi"
@@ -15,6 +18,83 @@ export type CanonicalPrivacyKind =
   | "private_address"
   | "private_date"
   | "private_person";
+export type PrivacyRegexDetectorKind =
+  | "email"
+  | "phone"
+  | "account"
+  | "payment_card"
+  | "ip_address"
+  | "url"
+  | "common_secret";
+
+export const PRIVACY_REGEX_DETECTOR_KINDS: readonly PrivacyRegexDetectorKind[] = [
+  "email",
+  "phone",
+  "account",
+  "payment_card",
+  "ip_address",
+  "url",
+  "common_secret",
+];
+
+export const MAX_PRIVACY_CUSTOM_REGEX_RULES = 64;
+export const MAX_PRIVACY_REGEX_PATTERN_CHARS = 512;
+export const MAX_PRIVACY_ALLOWLIST_RULES = 128;
+export const MAX_PRIVACY_ALLOWLIST_VALUE_CHARS = 256;
+
+export interface PrivacyRegexRule {
+  kind: PrivacyRegexDetectorKind;
+  pattern: string;
+}
+
+/**
+ * "token" emits an opaque marker such as `<PRIVATE_EMAIL_hex>`; an unrestored
+ * leak is obvious to a reader, but the marker is out-of-distribution text that
+ * violates typed tool-argument schemas. "natural" emits a syntactically valid
+ * stand-in from a permanently reserved namespace; a model copies it without
+ * being told to, but an unrestored leak looks plausible.
+ */
+export type PlaceholderStyle = "natural" | "token";
+
+/** Canonical order, matching core/contract.PrivacyKinds. */
+export const PRIVACY_KINDS: readonly CanonicalPrivacyKind[] = [
+  "common_secret",
+  "payment_card",
+  "account",
+  "email",
+  "phone",
+  "url",
+  "ip_address",
+  "private_person",
+  "private_address",
+  "private_date",
+];
+
+/**
+ * Kinds whose placeholder shape is fixed. A credential dressed up as a
+ * usable-looking key invites the model to actually call an API with it, and
+ * names, addresses, and dates have no reserved namespace to draw a safe
+ * stand-in from.
+ */
+export const PLACEHOLDER_STYLE_LOCKED_KINDS: ReadonlySet<CanonicalPrivacyKind> =
+  new Set(["common_secret", "private_person", "private_address", "private_date"]);
+
+export interface PrivacyKindRule {
+  kind: CanonicalPrivacyKind;
+  enabled: boolean;
+  style: PlaceholderStyle;
+}
+
+export type PrivacyAllowlistType = "literal" | "domain_suffix" | "cidr";
+
+export interface PrivacyAllowlistRule {
+  type: PrivacyAllowlistType;
+  value: string;
+}
+
+export interface PrivacyRegexBuiltinRules {
+  rules: PrivacyRegexRule[];
+}
 export type PrivacyModelInstallationPhase =
   | "downloading"
   | "ready"
@@ -38,9 +118,15 @@ export interface PrivacyPolicy {
   detector: PrivacyDetector;
   local_model_id: string | null;
   min_confidence: number;
+  regex_source: PrivacyRegexSource;
+  custom_regex_rules: PrivacyRegexRule[];
+  kind_rules: PrivacyKindRule[];
+  allowlist_rules: PrivacyAllowlistRule[];
   request_action: PrivacyAction;
   response_action: PrivacyAction;
   response_restore: boolean;
+  restore_tool_arguments: boolean;
+  placeholder_notice: boolean;
   match: PrivacyPolicyMatch;
 }
 
@@ -61,8 +147,14 @@ export type PrivacyPolicyPatch = Partial<
     | "detector"
     | "local_model_id"
     | "min_confidence"
+    | "regex_source"
+    | "custom_regex_rules"
+    | "kind_rules"
+    | "allowlist_rules"
     | "request_action"
     | "response_restore"
+    | "restore_tool_arguments"
+    | "placeholder_notice"
   >
 >;
 
@@ -84,18 +176,27 @@ export interface PrivacyDryRunInput {
   policy?: PrivacyPolicyPatch;
 }
 
+export type PrivacySuppressionReason =
+  | "low_confidence"
+  | "kind_disabled"
+  | "allowlisted"
+  | "placeholder"
+  | "unrepresentable";
+
 export interface PrivacyDryRunFinding {
   kind: CanonicalPrivacyKind;
   path: string;
   start: number;
   end: number;
   confidence: number;
+  reason?: PrivacySuppressionReason;
 }
 
 export interface PrivacyDryRunRedaction {
   placeholder: string;
   kind: CanonicalPrivacyKind;
   value: string;
+  style: PlaceholderStyle;
 }
 
 export interface PrivacyDryRunResult {
@@ -211,6 +312,20 @@ const tokenPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
 const labelPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const etagPattern = /^"sha256:[0-9a-f]{64}"$/;
 const detectors = new Set<PrivacyDetector>(["regex", "local_model"]);
+const regexSources = new Set<PrivacyRegexSource>(["builtin", "custom"]);
+const placeholderStyles = new Set<PlaceholderStyle>(["natural", "token"]);
+const allowlistTypes = new Set<PrivacyAllowlistType>([
+  "literal",
+  "domain_suffix",
+  "cidr",
+]);
+const suppressionReasons = new Set<PrivacySuppressionReason>([
+  "low_confidence",
+  "kind_disabled",
+  "allowlisted",
+  "placeholder",
+  "unrepresentable",
+]);
 const actions = new Set<PrivacyAction>([
   "allow",
   "warn",
@@ -234,6 +349,9 @@ const canonicalKinds = new Set<CanonicalPrivacyKind>([
   "private_date",
   "private_person",
 ]);
+const regexDetectorKinds = new Set<PrivacyRegexDetectorKind>(
+  PRIVACY_REGEX_DETECTOR_KINDS,
+);
 const dryRunProtocols = new Set<PrivacyDryRunProtocol>([
   "openai.chat",
   "openai.completions",
@@ -589,7 +707,14 @@ export function parsePrivacyPolicy(
       "response_restore",
       "match",
     ],
-    [],
+    [
+      "regex_source",
+      "custom_regex_rules",
+      "kind_rules",
+      "allowlist_rules",
+      "restore_tool_arguments",
+      "placeholder_notice",
+    ],
     path,
   );
   const id = resourceIDAt(policy.id, `${path}.id`);
@@ -639,6 +764,32 @@ export function parsePrivacyPolicy(
   ) {
     invalid(path, "detector and local model selection are inconsistent");
   }
+  let regexSource: PrivacyRegexSource = "builtin";
+  if (Object.hasOwn(policy, "regex_source")) {
+    if (
+      typeof policy.regex_source !== "string" ||
+      !regexSources.has(policy.regex_source as PrivacyRegexSource)
+    ) {
+      invalid(`${path}.regex_source`, "unknown regex source");
+    }
+    regexSource = policy.regex_source as PrivacyRegexSource;
+  }
+  const customRegexRules = Object.hasOwn(policy, "custom_regex_rules")
+    ? parsePrivacyRegexRules(
+        policy.custom_regex_rules,
+        `${path}.custom_regex_rules`,
+      )
+    : [];
+  if (
+    detector === "regex" &&
+    regexSource === "custom" &&
+    customRegexRules.length === 0
+  ) {
+    invalid(
+      `${path}.custom_regex_rules`,
+      "custom regex rules require at least one rule",
+    );
+  }
   return {
     id,
     name,
@@ -650,10 +801,158 @@ export function parsePrivacyPolicy(
       policy.min_confidence,
       `${path}.min_confidence`,
     ),
+    regex_source: regexSource,
+    custom_regex_rules: customRegexRules,
+    kind_rules: Object.hasOwn(policy, "kind_rules")
+      ? parsePrivacyKindRules(policy.kind_rules, `${path}.kind_rules`)
+      : defaultPrivacyKindRules(),
+    allowlist_rules: Object.hasOwn(policy, "allowlist_rules")
+      ? parsePrivacyAllowlistRules(
+          policy.allowlist_rules,
+          `${path}.allowlist_rules`,
+        )
+      : [],
     request_action: policy.request_action as PrivacyAction,
     response_action: policy.response_action as PrivacyAction,
     response_restore: booleanAt(policy.response_restore, `${path}.response_restore`),
+    restore_tool_arguments: Object.hasOwn(policy, "restore_tool_arguments")
+      ? booleanAt(
+          policy.restore_tool_arguments,
+          `${path}.restore_tool_arguments`,
+        )
+      : true,
+    placeholder_notice: Object.hasOwn(policy, "placeholder_notice")
+      ? booleanAt(policy.placeholder_notice, `${path}.placeholder_notice`)
+      : true,
     match: parseMatch(policy.match, `${path}.match`),
+  };
+}
+
+/**
+ * Mirrors core/contract.DefaultPrivacyKindRules for responses that predate the
+ * field. url and ip_address are off because they were the dominant
+ * false-positive source for coding agents.
+ */
+export function defaultPrivacyKindRules(): PrivacyKindRule[] {
+  return PRIVACY_KINDS.map((kind) => ({
+    kind,
+    enabled: kind !== "url" && kind !== "ip_address",
+    style: PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind) ? "token" : "natural",
+  }));
+}
+
+export function parsePrivacyRegexBuiltinRules(
+  value: unknown,
+): PrivacyRegexBuiltinRules {
+  const object = objectAt(value, "$");
+  keysAt(object, ["rules"], [], "$");
+  return {
+    rules: parsePrivacyRegexRules(object.rules, "$.rules"),
+  };
+}
+
+function parsePrivacyRegexRules(
+  value: unknown,
+  path: string,
+): PrivacyRegexRule[] {
+  if (!Array.isArray(value)) invalid(path, "expected an array");
+  if (value.length > MAX_PRIVACY_CUSTOM_REGEX_RULES) {
+    invalid(path, `expected at most ${MAX_PRIVACY_CUSTOM_REGEX_RULES} rules`);
+  }
+  return value.map((entry, index) =>
+    parsePrivacyRegexRule(entry, `${path}[${index}]`),
+  );
+}
+
+function parsePrivacyRegexRule(value: unknown, path: string): PrivacyRegexRule {
+  const object = objectAt(value, path);
+  keysAt(object, ["kind", "pattern"], [], path);
+  if (
+    typeof object.kind !== "string" ||
+    !regexDetectorKinds.has(object.kind as PrivacyRegexDetectorKind)
+  ) {
+    invalid(`${path}.kind`, "unknown regex detector kind");
+  }
+  const pattern = stringAt(
+    object.pattern,
+    `${path}.pattern`,
+    1,
+    MAX_PRIVACY_REGEX_PATTERN_CHARS,
+  );
+  return {
+    kind: object.kind as PrivacyRegexDetectorKind,
+    pattern,
+  };
+}
+
+function parsePrivacyKindRules(
+  value: unknown,
+  path: string,
+): PrivacyKindRule[] {
+  if (!Array.isArray(value)) invalid(path, "expected an array");
+  const rules = value.map((entry, index) =>
+    parsePrivacyKindRule(entry, `${path}[${index}]`),
+  );
+  if (new Set(rules.map((rule) => rule.kind)).size !== rules.length) {
+    invalid(path, "duplicate kind rule");
+  }
+  return rules;
+}
+
+function parsePrivacyKindRule(value: unknown, path: string): PrivacyKindRule {
+  const object = objectAt(value, path);
+  keysAt(object, ["kind", "enabled", "style"], [], path);
+  const kind = canonicalKindAt(object.kind, `${path}.kind`);
+  if (
+    typeof object.style !== "string" ||
+    !placeholderStyles.has(object.style as PlaceholderStyle)
+  ) {
+    invalid(`${path}.style`, "unknown placeholder style");
+  }
+  const style = object.style as PlaceholderStyle;
+  if (PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind) && style !== "token") {
+    invalid(`${path}.style`, "this kind must keep the token placeholder style");
+  }
+  return {
+    kind,
+    enabled: booleanAt(object.enabled, `${path}.enabled`),
+    style,
+  };
+}
+
+function parsePrivacyAllowlistRules(
+  value: unknown,
+  path: string,
+): PrivacyAllowlistRule[] {
+  if (!Array.isArray(value)) invalid(path, "expected an array");
+  if (value.length > MAX_PRIVACY_ALLOWLIST_RULES) {
+    invalid(path, `expected at most ${MAX_PRIVACY_ALLOWLIST_RULES} rules`);
+  }
+  return value.map((entry, index) =>
+    parsePrivacyAllowlistRule(entry, `${path}[${index}]`),
+  );
+}
+
+function parsePrivacyAllowlistRule(
+  value: unknown,
+  path: string,
+): PrivacyAllowlistRule {
+  const object = objectAt(value, path);
+  keysAt(object, ["type", "value"], [], path);
+  if (
+    typeof object.type !== "string" ||
+    !allowlistTypes.has(object.type as PrivacyAllowlistType)
+  ) {
+    invalid(`${path}.type`, "unknown allowlist type");
+  }
+  return {
+    type: object.type as PrivacyAllowlistType,
+    value: stringAt(
+      object.value,
+      `${path}.value`,
+      1,
+      MAX_PRIVACY_ALLOWLIST_VALUE_CHARS,
+    ),
   };
 }
 
@@ -692,7 +991,7 @@ function parsePrivacyDryRunFinding(
   keysAt(
     finding,
     ["kind", "path", "start", "end", "confidence"],
-    [],
+    ["reason"],
     path,
   );
   if (
@@ -706,13 +1005,23 @@ function parsePrivacyDryRunFinding(
   if (end <= start) {
     invalid(path, "end must be greater than start");
   }
-  return {
+  const parsed: PrivacyDryRunFinding = {
     kind: finding.kind as CanonicalPrivacyKind,
     path: stringAt(finding.path, `${path}.path`, 1, 512),
     start,
     end,
     confidence: unitIntervalAt(finding.confidence, `${path}.confidence`),
   };
+  if (Object.hasOwn(finding, "reason")) {
+    if (
+      typeof finding.reason !== "string" ||
+      !suppressionReasons.has(finding.reason as PrivacySuppressionReason)
+    ) {
+      invalid(`${path}.reason`, "unknown suppression reason");
+    }
+    parsed.reason = finding.reason as PrivacySuppressionReason;
+  }
+  return parsed;
 }
 
 export function parsePrivacyDryRunResult(
@@ -775,17 +1084,28 @@ export function parsePrivacyDryRunResult(
     parsed.redactions = result.redactions.map((item, index) => {
       const path = `$.redactions[${index}]`;
       const redaction = objectAt(item, path);
-      keysAt(redaction, ["placeholder", "kind", "value"], [], path);
+      keysAt(redaction, ["placeholder", "kind", "value"], ["style"], path);
       if (
         typeof redaction.kind !== "string" ||
         !canonicalKinds.has(redaction.kind as CanonicalPrivacyKind)
       ) {
         invalid(`${path}.kind`, "unknown privacy kind");
       }
+      let style: PlaceholderStyle = "token";
+      if (Object.hasOwn(redaction, "style")) {
+        if (
+          typeof redaction.style !== "string" ||
+          !placeholderStyles.has(redaction.style as PlaceholderStyle)
+        ) {
+          invalid(`${path}.style`, "unknown placeholder style");
+        }
+        style = redaction.style as PlaceholderStyle;
+      }
       return {
         placeholder: stringAt(redaction.placeholder, `${path}.placeholder`, 1, 128),
         kind: redaction.kind as CanonicalPrivacyKind,
         value: stringAt(redaction.value, `${path}.value`, 0, MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES),
+        style,
       };
     });
   }
@@ -817,16 +1137,19 @@ export function validatePrivacyDryRunInput(
     invalid("$.protocol", "unsupported dry-run protocol");
   }
   if (typeof input.sample_text !== "string") {
-    throw new Error("样例文本无效。");
+    throw new Error(i18n.t("privacy.sampleInvalid"));
   }
   const sample = input.sample_text;
   if (sample.length === 0) {
-    throw new Error("请输入用于试运行的样例文本。");
+    throw new Error(i18n.t("privacy.sampleRequired"));
   }
   const bytes = utf8ByteLength(sample);
   if (bytes > MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES) {
     throw new Error(
-      `样例过长（${bytes} 字节，上限 ${MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES} 字节 / 256 KiB），请缩短后再试。`,
+      i18n.t("privacy.sampleTooLong", {
+        bytes,
+        max: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES,
+      }),
     );
   }
   const validated: PrivacyDryRunInput = {
@@ -851,8 +1174,14 @@ function validatePrivacyPolicyPatch(
       "detector",
       "local_model_id",
       "min_confidence",
+      "regex_source",
+      "custom_regex_rules",
+      "kind_rules",
+      "allowlist_rules",
       "request_action",
       "response_restore",
+      "restore_tool_arguments",
+      "placeholder_notice",
     ],
     "$.policy",
   );
@@ -884,6 +1213,21 @@ function validatePrivacyPolicyPatch(
       "$.policy.min_confidence",
     );
   }
+  if (Object.hasOwn(object, "regex_source")) {
+    if (
+      typeof object.regex_source !== "string" ||
+      !regexSources.has(object.regex_source as PrivacyRegexSource)
+    ) {
+      invalid("$.policy.regex_source", "unknown regex source");
+    }
+    validated.regex_source = object.regex_source as PrivacyRegexSource;
+  }
+  if (Object.hasOwn(object, "custom_regex_rules")) {
+    validated.custom_regex_rules = parsePrivacyRegexRules(
+      object.custom_regex_rules,
+      "$.policy.custom_regex_rules",
+    );
+  }
   if (Object.hasOwn(object, "request_action")) {
     if (
       typeof object.request_action !== "string" ||
@@ -897,6 +1241,30 @@ function validatePrivacyPolicyPatch(
     validated.response_restore = booleanAt(
       object.response_restore,
       "$.policy.response_restore",
+    );
+  }
+  if (Object.hasOwn(object, "kind_rules")) {
+    validated.kind_rules = parsePrivacyKindRules(
+      object.kind_rules,
+      "$.policy.kind_rules",
+    );
+  }
+  if (Object.hasOwn(object, "allowlist_rules")) {
+    validated.allowlist_rules = parsePrivacyAllowlistRules(
+      object.allowlist_rules,
+      "$.policy.allowlist_rules",
+    );
+  }
+  if (Object.hasOwn(object, "restore_tool_arguments")) {
+    validated.restore_tool_arguments = booleanAt(
+      object.restore_tool_arguments,
+      "$.policy.restore_tool_arguments",
+    );
+  }
+  if (Object.hasOwn(object, "placeholder_notice")) {
+    validated.placeholder_notice = booleanAt(
+      object.placeholder_notice,
+      "$.policy.placeholder_notice",
     );
   }
   return validated;

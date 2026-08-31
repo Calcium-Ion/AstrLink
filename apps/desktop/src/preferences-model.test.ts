@@ -9,6 +9,8 @@ const valid = {
     core_auto_start: true,
     core_auto_recover: true,
     inference_port: 8317,
+    max_concurrent_inspections: 16,
+    locale: "zh-CN",
   },
   load_warning: null,
   autostart_actual: false,
@@ -30,6 +32,12 @@ describe("preferences IPC contract", () => {
         values: { ...valid.values, inference_port: 80 },
       }),
     ).toThrow("$.values.inference_port");
+    expect(() =>
+      parseSettingsSnapshot({
+        ...valid,
+        values: { ...valid.values, max_concurrent_inspections: 3 },
+      }),
+    ).toThrow("$.values.max_concurrent_inspections");
   });
 
   it("does not invent an OS state when reconciliation failed", () => {

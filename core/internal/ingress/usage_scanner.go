@@ -22,10 +22,13 @@ type usageScanner struct {
 	usage            *contract.Usage
 	contentEncoding  string
 	encodingCaptured bool
-	// Anthropic accumulates output_tokens across message_delta events.
-	anthropicInput  *int
-	anthropicOutput int
-	anthropicSeen   bool
+	// Anthropic accumulates across message_start / message_delta events.
+	anthropicInput      *int
+	anthropicOutput     int
+	anthropicCacheRead  *int
+	anthropicCacheWrite *int
+	anthropicSeen       bool
+	outputID            string
 }
 
 func newUsageScanner(protocol contract.ProtocolID, streaming bool) *usageScanner {
@@ -57,6 +60,24 @@ func (scanner *usageScanner) wrap(inner http.ResponseWriter) http.ResponseWriter
 	return &usageScanningWriter{ResponseWriter: inner, scanner: scanner}
 }
 
+func (scanner *usageScanner) OutputID() string {
+	if scanner == nil {
+		return ""
+	}
+	return scanner.outputID
+}
+
+func (scanner *usageScanner) noteOutputID(raw json.RawMessage) {
+	if scanner == nil || scanner.outputID != "" || len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	var id string
+	if json.Unmarshal(raw, &id) != nil {
+		return
+	}
+	scanner.outputID = clampCursor(id)
+}
+
 func (scanner *usageScanner) Usage() *contract.Usage {
 	if scanner == nil || scanner.disabled {
 		return nil
@@ -72,16 +93,12 @@ func (scanner *usageScanner) Usage() *contract.Usage {
 		scanner.carry = nil
 	}
 	if scanner.protocol == contract.ProtocolAnthropicMessages && scanner.anthropicSeen {
-		input := 0
-		if scanner.anthropicInput != nil {
-			input = *scanner.anthropicInput
-		}
-		total := input + scanner.anthropicOutput
-		scanner.usage = &contract.Usage{
-			InputTokens:  input,
-			OutputTokens: scanner.anthropicOutput,
-			TotalTokens:  total,
-		}
+		scanner.usage = normalizeAnthropicUsage(
+			scanner.anthropicInput,
+			&scanner.anthropicOutput,
+			scanner.anthropicCacheRead,
+			scanner.anthropicCacheWrite,
+		)
 	}
 	return scanner.usage
 }
@@ -200,6 +217,7 @@ func (scanner *usageScanner) parseOpenAIResponses(document map[string]json.RawMe
 		if rawResponse, ok := document["response"]; ok {
 			var response map[string]json.RawMessage
 			if json.Unmarshal(rawResponse, &response) == nil {
+				scanner.noteOutputID(response["id"])
 				if usage := decodeOpenAIResponsesUsage(response["usage"]); usage != nil {
 					scanner.usage = usage
 				}
@@ -207,6 +225,7 @@ func (scanner *usageScanner) parseOpenAIResponses(document map[string]json.RawMe
 			}
 		}
 	}
+	scanner.noteOutputID(document["id"])
 	if usage := decodeOpenAIResponsesUsage(document["usage"]); usage != nil {
 		scanner.usage = usage
 	}
@@ -217,10 +236,11 @@ func decodeOpenAIResponsesUsage(raw json.RawMessage) *contract.Usage {
 		return nil
 	}
 	var payload struct {
-		InputTokens       *int `json:"input_tokens"`
-		OutputTokens      *int `json:"output_tokens"`
-		TotalTokens       *int `json:"total_tokens"`
-		CachedInputTokens *int `json:"cached_input_tokens"`
+		InputTokens        *int            `json:"input_tokens"`
+		OutputTokens       *int            `json:"output_tokens"`
+		TotalTokens        *int            `json:"total_tokens"`
+		CachedInputTokens  *int            `json:"cached_input_tokens"`
+		InputTokensDetails json.RawMessage `json:"input_tokens_details"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return nil
@@ -228,26 +248,29 @@ func decodeOpenAIResponsesUsage(raw json.RawMessage) *contract.Usage {
 	if payload.InputTokens == nil || payload.OutputTokens == nil || payload.TotalTokens == nil {
 		return nil
 	}
-	usage := &contract.Usage{
-		InputTokens:  *payload.InputTokens,
-		OutputTokens: *payload.OutputTokens,
-		TotalTokens:  *payload.TotalTokens,
+	cacheRead := cachedTokensFromDetails(payload.InputTokensDetails)
+	if cacheRead == nil {
+		cacheRead = payload.CachedInputTokens
 	}
-	if payload.CachedInputTokens != nil {
-		usage.CachedInputTokens = payload.CachedInputTokens
-	}
-	return usage
+	return normalizeOpenAIStyleUsage(
+		*payload.InputTokens,
+		*payload.OutputTokens,
+		*payload.TotalTokens,
+		cacheRead,
+	)
 }
 
 func (scanner *usageScanner) parseOpenAIChat(document map[string]json.RawMessage) {
+	scanner.noteOutputID(document["id"])
 	raw, ok := document["usage"]
 	if !ok || len(raw) == 0 || string(raw) == "null" {
 		return
 	}
 	var payload struct {
-		PromptTokens     *int `json:"prompt_tokens"`
-		CompletionTokens *int `json:"completion_tokens"`
-		TotalTokens      *int `json:"total_tokens"`
+		PromptTokens        *int            `json:"prompt_tokens"`
+		CompletionTokens    *int            `json:"completion_tokens"`
+		TotalTokens         *int            `json:"total_tokens"`
+		PromptTokensDetails json.RawMessage `json:"prompt_tokens_details"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return
@@ -255,11 +278,12 @@ func (scanner *usageScanner) parseOpenAIChat(document map[string]json.RawMessage
 	if payload.PromptTokens == nil || payload.CompletionTokens == nil || payload.TotalTokens == nil {
 		return
 	}
-	scanner.usage = &contract.Usage{
-		InputTokens:  *payload.PromptTokens,
-		OutputTokens: *payload.CompletionTokens,
-		TotalTokens:  *payload.TotalTokens,
-	}
+	scanner.usage = normalizeOpenAIStyleUsage(
+		*payload.PromptTokens,
+		*payload.CompletionTokens,
+		*payload.TotalTokens,
+		cachedTokensFromDetails(payload.PromptTokensDetails),
+	)
 }
 
 func (scanner *usageScanner) parseAnthropic(document map[string]json.RawMessage) {
@@ -270,55 +294,82 @@ func (scanner *usageScanner) parseAnthropic(document map[string]json.RawMessage)
 	switch eventType {
 	case "message_start":
 		var message struct {
-			Usage struct {
-				InputTokens *int `json:"input_tokens"`
-			} `json:"usage"`
+			ID    string                `json:"id"`
+			Usage anthropicUsagePayload `json:"usage"`
 		}
 		if raw, ok := document["message"]; ok {
-			if json.Unmarshal(raw, &message) == nil && message.Usage.InputTokens != nil {
-				scanner.anthropicInput = message.Usage.InputTokens
-				scanner.anthropicSeen = true
+			if json.Unmarshal(raw, &message) == nil {
+				if message.ID != "" {
+					scanner.outputID = clampCursor(message.ID)
+				}
+				scanner.applyAnthropicUsage(message.Usage, false)
 			}
 		}
 	case "message_delta":
 		if raw, ok := document["usage"]; ok {
-			var usage struct {
-				OutputTokens *int `json:"output_tokens"`
-			}
-			if json.Unmarshal(raw, &usage) == nil && usage.OutputTokens != nil {
-				scanner.anthropicOutput += *usage.OutputTokens
-				scanner.anthropicSeen = true
+			var usage anthropicUsagePayload
+			if json.Unmarshal(raw, &usage) == nil {
+				scanner.applyAnthropicUsage(usage, true)
 			}
 		}
 	default:
 		if !scanner.streaming {
-			var usage struct {
-				InputTokens  *int `json:"input_tokens"`
-				OutputTokens *int `json:"output_tokens"`
-			}
+			var usage anthropicUsagePayload
 			if raw, ok := document["usage"]; ok && json.Unmarshal(raw, &usage) == nil {
 				if usage.InputTokens != nil && usage.OutputTokens != nil {
-					total := *usage.InputTokens + *usage.OutputTokens
-					scanner.usage = &contract.Usage{
-						InputTokens:  *usage.InputTokens,
-						OutputTokens: *usage.OutputTokens,
-						TotalTokens:  total,
-					}
+					scanner.usage = normalizeAnthropicUsage(
+						usage.InputTokens,
+						usage.OutputTokens,
+						usage.CacheReadInputTokens,
+						usage.CacheCreationInputTokens,
+					)
 				}
 			}
 		}
 	}
 }
 
+type anthropicUsagePayload struct {
+	InputTokens              *int `json:"input_tokens"`
+	OutputTokens             *int `json:"output_tokens"`
+	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+}
+
+func (scanner *usageScanner) applyAnthropicUsage(usage anthropicUsagePayload, accumulateOutput bool) {
+	if usage.InputTokens != nil {
+		scanner.anthropicInput = usage.InputTokens
+		scanner.anthropicSeen = true
+	}
+	if usage.CacheReadInputTokens != nil {
+		scanner.anthropicCacheRead = usage.CacheReadInputTokens
+		scanner.anthropicSeen = true
+	}
+	if usage.CacheCreationInputTokens != nil {
+		scanner.anthropicCacheWrite = usage.CacheCreationInputTokens
+		scanner.anthropicSeen = true
+	}
+	if usage.OutputTokens != nil {
+		if accumulateOutput {
+			scanner.anthropicOutput += *usage.OutputTokens
+		} else {
+			scanner.anthropicOutput = *usage.OutputTokens
+		}
+		scanner.anthropicSeen = true
+	}
+}
+
 func (scanner *usageScanner) parseGemini(document map[string]json.RawMessage) {
+	scanner.noteOutputID(document["responseId"])
 	raw, ok := document["usageMetadata"]
 	if !ok || len(raw) == 0 || string(raw) == "null" {
 		return
 	}
 	var payload struct {
-		PromptTokenCount     *int `json:"promptTokenCount"`
-		CandidatesTokenCount *int `json:"candidatesTokenCount"`
-		TotalTokenCount      *int `json:"totalTokenCount"`
+		PromptTokenCount        *int `json:"promptTokenCount"`
+		CandidatesTokenCount    *int `json:"candidatesTokenCount"`
+		TotalTokenCount         *int `json:"totalTokenCount"`
+		CachedContentTokenCount *int `json:"cachedContentTokenCount"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return
@@ -326,11 +377,74 @@ func (scanner *usageScanner) parseGemini(document map[string]json.RawMessage) {
 	if payload.PromptTokenCount == nil || payload.CandidatesTokenCount == nil || payload.TotalTokenCount == nil {
 		return
 	}
-	scanner.usage = &contract.Usage{
-		InputTokens:  *payload.PromptTokenCount,
-		OutputTokens: *payload.CandidatesTokenCount,
-		TotalTokens:  *payload.TotalTokenCount,
+	scanner.usage = normalizeOpenAIStyleUsage(
+		*payload.PromptTokenCount,
+		*payload.CandidatesTokenCount,
+		*payload.TotalTokenCount,
+		payload.CachedContentTokenCount,
+	)
+}
+
+// normalizeOpenAIStyleUsage keeps provider input as-is (already includes cache
+// hits and multimodal tokens) and attaches optional cache_read.
+func normalizeOpenAIStyleUsage(input, output, total int, cacheRead *int) *contract.Usage {
+	usage := &contract.Usage{
+		InputTokens:  input,
+		OutputTokens: output,
+		TotalTokens:  total,
 	}
+	if cacheRead != nil {
+		value := *cacheRead
+		usage.CacheReadTokens = &value
+	}
+	return usage
+}
+
+// normalizeAnthropicUsage converts Anthropic's disjoint input partition into
+// OpenAI-style input_tokens that include cache read and cache creation.
+func normalizeAnthropicUsage(rawInput, rawOutput, cacheRead, cacheWrite *int) *contract.Usage {
+	if rawInput == nil || rawOutput == nil {
+		return nil
+	}
+	input := *rawInput
+	read := 0
+	write := 0
+	if cacheRead != nil {
+		read = *cacheRead
+		input += read
+	}
+	if cacheWrite != nil {
+		write = *cacheWrite
+		input += write
+	}
+	usage := &contract.Usage{
+		InputTokens:  input,
+		OutputTokens: *rawOutput,
+		TotalTokens:  input + *rawOutput,
+	}
+	if cacheRead != nil {
+		value := read
+		usage.CacheReadTokens = &value
+	}
+	if cacheWrite != nil {
+		value := write
+		usage.CacheWriteTokens = &value
+	}
+	return usage
+}
+
+func cachedTokensFromDetails(raw json.RawMessage) *int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var details struct {
+		CachedTokens *int `json:"cached_tokens"`
+	}
+	if json.Unmarshal(raw, &details) != nil || details.CachedTokens == nil {
+		return nil
+	}
+	value := *details.CachedTokens
+	return &value
 }
 
 type usageScanningWriter struct {

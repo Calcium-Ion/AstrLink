@@ -141,9 +141,6 @@ func (prober *Prober) probeSubscription(
 		}
 		return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
 	}
-	if models.Data == nil {
-		return nil, fmt.Errorf("%w: invalid Codex model response", ErrUpstream)
-	}
 	ids := make([]string, 0, len(models.Data))
 	for _, model := range models.Data {
 		ids = append(ids, model.ID)

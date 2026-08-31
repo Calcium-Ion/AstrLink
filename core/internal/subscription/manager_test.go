@@ -83,10 +83,40 @@ func TestConnectedAccountModelsAndResponsesPath(t *testing.T) {
 			return
 		}
 		switch request.URL.Path {
-		case "/models":
+		case "/api/codex/usage":
 			_ = json.NewEncoder(writer).Encode(map[string]any{
-				"object": "list",
-				"data":   []map[string]any{{"id": "gpt-5", "object": "model"}},
+				"plan_type": "plus",
+				"rate_limit": map[string]any{
+					"primary_window": map[string]any{
+						"used_percent":         10,
+						"limit_window_seconds": 18000,
+						"reset_at":             1783090800,
+					},
+				},
+			})
+		case "/api/codex/rate-limit-reset-credits/consume":
+			if request.Method != http.MethodPost {
+				http.Error(writer, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			body, _ := io.ReadAll(request.Body)
+			if !strings.Contains(string(body), `"redeem_request_id"`) || strings.Contains(string(body), "credit_id") {
+				http.Error(writer, "bad consume body", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"code":          "reset",
+				"windows_reset": 2,
+			})
+		case "/models":
+			if request.URL.Query().Get("client_version") == "" {
+				http.Error(writer, "missing client_version", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"models": []map[string]any{
+					{"slug": "gpt-5", "visibility": "list", "supported_in_api": false},
+				},
 			})
 		case "/responses":
 			body, _ := io.ReadAll(request.Body)
@@ -160,6 +190,14 @@ func TestConnectedAccountModelsAndResponsesPath(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "resp_1") {
 		t.Fatalf("unexpected response body %s", body)
+	}
+	usage, err := manager.Usage(context.Background(), account.ID)
+	if err != nil || usage.PlanType != "plus" || usage.Primary == nil || usage.Primary.UsedPercent != 10 {
+		t.Fatalf("Usage() = %#v err=%v", usage, err)
+	}
+	reset, err := manager.ConsumeReset(context.Background(), account.ID)
+	if err != nil || reset.Outcome != contract.UsageResetOutcomeReset || reset.ServiceID != account.ID {
+		t.Fatalf("ConsumeReset() = %#v err=%v", reset, err)
 	}
 
 	// Secret corpus: account JSON and errors must not contain token material.

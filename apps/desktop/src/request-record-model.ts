@@ -1,3 +1,5 @@
+import { i18n } from "./i18n";
+
 export type RequestStatus =
   | "pending"
   | "succeeded"
@@ -9,7 +11,8 @@ export interface RequestUsage {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
-  cached_input_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
 }
 
 export interface RequestErrorSummary {
@@ -30,11 +33,40 @@ export interface RequestAuditSummary {
   upstream_response_content_truncated: boolean;
 }
 
+export interface PrivacyHitCount {
+  kind: string;
+  count: number;
+}
+
 export interface PrivacyRestoreSummary {
   enabled: boolean;
   mapping_count: number;
   restored_count: number;
+  /**
+   * Split of restored_count by channel. Both are zero on records written before
+   * the split, which report only the total.
+   */
+  visible_restored_count: number;
+  tool_argument_restored_count: number;
   fallback_count: number;
+  hits?: PrivacyHitCount[];
+}
+
+export type RequestEventKind =
+  | "accepted"
+  | "privacy"
+  | "routed"
+  | "upstream"
+  | "restore"
+  | "completed";
+
+export interface RequestEvent {
+  kind: RequestEventKind;
+  started_at: string;
+  ended_at: string | null;
+  status: RequestStatus;
+  summary: string;
+  attempt_index: number;
 }
 
 export interface RequestRecord {
@@ -57,6 +89,54 @@ export interface RequestRecord {
   error: RequestErrorSummary | null;
   audit: RequestAuditSummary;
   privacy_restore: PrivacyRestoreSummary | null;
+  session_id: string | null;
+  previous_response_id: string | null;
+  output_response_id: string | null;
+  input_preview: string | null;
+  events: RequestEvent[];
+}
+
+export const emptyTrajectoryFields = {
+  session_id: null,
+  previous_response_id: null,
+  output_response_id: null,
+  input_preview: null,
+  events: [] as RequestEvent[],
+};
+
+export interface RequestSession {
+  id: string;
+  title: string;
+  started_at: string;
+  last_started_at: string;
+  completed_at: string | null;
+  turn_count: number;
+  call_count: number;
+  status: RequestStatus;
+  requested_model: string | null;
+  input_protocol: string;
+  service_id: string | null;
+  local_access_token_id: string | null;
+}
+
+export interface RequestSessionPage {
+  items: RequestSession[];
+  next_cursor: string | null;
+}
+
+export interface RequestSessionDetail extends RequestSession {
+  turns: RequestRecord[];
+}
+
+export interface RequestSessionListQuery {
+  limit?: number;
+  cursor?: string;
+  from?: string;
+  to?: string;
+  protocol?: string;
+  service_id?: string;
+  local_access_token_id?: string;
+  status?: RequestStatus;
 }
 
 export interface RequestRecordPage {
@@ -71,6 +151,7 @@ export interface RequestRecordListQuery {
   to?: string;
   protocol?: string;
   service_id?: string;
+  local_access_token_id?: string;
   status?: RequestStatus;
 }
 
@@ -171,10 +252,22 @@ function parseUsage(value: unknown, path: string): RequestUsage | null {
     output_tokens: intAt(usage.output_tokens, `${path}.output_tokens`),
     total_tokens: intAt(usage.total_tokens, `${path}.total_tokens`),
   };
-  if (Object.hasOwn(usage, "cached_input_tokens")) {
-    result.cached_input_tokens = intAt(
+  if (Object.hasOwn(usage, "cache_read_tokens")) {
+    result.cache_read_tokens = intAt(
+      usage.cache_read_tokens,
+      `${path}.cache_read_tokens`,
+    );
+  } else if (Object.hasOwn(usage, "cached_input_tokens")) {
+    // Legacy records stored a single cached_input_tokens field.
+    result.cache_read_tokens = intAt(
       usage.cached_input_tokens,
       `${path}.cached_input_tokens`,
+    );
+  }
+  if (Object.hasOwn(usage, "cache_write_tokens")) {
+    result.cache_write_tokens = intAt(
+      usage.cache_write_tokens,
+      `${path}.cache_write_tokens`,
     );
   }
   return result;
@@ -237,6 +330,19 @@ function parseAuditSummary(value: unknown, path: string): RequestAuditSummary {
   };
 }
 
+const privacyHitKinds = new Set([
+  "email",
+  "phone",
+  "account",
+  "payment_card",
+  "ip_address",
+  "url",
+  "common_secret",
+  "private_address",
+  "private_date",
+  "private_person",
+]);
+
 function parsePrivacyRestore(
   value: unknown,
   path: string,
@@ -246,15 +352,64 @@ function parsePrivacyRestore(
   const mappingCount = intAt(summary.mapping_count, `${path}.mapping_count`);
   const restoredCount = intAt(summary.restored_count, `${path}.restored_count`);
   const fallbackCount = intAt(summary.fallback_count, `${path}.fallback_count`);
-  if (mappingCount < 0 || restoredCount < 0 || fallbackCount < 0) {
+  const visibleRestoredCount =
+    summary.visible_restored_count === undefined
+      ? 0
+      : intAt(summary.visible_restored_count, `${path}.visible_restored_count`);
+  const toolArgumentRestoredCount =
+    summary.tool_argument_restored_count === undefined
+      ? 0
+      : intAt(
+          summary.tool_argument_restored_count,
+          `${path}.tool_argument_restored_count`,
+        );
+  if (
+    mappingCount < 0 ||
+    restoredCount < 0 ||
+    fallbackCount < 0 ||
+    visibleRestoredCount < 0 ||
+    toolArgumentRestoredCount < 0
+  ) {
     return invalid(path, "计数不得为负数");
   }
-  return {
+  if (visibleRestoredCount + toolArgumentRestoredCount > restoredCount) {
+    return invalid(path, "分通道还原计数不得超过总数");
+  }
+  const parsed: PrivacyRestoreSummary = {
     enabled: boolAt(summary.enabled, `${path}.enabled`),
     mapping_count: mappingCount,
     restored_count: restoredCount,
+    visible_restored_count: visibleRestoredCount,
+    tool_argument_restored_count: toolArgumentRestoredCount,
     fallback_count: fallbackCount,
   };
+  if (summary.hits !== undefined) {
+    parsed.hits = parsePrivacyHits(summary.hits, `${path}.hits`);
+  }
+  return parsed;
+}
+
+function parsePrivacyHits(value: unknown, path: string): PrivacyHitCount[] {
+  if (!Array.isArray(value)) {
+    return invalid(path, "应为数组");
+  }
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const hit = objectAt(item, `${path}[${index}]`);
+    const kind = stringAt(hit.kind, `${path}[${index}].kind`);
+    const count = intAt(hit.count, `${path}[${index}].count`);
+    if (!privacyHitKinds.has(kind)) {
+      return invalid(`${path}[${index}].kind`, "类别无效");
+    }
+    if (count < 1) {
+      return invalid(`${path}[${index}].count`, "计数必须为正整数");
+    }
+    if (seen.has(kind)) {
+      return invalid(`${path}[${index}].kind`, "类别重复");
+    }
+    seen.add(kind);
+    return { kind, count };
+  });
 }
 
 export function parseRequestRecord(value: unknown): RequestRecord {
@@ -310,6 +465,131 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     privacy_restore: parsePrivacyRestore(
       record.privacy_restore,
       `${path}.privacy_restore`,
+    ),
+    session_id: Object.hasOwn(record, "session_id")
+      ? nullableStringAt(record.session_id, `${path}.session_id`)
+      : null,
+    previous_response_id: Object.hasOwn(record, "previous_response_id")
+      ? nullableStringAt(
+          record.previous_response_id,
+          `${path}.previous_response_id`,
+        )
+      : null,
+    output_response_id: Object.hasOwn(record, "output_response_id")
+      ? nullableStringAt(record.output_response_id, `${path}.output_response_id`)
+      : null,
+    input_preview: Object.hasOwn(record, "input_preview")
+      ? nullableStringAt(record.input_preview, `${path}.input_preview`)
+      : null,
+    events: Object.hasOwn(record, "events")
+      ? parseRequestEvents(record.events, `${path}.events`)
+      : [],
+  };
+}
+
+const eventKinds = new Set<RequestEventKind>([
+  "accepted",
+  "privacy",
+  "routed",
+  "upstream",
+  "restore",
+  "completed",
+]);
+
+function parseRequestEvents(value: unknown, path: string): RequestEvent[] {
+  if (!Array.isArray(value)) invalid(path, "应为数组");
+  return value.map((item, index) => {
+    const event = objectAt(item, `${path}[${index}]`);
+    if (
+      typeof event.kind !== "string" ||
+      !eventKinds.has(event.kind as RequestEventKind)
+    ) {
+      invalid(`${path}[${index}].kind`, "事件类型无效");
+    }
+    if (
+      typeof event.status !== "string" ||
+      !statuses.has(event.status as RequestStatus)
+    ) {
+      invalid(`${path}[${index}].status`, "状态枚举无效");
+    }
+    return {
+      kind: event.kind as RequestEventKind,
+      started_at: stringAt(event.started_at, `${path}[${index}].started_at`),
+      ended_at: nullableStringAt(event.ended_at, `${path}[${index}].ended_at`),
+      status: event.status as RequestStatus,
+      summary: stringAt(event.summary, `${path}[${index}].summary`),
+      attempt_index: intAt(
+        event.attempt_index,
+        `${path}[${index}].attempt_index`,
+      ),
+    };
+  });
+}
+
+export function parseRequestSession(value: unknown): RequestSession {
+  return parseRequestSessionAt(value, "$");
+}
+
+function parseRequestSessionAt(value: unknown, path: string): RequestSession {
+  const session = objectAt(value, path);
+  if (
+    typeof session.status !== "string" ||
+    !statuses.has(session.status as RequestStatus)
+  ) {
+    invalid(`${path}.status`, "状态枚举无效");
+  }
+  const turnCount = intAt(session.turn_count, `${path}.turn_count`);
+  const callCount = intAt(session.call_count, `${path}.call_count`);
+  if (turnCount < 1 || callCount < 1) {
+    invalid(path, "计数必须至少为 1");
+  }
+  return {
+    id: stringAt(session.id, `${path}.id`),
+    title: stringAt(session.title, `${path}.title`),
+    started_at: stringAt(session.started_at, `${path}.started_at`),
+    last_started_at: stringAt(session.last_started_at, `${path}.last_started_at`),
+    completed_at: nullableStringAt(session.completed_at, `${path}.completed_at`),
+    turn_count: turnCount,
+    call_count: callCount,
+    status: session.status as RequestStatus,
+    requested_model: nullableStringAt(
+      session.requested_model,
+      `${path}.requested_model`,
+    ),
+    input_protocol: stringAt(session.input_protocol, `${path}.input_protocol`),
+    service_id: nullableStringAt(session.service_id, `${path}.service_id`),
+    local_access_token_id: nullableStringAt(
+      session.local_access_token_id,
+      `${path}.local_access_token_id`,
+    ),
+  };
+}
+
+export function parseRequestSessionPage(value: unknown): RequestSessionPage {
+  const page = objectAt(value, "$");
+  if (!Array.isArray(page.items)) invalid("$.items", "应为数组");
+  const nextCursor =
+    page.next_cursor === null
+      ? null
+      : stringAt(page.next_cursor, "$.next_cursor");
+  return {
+    items: page.items.map((item, index) =>
+      parseRequestSessionAt(item, `$.items[${index}]`),
+    ),
+    next_cursor: nextCursor,
+  };
+}
+
+export function parseRequestSessionDetail(
+  value: unknown,
+): RequestSessionDetail {
+  const session = parseRequestSessionAt(value, "$");
+  const detail = objectAt(value, "$");
+  if (!Array.isArray(detail.turns)) invalid("$.turns", "应为数组");
+  return {
+    ...session,
+    turns: detail.turns.map((item, index) =>
+      parseRequestRecordAt(item, `$.turns[${index}]`),
     ),
   };
 }
@@ -428,18 +708,7 @@ export function parsePurgeResult(value: unknown): PurgeResult {
 }
 
 export function statusLabel(status: RequestStatus): string {
-  switch (status) {
-    case "pending":
-      return "进行中";
-    case "succeeded":
-      return "成功";
-    case "failed":
-      return "失败";
-    case "cancelled":
-      return "已取消";
-    case "blocked":
-      return "已拦截";
-  }
+  return i18n.t(`status.${status}`);
 }
 
 export function statusTone(

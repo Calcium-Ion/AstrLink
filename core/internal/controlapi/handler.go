@@ -22,20 +22,21 @@ import (
 )
 
 const (
-	HealthPath                 = "/control/v1/health"
-	VersionPath                = "/control/v1/version"
-	CapabilitiesPath           = "/control/v1/capabilities"
-	ShutdownPath               = "/control/v1/shutdown"
-	ServicesPath               = "/control/v1/services"
-	ServiceModelProbesPath     = "/control/v1/service-model-probes"
-	RoutesPath                 = "/control/v1/routes"
-	AccessTokensPath           = "/control/v1/access-tokens"
-	PoliciesPath               = "/control/v1/policies"
-	PolicyDryRunPath           = PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID) + "/dry-run"
-	PrivacyModelCatalogPath    = "/control/v1/privacy-model-catalog"
-	PrivacyModelsPath          = "/control/v1/privacy-models"
-	PrivacyModelProbePath      = PrivacyModelsPath + "/probe"
-	PrivacyModelLocalProbePath = PrivacyModelsPath + "/local/probe"
+	HealthPath                   = "/control/v1/health"
+	VersionPath                  = "/control/v1/version"
+	CapabilitiesPath             = "/control/v1/capabilities"
+	ShutdownPath                 = "/control/v1/shutdown"
+	ServicesPath                 = "/control/v1/services"
+	ServiceModelProbesPath       = "/control/v1/service-model-probes"
+	RoutesPath                   = "/control/v1/routes"
+	AccessTokensPath             = "/control/v1/access-tokens"
+	PoliciesPath                 = "/control/v1/policies"
+	PolicyDryRunPath             = PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID) + "/dry-run"
+	PrivacyRegexBuiltinRulesPath = "/control/v1/privacy/regex-builtin-rules"
+	PrivacyModelCatalogPath      = "/control/v1/privacy-model-catalog"
+	PrivacyModelsPath            = "/control/v1/privacy-models"
+	PrivacyModelProbePath        = PrivacyModelsPath + "/probe"
+	PrivacyModelLocalProbePath   = PrivacyModelsPath + "/local/probe"
 )
 
 type Dependencies struct {
@@ -52,6 +53,8 @@ type Dependencies struct {
 	AuditBlobs         storage.AuditBlobStore
 	Subscriptions      *subscription.Manager
 	ServiceModels      ServiceModelProber
+	AutoClassifiers    AutoClassifierRegistry
+	AutoClassifier     AutoClassifier
 	ControlToken       string
 	NewServiceID       func() (contract.ServiceID, error)
 	NewRouteID         func() (contract.RouteID, error)
@@ -78,27 +81,29 @@ type PrivacyModelRegistry interface {
 }
 
 type Handler struct {
-	version        contract.VersionResponse
-	capabilities   contract.CapabilitiesResponse
-	serviceStore   storage.ServiceStore
-	routeStore     storage.RouteStore
-	accessTokens   AccessTokenManager
-	policyStore    storage.PolicyStore
-	privacyModels  PrivacyModelRegistry
-	privacyFilter  privacy.Filter
-	policyChanged  func(contract.Policy)
-	requestRecords storage.RequestRecordStore
-	auditSettings  storage.AuditSettingsStore
-	auditKeys      storage.AuditKeyStore
-	auditBlobs     storage.AuditBlobStore
-	subscriptions  *subscription.Manager
-	serviceModels  ServiceModelProber
-	controlToken   []byte
-	newServiceID   func() (contract.ServiceID, error)
-	newRouteID     func() (contract.RouteID, error)
-	mux            *http.ServeMux
-	privacyMu      sync.Mutex
-	shutdown       context.CancelFunc
+	version         contract.VersionResponse
+	capabilities    contract.CapabilitiesResponse
+	serviceStore    storage.ServiceStore
+	routeStore      storage.RouteStore
+	accessTokens    AccessTokenManager
+	policyStore     storage.PolicyStore
+	privacyModels   PrivacyModelRegistry
+	privacyFilter   privacy.Filter
+	policyChanged   func(contract.Policy)
+	requestRecords  storage.RequestRecordStore
+	auditSettings   storage.AuditSettingsStore
+	auditKeys       storage.AuditKeyStore
+	auditBlobs      storage.AuditBlobStore
+	subscriptions   *subscription.Manager
+	serviceModels   ServiceModelProber
+	autoClassifiers AutoClassifierRegistry
+	autoClassifier  AutoClassifier
+	controlToken    []byte
+	newServiceID    func() (contract.ServiceID, error)
+	newRouteID      func() (contract.RouteID, error)
+	mux             *http.ServeMux
+	privacyMu       sync.Mutex
+	shutdown        context.CancelFunc
 }
 
 func New(version contract.VersionResponse) *Handler {
@@ -125,26 +130,28 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		capabilities.ConversionEngine = relaykitbridge.Descriptor(dependencies.ConversionEngine)
 	}
 	handler := &Handler{
-		version:        version,
-		capabilities:   capabilities,
-		serviceStore:   dependencies.ServiceStore,
-		routeStore:     dependencies.RouteStore,
-		accessTokens:   dependencies.AccessTokenManager,
-		policyStore:    dependencies.PolicyStore,
-		privacyModels:  dependencies.PrivacyModels,
-		privacyFilter:  dependencies.PrivacyFilter,
-		policyChanged:  dependencies.PolicyChanged,
-		requestRecords: dependencies.RequestRecords,
-		auditSettings:  dependencies.AuditSettings,
-		auditKeys:      dependencies.AuditKeys,
-		auditBlobs:     dependencies.AuditBlobs,
-		subscriptions:  dependencies.Subscriptions,
-		serviceModels:  dependencies.ServiceModels,
-		controlToken:   []byte(dependencies.ControlToken),
-		newServiceID:   dependencies.NewServiceID,
-		newRouteID:     dependencies.NewRouteID,
-		shutdown:       dependencies.Shutdown,
-		mux:            http.NewServeMux(),
+		version:         version,
+		capabilities:    capabilities,
+		serviceStore:    dependencies.ServiceStore,
+		routeStore:      dependencies.RouteStore,
+		accessTokens:    dependencies.AccessTokenManager,
+		policyStore:     dependencies.PolicyStore,
+		privacyModels:   dependencies.PrivacyModels,
+		privacyFilter:   dependencies.PrivacyFilter,
+		policyChanged:   dependencies.PolicyChanged,
+		requestRecords:  dependencies.RequestRecords,
+		auditSettings:   dependencies.AuditSettings,
+		auditKeys:       dependencies.AuditKeys,
+		auditBlobs:      dependencies.AuditBlobs,
+		subscriptions:   dependencies.Subscriptions,
+		serviceModels:   dependencies.ServiceModels,
+		autoClassifiers: dependencies.AutoClassifiers,
+		autoClassifier:  dependencies.AutoClassifier,
+		controlToken:    []byte(dependencies.ControlToken),
+		newServiceID:    dependencies.NewServiceID,
+		newRouteID:      dependencies.NewRouteID,
+		shutdown:        dependencies.Shutdown,
+		mux:             http.NewServeMux(),
 	}
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, contract.HealthResponse{Status: "ok"})
@@ -186,6 +193,9 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	}
 	if handler.policyStore != nil && handler.privacyModels != nil {
 		handler.registerPrivacyModelsRoutes()
+	}
+	if handler.autoClassifiers != nil && handler.autoClassifier != nil {
+		handler.registerAutoClassifierRoutes()
 	}
 	if handler.requestRecords != nil {
 		handler.registerRequestRecordRoutes()

@@ -2,4 +2,7 @@ dist/
 node_modules/
 src-tauri/target/
 src-tauri/binaries/astrlink-core-*
+src-tauri/binaries/astrlink-privacy-worker-*
+src-tauri/binaries/astrlink-classifier-worker-*
+src-tauri/binaries/astrlink-mcp-*
 

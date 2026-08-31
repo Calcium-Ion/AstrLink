@@ -278,7 +278,7 @@ func routeCandidates(
 	runtime contract.RuntimeProfile,
 	subscriptionBaseURL string,
 ) []Resolved {
-	targets := append([]contract.RouteTarget(nil), route.Targets...)
+	targets := route.TargetsForCategory(request.Category)
 	sort.Slice(targets, func(left, right int) bool {
 		a, b := targets[left], targets[right]
 		if a.Priority != b.Priority {
@@ -297,8 +297,8 @@ func routeCandidates(
 	for _, candidate := range endpoints {
 		byID[candidate.ID] = candidate
 	}
-	distinctTargets := make(map[contract.ServiceID]struct{}, len(route.Targets))
-	for _, target := range route.Targets {
+	distinctTargets := make(map[contract.ServiceID]struct{}, len(targets))
+	for _, target := range targets {
 		distinctTargets[target.ServiceID] = struct{}{}
 	}
 	pinned := len(distinctTargets) == 1
@@ -308,6 +308,7 @@ func routeCandidates(
 		endpoint contract.ServiceID
 		plan     contract.PlanType
 		protocol contract.ProtocolID
+		model    string
 	}
 	added := make(map[candidateKey]struct{}, len(targets))
 	for _, target := range targets {
@@ -334,9 +335,12 @@ func routeCandidates(
 		if target.PlanType == contract.PlanTypeRelayKit {
 			key.plan, key.protocol = target.PlanType, upstreamProtocol
 		}
+		if route.Selection != nil && route.Selection.Mode == contract.RouteSelectionModeAuto {
+			key.model = target.UpstreamModel
+		}
 		if _, duplicate := added[key]; duplicate {
-			// When two targets name the same endpoint, the first target in
-			// sorted order wins — including its UpstreamModel rewrite.
+			// Priority routes still collapse one physical endpoint. Auto
+			// routes keep same-service models distinct by upstream model.
 			continue
 		}
 		added[key] = struct{}{}
@@ -393,7 +397,7 @@ func baseURLForService(service contract.Service, subscriptionBaseURL string) str
 
 func routeCapabilityModes(route contract.Route) []contract.CapabilityMode {
 	present := make(map[contract.CapabilityMode]struct{}, 2)
-	for _, target := range route.Targets {
+	for _, target := range route.ExecutableTargets() {
 		if mode, ok := capabilityMode(target.PlanType); ok {
 			present[mode] = struct{}{}
 		}
@@ -462,13 +466,10 @@ func validateRouteDocument(route contract.Route) error {
 	if err := route.Validate(); err != nil {
 		return err
 	}
-	if route.Selection != nil && route.Selection.Mode == contract.RouteSelectionModeAuto {
-		return fmt.Errorf("route selection mode %q is not implemented in this build", contract.RouteSelectionModeAuto)
-	}
 	if !route.Match.Protocol.AvailableInAlpha() {
 		return fmt.Errorf("match protocol %q is not available in Alpha", route.Match.Protocol)
 	}
-	for index, target := range route.Targets {
+	for index, target := range route.ExecutableTargets() {
 		if !target.UpstreamProtocol.AvailableInAlpha() {
 			return fmt.Errorf("targets[%d]: upstream protocol %q is not available in Alpha", index, target.UpstreamProtocol)
 		}
@@ -561,7 +562,7 @@ func (resolver *StoreResolver) ListAliasModelMappings(
 		if !aliasRouteMatchesDiscovery(route.Match.Protocol, discovery) {
 			continue
 		}
-		for _, target := range route.Targets {
+		for _, target := range route.ExecutableTargets() {
 			service, exists := byID[target.ServiceID]
 			if target.UpstreamModel != "" && exists &&
 				containsModel(service.Models, target.UpstreamModel) {

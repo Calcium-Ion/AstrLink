@@ -20,5 +20,11 @@
     "jsx": "react-jsx",
     "types": ["node", "@rsbuild/core/types"]
   },
-  "include": ["src", "rsbuild.config.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "rsbuild.config.ts",
+    "vitest.config.ts",
+    "dev-build-generation.ts",
+    "dev-build-generation.test.ts"
+  ]
 }

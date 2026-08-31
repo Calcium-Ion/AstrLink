@@ -402,5 +402,137 @@ SET document_json = json_set(
 WHERE json_extract(document_json, '$.kind') = 'codex_subscription'`,
 			},
 		},
+		{
+			Version: 16,
+			Name:    "privacy_policy_custom_regex_rules",
+			Statements: []string{
+				`UPDATE policies
+SET document_json = json_set(
+    document_json,
+    '$.regex_source',
+    COALESCE(json_extract(document_json, '$.regex_source'), 'builtin'),
+    '$.custom_regex_rules',
+    COALESCE(json_extract(document_json, '$.custom_regex_rules'), json('[]'))
+)
+WHERE id = 'policy_privacy_default'`,
+			},
+		},
+		{
+			Version: 17,
+			Name:    "merge_passthrough_capability_modes",
+			Statements: []string{
+				`UPDATE services
+SET document_json = json_set(
+    document_json,
+    '$.capabilities',
+    json(COALESCE((
+        SELECT json_group_array(json(json_set(value, '$.mode', 'native')))
+        FROM (
+            SELECT MIN(value) AS value
+            FROM json_each(services.document_json, '$.capabilities')
+            GROUP BY json_extract(value, '$.protocol')
+        )
+    ), '[]'))
+)`,
+				`UPDATE routes
+SET document_json = json_set(
+    document_json,
+    '$.targets',
+    json((
+        SELECT json_group_array(
+            json(
+                CASE json_extract(value, '$.plan_type')
+                    WHEN 'delegated' THEN json_set(value, '$.plan_type', 'native')
+                    ELSE value
+                END
+            )
+        )
+        FROM json_each(routes.document_json, '$.targets')
+    ))
+)
+WHERE json_type(document_json, '$.targets') = 'array'`,
+			},
+		},
+		{
+			Version: 18,
+			Name:    "request_session_trajectory",
+			Statements: []string{
+				`ALTER TABLE request_records ADD COLUMN session_id TEXT`,
+				`ALTER TABLE request_records ADD COLUMN previous_response_id TEXT`,
+				`ALTER TABLE request_records ADD COLUMN output_response_id TEXT`,
+				`ALTER TABLE request_records ADD COLUMN input_preview TEXT`,
+				`ALTER TABLE request_records ADD COLUMN events_json TEXT`,
+				`CREATE INDEX request_records_session_id_idx ON request_records (session_id)`,
+				`CREATE INDEX request_records_output_response_id_idx ON request_records (output_response_id)`,
+			},
+		},
+		{
+			Version: 19,
+			Name:    "privacy_allowlist_and_restore_defaults",
+			// kind_rules is deliberately not seeded here: an absent list is
+			// filled from the code defaults on read, so the shipped per-kind
+			// defaults stay in one place instead of being duplicated in SQL.
+			//
+			// The allowlist cannot work that way, because an empty list has to
+			// keep meaning "allow nothing" for an operator who cleared it.
+			//
+			// The booleans are written explicitly because absent and false are
+			// indistinguishable after JSON decoding, and an install that left
+			// them absent would silently lose tool-argument restoration.
+			Statements: []string{
+				`UPDATE policies
+SET document_json = json_set(
+    document_json,
+    '$.allowlist_rules',
+    COALESCE(json_extract(document_json, '$.allowlist_rules'), json('[
+        {"type":"domain_suffix","value":"localhost"},
+        {"type":"domain_suffix","value":"github.com"},
+        {"type":"domain_suffix","value":"githubusercontent.com"},
+        {"type":"cidr","value":"127.0.0.0/8"},
+        {"type":"cidr","value":"::1/128"},
+        {"type":"cidr","value":"10.0.0.0/8"},
+        {"type":"cidr","value":"172.16.0.0/12"},
+        {"type":"cidr","value":"192.168.0.0/16"},
+        {"type":"cidr","value":"169.254.0.0/16"}
+    ]')),
+    '$.restore_tool_arguments',
+    json(CASE
+        WHEN json_extract(document_json, '$.restore_tool_arguments') IS NULL THEN 'true'
+        WHEN json_extract(document_json, '$.restore_tool_arguments') THEN 'true'
+        ELSE 'false'
+    END),
+    '$.placeholder_notice',
+    json(CASE
+        WHEN json_extract(document_json, '$.placeholder_notice') IS NULL THEN 'true'
+        WHEN json_extract(document_json, '$.placeholder_notice') THEN 'true'
+        ELSE 'false'
+    END)
+)
+WHERE id = 'policy_privacy_default'`,
+			},
+		},
+		{
+			Version: 20,
+			Name:    "service_disabled_model_list",
+			// An absent list decodes to nil and would re-encode as JSON null,
+			// so existing documents are seeded with an empty array to keep the
+			// stored shape identical to what the control API now returns.
+			Statements: []string{
+				`UPDATE services
+SET document_json = json_set(
+    document_json,
+    '$.disabled_models',
+    COALESCE(json_extract(document_json, '$.disabled_models'), json('[]'))
+)`,
+			},
+		},
+		{
+			Version: 21,
+			Name:    "drop_service_disabled_models",
+			Statements: []string{
+				`UPDATE services
+SET document_json = json_remove(document_json, '$.disabled_models')`,
+			},
+		},
 	}
 }

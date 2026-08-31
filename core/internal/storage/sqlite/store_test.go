@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
@@ -50,6 +51,73 @@ func TestOpenMigratesDatabaseAndUsesRestrictiveFileModes(t *testing.T) {
 	}
 	if tableCount != 2 {
 		t.Fatalf("migrated table count = %d, want 2", tableCount)
+	}
+
+	var journalMode string
+	if err := store.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+}
+
+func TestOpenWALPoolAllowsReadDuringWrite(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "wal-pool.db"))
+	defer store.Close()
+	ctx := context.Background()
+	started := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	if err := store.InsertRequestRecord(ctx, contract.RequestRecord{
+		ID:            "request_wal_seed",
+		StartedAt:     started,
+		Status:        contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIResponses,
+		Audit:         contract.NotCapturedAuditSummary(),
+	}); err != nil {
+		t.Fatalf("InsertRequestRecord: %v", err)
+	}
+
+	writerStarted := make(chan struct{})
+	releaseWriter := make(chan struct{})
+	writerErr := make(chan error, 1)
+	go func() {
+		transaction, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			writerErr <- err
+			return
+		}
+		defer func() { _ = transaction.Rollback() }()
+		if _, err := transaction.ExecContext(ctx, `UPDATE request_records SET status = status`); err != nil {
+			writerErr <- err
+			return
+		}
+		close(writerStarted)
+		<-releaseWriter
+		writerErr <- transaction.Commit()
+	}()
+
+	select {
+	case <-writerStarted:
+	case err := <-writerErr:
+		t.Fatalf("writer: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("writer did not take the write lock")
+	}
+
+	listStarted := time.Now()
+	page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListRequestSessions during write: %v", err)
+	}
+	if elapsed := time.Since(listStarted); elapsed > 2*time.Second {
+		t.Fatalf("list blocked for %s under WAL", elapsed)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("sessions=%#v", page.Items)
+	}
+	close(releaseWriter)
+	if err := <-writerErr; err != nil {
+		t.Fatalf("writer commit: %v", err)
 	}
 }
 
@@ -255,9 +323,15 @@ func TestDefaultAccessTokenBootstrapsOnceAndSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tokens) != 1 || tokens[0].Name != accesstoken.DefaultTokenName ||
-		tokens[0].Source != accesstoken.SourceBootstrap {
+	if len(tokens) != 1 || tokens[0].Name != accesstoken.DefaultTokenName {
 		t.Fatalf("bootstrap tokens = %#v", tokens)
+	}
+	var storedSource string
+	if err := store.db.QueryRow(`SELECT source FROM local_access_tokens WHERE id = ?`, tokens[0].ID).Scan(&storedSource); err != nil {
+		t.Fatal(err)
+	}
+	if storedSource != "user" {
+		t.Fatalf("bootstrap source = %q", storedSource)
 	}
 	id := tokens[0].ID
 	raw, err := manager.Reveal(ctx, id)
@@ -333,7 +407,7 @@ func TestAccessTokenCreateListRevealAuthenticateAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if created.Token.Name != "CI Agent" || created.Token.Source != accesstoken.SourceUser ||
+	if created.Token.Name != "CI Agent" ||
 		!strings.HasPrefix(created.Value, "astr_") || len(created.Value) != 48 {
 		t.Fatalf("created = %#v", created)
 	}
@@ -566,6 +640,45 @@ func mustExec(t *testing.T, store *Store, query string, args ...any) {
 	if _, err := store.db.Exec(query, args...); err != nil {
 		t.Fatalf("exec %q: %v", query, err)
 	}
+}
+
+func TestServiceStoreNormalizesTheModelAllowList(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ctx := context.Background()
+	service := contract.ServiceFromEndpoint(testEndpoint("service_models"))
+	service.Models = []string{"gpt-5", "gpt-4o", "gpt-5"}
+
+	record, err := store.CreateService(ctx, service, storagecontract.CredentialMutation{
+		Present: true, Secret: []byte("provider-secret-value"),
+	})
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+	if got := strings.Join(record.Service.Models, ","); got != "gpt-4o,gpt-5" {
+		t.Fatalf("models = %q, want the sorted unique allow-list", got)
+	}
+	if strings.Contains(mustServiceDocument(t, store, service.ID), `"disabled_models"`) {
+		t.Fatalf("stored service still has disabled_models")
+	}
+	loaded, err := store.GetService(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("GetService: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, record) {
+		t.Fatalf("loaded = %#v, want %#v", loaded, record)
+	}
+}
+
+func mustServiceDocument(t *testing.T, store *Store, id contract.ServiceID) string {
+	t.Helper()
+	var document string
+	if err := store.db.QueryRow(
+		`SELECT document_json FROM services WHERE id = ?`, id,
+	).Scan(&document); err != nil {
+		t.Fatal(err)
+	}
+	return document
 }
 
 func openTestStore(t *testing.T, path string) *Store {

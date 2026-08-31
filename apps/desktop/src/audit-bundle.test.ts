@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { buildHeadersText, buildRecordBundle, fence } from "./audit-bundle";
-import type { AuditContent, RequestRecord } from "./request-record-model";
+import {
+  buildHeadersText,
+  buildRecordBundle,
+  bundleFilename,
+  fence,
+} from "./audit-bundle";
+import {
+  emptyTrajectoryFields,
+  type AuditContent,
+  type RequestRecord,
+} from "./request-record-model";
 
 const record: RequestRecord = {
   id: "req_bundle_test",
@@ -23,7 +32,8 @@ const record: RequestRecord = {
     input_tokens: 10,
     output_tokens: 20,
     total_tokens: 30,
-    cached_input_tokens: 4,
+    cache_read_tokens: 4,
+    cache_write_tokens: 1,
   },
   error: null,
   audit: {
@@ -40,8 +50,11 @@ const record: RequestRecord = {
     enabled: true,
     mapping_count: 4,
     restored_count: 5,
+    visible_restored_count: 3,
+    tool_argument_restored_count: 2,
     fallback_count: 0,
   },
+  ...emptyTrajectoryFields,
 };
 
 const content: AuditContent = {
@@ -131,6 +144,9 @@ describe("buildRecordBundle", () => {
       "- 隐私还原: 已开启 · 映射 4 · 已还原 5 · 安全降级 0",
     );
     expect(bundle).toContain("Primary gateway");
+    expect(bundle).toContain(
+      "- Token: 输入 10 / 输出 20 / 总计 30（缓存读取 4 / 缓存写入 1）",
+    );
     expect(bundle).toContain("## 客户端 HTTP 请求");
     expect(bundle).toContain("POST /v1/responses?stream=true HTTP/1.1");
     expect(bundle).toContain("authorization: Bearer <redacted:51 chars>");
@@ -190,6 +206,39 @@ describe("buildRecordBundle", () => {
     expect(bundle).toContain("## 错误");
     expect(bundle).toContain("upstream_unavailable");
     expect(bundle).toContain("gateway unavailable");
+  });
+
+  it("renders the same facts as plain text without markdown decoration", () => {
+    const bundle = buildRecordBundle(record, content, {
+      format: "txt",
+      serviceLabel: "Primary gateway",
+    });
+
+    expect(bundle).toContain("AstrLink 请求记录 req_bundle_test");
+    expect(bundle).not.toContain("# AstrLink");
+    expect(bundle).not.toContain("## ");
+    expect(bundle).not.toContain("```");
+    expect(bundle).toContain("状态: 成功 · HTTP 200");
+    expect(bundle).toContain("POST /v1/responses?stream=true HTTP/1.1");
+    expect(bundle).toContain('{"model":"gpt-4.1"}');
+    expect(bundle).toContain("已截断");
+  });
+});
+
+describe("bundleFilename", () => {
+  it("uses the record id and format extension", () => {
+    expect(bundleFilename("req_bundle_test", "markdown")).toBe(
+      "astrlink-req_bundle_test.md",
+    );
+    expect(bundleFilename("req_bundle_test", "txt")).toBe(
+      "astrlink-req_bundle_test.txt",
+    );
+  });
+
+  it("strips path separators from the id", () => {
+    expect(bundleFilename("req/../evil name", "txt")).toBe(
+      "astrlink-req_.._evil_name.txt",
+    );
   });
 });
 

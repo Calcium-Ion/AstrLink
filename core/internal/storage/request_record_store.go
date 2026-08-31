@@ -8,13 +8,14 @@ import (
 )
 
 type RequestRecordListOptions struct {
-	Limit     int
-	Cursor    string
-	From      *time.Time
-	To        *time.Time
-	Protocol  *contract.ProtocolID
-	ServiceID *contract.ServiceID
-	Status    *contract.RequestStatus
+	Limit              int
+	Cursor             string
+	From               *time.Time
+	To                 *time.Time
+	Protocol           *contract.ProtocolID
+	ServiceID          *contract.ServiceID
+	LocalAccessTokenID *contract.AccessTokenID
+	Status             *contract.RequestStatus
 }
 
 type RequestRecordPage struct {
@@ -24,6 +25,22 @@ type RequestRecordPage struct {
 
 // RequestRecordStore persists always-on inference metadata records (ADR 0007).
 // Implementations must validate every row on read so corrupt history fails closed.
+type RequestSessionListOptions struct {
+	Limit              int
+	Cursor             string
+	From               *time.Time
+	To                 *time.Time
+	Protocol           *contract.ProtocolID
+	ServiceID          *contract.ServiceID
+	LocalAccessTokenID *contract.AccessTokenID
+	Status             *contract.RequestStatus
+}
+
+type RequestSessionPage struct {
+	Items      []contract.RequestSession
+	NextCursor string
+}
+
 type RequestRecordStore interface {
 	InsertRequestRecord(context.Context, contract.RequestRecord) error
 	UpsertRequestRecord(context.Context, contract.RequestRecord) error
@@ -32,4 +49,7 @@ type RequestRecordStore interface {
 	GetRequestRecord(context.Context, contract.RequestID) (contract.RequestRecord, error)
 	DeleteRequestRecord(context.Context, contract.RequestID) error
 	PurgeRequestRecords(context.Context, contract.PurgeRequest) (contract.PurgeResult, error)
+	FindSessionLink(context.Context, string) (contract.SessionID, error)
+	ListRequestSessions(context.Context, RequestSessionListOptions) (RequestSessionPage, error)
+	GetRequestSession(context.Context, string) (contract.RequestSessionDetail, error)
 }

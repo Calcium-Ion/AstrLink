@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/autotext"
 )
 
 var errProtocolPathNotFound = errors.New("protocol path not found")
@@ -32,9 +34,14 @@ func (err methodNotAllowedError) Error() string {
 // Request describes the protocol facts needed before routing. It deliberately
 // contains no converted DTO: Alpha forwards the original HTTP request body.
 type Request struct {
-	Protocol  contract.ProtocolID
-	Model     string
-	Streaming bool
+	Protocol           contract.ProtocolID
+	Model              string
+	Streaming          bool
+	PreviousResponseID string
+	ConversationID     string
+	InputPreview       string
+	// lastUserText is classifier input only. Never persist, log, or cache it.
+	lastUserText string
 }
 
 type protocolRoute struct {
@@ -68,6 +75,23 @@ var exactProtocolRoutes = map[string]protocolRoute{
 	},
 }
 
+// classifyFromPath identifies the protocol from the URL alone. It is used to
+// record local boundary failures (auth, media type) without reading the body.
+func classifyFromPath(request *http.Request) (Request, bool) {
+	if request == nil || request.URL == nil {
+		return Request{}, false
+	}
+	route, model, ok := matchProtocolRoute(request.URL.Path)
+	if !ok {
+		return Request{}, false
+	}
+	return Request{
+		Protocol:  route.protocol,
+		Model:     model,
+		Streaming: route.streaming,
+	}, true
+}
+
 func classify(request *http.Request) (Request, error) {
 	route, model, ok := matchProtocolRoute(request.URL.Path)
 	if !ok {
@@ -83,6 +107,7 @@ func classify(request *http.Request) (Request, error) {
 		Streaming: route.streaming,
 	}
 	if !route.inspectMetadata {
+		attachAutoClassifyText(&result, request, nil)
 		return validateClassifiedRequest(result)
 	}
 
@@ -96,6 +121,10 @@ func classify(request *http.Request) (Request, error) {
 	if result.Model == "" {
 		result.Model = metadata.Model
 	}
+	result.PreviousResponseID = metadata.PreviousResponseID
+	result.ConversationID = metadata.ConversationID
+	result.InputPreview = metadata.InputPreview
+	attachAutoClassifyText(&result, request, metadata.raw)
 	return validateClassifiedRequest(result)
 }
 
@@ -116,8 +145,14 @@ func matchProtocolRoute(path string) (protocolRoute, string, bool) {
 		return protocolRoute{}, "", false
 	}
 	modelAndAction := strings.TrimPrefix(path, prefix)
+	if decoded, err := url.PathUnescape(modelAndAction); err == nil {
+		modelAndAction = decoded
+	}
 	model, action, found := strings.Cut(modelAndAction, ":")
-	if !found || model == "" || strings.Contains(model, "/") {
+	if !found || model == "" {
+		return protocolRoute{}, "", false
+	}
+	if strings.Contains(model, "/") && model != contract.AstrLinkAutoModelID {
 		return protocolRoute{}, "", false
 	}
 	switch action {
@@ -135,8 +170,50 @@ func matchProtocolRoute(path string) (protocolRoute, string, bool) {
 }
 
 type requestMetadata struct {
-	Model  string
-	Stream bool
+	Model              string
+	Stream             bool
+	PreviousResponseID string
+	ConversationID     string
+	InputPreview       string
+	raw                []byte
+}
+
+func attachAutoClassifyText(result *Request, request *http.Request, raw []byte) {
+	if result.Model != contract.AstrLinkAutoModelID {
+		return
+	}
+	if len(raw) == 0 {
+		buffered, err := bufferRequestBody(request)
+		if err != nil {
+			return
+		}
+		raw = buffered
+	}
+	result.lastUserText = autotext.ExtractLastUserText(result.Protocol, raw)
+}
+
+func bufferRequestBody(request *http.Request) ([]byte, error) {
+	if request.Body == nil || request.Body == http.NoBody {
+		return nil, nil
+	}
+	encoding := strings.ToLower(strings.TrimSpace(request.Header.Get("Content-Encoding")))
+	if encoding != "" && encoding != "identity" {
+		return nil, errUnsupportedContentEncoding
+	}
+	original := request.Body
+	var consumed bytes.Buffer
+	_, copyErr := io.Copy(&consumed, io.LimitReader(original, maxMetadataBytes+1))
+	request.Body = &replayReadCloser{
+		reader: io.MultiReader(bytes.NewReader(consumed.Bytes()), original),
+		closer: original,
+	}
+	if consumed.Len() > maxMetadataBytes {
+		return nil, errMetadataTooLarge
+	}
+	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
+		return nil, copyErr
+	}
+	return consumed.Bytes(), nil
 }
 
 // inspectJSONMetadata observes routing fields without changing bytes that are
@@ -144,17 +221,14 @@ type requestMetadata struct {
 // infer its streaming/model requirements; encoded JSON is likewise rejected
 // unless it explicitly uses the no-op identity encoding.
 func inspectJSONMetadata(request *http.Request) (requestMetadata, error) {
-	if request.Body == nil || request.Body == http.NoBody {
+	raw, err := bufferRequestBody(request)
+	if err != nil {
+		return requestMetadata{}, err
+	}
+	if len(raw) == 0 {
 		return requestMetadata{}, nil
 	}
-	encoding := strings.ToLower(strings.TrimSpace(request.Header.Get("Content-Encoding")))
-	if encoding != "" && encoding != "identity" {
-		return requestMetadata{}, errUnsupportedContentEncoding
-	}
-
-	original := request.Body
-	var consumed bytes.Buffer
-	decoder := json.NewDecoder(io.TeeReader(io.LimitReader(original, maxMetadataBytes+1), &consumed))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	var fields map[string]json.RawMessage
 	decodeErr := decoder.Decode(&fields)
 	if decodeErr == nil {
@@ -162,16 +236,6 @@ func inspectJSONMetadata(request *http.Request) (requestMetadata, error) {
 		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 			decodeErr = errInvalidMetadata
 		}
-	}
-	request.Body = &replayReadCloser{
-		reader: io.MultiReader(bytes.NewReader(consumed.Bytes()), original),
-		closer: original,
-	}
-	if consumed.Len() > maxMetadataBytes {
-		return requestMetadata{}, errMetadataTooLarge
-	}
-	if errors.Is(decodeErr, io.EOF) && consumed.Len() == 0 {
-		return requestMetadata{}, nil
 	}
 	if decodeErr != nil {
 		return requestMetadata{}, errInvalidMetadata
@@ -195,6 +259,10 @@ func inspectJSONMetadata(request *http.Request) (requestMetadata, error) {
 			return requestMetadata{}, errInvalidMetadata
 		}
 	}
+	metadata.PreviousResponseID = extractProtocolCursor(fields, "previous_response_id")
+	metadata.ConversationID = extractConversationCursor(fields)
+	metadata.InputPreview = extractInputPreview(fields)
+	metadata.raw = raw
 	return metadata, nil
 }
 

@@ -1,13 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Ellipsis, Plus, RefreshCw } from "lucide-react";
 
 import { ChoiceCard } from "@/components/ChoiceCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
+import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { FormMessage } from "@/components/FormMessage";
+import { ServiceKindIcon } from "@/components/ServiceKindIcon";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 import {
@@ -37,21 +49,31 @@ import {
   deleteService,
   getService,
   getServiceAuthorization,
+  getServiceUsage,
   logoutService,
+  resetServiceUsage,
   openAuthorizationURL,
   probeDraftServiceModels,
   probeServiceModels,
   updateService,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
+import { i18n, useT } from "./i18n";
+import type { ConversionEngineCapability } from "./core-model";
 import {
+  conversionQualityLabels,
   httpServicePreset,
   httpServicePresetIDs,
+  localConversionPassthrough,
+  localConversionTargets,
   protocolDescriptors,
+  protocolEntryPath,
   protocolLabel,
+  supportsLocalConversion,
   type HTTPServicePresetID,
   type ProtocolDescriptor,
 } from "./service-presets";
+import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 import { filterModels } from "./model-groups";
@@ -70,9 +92,19 @@ import {
   type ServiceRecord,
 } from "./service-model";
 import {
+  SubscriptionUsageMeter,
+  type SubscriptionUsageStatus,
+} from "./SubscriptionUsageMeter";
+import {
   type AuthorizationFlow,
   type AuthorizationSession,
 } from "./subscription-model";
+import {
+  formatSubscriptionUsageError,
+  planTypeLabel,
+  resetOutcomeMessage,
+  type SubscriptionUsage,
+} from "./subscription-usage-model";
 
 export type ServiceManagerView =
   | { kind: "list" }
@@ -88,6 +120,7 @@ export type ServiceCatalogStatus =
 export interface ServiceManagerProps {
   isReady: boolean;
   protocols: ProtocolDescriptor[];
+  conversionEngine?: ConversionEngineCapability | null;
   view: ServiceManagerView;
   services: Service[];
   catalogStatus: ServiceCatalogStatus;
@@ -116,6 +149,7 @@ type Draft = {
 type ConfirmAction =
   | { kind: "delete"; service: Service }
   | { kind: "logout"; service: Service }
+  | { kind: "reset-usage"; service: Service; availableCount: number }
   | null;
 
 type AuthorizationDialog = {
@@ -124,6 +158,23 @@ type AuthorizationDialog = {
   session: AuthorizationSession;
 };
 
+type EditorTab = "connection" | "models" | "protocols";
+
+function serviceTypeOptionLabel(kind: ServiceKind): string {
+  return kind === "codex_subscription"
+    ? i18n.t("services.codexKind")
+    : serviceKindLabel(kind);
+}
+
+function mergeDiscoveredServiceModels(
+  current: { models: readonly string[] },
+  discovered: readonly string[],
+): string[] | null {
+  const models = [...new Set([...current.models, ...discovered])].sort();
+  if (models.length > 2_000) return null;
+  return models;
+}
+
 type ModelPreview = {
   models: string[];
   selected: string[];
@@ -131,11 +182,21 @@ type ModelPreview = {
 };
 
 const authLabels: Record<ServiceAuthScheme, string> = {
-  none: "无需认证",
-  bearer: "API Key（Bearer）",
-  anthropic_api_key: "Anthropic API Key",
-  google_api_key: "Google API Key",
-  custom_header: "自定义 Header",
+  get none() {
+    return i18n.t("services.authNone");
+  },
+  get bearer() {
+    return i18n.t("services.authBearer");
+  },
+  get anthropic_api_key() {
+    return i18n.t("services.authAnthropic");
+  },
+  get google_api_key() {
+    return i18n.t("services.authGoogle");
+  },
+  get custom_header() {
+    return i18n.t("services.authCustomHeader");
+  },
 };
 
 function draftForKind(
@@ -145,7 +206,7 @@ function draftForKind(
   if (kind === "codex_subscription") {
     return {
       kind,
-      name: "Codex 订阅",
+      name: i18n.t("services.codexName"),
       enabled: true,
       baseURL: "",
       authScheme: "none",
@@ -186,7 +247,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
       models: [...service.models],
     };
   }
-  if (!service.http) throw new Error("HTTP 服务缺少连接配置。");
+  if (!service.http) throw new Error(i18n.t("services.missingHttp"));
   return {
     kind: service.kind,
     name: service.name,
@@ -198,7 +259,18 @@ function draftFromRecord(record: ServiceRecord): Draft {
     removeCredential: false,
     models: [...service.models],
     authorizationFlow: null,
-    capabilities: service.capabilities.map((capability) => ({ ...capability })),
+    capabilities: service.capabilities.map((capability) =>
+      wireCapability(capability),
+    ),
+  };
+}
+
+function wireCapability(capability: ServiceCapability): ServiceCapability {
+  return {
+    protocol: capability.protocol,
+    mode: "native",
+    streaming: capability.streaming,
+    ...(capability.convert_to ? { convert_to: capability.convert_to } : {}),
   };
 }
 
@@ -221,19 +293,20 @@ function validateDraft(
   editing: ServiceRecord | null,
 ): string | null {
   if (draft.name.trim().length === 0 || [...draft.name.trim()].length > 128) {
-    return "服务名称需包含 1 至 128 个字符。";
+    return i18n.t("services.nameInvalid");
   }
-  if (draft.models.length > 2_000) return "每个服务最多配置 2,000 个模型。";
+  if (draft.models.length > 2_000) {
+    return i18n.t("services.tooManyModels");
+  }
   if (
-    draft.models.some(
-      (model) => [...model].length < 1 || [...model].length > 256,
-    ) || new Set(draft.models).size !== draft.models.length
+    draft.models.some((model) => [...model].length < 1 || [...model].length > 256) ||
+    new Set(draft.models).size !== draft.models.length
   ) {
-    return "模型 ID 必须唯一，且每项包含 1 至 256 个字符。";
+    return i18n.t("services.modelIdsInvalid");
   }
   if (draft.kind === "codex_subscription") {
     if (!editing && draft.authorizationFlow === null) {
-      return "请选择 Codex 登录方式。";
+      return i18n.t("services.chooseLogin");
     }
     return null;
   }
@@ -241,7 +314,7 @@ function validateDraft(
   try {
     parsed = new URL(draft.baseURL.trim());
   } catch {
-    return "请输入有效的 API 地址。";
+    return i18n.t("services.invalidUrl");
   }
   if (
     (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
@@ -250,10 +323,10 @@ function validateDraft(
     parsed.search !== "" ||
     parsed.hash !== ""
   ) {
-    return "API 地址必须是安全的 http(s) 根地址，且不能包含凭据、查询或片段。";
+    return i18n.t("services.urlRules");
   }
   if (draft.authScheme === "custom_header" && draft.headerName.trim() === "") {
-    return "自定义认证需要填写 Header 名称。";
+    return i18n.t("services.headerRequired");
   }
   const hasStoredCredential = Boolean(editing?.service.http?.credential_ref);
   if (
@@ -261,10 +334,10 @@ function validateDraft(
     draft.secret.trim() === "" &&
     !hasStoredCredential
   ) {
-    return "请填写 API Key。";
+    return i18n.t("services.keyRequired");
   }
   if (draft.capabilities.length === 0) {
-    return "HTTP 服务至少需要一项 API 能力。";
+    return i18n.t("services.capabilityRequired");
   }
   return null;
 }
@@ -275,6 +348,13 @@ function serviceDot(service: Service): "positive" | "pending" | "negative" | "ne
   if (!status || status === "connected") return "positive";
   if (status === "authorizing" || status === "disconnected") return "pending";
   return "negative";
+}
+
+function serviceStatusTextClass(tone: ReturnType<typeof serviceDot>): string {
+  if (tone === "positive") return "text-success-foreground";
+  if (tone === "pending") return "text-warning-foreground";
+  if (tone === "negative") return "text-danger-foreground";
+  return "text-muted-foreground";
 }
 
 function ModelPreviewDialog({
@@ -292,6 +372,7 @@ function ModelPreviewDialog({
   onApply: () => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const filtered = useMemo(
     () => filterModels(preview.models, query),
     [preview.models, query],
@@ -310,20 +391,24 @@ function ModelPreviewDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="w-[min(620px,calc(100vw-40px))] max-w-none sm:max-w-none">
         <DialogHeader>
-          <DialogTitle>选择服务支持的模型</DialogTitle>
-          <DialogDescription>确认后，服务模型清单将替换为下面勾选的项目。</DialogDescription>
+          <DialogTitle>{t("services.selectModelsTitle")}</DialogTitle>
+          <DialogDescription>
+            {t("services.selectModelsHint")}
+          </DialogDescription>
         </DialogHeader>
         {preview.warnings.length > 0 ? (
           <FormMessage tone="warning">
-            部分协议获取失败：{preview.warnings.join("；")}
+            {t("services.partialFetchFailed", {
+              warnings: preview.warnings.join("；"),
+            })}
           </FormMessage>
         ) : null}
         {preview.models.length > 0 ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Input
               className="h-8 min-w-0 flex-[1_1_160px]"
-              aria-label="搜索上游模型"
-              placeholder="搜索模型…"
+              aria-label={t("services.searchUpstream")}
+              placeholder={t("services.searchModels")}
               type="search"
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
@@ -339,7 +424,9 @@ function ModelPreviewDialog({
                 }
                 type="button"
               >
-                {hasQuery ? `全选匹配（${filtered.length}）` : "全选"}
+                {hasQuery
+                  ? t("services.selectAllMatches", { count: filtered.length })
+                  : t("services.selectAll")}
               </Button>
               <Button
                 variant="outline"
@@ -356,16 +443,16 @@ function ModelPreviewDialog({
                 }}
                 type="button"
               >
-                {hasQuery ? "取消匹配" : "全不选"}
+                {hasQuery ? t("services.clearMatches") : t("services.selectNone")}
               </Button>
             </div>
           </div>
         ) : null}
         <div className="my-2 grid max-h-[min(52vh,460px)] gap-1 overflow-auto">
           {preview.models.length === 0 ? (
-            <p>上游没有返回模型；确认后将应用空清单。</p>
+            <p>{t("services.emptyUpstream")}</p>
           ) : filtered.length === 0 ? (
-            <p>没有匹配“{query.trim()}”的模型。</p>
+            <p>{t("models.noMatch", { query: query.trim() })}</p>
           ) : (
             filtered.map((model) => (
               <Label className="flex items-center gap-2 rounded-lg border px-2 py-1.5" key={model}>
@@ -378,21 +465,30 @@ function ModelPreviewDialog({
                     onSelectedChange(selected);
                   }}
                 />
+                <ModelBrandIcon model={model} />
                 <code className="min-w-0 truncate font-mono text-xs">{encodeModelEditorValue(model)}</code>
               </Label>
             ))
           )}
         </div>
         <small className="mb-2 block text-xs text-muted-foreground">
-          已选 {preview.selected.length}
-          {hasQuery ? ` · 显示 ${filtered.length} / ${preview.models.length}` : ""}
+          {t("services.selectedCount", {
+            selected: preview.selected.length,
+            total: preview.models.length,
+          })}
+          {hasQuery
+            ? t("services.showingFiltered", {
+                shown: filtered.length,
+                total: preview.models.length,
+              })
+            : ""}
         </small>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} type="button">
-            取消
+            {t("common.cancel")}
           </Button>
           <Button onClick={onApply} type="button">
-            应用所选模型（{preview.selected.length}）
+            {t("services.applySelected", { count: preview.selected.length })}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -403,6 +499,7 @@ function ModelPreviewDialog({
 export function ServiceManager({
   isReady,
   protocols,
+  conversionEngine = null,
   view,
   services,
   catalogStatus,
@@ -413,6 +510,7 @@ export function ServiceManager({
   onServiceRemoved,
   onDirtyChange,
 }: ServiceManagerProps) {
+  const t = useT();
   const descriptors = useMemo(
     () => protocolDescriptors(protocols),
     [protocols],
@@ -426,7 +524,6 @@ export function ServiceManager({
   const [saving, setSaving] = useState(false);
   const [actionID, setActionID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [loginChoice, setLoginChoice] = useState<Service | null>(null);
   const [loginChoiceFlow, setLoginChoiceFlow] =
@@ -437,12 +534,69 @@ export function ServiceManager({
   const [probingModels, setProbingModels] = useState(false);
   const [modelPreview, setModelPreview] = useState<ModelPreview | null>(null);
   const [modelPreviewQuery, setModelPreviewQuery] = useState("");
+  const [editorTab, setEditorTab] = useState<EditorTab>("connection");
+  const [usageByService, setUsageByService] = useState<
+    Record<
+      string,
+      { status: SubscriptionUsageStatus; usage?: SubscriptionUsage; error?: string }
+    >
+  >({});
+  const [usageEpoch, setUsageEpoch] = useState(0);
   const copyFeedback = useCopyFeedback();
   const loadGeneration = useRef(0);
+  const usageGeneration = useRef(0);
+  const importedAfterLogin = useRef(new Set<string>());
   const protocolsRef = useRef(protocols);
   protocolsRef.current = protocols;
   const viewKind = view.kind;
   const editingServiceID = view.kind === "edit" ? view.serviceId : null;
+  const connectedUsageIDs = useMemo(
+    () =>
+      services
+        .filter((service) => service.subscription?.status === "connected")
+        .map((service) => service.id)
+        .sort()
+        .join("\0"),
+    [services],
+  );
+
+  useEffect(() => {
+    if (view.kind !== "list" || !isReady) return;
+    const ids = connectedUsageIDs === "" ? [] : connectedUsageIDs.split("\0");
+    const generation = usageGeneration.current + 1;
+    usageGeneration.current = generation;
+    setUsageByService((current) => {
+      const next: Record<
+        string,
+        { status: SubscriptionUsageStatus; usage?: SubscriptionUsage; error?: string }
+      > = {};
+      for (const id of ids) {
+        next[id] = { status: "loading", usage: current[id]?.usage };
+      }
+      return next;
+    });
+    if (ids.length === 0) return;
+    void Promise.all(
+      ids.map(async (id) => {
+        try {
+          const usage = await getServiceUsage(id);
+          if (usageGeneration.current !== generation) return;
+          setUsageByService((current) => ({
+            ...current,
+            [id]: { status: "ready", usage },
+          }));
+        } catch (cause) {
+          const message = formatSubscriptionUsageError(cause);
+          console.error("AstrLink failed to load subscription usage", id, cause);
+          if (usageGeneration.current !== generation) return;
+          setUsageByService((current) => ({
+            ...current,
+            [id]: { status: "error", usage: current[id]?.usage, error: message },
+          }));
+        }
+      }),
+    );
+  }, [connectedUsageIDs, isReady, usageEpoch, view.kind]);
 
   const dirty =
     view.kind !== "list" &&
@@ -460,6 +614,7 @@ export function ServiceManager({
     setModelEditor("");
     setModelPreview(null);
     setModelPreviewQuery("");
+    setEditorTab("connection");
     if (view.kind === "list") {
       setEditing(null);
       setBaseline(null);
@@ -486,12 +641,59 @@ export function ServiceManager({
       .catch((cause) => {
         if (loadGeneration.current !== generation) return;
         setEditing(null);
-        setError(errorMessage(cause, "无法读取服务配置。"));
+        setError(errorMessage(cause, t("services.readFailed")));
       })
       .finally(() => {
         if (loadGeneration.current === generation) setLoadingRecord(false);
       });
-  }, [editingServiceID, viewKind]);
+  }, [editingServiceID, t, viewKind]);
+
+  const importCodexModelsAfterLogin = useCallback(
+    async (service: Service) => {
+      if (importedAfterLogin.current.has(service.id)) return;
+      importedAfterLogin.current.add(service.id);
+      try {
+        const [record, probe] = await Promise.all([
+          getService(service.id),
+          probeServiceModels(service.id, "openai.models"),
+        ]);
+        const merged = mergeDiscoveredServiceModels(
+          { models: record.service.models },
+          probe.model_ids,
+        );
+        if (!merged) {
+          notify.error(
+            t("services.loggedInTooMany", { name: service.name }),
+          );
+          return;
+        }
+        const unchanged = merged.join("\0") === record.service.models.join("\0");
+        if (!unchanged) {
+          await updateService(service.id, record.etag, {
+            models: merged,
+          });
+        }
+        notify.success(
+          probe.model_ids.length === 0
+            ? t("services.loggedInNone", { name: service.name })
+            : t("services.loggedInFetched", {
+                name: service.name,
+                count: merged.length,
+              }),
+        );
+        await onRefresh();
+      } catch (cause) {
+        importedAfterLogin.current.delete(service.id);
+        notify.warning(
+          errorMessage(
+            cause,
+            t("services.loggedInFetchFailed", { name: service.name }),
+          ),
+        );
+      }
+    },
+    [onRefresh, t],
+  );
 
   useEffect(() => {
     const authorizing = services.filter(
@@ -501,17 +703,28 @@ export function ServiceManager({
     let cancelled = false;
     const check = async () => {
       let completed = false;
+      const connected: Service[] = [];
       await Promise.all(
         authorizing.map(async (service) => {
           try {
             const session = await getServiceAuthorization(service.id);
-            if (session.status !== "pending") completed = true;
+            if (session.status === "completed") {
+              completed = true;
+              connected.push(service);
+            } else if (session.status !== "pending") {
+              completed = true;
+            }
           } catch {
             completed = true;
           }
         }),
       );
-      if (!cancelled && completed) await onRefresh();
+      if (cancelled) return;
+      if (completed) await onRefresh();
+      for (const service of connected) {
+        if (cancelled) return;
+        await importCodexModelsAfterLogin(service);
+      }
     };
     const timer = window.setInterval(() => void check(), 1_500);
     void check();
@@ -519,7 +732,7 @@ export function ServiceManager({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isReady, onRefresh, services]);
+  }, [importCodexModelsAfterLogin, isReady, onRefresh, services]);
 
   useEffect(() => {
     const active = authorizationDialog;
@@ -537,8 +750,8 @@ export function ServiceManager({
         if (stopped) return;
         if (session.status === "completed") {
           setAuthorizationDialog(null);
-          setNotice(`“${active.service.name}”已登录。`);
           await onRefresh();
+          await importCodexModelsAfterLogin(active.service);
           return;
         }
         setAuthorizationDialog((current) =>
@@ -549,7 +762,7 @@ export function ServiceManager({
         if (session.status !== "pending") await onRefresh();
       } catch (cause) {
         if (!stopped) {
-          setError(errorMessage(cause, "无法读取 Codex 登录状态。"));
+          setError(errorMessage(cause, t("services.authStatusFailed")));
         }
       }
     };
@@ -562,14 +775,39 @@ export function ServiceManager({
   }, [
     authorizationDialog?.service.id,
     authorizationDialog?.session.status,
+    importCodexModelsAfterLogin,
     isReady,
     onRefresh,
+    t,
   ]);
 
   const selectKind = (kind: ServiceKind) => {
     const next = draftForKind(kind, protocols);
     setDraft(next);
+    setEditorTab((current) =>
+      kind === "codex_subscription" && current === "protocols"
+        ? "connection"
+        : current,
+    );
     setError(null);
+  };
+
+  const setConvertTo = (protocol: string, value: string) => {
+    setDraft((current) => ({
+      ...current,
+      capabilities: current.capabilities.map((item) =>
+        item.protocol === protocol
+          ? {
+              protocol: item.protocol,
+              mode: "native",
+              streaming: item.streaming,
+              ...(value !== localConversionPassthrough
+                ? { convert_to: value }
+                : {}),
+            }
+          : item,
+      ),
+    }));
   };
 
   const toggleCapability = (
@@ -598,7 +836,7 @@ export function ServiceManager({
           ...current.capabilities,
           {
             protocol: descriptor.id,
-            mode: current.kind === "newapi" ? "delegated" : "native",
+            mode: "native",
             streaming: descriptor.streaming,
           },
         ],
@@ -613,26 +851,29 @@ export function ServiceManager({
       .filter(Boolean)
       .map(decodeModelEditorValue);
     if (additions.length === 0) {
-      setError("请输入至少一个模型 ID；批量添加时每行一个。");
+      setError(t("services.needModelIds"));
       return;
     }
     if (additions.some((model) => [...model].length > 256)) {
-      setError("模型 ID 不能超过 256 个字符。");
+      setError(t("services.modelIdTooLong"));
       return;
     }
     const models = [...new Set([...draft.models, ...additions])].sort();
     if (models.length > 2_000) {
-      setError("每个服务最多配置 2,000 个模型。");
+      setError(t("services.tooManyModels"));
       return;
     }
-    setDraft((current) => ({ ...current, models }));
+    setDraft((current) => ({
+      ...current,
+      models,
+    }));
     setModelEditor("");
     setError(null);
   };
 
   const discoverModels = async () => {
     if (draft.kind === "codex_subscription" && !editing) {
-      setError("请先保存并完成 Codex 登录，再从上游获取模型。");
+      setError(t("services.saveBeforeFetch"));
       return;
     }
     const discoveryProtocols: ModelDiscoveryProtocol[] =
@@ -642,7 +883,7 @@ export function ServiceManager({
             draft.capabilities.some((capability) => capability.protocol === protocol),
           );
     if (discoveryProtocols.length === 0) {
-      setError("请先在 API 能力中启用 OpenAI Models 或 Gemini Models。");
+      setError(t("services.enableDiscovery"));
       return;
     }
     setProbingModels(true);
@@ -674,21 +915,27 @@ export function ServiceManager({
           discovered.push(...attempt.value.model_ids);
         } else {
           warnings.push(
-            `${protocolLabel(discoveryProtocols[index] ?? "models")}：${errorMessage(attempt.reason, "获取失败")}`,
+            `${protocolLabel(discoveryProtocols[index] ?? "models")}：${errorMessage(attempt.reason, t("services.fetchFailed"))}`,
           );
         }
       });
       if (warnings.length === attempts.length) {
-        setError(`无法从上游获取模型。${warnings.join("；")}`);
+        setError(
+          t("services.fetchFailedDetail", { warnings: warnings.join("；") }),
+        );
         return;
       }
       const models = [...new Set([...draft.models, ...discovered])].sort();
       if (models.length > 2_000) {
-        setError("上游模型与当前清单合并后超过 2,000 项，草稿未作更改。");
+        setError(t("services.mergeTooMany"));
         return;
       }
       setModelPreviewQuery("");
-      setModelPreview({ models, selected: [...models], warnings });
+      setModelPreview({
+        models,
+        selected: models,
+        warnings,
+      });
     } finally {
       setProbingModels(false);
     }
@@ -710,15 +957,15 @@ export function ServiceManager({
   ) => {
     if (session.flow === "device_code") {
       setAuthorizationDialog({ service, requestedFlow, session });
-      setNotice(
+      notify.success(
         requestedFlow === "browser"
-          ? "回调端口 1455 和 1457 均不可用，已切换为 Device Code 登录。"
-          : "Device Code 登录已开始，请在浏览器中输入一次性验证码。",
+          ? t("services.portsBusy")
+          : t("services.deviceStarted"),
       );
       return;
     }
     setAuthorizationDialog(null);
-    setNotice(`已为“${service.name}”打开浏览器登录。`);
+    notify.success(t("services.browserOpened", { name: service.name }));
   };
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -730,7 +977,6 @@ export function ServiceManager({
     }
     setSaving(true);
     setError(null);
-    setNotice(null);
     try {
       let record: ServiceRecord;
       if (editing) {
@@ -749,14 +995,14 @@ export function ServiceManager({
                 ? { credential: null }
                 : {}),
           };
-          patch.capabilities = draft.capabilities;
+          patch.capabilities = draft.capabilities.map(wireCapability);
         }
         record = await updateService(
           editing.service.id,
           editing.etag,
           patch,
         );
-        setNotice("服务配置已更新。");
+        notify.success(t("services.updated"));
       } else {
         let input: ServiceCreateInput;
         if (draft.kind === "codex_subscription") {
@@ -779,7 +1025,7 @@ export function ServiceManager({
                 ? { credential: { secret: draft.secret } }
                 : {}),
             },
-            capabilities: draft.capabilities,
+            capabilities: draft.capabilities.map(wireCapability),
           };
         }
         record = await createService(input);
@@ -787,8 +1033,9 @@ export function ServiceManager({
           try {
             const flow = draft.authorizationFlow;
             if (flow === null) {
-              throw new Error("请选择 Codex 登录方式。");
+              throw new Error(t("services.chooseLogin"));
             }
+            importedAfterLogin.current.delete(record.service.id);
             const authorization = await beginServiceAuthorization(
               record.service.id,
               flow,
@@ -799,11 +1046,11 @@ export function ServiceManager({
               authorization.session,
             );
           } catch (cause) {
-            setNotice("Codex 服务已添加，可稍后从服务列表重新登录。");
-            setError(errorMessage(cause, "服务已添加，但无法开始 OAuth 登录。"));
+            notify.success(t("services.addedLaterLogin"));
+            setError(errorMessage(cause, t("services.addedOauthFailed")));
           }
         } else {
-          setNotice("服务已添加，API Key 只保存在本机凭据库中。");
+          notify.success(t("services.addedKey"));
         }
       }
       onServiceSaved(record.service);
@@ -813,7 +1060,7 @@ export function ServiceManager({
       onViewChange({ kind: "list" });
       await onRefresh();
     } catch (cause) {
-      setError(errorMessage(cause, "保存服务失败。"));
+      setError(errorMessage(cause, t("services.saveFailed")));
     } finally {
       setSaving(false);
       setDraft((current) => ({ ...current, secret: "" }));
@@ -829,11 +1076,12 @@ export function ServiceManager({
     setActionID(service.id);
     setError(null);
     try {
+      importedAfterLogin.current.delete(service.id);
       const result = await beginServiceAuthorization(service.id, flow);
       presentAuthorization(service, flow, result.session);
       await onRefresh();
     } catch (cause) {
-      setError(errorMessage(cause, "无法开始 Codex 登录。"));
+      setError(errorMessage(cause, t("services.beginLoginFailed")));
     } finally {
       setActionID(null);
     }
@@ -847,10 +1095,10 @@ export function ServiceManager({
       setAuthorizationDialog((current) =>
         current?.service.id === service.id ? null : current,
       );
-      setNotice(`已取消“${service.name}”的登录。`);
+      notify.success(t("services.cancelledLogin", { name: service.name }));
       await onRefresh();
     } catch (cause) {
-      setError(errorMessage(cause, "无法取消 Codex 登录。"));
+      setError(errorMessage(cause, t("services.cancelLoginFailed")));
     } finally {
       setActionID(null);
     }
@@ -868,10 +1116,10 @@ export function ServiceManager({
           session,
         });
       } else {
-        setNotice(`“${service.name}”正在等待浏览器登录回调。`);
+        notify.success(t("services.waitingCallback", { name: service.name }));
       }
     } catch (cause) {
-      setError(errorMessage(cause, "无法读取 Codex 登录状态。"));
+      setError(errorMessage(cause, t("services.authStatusFailed")));
     } finally {
       setActionID(null);
     }
@@ -884,7 +1132,29 @@ export function ServiceManager({
     try {
       await openAuthorizationURL(url);
     } catch (cause) {
-      setError(errorMessage(cause, "无法打开 Device Code 登录页面。"));
+      setError(errorMessage(cause, t("services.openDeviceFailed")));
+    }
+  };
+
+  const toggleEnabled = async (service: Service) => {
+    setActionID(service.id);
+    setError(null);
+    try {
+      const record = await getService(service.id);
+      const updated = await updateService(service.id, record.etag, {
+        enabled: !record.service.enabled,
+      });
+      onServiceSaved(updated.service);
+      notify.success(
+        updated.service.enabled
+          ? t("services.enabledToast")
+          : t("services.disabledToast"),
+      );
+      await onRefresh();
+    } catch (cause) {
+      setError(errorMessage(cause, t("services.statusFailed")));
+    } finally {
+      setActionID(null);
     }
   };
 
@@ -895,24 +1165,35 @@ export function ServiceManager({
     setActionID(service.id);
     setError(null);
     try {
+      if (confirmAction.kind === "reset-usage") {
+        const result = await resetServiceUsage(service.id);
+        notify.success(resetOutcomeMessage(result.outcome));
+        setUsageEpoch((current) => current + 1);
+        return;
+      }
       if (confirmAction.kind === "logout") {
         const record = await logoutService(service.id);
         onServiceSaved(record.service);
-        setNotice(`已退出“${service.name}”。`);
+        notify.success(t("services.loggedOut", { name: service.name }));
       } else {
         const record = await getService(service.id);
         await deleteService(service.id, record.etag);
         onServiceRemoved(service.id);
-        setNotice(`已删除“${service.name}”。`);
+        notify.success(t("services.deleted", { name: service.name }));
       }
       await onRefresh();
     } catch (cause) {
+      if (confirmAction.kind === "reset-usage") {
+        console.error("AstrLink failed to reset subscription usage", service.id, cause);
+        notify.error(formatSubscriptionUsageError(cause));
+        return;
+      }
       setError(
         errorMessage(
           cause,
           confirmAction.kind === "logout"
-            ? "退出登录失败。"
-            : "删除服务失败。",
+            ? t("services.logoutFailed")
+            : t("services.deleteFailed"),
         ),
       );
     } finally {
@@ -932,26 +1213,33 @@ export function ServiceManager({
                 onClick={() => onViewChange({ kind: "create" })}
                 type="button"
               >
-                添加服务
+                <Plus aria-hidden="true" />
+                {t("services.add")}
               </Button>
               <Button
                 variant="outline"
                 disabled={!isReady || busy}
-                onClick={() => void onRefresh()}
+                onClick={() => {
+                  setUsageEpoch((value) => value + 1);
+                  void onRefresh();
+                }}
                 type="button"
               >
-                {busy ? "刷新中…" : "刷新列表"}
+                <RefreshCw
+                  aria-hidden="true"
+                  className={cn("motion-reduce:animate-none", busy && "animate-spin")}
+                />
+                {busy ? t("common.refreshing") : t("services.refreshList")}
               </Button>
             </>
           }
-          description="订阅与外部网关都是 API 服务；每次添加都会创建独立服务，可配置多个 Codex 账户。"
-          eyebrow="API 服务"
-          title="管理 API 服务"
+          description={t("services.description")}
+          title={t("services.title")}
           titleId="service-heading"
         />
         {!isReady || catalogStatus === "blocked" ? (
           <FormMessage className="mb-3" tone="notice">
-            Core 就绪后才能管理 API 服务。
+            {t("services.gatewayNotReady")}
           </FormMessage>
         ) : null}
         {catalogStatus === "error" && catalogError ? (
@@ -964,172 +1252,238 @@ export function ServiceManager({
             {error}
           </FormMessage>
         ) : null}
-        {notice ? (
-          <FormMessage className="mb-3" tone="success">{notice}</FormMessage>
-        ) : null}
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="已配置服务">
-          <div className="mb-2 flex shrink-0 items-baseline justify-between gap-2">
-            <strong className="text-sm font-semibold tracking-tight">
-              全部服务
-            </strong>
-            <span className="text-xs text-muted-foreground">
-              {catalogStatus === "blocked" ? "—" : `${services.length} 个`}
-            </span>
-          </div>
-          {/* Cards rather than flat rows: a service carries four lines of
-              heterogeneous detail, which needs its own bounding box to read. */}
-          <div className="grid min-h-0 content-start gap-2 overflow-y-auto">
-              {catalogStatus === "loading" && services.length === 0 ? (
-                <EmptyState title="正在加载 API 服务…" />
-              ) : services.length === 0 ? (
-                <EmptyState
-                  description="可先添加 Codex 订阅，或接入 new-api 外部网关。"
-                  title="尚未添加服务"
-                />
-              ) : (
-                services.map((service) => {
-                  const subscription = service.subscription;
-                  const acting = actionID === service.id;
-                  return (
-                    <article
-                      className="min-w-0 rounded-md border bg-card"
-                      data-testid="service-card"
-                      key={service.id}
-                    >
-                      <div className="min-w-0 px-3.5 py-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <StatusDot tone={serviceDot(service)} />
-                        <strong className="truncate text-sm font-medium">{service.name}</strong>
-                        <span className="shrink-0 text-xs text-muted-foreground">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t("services.listLabel")}>
+          {catalogStatus === "loading" && services.length === 0 ? (
+            <EmptyState title={t("services.loading")} />
+          ) : services.length === 0 ? (
+            <EmptyState
+              action={
+                <Button
+                  disabled={!isReady || busy}
+                  onClick={() => onViewChange({ kind: "create" })}
+                  size="sm"
+                  type="button"
+                >
+                  <Plus aria-hidden="true" />
+                  {t("services.add")}
+                </Button>
+              }
+              description={t("services.emptyHint")}
+              title={t("services.empty")}
+            />
+          ) : (
+            <div className="grid min-h-0 content-start grid-cols-2 gap-2.5 overflow-y-auto max-[720px]:grid-cols-1">
+              {services.map((service) => {
+                const subscription = service.subscription;
+                const acting = actionID === service.id;
+                const plan = planTypeLabel(
+                  usageByService[service.id]?.usage?.plan_type,
+                );
+                const tone = serviceDot(service);
+                return (
+                  <article
+                    className="flex min-w-0 flex-col overflow-hidden rounded-md border bg-card"
+                    data-testid="service-card"
+                    key={service.id}
+                  >
+                    <div className="flex min-w-0 items-center gap-2 px-3.5 pt-3">
+                      <ServiceKindIcon kind={service.kind} />
+                      <StatusDot tone={tone} />
+                      <strong className="truncate text-sm font-medium">{service.name}</strong>
+                      {plan ? (
+                        <Badge data-testid="subscription-plan" variant="secondary">
+                          {plan}
+                        </Badge>
+                      ) : null}
+                      <div className="ml-auto flex shrink-0 items-center gap-2">
+                        <span
+                          className={cn(
+                            "text-xs font-medium",
+                            serviceStatusTextClass(tone),
+                          )}
+                        >
                           {serviceStatusLabel(service)}
                         </span>
-                        <Badge className="ml-auto" variant="secondary">
-                          {serviceKindLabel(service.kind)}
-                        </Badge>
+                        <Switch
+                          aria-label={t("services.enableNamed", { name: service.name })}
+                          checked={service.enabled}
+                          disabled={!isReady || acting}
+                          onCheckedChange={() => void toggleEnabled(service)}
+                          size="sm"
+                        />
                       </div>
-                      <code className="mt-1.5 block truncate font-mono text-xs text-text-secondary">
+                    </div>
+                    <div className="px-3.5 pt-1 pb-3">
+                      <code className="block truncate font-mono text-xs text-text-secondary">
                         {service.http?.base_url ??
                           (subscription?.account_hint
-                            ? `OpenAI 账户 ${subscription.account_hint}`
-                            : "OpenAI Codex OAuth")}
+                            ? t("services.openaiAccount", {
+                                hint: subscription.account_hint,
+                              })
+                            : t("services.openaiCodexOauth"))}
                       </code>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
-                        支持 {service.capabilities.length} 项 API 能力 · {service.models.length} 个模型
-                        {subscription?.authorization_boundary
-                          ? ` · ${subscription.authorization_boundary}`
-                          : ""}
-                      </p>
+                    </div>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t px-3.5 py-2">
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {t("services.capabilityCount", {
+                          count: service.capabilities.length,
+                        })}
+                        {" · "}
+                        {t("services.modelCount", {
+                          count: service.models.length,
+                        })}
+                      </span>
+                    </div>
+                    {subscription?.status === "connected" ? (
+                      <div className="border-t px-3.5 pb-2.5">
+                        <SubscriptionUsageMeter
+                          error={usageByService[service.id]?.error}
+                          now={new Date()}
+                          onReset={() =>
+                            setConfirmAction({
+                              kind: "reset-usage",
+                              service,
+                              availableCount:
+                                usageByService[service.id]?.usage
+                                  ?.rate_limit_reset_credits?.available_count ??
+                                0,
+                            })
+                          }
+                          resetting={actionID === service.id}
+                          status={
+                            usageByService[service.id]?.status ?? "loading"
+                          }
+                          usage={usageByService[service.id]?.usage}
+                        />
                       </div>
-                      <div className="flex items-center justify-between gap-3 border-t px-3.5 py-2 text-xs text-muted-foreground max-[700px]:items-start max-[700px]:flex-col max-[700px]:gap-2">
-                        <span>
-                          {service.http
-                            ? service.http.credential_ref
-                              ? "API Key 已安全保存"
-                              : service.http.auth.scheme === "none"
-                                ? "无需 API Key"
-                                : "尚未保存 API Key"
-                            : subscription?.status === "connected"
-                              ? "OAuth 凭据已存入系统钥匙串"
-                              : "等待 OAuth 登录"}
-                        </span>
-                        <div className="flex shrink-0 flex-wrap items-center gap-1">
+                    ) : null}
+                    <div className="mt-auto flex items-center justify-end gap-1.5 border-t bg-muted px-3.5 py-2">
+                      <Button
+                        disabled={acting}
+                        onClick={() =>
+                          onViewChange({
+                            kind: "edit",
+                            serviceId: service.id,
+                          })
+                        }
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        {t("services.editAction")}
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            aria-label={t("services.moreNamed", {
+                              name: service.name,
+                            })}
+                            disabled={acting}
+                            size="icon-sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            <Ellipsis />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
                           {subscription ? (
                             subscription.status === "authorizing" ? (
                               <>
-                                <Button
+                                <DropdownMenuItem
                                   disabled={acting}
-                                  onClick={() => void showAuthorization(service)}
-                                  size="sm"
-                                  type="button"
-                                  variant="outline"
+                                  onSelect={() =>
+                                    void showAuthorization(service)
+                                  }
                                 >
-                                  {acting ? "处理中…" : "查看登录"}
-                                </Button>
-                                <Button
+                                  {acting
+                                    ? t("common.processing")
+                                    : t("services.viewLogin")}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
                                   disabled={acting}
-                                  onClick={() => void cancelAuthorization(service)}
-                                  size="sm"
-                                  type="button"
-                                  variant="ghost"
+                                  onSelect={() =>
+                                    void cancelAuthorization(service)
+                                  }
                                 >
-                                  取消登录
-                                </Button>
+                                  {t("services.cancelLogin")}
+                                </DropdownMenuItem>
                               </>
                             ) : (
-                              <Button
+                              <DropdownMenuItem
                                 disabled={acting}
-                                onClick={() => {
+                                onSelect={() => {
                                   setLoginChoice(service);
                                   setLoginChoiceFlow(null);
                                   setError(null);
                                 }}
-                                size="sm"
-                                type="button"
-                                variant="outline"
                               >
                                 {acting
-                                  ? "处理中…"
+                                  ? t("common.processing")
                                   : subscription.status === "connected"
-                                    ? "重新登录"
-                                    : "登录"}
-                              </Button>
+                                    ? t("services.resignIn")
+                                    : t("services.signIn")}
+                              </DropdownMenuItem>
                             )
                           ) : null}
                           {subscription?.status === "connected" ? (
-                            <Button
+                            <DropdownMenuItem
                               disabled={acting}
-                              onClick={() =>
-                                setConfirmAction({ kind: "logout", service })
+                              onSelect={() =>
+                                setConfirmAction({
+                                  kind: "logout",
+                                  service,
+                                })
                               }
-                              size="sm"
-                              type="button"
-                              variant="ghost"
                             >
-                              退出
-                            </Button>
+                              {t("services.signOut")}
+                            </DropdownMenuItem>
                           ) : null}
-                          <Button
+                          {subscription ? <DropdownMenuSeparator /> : null}
+                          <DropdownMenuItem
                             disabled={acting}
-                            onClick={() =>
-                              onViewChange({
-                                kind: "edit",
-                                serviceId: service.id,
+                            onSelect={() =>
+                              setConfirmAction({
+                                kind: "delete",
+                                service,
                               })
                             }
-                            size="sm"
-                            type="button"
-                            variant="outline"
+                            variant="destructive"
                           >
-                            编辑
-                          </Button>
-                          <Button
-                            className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-                            disabled={acting}
-                            onClick={() =>
-                              setConfirmAction({ kind: "delete", service })
-                            }
-                            size="sm"
-                            type="button"
-                            variant="ghost"
-                          >
-                            {acting ? "处理中…" : "删除"}
-                          </Button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })
-              )}
+                            {acting
+                              ? t("common.processing")
+                              : t("common.delete")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
+          )}
         </div>
         <ConfirmDialog
-          confirmLabel="确认"
+          confirmLabel={
+            confirmAction?.kind === "reset-usage"
+              ? t("services.reset")
+              : t("common.confirm")
+          }
           description={
             <p>
               {confirmAction?.kind === "delete"
-                ? `“${confirmAction.service.name}”及其本机凭据会被删除；被路由引用时 Core 会拒绝删除。`
-                : `“${confirmAction?.service.name ?? ""}”的 OAuth 凭据将从系统钥匙串删除，服务会保留。`}
+                ? t("services.deleteBody", {
+                    name: confirmAction.service.name,
+                  })
+                : confirmAction?.kind === "reset-usage"
+                  ? t("services.resetBody", {
+                      name: confirmAction.service.name,
+                      count: confirmAction.availableCount,
+                    })
+                  : t("services.logoutBody", {
+                      name: confirmAction?.service.name ?? "",
+                    })}
             </p>
           }
           destructive
@@ -1138,8 +1492,10 @@ export function ServiceManager({
           open={confirmAction !== null}
           title={
             confirmAction?.kind === "delete"
-              ? "删除这个服务？"
-              : "退出这个 Codex 账户？"
+              ? t("services.confirmDelete")
+              : confirmAction?.kind === "reset-usage"
+                ? t("services.confirmReset")
+                : t("services.confirmLogout")
           }
         />
         <Dialog
@@ -1153,23 +1509,25 @@ export function ServiceManager({
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>登录“{loginChoice?.name ?? ""}”</DialogTitle>
-              <DialogDescription>请选择本次使用的 OpenAI 登录方式。</DialogDescription>
+              <DialogTitle>
+                {t("services.loginNamed", { name: loginChoice?.name ?? "" })}
+              </DialogTitle>
+              <DialogDescription>{t("services.chooseOauthHint")}</DialogDescription>
             </DialogHeader>
               <RadioGroup
-                aria-label="登录方式"
+                aria-label={t("services.loginMethod")}
                 className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
                 onValueChange={(value) => setLoginChoiceFlow(value as AuthorizationFlow)}
                 value={loginChoiceFlow ?? ""}
               >
                 <ChoiceCard
-                  description="依次使用本机回调端口 1455 和 1457。"
-                  label="浏览器 OAuth"
+                  description={t("services.browserOauthHint")}
+                  label={t("services.browserOauth")}
                   selected={loginChoiceFlow === "browser"}
                   value="browser"
                 />
                 <ChoiceCard
-                  description="打开登录页并输入一次性验证码。"
+                  description={t("services.deviceCodeHint")}
                   label="Device Code"
                   selected={loginChoiceFlow === "device_code"}
                   value="device_code"
@@ -1184,7 +1542,7 @@ export function ServiceManager({
                   }}
                   type="button"
                 >
-                  取消
+                  {t("common.cancel")}
                 </Button>
                 <Button
                   disabled={loginChoiceFlow === null}
@@ -1195,7 +1553,7 @@ export function ServiceManager({
                   }}
                   type="button"
                 >
-                  开始登录
+                  {t("services.startLogin")}
                 </Button>
               </DialogFooter>
           </DialogContent>
@@ -1204,22 +1562,21 @@ export function ServiceManager({
           <Dialog open onOpenChange={(open) => !open && setAuthorizationDialog(null)}>
             <DialogContent className="max-w-[460px] sm:max-w-[460px]">
               <DialogHeader>
-                <DialogTitle>使用 Device Code 登录</DialogTitle>
+                <DialogTitle>{t("services.deviceCodeTitle")}</DialogTitle>
                 <DialogDescription>
-                  在 OpenAI 登录页面完成本次 Codex 账户授权。
+                  {t("services.deviceCodeDescription")}
                 </DialogDescription>
               </DialogHeader>
               {authorizationDialog.requestedFlow === "browser" ? (
                 <FormMessage tone="warning">
-                  本机回调端口 1455 和 1457 均不可用，已自动切换。
+                  {t("services.portsBusyAuto")}
                 </FormMessage>
               ) : null}
               {authorizationDialog.session.status === "pending" &&
               authorizationDialog.session.device_code ? (
                 <>
                   <p className="text-sm leading-6 text-muted-foreground">
-                    请在 OpenAI 登录页面输入下方一次性验证码。验证码将在
-                    15 分钟内失效。
+                    {t("services.enterDeviceCode")}
                   </p>
                   <div className="flex items-center justify-between gap-3 rounded-md border border-primary/20 bg-accent p-3">
                     <code className="font-mono text-xl font-semibold tracking-[0.08em] text-accent-foreground select-all">
@@ -1238,13 +1595,12 @@ export function ServiceManager({
                       {copyButtonLabel(
                         copyFeedback,
                         "codex-device-code",
-                        "复制验证码",
+                        t("services.copyCode"),
                       )}
                     </Button>
                   </div>
                   <small className="mt-2 block text-xs text-muted-foreground">
-                    如果账户或工作区禁用了 Device Code，请改用浏览器 OAuth，
-                    或由管理员启用该登录方式。
+                    {t("services.deviceDisabledHint")}
                   </small>
                   <DialogFooter>
                     <Button
@@ -1255,13 +1611,13 @@ export function ServiceManager({
                       }
                       type="button"
                     >
-                      取消登录
+                      {t("services.cancelLogin")}
                     </Button>
                     <Button
                       onClick={() => void reopenAuthorizationPage()}
                       type="button"
                     >
-                      重新打开登录页面
+                      {t("services.reopenLogin")}
                     </Button>
                   </DialogFooter>
                 </>
@@ -1270,19 +1626,19 @@ export function ServiceManager({
                   <p className="text-sm text-muted-foreground" role="status">
                     {authorizationDialog.session.status === "failed"
                       ? authorizationDialog.session.error?.message ??
-                        "Device Code 登录失败。"
+                        t("services.deviceFailed")
                       : authorizationDialog.session.status === "expired"
-                        ? "Device Code 已过期，请重新开始登录。"
+                        ? t("services.deviceExpired")
                         : authorizationDialog.session.status === "cancelled"
-                          ? "Device Code 登录已取消。"
-                          : "登录已完成。"}
+                          ? t("services.deviceCancelled")
+                          : t("services.loginDone")}
                   </p>
                   <DialogFooter>
                     <Button
                       onClick={() => setAuthorizationDialog(null)}
                       type="button"
                     >
-                      关闭
+                      {t("common.close")}
                     </Button>
                   </DialogFooter>
                 </>
@@ -1303,358 +1659,495 @@ export function ServiceManager({
           draft.kind as HTTPServicePresetID,
           protocols,
         );
+  const modelsEditor = (
+    <ServiceModelsEditor
+      key={editingServiceID ?? "create"}
+      modelEditor={modelEditor}
+      models={draft.models}
+      probingModels={probingModels}
+      onAddModels={addModels}
+      onClearModels={() =>
+        setDraft((current) => ({
+          ...current,
+          models: [],
+        }))
+      }
+      onDiscoverModels={() => void discoverModels()}
+      onModelEditorChange={setModelEditor}
+      onRemoveModels={removeDraftModels}
+    />
+  );
+  const protocolEditor = (
+    <section
+      aria-labelledby="service-capabilities-heading"
+      className="grid gap-2.5 rounded-md border bg-card p-3"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-0.5">
+          <strong
+            className="text-sm font-semibold"
+            id="service-capabilities-heading"
+          >
+            {t("services.capabilitiesTitle")}
+          </strong>
+          <p className="text-xs text-muted-foreground">
+            {conversionEngine?.available
+              ? t("services.capabilityHintConvert")
+              : t("services.capabilityHintPassthrough")}
+          </p>
+        </div>
+        <Badge className="mt-px shrink-0 tabular-nums" variant="secondary">
+          {t("services.enabledItems", { count: draft.capabilities.length })}
+        </Badge>
+      </div>
+
+      <div className="grid gap-1.5">
+        {descriptors.map((descriptor) => {
+          const capability = draft.capabilities.find(
+            (item) => item.protocol === descriptor.id,
+          );
+          const convertible = supportsLocalConversion(descriptor.id);
+          const targets = convertible
+            ? localConversionTargets(descriptor.id, conversionEngine)
+            : [];
+          const selected = targets.find(
+            (target) => target.id === capability?.convert_to,
+          );
+          return (
+            <div
+              className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,232px)] items-center gap-2 rounded-md border bg-card px-2.5 py-2 max-[640px]:grid-cols-1"
+              data-testid="service-capability-row"
+              key={descriptor.id}
+            >
+              <Label className="flex min-w-0 flex-row items-center gap-2 text-xs text-text-secondary">
+                <Checkbox
+                  checked={Boolean(capability)}
+                  onCheckedChange={(checked) =>
+                    toggleCapability(descriptor, checked === true)
+                  }
+                />
+                <span className="shrink-0">
+                  {protocolLabel(descriptor.id)}
+                </span>
+                <code className="min-w-0 truncate font-mono text-micro text-muted-foreground">
+                  {protocolEntryPath(descriptor.id)}
+                </code>
+                {selected?.quality ? (
+                  <Badge
+                    className="shrink-0 px-1.5 py-0 text-micro"
+                    variant={
+                      selected.quality === "discouraged"
+                        ? "destructive"
+                        : "secondary"
+                    }
+                  >
+                    {conversionQualityLabels[selected.quality]}
+                    {selected.streaming ? "" : t("services.noStreaming")}
+                  </Badge>
+                ) : null}
+              </Label>
+              {capability && convertible ? (
+                <Select
+                  value={
+                    capability.convert_to ?? localConversionPassthrough
+                  }
+                  onValueChange={(value) =>
+                    setConvertTo(descriptor.id, value)
+                  }
+                >
+                  <SelectTrigger
+                    aria-label={t("services.localConvert", {
+                      protocol: protocolLabel(descriptor.id),
+                    })}
+                    className="h-8 w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={localConversionPassthrough}>
+                      {t("services.passthrough")}
+                    </SelectItem>
+                    {targets.map((target) => (
+                      <SelectItem
+                        disabled={!target.enabled}
+                        key={target.id}
+                        value={target.id}
+                      >
+                        {t("services.convertTo", {
+                          protocol: protocolLabel(target.id),
+                        })}
+                        {target.enabled
+                          ? target.quality
+                            ? ` · ${conversionQualityLabels[target.quality]}`
+                            : ""
+                          : t("services.notEnabled")}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span className="text-micro text-muted-foreground max-[640px]:hidden">
+                  {capability ? t("services.passthrough") : ""}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+  const connectionFields = (
+    <div className="grid grid-cols-2 gap-3 max-[680px]:grid-cols-1 [&>label]:flex [&>label]:min-w-0 [&>label]:flex-col [&>label]:items-stretch [&>label]:gap-1.5 [&>label>span]:text-xs [&>label>span]:font-medium [&>label>span]:text-text-secondary [&>label>small]:text-xs [&>label>small]:font-normal [&>label>small]:text-muted-foreground">
+      <Label className="col-span-full">
+        <span>{t("services.serviceType")}</span>
+        <Select
+          disabled={view.kind === "edit"}
+          value={draft.kind}
+          onValueChange={(value) => selectKind(value as ServiceKind)}
+        >
+          <SelectTrigger aria-label={t("services.serviceType")} className="w-full">
+            <SelectValue>{serviceTypeOptionLabel(draft.kind)}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+          <SelectGroup>
+            <SelectLabel>{t("services.groupSubscription")}</SelectLabel>
+            <SelectItem value="codex_subscription">
+              {serviceTypeOptionLabel("codex_subscription")}
+            </SelectItem>
+          </SelectGroup>
+          <SelectGroup>
+            <SelectLabel>{t("services.groupGateway")}</SelectLabel>
+            <SelectItem value="newapi">
+              {serviceTypeOptionLabel("newapi")}
+            </SelectItem>
+          </SelectGroup>
+          <SelectGroup>
+            <SelectLabel>{t("services.groupAdvanced")}</SelectLabel>
+            {httpServicePresetIDs
+              .filter((kind) => kind !== "newapi")
+              .map((kind) => (
+                <SelectItem key={kind} value={kind}>
+                  {serviceTypeOptionLabel(kind)}
+                </SelectItem>
+              ))}
+          </SelectGroup>
+          </SelectContent>
+        </Select>
+        <small>
+          {draft.kind === "codex_subscription"
+            ? t("services.codexHint")
+            : selectedPreset?.description}
+        </small>
+      </Label>
+      <Label>
+        <span>{t("services.serviceName")}</span>
+        <Input
+          id="service-name"
+          maxLength={128}
+          placeholder={
+            draft.kind === "codex_subscription"
+              ? t("services.namePlaceholderCodex")
+              : t("services.namePlaceholderHttp")
+          }
+          required
+          value={draft.name}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              name: event.target.value,
+            }))
+          }
+        />
+      </Label>
+      <Label className="col-span-full flex-row! items-center!">
+        <Checkbox
+          checked={draft.enabled}
+          onCheckedChange={(checked) =>
+            setDraft((current) => ({
+              ...current,
+              enabled: checked === true,
+            }))
+          }
+        />
+        <span>{t("services.enableThis")}</span>
+      </Label>
+      {draft.kind === "codex_subscription" &&
+      view.kind === "create" ? (
+        <fieldset className="col-span-full min-w-0 rounded-md border bg-muted p-3">
+          <legend className="px-1 text-xs font-medium text-text-secondary">{t("services.loginMethod")}</legend>
+          <RadioGroup
+            aria-label={t("services.newLoginMethod")}
+            className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
+            onValueChange={(value) =>
+              setDraft((current) => ({
+                ...current,
+                authorizationFlow: value as AuthorizationFlow,
+              }))
+            }
+            value={draft.authorizationFlow ?? ""}
+          >
+            <ChoiceCard
+              description={t("services.browserOauthCreateHint")}
+              label={t("services.browserOauth")}
+              selected={draft.authorizationFlow === "browser"}
+              value="browser"
+            />
+            <ChoiceCard
+              description={t("services.deviceCodeCreateHint")}
+              label="Device Code"
+              selected={draft.authorizationFlow === "device_code"}
+              value="device_code"
+            />
+          </RadioGroup>
+          {draft.authorizationFlow === null ? (
+            <small className="mt-2 block text-warning-foreground">
+              {t("services.chooseLoginContinue")}
+            </small>
+          ) : null}
+        </fieldset>
+      ) : null}
+      {draft.kind !== "codex_subscription" ? (
+        <>
+          <Label>
+            <span>{t("services.apiAddress")}</span>
+            <Input
+              maxLength={2048}
+              placeholder={
+                selectedPreset?.baseURLPlaceholder ??
+                "https://api.example.com"
+              }
+              required
+              type="url"
+              value={draft.baseURL}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  baseURL: event.target.value,
+                }))
+              }
+            />
+          </Label>
+          <Label>
+            <span>{t("services.authScheme")}</span>
+            <Select
+              value={draft.authScheme}
+              onValueChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  authScheme: value as ServiceAuthScheme,
+                }))
+              }
+            >
+              <SelectTrigger aria-label={t("services.authScheme")} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+              {Object.entries(authLabels).map(([scheme, label]) => (
+                <SelectItem key={scheme} value={scheme}>
+                  {label}
+                </SelectItem>
+              ))}
+              </SelectContent>
+            </Select>
+          </Label>
+          {draft.authScheme === "custom_header" ? (
+            <Label>
+              <span>{t("services.headerName")}</span>
+              <Input
+                maxLength={128}
+                placeholder="X-Api-Key"
+                value={draft.headerName}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    headerName: event.target.value,
+                  }))
+                }
+              />
+            </Label>
+          ) : null}
+          {draft.authScheme !== "none" ? (
+            <Label>
+              <span>
+                {editingKind
+                  ? canKeepCredential
+                    ? t("services.apiKeyKeep")
+                    : t("services.apiKeyRequired")
+                  : "API Key"}
+              </span>
+              <Input
+                autoComplete="new-password"
+                maxLength={16_384}
+                placeholder={
+                  canKeepCredential
+                    ? t("services.apiKeySaved")
+                    : t("services.apiKeyPaste")
+                }
+                type="password"
+                value={draft.secret}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    secret: event.target.value,
+                  }))
+                }
+              />
+            </Label>
+          ) : null}
+          {editing?.service.http?.credential_ref ? (
+            <Label className="col-span-full flex-row! items-center!">
+              <Checkbox
+                checked={draft.removeCredential}
+                onCheckedChange={(checked) =>
+                  setDraft((current) => ({
+                    ...current,
+                    removeCredential: checked === true,
+                  }))
+                }
+              />
+              <span>{t("services.removeStoredKey")}</span>
+            </Label>
+          ) : null}
+        </>
+      ) : null}
+      {draft.kind === "codex_subscription" ? (
+        <div className="col-span-full flex items-start gap-2 rounded-md border border-success/20 bg-success-wash px-3 py-2.5 text-text-secondary">
+          <StatusDot className="mt-1.5" tone="positive" />
+          <div>
+            <strong className="text-sm font-medium text-success-foreground">
+              {view.kind === "create"
+                ? t("services.saveThenLogin")
+                : t("services.loginInList")}
+            </strong>
+            <p className="mt-0.5 text-xs">
+              {t("services.independentAccounts")}
+            </p>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+  const visibleEditorTab: EditorTab =
+    draft.kind === "codex_subscription" && editorTab === "protocols"
+      ? "models"
+      : editorTab;
 
   return (
     <section className="flex min-h-0 w-full flex-1 flex-col" aria-labelledby="service-editor-heading">
       <PageHeader
         back={{
-          label: "返回服务列表",
+          label: t("services.back"),
           onClick: () => onViewChange({ kind: "list" }),
         }}
-        description={
-          view.kind === "create"
-            ? "Codex 订阅与外部网关都从这里添加，并分别获得独立 service_id。"
-            : "服务类型不可变；可修改名称、启用状态与对应连接配置。"
-        }
-        eyebrow="API 服务"
-        title={view.kind === "edit" ? "编辑服务" : "添加服务"}
+        title={view.kind === "edit" ? t("services.edit") : t("services.add")}
         titleId="service-editor-heading"
+        variant="compact"
       />
       {!isReady ? (
-        <FormMessage className="mb-3" tone="notice">
-          Core 就绪后才能管理 API 服务。
+        <FormMessage className="mb-3 shrink-0" tone="notice">
+          {t("services.gatewayNotReady")}
         </FormMessage>
       ) : null}
       {error ? (
-        <FormMessage className="mb-3" tone="error">
+        <FormMessage className="mb-3 shrink-0" tone="error">
           {error}
         </FormMessage>
       ) : null}
       {loadingRecord ? (
-        <FormMessage className="mb-3" aria-busy="true" tone="notice">
-          正在载入服务配置…
+        <FormMessage className="mb-3 shrink-0" aria-busy="true" tone="notice">
+          {t("services.loadingRecord")}
         </FormMessage>
       ) : view.kind === "edit" && !editing ? (
-        <FormMessage className="mb-3" tone="error">
-          无法载入这个 API 服务。请返回列表后重试。
+        <FormMessage className="mb-3 shrink-0" tone="error">
+          {t("services.loadRecordFailed")}
         </FormMessage>
       ) : (
         <form
           aria-busy={saving}
-          className="mx-auto w-full max-w-[760px] min-w-0 rounded-lg border bg-card p-4"
+          className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
           data-testid="service-form"
           noValidate
           onSubmit={(event) => void submit(event)}
         >
-          <fieldset className="min-w-0 border-0 p-0 disabled:pointer-events-none disabled:opacity-70" disabled={!isReady || saving}>
-            <div className="grid grid-cols-2 gap-3 max-[680px]:grid-cols-1 [&>label]:flex [&>label]:min-w-0 [&>label]:flex-col [&>label]:items-stretch [&>label]:gap-1.5 [&>label>span]:text-xs [&>label>span]:font-medium [&>label>span]:text-text-secondary [&>label>small]:text-xs [&>label>small]:font-normal [&>label>small]:text-muted-foreground">
-              <Label className="col-span-full">
-                <span>服务类型</span>
-                <Select
-                  disabled={view.kind === "edit"}
-                  value={draft.kind}
-                  onValueChange={(value) => selectKind(value as ServiceKind)}
+          <fieldset className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-0 p-0 disabled:pointer-events-none disabled:opacity-70" disabled={!isReady || saving}>
+            <Tabs
+              className="min-h-0 flex-1 gap-3"
+              onValueChange={(value) => setEditorTab(value as EditorTab)}
+              value={visibleEditorTab}
+            >
+              <TabsList aria-label={t("services.tabsAria")} className="h-8 shrink-0">
+                <TabsTrigger
+                  data-testid="service-editor-tab-connection"
+                  onClick={() => setEditorTab("connection")}
+                  type="button"
+                  value="connection"
                 >
-                  <SelectTrigger aria-label="服务类型" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel>订阅服务（P0）</SelectLabel>
-                    <SelectItem value="codex_subscription">
-                      Codex 订阅（OpenAI OAuth）
-                    </SelectItem>
-                  </SelectGroup>
-                  <SelectGroup>
-                    <SelectLabel>外部网关（P1）</SelectLabel>
-                    <SelectItem value="newapi">new-api</SelectItem>
-                  </SelectGroup>
-                  <SelectGroup>
-                    <SelectLabel>高级 API 服务</SelectLabel>
-                    {httpServicePresetIDs
-                      .filter((kind) => kind !== "newapi")
-                      .map((kind) => (
-                        <SelectItem key={kind} value={kind}>
-                          {serviceKindLabel(kind)}
-                        </SelectItem>
-                      ))}
-                  </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <small>
-                  {draft.kind === "codex_subscription"
-                    ? "使用 Codex 官方公开 OAuth 客户端接入真实订阅账户。"
-                    : selectedPreset?.description}
-                </small>
-              </Label>
-              <Label>
-                <span>服务名称</span>
-                <Input
-                  id="service-name"
-                  maxLength={128}
-                  placeholder={
-                    draft.kind === "codex_subscription"
-                      ? "例如：个人 Codex"
-                      : "例如：团队 new-api"
-                  }
-                  required
-                  value={draft.name}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                />
-              </Label>
-              <Label className="col-span-full flex-row! items-center!">
-                <Checkbox
-                  checked={draft.enabled}
-                  onCheckedChange={(checked) =>
-                    setDraft((current) => ({
-                      ...current,
-                      enabled: checked === true,
-                    }))
-                  }
-                />
-                <span>启用这个服务</span>
-              </Label>
-              {draft.kind === "codex_subscription" &&
-              view.kind === "create" ? (
-                <fieldset className="col-span-full min-w-0 rounded-md border bg-muted p-3">
-                  <legend className="px-1 text-xs font-medium text-text-secondary">登录方式</legend>
-                  <RadioGroup
-                    aria-label="新服务登录方式"
-                    className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
-                    onValueChange={(value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        authorizationFlow: value as AuthorizationFlow,
-                      }))
-                    }
-                    value={draft.authorizationFlow ?? ""}
+                  {t("services.tabConnection")}
+                </TabsTrigger>
+                <TabsTrigger
+                  data-testid="service-editor-tab-models"
+                  onClick={() => setEditorTab("models")}
+                  type="button"
+                  value="models"
+                >
+                  {t("services.tabModels")}
+                  <Badge
+                    className="px-1.5 py-0 text-micro tabular-nums"
+                    variant="secondary"
                   >
-                    <ChoiceCard
-                      description="打开系统浏览器，依次尝试本机回调端口 1455 和 1457。"
-                      label="浏览器 OAuth"
-                      selected={draft.authorizationFlow === "browser"}
-                      value="browser"
-                    />
-                    <ChoiceCard
-                      description="打开 OpenAI 登录页并输入一次性验证码；部分工作区需要管理员启用。"
-                      label="Device Code"
-                      selected={draft.authorizationFlow === "device_code"}
-                      value="device_code"
-                    />
-                  </RadioGroup>
-                  {draft.authorizationFlow === null ? (
-                    <small className="mt-2 block text-warning-foreground">
-                      请选择一种登录方式后继续。
-                    </small>
-                  ) : null}
-                </fieldset>
-              ) : null}
-              {draft.kind !== "codex_subscription" ? (
-                <>
-                  <Label>
-                    <span>API 地址</span>
-                    <Input
-                      maxLength={2048}
-                      placeholder={
-                        selectedPreset?.baseURLPlaceholder ??
-                        "https://api.example.com"
-                      }
-                      required
-                      type="url"
-                      value={draft.baseURL}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          baseURL: event.target.value,
-                        }))
-                      }
-                    />
-                  </Label>
-                  <Label>
-                    <span>认证方式</span>
-                    <Select
-                      value={draft.authScheme}
-                      onValueChange={(value) =>
-                        setDraft((current) => ({
-                          ...current,
-                          authScheme: value as ServiceAuthScheme,
-                        }))
-                      }
-                    >
-                      <SelectTrigger aria-label="认证方式" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                      {Object.entries(authLabels).map(([scheme, label]) => (
-                        <SelectItem key={scheme} value={scheme}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                      </SelectContent>
-                    </Select>
-                  </Label>
-                  {draft.authScheme === "custom_header" ? (
-                    <Label>
-                      <span>认证 Header 名称</span>
-                      <Input
-                        maxLength={128}
-                        placeholder="X-Api-Key"
-                        value={draft.headerName}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            headerName: event.target.value,
-                          }))
-                        }
-                      />
-                    </Label>
-                  ) : null}
-                  {draft.authScheme !== "none" ? (
-                    <Label>
-                      <span>
-                        {editingKind
-                          ? canKeepCredential
-                            ? "API Key（留空保留）"
-                            : "API Key（需填写）"
-                          : "API Key"}
-                      </span>
-                      <Input
-                        autoComplete="new-password"
-                        maxLength={16_384}
-                        placeholder={
-                          canKeepCredential
-                            ? "已安全保存，无需重复输入"
-                            : "粘贴 API Key"
-                        }
-                        type="password"
-                        value={draft.secret}
-                        onChange={(event) =>
-                          setDraft((current) => ({
-                            ...current,
-                            secret: event.target.value,
-                          }))
-                        }
-                      />
-                    </Label>
-                  ) : null}
-                  {editing?.service.http?.credential_ref ? (
-                    <Label className="col-span-full flex-row! items-center!">
-                      <Checkbox
-                        checked={draft.removeCredential}
-                        onCheckedChange={(checked) =>
-                          setDraft((current) => ({
-                            ...current,
-                            removeCredential: checked === true,
-                          }))
-                        }
-                      />
-                      <span>保存时删除已存 API Key</span>
-                    </Label>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-
-            <ServiceModelsEditor
-              key={editingServiceID ?? "create"}
-              modelEditor={modelEditor}
-              models={draft.models}
-              probingModels={probingModels}
-              onAddModels={addModels}
-              onDiscoverModels={() => void discoverModels()}
-              onModelEditorChange={setModelEditor}
-              onRemoveModels={removeDraftModels}
-              onReplaceModels={(models) =>
-                setDraft((current) => ({ ...current, models }))
-              }
-            />
-
-            {draft.kind === "codex_subscription" ? (
-              <div className="mt-3 flex items-start gap-2 rounded-md border border-success/20 bg-success-wash px-3 py-2.5 text-text-secondary">
-                <StatusDot className="mt-1.5" tone="positive" />
-                <div>
-                  <strong className="text-sm font-medium text-success-foreground">
-                    {view.kind === "create"
-                      ? "保存后使用所选方式登录"
-                      : "订阅登录在服务列表中管理"}
-                  </strong>
-                  <p className="mt-0.5 text-xs">
-                    每次添加都会创建独立服务，可同时管理多个 Codex 订阅账户。
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <details className="group mt-3 rounded-md border bg-card">
-                <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2.5 text-sm font-medium text-text-secondary before:text-base before:leading-none before:text-muted-foreground before:content-['›'] group-open:before:rotate-90 [&::-webkit-details-marker]:hidden">
-                  <span>API 能力</span>
-                  <small className="ml-auto text-xs font-normal text-muted-foreground">{draft.capabilities.length} 项已启用</small>
-                </summary>
-                <div className="border-t p-3">
-                  <div className="grid grid-cols-2 gap-2 max-[600px]:grid-cols-1">
-                    {descriptors.map((descriptor) => {
-                      const capability = draft.capabilities.find(
-                        (item) => item.protocol === descriptor.id,
-                      );
-                      return (
-                        <div className="grid min-w-0 gap-1.5 rounded-md border bg-card p-2.5" key={descriptor.id}>
-                          <Label className="flex flex-row items-center gap-2 text-xs text-text-secondary">
-                            <Checkbox
-                              checked={Boolean(capability)}
-                              onCheckedChange={(checked) =>
-                                toggleCapability(
-                                  descriptor,
-                                  checked === true,
-                                )
-                              }
-                            />
-                            <span>{protocolLabel(descriptor.id)}</span>
-                          </Label>
-                          {capability ? (
-                            <Select
-                              value={capability.mode}
-                              onValueChange={(value) =>
-                                setDraft((current) => ({
-                                  ...current,
-                                  capabilities: current.capabilities.map(
-                                    (item) =>
-                                      item.protocol === descriptor.id
-                                        ? {
-                                            ...item,
-                                            mode: value as
-                                              | "native"
-                                              | "delegated",
-                                          }
-                                        : item,
-                                  ),
-                                }))
-                              }
-                            >
-                              <SelectTrigger
-                                aria-label={`${protocolLabel(descriptor.id)} 处理模式`}
-                                className="w-full"
-                              >
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="native">原生协议</SelectItem>
-                                <SelectItem value="delegated">由网关路由</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : null}
-                        </div>
-                      );
+                    {t("services.modelCount", {
+                      count: draft.models.length,
                     })}
-                  </div>
-                </div>
-              </details>
-            )}
+                  </Badge>
+                </TabsTrigger>
+                {draft.kind === "codex_subscription" ? null : (
+                  <TabsTrigger
+                    data-testid="service-editor-tab-protocols"
+                    onClick={() => setEditorTab("protocols")}
+                    type="button"
+                    value="protocols"
+                  >
+                    {t("services.tabProtocols")}
+                    <Badge
+                      className="px-1.5 py-0 text-micro tabular-nums"
+                      variant="secondary"
+                    >
+                      {t("services.enabledItems", {
+                        count: draft.capabilities.length,
+                      })}
+                    </Badge>
+                  </TabsTrigger>
+                )}
+              </TabsList>
+              <TabsContent
+                className="min-h-0 flex-1 overflow-y-auto pr-4"
+                data-tab-scroller=""
+                data-testid="service-editor-tab-panel"
+                value="connection"
+              >
+                {connectionFields}
+              </TabsContent>
+              <TabsContent
+                className="min-h-0 flex-1 overflow-y-auto pr-4"
+                data-tab-scroller=""
+                data-testid="service-editor-tab-panel"
+                value="models"
+              >
+                {modelsEditor}
+              </TabsContent>
+              {draft.kind === "codex_subscription" ? null : (
+                <TabsContent
+                  className="min-h-0 flex-1 overflow-y-auto pr-4"
+                  data-tab-scroller=""
+                  data-testid="service-editor-tab-panel"
+                  value="protocols"
+                >
+                  {protocolEditor}
+                </TabsContent>
+              )}
+            </Tabs>
           </fieldset>
-          <div className="sticky bottom-0 z-4 mt-[15px] border-t bg-card px-0 pt-2.5 pb-1">
+          <div className="z-4 mt-3 shrink-0 border-t px-0 pt-2.5 pb-1">
             <Button
               className="w-full"
               data-testid="service-submit"
@@ -1668,12 +2161,12 @@ export function ServiceManager({
               type="submit"
             >
               {saving
-                ? "保存中…"
+                ? t("common.saving")
                 : view.kind === "edit"
-                  ? "保存修改"
+                  ? t("services.saveChanges")
                   : draft.kind === "codex_subscription"
-                    ? "添加并登录"
-                    : "保存服务"}
+                    ? t("services.addAndLogin")
+                    : t("services.saveService")}
             </Button>
           </div>
         </form>
@@ -1693,9 +2186,10 @@ export function ServiceManager({
             )
           }
           onApply={() => {
+            const selected = new Set(modelPreview.selected);
             setDraft((current) => ({
               ...current,
-              models: [...modelPreview.selected].sort(),
+              models: [...selected].sort(),
             }));
             setModelPreview(null);
             setModelPreviewQuery("");

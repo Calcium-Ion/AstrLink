@@ -18,4 +18,20 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   )
 }
 
-export { Input }
+function InputDatalist({
+  id,
+  options,
+}: {
+  id: string;
+  options: readonly string[];
+}) {
+  return (
+    <datalist id={id}>
+      {options.map((value) => (
+        <option key={value} value={value} />
+      ))}
+    </datalist>
+  );
+}
+
+export { Input, InputDatalist }

@@ -37,15 +37,48 @@ func (action Action) Valid() bool {
 		action == ActionBlock || action == ActionWarn
 }
 
+// KindRule is the effective per-kind detection switch and placeholder shape.
+type KindRule struct {
+	Enabled bool
+	Style   contract.PlaceholderStyle
+}
+
 // Policy is the minimal execution contract. Storage/control-plane adapters may
 // resolve richer policy documents into one effective request policy.
 type Policy struct {
-	Enabled         bool
-	Mode            Mode
-	LocalModelID    contract.PrivacyModelID
-	MinConfidence   float64
-	Action          Action
-	ResponseRestore bool
+	Enabled          bool
+	Mode             Mode
+	LocalModelID     contract.PrivacyModelID
+	MinConfidence    float64
+	RegexSource      contract.PolicyRegexSource
+	CustomRegexRules []contract.PolicyRegexRule
+	// KindRules holds one entry per canonical kind. A nil map means every kind
+	// is enabled with token placeholders: for a privacy filter the safe default
+	// is to redact, so an unresolved or hand-built policy must never quietly
+	// forward plaintext. Once the map is present it is authoritative, and a kind
+	// omitted from it is disabled.
+	KindRules            map[Kind]KindRule
+	Allowlist            []contract.PolicyAllowlistRule
+	Action               Action
+	ResponseRestore      bool
+	RestoreToolArguments bool
+	PlaceholderNotice    bool
+}
+
+// KindRule resolves the effective rule for a kind. See Policy.KindRules for why
+// a nil map redacts everything rather than nothing.
+func (policy Policy) KindRule(kind Kind) KindRule {
+	if policy.KindRules == nil {
+		return KindRule{Enabled: true, Style: contract.PlaceholderStyleToken}
+	}
+	rule, exists := policy.KindRules[kind]
+	if !exists {
+		return KindRule{}
+	}
+	if rule.Style == "" {
+		rule.Style = contract.PlaceholderStyleToken
+	}
+	return rule
 }
 
 type Scope struct {
@@ -91,16 +124,37 @@ type DetectInput struct {
 	Segments             []Segment
 }
 
+// SuppressionReason names the rule that kept a detected span in the request.
+type SuppressionReason string
+
+const (
+	SuppressionLowConfidence SuppressionReason = "low_confidence"
+	SuppressionKindDisabled  SuppressionReason = "kind_disabled"
+	SuppressionAllowlisted   SuppressionReason = "allowlisted"
+	// SuppressionPlaceholder marks a value that already belongs to a
+	// placeholder namespace. Redacting it again would build a chain of
+	// placeholders standing in for placeholders, and the innermost original
+	// could never be restored.
+	SuppressionPlaceholder SuppressionReason = "placeholder"
+	// SuppressionUnrepresentable marks a span whose kind ran out of reserved
+	// natural stand-ins, so the request fell back to a token placeholder.
+	SuppressionUnrepresentable SuppressionReason = "unrepresentable"
+)
+
 // Finding identifies a byte range without retaining or returning the matched
 // plaintext. Detector implementations must index the supplied Segment.Value.
 // Plaintext for local restoration is carried only on Result.Redactions after a
 // successful DecisionRedact and must never be logged, persisted, or sent upstream.
+//
+// Suppression is empty on accepted findings and set on suppressed ones.
+// Detectors never populate it; only the engine does.
 type Finding struct {
-	Segment    int
-	Start      int
-	End        int
-	Kind       Kind
-	Confidence float64
+	Segment     int
+	Start       int
+	End         int
+	Kind        Kind
+	Confidence  float64
+	Suppression SuppressionReason
 }
 
 // Redaction maps a request-scoped placeholder to the original plaintext for
@@ -109,6 +163,7 @@ type Redaction struct {
 	Placeholder string
 	Kind        Kind
 	Value       string
+	Style       contract.PlaceholderStyle
 }
 
 type Detector interface {
@@ -146,6 +201,9 @@ type Result struct {
 	Findings           []Finding
 	SuppressedFindings []Finding
 	Redactions         []Redaction
+	// NoticeInjected reports that a placeholder convention note was prepended
+	// to the upstream system prompt.
+	NoticeInjected bool
 }
 
 type Filter interface {

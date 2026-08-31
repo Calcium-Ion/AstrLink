@@ -37,6 +37,14 @@ type Manager struct {
 	authorizationAttempts   map[contract.ServiceID]authorizationAttempt
 	pendingProviderAccounts map[string]contract.SubscriptionAccountID
 	lifecycleTransitions    map[contract.ServiceID]bool
+	usageCache              map[contract.ServiceID]usageCacheEntry
+}
+
+const usageCacheTTL = 30 * time.Second
+
+type usageCacheEntry struct {
+	usage contract.SubscriptionUsage
+	until time.Time
 }
 
 func NewManager(accounts AccountStore, credentials accountauth.AccountCredentialStore, oauth accountauth.OAuthConfig) (*Manager, error) {
@@ -57,6 +65,7 @@ func NewManager(accounts AccountStore, credentials accountauth.AccountCredential
 		authorizationAttempts:   make(map[contract.ServiceID]authorizationAttempt),
 		pendingProviderAccounts: make(map[string]contract.SubscriptionAccountID),
 		lifecycleTransitions:    make(map[contract.ServiceID]bool),
+		usageCache:              make(map[contract.ServiceID]usageCacheEntry),
 	}
 	manager.sessions = accountauth.NewSessionManager(oauth, credentials, manager.persistAuthorizedTokens)
 	tokenClient := accountauth.NewTokenClient(oauth)
@@ -210,6 +219,7 @@ func (manager *Manager) Logout(ctx context.Context, id contract.SubscriptionAcco
 	manager.sessions.CancelAllForService(id)
 	manager.clearAuthorizationAttempt(id)
 	manager.tokens.Invalidate(id)
+	manager.clearUsageCache(id)
 	if err := manager.credentials.Delete(ctx, id); err != nil {
 		return contract.SubscriptionAccount{}, fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
 	}
@@ -249,6 +259,7 @@ func (manager *Manager) CleanupCredentialsForDelete(ctx context.Context, id cont
 	manager.sessions.CancelAllForService(id)
 	manager.clearAuthorizationAttempt(id)
 	manager.tokens.Invalidate(id)
+	manager.clearUsageCache(id)
 	if err := manager.credentials.Delete(ctx, id); err != nil {
 		return fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
 	}
@@ -273,6 +284,65 @@ func (manager *Manager) AccessToken(ctx context.Context, id contract.Subscriptio
 		return accountauth.AccountTokens{}, fmt.Errorf("subscription account is not connected")
 	}
 	return manager.tokens.AccessToken(ctx, id)
+}
+
+func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsage, error) {
+	now := manager.now().UTC()
+	manager.mu.Lock()
+	if entry, ok := manager.usageCache[id]; ok && now.Before(entry.until) {
+		usage := entry.usage
+		manager.mu.Unlock()
+		return usage, nil
+	}
+	manager.mu.Unlock()
+
+	tokens, err := manager.AccessToken(ctx, id)
+	if err != nil {
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w", ErrNotConnected)
+	}
+	usage, err := manager.provider.Usage(ctx, tokens)
+	if err != nil {
+		return contract.SubscriptionUsage{}, err
+	}
+	usage.ServiceID = id
+	usage.FetchedAt = now
+	if err := usage.Validate(); err != nil {
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+	}
+	manager.mu.Lock()
+	manager.usageCache[id] = usageCacheEntry{usage: usage, until: now.Add(usageCacheTTL)}
+	manager.mu.Unlock()
+	return usage, nil
+}
+
+func (manager *Manager) ConsumeReset(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsageReset, error) {
+	tokens, err := manager.AccessToken(ctx, id)
+	if err != nil {
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w", ErrNotConnected)
+	}
+	redeemID, err := newRedeemRequestID()
+	if err != nil {
+		return contract.SubscriptionUsageReset{}, err
+	}
+	result, err := manager.provider.ConsumeReset(ctx, tokens, redeemID)
+	if result.Outcome == contract.UsageResetOutcomeReset ||
+		result.Outcome == contract.UsageResetOutcomeAlreadyRedeemed {
+		manager.clearUsageCache(id)
+	}
+	if err != nil {
+		return result, err
+	}
+	result.ServiceID = id
+	if err := result.Validate(); err != nil {
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: invalid payload", ErrResetUnavailable)
+	}
+	return result, nil
+}
+
+func (manager *Manager) clearUsageCache(id contract.ServiceID) {
+	manager.mu.Lock()
+	delete(manager.usageCache, id)
+	manager.mu.Unlock()
 }
 
 func (manager *Manager) Provider() *CodexProvider { return manager.provider }
@@ -354,6 +424,7 @@ func (manager *Manager) onInvalidGrant(ctx context.Context, id contract.Subscrip
 			return nil
 		}
 		account.Status = contract.SubscriptionStatusNeedsReauth
+		delete(manager.usageCache, id)
 		account.LastError = &contract.SubscriptionError{
 			Code:    accountauth.ErrCodeInvalidGrant,
 			Message: "subscription refresh failed; sign in again",
@@ -570,6 +641,23 @@ func (manager *Manager) mutateAccount(
 func (manager *Manager) publicAccount(account contract.SubscriptionAccount) contract.SubscriptionAccount {
 	account.AuthorizationBoundary = manager.AuthorizationBoundary()
 	return account
+}
+
+func newRedeemRequestID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40
+	raw[8] = (raw[8] & 0x3f) | 0x80
+	return fmt.Sprintf(
+		"%x-%x-%x-%x-%x",
+		raw[0:4],
+		raw[4:6],
+		raw[6:8],
+		raw[8:10],
+		raw[10:],
+	), nil
 }
 
 func randomSubscriptionAccountID() (contract.SubscriptionAccountID, error) {

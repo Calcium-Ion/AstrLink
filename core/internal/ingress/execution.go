@@ -126,14 +126,19 @@ func (handler *Handler) executeCandidates(
 		}
 		var plan contract.ExecutionPlan
 		var planErr error
-		if planType == contract.PlanTypeRelayKit {
+		convertTo := declaredConvertTo(candidate.Service, classified.Protocol, mode)
+		if planType == contract.PlanTypeRelayKit || convertTo != "" {
 			if handler.conversionEngine == nil {
 				last = executionFailure{kind: executionFailureCapability, endpointID: candidate.Service.ID}
 				continue
 			}
+			upstreamProtocol := candidate.UpstreamProtocol
+			if convertTo != "" {
+				upstreamProtocol = convertTo
+			}
 			plan, planErr = planner.BuildRelayKit(planner.RelayKitInput{
 				Service: candidate.Service, InputProtocol: classified.Protocol,
-				UpstreamProtocol: candidate.UpstreamProtocol, Streaming: classified.Streaming,
+				UpstreamProtocol: upstreamProtocol, Streaming: classified.Streaming,
 				Edges: handler.conversionEngine.Edges(),
 			})
 		} else {
@@ -204,12 +209,13 @@ func (handler *Handler) executeCandidates(
 		}
 
 		resetResponseHeaders(downstream.Header(), initialHeaders)
-		finishPrivacy, redactions, privacyErr := handler.applyPrivacy(
+		finishPrivacy, privacyResult, privacyErr := handler.applyPrivacy(
 			downstream,
 			attemptRequest,
 			classified,
 			candidate.Service.ID,
 		)
+		redactions := privacyResult.redactions
 		if request.Context().Err() != nil {
 			finishPrivacy()
 			_ = attemptRequest.Body.Close()
@@ -331,6 +337,7 @@ func (handler *Handler) executeCandidates(
 				redactions,
 				classified.Streaming,
 				classified.Protocol,
+				privacyResult.toolArguments,
 			)
 			outWriter = restoring
 		}
@@ -634,6 +641,19 @@ func (handler *Handler) writeExecutionFailure(
 	}
 }
 
+func declaredConvertTo(
+	service contract.Service,
+	protocol contract.ProtocolID,
+	mode contract.CapabilityMode,
+) contract.ProtocolID {
+	for _, capability := range service.Capabilities {
+		if capability.Protocol == protocol && capability.Mode == mode && capability.ConvertTo != "" {
+			return capability.ConvertTo
+		}
+	}
+	return ""
+}
+
 func requiresInspectedJSON(protocol contract.ProtocolID) bool {
 	switch protocol {
 	case contract.ProtocolOpenAIResponses,
@@ -673,6 +693,7 @@ func captureRequestBody(request *http.Request, forceBuffer bool) (*requestBodySo
 			source.Close()
 			return nil, err
 		}
+		source.releasePermit()
 		return source, nil
 	}
 
@@ -704,6 +725,7 @@ func captureRequestBody(request *http.Request, forceBuffer bool) (*requestBodySo
 	source.factory = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(contents)), nil
 	}
+	source.releasePermit()
 	return source, nil
 }
 
@@ -722,10 +744,9 @@ func (source *requestBodySource) Next(ctx context.Context) (*http.Request, bool,
 			return nil, false, err
 		}
 		if source.release != nil {
-			// The source owns the real four-slot residency permit across the
-			// fallback window. Mark each attempt as borrowing that permit so
-			// endpoint-scoped privacy inspection does not acquire a second
-			// slot and deadlock four concurrent requests.
+			// A leftover inspection permit is owned by the source, not by
+			// each replayed attempt. Mark the attempt body as already
+			// permitted so privacy inspection does not take a second slot.
 			body = &metadataPermitBody{
 				ReadCloser: body,
 				release:    func() {},
@@ -745,6 +766,14 @@ func (source *requestBodySource) Next(ctx context.Context) (*http.Request, bool,
 	return cloned, true, nil
 }
 
+func (source *requestBodySource) releasePermit() {
+	if source == nil || source.release == nil {
+		return
+	}
+	source.release()
+	source.release = nil
+}
+
 func (source *requestBodySource) Close() {
 	if source == nil {
 		return
@@ -753,10 +782,7 @@ func (source *requestBodySource) Close() {
 		_ = source.first.Close()
 		source.first = nil
 	}
-	if source.release != nil {
-		source.release()
-		source.release = nil
-	}
+	source.releasePermit()
 }
 
 type joinedReadCloser struct {

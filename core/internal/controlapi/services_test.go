@@ -293,6 +293,33 @@ func newServiceHandler(t *testing.T, ids ...contract.ServiceID) (*sqlite.Store, 
 	return store, handler
 }
 
+func TestCreateServiceRejectsLocalConversionWhileEngineUnavailable(t *testing.T) {
+	_, handler := newServiceHandler(t, "service_convert")
+	response := serviceRequestForTest(
+		t, handler, http.MethodPost, ServicesPath, "application/json",
+		`{"name":"gw","kind":"newapi","http":{"base_url":"https://gateway.example/v1","auth":{"scheme":"none"}},"capabilities":[{"protocol":"anthropic.messages","mode":"native","streaming":true,"convert_to":"openai.chat"}]}`,
+		"",
+	)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "local conversion is unavailable") {
+		t.Fatalf("body=%s", response.Body.String())
+	}
+}
+
+func TestServiceRejectsDisabledModelsField(t *testing.T) {
+	_, handler := newServiceHandler(t, "service_bad_models")
+	response := serviceRequestForTest(
+		t, handler, http.MethodPost, ServicesPath, "application/json",
+		`{"name":"gw","kind":"newapi","disabled_models":["gpt-4o"],"http":{"base_url":"https://gateway.example/v1","auth":{"scheme":"none"}},"capabilities":[{"protocol":"openai.chat","mode":"native","streaming":true}]}`,
+		"",
+	)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func createServiceForTest(t *testing.T, handler http.Handler, body string) contract.Service {
 	t.Helper()
 	response := serviceRequestForTest(t, handler, http.MethodPost, ServicesPath, "application/json", body, "")

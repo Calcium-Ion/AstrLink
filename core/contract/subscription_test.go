@@ -134,3 +134,74 @@ func TestAuthorizationSessionValidateEnforcesFlowPayload(t *testing.T) {
 		t.Fatalf("Validate() rejected terminal session without instructions: %v", err)
 	}
 }
+
+func TestSubscriptionUsageValidateAcceptsSanitizedSnapshot(t *testing.T) {
+	t.Parallel()
+	windowSeconds := int64(18000)
+	resetAfter := int64(120)
+	resetAt := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	allowed := true
+	usage := contract.SubscriptionUsage{
+		ServiceID:             "service_codex_01",
+		FetchedAt:             time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC),
+		PlanType:              "plus",
+		Allowed:               &allowed,
+		Primary:               &contract.RateLimitWindow{UsedPercent: 34, LimitWindowSeconds: &windowSeconds, ResetAt: &resetAt, ResetAfterSeconds: &resetAfter},
+		Credits:               &contract.UsageCredits{HasCredits: false, Unlimited: false, Balance: "0"},
+		RateLimitResetCredits: &contract.RateLimitResetCredits{AvailableCount: 2},
+		AdditionalRateLimits: []contract.AdditionalRateLimit{{
+			LimitName:      "GPT-5.3-Codex-Spark",
+			MeteredFeature: "codex_bengalfox",
+			Primary:        &contract.RateLimitWindow{UsedPercent: 0, LimitWindowSeconds: &windowSeconds},
+		}},
+	}
+	if err := usage.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+}
+
+func TestSubscriptionUsageValidateRejectsPIIAndRangeErrors(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC)
+	valid := contract.SubscriptionUsage{ServiceID: "service_codex_01", FetchedAt: now, PlanType: "plus"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid usage: %v", err)
+	}
+
+	usage := valid
+	usage.PlanType = "user@example.com"
+	if err := usage.Validate(); err == nil {
+		t.Fatal("accepted email plan_type")
+	}
+
+	usage = valid
+	usage.Primary = &contract.RateLimitWindow{UsedPercent: -1}
+	if err := usage.Validate(); err == nil {
+		t.Fatal("accepted negative used_percent")
+	}
+
+	usage = valid
+	usage.AdditionalRateLimits = []contract.AdditionalRateLimit{{
+		LimitName: "Bearer sk-test-access-token-value-123456",
+	}}
+	if err := usage.Validate(); err == nil {
+		t.Fatal("accepted leaked limit_name")
+	}
+}
+
+func TestSubscriptionUsageResetValidateAcceptsOfficialOutcomes(t *testing.T) {
+	t.Parallel()
+	windows := int64(2)
+	result := contract.SubscriptionUsageReset{
+		ServiceID:    "service_codex_01",
+		Outcome:      contract.UsageResetOutcomeReset,
+		WindowsReset: &windows,
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+	result.Outcome = "full_reset"
+	if err := result.Validate(); err == nil {
+		t.Fatal("accepted unknown outcome")
+	}
+}

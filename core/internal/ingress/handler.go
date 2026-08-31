@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
+	"github.com/QuantumNous/astrlink/core/internal/autotext"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
@@ -59,6 +61,22 @@ type Dependencies struct {
 	AllowedHost              string
 	ResponseStartTimeout     time.Duration
 	ConversionEngine         relaykitbridge.ConversionEngine
+	// Classifier is optional. Missing, timeout, or empty text fail-open to
+	// an empty category so auto routes flatten every configured target.
+	Classifier Classifier
+	// MaxConcurrentInspections limits how many requests may parse and
+	// classify at once. Zero selects DefaultMaxConcurrentInspections.
+	MaxConcurrentInspections int
+}
+
+type Classifier interface {
+	Classify(context.Context, string) autoclassifier.Outcome
+}
+
+type ClassifierFunc func(context.Context, string) autoclassifier.Outcome
+
+func (function ClassifierFunc) Classify(ctx context.Context, text string) autoclassifier.Outcome {
+	return function(ctx, text)
 }
 
 type PolicyWarningReporter interface {
@@ -90,10 +108,34 @@ type Handler struct {
 	responseStartTimeout     time.Duration
 	metadataSlots            chan struct{}
 	conversionEngine         relaykitbridge.ConversionEngine
+	classifier               Classifier
 }
 
-const maxConcurrentMetadataInspections = 4
+const (
+	DefaultMaxConcurrentInspections = 16
+	MinMaxConcurrentInspections     = 4
+	MaxMaxConcurrentInspections     = 128
+)
+
 const defaultResponseStartTimeout = 60 * time.Second
+
+func metadataInspectionLimit(requested int) int {
+	if requested <= 0 {
+		return DefaultMaxConcurrentInspections
+	}
+	return requested
+}
+
+func ValidateMaxConcurrentInspections(n int) error {
+	if n < MinMaxConcurrentInspections || n > MaxMaxConcurrentInspections {
+		return fmt.Errorf(
+			"max concurrent inspections must be between %d and %d",
+			MinMaxConcurrentInspections,
+			MaxMaxConcurrentInspections,
+		)
+	}
+	return nil
+}
 
 const PolicyWarningHeader = "X-AstrLink-Policy-Warning"
 
@@ -155,8 +197,9 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		recordLogger:          dependencies.RecordLogger,
 		allowedHost:           dependencies.AllowedHost,
 		responseStartTimeout:  dependencies.ResponseStartTimeout,
-		metadataSlots:         make(chan struct{}, maxConcurrentMetadataInspections),
+		metadataSlots:         make(chan struct{}, metadataInspectionLimit(dependencies.MaxConcurrentInspections)),
 		conversionEngine:      dependencies.ConversionEngine,
+		classifier:            dependencies.Classifier,
 	}
 }
 
@@ -173,45 +216,30 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if errors.Is(err, errProtocolPathNotFound) {
-		writeInferenceError(writer, http.StatusNotFound, "not_found", "inference endpoint not found", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusNotFound, "not_found", "inference endpoint not found", false, nil)
 		return
 	}
 	var methodErr methodNotAllowedError
 	if errors.As(err, &methodErr) {
 		writer.Header().Set("Allow", methodErr.allow)
-		writeInferenceError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed for this inference endpoint", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed for this inference endpoint", false, nil)
 		return
 	}
 	if errors.Is(err, errMetadataTooLarge) {
-		writeInferenceError(writer, http.StatusRequestEntityTooLarge, "request_too_large", "request metadata exceeds the inspection limit", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusRequestEntityTooLarge, "request_too_large", "request metadata exceeds the inspection limit", false, nil)
 		return
 	}
 	if errors.Is(err, errUnsupportedContentEncoding) {
-		writeInferenceError(writer, http.StatusUnsupportedMediaType, "unsupported_content_encoding", "encoded inference request bodies are not supported", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusUnsupportedMediaType, "unsupported_content_encoding", "encoded inference request bodies are not supported", false, nil)
 		return
 	}
 	if err != nil {
-		writeInferenceError(writer, http.StatusBadRequest, "invalid_request", "request metadata could not be identified", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusBadRequest, "invalid_request", "request metadata could not be identified", false, nil)
 		return
 	}
 
-	accessTokenID, _ := AccessTokenIDFromContext(request.Context())
-	auditSettings := contract.DefaultAuditSettings()
-	if handler.auditSettings != nil {
-		if loaded, err := handler.auditSettings.GetAuditSettings(request.Context()); err != nil {
-			if handler.recordLogger != nil {
-				handler.recordLogger("audit settings load failed: %v", err)
-			}
-		} else {
-			auditSettings = loaded
-		}
-	}
-	session := newRecordSession(classified, accessTokenID, auditSettings)
-	// Snapshot the redacted HTTP envelope before any privacy or routing
-	// rewrite mutates the request (ADR 0008).
-	session.captureHTTPRequestMeta(request)
+	session := handler.startRecordSession(request, classified)
 	session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
-	session.attachRequestCapture(request)
 	outWriter := session.wrap(writer)
 	request = request.WithContext(withRecordSession(request.Context(), session))
 	defer func() {
@@ -223,7 +251,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}()
 
 	candidates, err := handler.resolveCandidates(request.Context(), endpoint.ResolveRequest{
-		Protocol: classified.Protocol, Model: classified.Model, Streaming: classified.Streaming,
+		Protocol:  classified.Protocol,
+		Model:     classified.Model,
+		Streaming: classified.Streaming,
+		Category:  handler.autoCategory(request.Context(), classified),
 	})
 	if err != nil {
 		handler.writeResolveError(outWriter, request, classified, err)
@@ -238,16 +269,24 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 
 var errPrivacyBlocked = errors.New("privacy policy blocked request")
 
+// privacyOutcome carries what the response path needs from the request-side
+// decision: the mapping to reverse and how far restoration may reach.
+type privacyOutcome struct {
+	redactions    []privacy.Redaction
+	toolArguments bool
+}
+
 func (handler *Handler) applyPrivacy(
 	writer http.ResponseWriter,
 	request *http.Request,
 	classified Request,
 	endpointID contract.ServiceID,
-) (func(), []privacy.Redaction, error) {
+) (func(), privacyOutcome, error) {
 	session := recordSessionFromContext(request.Context())
 	session.beginPrivacyAttempt()
 	if handler.privacyFilter == nil {
-		return func() {}, nil, nil
+		session.notePrivacyDecision("allow", contract.RequestStatusSucceeded)
+		return func() {}, privacyOutcome{}, nil
 	}
 	accessTokenID, _ := AccessTokenIDFromContext(request.Context())
 	policy, err := handler.privacyFilter.ResolvePolicy(request.Context(), privacy.Scope{
@@ -257,21 +296,22 @@ func (handler *Handler) applyPrivacy(
 		AccessTokenID: accessTokenID,
 	})
 	if err != nil {
-		return func() {}, nil, err
+		return func() {}, privacyOutcome{}, err
 	}
 	if !policy.Enabled {
 		// This branch deliberately does not read, replace, or otherwise touch
 		// request.Body. Disabled policy preserves the original byte path.
-		return func() {}, nil, nil
+		session.notePrivacyDecision("allow", contract.RequestStatusSucceeded)
+		return func() {}, privacyOutcome{}, nil
 	}
 	encoding := strings.ToLower(strings.TrimSpace(request.Header.Get("Content-Encoding")))
 	if encoding != "" && encoding != "identity" {
-		return func() {}, nil, errUnsupportedContentEncoding
+		return func() {}, privacyOutcome{}, errUnsupportedContentEncoding
 	}
 
 	body, buffered, err := handler.bufferPrivacyBody(request)
 	if err != nil {
-		return func() {}, nil, err
+		return func() {}, privacyOutcome{}, err
 	}
 	finish := func() {}
 	if buffered != nil {
@@ -284,11 +324,12 @@ func (handler *Handler) applyPrivacy(
 		body,
 	)
 	if err != nil {
-		return finish, nil, err
+		return finish, privacyOutcome{}, err
 	}
 	switch result.Decision {
 	case privacy.DecisionAllow:
-		return finish, nil, nil
+		session.notePrivacyDecision("allow", contract.RequestStatusSucceeded)
+		return finish, privacyOutcome{}, nil
 	case privacy.DecisionWarn:
 		// This is a response-only signal. Never add it to request.Header, where
 		// it could cross the upstream boundary.
@@ -301,36 +342,43 @@ func (handler *Handler) applyPrivacy(
 				summary,
 			)
 		}
-		return finish, nil, nil
+		session.notePrivacyDecision("warn", contract.RequestStatusSucceeded)
+		return finish, privacyOutcome{}, nil
 	case privacy.DecisionBlock:
-		return finish, nil, errPrivacyBlocked
+		session.notePrivacyDecision("block", contract.RequestStatusBlocked)
+		return finish, privacyOutcome{}, errPrivacyBlocked
 	case privacy.DecisionRedact:
 		if buffered == nil || len(result.Body) > maxMetadataBytes {
-			return finish, nil, privacy.ErrUnsafeRewrite
+			return finish, privacyOutcome{}, privacy.ErrUnsafeRewrite
 		}
 		buffered.Replace(result.Body)
+		mappingCount := uniqueRedactionMappingCount(result.Redactions)
 		session.notePrivacyMapping(
 			policy.ResponseRestore,
-			uniqueRedactionMappingCount(result.Redactions),
+			mappingCount,
+			privacyHitCounts(result.Redactions),
+		)
+		session.notePrivacyDecision(
+			privacyDecisionSummary(mappingCount, result.NoticeInjected),
+			contract.RequestStatusSucceeded,
 		)
 		if !policy.ResponseRestore || len(result.Redactions) == 0 {
-			return finish, nil, nil
+			return finish, privacyOutcome{}, nil
 		}
-		return finish, result.Redactions, nil
+		return finish, privacyOutcome{
+			redactions:    result.Redactions,
+			toolArguments: policy.RestoreToolArguments,
+		}, nil
 	default:
-		return finish, nil, privacy.ErrPolicyUnavailable
+		return finish, privacyOutcome{}, privacy.ErrPolicyUnavailable
 	}
 }
 
-func uniqueRedactionMappingCount(redactions []privacy.Redaction) int {
-	seen := make(map[string]struct{}, len(redactions))
-	for _, redaction := range redactions {
-		if redaction.Placeholder == "" {
-			continue
-		}
-		seen[redaction.Placeholder] = struct{}{}
+func privacyDecisionSummary(mappingCount int, noticeInjected bool) string {
+	if noticeInjected {
+		return fmt.Sprintf("redact · %d · notice", mappingCount)
 	}
-	return len(seen)
+	return fmt.Sprintf("redact · %d", mappingCount)
 }
 
 func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *http.Request, err error) {
@@ -340,17 +388,21 @@ func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *h
 		return
 	case errors.Is(err, errMetadataTooLarge):
 		writeInferenceError(writer, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the inspection limit", false, nil)
+		session.notePrivacyDecision("request_too_large", contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("request_too_large", "request body exceeds the inspection limit", false))
 	case errors.Is(err, errUnsupportedContentEncoding):
 		writeInferenceError(writer, http.StatusUnsupportedMediaType, "unsupported_content_encoding", "encoded inference request bodies cannot be inspected safely", false, nil)
+		session.notePrivacyDecision("unsupported_content_encoding", contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("unsupported_content_encoding", "encoded inference request bodies cannot be inspected safely", false))
 	case errors.Is(err, privacy.ErrPolicyUnavailable):
 		writeInferenceError(writer, http.StatusServiceUnavailable, "privacy_policy_unavailable", "privacy policy could not be resolved", true, nil)
+		session.notePrivacyDecision("privacy_policy_unavailable", contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("privacy_policy_unavailable", "privacy policy could not be resolved", true))
 	case errors.Is(err, privacy.ErrDetectorUnavailable),
 		errors.Is(err, privacy.ErrDetectorLimit),
 		errors.Is(err, privacy.ErrDetectorTimeout):
 		writeInferenceError(writer, http.StatusServiceUnavailable, "safety_engine_unavailable", "local safety engine is unavailable", true, nil)
+		session.notePrivacyDecision("safety_engine_unavailable", contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("safety_engine_unavailable", "local safety engine is unavailable", true))
 	case errors.Is(err, errPrivacyBlocked),
 		errors.Is(err, privacy.ErrUnsafeInput),
@@ -359,6 +411,7 @@ func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *h
 		session.noteBlocked(errorSummaryFromInference("policy_blocked", "request was blocked by local privacy policy", false))
 	default:
 		writeInferenceError(writer, http.StatusServiceUnavailable, "safety_engine_unavailable", "local safety engine is unavailable", true, nil)
+		session.notePrivacyDecision("safety_engine_unavailable", contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("safety_engine_unavailable", "local safety engine is unavailable", true))
 	}
 }
@@ -402,9 +455,11 @@ func (handler *Handler) bufferPrivacyBody(request *http.Request) ([]byte, *priva
 	buffered := &privacyBufferedBody{request: request}
 	buffered.current = &metadataPermitBody{
 		ReadCloser: io.NopCloser(bytes.NewReader(body)),
-		release:    release,
 	}
 	request.Body = buffered.current
+	// The body is already in memory. Free the inspection slot before
+	// Detect/forward so concurrent streams are not limited by the inspect cap.
+	release()
 	return body, buffered, nil
 }
 
@@ -445,28 +500,28 @@ func (body *privacyBufferedBody) Close() {
 
 func (handler *Handler) allowInferenceBoundary(writer http.ResponseWriter, request *http.Request) bool {
 	if hasBrowserOrigin(request.Header) {
-		writeInferenceError(writer, http.StatusForbidden, "origin_forbidden", "browser origins cannot call the inference plane", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusForbidden, "origin_forbidden", "browser origins cannot call the inference plane", false, nil)
 		return false
 	}
 	if handler.allowedHost != "" && request.Host != handler.allowedHost {
-		writeInferenceError(writer, http.StatusMisdirectedRequest, "host_forbidden", "request Host does not match the inference listener", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusMisdirectedRequest, "host_forbidden", "request Host does not match the inference listener", false, nil)
 		return false
 	}
 	if handler.accessTokenAuthenticator != nil {
 		if request.URL.Query().Has("key") || request.URL.Query().Has("api_key") || request.URL.Query().Has("access_token") {
-			writeInferenceError(writer, http.StatusUnauthorized, "token_query_forbidden", "local access tokens are not accepted in query parameters", false, nil)
+			handler.writeRecordedInferenceError(writer, request, http.StatusUnauthorized, "token_query_forbidden", "local access tokens are not accepted in query parameters", false, nil)
 			return false
 		}
 		token, ok := localClientCredential(request.Header)
 		if !ok {
 			writer.Header().Set("WWW-Authenticate", `Bearer realm="astrlink-inference"`)
-			writeInferenceError(writer, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required", false, nil)
+			handler.writeRecordedInferenceError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required", false, nil)
 			return false
 		}
 		tokenID, err := handler.accessTokenAuthenticator.AuthenticateAccessToken(request.Context(), token)
 		if err != nil || tokenID == "" {
 			writer.Header().Set("WWW-Authenticate", `Bearer realm="astrlink-inference"`)
-			writeInferenceError(writer, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required", false, nil)
+			handler.writeRecordedInferenceError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required", false, nil)
 			return false
 		}
 		*request = *request.WithContext(context.WithValue(request.Context(), accessTokenIDContextKey{}, tokenID))
@@ -481,10 +536,62 @@ func (handler *Handler) allowInferenceBoundary(writer http.ResponseWriter, reque
 	}
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil || mediaType != "application/json" {
-		writeInferenceError(writer, http.StatusUnsupportedMediaType, "unsupported_media_type", "inference request bodies must use application/json", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusUnsupportedMediaType, "unsupported_media_type", "inference request bodies must use application/json", false, nil)
 		return false
 	}
 	return true
+}
+
+func (handler *Handler) loadAuditSettings(ctx context.Context) contract.AuditSettings {
+	settings := contract.DefaultAuditSettings()
+	if handler.auditSettings == nil {
+		return settings
+	}
+	loaded, err := handler.auditSettings.GetAuditSettings(ctx)
+	if err != nil {
+		if handler.recordLogger != nil {
+			handler.recordLogger("audit settings load failed: %v", err)
+		}
+		return settings
+	}
+	return loaded
+}
+
+func (handler *Handler) startRecordSession(request *http.Request, classified Request) *recordSession {
+	accessTokenID, _ := AccessTokenIDFromContext(request.Context())
+	session := newRecordSession(classified, accessTokenID, handler.loadAuditSettings(request.Context()))
+	session.resolveSession(request.Context(), handler.requestRecords)
+	// Snapshot the redacted HTTP envelope before any privacy or routing
+	// rewrite mutates the request (ADR 0008).
+	session.captureHTTPRequestMeta(request)
+	session.attachRequestCapture(request)
+	return session
+}
+
+// writeRecordedInferenceError writes a local inference-plane error and, when
+// the path maps to a known protocol, persists a failed request record so
+// boundary failures such as invalid_access_token appear in the operator list.
+func (handler *Handler) writeRecordedInferenceError(
+	writer http.ResponseWriter,
+	request *http.Request,
+	status int,
+	code, message string,
+	retryable bool,
+	details []errorDetail,
+) {
+	classified, ok := classifyFromPath(request)
+	if !ok {
+		writeInferenceError(writer, status, code, message, retryable, details)
+		return
+	}
+	session := handler.startRecordSession(request, classified)
+	writeInferenceError(session.wrap(writer), status, code, message, retryable, details)
+	if request.Context().Err() != nil {
+		session.noteCancelled()
+	} else {
+		session.noteFailed(errorSummaryFromInference(code, message, retryable))
+	}
+	session.finish(context.Background(), handler.requestRecords, handler.auditBlobs, handler.recordLogger)
 }
 
 func hasBrowserOrigin(header http.Header) bool {
@@ -512,44 +619,56 @@ func localClientCredential(header http.Header) (string, bool) {
 			credentials = append(credentials, values[0])
 		}
 	}
-	if len(credentials) != 1 || credentials[0] == "" {
+	if len(credentials) == 0 || credentials[0] == "" {
 		return "", false
+	}
+	// Anthropic-compatible clients (Cherry Studio, official SDK) commonly send
+	// the same token as both Authorization and X-Api-Key. That is one
+	// credential, not an ambiguous pair. Differing values stay rejected.
+	for _, credential := range credentials[1:] {
+		if credential != credentials[0] {
+			return "", false
+		}
 	}
 	return credentials[0], true
 }
 
-func (handler *Handler) classify(request *http.Request) (Request, func(), error) {
-	select {
-	case handler.metadataSlots <- struct{}{}:
-		var once sync.Once
-		release := func() {
-			once.Do(func() { <-handler.metadataSlots })
-		}
-		classified, err := classify(request)
-		if err != nil {
-			if replay, buffered := request.Body.(*replayReadCloser); buffered {
-				_ = replay.Close()
-			}
-			release()
-			return Request{}, func() {}, err
-		}
-		if _, buffered := request.Body.(*replayReadCloser); !buffered {
-			release()
-			return classified, func() {}, nil
-		}
-		body := &metadataPermitBody{ReadCloser: request.Body, release: release}
-		request.Body = body
-		return classified, func() {
-			_ = body.Close()
-		}, nil
-	case <-request.Context().Done():
-		return Request{}, func() {}, request.Context().Err()
+func (handler *Handler) autoCategory(ctx context.Context, classified Request) string {
+	if classified.Model != contract.AstrLinkAutoModelID {
+		return ""
 	}
+	if handler.classifier == nil || autotext.IsBlank(classified.lastUserText) {
+		return ""
+	}
+	outcome := handler.classifier.Classify(ctx, classified.lastUserText)
+	if !outcome.OK() {
+		return ""
+	}
+	return outcome.Category
 }
 
-// metadataPermitBody keeps the inspection permit until the replay buffer is
-// consumed or closed. This bounds resident replay memory across slow endpoint
-// resolution and upstream work, rather than only bounding concurrent parsing.
+func (handler *Handler) classify(request *http.Request) (Request, func(), error) {
+	release, err := handler.acquireMetadataPermit(request.Context())
+	if err != nil {
+		return Request{}, func() {}, err
+	}
+	classified, classifyErr := classify(request)
+	if classifyErr != nil {
+		if replay, buffered := request.Body.(*replayReadCloser); buffered {
+			_ = replay.Close()
+		}
+		release()
+		return Request{}, func() {}, classifyErr
+	}
+	// Inspection is done. Holding the slot through resolve + upstream
+	// streaming caps the whole gateway at four in-flight AI requests.
+	release()
+	return classified, func() {}, nil
+}
+
+// metadataPermitBody keeps an inspection permit until the body is consumed,
+// closed, or the caller transfers/releases it. The permit only bounds
+// concurrent parse/inspect work, not in-flight upstream streams.
 type metadataPermitBody struct {
 	io.ReadCloser
 	releaseMu sync.Mutex

@@ -1,3 +1,4 @@
+import { i18n } from "./i18n";
 import type {
   AuditContent,
   AuditContentPart,
@@ -6,10 +7,27 @@ import type {
 } from "./request-record-model";
 import { statusLabel } from "./request-record-model";
 
+export type BundleFormat = "markdown" | "txt";
+
 export interface RecordBundleOptions {
   includeBodies?: boolean;
   /** Human-readable service name resolved by the caller. */
   serviceLabel?: string | null;
+  format?: BundleFormat;
+}
+
+export function bundleFilename(recordId: string, format: BundleFormat): string {
+  const ext = format === "markdown" ? "md" : "txt";
+  const safe = recordId.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return `astrlink-${safe || "record"}.${ext}`;
+}
+
+function heading(title: string, level: 1 | 2, format: BundleFormat): string {
+  return format === "txt" ? title : `${"#".repeat(level)} ${title}`;
+}
+
+function bullet(text: string, format: BundleFormat): string {
+  return format === "txt" ? text : `- ${text}`;
 }
 
 /**
@@ -43,39 +61,51 @@ function fenceLanguage(mediaType: string): string {
   return mediaType.toLowerCase().includes("json") ? "json" : "";
 }
 
-function partSection(title: string, part: AuditContentPart | null): string[] {
-  const lines = [`## ${title}`];
+function partSection(
+  title: string,
+  part: AuditContentPart | null,
+  format: BundleFormat,
+): string[] {
+  const lines = [heading(title, 2, format)];
   if (part === null) {
-    lines.push("（未捕获）");
+    lines.push(i18n.t("audit.uncaptured"));
     return lines;
   }
   const meta = [`${part.media_type} · ${formatBytes(part.captured_bytes)}`];
   if (part.truncated) {
     // An LLM given a truncated body without notice will confidently reason
     // about bytes that were never captured — always flag it inline.
-    meta.push("⚠️ 已截断（超出捕获上限，以下内容不完整）");
+    meta.push(i18n.t("audit.truncatedNote"));
   }
-  lines.push(meta.join(" · "), "", fence(part.content, fenceLanguage(part.media_type)));
+  const body =
+    format === "txt"
+      ? part.content
+      : fence(part.content, fenceLanguage(part.media_type));
+  lines.push(meta.join(" · "), "", body);
   return lines;
 }
 
-function httpSection(title: string, meta: NonNullable<AuditContent["http_meta"]> | null): string[] {
+function httpSection(
+  title: string,
+  meta: NonNullable<AuditContent["http_meta"]> | null,
+  format: BundleFormat,
+): string[] {
   if (meta === null) {
-    return ["", `## ${title}`, "（此记录未捕获 HTTP 元数据）"];
+    return ["", heading(title, 2, format), i18n.t("audit.noHttp")];
   }
   const lines = [
     "",
-    `## ${title} 请求`,
+    heading(i18n.t("audit.requestTitle", { title }), 2, format),
     `${meta.method} ${meta.url} ${meta.http_version}`.trim(),
   ];
   if (meta.request_headers.length > 0) {
     lines.push("", buildHeadersText(meta.request_headers));
   }
-  lines.push("", `## ${title} 响应`);
+  lines.push("", heading(i18n.t("audit.responseTitle", { title }), 2, format));
   lines.push(
     meta.response_status !== null
       ? `HTTP ${meta.response_status}`
-      : "（无响应状态）",
+      : i18n.t("audit.noStatus"),
   );
   if (meta.response_headers.length > 0) {
     lines.push("", buildHeadersText(meta.response_headers));
@@ -89,67 +119,176 @@ export function buildRecordBundle(
   options: RecordBundleOptions = {},
 ): string {
   const includeBodies = options.includeBodies !== false;
-  const lines: string[] = [`# AstrLink 请求记录 ${record.id}`, ""];
+  const format = options.format ?? "markdown";
+  const lines: string[] = [
+    heading(i18n.t("audit.bundleTitle", { id: record.id }), 1, format),
+    "",
+  ];
   const isChild = record.parent_request_id !== null;
 
   const time = record.completed_at
     ? `${record.started_at} → ${record.completed_at}`
     : record.started_at;
   const latency =
-    record.latency_ms !== null ? `（${record.latency_ms} ms）` : "";
-  lines.push(`- 时间: ${time}${latency}`);
+    record.latency_ms !== null
+      ? i18n.t("audit.latencyPart", { ms: record.latency_ms })
+      : "";
+  lines.push(bullet(i18n.t("audit.timeLine", { time, latency }), format));
   const httpStatus =
-    record.http_status !== null ? ` · HTTP ${record.http_status}` : "";
-  lines.push(`- 状态: ${statusLabel(record.status)}${httpStatus}`);
+    record.http_status !== null
+      ? i18n.t("audit.httpPart", { status: record.http_status })
+      : "";
   lines.push(
-    `- 协议: ${record.input_protocol} · 模型: ${record.requested_model ?? "（未知）"} · 流式: ${record.streaming ? "是" : "否"}`,
+    bullet(
+      i18n.t("audit.statusLine", {
+        status: statusLabel(record.status),
+        http: httpStatus,
+      }),
+      format,
+    ),
   );
   lines.push(
-    `- 尝试序号: ${record.attempt_index === 0 ? "未到达上游" : record.attempt_index}` +
-      (isChild
-        ? ` · 父记录: ${record.parent_request_id}`
-        : ` · 重试子记录: ${record.child_count}`),
+    bullet(
+      i18n.t("audit.protocolLine", {
+        protocol: record.input_protocol,
+        model: record.requested_model ?? i18n.t("audit.unknownModel"),
+        streaming: record.streaming ? i18n.t("common.yes") : i18n.t("common.no"),
+      }),
+      format,
+    ),
   );
-  const service = options.serviceLabel ?? record.service_id ?? "（未路由）";
-  const route = record.route_id ? ` · 路由: ${record.route_id}` : "";
-  lines.push(`- 服务: ${service}${route}`);
+  lines.push(
+    bullet(
+      i18n.t("audit.attemptLine", {
+        attempt:
+          record.attempt_index === 0
+            ? i18n.t("records.neverReachedUpstream")
+            : record.attempt_index,
+      }) +
+        (isChild
+          ? i18n.t("audit.parentLine", { id: record.parent_request_id })
+          : i18n.t("audit.childrenLine", { count: record.child_count })),
+      format,
+    ),
+  );
+  const service = options.serviceLabel ?? record.service_id ?? i18n.t("audit.unrouted");
+  const route = record.route_id
+    ? i18n.t("audit.routeLine", { id: record.route_id })
+    : "";
+  lines.push(bullet(i18n.t("audit.serviceLine", { service, route }), format));
   if (record.usage) {
+    const cacheParts: string[] = [];
+    if (record.usage.cache_read_tokens !== undefined) {
+      cacheParts.push(
+        i18n.t("audit.cacheReadPart", { count: record.usage.cache_read_tokens }),
+      );
+    }
+    if (record.usage.cache_write_tokens !== undefined) {
+      cacheParts.push(
+        i18n.t("audit.cacheWritePart", {
+          count: record.usage.cache_write_tokens,
+        }),
+      );
+    }
     const cached =
-      record.usage.cached_input_tokens !== undefined
-        ? `（缓存命中 ${record.usage.cached_input_tokens}）`
+      cacheParts.length > 0
+        ? i18n.t("audit.cachedPart", { parts: cacheParts.join(" / ") })
         : "";
     lines.push(
-      `- Token: 输入 ${record.usage.input_tokens} / 输出 ${record.usage.output_tokens} / 总计 ${record.usage.total_tokens}${cached}`,
+      bullet(
+        i18n.t("audit.tokenLine", {
+          input: record.usage.input_tokens,
+          output: record.usage.output_tokens,
+          total: record.usage.total_tokens,
+          cached,
+        }),
+        format,
+      ),
     );
   }
   if (record.privacy_restore) {
     const restore = record.privacy_restore;
     lines.push(
-      `- 隐私还原: ${restore.enabled ? "已开启" : "已关闭"} · 映射 ${restore.mapping_count} · 已还原 ${restore.restored_count} · 安全降级 ${restore.fallback_count}`,
+      bullet(
+        i18n.t("audit.restoreLine", {
+          enabled: restore.enabled
+            ? i18n.t("records.on")
+            : i18n.t("records.off"),
+          mappings: restore.mapping_count,
+          restored: restore.restored_count,
+          fallback: restore.fallback_count,
+        }),
+        format,
+      ),
     );
   }
 
   if (record.error) {
     lines.push(
       "",
-      "## 错误",
-      `- 类别: ${record.error.category} · 代码: ${record.error.code} · 可重试: ${record.error.retryable ? "是" : "否"}`,
-      `- 消息: ${record.error.message}`,
+      heading(i18n.t("records.error"), 2, format),
+      bullet(
+        i18n.t("audit.errorLine", {
+          category: record.error.category,
+          code: record.error.code,
+          retryable: record.error.retryable
+            ? i18n.t("common.yes")
+            : i18n.t("common.no"),
+        }),
+        format,
+      ),
+      bullet(i18n.t("audit.errorMessage", { message: record.error.message }), format),
     );
   }
 
   if (!isChild) {
-    lines.push(...httpSection("客户端 HTTP", content?.http_meta ?? null));
+    lines.push(
+      ...httpSection(i18n.t("records.clientHttp"), content?.http_meta ?? null, format),
+    );
   }
-  lines.push(...httpSection("上游 HTTP", content?.upstream_http_meta ?? null));
+  lines.push(
+    ...httpSection(
+      i18n.t("records.upstreamHttp"),
+      content?.upstream_http_meta ?? null,
+      format,
+    ),
+  );
 
   if (includeBodies) {
     if (!isChild) {
-      lines.push("", ...partSection("客户端请求体", content?.request_body ?? null));
-      lines.push("", ...partSection("客户端响应内容", content?.response_content ?? null));
+      lines.push(
+        "",
+        ...partSection(
+          i18n.t("records.clientBody"),
+          content?.request_body ?? null,
+          format,
+        ),
+      );
+      lines.push(
+        "",
+        ...partSection(
+          i18n.t("records.clientResponseContent"),
+          content?.response_content ?? null,
+          format,
+        ),
+      );
     }
-    lines.push("", ...partSection("上游请求体", content?.upstream_request_body ?? null));
-    lines.push("", ...partSection("上游响应内容", content?.upstream_response_content ?? null));
+    lines.push(
+      "",
+      ...partSection(
+        i18n.t("records.upstreamBody"),
+        content?.upstream_request_body ?? null,
+        format,
+      ),
+    );
+    lines.push(
+      "",
+      ...partSection(
+        i18n.t("records.upstreamResponseContent"),
+        content?.upstream_response_content ?? null,
+        format,
+      ),
+    );
   }
 
   return lines.join("\n");

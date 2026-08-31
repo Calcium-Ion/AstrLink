@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridgeMocks = vi.hoisted(() => ({
   createAccessToken: vi.fn(),
   deleteAccessToken: vi.fn(),
+  listRequestRecords: vi.fn(),
   revealAccessToken: vi.fn(),
 }));
 
@@ -22,7 +23,6 @@ const firstToken: AccessTokenSummary = {
   id: "token_01",
   name: "VS Code",
   hint: "astr_…K8Q2",
-  source: "user",
   created_at: "2026-07-24T10:30:00Z",
 };
 
@@ -30,7 +30,6 @@ const secondToken: AccessTokenSummary = {
   id: "token_02",
   name: "Terminal",
   hint: "astr_…7HT4",
-  source: "system_default",
   created_at: "2026-07-24T10:31:00Z",
 };
 
@@ -93,6 +92,10 @@ describe("AccessTokenManager", () => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    bridgeMocks.listRequestRecords.mockResolvedValue({
+      items: [],
+      next_cursor: null,
     });
     container = document.createElement("div");
     document.body.append(container);
@@ -327,14 +330,70 @@ describe("AccessTokenManager", () => {
     expect(container.querySelector('[data-testid="access-token-row"]')).toBeNull();
   });
 
-  it("renders usage placeholders without starting any usage request", async () => {
+  it("loads today and lifetime token totals from request records", async () => {
+    bridgeMocks.listRequestRecords.mockImplementation(
+      async (query: { local_access_token_id?: string; from?: string }) => {
+        const total = query.from ? 30 : 90;
+        return {
+          items: [
+            {
+              id: "req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              parent_request_id: null,
+              attempt_index: 1,
+              child_count: 0,
+              started_at: "2026-07-25T10:00:00Z",
+              completed_at: "2026-07-25T10:00:01Z",
+              status: "succeeded",
+              input_protocol: "openai.chat",
+              requested_model: null,
+              streaming: false,
+              route_id: null,
+              service_id: null,
+              local_access_token_id: query.local_access_token_id ?? null,
+              http_status: 200,
+              latency_ms: 10,
+              usage: {
+                input_tokens: total,
+                output_tokens: 0,
+                total_tokens: total,
+              },
+              error: null,
+              audit: {
+                request_body_captured: false,
+                response_content_captured: false,
+                request_body_truncated: false,
+                response_content_truncated: false,
+                upstream_request_body_captured: false,
+                upstream_response_content_captured: false,
+                upstream_request_body_truncated: false,
+                upstream_response_content_truncated: false,
+              },
+              privacy_restore: null,
+              session_id: null,
+              previous_response_id: null,
+              output_response_id: null,
+              input_preview: null,
+              events: [],
+            },
+          ],
+          next_cursor: null,
+        };
+      },
+    );
+
     await renderManager(readyCatalog([firstToken]));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
     const tokenRow = row(firstToken.name);
-    expect(tokenRow.textContent).toContain("今日 Token—");
-    expect(tokenRow.textContent).toContain("累计 Token—");
-    expect(container.textContent).not.toContain("统计待接入");
-    expect(bridgeMocks.createAccessToken).not.toHaveBeenCalled();
-    expect(bridgeMocks.revealAccessToken).not.toHaveBeenCalled();
-    expect(bridgeMocks.deleteAccessToken).not.toHaveBeenCalled();
+    expect(tokenRow.textContent).toContain("今日 Token30");
+    expect(tokenRow.textContent).toContain("累计 Token90");
+    expect(bridgeMocks.listRequestRecords).toHaveBeenCalled();
+    expect(bridgeMocks.listRequestRecords.mock.calls[0]?.[0]).toMatchObject({
+      local_access_token_id: firstToken.id,
+      limit: 200,
+    });
   });
 });

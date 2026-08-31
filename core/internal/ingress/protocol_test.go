@@ -29,6 +29,7 @@ func TestClassifyAlphaProtocolRoutes(t *testing.T) {
 		{name: "completions", method: http.MethodPost, path: "/v1/completions", body: `{"model":"legacy"}`, protocol: contract.ProtocolOpenAICompletions, model: "legacy"},
 		{name: "openai models", method: http.MethodGet, path: "/v1/models", protocol: contract.ProtocolOpenAIModels},
 		{name: "gemini generate", method: http.MethodPost, path: "/v1beta/models/gemini-2.5-pro:generateContent", body: `{}`, protocol: contract.ProtocolGoogleGenerateContent, model: "gemini-2.5-pro"},
+		{name: "gemini auto", method: http.MethodPost, path: "/v1beta/models/astrlink/auto:generateContent", body: `{"contents":[{"parts":[{"text":"hello"}]}]}`, protocol: contract.ProtocolGoogleGenerateContent, model: contract.AstrLinkAutoModelID},
 		{name: "gemini stream", method: http.MethodPost, path: "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse", body: `{}`, protocol: contract.ProtocolGoogleGenerateContent, model: "gemini-2.5-flash", streaming: true},
 		{name: "google models", method: http.MethodGet, path: "/v1beta/models?pageSize=20", protocol: contract.ProtocolGoogleModels},
 	}
@@ -51,6 +52,28 @@ func TestClassifyAlphaProtocolRoutes(t *testing.T) {
 				t.Fatalf("body = %q, want exact %q", preserved, test.body)
 			}
 		})
+	}
+}
+
+func TestClassifyFromPathDoesNotReadTheBody(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/responses",
+		strings.NewReader(`{"model":"gpt-5","stream":true}`),
+	)
+	got, ok := classifyFromPath(request)
+	if !ok || got.Protocol != contract.ProtocolOpenAIResponses || got.Model != "" || got.Streaming {
+		t.Fatalf("classifyFromPath = %#v ok=%t", got, ok)
+	}
+	preserved, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(preserved) != `{"model":"gpt-5","stream":true}` {
+		t.Fatalf("body was consumed: %q", preserved)
+	}
+	if _, ok := classifyFromPath(httptest.NewRequest(http.MethodPost, "/v1/embeddings", nil)); ok {
+		t.Fatal("unknown path should not classify")
 	}
 }
 

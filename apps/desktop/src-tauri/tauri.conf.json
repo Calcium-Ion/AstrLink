@@ -34,7 +34,9 @@
     "category": "DeveloperTool",
     "externalBin": [
       "binaries/astrlink-core",
-      "binaries/astrlink-privacy-worker"
+      "binaries/astrlink-privacy-worker",
+      "binaries/astrlink-classifier-worker",
+      "binaries/astrlink-mcp"
     ],
     "resources": {
       "binaries/onnxruntime-1.23.2-LICENSE.txt": "notices/onnxruntime-1.23.2/LICENSE.txt",

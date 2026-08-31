@@ -125,6 +125,22 @@ func TestExecuteCandidatesDemotesFailedAttemptsIntoIndependentChildren(t *testin
 	if !indexes[1] || !indexes[2] {
 		t.Fatalf("child attempt indexes=%v", indexes)
 	}
+	if root.SessionID == nil {
+		t.Fatal("root missing session id")
+	}
+	for _, child := range children {
+		if child.SessionID == nil || *child.SessionID != *root.SessionID {
+			t.Fatalf("child session=%v root=%v", child.SessionID, root.SessionID)
+		}
+		if len(child.Events) == 0 {
+			t.Fatal("child missing attempt events")
+		}
+		for _, event := range child.Events {
+			if event.AttemptIndex != child.AttemptIndex {
+				t.Fatalf("child event attempt=%d child=%d", event.AttemptIndex, child.AttemptIndex)
+			}
+		}
+	}
 
 	plainByRecord := make(map[contract.RequestID]map[storage.AuditDirection][]byte)
 	for _, blob := range blobs.blobs {

@@ -1,0 +1,42 @@
+{
+  "model_onnx_sha256": "f08f74702e1443b8cc8510f9efb7158827d763b5bd469cc3478a7188a394ffba",
+  "runtime": "onnxruntime-1.28.0-CPUExecutionProvider",
+  "notes": [
+    "These five samples all predict general. They verify numeric alignment only.",
+    "Golden logits were generated on ORT 1.28.0. ORT 1.23.2 comparison is a gate, not a claim.",
+    "Each call is independent batch=1, right-padded to a multiple of 8."
+  ],
+  "absolute_tolerance": 0.01,
+  "samples": [
+    {
+      "text": "Explain what a database index is.",
+      "input_ids": [36576, 1212, 476, 8746, 3921, 603, 235265, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 0],
+      "logits": [3.2921414, -2.3803587, -2.2404652, -2.0588861]
+    },
+    {
+      "text": "Search for and verify current reliability evidence, then summarize the trade-offs.",
+      "input_ids": [10552, 604, 578, 17231, 2474, 28438, 5820, 235269, 1492, 62846, 573, 6082, 235290, 24781, 235265, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+      "logits": [1.5618557, -2.0127363, -0.8195181, 0.6527162]
+    },
+    {
+      "text": "Fix this failing API test and provide the patch.",
+      "input_ids": [22191, 736, 30314, 10665, 2121, 578, 3658, 573, 15714, 235265, 0, 0, 0, 0, 0, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+      "logits": [1.8531098, -2.7545693, -1.2234813, -0.9634934]
+    },
+    {
+      "text": "Review this PR and patch the race condition.",
+      "input_ids": [5973, 736, 5397, 578, 15714, 573, 7925, 4913, 235265, 0, 0, 0, 0, 0, 0, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+      "logits": [1.1684313, -3.0441108, -0.2670189, 0.0169845]
+    },
+    {
+      "text": "搜索证据并修复这个 issue。",
+      "input_ids": [185931, 137767, 236203, 99442, 8894, 4295, 235362, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 0],
+      "logits": [2.0981536, -2.2227104, -1.3964634, -0.9927975]
+    }
+  ]
+}

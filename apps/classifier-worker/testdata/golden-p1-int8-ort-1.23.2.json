@@ -1,0 +1,42 @@
+{
+  "model_onnx_sha256": "f08f74702e1443b8cc8510f9efb7158827d763b5bd469cc3478a7188a394ffba",
+  "runtime": "onnxruntime-1.23.2-CPUExecutionProvider",
+  "notes": [
+    "Observed on AstrLink's pinned ORT 1.23.2. Token ids match the 1.28.0 golden.",
+    "Absolute logits differ from the 1.28.0 export golden; top-1 stays general.",
+    "This file is the runtime reference until astrlink-auto publishes an official 1.23.2 golden."
+  ],
+  "absolute_tolerance": 0.01,
+  "samples": [
+    {
+      "text": "Explain what a database index is.",
+      "input_ids": [36576, 1212, 476, 8746, 3921, 603, 235265, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 0],
+      "logits": [3.3334434, -2.3812954, -2.2411606, -2.0612383]
+    },
+    {
+      "text": "Search for and verify current reliability evidence, then summarize the trade-offs.",
+      "input_ids": [10552, 604, 578, 17231, 2474, 28438, 5820, 235269, 1492, 62846, 573, 6082, 235290, 24781, 235265, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+      "logits": [1.5618564, -2.0127373, -0.8195184, 0.65271646]
+    },
+    {
+      "text": "Fix this failing API test and provide the patch.",
+      "input_ids": [22191, 736, 30314, 10665, 2121, 578, 3658, 573, 15714, 235265, 0, 0, 0, 0, 0, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+      "logits": [1.8530153, -2.481971, -1.3938041, -1.3119758]
+    },
+    {
+      "text": "Review this PR and patch the race condition.",
+      "input_ids": [5973, 736, 5397, 578, 15714, 573, 7925, 4913, 235265, 0, 0, 0, 0, 0, 0, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+      "logits": [1.1002277, -3.3193505, -0.038469862, 0.1674673]
+    },
+    {
+      "text": "搜索证据并修复这个 issue。",
+      "input_ids": [185931, 137767, 236203, 99442, 8894, 4295, 235362, 0],
+      "attention_mask": [1, 1, 1, 1, 1, 1, 1, 0],
+      "logits": [2.2411401, -2.2873101, -1.3533698, -1.1376458]
+    }
+  ]
+}
