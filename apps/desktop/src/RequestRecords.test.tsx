@@ -30,6 +30,7 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 import type { AuditSettings } from "./audit-settings-model";
 import { RequestRecords } from "./RequestRecords";
 import {
+  displayRequestStatus,
   emptyTrajectoryFields,
   type RequestRecord,
   type RequestSession,
@@ -133,7 +134,7 @@ function sessionFromRecord(
     completed_at: record.completed_at,
     turn_count: 1,
     call_count: 1 + record.child_count,
-    status: record.status,
+    status: displayRequestStatus(record.status, record.http_status),
     requested_model: record.requested_model,
     input_protocol: record.input_protocol,
     service_id: record.service_id,
@@ -340,6 +341,7 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("/v1/responses");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("1 轮");
+    expect(container.textContent).not.toContain("次调用");
     expect(container.textContent).toContain("1.0 s");
     expect(container.textContent).toContain("2.0 s");
     expect(container.textContent).not.toMatch(/\d{3,}m /);
@@ -381,6 +383,7 @@ describe("RequestRecords", () => {
     });
 
     await renderRecords();
+    expect(container.textContent).toContain("1 轮 · 3 次调用");
     await act(async () => {
       (
         container.querySelector(
@@ -458,6 +461,10 @@ describe("RequestRecords", () => {
     });
 
     await renderRecords();
+    expect(
+      container.querySelector('[data-testid="request-session-row"]')
+        ?.textContent,
+    ).toContain("失败");
     await act(async () => {
       (
         container.querySelector(
@@ -486,6 +493,9 @@ describe("RequestRecords", () => {
     const http = inspector?.querySelector('[data-testid="inspector-http"]');
     expect(http?.textContent).toContain("HTTP 403");
     expect(http?.className).toContain("text-destructive");
+    expect(
+      container.querySelector('[data-testid="record-status"]')?.textContent,
+    ).toContain("失败");
   });
 
   it("opens a side inspector for the selected phase without moving the list", async () => {

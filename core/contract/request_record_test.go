@@ -168,6 +168,58 @@ func TestRequestRecordValidation(t *testing.T) {
 			},
 			wantErr: "event kind",
 		},
+		{
+			name: "accepts conversation cursor fields",
+			mutate: func(record *RequestRecord) {
+				turn := 2
+				record.TurnIndex = &turn
+				record.SessionLink = &SessionLink{Kind: SessionCursorEchoID, Value: "call_7f3a9c2e1b4d4e8fa1c2"}
+				record.Cursors = []SessionCursor{
+					{Kind: SessionCursorExplicit, Direction: SessionCursorIn, Value: "conv_1"},
+					{Kind: SessionCursorEchoID, Direction: SessionCursorOut, Value: "call_9a8b7c6d5e4f3a2b1c0d"},
+					{Kind: SessionCursorFingerprint, Direction: SessionCursorOut, Value: "fp1_0123456789abcdef0123456789abcdef"},
+				}
+			},
+		},
+		{
+			name: "rejects zero turn index",
+			mutate: func(record *RequestRecord) {
+				turn := 0
+				record.TurnIndex = &turn
+			},
+			wantErr: "turn_index",
+		},
+		{
+			name: "rejects unknown session link kind",
+			mutate: func(record *RequestRecord) {
+				record.SessionLink = &SessionLink{Kind: "guess", Value: "x"}
+			},
+			wantErr: "session_link",
+		},
+		{
+			name: "rejects cursor with control characters",
+			mutate: func(record *RequestRecord) {
+				record.Cursors = []SessionCursor{{Kind: SessionCursorEchoID, Direction: SessionCursorOut, Value: "bad\nvalue"}}
+			},
+			wantErr: "cursors[0]",
+		},
+		{
+			name: "rejects cursor with unknown direction",
+			mutate: func(record *RequestRecord) {
+				record.Cursors = []SessionCursor{{Kind: SessionCursorEchoID, Direction: "sideways", Value: "call_1"}}
+			},
+			wantErr: "direction",
+		},
+		{
+			name: "rejects too many cursors",
+			mutate: func(record *RequestRecord) {
+				record.Cursors = make([]SessionCursor, MaxSessionCursors+1)
+				for index := range record.Cursors {
+					record.Cursors[index] = SessionCursor{Kind: SessionCursorEchoID, Direction: SessionCursorOut, Value: "call_x"}
+				}
+			},
+			wantErr: "at most",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -231,6 +283,33 @@ func TestPurgeRequestValidation(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("Validate() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestRequestRecordEffectiveStatusTreatsHTTPErrorAsFailed(t *testing.T) {
+	ok := 200
+	bad := 502
+	forbidden := 403
+	tests := []struct {
+		name   string
+		status RequestStatus
+		http   *int
+		want   RequestStatus
+	}{
+		{name: "success 200", status: RequestStatusSucceeded, http: &ok, want: RequestStatusSucceeded},
+		{name: "legacy success 502", status: RequestStatusSucceeded, http: &bad, want: RequestStatusFailed},
+		{name: "legacy success 403", status: RequestStatusSucceeded, http: &forbidden, want: RequestStatusFailed},
+		{name: "already failed", status: RequestStatusFailed, http: &bad, want: RequestStatusFailed},
+		{name: "blocked 403", status: RequestStatusBlocked, http: &forbidden, want: RequestStatusBlocked},
+		{name: "success without http", status: RequestStatusSucceeded, want: RequestStatusSucceeded},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := RequestRecord{Status: test.status, HTTPStatus: test.http}
+			if got := record.EffectiveStatus(); got != test.want {
+				t.Fatalf("EffectiveStatus()=%q want %q", got, test.want)
 			}
 		})
 	}

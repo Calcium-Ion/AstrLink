@@ -25,6 +25,7 @@ import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
 import { applyLocale, i18n, useT, type Locale } from "./i18n";
 import {
   MAX_MAX_CONCURRENT_INSPECTIONS,
+  MAX_RESPONSE_START_TIMEOUT_SECONDS,
   MIN_MAX_CONCURRENT_INSPECTIONS,
   type Preferences,
   type SettingsSnapshot,
@@ -32,7 +33,10 @@ import {
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 
-type InstantPatch = Omit<Preferences, "inference_port" | "max_concurrent_inspections">;
+type InstantPatch = Omit<
+  Preferences,
+  "inference_port" | "max_concurrent_inspections" | "response_start_timeout_seconds"
+>;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : i18n.t("settings.failed");
@@ -120,6 +124,7 @@ export function SettingsCenter({
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null);
   const [portDraft, setPortDraft] = useState<number | null>(null);
   const [concurrencyDraft, setConcurrencyDraft] = useState<number | null>(null);
+  const [timeoutDraft, setTimeoutDraft] = useState<number | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<
@@ -134,6 +139,7 @@ export function SettingsCenter({
           setSettings(next);
           setPortDraft(next.values.inference_port);
           setConcurrencyDraft(next.values.max_concurrent_inspections);
+          setTimeoutDraft(next.values.response_start_timeout_seconds);
           setLoadingError(null);
         }
       })
@@ -160,7 +166,14 @@ export function SettingsCenter({
       concurrencyDraft !== settings.values.max_concurrent_inspections,
     [concurrencyDraft, settings],
   );
-  const entryDirty = portDirty || concurrencyDirty;
+  const timeoutDirty = useMemo(
+    () =>
+      settings !== null &&
+      timeoutDraft !== null &&
+      timeoutDraft !== settings.values.response_start_timeout_seconds,
+    [timeoutDraft, settings],
+  );
+  const entryDirty = portDirty || concurrencyDirty || timeoutDirty;
   useEffect(() => {
     onDirtyChange(entryDirty);
     return () => onDirtyChange(false);
@@ -174,6 +187,7 @@ export function SettingsCenter({
       ...patch,
       inference_port: settings.values.inference_port,
       max_concurrent_inspections: settings.values.max_concurrent_inspections,
+      response_start_timeout_seconds: settings.values.response_start_timeout_seconds,
     };
     setBusy("prefs");
     setActionError(null);
@@ -220,7 +234,13 @@ export function SettingsCenter({
   };
 
   const savePort = async (): Promise<void> => {
-    if (!settings || portDraft === null || concurrencyDraft === null || !entryDirty) {
+    if (
+      !settings ||
+      portDraft === null ||
+      concurrencyDraft === null ||
+      timeoutDraft === null ||
+      !entryDirty
+    ) {
       return;
     }
     setBusy("port");
@@ -230,10 +250,12 @@ export function SettingsCenter({
         ...settings.values,
         inference_port: portDraft,
         max_concurrent_inspections: concurrencyDraft,
+        response_start_timeout_seconds: timeoutDraft,
       });
       setSettings(next);
       setPortDraft(next.values.inference_port);
       setConcurrencyDraft(next.values.max_concurrent_inspections);
+      setTimeoutDraft(next.values.response_start_timeout_seconds);
       const gatewayRunning =
         snapshot != null &&
         !["stopped", "exited", "error", "unavailable"].includes(snapshot.phase);
@@ -268,7 +290,12 @@ export function SettingsCenter({
       </section>
     );
   }
-  if (!settings || portDraft === null || concurrencyDraft === null) {
+  if (
+    !settings ||
+    portDraft === null ||
+    concurrencyDraft === null ||
+    timeoutDraft === null
+  ) {
     return (
       <section className="grid gap-4 pb-2">
         <PageHeader title={t("settings.title")} />
@@ -534,6 +561,30 @@ export function SettingsCenter({
             </Field>
             <p className="col-span-1 flex items-end text-xs text-muted-foreground max-[560px]:items-start">
               {t("settings.concurrencyHint")}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 border-b px-4 py-3 max-[560px]:grid-cols-1">
+            <Field label={t("settings.responseStartTimeoutField")}>
+              <Input
+                aria-label={t("settings.responseStartTimeoutField")}
+                className="font-mono tabular-nums"
+                max={MAX_RESPONSE_START_TIMEOUT_SECONDS}
+                min={0}
+                onChange={(event) =>
+                  setTimeoutDraft(Number(event.target.value))
+                }
+                type="number"
+                value={timeoutDraft}
+              />
+            </Field>
+            <Field label={t("settings.responseStartTimeoutSaved")}>
+              <span className="flex h-8 items-center rounded-md border bg-muted px-2.5 font-mono text-sm tabular-nums">
+                {settings.values.response_start_timeout_seconds}
+              </span>
+            </Field>
+            <p className="col-span-1 flex items-end text-xs text-muted-foreground max-[560px]:items-start">
+              {t("settings.responseStartTimeoutHint")}
             </p>
           </div>
 

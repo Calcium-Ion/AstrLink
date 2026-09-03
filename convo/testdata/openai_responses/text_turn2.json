@@ -1,0 +1,9 @@
+{
+  "model": "gpt-5-mini",
+  "input": [
+    {"role": "user", "content": [{"type": "input_text", "text": "Explain what a goroutine is in one sentence."}]},
+    {"type": "message", "id": "msg_68b7d2a0b1c2d3e4f5a6b7c8", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "A goroutine is a lightweight thread managed by the Go runtime, started with the go keyword and far cheaper than an OS thread.", "annotations": []}]},
+    {"role": "user", "content": [{"type": "input_text", "text": "And a channel?"}]}
+  ],
+  "stream": false
+}

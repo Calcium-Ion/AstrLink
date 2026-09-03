@@ -59,8 +59,12 @@ type Dependencies struct {
 	AuditBlobs               AuditBlobPersister
 	RecordLogger             func(string, ...any)
 	AllowedHost              string
-	ResponseStartTimeout     time.Duration
-	ConversionEngine         relaykitbridge.ConversionEngine
+	// ResponseStartTimeout bounds how long one candidate may wait for
+	// upstream response headers. Zero waits indefinitely so slow non-stream
+	// generations are not cut off before the first byte. Discovery and
+	// health probes keep their own bounds.
+	ResponseStartTimeout time.Duration
+	ConversionEngine     relaykitbridge.ConversionEngine
 	// Classifier is optional. Missing, timeout, or empty text fail-open to
 	// an empty category so auto routes flatten every configured target.
 	Classifier Classifier
@@ -109,15 +113,16 @@ type Handler struct {
 	metadataSlots            chan struct{}
 	conversionEngine         relaykitbridge.ConversionEngine
 	classifier               Classifier
+	sessionFingerprints      sessionFingerprints
 }
 
 const (
-	DefaultMaxConcurrentInspections = 16
-	MinMaxConcurrentInspections     = 4
-	MaxMaxConcurrentInspections     = 128
+	DefaultMaxConcurrentInspections    = 16
+	MinMaxConcurrentInspections        = 4
+	MaxMaxConcurrentInspections        = 128
+	DefaultResponseStartTimeoutSeconds = 0
+	MaxResponseStartTimeoutSeconds     = 86400
 )
-
-const defaultResponseStartTimeout = 60 * time.Second
 
 func metadataInspectionLimit(requested int) int {
 	if requested <= 0 {
@@ -132,6 +137,17 @@ func ValidateMaxConcurrentInspections(n int) error {
 			"max concurrent inspections must be between %d and %d",
 			MinMaxConcurrentInspections,
 			MaxMaxConcurrentInspections,
+		)
+	}
+	return nil
+}
+
+func ValidateResponseStartTimeoutSeconds(n int) error {
+	if n < DefaultResponseStartTimeoutSeconds || n > MaxResponseStartTimeoutSeconds {
+		return fmt.Errorf(
+			"response start timeout must be between %d and %d seconds",
+			DefaultResponseStartTimeoutSeconds,
+			MaxResponseStartTimeoutSeconds,
 		)
 	}
 	return nil
@@ -182,10 +198,7 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		dependencies.Authorizer = endpoint.NewSecretAuthorizer(nil)
 	}
 	if dependencies.Forwarder == nil {
-		dependencies.Forwarder = transport.New(nil)
-	}
-	if dependencies.ResponseStartTimeout <= 0 {
-		dependencies.ResponseStartTimeout = defaultResponseStartTimeout
+		dependencies.Forwarder = transport.NewWithResponseHeaderTimeout(nil, dependencies.ResponseStartTimeout)
 	}
 	return &Handler{
 		resolver: dependencies.Resolver, authorizer: dependencies.Authorizer, forwarder: dependencies.Forwarder,
@@ -560,7 +573,10 @@ func (handler *Handler) loadAuditSettings(ctx context.Context) contract.AuditSet
 func (handler *Handler) startRecordSession(request *http.Request, classified Request) *recordSession {
 	accessTokenID, _ := AccessTokenIDFromContext(request.Context())
 	session := newRecordSession(classified, accessTokenID, handler.loadAuditSettings(request.Context()))
-	session.resolveSession(request.Context(), handler.requestRecords)
+	if handler.requestRecords != nil {
+		session.fingerprinter = handler.sessionFingerprints.get(request.Context(), handler.auditBlobs, handler.recordLogger)
+	}
+	session.resolveSession(request.Context(), handler.requestRecords, handler.recordLogger)
 	// Snapshot the redacted HTTP envelope before any privacy or routing
 	// rewrite mutates the request (ADR 0008).
 	session.captureHTTPRequestMeta(request)

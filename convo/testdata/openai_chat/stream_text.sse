@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-9f2b7c1e","object":"chat.completion.chunk","created":1756880000,"model":"deepseek-chat","choices":[{"index":0,"delta":{"role":"assistant","content":"<think>\n用户想要一句话介绍"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-9f2b7c1e","object":"chat.completion.chunk","created":1756880000,"model":"deepseek-chat","choices":[{"index":0,"delta":{"content":" goroutine，简短回答。\n</think>\n\nGoroutine 是 Go 运行时调度的轻量级线程，"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-9f2b7c1e","object":"chat.completion.chunk","created":1756880000,"model":"deepseek-chat","choices":[{"index":0,"delta":{"content":"用 go 关键字即可并发执行函数，"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-9f2b7c1e","object":"chat.completion.chunk","created":1756880000,"model":"deepseek-chat","choices":[{"index":0,"delta":{"content":"成本远低于操作系统线程。"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-9f2b7c1e","object":"chat.completion.chunk","created":1756880000,"model":"deepseek-chat","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":21,"completion_tokens":58,"total_tokens":79}}
+
+data: [DONE]
+

@@ -218,6 +218,83 @@ func NotCapturedAuditSummary() AuditRecordSummary {
 	return AuditRecordSummary{}
 }
 
+// SessionCursorKind classifies how a session cursor value came to exist. The
+// values mirror the convo module's Kind but are declared here so the public
+// contract stays self-contained.
+type SessionCursorKind string
+
+const (
+	// SessionCursorExplicit is an identifier the client sent on purpose
+	// (previous_response_id, conversation ids, prompt_cache_key, Claude Code
+	// session, Anthropic container, Gemini cachedContent) or the response's
+	// own id. Matched globally.
+	SessionCursorExplicit SessionCursorKind = "explicit"
+	// SessionCursorEchoID is an opaque id the model produced and the client
+	// echoed back verbatim (tool call ids, Responses item ids, Gemini thought
+	// signatures). Matched within the same access token and a time window.
+	SessionCursorEchoID SessionCursorKind = "echo_id"
+	// SessionCursorFingerprint is a keyed digest of the last assistant text.
+	// The stored value cannot be reversed to the text. Matched like echo ids.
+	SessionCursorFingerprint SessionCursorKind = "fingerprint"
+)
+
+func (kind SessionCursorKind) Valid() bool {
+	switch kind {
+	case SessionCursorExplicit, SessionCursorEchoID, SessionCursorFingerprint:
+		return true
+	default:
+		return false
+	}
+}
+
+// SessionCursorDirection tells whether the cursor arrived with the request
+// (in) or was produced by the response (out).
+type SessionCursorDirection string
+
+const (
+	SessionCursorIn  SessionCursorDirection = "in"
+	SessionCursorOut SessionCursorDirection = "out"
+)
+
+func (direction SessionCursorDirection) Valid() bool {
+	return direction == SessionCursorIn || direction == SessionCursorOut
+}
+
+// MaxSessionCursors bounds the cursors stored per record.
+const MaxSessionCursors = 48
+
+// SessionCursor is one typed value that can link this record to others.
+type SessionCursor struct {
+	Kind      SessionCursorKind      `json:"kind"`
+	Direction SessionCursorDirection `json:"direction"`
+	Value     string                 `json:"value"`
+}
+
+func (cursor SessionCursor) Validate() error {
+	if !cursor.Kind.Valid() {
+		return fmt.Errorf("unknown session cursor kind %q", cursor.Kind)
+	}
+	if !cursor.Direction.Valid() {
+		return fmt.Errorf("unknown session cursor direction %q", cursor.Direction)
+	}
+	return validateProtocolCursor("cursor value", cursor.Value)
+}
+
+// SessionLink records how a request was attached to an existing session:
+// which cursor kind matched and the matching value. Null for the first
+// request of a session and for records that started their own session.
+type SessionLink struct {
+	Kind  SessionCursorKind `json:"kind"`
+	Value string            `json:"value"`
+}
+
+func (link SessionLink) Validate() error {
+	if !link.Kind.Valid() {
+		return fmt.Errorf("unknown session link kind %q", link.Kind)
+	}
+	return validateProtocolCursor("session_link value", link.Value)
+}
+
 type RequestRecord struct {
 	ID                 RequestID              `json:"id"`
 	ParentRequestID    *RequestID             `json:"parent_request_id"`
@@ -243,8 +320,18 @@ type RequestRecord struct {
 	PreviousResponseID *string                `json:"previous_response_id"`
 	OutputResponseID   *string                `json:"output_response_id"`
 	InputPreview       *string                `json:"input_preview"`
-	Events             []RequestEvent         `json:"events"`
-	Extensions         map[string]any         `json:"extensions,omitempty"`
+	// TurnIndex is the 1-based user turn within the session. Every model call
+	// of one agent loop shares the same value. Null when the protocol has no
+	// user turns or on legacy rows.
+	TurnIndex *int `json:"turn_index"`
+	// SessionLink tells how this record joined its session; null when it
+	// started the session.
+	SessionLink *SessionLink `json:"session_link"`
+	// Cursors are the typed values stored for this record: explicit cursors
+	// the request named plus everything the response produced.
+	Cursors    []SessionCursor `json:"cursors"`
+	Events     []RequestEvent  `json:"events"`
+	Extensions map[string]any  `json:"extensions,omitempty"`
 }
 
 func (record RequestRecord) Validate() error {
@@ -345,12 +432,39 @@ func (record RequestRecord) Validate() error {
 			return err
 		}
 	}
+	if record.TurnIndex != nil && *record.TurnIndex < 1 {
+		return fmt.Errorf("turn_index must be at least 1 when set")
+	}
+	if record.SessionLink != nil {
+		if err := record.SessionLink.Validate(); err != nil {
+			return fmt.Errorf("session_link: %w", err)
+		}
+	}
+	if len(record.Cursors) > MaxSessionCursors {
+		return fmt.Errorf("cursors must contain at most %d entries", MaxSessionCursors)
+	}
+	for index, cursor := range record.Cursors {
+		if err := cursor.Validate(); err != nil {
+			return fmt.Errorf("cursors[%d]: %w", index, err)
+		}
+	}
 	for index, event := range record.Events {
 		if err := event.Validate(); err != nil {
 			return fmt.Errorf("events[%d]: %w", index, err)
 		}
 	}
 	return nil
+}
+
+// EffectiveStatus is the user-visible outcome. A completed relay that still
+// returned HTTP 4xx/5xx is failed, including legacy rows stored as succeeded.
+func (record RequestRecord) EffectiveStatus() RequestStatus {
+	if record.Status == RequestStatusSucceeded &&
+		record.HTTPStatus != nil &&
+		*record.HTTPStatus >= 400 {
+		return RequestStatusFailed
+	}
+	return record.Status
 }
 
 type RequestSession struct {

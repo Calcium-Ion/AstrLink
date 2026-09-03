@@ -40,6 +40,7 @@ const settings = {
     core_auto_recover: true,
     inference_port: 9000,
     max_concurrent_inspections: 16,
+    response_start_timeout_seconds: 0,
     locale: "zh-CN" as const,
   },
   load_warning: null,
@@ -224,6 +225,46 @@ describe("SettingsCenter", () => {
       expect.objectContaining({
         inference_port: 9000,
         max_concurrent_inspections: 32,
+      }),
+    );
+  });
+
+  it("saves an explicit response-header wait for the next gateway start", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={vi.fn()}
+          snapshot={snapshot}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="响应头等待"]',
+    );
+    if (!input) throw new Error("missing response-header wait input");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(input, "300");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const save = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "保存",
+    );
+    if (!save) throw new Error("missing save button");
+    await act(async () => {
+      save.click();
+      await Promise.resolve();
+    });
+    expect(bridge.updatePreferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inference_port: 9000,
+        response_start_timeout_seconds: 300,
       }),
     );
   });

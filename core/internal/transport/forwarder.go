@@ -50,6 +50,13 @@ type UpstreamError struct {
 	err error
 }
 
+func NewUpstreamError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &UpstreamError{err: err}
+}
+
 func (err *UpstreamError) Error() string {
 	return "upstream request failed before the response started"
 }
@@ -86,11 +93,18 @@ type Forwarder struct {
 }
 
 func New(roundTripper http.RoundTripper) *Forwarder {
+	return NewWithResponseHeaderTimeout(roundTripper, 0)
+}
+
+// NewWithResponseHeaderTimeout builds a Forwarder whose default transport
+// waits headerTimeout for upstream response headers. Zero waits indefinitely
+// so slow non-stream generations are not cut off before the first byte.
+func NewWithResponseHeaderTimeout(roundTripper http.RoundTripper, headerTimeout time.Duration) *Forwarder {
 	if roundTripper == nil {
 		if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
 			configured := defaultTransport.Clone()
 			configured.DisableCompression = true
-			configured.ResponseHeaderTimeout = 60 * time.Second
+			configured.ResponseHeaderTimeout = headerTimeout
 			roundTripper = configured
 		} else {
 			roundTripper = http.DefaultTransport

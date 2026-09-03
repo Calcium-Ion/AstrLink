@@ -488,8 +488,13 @@ func TestModelDiscoveryReturnsStructuredErrorWhenEveryCapableEndpointFails(t *te
 				envelope.Error.Details[0].Protocol != string(contract.ProtocolOpenAIModels) {
 				t.Fatalf("details = %#v", envelope.Error.Details)
 			}
-			if strings.Contains(response.Body.String(), "dial detail") {
-				t.Fatalf("upstream detail leaked: %s", response.Body.String())
+			if test.name == "all connections fail" || test.name == "mixed timeout and connection failure" {
+				if !strings.Contains(envelope.Error.Message, "dial detail") {
+					t.Fatalf("discovery message hid transport cause: %s", response.Body.String())
+				}
+			}
+			if test.name == "all fetches time out" && !strings.Contains(envelope.Error.Message, "deadline exceeded") {
+				t.Fatalf("discovery timeout hid cause: %s", response.Body.String())
 			}
 		})
 	}

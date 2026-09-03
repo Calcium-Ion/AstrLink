@@ -721,29 +721,94 @@ func TestInferencePlaneFailsClosedWhenCredentialCannotBeLoaded(t *testing.T) {
 
 func TestInferencePlaneMapsUpstreamFailuresBeforeResponseStart(t *testing.T) {
 	tests := []struct {
-		name   string
-		err    error
-		status int
-		code   string
+		name      string
+		err       error
+		status    int
+		code      string
+		wantParts []string
+		hide      []string
 	}{
-		{name: "dial", err: errors.New("dial detail"), status: http.StatusBadGateway, code: "upstream_unavailable"},
-		{name: "timeout", err: context.DeadlineExceeded, status: http.StatusGatewayTimeout, code: "upstream_timeout"},
+		{
+			name:      "dial",
+			err:       errors.New("dial detail"),
+			status:    http.StatusBadGateway,
+			code:      "upstream_unavailable",
+			wantParts: []string{"dial detail"},
+		},
+		{
+			name:      "timeout",
+			err:       context.DeadlineExceeded,
+			status:    http.StatusGatewayTimeout,
+			code:      "upstream_timeout",
+			wantParts: []string{"deadline exceeded"},
+		},
+		{
+			name: "url with key",
+			err: errors.New(
+				`Get "https://host/v1?key=sk-secret": dial tcp 10.0.0.1:443: connection reset`,
+			),
+			status:    http.StatusBadGateway,
+			code:      "upstream_unavailable",
+			wantParts: []string{"https://host/v1", "10.0.0.1:443", "connection reset"},
+			hide:      []string{"sk-secret"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			store := &memoryRequestRecordStore{}
 			handler := NewWithDependencies(Dependencies{
 				Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
-					return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIModels, false)}, nil
+					return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
 				}),
+				RequestRecords: store,
 				Forwarder: transport.New(roundTripFunc(func(*http.Request) (*http.Response, error) {
 					return nil, test.err
 				})),
 			})
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
-			assertInferenceError(t, response, test.status, test.code)
-			if strings.Contains(response.Body.String(), "dial detail") {
-				t.Fatalf("upstream detail leaked: %s", response.Body.String())
+			handler.ServeHTTP(
+				response,
+				httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"m","input":"hi"}`)),
+			)
+			envelope := assertInferenceError(t, response, test.status, test.code)
+			for _, part := range test.wantParts {
+				if !strings.Contains(envelope.Error.Message, part) {
+					t.Fatalf("message %q missing %q", envelope.Error.Message, part)
+				}
+			}
+			for _, hidden := range test.hide {
+				if strings.Contains(response.Body.String(), hidden) {
+					t.Fatalf("secret leaked: %s", response.Body.String())
+				}
+			}
+			var root *contract.RequestRecord
+			for index := range store.records {
+				record := store.records[index]
+				if record.ParentRequestID != nil {
+					continue
+				}
+				copy := record
+				root = &copy
+			}
+			if root == nil {
+				t.Fatalf("missing root among %d records", len(store.records))
+			}
+			if root.Error == nil || root.Error.Message != envelope.Error.Message {
+				t.Fatalf("record error=%#v client=%q", root.Error, envelope.Error.Message)
+			}
+			var completed string
+			for _, event := range root.Events {
+				if event.Kind == contract.RequestEventCompleted {
+					completed = event.Summary
+				}
+			}
+			if !strings.Contains(completed, test.code) {
+				t.Fatalf("completed summary %q missing code %q", completed, test.code)
+			}
+			for _, part := range test.wantParts {
+				if !strings.Contains(completed, part) {
+					t.Fatalf("completed summary %q missing %q", completed, part)
+				}
 			}
 		})
 	}
@@ -996,6 +1061,9 @@ func containsEventKinds(got []contract.RequestEventKind, want ...contract.Reques
 
 type memoryRequestRecordStore struct {
 	records []contract.RequestRecord
+	// findErr, when set, makes FindSessionLink fail so tests can assert that
+	// lookup errors degrade to a fresh session instead of failing requests.
+	findErr error
 }
 
 func (store *memoryRequestRecordStore) InsertRequestRecord(_ context.Context, record contract.RequestRecord) error {
@@ -1003,23 +1071,82 @@ func (store *memoryRequestRecordStore) InsertRequestRecord(_ context.Context, re
 	return nil
 }
 
-func (store *memoryRequestRecordStore) FindSessionLink(_ context.Context, cursor string) (contract.SessionID, error) {
-	if cursor == "" {
-		return "", fmt.Errorf("session cursor not found")
+// FindSessionLink mirrors the sqlite semantics: newest root first, explicit
+// cursors match either direction plus the legacy id columns, other kinds
+// match outbound cursors only, and scope narrows by token and start time.
+func (store *memoryRequestRecordStore) FindSessionLink(
+	_ context.Context,
+	kind contract.SessionCursorKind,
+	values []string,
+	scope storage.SessionCursorScope,
+) (storage.SessionLinkMatch, bool, error) {
+	if store.findErr != nil {
+		return storage.SessionLinkMatch{}, false, store.findErr
 	}
-	for index := len(store.records) - 1; index >= 0; index-- {
-		record := store.records[index]
-		if record.ParentRequestID != nil || record.SessionID == nil {
-			continue
-		}
-		if record.OutputResponseID != nil && *record.OutputResponseID == cursor {
-			return *record.SessionID, nil
-		}
-		if record.PreviousResponseID != nil && *record.PreviousResponseID == cursor {
-			return *record.SessionID, nil
+	wanted := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value != "" {
+			wanted[value] = struct{}{}
 		}
 	}
-	return "", fmt.Errorf("session cursor not found")
+	if len(wanted) == 0 {
+		return storage.SessionLinkMatch{}, false, nil
+	}
+	matches := func(record contract.RequestRecord, direction contract.SessionCursorDirection) (string, bool) {
+		if kind == contract.SessionCursorExplicit {
+			legacy := record.PreviousResponseID
+			if direction == contract.SessionCursorOut {
+				legacy = record.OutputResponseID
+			}
+			if legacy != nil {
+				if _, ok := wanted[*legacy]; ok {
+					return *legacy, true
+				}
+			}
+		}
+		for _, cursor := range record.Cursors {
+			if cursor.Kind != kind || cursor.Direction != direction {
+				continue
+			}
+			if _, ok := wanted[cursor.Value]; ok {
+				return cursor.Value, true
+			}
+		}
+		return "", false
+	}
+	// Producers (direction out) anchor before consumers (direction in), and
+	// only explicit cursors are searched inbound.
+	directions := []contract.SessionCursorDirection{contract.SessionCursorOut}
+	if kind == contract.SessionCursorExplicit {
+		directions = append(directions, contract.SessionCursorIn)
+	}
+	for _, direction := range directions {
+		for index := len(store.records) - 1; index >= 0; index-- {
+			record := store.records[index]
+			if record.ParentRequestID != nil || record.SessionID == nil {
+				continue
+			}
+			if scope.SamePrincipal && !sameAccessToken(record.LocalAccessTokenID, scope.LocalAccessTokenID) {
+				continue
+			}
+			if !scope.NotBefore.IsZero() && record.StartedAt.Before(scope.NotBefore) {
+				continue
+			}
+			value, ok := matches(record, direction)
+			if !ok {
+				continue
+			}
+			return storage.SessionLinkMatch{SessionID: *record.SessionID, TurnIndex: record.TurnIndex, Value: value}, true, nil
+		}
+	}
+	return storage.SessionLinkMatch{}, false, nil
+}
+
+func sameAccessToken(left, right *contract.AccessTokenID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func (store *memoryRequestRecordStore) UpsertRequestRecord(_ context.Context, record contract.RequestRecord) error {
@@ -1541,7 +1668,55 @@ func TestInferencePlaneResponseStartTimeoutCanFailOverWithoutCuttingLongSSE(t *t
 	})
 }
 
+func TestInferencePlaneUnlimitedResponseStartTimeoutDoesNotCancelSlowHeaders(t *testing.T) {
+	candidate := validEndpoint(contract.ProtocolOpenAIResponses, false)
+	handler := NewWithDependencies(Dependencies{
+		Resolver: candidateResolver{candidates: []endpoint.Resolved{{Endpoint: candidate}}},
+		Forwarder: forwarderFunc(func(writer http.ResponseWriter, request *http.Request, _ transport.Target) error {
+			time.Sleep(80 * time.Millisecond)
+			if request.Context().Err() != nil {
+				t.Fatalf("unlimited response-start context was canceled: %v", request.Context().Err())
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			_, err := writer.Write([]byte(`{"ok":true}`))
+			return err
+		}),
+	})
+	if handler.responseStartTimeout != 0 {
+		t.Fatalf("default response-start timeout = %s, want unlimited", handler.responseStartTimeout)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(
+			http.MethodPost,
+			"/v1/responses",
+			strings.NewReader(`{"model":"gpt-5"}`),
+		),
+	)
+	if response.Code != http.StatusOK || response.Body.String() != `{"ok":true}` {
+		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+}
+
 func TestResponseStartTimeoutHasOneDeterministicWinner(t *testing.T) {
+	t.Run("zero timeout never expires", func(t *testing.T) {
+		attempt := newResponseStartContext(context.Background(), 0)
+		time.Sleep(20 * time.Millisecond)
+		if attempt.TimedOut() || attempt.Context().Err() != nil {
+			t.Fatalf(
+				"unlimited timeout state: timed_out=%t err=%v",
+				attempt.TimedOut(),
+				attempt.Context().Err(),
+			)
+		}
+		if !attempt.ResponseStarted() {
+			t.Fatal("unlimited attempt should accept a late response start")
+		}
+		attempt.Stop()
+	})
+
 	t.Run("response start disarms timeout", func(t *testing.T) {
 		attempt := newResponseStartContext(context.Background(), 5*time.Millisecond)
 		attempt.ResponseStarted()
@@ -1859,7 +2034,8 @@ func TestInferencePlaneRecordsInterruptedStreamAsFailed(t *testing.T) {
 	if record.Error == nil ||
 		record.Error.Code != "upstream_stream_interrupted" ||
 		record.Error.Category != "upstream" ||
-		!record.Error.Retryable {
+		!record.Error.Retryable ||
+		!strings.Contains(record.Error.Message, "stream broke") {
 		t.Fatalf("error=%#v", record.Error)
 	}
 	if record.ServiceID == nil || *record.ServiceID != upstream.ID {
@@ -1870,6 +2046,89 @@ func TestInferencePlaneRecordsInterruptedStreamAsFailed(t *testing.T) {
 	}
 	if record.Plan == nil {
 		t.Fatal("expected plan attribution")
+	}
+}
+
+func TestInferencePlaneRecordsCompletedHTTPErrorAsFailed(t *testing.T) {
+	const html502 = "<html><title>502 Bad Gateway</title></html>"
+	tests := []struct {
+		name      string
+		path      string
+		body      string
+		protocol  contract.ProtocolID
+		streaming bool
+		status    int
+		retryable bool
+	}{
+		{
+			name:      "streaming anthropic 502 html",
+			path:      "/v1/messages",
+			body:      `{"model":"claude-opus-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			protocol:  contract.ProtocolAnthropicMessages,
+			streaming: true,
+			status:    http.StatusBadGateway,
+			retryable: true,
+		},
+		{
+			name:      "non-stream 429",
+			path:      "/v1/responses",
+			body:      `{"model":"m","input":"hi"}`,
+			protocol:  contract.ProtocolOpenAIResponses,
+			streaming: false,
+			status:    http.StatusTooManyRequests,
+			retryable: true,
+		},
+		{
+			name:      "non-stream 400",
+			path:      "/v1/responses",
+			body:      `{"model":"m","input":"hi"}`,
+			protocol:  contract.ProtocolOpenAIResponses,
+			streaming: false,
+			status:    http.StatusBadRequest,
+			retryable: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &memoryRequestRecordStore{}
+			handler := NewWithDependencies(Dependencies{
+				Resolver: candidateResolver{candidates: []endpoint.Resolved{{
+					Endpoint: validEndpoint(test.protocol, test.streaming),
+				}}},
+				RequestRecords: store,
+				Forwarder: transport.New(roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: test.status,
+						Header:     http.Header{"Content-Type": {"text/html; charset=utf-8"}},
+						Body:       io.NopCloser(strings.NewReader(html502)),
+					}, nil
+				})),
+			})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(
+				response,
+				httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body)),
+			)
+			if response.Code != test.status {
+				t.Fatalf("client status=%d body=%q", response.Code, response.Body.String())
+			}
+			if len(store.records) != 1 {
+				t.Fatalf("records=%d", len(store.records))
+			}
+			record := store.records[0]
+			if record.Status != contract.RequestStatusFailed {
+				t.Fatalf("status=%q", record.Status)
+			}
+			if record.HTTPStatus == nil || *record.HTTPStatus != test.status {
+				t.Fatalf("http_status=%v", record.HTTPStatus)
+			}
+			if record.Error == nil ||
+				record.Error.Code != "upstream_http_error" ||
+				record.Error.Category != "upstream" ||
+				record.Error.Retryable != test.retryable {
+				t.Fatalf("error=%#v", record.Error)
+			}
+		})
 	}
 }
 
@@ -2151,6 +2410,21 @@ func TestValidateMaxConcurrentInspectionsRejectsOutOfRange(t *testing.T) {
 	}
 	if err := ValidateMaxConcurrentInspections(129); err == nil {
 		t.Fatal("expected error for 129")
+	}
+}
+
+func TestValidateResponseStartTimeoutSecondsAcceptsUnlimitedAndDayBound(t *testing.T) {
+	if err := ValidateResponseStartTimeoutSeconds(DefaultResponseStartTimeoutSeconds); err != nil {
+		t.Fatalf("default: %v", err)
+	}
+	if err := ValidateResponseStartTimeoutSeconds(MaxResponseStartTimeoutSeconds); err != nil {
+		t.Fatalf("max: %v", err)
+	}
+	if err := ValidateResponseStartTimeoutSeconds(-1); err == nil {
+		t.Fatal("expected error for -1")
+	}
+	if err := ValidateResponseStartTimeoutSeconds(MaxResponseStartTimeoutSeconds + 1); err == nil {
+		t.Fatal("expected error above max")
 	}
 }
 

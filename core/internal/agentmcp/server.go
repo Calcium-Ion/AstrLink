@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 )
@@ -12,7 +11,7 @@ import (
 const (
 	mcpProtocolVersion = "2024-11-05"
 	mcpServerName      = "astrlink"
-	mcpServerVersion   = "0.1.0"
+	mcpServerVersion   = "0.1.1"
 )
 
 type initializeParams struct {
@@ -24,10 +23,37 @@ type toolsCallParams struct {
 	Arguments map[string]any `json:"arguments"`
 }
 
+// Server is the read-only stdio MCP process. Handshake and tools/list do not
+// touch the Control API. Client is an optional pre-dialed handle for tests;
+// production leaves it nil and sets Options so the first tools/call Dials.
+type Server struct {
+	Client  *Client
+	Options DialOptions
+}
+
+func (server *Server) clientForCall() (*Client, error) {
+	if server != nil && server.Client != nil {
+		return server.Client, nil
+	}
+	var options DialOptions
+	if server != nil {
+		options = server.Options
+	}
+	client, err := Dial(options)
+	if err != nil {
+		return nil, err
+	}
+	if server != nil {
+		server.Client = client
+	}
+	return client, nil
+}
+
 // ServeStdio runs a read-only MCP server on the given streams.
-func ServeStdio(ctx context.Context, client *Client, input io.Reader, output io.Writer) error {
-	if client == nil {
-		return fmt.Errorf("control client is required")
+// server may be nil; initialize and tools/list still succeed.
+func ServeStdio(ctx context.Context, server *Server, input io.Reader, output io.Writer) error {
+	if server == nil {
+		server = &Server{}
 	}
 	reader := bufio.NewReader(input)
 	for {
@@ -68,7 +94,7 @@ func ServeStdio(ctx context.Context, client *Client, input io.Reader, output io.
 		if strings.HasPrefix(request.Method, "notifications/") || notificationID(request.ID) {
 			continue
 		}
-		result, rpcErr := dispatch(ctx, client, request)
+		result, rpcErr := dispatch(ctx, server, request)
 		response, encodeErr := encodeResponse(request.ID, result, rpcErr)
 		if encodeErr != nil {
 			return encodeErr
@@ -79,7 +105,7 @@ func ServeStdio(ctx context.Context, client *Client, input io.Reader, output io.
 	}
 }
 
-func dispatch(ctx context.Context, client *Client, request rpcRequest) (any, *rpcError) {
+func dispatch(ctx context.Context, server *Server, request rpcRequest) (any, *rpcError) {
 	switch request.Method {
 	case "initialize":
 		version := mcpProtocolVersion
@@ -106,6 +132,13 @@ func dispatch(ctx context.Context, client *Client, request rpcRequest) (any, *rp
 		var params toolsCallParams
 		if err := json.Unmarshal(request.Params, &params); err != nil || params.Name == "" {
 			return nil, &rpcError{Code: -32602, Message: "invalid tools/call params"}
+		}
+		client, err := server.clientForCall()
+		if err != nil {
+			return map[string]any{
+				"content": []map[string]any{{"type": "text", "text": err.Error()}},
+				"isError": true,
+			}, nil
 		}
 		payload, err := callTool(ctx, client, params.Name, params.Arguments)
 		if err != nil {

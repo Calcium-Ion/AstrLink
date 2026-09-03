@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::control_session::astrlink_home;
 
 pub const BUNDLE_NAME: &str = "astrlink-debug";
-pub const BUNDLE_VERSION: &str = "0.1.0";
+pub const BUNDLE_VERSION: &str = "0.1.1";
 pub const MCP_SERVER_NAME: &str = "astrlink";
 const RECEIPT_VERSION: u32 = 1;
 const MANAGED_FILES_NAME: &str = ".astrlink-managed-files.json";
@@ -172,6 +172,16 @@ pub fn sync_installed_skills(home: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+pub fn sync_installed_mcp(context: &InstallContext) -> Result<(), String> {
+    if !receipt_path(&context.home).is_file() {
+        return Ok(());
+    }
+    if !context.mcp_source.is_file() {
+        return Ok(());
+    }
+    copy_mcp_binary(&context.mcp_source, &mcp_binary_dest(&context.home))
 }
 
 pub fn resolve_sidecar_binary(name: &str) -> Result<PathBuf, String> {
@@ -573,7 +583,7 @@ fn merge_mcp_config(path: &Path, id: AgentToolId, command: &str) -> Result<(), S
 }
 
 pub fn merge_cursor_mcp(existing: &str, command: &str) -> Result<String, String> {
-    merge_json_mcp(existing, command, false)
+    merge_json_mcp(existing, command, true)
 }
 
 pub fn merge_claude_mcp(existing: &str, command: &str) -> Result<String, String> {
@@ -718,6 +728,7 @@ mod tests {
         assert!(merged.contains("keep-me"));
         assert!(merged.contains("astrlink"));
         assert!(merged.contains("/tmp/astrlink-mcp"));
+        assert!(merged.contains("\"type\": \"stdio\""));
         assert!(!merged.contains("Bearer"));
         assert!(!merged.contains("control_token"));
         let removed = remove_json_mcp(&merged).unwrap();
@@ -787,6 +798,7 @@ mod tests {
         }
         let cursor_mcp = fs::read_to_string(home.join(".cursor").join("mcp.json")).unwrap();
         assert!(cursor_mcp.contains("keep"));
+        assert!(cursor_mcp.contains("\"type\": \"stdio\""));
         assert!(!cursor_mcp.contains("control_token"));
 
         uninstall(&context).unwrap();
@@ -924,6 +936,44 @@ mod tests {
         sync_installed_skills(&home).unwrap();
         assert_eq!(fs::read_to_string(&skill).unwrap(), SKILL_MD);
         assert!(!tool_skill_dir(&home, AgentToolId::Cursor).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn sync_mcp_binary_requires_receipt() {
+        let home = unique_temp("agent-sync-mcp");
+        let dest = mcp_binary_dest(&home);
+        let stale = home.join("stale-astrlink-mcp");
+        let next = home.join("next-astrlink-mcp");
+        fs::write(&stale, b"stale").unwrap();
+        fs::write(&next, b"next").unwrap();
+
+        sync_installed_mcp(&InstallContext {
+            home: home.clone(),
+            mcp_source: next.clone(),
+        })
+        .unwrap();
+        assert!(!dest.exists());
+
+        write_json_file(
+            &receipt_path(&home),
+            &InstallReceipt {
+                version: RECEIPT_VERSION,
+                bundle: BUNDLE_NAME.to_string(),
+                bundle_version: BUNDLE_VERSION.to_string(),
+                installed_at_unix: 1,
+                mcp_binary: "astrlink-mcp".into(),
+                files: vec![],
+            },
+        )
+        .unwrap();
+        copy_mcp_binary(&stale, &dest).unwrap();
+        sync_installed_mcp(&InstallContext {
+            home: home.clone(),
+            mcp_source: next,
+        })
+        .unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"next");
         let _ = fs::remove_dir_all(&home);
     }
 

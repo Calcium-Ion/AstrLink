@@ -34,7 +34,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: core/go.mod
-          cache-dependency-path: core/go.mod
+          cache-dependency-path: |
+            core/go.mod
+            convo/go.mod
       - name: Test Core
         run: go test ./...
       - name: Build Core
@@ -70,6 +72,27 @@ jobs:
       - name: Validate frozen contracts
         run: make contracts-check
 
+  convo:
+    name: Convo module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: convo/go.mod
+          cache-dependency-path: convo/go.mod
+      - name: Vet and test convo
+        run: make convo-check
+      - name: Assert convo has no third-party dependencies
+        working-directory: convo
+        run: |
+          deps="$(go list -deps ./... | grep -E '^[^/]+\.[^/]+/' | grep -v '^github.com/QuantumNous/astrlink/convo' || true)"
+          if [ -n "$deps" ]; then
+            echo "convo must stay stdlib-only, found:"
+            echo "$deps"
+            exit 1
+          fi
+
   go-race:
     name: Go race tests
     runs-on: ubuntu-latest
@@ -80,10 +103,11 @@ jobs:
           go-version-file: core/go.mod
           cache-dependency-path: |
             core/go.mod
+            convo/go.mod
             contracts/go.mod
             contracts/go.sum
-      - name: Test Core and contracts with race detector
-        run: make core-race contracts-race
+      - name: Test Core, convo and contracts with race detector
+        run: make core-race convo-race contracts-race
 
   desktop-checks:
     name: Desktop checks

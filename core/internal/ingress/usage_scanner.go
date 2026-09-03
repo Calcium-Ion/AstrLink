@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
@@ -29,10 +30,21 @@ type usageScanner struct {
 	anthropicCacheWrite *int
 	anthropicSeen       bool
 	outputID            string
+	// observer collects session cursors from the same decoded events the
+	// usage parser sees, so the response is parsed exactly once. nil for
+	// protocols without conversation history.
+	observer *convo.ResponseObserver
+	// observerFed guards the non-streaming path: Usage re-parses the buffered
+	// body on every call but the observer must see it only once.
+	observerFed bool
 }
 
 func newUsageScanner(protocol contract.ProtocolID, streaming bool) *usageScanner {
-	return &usageScanner{protocol: protocol, streaming: streaming}
+	scanner := &usageScanner{protocol: protocol, streaming: streaming}
+	if convoProto, ok := convoProtocol(protocol); ok {
+		scanner.observer = conversationPolicy.NewResponseObserver(convoProto, streaming)
+	}
+	return scanner
 }
 
 // reset clears attempt-local parsing state without changing the scanner's
@@ -42,7 +54,18 @@ func (scanner *usageScanner) reset(protocol contract.ProtocolID, streaming bool)
 	if scanner == nil {
 		return
 	}
-	*scanner = usageScanner{protocol: protocol, streaming: streaming}
+	*scanner = *newUsageScanner(protocol, streaming)
+}
+
+// conversation returns what the response contributed to session identity.
+// It flushes the parser first so a non-streaming body observed only through
+// the buffer is accounted for.
+func (scanner *usageScanner) conversation() convo.ResponseSummary {
+	if scanner == nil || scanner.observer == nil {
+		return convo.ResponseSummary{}
+	}
+	scanner.Usage()
+	return scanner.observer.Summary()
 }
 
 func (scanner *usageScanner) setContentEncoding(encoding string) {
@@ -192,6 +215,10 @@ func (scanner *usageScanner) parseEventJSON(payload []byte) {
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &document); err != nil || document == nil {
 		return
+	}
+	if scanner.observer != nil && (scanner.streaming || !scanner.observerFed) {
+		scanner.observer.ObserveEvent(document)
+		scanner.observerFed = true
 	}
 	switch scanner.protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:

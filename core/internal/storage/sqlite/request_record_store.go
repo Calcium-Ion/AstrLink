@@ -19,8 +19,33 @@ const requestRecordSelectColumns = `
     requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
     http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
+    turn_index, session_link_json,
     (SELECT COUNT(*) FROM request_records children
-     WHERE children.parent_request_id = request_records.id) AS child_count`
+     WHERE children.parent_request_id = request_records.id) AS child_count,
+    (SELECT json_group_array(json_object('kind', kind, 'direction', direction, 'value', value))
+     FROM (SELECT kind, direction, value FROM request_record_cursors
+           WHERE request_record_cursors.request_id = request_records.id
+           ORDER BY kind, direction, value)) AS cursors_json`
+
+const requestRecordInsertColumns = `
+    id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
+    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
+    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
+    session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
+    turn_index, session_link_json`
+
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+func (row requestRecordRow) insertArgs() []any {
+	return []any{
+		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
+		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
+		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
+		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.sessionID, row.previousResponseID,
+		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
+		row.turnIndex, row.sessionLinkJSON,
+	}
+}
 
 func (store *Store) InsertRequestRecord(ctx context.Context, record contract.RequestRecord) error {
 	if err := record.Validate(); err != nil {
@@ -30,20 +55,22 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 	if err != nil {
 		return err
 	}
-	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
-    id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
-    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
-    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
-    session_id, previous_response_id, output_response_id, input_preview, events_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
-		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
-		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
-		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.sessionID, row.previousResponseID,
-		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
-	)
+	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin request insert: %w", err)
+	}
+	defer rollbackOnError(transaction, &err)
+	if _, err = transaction.ExecContext(ctx,
+		`INSERT INTO request_records (`+requestRecordInsertColumns+`) VALUES `+requestRecordInsertValues,
+		row.insertArgs()...,
+	); err != nil {
 		return fmt.Errorf("insert request record: %w", err)
+	}
+	if err = replaceRequestRecordCursors(ctx, transaction, record); err != nil {
+		return err
+	}
+	if err = transaction.Commit(); err != nil {
+		return fmt.Errorf("commit request insert: %w", err)
 	}
 	return nil
 }
@@ -51,7 +78,8 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 // UpsertRequestRecord persists a live request snapshot. A terminal row is never
 // downgraded by a late pending snapshot, which makes request-start and
 // request-finish persistence safe even when their contexts complete out of
-// order.
+// order. Cursor rows follow the main row: they are replaced only when the
+// snapshot was applied.
 func (store *Store) UpsertRequestRecord(ctx context.Context, record contract.RequestRecord) error {
 	if err := record.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
@@ -60,12 +88,13 @@ func (store *Store) UpsertRequestRecord(ctx context.Context, record contract.Req
 	if err != nil {
 		return err
 	}
-	_, err = store.db.ExecContext(ctx, `INSERT INTO request_records (
-    id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
-    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
-    http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
-    session_id, previous_response_id, output_response_id, input_preview, events_json, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin request upsert: %w", err)
+	}
+	defer rollbackOnError(transaction, &err)
+	result, err := transaction.ExecContext(ctx, `INSERT INTO request_records (`+requestRecordInsertColumns+`
+) VALUES `+requestRecordInsertValues+`
 ON CONFLICT(id) DO UPDATE SET
     parent_request_id = excluded.parent_request_id,
     attempt_index = excluded.attempt_index,
@@ -89,16 +118,44 @@ ON CONFLICT(id) DO UPDATE SET
     previous_response_id = excluded.previous_response_id,
     output_response_id = excluded.output_response_id,
     input_preview = excluded.input_preview,
-    events_json = excluded.events_json
+    events_json = excluded.events_json,
+    turn_index = excluded.turn_index,
+    session_link_json = excluded.session_link_json
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
-		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
-		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
-		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
-		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.sessionID, row.previousResponseID,
-		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
+		row.insertArgs()...,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert request record: %w", err)
+	}
+	applied, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read request upsert result: %w", err)
+	}
+	if applied > 0 {
+		if err = replaceRequestRecordCursors(ctx, transaction, record); err != nil {
+			return err
+		}
+	}
+	if err = transaction.Commit(); err != nil {
+		return fmt.Errorf("commit request upsert: %w", err)
+	}
+	return nil
+}
+
+// replaceRequestRecordCursors makes the cursor table reflect record.Cursors
+// exactly. Duplicate cursors in the record collapse onto the primary key.
+func replaceRequestRecordCursors(ctx context.Context, transaction *sql.Tx, record contract.RequestRecord) error {
+	if _, err := transaction.ExecContext(ctx,
+		`DELETE FROM request_record_cursors WHERE request_id = ?`, string(record.ID),
+	); err != nil {
+		return fmt.Errorf("clear request record cursors: %w", err)
+	}
+	for _, cursor := range record.Cursors {
+		if _, err := transaction.ExecContext(ctx, `INSERT OR IGNORE INTO request_record_cursors (
+    request_id, kind, direction, value
+) VALUES (?, ?, ?, ?)`, string(record.ID), string(cursor.Kind), string(cursor.Direction), cursor.Value); err != nil {
+			return fmt.Errorf("insert request record cursor: %w", err)
+		}
 	}
 	return nil
 }
@@ -170,21 +227,32 @@ func (store *Store) DeleteRequestRecord(ctx context.Context, id contract.Request
 		return fmt.Errorf("lookup request record: %w", err)
 	}
 
-	// Root delete cascades to children via FK; delete child audit blobs for the
-	// whole group first so purge counts stay accurate even if CASCADE is off.
+	// Root delete cascades to children via FK; delete child audit blobs and
+	// cursors for the whole group first so purge counts stay accurate even if
+	// CASCADE is off.
 	if !parentID.Valid {
 		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs WHERE request_id IN (
     SELECT id FROM request_records WHERE id = ? OR parent_request_id = ?
 )`, id, id); err != nil {
 			return fmt.Errorf("delete request audit blobs: %w", err)
 		}
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM request_record_cursors WHERE request_id IN (
+    SELECT id FROM request_records WHERE id = ? OR parent_request_id = ?
+)`, id, id); err != nil {
+			return fmt.Errorf("delete request record cursors: %w", err)
+		}
 		if _, err = transaction.ExecContext(ctx,
 			`DELETE FROM request_records WHERE parent_request_id = ?`, id,
 		); err != nil {
 			return fmt.Errorf("delete child request records: %w", err)
 		}
-	} else if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs WHERE request_id = ?`, id); err != nil {
-		return fmt.Errorf("delete request audit blobs: %w", err)
+	} else {
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs WHERE request_id = ?`, id); err != nil {
+			return fmt.Errorf("delete request audit blobs: %w", err)
+		}
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM request_record_cursors WHERE request_id = ?`, id); err != nil {
+			return fmt.Errorf("delete request record cursors: %w", err)
+		}
 	}
 
 	result, err := transaction.ExecContext(ctx, `DELETE FROM request_records WHERE id = ?`, id)
@@ -372,6 +440,9 @@ func (store *Store) PurgeRequestRecords(
 		if _, err = transaction.ExecContext(ctx, `DELETE FROM audit_blobs`); err != nil {
 			return contract.PurgeResult{}, fmt.Errorf("purge audit blobs: %w", err)
 		}
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM request_record_cursors`); err != nil {
+			return contract.PurgeResult{}, fmt.Errorf("purge request record cursors: %w", err)
+		}
 		result, execErr := transaction.ExecContext(ctx, `DELETE FROM request_records`)
 		if execErr != nil {
 			err = execErr
@@ -420,6 +491,16 @@ WHERE request_id IN (
 )`, before, before); err != nil {
 			return contract.PurgeResult{}, fmt.Errorf("purge audit blobs: %w", err)
 		}
+		if _, err = transaction.ExecContext(ctx, `DELETE FROM request_record_cursors
+WHERE request_id IN (
+    SELECT id FROM request_records WHERE started_at < ?
+    UNION
+    SELECT id FROM request_records WHERE parent_request_id IN (
+        SELECT id FROM request_records WHERE parent_request_id IS NULL AND started_at < ?
+    )
+)`, before, before); err != nil {
+			return contract.PurgeResult{}, fmt.Errorf("purge request record cursors: %w", err)
+		}
 		if _, err = transaction.ExecContext(ctx, `DELETE FROM request_records
 WHERE parent_request_id IN (
     SELECT id FROM request_records WHERE parent_request_id IS NULL AND started_at < ?
@@ -467,6 +548,8 @@ type requestRecordRow struct {
 	inputPreview       any
 	eventsJSON         any
 	createdAt          string
+	turnIndex          any
+	sessionLinkJSON    any
 }
 
 func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) (requestRecordRow, error) {
@@ -555,6 +638,16 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 		}
 		row.eventsJSON = string(encoded)
 	}
+	if record.TurnIndex != nil {
+		row.turnIndex = *record.TurnIndex
+	}
+	if record.SessionLink != nil {
+		encoded, err := json.Marshal(record.SessionLink)
+		if err != nil {
+			return requestRecordRow{}, fmt.Errorf("encode session link: %w", err)
+		}
+		row.sessionLinkJSON = string(encoded)
+	}
 	return row, nil
 }
 
@@ -572,14 +665,15 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		privacyRestoreJSON                                         sql.NullString
 		sessionID, previousResponseID, outputResponseID            sql.NullString
 		inputPreview, eventsJSON                                   sql.NullString
-		httpStatus, latencyMs                                      sql.NullInt64
+		sessionLinkJSON, cursorsJSON                               sql.NullString
+		httpStatus, latencyMs, turnIndex                           sql.NullInt64
 	)
 	if err := row.Scan(
 		&id, &parentRequestID, &attemptIndex, &startedAt, &completedAt, &status, &inputProtocol,
 		&requestedModel, &streaming, &routeID, &endpointID, &localAccessTokenID, &planJSON,
 		&httpStatus, &latencyMs, &usageJSON, &errorJSON, &auditJSON, &privacyRestoreJSON,
 		&sessionID, &previousResponseID, &outputResponseID, &inputPreview, &eventsJSON,
-		&createdAt, &childCount,
+		&createdAt, &turnIndex, &sessionLinkJSON, &childCount, &cursorsJSON,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -689,6 +783,24 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 			return contract.RequestRecord{}, fmt.Errorf("%w: request %q events", storagecontract.ErrInvalidRecord, id)
 		}
 		record.Events = events
+	}
+	if turnIndex.Valid {
+		value := int(turnIndex.Int64)
+		record.TurnIndex = &value
+	}
+	if sessionLinkJSON.Valid && sessionLinkJSON.String != "" {
+		var link contract.SessionLink
+		if err := json.Unmarshal([]byte(sessionLinkJSON.String), &link); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf("%w: request %q session_link", storagecontract.ErrInvalidRecord, id)
+		}
+		record.SessionLink = &link
+	}
+	if cursorsJSON.Valid && cursorsJSON.String != "" && cursorsJSON.String != "[]" {
+		var cursors []contract.SessionCursor
+		if err := json.Unmarshal([]byte(cursorsJSON.String), &cursors); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf("%w: request %q cursors", storagecontract.ErrInvalidRecord, id)
+		}
+		record.Cursors = cursors
 	}
 	if _, err := time.Parse(time.RFC3339Nano, createdAt); err != nil {
 		return contract.RequestRecord{}, fmt.Errorf("%w: request %q created_at", storagecontract.ErrInvalidRecord, id)

@@ -466,7 +466,7 @@ func (handler *Handler) executeCandidates(
 				session.noteServed(candidate, plan)
 				session.noteFailed(errorSummaryFromInference(
 					"upstream_stream_interrupted",
-					"upstream failed after the response started; the client response is incomplete",
+					interruptedStreamMessage(forwardErr),
 					true,
 				))
 			}
@@ -477,7 +477,7 @@ func (handler *Handler) executeCandidates(
 				session.noteServed(candidate, plan)
 				session.noteFailed(errorSummaryFromInference(
 					"upstream_stream_interrupted",
-					"upstream failed after the response started; the client response is incomplete",
+					interruptedStreamMessage(forwardErr),
 					true,
 				))
 			}
@@ -525,11 +525,12 @@ func (handler *Handler) executeCandidates(
 			break
 		}
 		code := "upstream_unavailable"
-		message := "upstream request could not be completed"
+		fallback := upstreamUnavailableFallback
 		if errors.Is(forwardErr, context.DeadlineExceeded) {
 			code = "upstream_timeout"
-			message = "upstream request timed out before its response started"
+			fallback = upstreamTimeoutFallback
 		}
+		message := operatorTransportMessage(forwardErr, fallback)
 		demoteFailedAttemptForRetry(
 			request.Context(),
 			recordSession,
@@ -627,12 +628,13 @@ func (handler *Handler) writeExecutionFailure(
 	default:
 		status := http.StatusBadGateway
 		code := "upstream_unavailable"
-		message := "upstream request could not be completed"
+		fallback := upstreamUnavailableFallback
 		if errors.Is(failure.err, context.DeadlineExceeded) {
 			status = http.StatusGatewayTimeout
 			code = "upstream_timeout"
-			message = "upstream request timed out before its response started"
+			fallback = upstreamTimeoutFallback
 		}
+		message := operatorTransportMessage(failure.err, fallback)
 		writeInferenceError(writer, status, code, message, true, []errorDetail{{
 			Protocol:  string(classified.Protocol),
 			ServiceID: string(failure.endpointID),
@@ -956,11 +958,13 @@ const (
 func newResponseStartContext(parent context.Context, timeout time.Duration) *responseStartContext {
 	ctx, cancel := context.WithCancelCause(parent)
 	result := &responseStartContext{ctx: ctx, cancel: cancel}
-	result.timer = time.AfterFunc(timeout, func() {
-		if result.outcome.CompareAndSwap(responseStartPending, responseStartTimedOut) {
-			cancel(context.DeadlineExceeded)
-		}
-	})
+	if timeout > 0 {
+		result.timer = time.AfterFunc(timeout, func() {
+			if result.outcome.CompareAndSwap(responseStartPending, responseStartTimedOut) {
+				cancel(context.DeadlineExceeded)
+			}
+		})
+	}
 	return result
 }
 
@@ -970,7 +974,9 @@ func (attempt *responseStartContext) Context() context.Context {
 
 func (attempt *responseStartContext) ResponseStarted() bool {
 	if attempt.outcome.CompareAndSwap(responseStartPending, responseStartObserved) {
-		attempt.timer.Stop()
+		if attempt.timer != nil {
+			attempt.timer.Stop()
+		}
 		return true
 	}
 	return attempt.outcome.Load() == responseStartObserved

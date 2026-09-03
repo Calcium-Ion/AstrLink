@@ -69,6 +69,28 @@ export interface RequestEvent {
   attempt_index: number;
 }
 
+/**
+ * How a session cursor value came to exist. `explicit` cursors are ids the
+ * client named on purpose (matched across tokens); `echo_id` and
+ * `fingerprint` are inferred from replayed history and matched only within
+ * the same access token and a time window.
+ */
+export type SessionCursorKind = "explicit" | "echo_id" | "fingerprint";
+
+export type SessionCursorDirection = "in" | "out";
+
+export interface SessionCursor {
+  kind: SessionCursorKind;
+  direction: SessionCursorDirection;
+  value: string;
+}
+
+/** How a record joined its session; null when it started the session. */
+export interface SessionLink {
+  kind: SessionCursorKind;
+  value: string;
+}
+
 export interface RequestRecord {
   id: string;
   parent_request_id: string | null;
@@ -93,6 +115,14 @@ export interface RequestRecord {
   previous_response_id: string | null;
   output_response_id: string | null;
   input_preview: string | null;
+  /**
+   * 1-based user turn within the session. Every model call of one agent loop
+   * shares the same value; null for protocols without user turns and for
+   * records written before linking existed.
+   */
+  turn_index: number | null;
+  session_link: SessionLink | null;
+  cursors: SessionCursor[];
   events: RequestEvent[];
 }
 
@@ -101,6 +131,9 @@ export const emptyTrajectoryFields = {
   previous_response_id: null,
   output_response_id: null,
   input_preview: null,
+  turn_index: null,
+  session_link: null,
+  cursors: [] as SessionCursor[],
   events: [] as RequestEvent[],
 };
 
@@ -481,10 +514,64 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     input_preview: Object.hasOwn(record, "input_preview")
       ? nullableStringAt(record.input_preview, `${path}.input_preview`)
       : null,
+    turn_index: parseTurnIndex(record.turn_index, `${path}.turn_index`),
+    session_link: parseSessionLink(record.session_link, `${path}.session_link`),
+    cursors: parseSessionCursors(record.cursors, `${path}.cursors`),
     events: Object.hasOwn(record, "events")
       ? parseRequestEvents(record.events, `${path}.events`)
       : [],
   };
+}
+
+const sessionCursorKinds = new Set<SessionCursorKind>([
+  "explicit",
+  "echo_id",
+  "fingerprint",
+]);
+
+function sessionCursorKindAt(value: unknown, path: string): SessionCursorKind {
+  if (
+    typeof value !== "string" ||
+    !sessionCursorKinds.has(value as SessionCursorKind)
+  ) {
+    return invalid(path, "游标类型无效");
+  }
+  return value as SessionCursorKind;
+}
+
+// A core sidecar that predates conversation linking omits these fields; treat
+// absence like null so old records still render.
+function parseTurnIndex(value: unknown, path: string): number | null {
+  if (value === undefined || value === null) return null;
+  const turn = intAt(value, path);
+  if (turn < 1) return invalid(path, "轮次必须至少为 1");
+  return turn;
+}
+
+function parseSessionLink(value: unknown, path: string): SessionLink | null {
+  if (value === undefined || value === null) return null;
+  const link = objectAt(value, path);
+  return {
+    kind: sessionCursorKindAt(link.kind, `${path}.kind`),
+    value: stringAt(link.value, `${path}.value`),
+  };
+}
+
+function parseSessionCursors(value: unknown, path: string): SessionCursor[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return invalid(path, "应为数组");
+  return value.map((item, index) => {
+    const cursor = objectAt(item, `${path}[${index}]`);
+    const direction = cursor.direction;
+    if (direction !== "in" && direction !== "out") {
+      return invalid(`${path}[${index}].direction`, "游标方向无效");
+    }
+    return {
+      kind: sessionCursorKindAt(cursor.kind, `${path}[${index}].kind`),
+      direction,
+      value: stringAt(cursor.value, `${path}[${index}].value`),
+    };
+  });
 }
 
 const eventKinds = new Set<RequestEventKind>([
@@ -705,6 +792,16 @@ export function parsePurgeResult(value: unknown): PurgeResult {
       "$.deleted_audit_blobs",
     ),
   };
+}
+
+export function displayRequestStatus(
+  status: RequestStatus,
+  httpStatus: number | null,
+): RequestStatus {
+  if (status === "succeeded" && httpStatus !== null && httpStatus >= 400) {
+    return "failed";
+  }
+  return status;
 }
 
 export function statusLabel(status: RequestStatus): string {

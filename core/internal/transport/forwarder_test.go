@@ -23,8 +23,16 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 func TestDefaultForwarderDisablesTransparentCompression(t *testing.T) {
 	forwarder := New(nil)
 	configured, ok := forwarder.roundTripper.(*http.Transport)
-	if !ok || !configured.DisableCompression || configured.ResponseHeaderTimeout != 60*time.Second {
-		t.Fatalf("default transport = %#v, want compression disabled and bounded response headers", forwarder.roundTripper)
+	if !ok || !configured.DisableCompression || configured.ResponseHeaderTimeout != 0 {
+		t.Fatalf("default transport = %#v, want compression disabled and unbounded response headers", forwarder.roundTripper)
+	}
+}
+
+func TestForwarderHonorsConfiguredResponseHeaderTimeout(t *testing.T) {
+	forwarder := NewWithResponseHeaderTimeout(nil, 30*time.Second)
+	configured, ok := forwarder.roundTripper.(*http.Transport)
+	if !ok || configured.ResponseHeaderTimeout != 30*time.Second || !configured.DisableCompression {
+		t.Fatalf("configured transport = %#v, want 30s response headers and compression disabled", forwarder.roundTripper)
 	}
 }
 

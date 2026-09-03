@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"parts":[{"text":"**Considering the question**\n\nThe user wants a one-sentence answer.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":19,"totalTokenCount":19},"modelVersion":"gemini-2.5-flash","responseId":"Qm3YaP2jN5Wx0PEP9pXg4Q0"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"Goroutine 是 Go 运行时调度的轻量级线程，","thoughtSignature":"CtcBAVSoXO7tJh9QqZl7m0v3c1dOaX6z2tKq8oYB1wgWm5QnD0jE9RtfL2xPv4Uu6ZbA3sC8qHkN1eG7iM5oJyF0lTdWnRaB"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":19,"totalTokenCount":19},"modelVersion":"gemini-2.5-flash","responseId":"Qm3YaP2jN5Wx0PEP9pXg4Q0"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"用 go 关键字即可并发执行函数，成本远低于操作系统线程。"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":19,"candidatesTokenCount":57,"totalTokenCount":112,"thoughtsTokenCount":36},"modelVersion":"gemini-2.5-flash","responseId":"Qm3YaP2jN5Wx0PEP9pXg4Q0"}
+

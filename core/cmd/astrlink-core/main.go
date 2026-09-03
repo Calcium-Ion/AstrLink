@@ -43,6 +43,7 @@ func main() {
 	classifierWorkerPath := ""
 	controlTokenStdin := false
 	maxConcurrentInspections := ingress.DefaultMaxConcurrentInspections
+	responseStartTimeoutSeconds := ingress.DefaultResponseStartTimeoutSeconds
 	flag.StringVar(&config.InferenceListen, "inference-listen", config.InferenceListen, "loopback inference listen address")
 	flag.StringVar(&config.ControlListen, "control-listen", config.ControlListen, "loopback control listen address")
 	flag.IntVar(&parentPID, "parent-pid", 0, "optional desktop parent PID to watch on Unix")
@@ -51,11 +52,16 @@ func main() {
 	flag.StringVar(&classifierWorkerPath, "classifier-worker", "", "optional bundled classifier worker executable")
 	flag.BoolVar(&controlTokenStdin, "control-token-stdin", false, "read the per-start control token from stdin")
 	flag.IntVar(&maxConcurrentInspections, "max-concurrent-inspections", maxConcurrentInspections, "maximum requests that may parse and classify at once")
+	flag.IntVar(&responseStartTimeoutSeconds, "response-start-timeout-seconds", responseStartTimeoutSeconds, "seconds to wait for upstream response headers before failing over; 0 waits indefinitely")
 	flag.CommandLine.SetOutput(os.Stderr)
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "astrlink-core: ", log.LstdFlags)
 	if err := ingress.ValidateMaxConcurrentInspections(maxConcurrentInspections); err != nil {
+		logger.Printf("%v", err)
+		os.Exit(2)
+	}
+	if err := ingress.ValidateResponseStartTimeoutSeconds(responseStartTimeoutSeconds); err != nil {
 		logger.Printf("%v", err)
 		os.Exit(2)
 	}
@@ -245,6 +251,7 @@ func main() {
 			ConversionEngine:         conversionEngine,
 			Classifier:               classifierWorker,
 			MaxConcurrentInspections: maxConcurrentInspections,
+			ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
 		})
 		if err != nil {
 			_ = store.Close()

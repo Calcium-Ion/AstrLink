@@ -13,32 +13,124 @@ import (
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
-func (store *Store) FindSessionLink(ctx context.Context, cursor string) (contract.SessionID, error) {
-	if cursor == "" || len([]rune(cursor)) > contract.MaxProtocolCursorRunes {
-		return "", fmt.Errorf("%w: session cursor", storagecontract.ErrInvalidArgument)
+// maxSessionLinkValues bounds one lookup so a hostile history cannot turn the
+// query into a scan over hundreds of bound parameters.
+const maxSessionLinkValues = 64
+
+// FindSessionLink picks the most recent root whose cursors of kind include one
+// of values. Explicit cursors match in both directions and also against the
+// legacy previous_response_id / output_response_id columns written before the
+// cursor table existed; echo ids and fingerprints match only what a response
+// produced. Children (demoted retries) never anchor a session.
+func (store *Store) FindSessionLink(
+	ctx context.Context,
+	kind contract.SessionCursorKind,
+	values []string,
+	scope storagecontract.SessionCursorScope,
+) (storagecontract.SessionLinkMatch, bool, error) {
+	if !kind.Valid() {
+		return storagecontract.SessionLinkMatch{}, false, fmt.Errorf("%w: session cursor kind", storagecontract.ErrInvalidArgument)
 	}
-	var sessionID sql.NullString
-	err := store.db.QueryRowContext(ctx, `
-SELECT session_id FROM request_records
-WHERE parent_request_id IS NULL
-  AND session_id IS NOT NULL
-  AND (output_response_id = ? OR previous_response_id = ?)
-ORDER BY started_at DESC, id DESC
-LIMIT 1`, cursor, cursor).Scan(&sessionID)
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || len([]rune(value)) > contract.MaxProtocolCursorRunes {
+			continue
+		}
+		cleaned = append(cleaned, value)
+		if len(cleaned) == maxSessionLinkValues {
+			break
+		}
+	}
+	if len(cleaned) == 0 {
+		return storagecontract.SessionLinkMatch{}, false, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(cleaned)), ", ")
+	valueArgs := make([]any, 0, len(cleaned))
+	for _, value := range cleaned {
+		valueArgs = append(valueArgs, value)
+	}
+
+	scopeClause := strings.Builder{}
+	scopeArgs := make([]any, 0, 2)
+	if scope.SamePrincipal {
+		scopeClause.WriteString(` AND r.local_access_token_id IS ?`)
+		if scope.LocalAccessTokenID != nil {
+			scopeArgs = append(scopeArgs, string(*scope.LocalAccessTokenID))
+		} else {
+			scopeArgs = append(scopeArgs, nil)
+		}
+	}
+	if !scope.NotBefore.IsZero() {
+		scopeClause.WriteString(` AND r.started_at >= ?`)
+		scopeArgs = append(scopeArgs, scope.NotBefore.UTC().Format(time.RFC3339Nano))
+	}
+
+	// The record that produced a value (direction out / output_response_id)
+	// is the true anchor and carries the turn the continuation builds on;
+	// records that merely named the same value (direction in) only serve
+	// client-chosen ids such as prompt_cache_key that no response emits.
+	query := strings.Builder{}
+	args := make([]any, 0, 5*len(cleaned)+2*len(scopeArgs)+1)
+	query.WriteString(`SELECT session_id, turn_index, value FROM (
+SELECT r.session_id, r.turn_index, c.value AS value,
+       CASE WHEN c.direction = 'out' THEN 0 ELSE 1 END AS priority,
+       r.started_at, r.id
+FROM request_record_cursors c
+JOIN request_records r ON r.id = c.request_id
+WHERE c.kind = ? AND c.value IN (` + placeholders + `)`)
+	args = append(args, string(kind))
+	args = append(args, valueArgs...)
+	if kind != contract.SessionCursorExplicit {
+		query.WriteString(` AND c.direction = 'out'`)
+	}
+	query.WriteString(` AND r.parent_request_id IS NULL AND r.session_id IS NOT NULL`)
+	query.WriteString(scopeClause.String())
+	args = append(args, scopeArgs...)
+	if kind == contract.SessionCursorExplicit {
+		query.WriteString(`
+UNION ALL
+SELECT r.session_id, r.turn_index,
+       CASE WHEN r.output_response_id IN (` + placeholders + `) THEN r.output_response_id ELSE r.previous_response_id END AS value,
+       CASE WHEN r.output_response_id IN (` + placeholders + `) THEN 0 ELSE 1 END AS priority,
+       r.started_at, r.id
+FROM request_records r
+WHERE (r.output_response_id IN (` + placeholders + `) OR r.previous_response_id IN (` + placeholders + `))
+  AND r.parent_request_id IS NULL AND r.session_id IS NOT NULL`)
+		args = append(args, valueArgs...)
+		args = append(args, valueArgs...)
+		args = append(args, valueArgs...)
+		args = append(args, valueArgs...)
+		query.WriteString(scopeClause.String())
+		args = append(args, scopeArgs...)
+	}
+	query.WriteString(`
+) ORDER BY priority ASC, started_at DESC, id DESC LIMIT 1`)
+
+	var (
+		sessionID sql.NullString
+		turnIndex sql.NullInt64
+		value     sql.NullString
+	)
+	err := store.db.QueryRowContext(ctx, query.String(), args...).Scan(&sessionID, &turnIndex, &value)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", fmt.Errorf("%w: session cursor", storagecontract.ErrNotFound)
+			return storagecontract.SessionLinkMatch{}, false, nil
 		}
-		return "", fmt.Errorf("lookup session link: %w", err)
+		return storagecontract.SessionLinkMatch{}, false, fmt.Errorf("lookup session link: %w", err)
 	}
 	if !sessionID.Valid || sessionID.String == "" {
-		return "", fmt.Errorf("%w: session cursor", storagecontract.ErrNotFound)
+		return storagecontract.SessionLinkMatch{}, false, nil
 	}
 	id := contract.SessionID(sessionID.String)
 	if err := id.Validate(); err != nil {
-		return "", fmt.Errorf("%w: session %q", storagecontract.ErrInvalidRecord, sessionID.String)
+		return storagecontract.SessionLinkMatch{}, false, fmt.Errorf("%w: session %q", storagecontract.ErrInvalidRecord, sessionID.String)
 	}
-	return id, nil
+	match := storagecontract.SessionLinkMatch{SessionID: id, Value: value.String}
+	if turnIndex.Valid && turnIndex.Int64 >= 1 {
+		turn := int(turnIndex.Int64)
+		match.TurnIndex = &turn
+	}
+	return match, true, nil
 }
 
 func (store *Store) ListRequestSessions(
@@ -280,9 +372,9 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 		StartedAt:          first.StartedAt,
 		LastStartedAt:      latest.StartedAt,
 		CompletedAt:        latest.CompletedAt,
-		TurnCount:          len(turns),
+		TurnCount:          countUserTurns(turns),
 		CallCount:          callCount,
-		Status:             latest.Status,
+		Status:             latest.EffectiveStatus(),
 		RequestedModel:     latest.RequestedModel,
 		InputProtocol:      latest.InputProtocol,
 		ServiceID:          latest.ServiceID,
@@ -292,4 +384,22 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 		return contract.RequestSession{}, fmt.Errorf("%w: session %q: %v", storagecontract.ErrInvalidRecord, id, err)
 	}
 	return session, nil
+}
+
+// countUserTurns counts user turns from records in time order. Consecutive
+// records sharing a turn_index are one turn (an agent loop); a record without
+// a turn_index is its own turn, as every record was before turn_index existed.
+// A turn_index that falls back to an earlier value also starts a new turn: the
+// client trimmed its history, and the conversation moved on regardless.
+func countUserTurns(turns []contract.RequestRecord) int {
+	count := 0
+	var previous *int
+	for index, turn := range turns {
+		switch {
+		case index == 0, turn.TurnIndex == nil, previous == nil, *turn.TurnIndex != *previous:
+			count++
+		}
+		previous = turn.TurnIndex
+	}
+	return count
 }

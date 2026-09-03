@@ -5,6 +5,8 @@ export type CloseBehavior = "hide_to_tray" | "quit";
 export const DEFAULT_MAX_CONCURRENT_INSPECTIONS = 16;
 export const MIN_MAX_CONCURRENT_INSPECTIONS = 4;
 export const MAX_MAX_CONCURRENT_INSPECTIONS = 128;
+export const DEFAULT_RESPONSE_START_TIMEOUT_SECONDS = 0;
+export const MAX_RESPONSE_START_TIMEOUT_SECONDS = 86400;
 
 export interface Preferences {
   close_behavior: CloseBehavior;
@@ -13,6 +15,7 @@ export interface Preferences {
   core_auto_recover: boolean;
   inference_port: number;
   max_concurrent_inspections: number;
+  response_start_timeout_seconds: number;
   locale: Locale;
 }
 
@@ -69,6 +72,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "core_auto_recover",
       "inference_port",
       "max_concurrent_inspections",
+      "response_start_timeout_seconds",
       "locale",
     ],
     "$.values",
@@ -99,6 +103,17 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     invalid(
       "$.values.max_concurrent_inspections",
       `expected an integer from ${MIN_MAX_CONCURRENT_INSPECTIONS} through ${MAX_MAX_CONCURRENT_INSPECTIONS}`,
+    );
+  }
+  if (
+    typeof values.response_start_timeout_seconds !== "number" ||
+    !Number.isInteger(values.response_start_timeout_seconds) ||
+    values.response_start_timeout_seconds < DEFAULT_RESPONSE_START_TIMEOUT_SECONDS ||
+    values.response_start_timeout_seconds > MAX_RESPONSE_START_TIMEOUT_SECONDS
+  ) {
+    invalid(
+      "$.values.response_start_timeout_seconds",
+      `expected an integer from ${DEFAULT_RESPONSE_START_TIMEOUT_SECONDS} through ${MAX_RESPONSE_START_TIMEOUT_SECONDS}`,
     );
   }
   if (root.autostart_actual !== null && typeof root.autostart_actual !== "boolean") {

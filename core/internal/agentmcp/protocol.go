@@ -31,33 +31,73 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+type flusher interface {
+	Flush() error
+}
+
 func writeMCPMessage(writer io.Writer, payload []byte) error {
-	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+	if _, err := writer.Write(payload); err != nil {
 		return err
 	}
-	_, err := writer.Write(payload)
-	return err
+	if _, err := writer.Write([]byte{'\n'}); err != nil {
+		return err
+	}
+	if flush, ok := writer.(flusher); ok {
+		return flush.Flush()
+	}
+	return nil
 }
 
 func readMCPMessage(reader *bufio.Reader) ([]byte, error) {
-	contentLength := -1
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
+			if err == io.EOF && len(strings.TrimSpace(line)) > 0 {
+				return ndjsonPayload(strings.TrimRight(line, "\r\n"))
+			}
 			return nil, err
 		}
-		line = strings.TrimRight(line, "\r\n")
+		trimmed := strings.TrimRight(line, "\r\n")
+		if trimmed == "" {
+			continue
+		}
+		body := strings.TrimLeft(trimmed, " \t")
+		if strings.HasPrefix(body, "{") || strings.HasPrefix(body, "[") {
+			return ndjsonPayload(trimmed)
+		}
+		return readContentLengthBody(reader, trimmed)
+	}
+}
+
+func ndjsonPayload(line string) ([]byte, error) {
+	if len(line) > maxMCPMessageBytes {
+		return nil, fmt.Errorf("message too large")
+	}
+	return []byte(line), nil
+}
+
+func readContentLengthBody(reader *bufio.Reader, firstLine string) ([]byte, error) {
+	contentLength := -1
+	line := firstLine
+	for {
+		if line != "" {
+			lower := strings.ToLower(line)
+			if strings.HasPrefix(lower, "content-length:") {
+				value := strings.TrimSpace(line[len("content-length:"):])
+				length, err := strconv.Atoi(value)
+				if err != nil || length < 0 || length > maxMCPMessageBytes {
+					return nil, fmt.Errorf("invalid Content-Length")
+				}
+				contentLength = length
+			}
+		}
+		next, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(next, "\r\n")
 		if line == "" {
 			break
-		}
-		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "content-length:") {
-			value := strings.TrimSpace(line[len("Content-Length:"):])
-			length, err := strconv.Atoi(value)
-			if err != nil || length < 0 || length > maxMCPMessageBytes {
-				return nil, fmt.Errorf("invalid Content-Length")
-			}
-			contentLength = length
 		}
 	}
 	if contentLength < 0 {

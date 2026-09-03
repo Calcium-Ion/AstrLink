@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
@@ -23,6 +24,12 @@ import (
 // is deliberately small and fixed; additional capable endpoints wait for a
 // free worker instead of opening unbounded concurrent upstream connections.
 const maxConcurrentDiscoveryFetches = 4
+
+// defaultDiscoveryTimeout bounds one upstream model-list fetch. Discovery
+// listings are small documents and must not reuse the inference response-start
+// timeout, which defaults to unlimited so slow non-stream generations can wait
+// for headers.
+const defaultDiscoveryTimeout = 60 * time.Second
 
 var errDiscoveryResponseInvalid = errors.New("upstream model discovery response cannot be aggregated")
 
@@ -237,10 +244,7 @@ func (handler *Handler) fetchModelDiscovery(
 		}}
 	}
 
-	// The whole per-endpoint fetch shares the response-start bound: an
-	// aggregated listing is a small bounded document, so unlike inference it
-	// never carries a long-lived stream that must outlive the timeout.
-	fetchContext, cancelFetch := context.WithTimeout(request.Context(), handler.responseStartTimeout)
+	fetchContext, cancelFetch := context.WithTimeout(request.Context(), defaultDiscoveryTimeout)
 	defer cancelFetch()
 	fetchRequest := request.Clone(fetchContext)
 	fetchRequest.Body = http.NoBody
@@ -617,12 +621,11 @@ func (handler *Handler) writeDiscoveryFailure(
 		}
 	}
 	if failed > 0 {
-		status, code, message := http.StatusBadGateway, "upstream_unavailable",
-			"model discovery failed on every capable endpoint"
+		status, code := http.StatusBadGateway, "upstream_unavailable"
 		if timedOut == failed {
-			status, code, message = http.StatusGatewayTimeout, "upstream_timeout",
-				"model discovery timed out on every capable endpoint"
+			status, code = http.StatusGatewayTimeout, "upstream_timeout"
 		}
+		message := discoveryAggregateMessage(results, timedOut == failed)
 		writeInferenceError(writer, status, code, message, true, []errorDetail{{
 			Protocol: string(classified.Protocol),
 			Reason:   "no capable endpoint returned a model list",

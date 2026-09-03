@@ -91,7 +91,7 @@ func TestMCPListsAndCallsRequestRecordTools(t *testing.T) {
 	output := &bytes.Buffer{}
 	done := make(chan error, 1)
 	go func() {
-		done <- ServeStdio(context.Background(), client, stdin, output)
+		done <- ServeStdio(context.Background(), &Server{Client: client}, stdin, output)
 	}()
 
 	writeRPC(t, input, 1, "initialize", map[string]any{"protocolVersion": "2024-11-05"})
@@ -170,6 +170,52 @@ func TestMCPListsAndCallsRequestRecordTools(t *testing.T) {
 	unknown := callResult(t, responses[10])
 	if unknown["isError"] != true {
 		t.Fatalf("unknown tool should be an error: %#v", unknown)
+	}
+}
+
+func TestServeStdioHandshakesWithoutControlSession(t *testing.T) {
+	stdin, input := io.Pipe()
+	output := &bytes.Buffer{}
+	done := make(chan error, 1)
+	server := &Server{
+		Options: DialOptions{SessionPath: filepath.Join(t.TempDir(), "missing-session.json")},
+	}
+	go func() {
+		done <- ServeStdio(context.Background(), server, stdin, output)
+	}()
+
+	writeRPC(t, input, 1, "initialize", map[string]any{"protocolVersion": "2025-03-26"})
+	writeRPC(t, input, 2, "tools/list", nil)
+	writeRPC(t, input, 3, "tools/call", map[string]any{
+		"name":      "get_audit_settings",
+		"arguments": map[string]any{},
+	})
+	_ = input.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("ServeStdio: %v", err)
+	}
+
+	responses := readAllResponses(t, output)
+	if len(responses) != 3 {
+		t.Fatalf("responses = %d, payload=%s", len(responses), output.String())
+	}
+	if strings.Contains(output.String(), "Content-Length") {
+		t.Fatalf("handshake used Content-Length framing: %s", output.String())
+	}
+	info := responses[1]["result"].(map[string]any)["serverInfo"].(map[string]any)
+	if info["version"] != mcpServerVersion {
+		t.Fatalf("server version = %#v", info["version"])
+	}
+	tools := responses[2]["result"].(map[string]any)["tools"].([]any)
+	if len(tools) != 7 {
+		t.Fatalf("tool count = %d", len(tools))
+	}
+	call := callResult(t, responses[3])
+	if call["isError"] != true {
+		t.Fatalf("missing session should be a tool error: %#v", call)
+	}
+	if !strings.Contains(callText(t, responses[3]), "desktop gateway") {
+		t.Fatalf("error should mention desktop gateway: %s", callText(t, responses[3]))
 	}
 }
 

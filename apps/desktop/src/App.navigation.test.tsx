@@ -508,6 +508,7 @@ describe("App workspace navigation", () => {
         core_auto_recover: true,
         inference_port: 8317,
         max_concurrent_inspections: 16,
+        response_start_timeout_seconds: 0,
         locale: "zh-CN",
       },
       load_warning: null,
@@ -526,6 +527,7 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("设置");
     expect(container.textContent).toContain("推理入口");
     expect(container.textContent).toContain("检查并发");
+    expect(container.textContent).toContain("响应头等待");
     expect(container.textContent).not.toContain("一键安装调试 Skill 与 MCP");
   });
 
@@ -558,6 +560,7 @@ describe("App workspace navigation", () => {
         core_auto_recover: true,
         inference_port: 8317,
         max_concurrent_inspections: 16,
+        response_start_timeout_seconds: 0,
         locale: "zh-CN",
       },
       load_warning: null,

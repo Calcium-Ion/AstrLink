@@ -1,5 +1,8 @@
 import { i18n } from "./i18n";
-import type { RequestRecord } from "./request-record-model";
+import {
+  displayRequestStatus,
+  type RequestRecord,
+} from "./request-record-model";
 
 export function unattributedServiceLabel(): string {
   return i18n.t("today.unattributed");
@@ -88,11 +91,12 @@ export function aggregateTodayUsage(
     // List endpoints return roots only; still exclude retry children so daily
     // totals never count failed attempts that later succeeded.
     if (record.parent_request_id !== null) continue;
-    if (record.status === "failed") {
+    const status = displayRequestStatus(record.status, record.http_status);
+    if (status === "failed") {
       failed_requests += 1;
       continue;
     }
-    if (record.status !== "succeeded") continue;
+    if (status !== "succeeded") continue;
     requests += 1;
     if (record.usage) {
       input_tokens += record.usage.input_tokens;

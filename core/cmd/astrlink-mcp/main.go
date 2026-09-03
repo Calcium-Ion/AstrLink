@@ -20,20 +20,17 @@ func main() {
 	flag.CommandLine.SetOutput(os.Stderr)
 	flag.Parse()
 
-	client, err := agentmcp.Dial(agentmcp.DialOptions{
-		Socket:       *socket,
-		ControlURL:   *controlURL,
-		ControlToken: *controlToken,
-		SessionPath:  *session,
-	})
-	if err != nil {
-		logger.Printf("%v", err)
-		os.Exit(2)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := agentmcp.ServeStdio(ctx, client, os.Stdin, os.Stdout); err != nil && err != context.Canceled {
+	err := agentmcp.ServeStdio(ctx, &agentmcp.Server{
+		Options: agentmcp.DialOptions{
+			Socket:       *socket,
+			ControlURL:   *controlURL,
+			ControlToken: *controlToken,
+			SessionPath:  *session,
+		},
+	}, os.Stdin, os.Stdout)
+	if err != nil && err != context.Canceled {
 		logger.Printf("%v", err)
 		os.Exit(1)
 	}

@@ -123,6 +123,10 @@ describe("today usage aggregation", () => {
             { status: "failed" },
           ),
           record(
+            { input_tokens: 3, output_tokens: 3, total_tokens: 6 },
+            { status: "succeeded", http_status: 502 },
+          ),
+          record(
             { input_tokens: 5, output_tokens: 5, total_tokens: 10 },
             {
               id: "req_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -135,7 +139,7 @@ describe("today usage aggregation", () => {
       ),
     ).toEqual({
       requests: 1,
-      failed_requests: 1,
+      failed_requests: 2,
       input_tokens: 1,
       output_tokens: 1,
       total_tokens: 2,

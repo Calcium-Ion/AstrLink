@@ -9,6 +9,7 @@ import {
 
 export type TrajectoryLane = "client" | "gateway" | "upstream";
 export type TrajectoryChip =
+  | "TURN"
   | "CLIENT"
   | "POLICY"
   | "ROUTE"
@@ -33,6 +34,7 @@ export type InspectorPart =
 
 export function inspectorPart(chip: TrajectoryChip): InspectorPart {
   switch (chip) {
+    case "TURN":
     case "CLIENT":
       return "request_body";
     case "POLICY":
@@ -50,6 +52,8 @@ export function inspectorPart(chip: TrajectoryChip): InspectorPart {
 
 export function inspectorTitle(chip: TrajectoryChip): string {
   switch (chip) {
+    case "TURN":
+      return i18n.t("trajectory.turnHeaderTitle");
     case "CLIENT":
       return i18n.t("trajectory.clientBody");
     case "POLICY":
@@ -264,6 +268,7 @@ const chipByKind: Record<RequestEvent["kind"], TrajectoryChip> = {
 };
 
 const laneByChip: Record<TrajectoryChip, TrajectoryLane> = {
+  TURN: "client",
   CLIENT: "client",
   POLICY: "gateway",
   ROUTE: "gateway",
@@ -346,30 +351,130 @@ export function synthesizeEvents(record: RequestRecord): RequestEvent[] {
   return events;
 }
 
+/**
+ * Groups consecutive root records into user turns the same way Core counts
+ * `turn_count`: a new group starts whenever `turn_index` changes, and a null
+ * index (no user turns, or a legacy row) is always its own group. Headers are
+ * only worth drawing when there is more than one call to group.
+ */
+export interface TrajectoryTurnGroup {
+  turnIndex: number | null;
+  records: RequestRecord[];
+}
+
+export function groupTurns(turns: RequestRecord[]): TrajectoryTurnGroup[] {
+  const groups: TrajectoryTurnGroup[] = [];
+  for (const record of turns) {
+    const last = groups[groups.length - 1];
+    if (
+      last &&
+      last.turnIndex !== null &&
+      record.turn_index !== null &&
+      last.turnIndex === record.turn_index
+    ) {
+      last.records.push(record);
+      continue;
+    }
+    groups.push({ turnIndex: record.turn_index, records: [record] });
+  }
+  return groups;
+}
+
 export function trajectoryRows(
   turns: RequestRecord[],
   childrenByRoot: Record<string, RequestRecord[]>,
 ): TrajectoryRow[] {
   const rows: TrajectoryRow[] = [];
-  for (const turn of turns) {
-    for (const event of synthesizeEvents(turn)) {
-      rows.push(rowFromEvent(turn, event, turn.parent_request_id !== null));
+  const groups = groupTurns(turns);
+  const headers = turns.length > 1;
+  for (const group of groups) {
+    if (headers) {
+      rows.push(turnHeaderRow(group));
     }
-    const children = childrenByRoot[turn.id] ?? [];
-    children.forEach((child, index) => {
-      for (const event of synthesizeEvents(child)) {
-        const row = rowFromEvent(child, event, true);
-        if (event.kind === "upstream") {
-          row.chip = "RETRY";
-          row.summary = i18n.t("trajectory.childRequest", {
-            index: index + 1,
-            summary: row.summary,
-          });
-        }
-        rows.push(row);
-      }
-    });
+    for (const turn of group.records) {
+      rows.push(...recordRows(turn, childrenByRoot));
+    }
   }
+  return rows;
+}
+
+function turnHeaderRow(group: TrajectoryTurnGroup): TrajectoryRow {
+  const first = group.records[0];
+  const last = group.records[group.records.length - 1];
+  const preview = first.input_preview;
+  const label =
+    group.turnIndex === null
+      ? i18n.t("trajectory.turnHeaderUnnumbered")
+      : i18n.t("trajectory.turnHeader", { index: group.turnIndex });
+  const status = turnGroupStatus(group.records);
+  return {
+    id: `${first.id}:turn`,
+    requestId: first.id,
+    chip: "TURN",
+    summary: preview ? `${label} · ${preview}` : label,
+    result: i18n.t("trajectory.turnCalls", { count: group.records.length }),
+    status,
+    tone: statusTone(status),
+    startedAt: first.started_at,
+    endedAt: status === "pending" ? null : last.completed_at ?? last.started_at,
+    lane: "client",
+  };
+}
+
+// The header reflects the worst outcome of the calls it groups so a failed
+// tool loop is visible before expanding it.
+function turnGroupStatus(records: RequestRecord[]): RequestStatus {
+  const statuses = new Set(records.map((record) => record.status));
+  if (statuses.has("pending")) return "pending";
+  if (statuses.has("blocked")) return "blocked";
+  if (statuses.has("failed")) return "failed";
+  if (statuses.has("cancelled")) return "cancelled";
+  return "succeeded";
+}
+
+function statusTone(status: RequestStatus): TrajectoryTone {
+  switch (status) {
+    case "failed":
+      return "failed";
+    case "blocked":
+      return "blocked";
+    case "cancelled":
+      return "cancelled";
+    case "pending":
+      return "pending";
+    default:
+      return "ok";
+  }
+}
+
+function recordRows(
+  turn: RequestRecord,
+  childrenByRoot: Record<string, RequestRecord[]>,
+): TrajectoryRow[] {
+  const rows: TrajectoryRow[] = [];
+  for (const event of synthesizeEvents(turn)) {
+    const row = rowFromEvent(turn, event, turn.parent_request_id !== null);
+    if (event.kind === "accepted" && turn.session_link) {
+      row.summary = `${row.summary} · ${i18n.t(
+        `trajectory.linkedVia.${turn.session_link.kind}`,
+      )}`;
+    }
+    rows.push(row);
+  }
+  const children = childrenByRoot[turn.id] ?? [];
+  children.forEach((child, index) => {
+    for (const event of synthesizeEvents(child)) {
+      const row = rowFromEvent(child, event, true);
+      if (event.kind === "upstream") {
+        row.chip = "RETRY";
+        row.summary = i18n.t("trajectory.childRequest", {
+          index: index + 1,
+          summary: row.summary,
+        });
+      }
+      rows.push(row);
+    }
+  });
   return rows;
 }
 
@@ -433,9 +538,12 @@ function eventResult(record: RequestRecord, event: RequestEvent): string {
 }
 
 export function trajectoryLanes(
-  rows: TrajectoryRow[],
+  allRows: TrajectoryRow[],
   nowMs: number,
 ): TrajectoryLanes {
+  // Turn headers span every call they group; drawing them would paint over
+  // the per-call segments on the client lane.
+  const rows = allRows.filter((row) => row.chip !== "TURN");
   const starts = rows
     .map((row) => Date.parse(row.startedAt))
     .filter((value) => !Number.isNaN(value));

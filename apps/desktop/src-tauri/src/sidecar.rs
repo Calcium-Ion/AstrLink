@@ -222,6 +222,7 @@ fn sidecar_args(
     data_directory: &Path,
     inference_port: u16,
     max_concurrent_inspections: u16,
+    response_start_timeout_seconds: u32,
 ) -> Result<Vec<String>, String> {
     let data_directory = data_directory
         .to_str()
@@ -238,6 +239,8 @@ fn sidecar_args(
         "--control-token-stdin".to_string(),
         "--max-concurrent-inspections".to_string(),
         max_concurrent_inspections.to_string(),
+        "--response-start-timeout-seconds".to_string(),
+        response_start_timeout_seconds.to_string(),
     ])
 }
 
@@ -395,6 +398,7 @@ struct CoreInner {
     app_handle: Option<AppHandle>,
     inference_port: u16,
     max_concurrent_inspections: u16,
+    response_start_timeout_seconds: u32,
     locale: Locale,
     auto_recover: bool,
     recovery_attempt: u8,
@@ -420,6 +424,7 @@ impl Default for CoreInner {
             app_handle: None,
             inference_port: 8317,
             max_concurrent_inspections: 16,
+            response_start_timeout_seconds: 0,
             locale: Locale::En,
             auto_recover: true,
             recovery_attempt: 0,
@@ -543,6 +548,7 @@ impl CoreManager {
                 &data_directory,
                 inner.inference_port,
                 inner.max_concurrent_inspections,
+                inner.response_start_timeout_seconds,
             ) {
                 Ok(arguments) => arguments,
                 Err(message) => {
@@ -691,12 +697,14 @@ impl CoreManager {
         &self,
         inference_port: u16,
         max_concurrent_inspections: u16,
+        response_start_timeout_seconds: u32,
         auto_recover: bool,
         locale: Locale,
     ) {
         let mut inner = self.lock_inner();
         inner.inference_port = inference_port;
         inner.max_concurrent_inspections = max_concurrent_inspections;
+        inner.response_start_timeout_seconds = response_start_timeout_seconds;
         inner.locale = locale;
         inner.auto_recover = auto_recover;
         if !auto_recover {
@@ -5785,7 +5793,7 @@ mod tests {
 
     #[test]
     fn sidecar_receives_pid_and_data_path_but_not_control_token_in_arguments() {
-        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16)
+        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0)
             .expect("test path should be valid UTF-8");
         assert_eq!(
             arguments,
@@ -5801,6 +5809,8 @@ mod tests {
                 "--control-token-stdin".to_string(),
                 "--max-concurrent-inspections".to_string(),
                 "16".to_string(),
+                "--response-start-timeout-seconds".to_string(),
+                "0".to_string(),
             ]
         );
     }

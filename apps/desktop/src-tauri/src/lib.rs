@@ -55,6 +55,7 @@ struct PreferencesInput {
     core_auto_recover: bool,
     inference_port: u16,
     max_concurrent_inspections: u16,
+    response_start_timeout_seconds: u32,
     locale: Locale,
 }
 
@@ -67,6 +68,7 @@ impl From<PreferencesInput> for Preferences {
             core_auto_recover: input.core_auto_recover,
             inference_port: input.inference_port,
             max_concurrent_inspections: input.max_concurrent_inspections,
+            response_start_timeout_seconds: input.response_start_timeout_seconds,
             locale: input.locale,
         }
     }
@@ -269,6 +271,7 @@ fn update_preferences(
     manager.configure(
         values.inference_port,
         values.max_concurrent_inspections,
+        values.response_start_timeout_seconds,
         values.core_auto_recover,
         locale,
     );
@@ -807,6 +810,7 @@ pub fn run() {
             setup_manager.configure(
                 values.inference_port,
                 values.max_concurrent_inspections,
+                values.response_start_timeout_seconds,
                 values.core_auto_recover,
                 values.locale,
             );
@@ -865,6 +869,16 @@ pub fn run() {
             if let Ok(home) = control_session::user_home() {
                 if let Err(error) = agent_install::sync_installed_skills(&home) {
                     eprintln!("failed to sync AstrLink agent skills: {error}");
+                }
+                if let Ok(mcp_source) = agent_install::resolve_sidecar_binary("astrlink-mcp") {
+                    if let Err(error) =
+                        agent_install::sync_installed_mcp(&agent_install::InstallContext {
+                            home,
+                            mcp_source,
+                        })
+                    {
+                        eprintln!("failed to sync AstrLink MCP binary: {error}");
+                    }
                 }
             }
 

@@ -136,7 +136,86 @@ describe("request trajectory model", () => {
     ).toBe(true);
   });
 
+  it("groups an agent loop under one TURN header and starts a new one per user turn", () => {
+    const accepted = (id: string, summary: string) => ({
+      kind: "accepted" as const,
+      started_at: record.started_at,
+      ended_at: record.completed_at,
+      status: "succeeded" as const,
+      summary,
+      attempt_index: 1,
+    });
+    const step1: RequestRecord = {
+      ...record,
+      id: "req_loop_1",
+      turn_index: 1,
+      input_preview: "帮我看看仓库里有哪些文件",
+      events: [accepted("req_loop_1", "gpt-4.1 · openai.chat")],
+    };
+    const step2: RequestRecord = {
+      ...step1,
+      id: "req_loop_2",
+      started_at: "2026-08-16T10:00:03Z",
+      completed_at: "2026-08-16T10:00:04Z",
+      session_link: { kind: "echo_id", value: "call_8f3kd92ls0a1Qz7" },
+      events: [accepted("req_loop_2", "gpt-4.1 · openai.chat")],
+    };
+    const followUp: RequestRecord = {
+      ...step1,
+      id: "req_loop_3",
+      started_at: "2026-08-16T10:00:10Z",
+      completed_at: null,
+      status: "pending",
+      turn_index: 2,
+      input_preview: "第二个文件是做什么的",
+      session_link: { kind: "fingerprint", value: "fp1_0123456789abcdef0123456789abcdef" },
+      events: [accepted("req_loop_3", "gpt-4.1 · openai.chat")],
+    };
+    const legacy: RequestRecord = {
+      ...step1,
+      id: "req_loop_legacy",
+      started_at: "2026-08-16T10:00:20Z",
+      turn_index: null,
+      input_preview: null,
+      events: [accepted("req_loop_legacy", "gpt-4.1 · openai.chat")],
+    };
+
+    const rows = trajectoryRows([step1, step2, followUp, legacy], {});
+    expect(rows.map((row) => [row.chip, row.summary])).toEqual([
+      ["TURN", "第 1 轮 · 帮我看看仓库里有哪些文件"],
+      ["CLIENT", "gpt-4.1 · openai.chat"],
+      ["CLIENT", "gpt-4.1 · openai.chat · 回显 ID 接续"],
+      ["TURN", "第 2 轮 · 第二个文件是做什么的"],
+      ["CLIENT", "gpt-4.1 · openai.chat · 回复指纹接续"],
+      ["TURN", "未标注轮次"],
+      ["CLIENT", "gpt-4.1 · openai.chat"],
+    ]);
+    const headers = rows.filter((row) => row.chip === "TURN");
+    expect(headers.map((row) => row.result)).toEqual([
+      "2 次调用",
+      "1 次调用",
+      "1 次调用",
+    ]);
+    expect(headers[0]).toMatchObject({
+      requestId: "req_loop_1",
+      status: "succeeded",
+      tone: "ok",
+      startedAt: step1.started_at,
+      endedAt: step2.completed_at,
+      lane: "client",
+    });
+    expect(headers[1]).toMatchObject({ status: "pending", tone: "pending", endedAt: null });
+
+    // Headers span whole turns, so they stay off the lane bars.
+    const lanes = trajectoryLanes(rows, Date.parse("2026-08-16T10:00:30Z"));
+    expect(lanes.segments).toHaveLength(rows.length - headers.length);
+
+    // A single call has nothing to group: no header, unchanged trajectory.
+    expect(trajectoryRows([step2], {}).map((row) => row.chip)).toEqual(["CLIENT"]);
+  });
+
   it("maps trajectory chips to inspector audit parts", () => {
+    expect(inspectorPart("TURN")).toBe("request_body");
     expect(inspectorPart("CLIENT")).toBe("request_body");
     expect(inspectorPart("POLICY")).toBe("upstream_request_body");
     expect(inspectorPart("ROUTE")).toBe("route");

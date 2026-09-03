@@ -1,8 +1,8 @@
 BUN ?= bun
 
-.PHONY: check core-check core-race contracts-check contracts-race desktop-install desktop-check desktop-sidecar desktop-rust-check privacy-worker-check classifier-worker-check classifier-ort-gate classifier-bench model-safety-check dev
+.PHONY: check core-check core-race convo-check convo-race contracts-check contracts-race desktop-install desktop-check desktop-sidecar desktop-rust-check privacy-worker-check classifier-worker-check classifier-ort-gate classifier-bench model-safety-check dev
 
-check: model-safety-check core-check contracts-check desktop-check privacy-worker-check classifier-worker-check desktop-rust-check
+check: model-safety-check convo-check core-check contracts-check desktop-check privacy-worker-check classifier-worker-check desktop-rust-check
 
 model-safety-check:
 	$(BUN) scripts/check-no-production-models.mjs
@@ -12,6 +12,12 @@ core-check:
 
 core-race:
 	cd core && ASTRLINK_CI_NO_REMOTE_MODELS=1 go test -race ./...
+
+convo-check:
+	cd convo && go vet ./... && go test ./...
+
+convo-race:
+	cd convo && go test -race ./...
 
 contracts-check:
 	ruby contracts/validate.rb

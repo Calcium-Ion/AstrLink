@@ -40,7 +40,7 @@ func toolCatalog() []toolDef {
 	return []toolDef{
 		{
 			Name:        "list_request_sessions",
-			Description: "List recent AstrLink request sessions (grouped conversations) with metadata only.",
+			Description: "List recent AstrLink request sessions (grouped conversations) with metadata only. turn_count is the number of user turns; call_count is the number of model calls, so an agent tool loop shows as 1 turn with many calls.",
 			Schema:      listQuery,
 			Call: func(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error) {
 				return client.get(ctx, controlapi.RequestSessionsPath, listQueryValues(arguments))
@@ -48,7 +48,7 @@ func toolCatalog() []toolDef {
 		},
 		{
 			Name:        "get_request_session",
-			Description: "Get one AstrLink request session and its turns (metadata + trajectory events).",
+			Description: "Get one AstrLink request session and its records (metadata + trajectory events). Each record carries turn_index (1-based user turn shared by every call of one agent loop) and session_link (how it joined the session: explicit cursor, echoed id, or assistant-text fingerprint; null for the first record).",
 			Schema:      idQuery,
 			Call: func(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error) {
 				id, err := requiredID(arguments)
@@ -68,7 +68,7 @@ func toolCatalog() []toolDef {
 		},
 		{
 			Name:        "get_request_record",
-			Description: "Get one AstrLink request record including events[] trajectory phases.",
+			Description: "Get one AstrLink request record including events[] trajectory phases, turn_index, session_link, and cursors[] (the typed session cursors stored for linking; fingerprint values are keyed digests, never text).",
 			Schema:      idQuery,
 			Call: func(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error) {
 				id, err := requiredID(arguments)

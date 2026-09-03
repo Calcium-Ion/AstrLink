@@ -23,6 +23,7 @@ import {
 import { protocolEntryPath } from "./service-presets";
 
 const chipClass: Record<TrajectoryChip, string> = {
+  TURN: "bg-foreground text-background",
   CLIENT: "bg-primary text-primary-foreground",
   POLICY: "bg-warning text-primary-foreground",
   ROUTE: "bg-tide text-primary-foreground",
@@ -33,6 +34,7 @@ const chipClass: Record<TrajectoryChip, string> = {
 };
 
 const failedPhaseChips = new Set<TrajectoryChip>([
+  "TURN",
   "RESULT",
   "UPSTREAM",
   "RETRY",
@@ -576,6 +578,7 @@ function inspectorHttpStatus(
 
 function bodySectionTitle(chip: TrajectoryChip): string {
   switch (chip) {
+    case "TURN":
     case "CLIENT":
       return i18n.t("trajectory.clientBody");
     case "POLICY":
@@ -641,6 +644,7 @@ function TrajectoryRowView({
       <Button
         className={cn(
           "grid h-auto w-full shrink-0 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 rounded-none border-b bg-transparent px-0 py-2 text-left text-xs text-foreground shadow-none hover:bg-muted",
+          row.chip === "TURN" && "bg-muted/50 font-medium",
           row.tone === "failed" && "bg-danger-wash/60 hover:bg-danger-wash",
           row.tone === "blocked" && "bg-warning-wash/60 hover:bg-warning-wash",
           selected && "bg-accent hover:bg-accent",

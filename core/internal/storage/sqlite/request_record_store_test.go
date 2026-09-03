@@ -233,9 +233,10 @@ func TestRequestSessionStoreGroupsTurnsAndLinksCursors(t *testing.T) {
 		}
 	}
 
-	linked, err := store.FindSessionLink(ctx, "resp_one")
-	if err != nil || linked != sessionID {
-		t.Fatalf("link=%q err=%v", linked, err)
+	// Legacy columns still anchor explicit lookups.
+	linked, ok, err := store.FindSessionLink(ctx, contract.SessionCursorExplicit, []string{"resp_one"}, storagecontract.SessionCursorScope{})
+	if err != nil || !ok || linked.SessionID != sessionID || linked.Value != "resp_one" {
+		t.Fatalf("link=%+v ok=%v err=%v", linked, ok, err)
 	}
 
 	page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Limit: 10})
@@ -262,6 +263,41 @@ func TestRequestSessionStoreGroupsTurnsAndLinksCursors(t *testing.T) {
 	legacyDetail, err := store.GetRequestSession(ctx, "request_legacy")
 	if err != nil || legacyDetail.ID != "request_legacy" || len(legacyDetail.Turns) != 1 {
 		t.Fatalf("legacy=%#v err=%v", legacyDetail, err)
+	}
+}
+
+func TestRequestSessionStoreTreatsLegacyHTTPErrorAsFailed(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "sessions-http-error.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 9, 3, 2, 7, 29, 0, time.UTC)
+	completed := start.Add(63 * time.Second)
+	status := http.StatusBadGateway
+	sessionID := contract.SessionID("session_http_error")
+	record := contract.RequestRecord{
+		ID: "request_a979607ff60139b9386dcb11", StartedAt: start, CompletedAt: &completed,
+		Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolAnthropicMessages,
+		HTTPStatus: &status, Audit: contract.NotCapturedAuditSummary(), SessionID: &sessionID,
+	}
+	if err := store.InsertRequestRecord(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Limit: 10})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("sessions=%#v err=%v", page, err)
+	}
+	if page.Items[0].Status != contract.RequestStatusFailed {
+		t.Fatalf("list status=%q", page.Items[0].Status)
+	}
+	detail, err := store.GetRequestSession(ctx, string(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Status != contract.RequestStatusFailed {
+		t.Fatalf("detail status=%q", detail.Status)
+	}
+	if detail.Turns[0].Status != contract.RequestStatusSucceeded {
+		t.Fatalf("stored turn status should stay succeeded, got %q", detail.Turns[0].Status)
 	}
 }
 
@@ -310,6 +346,198 @@ func TestListRequestSessionsHonorsSQLLimitWithManyRoots(t *testing.T) {
 		t.Fatalf("second page = %#v", second)
 	}
 }
+
+func TestRequestRecordCursorsRoundTripScopeAndCascade(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "cursors.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 9, 3, 8, 0, 0, 0, time.UTC)
+	tokenA := contract.AccessTokenID("token_a")
+	tokenB := contract.AccessTokenID("token_b")
+	sessionA := contract.SessionID("session_a")
+	turnOne := 1
+
+	pending := contract.RequestRecord{
+		ID: "request_cur_a", StartedAt: start, Status: contract.RequestStatusPending,
+		InputProtocol: contract.ProtocolOpenAIChat, Audit: contract.NotCapturedAuditSummary(),
+		LocalAccessTokenID: &tokenA, SessionID: &sessionA, TurnIndex: &turnOne,
+		Cursors: []contract.SessionCursor{
+			{Kind: contract.SessionCursorExplicit, Direction: contract.SessionCursorIn, Value: "conv_shared"},
+		},
+	}
+	if err := store.UpsertRequestRecord(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	terminal := pending
+	terminal.Status = contract.RequestStatusSucceeded
+	terminal.Cursors = []contract.SessionCursor{
+		{Kind: contract.SessionCursorExplicit, Direction: contract.SessionCursorIn, Value: "conv_shared"},
+		{Kind: contract.SessionCursorExplicit, Direction: contract.SessionCursorOut, Value: "chatcmpl-a"},
+		{Kind: contract.SessionCursorEchoID, Direction: contract.SessionCursorOut, Value: "call_7f3a9c2e1b4d4e8fa1c2"},
+		{Kind: contract.SessionCursorFingerprint, Direction: contract.SessionCursorOut, Value: "fp1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{Kind: contract.SessionCursorFingerprint, Direction: contract.SessionCursorOut, Value: "fp1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+	}
+	if err := store.UpsertRequestRecord(ctx, terminal); err != nil {
+		t.Fatal(err)
+	}
+	// A late pending snapshot must neither downgrade the row nor its cursors.
+	if err := store.UpsertRequestRecord(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetRequestRecord(ctx, pending.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Cursors) != 4 || got.TurnIndex == nil || *got.TurnIndex != 1 {
+		t.Fatalf("stored record = %+v", got)
+	}
+
+	scopedA := storagecontract.SessionCursorScope{SamePrincipal: true, LocalAccessTokenID: &tokenA}
+	scopedB := storagecontract.SessionCursorScope{SamePrincipal: true, LocalAccessTokenID: &tokenB}
+	match, ok, err := store.FindSessionLink(ctx, contract.SessionCursorEchoID, []string{"call_missing", "call_7f3a9c2e1b4d4e8fa1c2"}, scopedA)
+	if err != nil || !ok || match.SessionID != sessionA || match.Value != "call_7f3a9c2e1b4d4e8fa1c2" || match.TurnIndex == nil || *match.TurnIndex != 1 {
+		t.Fatalf("echo match = %+v ok=%v err=%v", match, ok, err)
+	}
+	if _, ok, err := store.FindSessionLink(ctx, contract.SessionCursorEchoID, []string{"call_7f3a9c2e1b4d4e8fa1c2"}, scopedB); err != nil || ok {
+		t.Fatalf("other token must not match: ok=%v err=%v", ok, err)
+	}
+	late := storagecontract.SessionCursorScope{SamePrincipal: true, LocalAccessTokenID: &tokenA, NotBefore: start.Add(time.Second)}
+	if _, ok, err := store.FindSessionLink(ctx, contract.SessionCursorEchoID, []string{"call_7f3a9c2e1b4d4e8fa1c2"}, late); err != nil || ok {
+		t.Fatalf("window must exclude older roots: ok=%v err=%v", ok, err)
+	}
+	if _, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorExplicit, []string{"conv_shared"}, storagecontract.SessionCursorScope{}); !ok {
+		t.Fatal("explicit inbound cursors must match")
+	}
+	if _, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorFingerprint, []string{"fp1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, scopedA); !ok {
+		t.Fatal("fingerprint out cursor must match")
+	}
+	if _, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorFingerprint, []string{"conv_shared"}, scopedA); ok {
+		t.Fatal("kind mismatch must not match")
+	}
+	if _, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorEchoID, nil, scopedA); ok {
+		t.Fatal("empty values must not match")
+	}
+
+	// Children never anchor a session, and the newest root wins.
+	child := terminal
+	child.ID = "request_cur_a_child"
+	child.ParentRequestID = &terminal.ID
+	child.AttemptIndex = 1
+	child.StartedAt = start.Add(time.Minute)
+	child.Cursors = []contract.SessionCursor{{Kind: contract.SessionCursorEchoID, Direction: contract.SessionCursorOut, Value: "call_child_only_9a8b7c6d"}}
+	if err := store.InsertRequestRecord(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorEchoID, []string{"call_child_only_9a8b7c6d"}, scopedA); ok {
+		t.Fatal("child cursors must not anchor sessions")
+	}
+	sessionB := contract.SessionID("session_b")
+	newer := terminal
+	newer.ID = "request_cur_b"
+	newer.StartedAt = start.Add(2 * time.Minute)
+	newer.SessionID = &sessionB
+	if err := store.InsertRequestRecord(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	if match, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorEchoID, []string{"call_7f3a9c2e1b4d4e8fa1c2"}, scopedA); !ok || match.SessionID != sessionB {
+		t.Fatalf("newest root must win: %+v", match)
+	}
+
+	// A newer root that merely consumed an explicit cursor must not outrank
+	// the root that produced it: the producer carries the turn the
+	// continuation builds on. This holds for the cursor table and for the
+	// legacy previous_response_id / output_response_id columns alike.
+	sessionC := contract.SessionID("session_c")
+	turnFive := 5
+	previous := "chatcmpl-a"
+	consumer := contract.RequestRecord{
+		ID: "request_cur_c", StartedAt: start.Add(3 * time.Minute), Status: contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIChat, Audit: contract.NotCapturedAuditSummary(),
+		LocalAccessTokenID: &tokenA, SessionID: &sessionC, TurnIndex: &turnFive,
+		PreviousResponseID: &previous,
+		Cursors: []contract.SessionCursor{
+			{Kind: contract.SessionCursorExplicit, Direction: contract.SessionCursorIn, Value: "chatcmpl-a"},
+		},
+	}
+	if err := store.InsertRequestRecord(ctx, consumer); err != nil {
+		t.Fatal(err)
+	}
+	if match, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorExplicit, []string{"chatcmpl-a"}, storagecontract.SessionCursorScope{}); !ok || match.SessionID != sessionB || match.TurnIndex == nil || *match.TurnIndex != 1 {
+		t.Fatalf("producer must outrank a newer consumer: %+v", match)
+	}
+	legacyOutput := "resp_legacy_out"
+	legacyProducer := contract.RequestRecord{
+		ID: "request_legacy_producer", StartedAt: start.Add(4 * time.Minute), Status: contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		SessionID: &sessionA, TurnIndex: &turnOne, OutputResponseID: &legacyOutput,
+	}
+	legacyConsumer := contract.RequestRecord{
+		ID: "request_legacy_consumer", StartedAt: start.Add(5 * time.Minute), Status: contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		SessionID: &sessionC, TurnIndex: &turnFive, PreviousResponseID: &legacyOutput,
+	}
+	for _, record := range []contract.RequestRecord{legacyProducer, legacyConsumer} {
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if match, ok, _ := store.FindSessionLink(ctx, contract.SessionCursorExplicit, []string{legacyOutput}, storagecontract.SessionCursorScope{}); !ok || match.SessionID != sessionA || match.TurnIndex == nil || *match.TurnIndex != 1 {
+		t.Fatalf("legacy output column must outrank a newer previous_response_id: %+v", match)
+	}
+	if err := store.DeleteRequestRecord(ctx, consumer.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deleting the root removes its and its children's cursor rows.
+	if err := store.DeleteRequestRecord(ctx, terminal.ID); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM request_record_cursors WHERE request_id IN ('request_cur_a', 'request_cur_a_child')`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("cursor rows after delete = %d err=%v", remaining, err)
+	}
+	if _, err := store.PurgeRequestRecords(ctx, contract.PurgeRequest{Scope: contract.PurgeScopeAll, Confirm: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM request_record_cursors`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("cursor rows after purge = %d err=%v", remaining, err)
+	}
+}
+
+func TestSessionTurnCountGroupsByTurnIndex(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "turns.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC)
+	sessionID := contract.SessionID("session_loop")
+	turns := []*int{ptrInt(1), ptrInt(1), ptrInt(1), ptrInt(2), nil, ptrInt(1)}
+	for index, turn := range turns {
+		record := contract.RequestRecord{
+			ID: contract.RequestID(fmt.Sprintf("request_loop_%d", index)), StartedAt: start.Add(time.Duration(index) * time.Second),
+			Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIChat,
+			Audit: contract.NotCapturedAuditSummary(), SessionID: &sessionID, TurnIndex: turn,
+		}
+		if index > 0 {
+			record.SessionLink = &contract.SessionLink{Kind: contract.SessionCursorEchoID, Value: "call_7f3a9c2e1b4d4e8fa1c2"}
+		}
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detail, err := store.GetRequestSession(ctx, string(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1,1,1 → one turn; 2 → second; nil → third; 1 (fell back) → fourth.
+	if detail.TurnCount != 4 || detail.CallCount != 6 {
+		t.Fatalf("turn_count=%d call_count=%d", detail.TurnCount, detail.CallCount)
+	}
+	if detail.Turns[1].SessionLink == nil || detail.Turns[1].SessionLink.Kind != contract.SessionCursorEchoID {
+		t.Fatalf("session_link not persisted: %+v", detail.Turns[1])
+	}
+}
+
+func ptrInt(value int) *int { return &value }
 
 func ptrTime(value time.Time) *time.Time { return &value }
 

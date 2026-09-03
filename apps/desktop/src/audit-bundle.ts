@@ -5,7 +5,7 @@ import type {
   AuditHeader,
   RequestRecord,
 } from "./request-record-model";
-import { statusLabel } from "./request-record-model";
+import { displayRequestStatus, statusLabel } from "./request-record-model";
 
 export type BundleFormat = "markdown" | "txt";
 
@@ -141,7 +141,9 @@ export function buildRecordBundle(
   lines.push(
     bullet(
       i18n.t("audit.statusLine", {
-        status: statusLabel(record.status),
+        status: statusLabel(
+          displayRequestStatus(record.status, record.http_status),
+        ),
         http: httpStatus,
       }),
       format,

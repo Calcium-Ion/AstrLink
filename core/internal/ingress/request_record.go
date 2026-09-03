@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -33,7 +34,9 @@ func recordSessionFromContext(ctx context.Context) *recordSession {
 type RequestRecordStore interface {
 	UpsertRequestRecord(context.Context, contract.RequestRecord) error
 	InsertRequestRecord(context.Context, contract.RequestRecord) error
-	FindSessionLink(context.Context, string) (contract.SessionID, error)
+	// FindSessionLink implements the convo.Lookup contract over stored
+	// cursors; see storage.RequestRecordStore for the matching rules.
+	FindSessionLink(context.Context, contract.SessionCursorKind, []string, storage.SessionCursorScope) (storage.SessionLinkMatch, bool, error)
 }
 
 // AuditSettingsProvider supplies the capture switches for one request.
@@ -122,7 +125,17 @@ type recordSession struct {
 	previousResponseID       string
 	outputResponseID         string
 	inputPreview             string
-	events                   []contract.RequestEvent
+	// fingerprinter is nil when audit storage is unavailable; text-only
+	// linking is then skipped for this request.
+	fingerprinter *convo.Fingerprinter
+	turnIndex     *int
+	sessionLink   *contract.SessionLink
+	// inboundCursors are the explicit cursors the request named; they are
+	// stored so sibling requests naming the same conversation can link.
+	inboundCursors []contract.SessionCursor
+	// outputCursors are what the client-facing response produced.
+	outputCursors []contract.SessionCursor
+	events        []contract.RequestEvent
 }
 
 func newRecordSession(
@@ -236,6 +249,15 @@ func (session *recordSession) recordSnapshot(
 		value := session.inputPreview
 		record.InputPreview = &value
 	}
+	if session.turnIndex != nil {
+		turn := *session.turnIndex
+		record.TurnIndex = &turn
+	}
+	if session.sessionLink != nil {
+		link := *session.sessionLink
+		record.SessionLink = &link
+	}
+	record.Cursors = mergeSessionCursors(session.inboundCursors, session.outputCursors)
 	return record
 }
 
@@ -488,8 +510,40 @@ func (session *recordSession) notePrivacyRestore(summary contract.PrivacyRestore
 	session.privacyRestore = &copy
 }
 
+func (session *recordSession) recordedHTTPStatus() (int, bool) {
+	if session == nil {
+		return 0, false
+	}
+	if session.hasHTTPStatus {
+		return session.httpStatus, true
+	}
+	if session.hasUpstreamHTTPStatus {
+		return session.upstreamHTTPStatus, true
+	}
+	return 0, false
+}
+
+func (session *recordSession) failFromHTTPError() bool {
+	if session == nil {
+		return false
+	}
+	status, ok := session.recordedHTTPStatus()
+	if !ok || status < http.StatusBadRequest {
+		return false
+	}
+	session.status = contract.RequestStatusFailed
+	if session.errorSummary == nil {
+		summary := errorSummaryFromHTTPStatus(status)
+		session.errorSummary = &summary
+	}
+	return true
+}
+
 func (session *recordSession) noteSucceeded() {
 	if session == nil {
+		return
+	}
+	if session.failFromHTTPError() {
 		return
 	}
 	session.status = contract.RequestStatusSucceeded
@@ -555,6 +609,10 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 	child.ChildCount = 0
 	child.Events = eventsForAttempt(session.events, session.attemptIndex)
 	child.Audit = session.upstreamAuditSummary()
+	// A failed attempt produced nothing the client will replay; only the
+	// root anchors the session.
+	child.Cursors = nil
+	child.SessionLink = nil
 
 	pendingBlobs := make([]storage.AuditBlob, 0, 3)
 	if blobs != nil {
@@ -661,7 +719,11 @@ func (session *recordSession) finish(
 			Retryable: true,
 		}
 	}
+	if session.status == contract.RequestStatusSucceeded {
+		session.failFromHTTPError()
+	}
 	session.captureOutputID()
+	session.captureOutputCursors()
 	if session.networkAttemptOpen {
 		session.closeEventKind(contract.RequestEventUpstream, session.status, session.completedSummary())
 	}
@@ -905,7 +967,11 @@ func logIngressAccess(logf func(string, ...any), session *recordSession) {
 	)
 }
 
-func (session *recordSession) resolveSession(ctx context.Context, store RequestRecordStore) {
+// resolveSession attaches the request to an earlier session through the convo
+// policy (explicit cursor, then echoed ids, then the assistant-text
+// fingerprint) and derives its user turn. Lookup failures degrade to a fresh
+// session so recording never blocks or fails the request.
+func (session *recordSession) resolveSession(ctx context.Context, store RequestRecordStore, logf func(string, ...any)) {
 	if session == nil {
 		return
 	}
@@ -915,12 +981,33 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 	}
 	if cursor != "" {
 		session.previousResponseID = cursor
-		if store != nil {
-			if linked, err := store.FindSessionLink(ctx, cursor); err == nil && linked != "" {
-				session.sessionID = linked
-			}
+	}
+	summary := session.classified.Conversation
+	if len(summary.ExplicitCursors) == 0 && cursor != "" {
+		// Protocols without a convo adapter still honour the legacy cursor.
+		summary.ExplicitCursors = []string{cursor}
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, sessionLookupTimeout)
+	defer cancel()
+	decision, err := conversationPolicy.Resolve(
+		lookupCtx, summary, session.fingerprinter, sessionLookup(store, session.accessTokenID), time.Now(),
+	)
+	if err != nil {
+		logRequestRecordFailure(logf, "session_lookup", err)
+		// Resolve aborts on the first lookup error, so the partial decision
+		// may lack Inbound and TurnIndex; recompute both without storage.
+		decision, _ = conversationPolicy.Resolve(ctx, summary, session.fingerprinter, nil, time.Now())
+	}
+	if decision.Matched {
+		session.sessionID = contract.SessionID(decision.Match.SessionID)
+		session.sessionLink = &contract.SessionLink{
+			Kind:  contract.SessionCursorKind(decision.Match.Kind),
+			Value: decision.Match.Value,
 		}
 	}
+	session.turnIndex = decision.TurnIndex
+	session.inboundCursors = contractCursors(decision.PersistentInbound())
 	if session.sessionID == "" {
 		session.sessionID = newSessionID()
 	}
@@ -933,7 +1020,10 @@ func (session *recordSession) completedSummary() string {
 		return ""
 	}
 	if session.errorSummary != nil {
-		return session.errorSummary.Code
+		if session.errorSummary.Message == "" {
+			return session.errorSummary.Code
+		}
+		return session.errorSummary.Code + " · " + session.errorSummary.Message
 	}
 	parts := make([]string, 0, 3)
 	if session.hasHTTPStatus {
@@ -1028,6 +1118,21 @@ func (session *recordSession) captureOutputID() {
 			session.outputResponseID = id
 		}
 	}
+}
+
+// captureOutputCursors turns what the client-facing response produced (its
+// id, echoed ids, assistant-text fingerprint) into stored cursors. Only the
+// client-facing scanner counts: after protocol conversion or privacy restore
+// those are the bytes the client will replay.
+func (session *recordSession) captureOutputCursors() {
+	if session == nil || session.scanner == nil {
+		return
+	}
+	summary := session.scanner.conversation()
+	if summary.OutputID == "" {
+		summary.OutputID = session.outputResponseID
+	}
+	session.outputCursors = contractCursors(conversationPolicy.OutputCursors(summary, session.fingerprinter))
 }
 
 func eventsForAttempt(events []contract.RequestEvent, attempt int) []contract.RequestEvent {
@@ -1128,6 +1233,15 @@ func (writer *recordStatusWriter) Unwrap() http.ResponseWriter {
 	return writer.ResponseWriter
 }
 
+func errorSummaryFromHTTPStatus(status int) contract.ErrorSummary {
+	retryable := status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+	return errorSummaryFromInference(
+		"upstream_http_error",
+		fmt.Sprintf("upstream returned HTTP %d", status),
+		retryable,
+	)
+}
+
 func errorSummaryFromInference(code, message string, retryable bool) contract.ErrorSummary {
 	category := "gateway"
 	switch code {
@@ -1136,7 +1250,7 @@ func errorSummaryFromInference(code, message string, retryable bool) contract.Er
 	case "invalid_access_token", "token_query_forbidden":
 		category = "auth"
 	case "upstream_unavailable", "upstream_timeout", "credential_unavailable",
-		"upstream_stream_interrupted":
+		"upstream_stream_interrupted", "upstream_http_error":
 		category = "upstream"
 	case "missing_protocol_capability", "endpoint_resolver_unavailable":
 		category = "routing"

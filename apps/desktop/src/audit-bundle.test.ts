@@ -208,6 +208,15 @@ describe("buildRecordBundle", () => {
     expect(bundle).toContain("gateway unavailable");
   });
 
+  it("labels a legacy succeeded HTTP 502 as failed", () => {
+    const bundle = buildRecordBundle(
+      { ...record, status: "succeeded", http_status: 502, error: null },
+      content,
+      {},
+    );
+    expect(bundle).toContain("状态: 失败 · HTTP 502");
+  });
+
   it("renders the same facts as plain text without markdown decoration", () => {
     const bundle = buildRecordBundle(record, content, {
       format: "txt",

@@ -128,9 +128,18 @@ func TestExecuteCandidatesDemotesFailedAttemptsIntoIndependentChildren(t *testin
 	if root.SessionID == nil {
 		t.Fatal("root missing session id")
 	}
+	if root.TurnIndex == nil || *root.TurnIndex != 1 {
+		t.Fatalf("root turn_index=%v, want 1", root.TurnIndex)
+	}
+	if !hasSessionCursor(root.Cursors, contract.SessionCursorExplicit, contract.SessionCursorOut, "chat_ok") {
+		t.Fatalf("root cursors=%#v, want explicit out chat_ok", root.Cursors)
+	}
 	for _, child := range children {
 		if child.SessionID == nil || *child.SessionID != *root.SessionID {
 			t.Fatalf("child session=%v root=%v", child.SessionID, root.SessionID)
+		}
+		if len(child.Cursors) != 0 || child.SessionLink != nil {
+			t.Fatalf("failed attempt must not anchor the session: cursors=%#v link=%#v", child.Cursors, child.SessionLink)
 		}
 		if len(child.Events) == 0 {
 			t.Fatal("child missing attempt events")

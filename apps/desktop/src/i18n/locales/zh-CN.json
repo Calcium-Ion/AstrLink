@@ -129,7 +129,7 @@
     "restarting": "重启中…",
     "portKicker": "网络入口",
     "portTitle": "推理入口",
-    "portHint": "修改后需保存；重启网关后才会切换到新端口和并发上限。",
+    "portHint": "修改后需保存；重启网关后才会切换到新端口、并发上限和响应头等待。",
     "portField": "推理端口",
     "portActive": "正在使用",
     "portSaved": "已保存",
@@ -140,6 +140,9 @@
     "concurrencyField": "检查并发",
     "concurrencySaved": "已保存",
     "concurrencyHint": "同时解析与分类的请求路数，范围 4–128。并行调用排队时可调高。",
+    "responseStartTimeoutField": "响应头等待",
+    "responseStartTimeoutSaved": "已保存",
+    "responseStartTimeoutHint": "等待上游响应头的秒数（0 为不限制，最大 86400）。非流上游常在整段生成完才出头。",
     "savePort": "保存",
     "savingPort": "正在保存…",
     "autostartMismatch": "偏好与系统开机启动状态不一致；可再次切换以重新核对。",
@@ -154,7 +157,7 @@
     "description": "为 Cursor、Claude Code、Codex 安装只读 Skill 和 MCP，让它们自行查看 AstrLink 请求记录。控制面令牌不会写入这些配置。",
     "panelTitle": "一键安装调试 Skill 与 MCP",
     "failed": "Agent 工具操作失败。",
-    "restartHint": "安装后请新开一个 agent 会话。元数据调试立即可用；请求/响应正文仍默认关闭，需在请求记录里手动开启捕获。",
+    "restartHint": "桌面网关需要在运行中。安装后请新开一个 agent 会话。不要对本地 astrlink MCP 点 Authenticate / 登录，它是本机 stdio，不是 OAuth。元数据调试立即可用；请求/响应正文仍默认关闭，需在请求记录里手动开启捕获。",
     "install": "安装 Skill 与 MCP",
     "installing": "正在安装…",
     "remove": "卸载",
@@ -986,6 +989,7 @@
     "emptyHint": "调整筛选条件，或发起一次新的推理请求。",
     "countItems": "{{count}} 条",
     "sessionMeta": "{{turns}} 轮 · {{calls}} 次调用 · {{duration}}",
+    "sessionMetaTurns": "{{turns}} 轮 · {{duration}}",
     "exportMarkdown": "导出为 Markdown 文件",
     "exportTxt": "导出为 TXT 文件",
     "tabTrajectory": "追踪",
@@ -1082,7 +1086,16 @@
     "childRequest": "子请求 {{index}} · {{summary}}",
     "uncapturedHint": "未捕获。可在顶栏开启「请求和响应捕获」。",
     "unrestoredPlaceholders": "仍留在响应中的替换值（未还原）",
-    "restoreRatio": "restore · {{restored}}/{{mapped}}"
+    "restoreRatio": "restore · {{restored}}/{{mapped}}",
+    "turnHeader": "第 {{index}} 轮",
+    "turnHeaderUnnumbered": "未标注轮次",
+    "turnCalls": "{{count}} 次调用",
+    "turnHeaderTitle": "用户轮次",
+    "linkedVia": {
+      "explicit": "显式游标接续",
+      "echo_id": "回显 ID 接续",
+      "fingerprint": "回复指纹接续"
+    }
   },
   "routes": {
     "passthrough": "原样转发",
@@ -1235,6 +1248,7 @@
     "preferences": {
       "portRange": "推理端口必须在 1024–65535 之间。",
       "concurrencyRange": "检查并发必须在 4–128 之间。",
+      "responseStartTimeoutRange": "响应头等待必须在 0–86400 秒之间。",
       "invalidSettings": "偏好文件包含无效设置，当前使用安全默认值：{{error}}",
       "unparseable": "偏好文件无法解析，当前使用安全默认值：{{error}}",
       "unreadable": "无法读取偏好文件，当前使用安全默认值：{{error}}",

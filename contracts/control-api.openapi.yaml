@@ -3708,7 +3708,28 @@ components:
           type: [string, "null"]
           minLength: 1
           maxLength: 80
-          description: Bounded first-user-text title. URLs and obvious secrets are stripped.
+          description: Bounded title from the newest visible user text. URLs and obvious secrets are stripped.
+        turn_index:
+          type: [integer, "null"]
+          minimum: 1
+          description: |
+            1-based user turn within the session. Every model call of one agent
+            loop shares the same value, so a session's turn_count can be far below
+            its call_count. Null when the protocol has no user turns or on legacy rows.
+        session_link:
+          oneOf:
+            - $ref: "#/components/schemas/SessionLink"
+            - type: "null"
+          description: How this record joined an existing session; null when it started the session.
+        cursors:
+          type: [array, "null"]
+          maxItems: 48
+          items:
+            $ref: "#/components/schemas/SessionCursor"
+          description: |
+            Typed values stored for this record: explicit cursors the request named
+            (direction in) and everything the response produced (direction out).
+            Fingerprints are keyed digests and reveal nothing about the text.
         events:
           type: array
           items:
@@ -3716,6 +3737,38 @@ components:
           description: Gateway phase events for this attempt. Empty on legacy rows.
         extensions:
           $ref: ./protocol-capabilities.schema.json#/$defs/Extensions
+      additionalProperties: false
+    SessionCursorKind:
+      type: string
+      enum: [explicit, echo_id, fingerprint]
+      description: |
+        explicit: an id the client sent on purpose or the response's own id, matched globally.
+        echo_id: an opaque id the model produced and the client echoed back, matched within the same access token and time window.
+        fingerprint: keyed digest of the last assistant text, matched like echo_id.
+    SessionCursor:
+      type: object
+      required: [kind, direction, value]
+      properties:
+        kind:
+          $ref: "#/components/schemas/SessionCursorKind"
+        direction:
+          type: string
+          enum: [in, out]
+        value:
+          type: string
+          minLength: 1
+          maxLength: 256
+      additionalProperties: false
+    SessionLink:
+      type: object
+      required: [kind, value]
+      properties:
+        kind:
+          $ref: "#/components/schemas/SessionCursorKind"
+        value:
+          type: string
+          minLength: 1
+          maxLength: 256
       additionalProperties: false
     RequestEvent:
       type: object
@@ -3858,7 +3911,7 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
-          description: Sanitized message without service identity, URL, IP, organization, project, headers, or body content.
+          description: Operator-visible failure text. Transport errors may include the upstream host, URL, and IP; credentials (Authorization, API keys, sensitive query values) are redacted. Never contains request or response bodies or header maps.
         retryable:
           type: boolean
       additionalProperties: false

@@ -16,11 +16,17 @@ pub const DEFAULT_INFERENCE_PORT: u16 = 8317;
 pub const DEFAULT_MAX_CONCURRENT_INSPECTIONS: u16 = 16;
 pub const MIN_MAX_CONCURRENT_INSPECTIONS: u16 = 4;
 pub const MAX_MAX_CONCURRENT_INSPECTIONS: u16 = 128;
+pub const DEFAULT_RESPONSE_START_TIMEOUT_SECONDS: u32 = 0;
+pub const MAX_RESPONSE_START_TIMEOUT_SECONDS: u32 = 86400;
 const FILE_NAME: &str = "desktop-preferences.json";
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn default_max_concurrent_inspections() -> u16 {
     DEFAULT_MAX_CONCURRENT_INSPECTIONS
+}
+
+fn default_response_start_timeout_seconds() -> u32 {
+    DEFAULT_RESPONSE_START_TIMEOUT_SECONDS
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -40,6 +46,8 @@ pub struct Preferences {
     pub inference_port: u16,
     #[serde(default = "default_max_concurrent_inspections")]
     pub max_concurrent_inspections: u16,
+    #[serde(default = "default_response_start_timeout_seconds")]
+    pub response_start_timeout_seconds: u32,
     pub locale: Locale,
 }
 
@@ -52,6 +60,7 @@ impl Default for Preferences {
             core_auto_recover: true,
             inference_port: DEFAULT_INFERENCE_PORT,
             max_concurrent_inspections: DEFAULT_MAX_CONCURRENT_INSPECTIONS,
+            response_start_timeout_seconds: DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
             locale: Locale::En,
         }
     }
@@ -68,6 +77,13 @@ impl Preferences {
             return Err(i18n::t(
                 self.locale,
                 "host.preferences.concurrencyRange",
+                &[],
+            ));
+        }
+        if self.response_start_timeout_seconds > MAX_RESPONSE_START_TIMEOUT_SECONDS {
+            return Err(i18n::t(
+                self.locale,
+                "host.preferences.responseStartTimeoutRange",
                 &[],
             ));
         }
@@ -314,6 +330,10 @@ mod tests {
             snapshot.values.max_concurrent_inspections,
             DEFAULT_MAX_CONCURRENT_INSPECTIONS
         );
+        assert_eq!(
+            snapshot.values.response_start_timeout_seconds,
+            DEFAULT_RESPONSE_START_TIMEOUT_SECONDS
+        );
         assert_eq!(snapshot.load_warning, None);
         let _ = fs::remove_dir_all(directory);
     }
@@ -350,9 +370,15 @@ mod tests {
         let mut invalid = values;
         invalid.max_concurrent_inspections = 200;
         assert!(store
-            .replace(invalid)
+            .replace(invalid.clone())
             .unwrap_err()
             .contains("between 4 and 128"));
+        invalid.max_concurrent_inspections = DEFAULT_MAX_CONCURRENT_INSPECTIONS;
+        invalid.response_start_timeout_seconds = MAX_RESPONSE_START_TIMEOUT_SECONDS + 1;
+        assert!(store
+            .replace(invalid)
+            .unwrap_err()
+            .contains("between 0 and 86400"));
         let _ = fs::remove_dir_all(directory);
     }
 

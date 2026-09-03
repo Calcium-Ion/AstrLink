@@ -1,0 +1,33 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_68b7d2a0f0e1d2c3b4a59687","object":"response","created_at":1756880300,"status":"in_progress","model":"gpt-5-mini","output":[]}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_68b7d2a0f0e1d2c3b4a59687","object":"response","status":"in_progress","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"rs_68b7d2a0f0e1d2c3b4a59688","type":"reasoning","summary":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"id":"rs_68b7d2a0f0e1d2c3b4a59688","type":"reasoning","summary":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":4,"output_index":1,"item":{"id":"msg_68b7d2a0b1c2d3e4f5a6b7c8","type":"message","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":5,"item_id":"msg_68b7d2a0b1c2d3e4f5a6b7c8","output_index":1,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":6,"item_id":"msg_68b7d2a0b1c2d3e4f5a6b7c8","output_index":1,"content_index":0,"delta":"A goroutine is a lightweight thread managed by the Go runtime, "}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":7,"item_id":"msg_68b7d2a0b1c2d3e4f5a6b7c8","output_index":1,"content_index":0,"delta":"started with the go keyword and far cheaper than an OS thread."}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":8,"item_id":"msg_68b7d2a0b1c2d3e4f5a6b7c8","output_index":1,"content_index":0,"text":"A goroutine is a lightweight thread managed by the Go runtime, started with the go keyword and far cheaper than an OS thread."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":9,"output_index":1,"item":{"id":"msg_68b7d2a0b1c2d3e4f5a6b7c8","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"A goroutine is a lightweight thread managed by the Go runtime, started with the go keyword and far cheaper than an OS thread.","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":10,"response":{"id":"resp_68b7d2a0f0e1d2c3b4a59687","object":"response","status":"completed","model":"gpt-5-mini","output":[{"id":"rs_68b7d2a0f0e1d2c3b4a59688","type":"reasoning","summary":[]},{"id":"msg_68b7d2a0b1c2d3e4f5a6b7c8","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"A goroutine is a lightweight thread managed by the Go runtime, started with the go keyword and far cheaper than an OS thread.","annotations":[]}]}],"usage":{"input_tokens":18,"output_tokens":31,"total_tokens":49}}}
+

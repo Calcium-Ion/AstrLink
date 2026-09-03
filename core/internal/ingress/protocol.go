@@ -11,6 +11,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/autotext"
 )
@@ -40,6 +41,10 @@ type Request struct {
 	PreviousResponseID string
 	ConversationID     string
 	InputPreview       string
+	// Conversation is the convo view of the replayed history used to link
+	// this request to an earlier session. It is derived, never persisted or
+	// logged; LastUserText/FirstUserText inside it are raw client text.
+	Conversation convo.RequestSummary
 	// lastUserText is classifier input only. Never persist, log, or cache it.
 	lastUserText string
 }
@@ -107,11 +112,12 @@ func classify(request *http.Request) (Request, error) {
 		Streaming: route.streaming,
 	}
 	if !route.inspectMetadata {
-		attachAutoClassifyText(&result, request, nil)
+		raw := inspectConversationBestEffort(&result, request)
+		attachAutoClassifyText(&result, request, raw)
 		return validateClassifiedRequest(result)
 	}
 
-	metadata, err := inspectJSONMetadata(request)
+	metadata, err := inspectJSONMetadata(request, route.protocol)
 	if err != nil {
 		return Request{}, err
 	}
@@ -124,6 +130,7 @@ func classify(request *http.Request) (Request, error) {
 	result.PreviousResponseID = metadata.PreviousResponseID
 	result.ConversationID = metadata.ConversationID
 	result.InputPreview = metadata.InputPreview
+	result.Conversation = metadata.Conversation
 	attachAutoClassifyText(&result, request, metadata.raw)
 	return validateClassifiedRequest(result)
 }
@@ -175,7 +182,37 @@ type requestMetadata struct {
 	PreviousResponseID string
 	ConversationID     string
 	InputPreview       string
+	Conversation       convo.RequestSummary
 	raw                []byte
+}
+
+// inspectConversationBestEffort summarises the replayed history of protocols
+// whose bodies AstrLink otherwise treats as opaque (Gemini: model and
+// streaming come from the path). Unlike inspectJSONMetadata it never rejects
+// the request: encoded, oversized, or malformed bodies are forwarded untouched
+// and simply do not link. The buffered bytes are returned so the auto
+// classifier can reuse them.
+func inspectConversationBestEffort(result *Request, request *http.Request) []byte {
+	convoProto, ok := convoProtocol(result.Protocol)
+	if !ok {
+		return nil
+	}
+	raw, err := bufferRequestBody(request)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return raw
+	}
+	summary, err := conversationPolicy.InspectFields(convoProto, fields)
+	if err != nil {
+		return raw
+	}
+	result.Conversation = summary
+	result.ConversationID = conversationCursor(summary, "")
+	result.InputPreview = sanitizePreview(summary.LastUserText)
+	return raw
 }
 
 func attachAutoClassifyText(result *Request, request *http.Request, raw []byte) {
@@ -220,7 +257,7 @@ func bufferRequestBody(request *http.Request) ([]byte, error) {
 // forwarded. Malformed JSON is rejected locally because planning cannot safely
 // infer its streaming/model requirements; encoded JSON is likewise rejected
 // unless it explicitly uses the no-op identity encoding.
-func inspectJSONMetadata(request *http.Request) (requestMetadata, error) {
+func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID) (requestMetadata, error) {
 	raw, err := bufferRequestBody(request)
 	if err != nil {
 		return requestMetadata{}, err
@@ -260,10 +297,31 @@ func inspectJSONMetadata(request *http.Request) (requestMetadata, error) {
 		}
 	}
 	metadata.PreviousResponseID = extractProtocolCursor(fields, "previous_response_id")
-	metadata.ConversationID = extractConversationCursor(fields)
-	metadata.InputPreview = extractInputPreview(fields)
+	if convoProto, ok := convoProtocol(protocol); ok {
+		// The summary walks the history once; conversation cursors and the
+		// preview both come from it so the two never disagree.
+		summary, err := conversationPolicy.InspectFields(convoProto, fields)
+		if err == nil {
+			metadata.Conversation = summary
+			metadata.ConversationID = conversationCursor(summary, metadata.PreviousResponseID)
+			metadata.InputPreview = sanitizePreview(summary.LastUserText)
+		}
+	}
 	metadata.raw = raw
 	return metadata, nil
+}
+
+// conversationCursor picks the first explicit cursor that is not the official
+// previous_response_id chain. It feeds the legacy previous_response_id record
+// column, which stores whichever inbound cursor named the conversation.
+func conversationCursor(summary convo.RequestSummary, previousResponseID string) string {
+	for _, cursor := range summary.ExplicitCursors {
+		if cursor == previousResponseID {
+			continue
+		}
+		return clampCursor(cursor)
+	}
+	return ""
 }
 
 type replayReadCloser struct {

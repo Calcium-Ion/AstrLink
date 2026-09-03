@@ -3,10 +3,15 @@ module github.com/QuantumNous/astrlink/core
 go 1.25.1
 
 require (
+	github.com/QuantumNous/astrlink/convo v0.0.0
 	github.com/QuantumNous/new-api/relaykit v0.1.1
 	golang.org/x/sys v0.34.0
 	modernc.org/sqlite v1.38.2
 )
+
+// convo is developed in this repository; consumers outside the monorepo fetch
+// it through the nested-module tag convo/vX.Y.Z instead.
+replace github.com/QuantumNous/astrlink/convo => ../convo
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect

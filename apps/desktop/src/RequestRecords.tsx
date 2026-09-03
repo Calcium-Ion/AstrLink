@@ -72,6 +72,7 @@ import {
   type RecordFilters,
 } from "./request-live-model";
 import {
+  displayRequestStatus,
   statusLabel,
   statusTone,
   type AuditContent,
@@ -1148,11 +1149,16 @@ function SessionRow({
           <span className="truncate">{serviceName ?? session.service_id ?? t("records.selectingService")}</span>
           <span>
             →{" "}
-            {t("records.sessionMeta", {
-              turns: session.turn_count,
-              calls: session.call_count,
-              duration: formatDuration(sessionElapsedMs(session, nowMs)),
-            })}
+            {t(
+              session.turn_count === session.call_count
+                ? "records.sessionMetaTurns"
+                : "records.sessionMeta",
+              {
+                turns: session.turn_count,
+                calls: session.call_count,
+                duration: formatDuration(sessionElapsedMs(session, nowMs)),
+              },
+            )}
           </span>
         </span>
       </span>
@@ -1247,6 +1253,8 @@ function RecordDetail({
     copyFeedback.copy(includeBodies ? "bundle" : "bundle-meta", bundle);
   };
 
+  const visibleStatus = displayRequestStatus(record.status, record.http_status);
+
   const exportBundle = (format: BundleFormat) => {
     const bundle = buildRecordBundle(record, auditContent, {
       includeBodies: true,
@@ -1293,10 +1301,13 @@ function RecordDetail({
           >
             {session.title}
           </h1>
-          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-0.5">
-            <StatusDot tone={statusTone(record.status)} />
+          <span
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-0.5"
+            data-testid="record-status"
+          >
+            <StatusDot tone={statusTone(visibleStatus)} />
             <strong className="text-xs font-medium">
-              {statusLabel(record.status)}
+              {statusLabel(visibleStatus)}
             </strong>
             {record.status === "pending" ? (
               <span className="text-micro text-muted-foreground">

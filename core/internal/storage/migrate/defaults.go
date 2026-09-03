@@ -534,5 +534,27 @@ SET document_json = json_set(
 SET document_json = json_remove(document_json, '$.disabled_models')`,
 			},
 		},
+		{
+			Version: 22,
+			Name:    "conversation_cursors_and_turns",
+			// Typed session cursors (ADR 0015). One record stores every value
+			// that can link it to others: explicit ids the request named, and
+			// echo ids / keyed fingerprints its response produced. The legacy
+			// previous_response_id / output_response_id columns stay in place
+			// and are still consulted for explicit lookups; they are not
+			// backfilled into this table.
+			Statements: []string{
+				`CREATE TABLE request_record_cursors (
+    request_id TEXT NOT NULL REFERENCES request_records(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('explicit', 'echo_id', 'fingerprint')),
+    direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
+    value TEXT NOT NULL,
+    PRIMARY KEY (request_id, kind, direction, value)
+)`,
+				`CREATE INDEX request_record_cursors_value_idx ON request_record_cursors (value, kind)`,
+				`ALTER TABLE request_records ADD COLUMN turn_index INTEGER CHECK(turn_index IS NULL OR turn_index >= 1)`,
+				`ALTER TABLE request_records ADD COLUMN session_link_json TEXT`,
+			},
+		},
 	}
 }

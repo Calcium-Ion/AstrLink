@@ -1,0 +1,17 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {"functionCall": {"name": "get_weather", "args": {"city": "Shanghai"}}, "thoughtSignature": "CtcBAVSoXO7tJh9QqZl7m0v3c1dOaX6z2tKq8oYB1wgWm5QnD0jE9RtfL2xPv4Uu6ZbA3sC8qHkN1eG7iM5oJyF0lTdWnRaB"}
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {"promptTokenCount": 44, "candidatesTokenCount": 12, "totalTokenCount": 56},
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "Rn4ZaP7kO6Xy1QFQ0qYh5R1"
+}

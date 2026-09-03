@@ -37,8 +37,12 @@ func TestDisabledPrivacyPolicyDoesNotReadOrReplaceOriginalGeminiBody(t *testing.
 		}),
 		PrivacyFilter: filter,
 		Forwarder: forwarderFunc(func(_ http.ResponseWriter, request *http.Request, _ transport.Target) error {
-			if request.Body != tracked || tracked.reads != 0 {
-				t.Fatalf("disabled policy touched body: body=%T reads=%d", request.Body, tracked.reads)
+			// Session linking may buffer the body for inspection, but a
+			// disabled policy must never rewrite it: the upstream sees the
+			// exact original bytes, whitespace included, and no privacy
+			// residency buffer replaces the stream.
+			if _, rewritten := request.Body.(*metadataPermitBody); rewritten {
+				t.Fatalf("disabled policy replaced body with %T", request.Body)
 			}
 			body, err := io.ReadAll(request.Body)
 			if err != nil || string(body) != original {

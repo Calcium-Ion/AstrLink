@@ -298,8 +298,8 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	if err := database.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 21 {
-		t.Fatalf("schema version = %d, want 21", version)
+	if version != 22 {
+		t.Fatalf("schema version = %d, want 22", version)
 	}
 	var privacyDefaults string
 	if err := database.QueryRow(
@@ -318,8 +318,14 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	}
 	var sessionColumns int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('request_records')
-WHERE name IN ('session_id', 'previous_response_id', 'output_response_id', 'input_preview', 'events_json')`).Scan(&sessionColumns); err != nil || sessionColumns != 5 {
+WHERE name IN ('session_id', 'previous_response_id', 'output_response_id', 'input_preview', 'events_json', 'turn_index', 'session_link_json')`).Scan(&sessionColumns); err != nil || sessionColumns != 7 {
 		t.Fatalf("session trajectory columns = %d err=%v", sessionColumns, err)
+	}
+	var cursorTable int
+	if err := database.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='request_record_cursors'`,
+	).Scan(&cursorTable); err != nil || cursorTable != 1 {
+		t.Fatalf("request_record_cursors missing after upgrade: count=%d err=%v", cursorTable, err)
 	}
 	var requestRecordsTable int
 	if err := database.QueryRow(

@@ -7,6 +7,7 @@ import {
   parseRequestRecordPage,
   parseRequestSession,
   parseRequestSessionDetail,
+  displayRequestStatus,
   statusLabel,
   statusTone,
 } from "./request-record-model";
@@ -85,6 +86,9 @@ describe("request-record IPC contract", () => {
       previous_response_id: null,
       output_response_id: null,
       input_preview: null,
+      turn_index: null,
+      session_link: null,
+      cursors: [],
       events: [],
       started_at: fullRecord.started_at,
       completed_at: fullRecord.completed_at,
@@ -122,6 +126,9 @@ describe("request-record IPC contract", () => {
       previous_response_id: null,
       output_response_id: null,
       input_preview: null,
+      turn_index: null,
+      session_link: null,
+      cursors: [],
       events: [],
       audit: {
         ...nullOptionalRecord.audit,
@@ -131,6 +138,36 @@ describe("request-record IPC contract", () => {
         upstream_response_content_truncated: false,
       },
     });
+  });
+
+  it("parses conversation linking fields and rejects bad kinds", () => {
+    const parsed = parseRequestRecord({
+      ...fullRecord,
+      turn_index: 2,
+      session_link: { kind: "echo_id", value: "call_8f3kd92ls0a1Qz7" },
+      cursors: [
+        { kind: "explicit", direction: "out", value: "chatcmpl-1" },
+        { kind: "fingerprint", direction: "out", value: "fp1_0123456789abcdef0123456789abcdef" },
+      ],
+    });
+    expect(parsed.turn_index).toBe(2);
+    expect(parsed.session_link).toEqual({ kind: "echo_id", value: "call_8f3kd92ls0a1Qz7" });
+    expect(parsed.cursors).toHaveLength(2);
+    expect(() =>
+      parseRequestRecord({ ...fullRecord, turn_index: 0 }),
+    ).toThrow(/turn_index/);
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        session_link: { kind: "guess", value: "x" },
+      }),
+    ).toThrow(/session_link\.kind/);
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        cursors: [{ kind: "explicit", direction: "sideways", value: "x" }],
+      }),
+    ).toThrow(/cursors\[0\]\.direction/);
   });
 
   it("parses request-time privacy hit counts", () => {
@@ -185,6 +222,9 @@ describe("request-record IPC contract", () => {
           previous_response_id: null,
           output_response_id: null,
           input_preview: null,
+          turn_index: null,
+          session_link: null,
+          cursors: [],
           events: [],
           audit: {
             ...nullOptionalRecord.audit,
@@ -348,5 +388,14 @@ describe("request-record IPC contract", () => {
     expect(statusTone("pending")).toBe("pending");
     expect(statusTone("cancelled")).toBe("pending");
     expect(statusTone("blocked")).toBe("pending");
+  });
+
+  it("treats a completed HTTP error as failed", () => {
+    expect(displayRequestStatus("succeeded", 200)).toBe("succeeded");
+    expect(displayRequestStatus("succeeded", 502)).toBe("failed");
+    expect(displayRequestStatus("succeeded", 403)).toBe("failed");
+    expect(displayRequestStatus("blocked", 403)).toBe("blocked");
+    expect(displayRequestStatus("failed", 502)).toBe("failed");
+    expect(displayRequestStatus("succeeded", null)).toBe("succeeded");
   });
 });

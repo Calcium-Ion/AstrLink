@@ -129,7 +129,7 @@
     "restarting": "Restarting…",
     "portKicker": "Network entry",
     "portTitle": "Inference entry",
-    "portHint": "Save after changing. Restart the gateway to apply the new port and concurrency limit.",
+    "portHint": "Save after changing. Restart the gateway to apply the new port, concurrency, and response-header wait.",
     "portField": "Inference port",
     "portActive": "In use",
     "portSaved": "Saved",
@@ -140,6 +140,9 @@
     "concurrencyField": "Inspection concurrency",
     "concurrencySaved": "Saved",
     "concurrencyHint": "How many requests may parse and classify at once (4–128). Raise this if parallel calls queue up.",
+    "responseStartTimeoutField": "Response header wait",
+    "responseStartTimeoutSaved": "Saved",
+    "responseStartTimeoutHint": "Seconds to wait for upstream response headers (0 = no limit, max 86400). Non-stream upstreams often withhold headers until generation finishes.",
     "savePort": "Save",
     "savingPort": "Saving…",
     "autostartMismatch": "Preferences and the system login-item state do not match. Toggle again to re-check.",
@@ -154,7 +157,7 @@
     "description": "Install a read-only skill and MCP so Cursor, Claude Code, and Codex can inspect AstrLink request records. The control token is never written into those configs.",
     "panelTitle": "One-click debug skill and MCP",
     "failed": "Agent tools action failed.",
-    "restartHint": "Open a new agent session after installing. Metadata debugging works immediately; request bodies stay off until you enable capture in Request records.",
+    "restartHint": "The desktop gateway must be running. Open a new agent session after installing. Do not Authenticate or sign in to the local astrlink MCP — it is stdio, not OAuth. Metadata debugging works immediately; request bodies stay off until you enable capture in Request records.",
     "install": "Install skill and MCP",
     "installing": "Installing…",
     "remove": "Remove",
@@ -986,6 +989,7 @@
     "emptyHint": "Adjust the filters, or send a new inference request.",
     "countItems": "{{count}} records",
     "sessionMeta": "{{turns}} turns · {{calls}} calls · {{duration}}",
+    "sessionMetaTurns": "{{turns}} turns · {{duration}}",
     "exportMarkdown": "Export as Markdown",
     "exportTxt": "Export as TXT",
     "tabTrajectory": "Trace",
@@ -1082,7 +1086,16 @@
     "childRequest": "Child request {{index}} · {{summary}}",
     "uncapturedHint": "Not captured. Turn on “Request and response capture” in the top bar.",
     "unrestoredPlaceholders": "Replacement values still in the response (not restored)",
-    "restoreRatio": "restore · {{restored}}/{{mapped}}"
+    "restoreRatio": "restore · {{restored}}/{{mapped}}",
+    "turnHeader": "Turn {{index}}",
+    "turnHeaderUnnumbered": "Unnumbered turn",
+    "turnCalls": "{{count}} calls",
+    "turnHeaderTitle": "User turn",
+    "linkedVia": {
+      "explicit": "linked by explicit cursor",
+      "echo_id": "linked by echoed id",
+      "fingerprint": "linked by reply fingerprint"
+    }
   },
   "routes": {
     "passthrough": "Pass through",
@@ -1235,6 +1248,7 @@
     "preferences": {
       "portRange": "The inference port must be between 1024 and 65535.",
       "concurrencyRange": "Inspection concurrency must be between 4 and 128.",
+      "responseStartTimeoutRange": "Response header wait must be between 0 and 86400 seconds.",
       "invalidSettings": "The preferences file contains invalid settings. Safe defaults are in use: {{error}}",
       "unparseable": "The preferences file could not be parsed. Safe defaults are in use: {{error}}",
       "unreadable": "The preferences file could not be read. Safe defaults are in use: {{error}}",
