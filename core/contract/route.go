@@ -98,22 +98,36 @@ func (target *RouteTarget) UnmarshalJSON(data []byte) error {
 // RouteCategory owns the concrete model candidates configured for one
 // classifier output. It is Route configuration, not model capability metadata.
 type RouteCategory struct {
-	CategoryID string        `json:"category_id"`
-	Targets    []RouteTarget `json:"targets"`
+	RecoveryPathID RecoveryPathID `json:"recovery_path_id,omitempty"`
+	CategoryID     string         `json:"category_id"`
+	Targets        []RouteTarget  `json:"targets,omitempty"`
 }
 
 type Route struct {
-	ID         RouteID         `json:"id"`
-	Name       string          `json:"name"`
-	Enabled    bool            `json:"enabled"`
-	Priority   int             `json:"priority"`
-	Match      RouteMatch      `json:"match"`
-	Selection  *RouteSelection `json:"selection,omitempty"`
-	Targets    []RouteTarget   `json:"targets,omitempty"`
-	Categories []RouteCategory `json:"categories,omitempty"`
+	RecoveryPathID RecoveryPathID  `json:"recovery_path_id,omitempty"`
+	FailurePolicy  *FailurePolicy  `json:"failure_policy,omitempty"`
+	Failover       *FailoverPolicy `json:"failover,omitempty"`
+	ID             RouteID         `json:"id"`
+	Name           string          `json:"name"`
+	Enabled        bool            `json:"enabled"`
+	Priority       int             `json:"priority"`
+	Match          RouteMatch      `json:"match"`
+	Selection      *RouteSelection `json:"selection,omitempty"`
+	Targets        []RouteTarget   `json:"targets,omitempty"`
+	Categories     []RouteCategory `json:"categories,omitempty"`
 }
 
 func (route Route) Validate() error {
+	if route.FailurePolicy != nil {
+		if err := route.FailurePolicy.Validate(); err != nil {
+			return fmt.Errorf("failure_policy: %w", err)
+		}
+	}
+	if route.Failover != nil {
+		if err := route.Failover.Validate(); err != nil {
+			return fmt.Errorf("failover: %w", err)
+		}
+	}
 	if err := route.ID.Validate(); err != nil {
 		return err
 	}
@@ -253,6 +267,12 @@ func (route Route) validatePrioritySelection() error {
 	if route.Categories != nil {
 		return fmt.Errorf("categories require auto selection")
 	}
+	if route.RecoveryPathID != "" {
+		if route.Targets != nil {
+			return fmt.Errorf("recovery_path_id and targets are mutually exclusive")
+		}
+		return route.RecoveryPathID.Validate()
+	}
 	if len(route.Targets) == 0 {
 		return fmt.Errorf("route requires at least one target")
 	}
@@ -263,7 +283,7 @@ func (route Route) validateAutoSelection() error {
 	if route.Match.Model != AstrLinkAutoModelID {
 		return fmt.Errorf("auto selection requires match model %q", AstrLinkAutoModelID)
 	}
-	if route.Targets != nil {
+	if route.Targets != nil || route.RecoveryPathID != "" {
 		return fmt.Errorf("top-level targets are not valid for auto selection")
 	}
 	if len(route.Categories) < 2 {
@@ -284,6 +304,15 @@ func (route Route) validateAutoSelection() error {
 			)
 		}
 		categoryIDs[category.CategoryID] = struct{}{}
+		if category.RecoveryPathID != "" {
+			if category.Targets != nil {
+				return fmt.Errorf("category path and targets are mutually exclusive")
+			}
+			if err := category.RecoveryPathID.Validate(); err != nil {
+				return err
+			}
+			continue
+		}
 		if len(category.Targets) == 0 {
 			return fmt.Errorf("categories[%d] requires at least one target", categoryIndex)
 		}
@@ -302,7 +331,11 @@ func (route Route) validateAutoSelection() error {
 			models[target.UpstreamModel] = struct{}{}
 		}
 	}
-	if len(models) < 2 {
+	hasPaths := false
+	for _, category := range route.Categories {
+		hasPaths = hasPaths || category.RecoveryPathID != ""
+	}
+	if len(models) < 2 && !hasPaths {
 		return fmt.Errorf("auto selection requires at least two distinct upstream models")
 	}
 	return nil

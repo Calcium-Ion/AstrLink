@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridge = vi.hoisted(() => ({
   getPreferences: vi.fn(),
+  getRoutingSettings: vi.fn(),
+  updateRoutingSettings: vi.fn(),
   restartCore: vi.fn(),
   startCore: vi.fn(),
   stopCore: vi.fn(),
@@ -56,6 +58,8 @@ describe("SettingsCenter", () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
+    bridge.getRoutingSettings.mockReset();
+    bridge.updateRoutingSettings.mockReset();
     bridge.getPreferences.mockReset().mockResolvedValue(settings);
     bridge.updatePreferences.mockReset().mockResolvedValue(settings);
     notifyMocks.success.mockReset();
@@ -67,6 +71,14 @@ describe("SettingsCenter", () => {
     await applyLocale("zh-CN");
     await act(async () => root.unmount());
     container.remove();
+  });
+
+  it("does not mount or read routing settings", async () => {
+    await act(async () => root.render(<SettingsCenter snapshot={snapshot} onCoreSnapshot={() => {}} onDirtyChange={() => {}} />));
+    expect(bridge.getRoutingSettings).not.toHaveBeenCalled();
+    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="routing-defaults-panel"]')).toBeNull();
+    expect(container.textContent).not.toContain("默认失败处理");
   });
 
   it("shows active and saved ports truthfully and saves a validated draft", async () => {

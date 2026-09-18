@@ -264,7 +264,11 @@ func (store *Store) DeleteRoute(ctx context.Context, id contract.RouteID, expect
 }
 
 func validateRouteEndpointReferences(ctx context.Context, transaction *sql.Tx, route contract.Route) error {
-	for index, target := range route.Targets {
+	expanded, err := expandStoredRoutePaths(ctx, transaction, route, nil)
+	if err != nil {
+		return err
+	}
+	for index, target := range expanded.ExecutableTargets() {
 		var document string
 		if err := transaction.QueryRowContext(
 			ctx,
@@ -307,6 +311,9 @@ func serviceSupportsRouteTarget(
 	effectiveModel string,
 ) bool {
 	mode := contract.CapabilityMode(target.PlanType)
+	if target.PlanType == contract.PlanTypeRelayKit {
+		mode = contract.CapabilityModeNative
+	}
 	modelSupported := effectiveModel == ""
 	for _, model := range service.Models {
 		if model == effectiveModel {

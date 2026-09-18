@@ -1,12 +1,34 @@
+import { useServiceOrder } from "./use-service-order";
+import { OrderedList } from "./components/OrderedList";
+import { useRoutingDefaults } from "./use-routing-defaults";
+import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
+import { parseFailurePolicy, type FailurePolicy } from "./failure-policy-model";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Ellipsis, Plus, RefreshCw } from "lucide-react";
+import {
+  Boxes,
+  Connect as Cable,
+  Menu as Ellipsis,
+  Key as KeyRound,
+  SquarePen as Pencil,
+  Plus,
+  RefreshCw,
+  SlidersHorizontal,
+} from "@/components/icons";
 
 import { ChoiceCard } from "@/components/ChoiceCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { FormMessage } from "@/components/FormMessage";
+import { Field } from "@/components/Field";
+import { ListToolbar } from "@/components/ListToolbar";
+import { IconButton } from "@/components/IconButton";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { ServiceListHeader, ServiceListRow } from "@/components/ServiceListRow";
+import { Panel, PanelHeader } from "@/components/Panel";
+import { DataRow } from "@/components/DataRow";
 import { ServiceKindIcon } from "@/components/ServiceKindIcon";
+import { ServiceKindLabel } from "@/components/ServiceKindLabel";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +67,7 @@ import { cn } from "@/lib/utils";
 import {
   beginServiceAuthorization,
   cancelServiceAuthorization,
+  completeServiceAuthorization,
   createService,
   deleteService,
   getService,
@@ -62,6 +85,7 @@ import { i18n, useT } from "./i18n";
 import type { ConversionEngineCapability } from "./core-model";
 import {
   conversionQualityLabels,
+  codingPlanPresetIDs,
   httpServicePreset,
   httpServicePresetIDs,
   localConversionPassthrough,
@@ -80,6 +104,7 @@ import { filterModels } from "./model-groups";
 import { ServiceModelsEditor } from "./ServiceModelsEditor";
 import {
   serviceKindLabel,
+  isSubscriptionKind,
   serviceStatusLabel,
   type HTTPServiceKind,
   type ModelDiscoveryProtocol,
@@ -111,11 +136,7 @@ export type ServiceManagerView =
   | { kind: "create" }
   | { kind: "edit"; serviceId: string };
 
-export type ServiceCatalogStatus =
-  | "blocked"
-  | "loading"
-  | "ready"
-  | "error";
+export type ServiceCatalogStatus = "blocked" | "loading" | "ready" | "error";
 
 export interface ServiceManagerProps {
   isReady: boolean;
@@ -133,6 +154,7 @@ export interface ServiceManagerProps {
 }
 
 type Draft = {
+  failurePolicy?: FailurePolicy;
   kind: ServiceKind;
   name: string;
   enabled: boolean;
@@ -158,7 +180,8 @@ type AuthorizationDialog = {
   session: AuthorizationSession;
 };
 
-type EditorTab = "connection" | "models" | "protocols";
+type EditorTab = "connection" | "models" | "protocols" | "failure";
+type ServiceFilter = "all" | "enabled" | "disabled";
 
 function serviceTypeOptionLabel(kind: ServiceKind): string {
   return kind === "codex_subscription"
@@ -173,6 +196,17 @@ function mergeDiscoveredServiceModels(
   const models = [...new Set([...current.models, ...discovered])].sort();
   if (models.length > 2_000) return null;
   return models;
+}
+
+// Applying the preview replaces the whole allowlist, so a service that already
+// has models must open with only those checked — never the fresh discoveries.
+function initialModelPreviewSelection(
+  current: readonly string[],
+  preview: readonly string[],
+): string[] {
+  if (current.length === 0) return [...preview];
+  const allowed = new Set(preview);
+  return current.filter((model) => allowed.has(model)).sort();
 }
 
 type ModelPreview = {
@@ -203,10 +237,10 @@ function draftForKind(
   kind: ServiceKind,
   protocols: readonly ProtocolDescriptor[],
 ): Draft {
-  if (kind === "codex_subscription") {
+  if (isSubscriptionKind(kind)) {
     return {
       kind,
-      name: i18n.t("services.codexName"),
+      name: kind === "claude_subscription" ? "Claude Code" : i18n.t("services.codexName"),
       enabled: true,
       baseURL: "",
       authScheme: "none",
@@ -215,7 +249,7 @@ function draftForKind(
       removeCredential: false,
       models: [],
       capabilities: [],
-      authorizationFlow: null,
+      authorizationFlow: kind === "claude_subscription" ? "authorization_code" : null,
     };
   }
   const preset = httpServicePreset(
@@ -231,7 +265,7 @@ function draftForKind(
     headerName: preset.headerName,
     secret: "",
     removeCredential: false,
-    models: [],
+    models: [...(preset.models ?? [])],
     capabilities: preset.capabilities.map((capability) => ({ ...capability })),
     authorizationFlow: null,
   };
@@ -239,10 +273,11 @@ function draftForKind(
 
 function draftFromRecord(record: ServiceRecord): Draft {
   const { service } = record;
-  if (service.kind === "codex_subscription") {
+  if (isSubscriptionKind(service.kind)) {
     return {
-      ...draftForKind("codex_subscription", []),
+      ...draftForKind(service.kind, []),
       name: service.name,
+      failurePolicy: service.failure_policy,
       enabled: service.enabled,
       models: [...service.models],
     };
@@ -251,6 +286,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
   return {
     kind: service.kind,
     name: service.name,
+      failurePolicy: service.failure_policy,
     enabled: service.enabled,
     baseURL: service.http.base_url,
     authScheme: service.http.auth.scheme,
@@ -304,7 +340,7 @@ function validateDraft(
   ) {
     return i18n.t("services.modelIdsInvalid");
   }
-  if (draft.kind === "codex_subscription") {
+  if (isSubscriptionKind(draft.kind)) {
     if (!editing && draft.authorizationFlow === null) {
       return i18n.t("services.chooseLogin");
     }
@@ -510,11 +546,15 @@ export function ServiceManager({
   onServiceRemoved,
   onDirtyChange,
 }: ServiceManagerProps) {
+  const routingDefaults = useRoutingDefaults(isReady);
+  const serviceOrder = useServiceOrder(services, isReady && view.kind === "list" && catalogStatus === "ready", onRefresh);
   const t = useT();
   const descriptors = useMemo(
     () => protocolDescriptors(protocols),
     [protocols],
   );
+  const [query, setQuery] = useState("");
+  const [serviceFilter, setServiceFilter] = useState<ServiceFilter>("all");
   const [draft, setDraft] = useState<Draft>(() =>
     draftForKind("codex_subscription", protocols),
   );
@@ -530,6 +570,8 @@ export function ServiceManager({
     useState<AuthorizationFlow | null>(null);
   const [authorizationDialog, setAuthorizationDialog] =
     useState<AuthorizationDialog | null>(null);
+  const [authorizationCode, setAuthorizationCode] = useState("");
+  useEffect(() => setAuthorizationCode(""), [authorizationDialog?.session.id, authorizationDialog?.session.status]);
   const [modelEditor, setModelEditor] = useState("");
   const [probingModels, setProbingModels] = useState(false);
   const [modelPreview, setModelPreview] = useState<ModelPreview | null>(null);
@@ -662,12 +704,11 @@ export function ServiceManager({
           probe.model_ids,
         );
         if (!merged) {
-          notify.error(
-            t("services.loggedInTooMany", { name: service.name }),
-          );
+          notify.error(t("services.loggedInTooMany", { name: service.name }));
           return;
         }
-        const unchanged = merged.join("\0") === record.service.models.join("\0");
+        const unchanged =
+          merged.join("\0") === record.service.models.join("\0");
         if (!unchanged) {
           await updateService(service.id, record.etag, {
             models: merged,
@@ -678,6 +719,7 @@ export function ServiceManager({
             ? t("services.loggedInNone", { name: service.name })
             : t("services.loggedInFetched", {
                 name: service.name,
+      failurePolicy: service.failure_policy,
                 count: merged.length,
               }),
         );
@@ -736,11 +778,7 @@ export function ServiceManager({
 
   useEffect(() => {
     const active = authorizationDialog;
-    if (
-      !isReady ||
-      active === null ||
-      active.session.status !== "pending"
-    ) {
+    if (!isReady || active === null || active.session.status !== "pending") {
       return;
     }
     let stopped = false;
@@ -785,7 +823,7 @@ export function ServiceManager({
     const next = draftForKind(kind, protocols);
     setDraft(next);
     setEditorTab((current) =>
-      kind === "codex_subscription" && current === "protocols"
+      isSubscriptionKind(kind) && current === "protocols"
         ? "connection"
         : current,
     );
@@ -872,15 +910,17 @@ export function ServiceManager({
   };
 
   const discoverModels = async () => {
-    if (draft.kind === "codex_subscription" && !editing) {
+    if (isSubscriptionKind(draft.kind) && !editing) {
       setError(t("services.saveBeforeFetch"));
       return;
     }
     const discoveryProtocols: ModelDiscoveryProtocol[] =
-      draft.kind === "codex_subscription"
+      isSubscriptionKind(draft.kind)
         ? ["openai.models"]
         : (["openai.models", "google.models"] as const).filter((protocol) =>
-            draft.capabilities.some((capability) => capability.protocol === protocol),
+            draft.capabilities.some(
+              (capability) => capability.protocol === protocol,
+            ),
           );
     if (discoveryProtocols.length === 0) {
       setError(t("services.enableDiscovery"));
@@ -891,7 +931,7 @@ export function ServiceManager({
     try {
       const attempts = await Promise.allSettled(
         discoveryProtocols.map((protocol) => {
-          if (draft.kind === "codex_subscription") {
+          if (isSubscriptionKind(draft.kind)) {
             return probeServiceModels(editing!.service.id, protocol);
           }
           return probeDraftServiceModels({
@@ -933,7 +973,7 @@ export function ServiceManager({
       setModelPreviewQuery("");
       setModelPreview({
         models,
-        selected: models,
+        selected: initialModelPreviewSelection(draft.models, models),
         warnings,
       });
     } finally {
@@ -955,6 +995,10 @@ export function ServiceManager({
     requestedFlow: AuthorizationFlow,
     session: AuthorizationSession,
   ) => {
+    if (session.flow === "authorization_code") {
+      setAuthorizationDialog({ service, requestedFlow, session });
+      return;
+    }
     if (session.flow === "device_code") {
       setAuthorizationDialog({ service, requestedFlow, session });
       notify.success(
@@ -970,6 +1014,7 @@ export function ServiceManager({
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    try { if (draft.failurePolicy) parseFailurePolicy(draft.failurePolicy); } catch { setError(t("failure.invalid")); return; }
     const issue = validateDraft(draft, editing);
     if (issue) {
       setError(issue);
@@ -984,8 +1029,9 @@ export function ServiceManager({
           name: draft.name.trim(),
           enabled: draft.enabled,
           models: draft.models,
+          failure_policy: draft.failurePolicy ?? null,
         };
-        if (draft.kind !== "codex_subscription") {
+        if (!isSubscriptionKind(draft.kind)) {
           patch.http = {
             base_url: draft.baseURL.trim(),
             auth: authForDraft(draft),
@@ -997,20 +1043,17 @@ export function ServiceManager({
           };
           patch.capabilities = draft.capabilities.map(wireCapability);
         }
-        record = await updateService(
-          editing.service.id,
-          editing.etag,
-          patch,
-        );
+        record = await updateService(editing.service.id, editing.etag, patch);
         notify.success(t("services.updated"));
       } else {
         let input: ServiceCreateInput;
-        if (draft.kind === "codex_subscription") {
+        if (isSubscriptionKind(draft.kind)) {
           input = {
             name: draft.name.trim(),
-            kind: "codex_subscription",
+            kind: draft.kind,
             enabled: draft.enabled,
             models: draft.models,
+          ...(draft.failurePolicy ? { failure_policy: draft.failurePolicy } : {}),
           };
         } else {
           input = {
@@ -1018,6 +1061,7 @@ export function ServiceManager({
             kind: draft.kind as HTTPServiceKind,
             enabled: draft.enabled,
             models: draft.models,
+          ...(draft.failurePolicy ? { failure_policy: draft.failurePolicy } : {}),
             http: {
               base_url: draft.baseURL.trim(),
               auth: authForDraft(draft),
@@ -1029,7 +1073,7 @@ export function ServiceManager({
           };
         }
         record = await createService(input);
-        if (record.service.kind === "codex_subscription") {
+        if (isSubscriptionKind(record.service.kind)) {
           try {
             const flow = draft.authorizationFlow;
             if (flow === null) {
@@ -1040,11 +1084,7 @@ export function ServiceManager({
               record.service.id,
               flow,
             );
-            presentAuthorization(
-              record.service,
-              flow,
-              authorization.session,
-            );
+            presentAuthorization(record.service, flow, authorization.session);
           } catch (cause) {
             notify.success(t("services.addedLaterLogin"));
             setError(errorMessage(cause, t("services.addedOauthFailed")));
@@ -1067,10 +1107,7 @@ export function ServiceManager({
     }
   };
 
-  const authorize = async (
-    service: Service,
-    flow: AuthorizationFlow,
-  ) => {
+  const authorize = async (service: Service, flow: AuthorizationFlow) => {
     setLoginChoice(null);
     setLoginChoiceFlow(null);
     setActionID(service.id);
@@ -1109,10 +1146,10 @@ export function ServiceManager({
     setError(null);
     try {
       const session = await getServiceAuthorization(service.id);
-      if (session.flow === "device_code") {
+      if (session.flow === "device_code" || session.flow === "authorization_code") {
         setAuthorizationDialog({
           service,
-          requestedFlow: "device_code",
+          requestedFlow: session.flow,
           session,
         });
       } else {
@@ -1126,7 +1163,7 @@ export function ServiceManager({
   };
 
   const reopenAuthorizationPage = async () => {
-    const url = authorizationDialog?.session.device_code?.verification_url;
+    const url = authorizationDialog?.session.device_code?.verification_url ?? authorizationDialog?.session.authorization_url;
     if (!url) return;
     setError(null);
     try {
@@ -1184,7 +1221,11 @@ export function ServiceManager({
       await onRefresh();
     } catch (cause) {
       if (confirmAction.kind === "reset-usage") {
-        console.error("AstrLink failed to reset subscription usage", service.id, cause);
+        console.error(
+          "AstrLink failed to reset subscription usage",
+          service.id,
+          cause,
+        );
         notify.error(formatSubscriptionUsageError(cause));
         return;
       }
@@ -1202,38 +1243,64 @@ export function ServiceManager({
   };
 
   if (view.kind === "list") {
+    const search = query.trim().toLocaleLowerCase();
+    const enabledCount = services.filter((service) => service.enabled).length;
+    const visibleServices = serviceOrder.ordered.filter(
+      (service) =>
+        (serviceFilter === "all" ||
+          service.enabled === (serviceFilter === "enabled")) &&
+        [
+          service.name,
+          serviceKindLabel(service.kind),
+          service.http?.base_url,
+          service.subscription?.account_hint,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLocaleLowerCase()
+          .includes(search),
+    );
     const busy = catalogStatus === "loading";
     return (
-      <section className="flex min-h-0 w-full flex-1 flex-col" aria-labelledby="service-heading">
+      <section
+        className="@container flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
+        aria-labelledby="service-heading"
+      >
         <PageHeader
+          className="mb-4 items-center border-b-0 pb-1 @max-[560px]:flex-wrap @max-[560px]:items-start @max-[560px]:gap-3"
           actions={
             <>
               <Button
                 disabled={!isReady || busy}
                 onClick={() => onViewChange({ kind: "create" })}
+                size="sm"
                 type="button"
               >
                 <Plus aria-hidden="true" />
                 {t("services.add")}
               </Button>
-              <Button
-                variant="outline"
+              <IconButton
+                label={
+                  busy ? t("common.refreshing") : t("services.refreshList")
+                }
                 disabled={!isReady || busy}
                 onClick={() => {
                   setUsageEpoch((value) => value + 1);
                   void onRefresh();
                 }}
+                size="icon"
                 type="button"
               >
                 <RefreshCw
                   aria-hidden="true"
-                  className={cn("motion-reduce:animate-none", busy && "animate-spin")}
+                  className={cn(
+                    "motion-reduce:animate-none",
+                    busy && "animate-spin motion-reduce:animate-none",
+                  )}
                 />
-                {busy ? t("common.refreshing") : t("services.refreshList")}
-              </Button>
+              </IconButton>
             </>
           }
-          description={t("services.description")}
           title={t("services.title")}
           titleId="service-heading"
         />
@@ -1253,7 +1320,54 @@ export function ServiceManager({
           </FormMessage>
         ) : null}
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t("services.listLabel")}>
+        <div className="mb-4 shrink-0">
+          <ListToolbar
+            title={t("services.listLabel")}
+            count={
+              search
+                ? `${visibleServices.length} / ${services.length}`
+                : services.length
+            }
+            query={query}
+            onQueryChange={setQuery}
+            searchLabel={t("services.searchServices")}
+            placeholder={t("services.searchServicesPlaceholder")}
+            clearLabel={t("common.clearSearch")}
+            filters={
+              <SegmentedControl<ServiceFilter>
+                label={t("services.filterStatus")}
+                onValueChange={setServiceFilter}
+                options={[
+                  {
+                    value: "all",
+                    label: t("services.filterAll"),
+                    count: services.length,
+                  },
+                  {
+                    value: "enabled",
+                    label: t("services.filterEnabled"),
+                    count: enabledCount,
+                  },
+                  {
+                    value: "disabled",
+                    label: t("services.filterDisabled"),
+                    count: services.length - enabledCount,
+                  },
+                ]}
+                value={serviceFilter}
+              />
+            }
+          />
+        </div>
+        <p className="mb-3 shrink-0 text-xs text-muted-foreground" aria-live="polite">
+          {serviceOrder.saving ? t("services.orderSaving") : search || serviceFilter !== "all" ? t("services.orderFiltered") : t("services.orderHint")}
+          {routingDefaults.loaded && !routingDefaults.allow_unmatched_failover ? ` ${t("failure.globalOffHint")}` : ""}
+        </p>
+        {serviceOrder.error ? <FormMessage className="mb-3" tone="error">{serviceOrder.error}<Button type="button" variant="ghost" onClick={serviceOrder.reload}>{t("common.retry")}</Button></FormMessage> : null}
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          aria-label={t("services.listLabel")}
+        >
           {catalogStatus === "loading" && services.length === 0 ? (
             <EmptyState title={t("services.loading")} />
           ) : services.length === 0 ? (
@@ -1272,196 +1386,280 @@ export function ServiceManager({
               description={t("services.emptyHint")}
               title={t("services.empty")}
             />
-          ) : (
-            <div className="grid min-h-0 content-start grid-cols-2 gap-2.5 overflow-y-auto max-[720px]:grid-cols-1">
-              {services.map((service) => {
-                const subscription = service.subscription;
-                const acting = actionID === service.id;
-                const plan = planTypeLabel(
-                  usageByService[service.id]?.usage?.plan_type,
-                );
-                const tone = serviceDot(service);
-                return (
-                  <article
-                    className="flex min-w-0 flex-col overflow-hidden rounded-md border bg-card"
-                    data-testid="service-card"
-                    key={service.id}
-                  >
-                    <div className="flex min-w-0 items-center gap-2 px-3.5 pt-3">
-                      <ServiceKindIcon kind={service.kind} />
-                      <StatusDot tone={tone} />
-                      <strong className="truncate text-sm font-medium">{service.name}</strong>
-                      {plan ? (
-                        <Badge data-testid="subscription-plan" variant="secondary">
-                          {plan}
-                        </Badge>
-                      ) : null}
-                      <div className="ml-auto flex shrink-0 items-center gap-2">
-                        <span
-                          className={cn(
-                            "text-xs font-medium",
-                            serviceStatusTextClass(tone),
-                          )}
-                        >
-                          {serviceStatusLabel(service)}
-                        </span>
-                        <Switch
-                          aria-label={t("services.enableNamed", { name: service.name })}
-                          checked={service.enabled}
-                          disabled={!isReady || acting}
-                          onCheckedChange={() => void toggleEnabled(service)}
-                          size="sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="px-3.5 pt-1 pb-3">
-                      <code className="block truncate font-mono text-xs text-text-secondary">
-                        {service.http?.base_url ??
-                          (subscription?.account_hint
-                            ? t("services.openaiAccount", {
-                                hint: subscription.account_hint,
-                              })
-                            : t("services.openaiCodexOauth"))}
-                      </code>
-                    </div>
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t px-3.5 py-2">
-                      <span className="text-xs text-muted-foreground tabular-nums">
-                        {t("services.capabilityCount", {
-                          count: service.capabilities.length,
-                        })}
-                        {" · "}
-                        {t("services.modelCount", {
-                          count: service.models.length,
-                        })}
-                      </span>
-                    </div>
-                    {subscription?.status === "connected" ? (
-                      <div className="border-t px-3.5 pb-2.5">
-                        <SubscriptionUsageMeter
-                          error={usageByService[service.id]?.error}
-                          now={new Date()}
-                          onReset={() =>
-                            setConfirmAction({
-                              kind: "reset-usage",
-                              service,
-                              availableCount:
-                                usageByService[service.id]?.usage
-                                  ?.rate_limit_reset_credits?.available_count ??
-                                0,
-                            })
-                          }
-                          resetting={actionID === service.id}
-                          status={
-                            usageByService[service.id]?.status ?? "loading"
-                          }
-                          usage={usageByService[service.id]?.usage}
-                        />
-                      </div>
-                    ) : null}
-                    <div className="mt-auto flex items-center justify-end gap-1.5 border-t bg-muted px-3.5 py-2">
+          ) : !serviceOrder.hasOrder && !serviceOrder.error ? (
+            <EmptyState title={t("services.loading")} />
+          ) : !serviceOrder.hasOrder ? null : (
+            <>
+              <div
+                className="group/service-list min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+                data-testid="service-list-scroller"
+              >
+                <ServiceListHeader
+                  labels={[
+                    t("services.columnService"),
+                    t("services.columnModels"),
+                    t("services.columnUsage"),
+                    t("services.columnStatus"),
+                    t("services.columnActions"),
+                  ]}
+                />
+                {visibleServices.length === 0 ? (
+                  <EmptyState
+                    className="col-span-full"
+                    title={t("common.noSearchResults")}
+                    description={t("services.noSearchResults")}
+                    action={
                       <Button
-                        disabled={acting}
-                        onClick={() =>
-                          onViewChange({
-                            kind: "edit",
-                            serviceId: service.id,
-                          })
-                        }
-                        size="sm"
-                        type="button"
                         variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setQuery("");
+                          setServiceFilter("all");
+                        }}
+                        type="button"
                       >
-                        {t("services.editAction")}
+                        {t("services.clearFilters")}
                       </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            aria-label={t("services.moreNamed", {
+                    }
+                  />
+                ) : null}
+                <OrderedList items={visibleServices} label={t("services.orderLabel")} compact
+                  disabled={!isReady || busy || serviceOrder.saving || !serviceOrder.complete || !!search || serviceFilter !== "all"}
+                  positionOf={service => serviceOrder.ordered.findIndex(item => item.id === service.id) + 1}
+                  onChange={items => void serviceOrder.save(items)}>
+                {(service, _index, controls, sorting) => {
+                  const subscription = service.subscription;
+                  const acting = actionID === service.id;
+                  const plan = planTypeLabel(
+                    usageByService[service.id]?.usage?.plan_type,
+                  );
+                  const tone = serviceDot(service);
+                  return (
+                    <ServiceListRow
+                      key={service.id}
+                      name={service.name}
+                      order={controls}
+                      sorting={sorting}
+                      sortIcon={<ServiceKindIcon kind={service.kind} size={20} />}
+                      sortStatus={<><StatusDot tone={tone} />{serviceStatusLabel(service)}</>}
+                      identity={
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-background">
+                            <ServiceKindIcon kind={service.kind} size={24} />
+                          </span>
+                          <div className="grid min-w-0 gap-0.5">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                              <Button
+                                className="block h-auto min-w-0 max-w-full shrink truncate rounded-sm p-0 text-left text-sm font-semibold"
+                                disabled={acting}
+                                onClick={() =>
+                                  onViewChange({
+                                    kind: "edit",
+                                    serviceId: service.id,
+                                  })
+                                }
+                                title={service.name}
+                                type="button"
+                                variant="link"
+                              >
+                                {service.name}
+                              </Button>
+                              {plan ? (
+                                <Badge
+                                  data-testid="subscription-plan"
+                                  variant="secondary"
+                                >
+                                  {plan}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <span className="text-micro text-muted-foreground">
+                              {serviceKindLabel(service.kind)}
+                            </span>
+                            <span
+                              className="block truncate text-xs text-text-secondary"
+                              title={
+                                service.http?.base_url ??
+                                subscription?.account_hint
+                              }
+                            >
+                              {service.http?.base_url ??
+                                (subscription?.account_hint
+                                  ? t("services.openaiAccount", {
+                                      hint: subscription.account_hint,
+                                    })
+                                  : service.kind === "claude_subscription" ? "Claude Code OAuth" : t("services.openaiCodexOauth"))}
+                            </span>
+                          </div>
+                        </div>
+                      }
+                      inventory={
+                        <>
+                          <span className="text-xs font-medium tabular-nums">
+                            {t("services.modelCount", {
+                              count: service.models.length,
+                            })}
+                          </span>
+                          <span className="text-micro text-muted-foreground tabular-nums">
+                            {t("services.apiCount", {
+                              count: service.capabilities.length,
+                            })}
+                          </span>
+                        </>
+                      }
+                      usage={
+                        subscription?.status === "connected" ? (
+                          <SubscriptionUsageMeter
+                            error={usageByService[service.id]?.error}
+                            now={new Date()}
+                            onReset={() =>
+                              setConfirmAction({
+                                kind: "reset-usage",
+                                service,
+                                availableCount:
+                                  usageByService[service.id]?.usage
+                                    ?.rate_limit_reset_credits
+                                    ?.available_count ?? 0,
+                              })
+                            }
+                            resetting={actionID === service.id}
+                            status={
+                              usageByService[service.id]?.status ?? "loading"
+                            }
+                            usage={usageByService[service.id]?.usage}
+                          />
+                        ) : null
+                      }
+                      status={
+                        <>
+                          <span
+                            className={cn(
+                              "inline-flex min-w-0 items-center gap-1.5 text-micro font-medium",
+                              serviceStatusTextClass(tone),
+                            )}
+                          >
+                            <StatusDot tone={tone} />
+                            {serviceStatusLabel(service)}
+                          </span>
+                          <Switch
+                            aria-label={t("services.enableNamed", {
+                              name: service.name,
+                            })}
+                            checked={service.enabled}
+                            disabled={!isReady || acting}
+                            onCheckedChange={() => void toggleEnabled(service)}
+                            size="sm"
+                          />
+                        </>
+                      }
+                      actions={
+                        <>
+                          <IconButton
+                            label={t("services.editNamed", {
                               name: service.name,
                             })}
                             disabled={acting}
-                            size="icon-sm"
+                            onClick={() =>
+                              onViewChange({
+                                kind: "edit",
+                                serviceId: service.id,
+                              })
+                            }
                             type="button"
-                            variant="outline"
                           >
-                            <Ellipsis />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {subscription ? (
-                            subscription.status === "authorizing" ? (
-                              <>
+                            <Pencil aria-hidden="true" />
+                          </IconButton>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <IconButton
+                                label={t("services.moreNamed", {
+                                  name: service.name,
+                                })}
+                                disabled={acting}
+                                size="icon-sm"
+                                type="button"
+                              >
+                                <Ellipsis aria-hidden="true" />
+                              </IconButton>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {subscription ? (
+                                subscription.status === "authorizing" ? (
+                                  <>
+                                    <DropdownMenuItem
+                                      disabled={acting}
+                                      onSelect={() =>
+                                        void showAuthorization(service)
+                                      }
+                                    >
+                                      {acting
+                                        ? t("common.processing")
+                                        : t("services.viewLogin")}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      disabled={acting}
+                                      onSelect={() =>
+                                        void cancelAuthorization(service)
+                                      }
+                                    >
+                                      {t("services.cancelLogin")}
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : (
+                                  <DropdownMenuItem
+                                    disabled={acting}
+                                    onSelect={() => {
+                                      setLoginChoice(service);
+                                      setLoginChoiceFlow(service.kind === "claude_subscription" ? "authorization_code" : null);
+                                      setError(null);
+                                    }}
+                                  >
+                                    {acting
+                                      ? t("common.processing")
+                                      : subscription.status === "connected"
+                                        ? t("services.resignIn")
+                                        : t("services.signIn")}
+                                  </DropdownMenuItem>
+                                )
+                              ) : null}
+                              {subscription?.status === "connected" ? (
                                 <DropdownMenuItem
                                   disabled={acting}
                                   onSelect={() =>
-                                    void showAuthorization(service)
+                                    setConfirmAction({
+                                      kind: "logout",
+                                      service,
+                                    })
                                   }
                                 >
-                                  {acting
-                                    ? t("common.processing")
-                                    : t("services.viewLogin")}
+                                  {t("services.signOut")}
                                 </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  disabled={acting}
-                                  onSelect={() =>
-                                    void cancelAuthorization(service)
-                                  }
-                                >
-                                  {t("services.cancelLogin")}
-                                </DropdownMenuItem>
-                              </>
-                            ) : (
+                              ) : null}
+                              {subscription ? <DropdownMenuSeparator /> : null}
                               <DropdownMenuItem
                                 disabled={acting}
-                                onSelect={() => {
-                                  setLoginChoice(service);
-                                  setLoginChoiceFlow(null);
-                                  setError(null);
-                                }}
+                                onSelect={() =>
+                                  setConfirmAction({
+                                    kind: "delete",
+                                    service,
+                                  })
+                                }
+                                variant="destructive"
                               >
                                 {acting
                                   ? t("common.processing")
-                                  : subscription.status === "connected"
-                                    ? t("services.resignIn")
-                                    : t("services.signIn")}
+                                  : t("common.delete")}
                               </DropdownMenuItem>
-                            )
-                          ) : null}
-                          {subscription?.status === "connected" ? (
-                            <DropdownMenuItem
-                              disabled={acting}
-                              onSelect={() =>
-                                setConfirmAction({
-                                  kind: "logout",
-                                  service,
-                                })
-                              }
-                            >
-                              {t("services.signOut")}
-                            </DropdownMenuItem>
-                          ) : null}
-                          {subscription ? <DropdownMenuSeparator /> : null}
-                          <DropdownMenuItem
-                            disabled={acting}
-                            onSelect={() =>
-                              setConfirmAction({
-                                kind: "delete",
-                                service,
-                              })
-                            }
-                            variant="destructive"
-                          >
-                            {acting
-                              ? t("common.processing")
-                              : t("common.delete")}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </>
+                      }
+                    />
+                  );
+                }}
+                </OrderedList>
+              </div>
+            </>
           )}
         </div>
         <ConfirmDialog
@@ -1512,59 +1710,71 @@ export function ServiceManager({
               <DialogTitle>
                 {t("services.loginNamed", { name: loginChoice?.name ?? "" })}
               </DialogTitle>
-              <DialogDescription>{t("services.chooseOauthHint")}</DialogDescription>
+              <DialogDescription>
+                {t("services.chooseOauthHint")}
+              </DialogDescription>
             </DialogHeader>
-              <RadioGroup
-                aria-label={t("services.loginMethod")}
-                className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
-                onValueChange={(value) => setLoginChoiceFlow(value as AuthorizationFlow)}
-                value={loginChoiceFlow ?? ""}
+            <RadioGroup
+              aria-label={t("services.loginMethod")}
+              className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
+              onValueChange={(value) =>
+                setLoginChoiceFlow(value as AuthorizationFlow)
+              }
+              value={loginChoiceFlow ?? ""}
+            >
+              {loginChoice?.kind === "claude_subscription" ? (
+                <ChoiceCard label={t("services.claudeOauth")} description={t("services.claudeOauthHint")}
+                  selected={loginChoiceFlow === "authorization_code"} value="authorization_code" />
+              ) : <>
+              <ChoiceCard
+                description={t("services.browserOauthHint")}
+                label={t("services.browserOauth")}
+                selected={loginChoiceFlow === "browser"}
+                value="browser"
+              />
+              <ChoiceCard
+                description={t("services.deviceCodeHint")}
+                label="Device Code"
+                selected={loginChoiceFlow === "device_code"}
+                value="device_code"
+              />
+              </>}
+            </RadioGroup>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setLoginChoice(null);
+                  setLoginChoiceFlow(null);
+                }}
+                type="button"
               >
-                <ChoiceCard
-                  description={t("services.browserOauthHint")}
-                  label={t("services.browserOauth")}
-                  selected={loginChoiceFlow === "browser"}
-                  value="browser"
-                />
-                <ChoiceCard
-                  description={t("services.deviceCodeHint")}
-                  label="Device Code"
-                  selected={loginChoiceFlow === "device_code"}
-                  value="device_code"
-                />
-              </RadioGroup>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setLoginChoice(null);
-                    setLoginChoiceFlow(null);
-                  }}
-                  type="button"
-                >
-                  {t("common.cancel")}
-                </Button>
-                <Button
-                  disabled={loginChoiceFlow === null}
-                  onClick={() => {
-                    if (loginChoice && loginChoiceFlow) {
-                      void authorize(loginChoice, loginChoiceFlow);
-                    }
-                  }}
-                  type="button"
-                >
-                  {t("services.startLogin")}
-                </Button>
-              </DialogFooter>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                disabled={loginChoiceFlow === null}
+                onClick={() => {
+                  if (loginChoice && loginChoiceFlow) {
+                    void authorize(loginChoice, loginChoiceFlow);
+                  }
+                }}
+                type="button"
+              >
+                {t("services.startLogin")}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
         {authorizationDialog ? (
-          <Dialog open onOpenChange={(open) => !open && setAuthorizationDialog(null)}>
+          <Dialog
+            open
+            onOpenChange={(open) => !open && setAuthorizationDialog(null)}
+          >
             <DialogContent className="max-w-[460px] sm:max-w-[460px]">
               <DialogHeader>
-                <DialogTitle>{t("services.deviceCodeTitle")}</DialogTitle>
+                <DialogTitle>{authorizationDialog.session.flow === "authorization_code" ? t("services.claudeOauth") : t("services.deviceCodeTitle")}</DialogTitle>
                 <DialogDescription>
-                  {t("services.deviceCodeDescription")}
+                  {authorizationDialog.session.flow === "authorization_code" ? t("services.claudeOauthHint") : t("services.deviceCodeDescription")}
                 </DialogDescription>
               </DialogHeader>
               {authorizationDialog.requestedFlow === "browser" ? (
@@ -1572,7 +1782,36 @@ export function ServiceManager({
                   {t("services.portsBusyAuto")}
                 </FormMessage>
               ) : null}
-              {authorizationDialog.session.status === "pending" &&
+              {authorizationDialog.session.status === "pending" && authorizationDialog.session.flow === "authorization_code" ? (
+                <form className="grid gap-4" onSubmit={async (event) => {
+                  event.preventDefault();
+                  const active = authorizationDialog;
+                  setActionID(active.service.id);
+                  setError(null);
+                  const code = authorizationCode;
+                  setAuthorizationCode("");
+                  try {
+                    const session = await completeServiceAuthorization(active.service.id, active.session.id, code);
+                    setAuthorizationDialog((current) => current?.session.id === active.session.id ? { ...current, session } : current);
+                    await onRefresh();
+                  } catch (cause) {
+                    setError(errorMessage(cause, t("services.codeExchangeFailed")));
+                  } finally { setActionID(null); }
+                }}>
+                  <Field htmlFor="claude-authorization-code" label={t("services.authorizationCode")}>
+                    <Input id="claude-authorization-code" type="password" autoComplete="off" spellCheck={false}
+                      placeholder="code#state" value={authorizationCode} maxLength={8192}
+                      onChange={(event) => setAuthorizationCode(event.target.value)} />
+                  </Field>
+                  {error ? <FormMessage tone="error">{error}</FormMessage> : null}
+                  <DialogFooter>
+                    <Button variant="outline" type="button" disabled={actionID === authorizationDialog.service.id}
+                      onClick={() => void cancelAuthorization(authorizationDialog.service)}>{t("services.cancelLogin")}</Button>
+                    <Button variant="outline" type="button" onClick={() => void reopenAuthorizationPage()}>{t("services.reopenLogin")}</Button>
+                    <Button type="submit" disabled={!authorizationCode.trim() || actionID === authorizationDialog.service.id}>{t("services.completeLogin")}</Button>
+                  </DialogFooter>
+                </form>
+              ) : authorizationDialog.session.status === "pending" &&
               authorizationDialog.session.device_code ? (
                 <>
                   <p className="text-sm leading-6 text-muted-foreground">
@@ -1587,7 +1826,8 @@ export function ServiceManager({
                       onClick={() =>
                         copyFeedback.copy(
                           "codex-device-code",
-                          authorizationDialog.session.device_code?.user_code ?? "",
+                          authorizationDialog.session.device_code?.user_code ??
+                            "",
                         )
                       }
                       type="button"
@@ -1625,8 +1865,8 @@ export function ServiceManager({
                 <>
                   <p className="text-sm text-muted-foreground" role="status">
                     {authorizationDialog.session.status === "failed"
-                      ? authorizationDialog.session.error?.message ??
-                        t("services.deviceFailed")
+                      ? (authorizationDialog.session.error?.message ??
+                        t("services.deviceFailed"))
                       : authorizationDialog.session.status === "expired"
                         ? t("services.deviceExpired")
                         : authorizationDialog.session.status === "cancelled"
@@ -1653,7 +1893,7 @@ export function ServiceManager({
   const editingKind = editing?.service.kind;
   const canKeepCredential = Boolean(editing?.service.http?.credential_ref);
   const selectedPreset =
-    draft.kind === "codex_subscription"
+    isSubscriptionKind(draft.kind)
       ? null
       : httpServicePreset(
           draft.kind as HTTPServicePresetID,
@@ -1678,362 +1918,438 @@ export function ServiceManager({
     />
   );
   const protocolEditor = (
-    <section
-      aria-labelledby="service-capabilities-heading"
-      className="grid gap-2.5 rounded-md border bg-card p-3"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="grid min-w-0 gap-0.5">
-          <strong
-            className="text-sm font-semibold"
-            id="service-capabilities-heading"
-          >
-            {t("services.capabilitiesTitle")}
-          </strong>
-          <p className="text-xs text-muted-foreground">
-            {conversionEngine?.available
-              ? t("services.capabilityHintConvert")
-              : t("services.capabilityHintPassthrough")}
-          </p>
-        </div>
-        <Badge className="mt-px shrink-0 tabular-nums" variant="secondary">
-          {t("services.enabledItems", { count: draft.capabilities.length })}
-        </Badge>
-      </div>
-
-      <div className="grid gap-1.5">
-        {descriptors.map((descriptor) => {
-          const capability = draft.capabilities.find(
-            (item) => item.protocol === descriptor.id,
-          );
-          const convertible = supportsLocalConversion(descriptor.id);
-          const targets = convertible
-            ? localConversionTargets(descriptor.id, conversionEngine)
-            : [];
-          const selected = targets.find(
-            (target) => target.id === capability?.convert_to,
-          );
-          return (
-            <div
-              className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,232px)] items-center gap-2 rounded-md border bg-card px-2.5 py-2 max-[640px]:grid-cols-1"
-              data-testid="service-capability-row"
-              key={descriptor.id}
+    <Panel asChild>
+      <section aria-labelledby="service-capabilities-heading">
+        <PanelHeader
+          actions={
+            <Badge className="mt-px shrink-0 tabular-nums" variant="secondary">
+              {t("services.enabledItems", { count: draft.capabilities.length })}
+            </Badge>
+          }
+        >
+          <div className="grid min-w-0 gap-0.5">
+            <strong
+              className="text-sm font-semibold"
+              id="service-capabilities-heading"
             >
-              <Label className="flex min-w-0 flex-row items-center gap-2 text-xs text-text-secondary">
-                <Checkbox
-                  checked={Boolean(capability)}
-                  onCheckedChange={(checked) =>
-                    toggleCapability(descriptor, checked === true)
-                  }
-                />
-                <span className="shrink-0">
-                  {protocolLabel(descriptor.id)}
-                </span>
-                <code className="min-w-0 truncate font-mono text-micro text-muted-foreground">
-                  {protocolEntryPath(descriptor.id)}
-                </code>
-                {selected?.quality ? (
-                  <Badge
-                    className="shrink-0 px-1.5 py-0 text-micro"
-                    variant={
-                      selected.quality === "discouraged"
-                        ? "destructive"
-                        : "secondary"
+              {t("services.capabilitiesTitle")}
+            </strong>
+            <p className="text-xs text-muted-foreground">
+              {conversionEngine?.available
+                ? t("services.capabilityHintConvert")
+                : t("services.capabilityHintPassthrough")}
+            </p>
+          </div>
+        </PanelHeader>
+
+        <div>
+          {descriptors.map((descriptor) => {
+            const capability = draft.capabilities.find(
+              (item) => item.protocol === descriptor.id,
+            );
+            const convertible = supportsLocalConversion(descriptor.id);
+            const targets = convertible
+              ? localConversionTargets(descriptor.id, conversionEngine)
+              : [];
+            const selected = targets.find(
+              (target) => target.id === capability?.convert_to,
+            );
+            return (
+              <DataRow
+                className="grid grid-cols-1 gap-3 py-3 @[640px]:grid-cols-[minmax(0,1fr)_232px]"
+                data-testid="service-capability-row"
+                key={descriptor.id}
+              >
+                <Label className="flex min-w-0 items-center gap-3 text-xs text-text-secondary">
+                  <Checkbox
+                    checked={Boolean(capability)}
+                    onCheckedChange={(checked) =>
+                      toggleCapability(descriptor, checked === true)
+                    }
+                  />
+                  <span className="grid min-w-0 gap-1">
+                    <span className="font-medium text-foreground">
+                      {protocolLabel(descriptor.id)}
+                    </span>
+                    <code className="min-w-0 truncate font-mono text-micro text-muted-foreground">
+                      {protocolEntryPath(descriptor.id)}
+                    </code>
+                  </span>
+                  {selected?.quality ? (
+                    <Badge
+                      className="shrink-0 px-1.5 py-0 text-micro"
+                      variant={
+                        selected.quality === "discouraged"
+                          ? "destructive"
+                          : "secondary"
+                      }
+                    >
+                      {conversionQualityLabels[selected.quality]}
+                      {selected.streaming ? "" : t("services.noStreaming")}
+                    </Badge>
+                  ) : null}
+                </Label>
+                {capability && convertible ? (
+                  <Select
+                    value={capability.convert_to ?? localConversionPassthrough}
+                    onValueChange={(value) =>
+                      setConvertTo(descriptor.id, value)
                     }
                   >
-                    {conversionQualityLabels[selected.quality]}
-                    {selected.streaming ? "" : t("services.noStreaming")}
-                  </Badge>
-                ) : null}
-              </Label>
-              {capability && convertible ? (
-                <Select
-                  value={
-                    capability.convert_to ?? localConversionPassthrough
+                    <SelectTrigger
+                      aria-label={t("services.localConvert", {
+                        protocol: protocolLabel(descriptor.id),
+                      })}
+                      className="h-8 w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={localConversionPassthrough}>
+                        {t("services.passthrough")}
+                      </SelectItem>
+                      {targets.map((target) => (
+                        <SelectItem
+                          disabled={!target.enabled}
+                          key={target.id}
+                          value={target.id}
+                        >
+                          {t("services.convertTo", {
+                            protocol: protocolLabel(target.id),
+                          })}
+                          {target.enabled
+                            ? target.quality
+                              ? ` · ${conversionQualityLabels[target.quality]}`
+                              : ""
+                            : t("services.notEnabled")}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <span className="hidden text-xs text-muted-foreground @[640px]:block">
+                    {capability ? t("services.passthrough") : ""}
+                  </span>
+                )}
+              </DataRow>
+            );
+          })}
+        </div>
+      </section>
+    </Panel>
+  );
+  const connectionFields = (
+    <div className="grid min-w-0 items-start gap-4 pb-2 @[760px]:grid-cols-2">
+      <Panel>
+        <PanelHeader>
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <SlidersHorizontal
+              aria-hidden="true"
+              className="size-4 text-primary"
+            />
+            {t("services.basicInformation")}
+          </h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {t("services.basicInformationHint")}
+          </p>
+        </PanelHeader>
+        <div className="grid gap-4 p-4">
+          <Field
+            label={t("services.serviceType")}
+            hint={
+              isSubscriptionKind(draft.kind)
+                ? t(draft.kind === "claude_subscription" ? "services.claudeOauthHint" : "services.codexHint")
+                : selectedPreset?.description
+            }
+          >
+            <Select
+              disabled={view.kind === "edit"}
+              value={draft.kind}
+              onValueChange={(value) => selectKind(value as ServiceKind)}
+            >
+              <SelectTrigger
+                aria-label={t("services.serviceType")}
+                className="w-full"
+              >
+                <SelectValue>
+                  <ServiceKindLabel kind={draft.kind}>
+                    {serviceTypeOptionLabel(draft.kind)}
+                  </ServiceKindLabel>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>{t("services.groupSubscription")}</SelectLabel>
+                  <SelectItem value="codex_subscription" textValue={serviceTypeOptionLabel("codex_subscription")}>
+                    <ServiceKindLabel kind="codex_subscription">
+                      {serviceTypeOptionLabel("codex_subscription")}
+                    </ServiceKindLabel>
+                  </SelectItem>
+                  <SelectItem value="claude_subscription" textValue={serviceTypeOptionLabel("claude_subscription")}>
+                    <ServiceKindLabel kind="claude_subscription">
+                      {serviceTypeOptionLabel("claude_subscription")}
+                    </ServiceKindLabel>
+                  </SelectItem>
+                  {codingPlanPresetIDs.filter((kind) => kind !== "opencode_zen").map((kind) => (
+                    <SelectItem key={kind} value={kind} textValue={serviceTypeOptionLabel(kind)}>
+                      <ServiceKindLabel kind={kind}>
+                        {serviceTypeOptionLabel(kind)}
+                      </ServiceKindLabel>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                <SelectGroup>
+                  <SelectLabel>{t("services.groupGateway")}</SelectLabel>
+                  <SelectItem value="newapi" textValue={serviceTypeOptionLabel("newapi")}>
+                    <ServiceKindLabel kind="newapi">
+                      {serviceTypeOptionLabel("newapi")}
+                    </ServiceKindLabel>
+                  </SelectItem>
+                  <SelectItem value="opencode_zen" textValue={serviceTypeOptionLabel("opencode_zen")}>
+                    <ServiceKindLabel kind="opencode_zen">
+                      {serviceTypeOptionLabel("opencode_zen")}
+                    </ServiceKindLabel>
+                  </SelectItem>
+                </SelectGroup>
+                <SelectGroup>
+                  <SelectLabel>{t("services.groupAdvanced")}</SelectLabel>
+                  {httpServicePresetIDs
+                    .filter((kind) => kind !== "newapi" && !codingPlanPresetIDs.includes(kind))
+                    .map((kind) => (
+                      <SelectItem key={kind} value={kind} textValue={serviceTypeOptionLabel(kind)}>
+                        <ServiceKindLabel kind={kind}>
+                          {serviceTypeOptionLabel(kind)}
+                        </ServiceKindLabel>
+                      </SelectItem>
+                    ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field htmlFor="service-name" label={t("services.serviceName")}>
+            <Input
+              id="service-name"
+              maxLength={128}
+              placeholder={
+                isSubscriptionKind(draft.kind)
+                  ? t("services.namePlaceholderCodex")
+                  : t("services.namePlaceholderHttp")
+              }
+              required
+              value={draft.name}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+            />
+          </Field>
+          <Label className="flex items-center gap-2 border-t pt-4 text-xs font-medium">
+            <Checkbox
+              checked={draft.enabled}
+              onCheckedChange={(checked) =>
+                setDraft((current) => ({
+                  ...current,
+                  enabled: checked === true,
+                }))
+              }
+            />
+            <span>{t("services.enableThis")}</span>
+          </Label>
+        </div>
+      </Panel>
+      <Panel>
+        <PanelHeader>
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <KeyRound aria-hidden="true" className="size-4 text-primary" />
+            {isSubscriptionKind(draft.kind)
+              ? t("services.accountAuthorization")
+              : t("services.connectionAuthentication")}
+          </h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {isSubscriptionKind(draft.kind)
+              ? t("services.independentAccounts")
+              : t("services.connectionAuthenticationHint")}
+          </p>
+        </PanelHeader>
+        <div className="grid min-w-0 gap-4 p-4">
+          {isSubscriptionKind(draft.kind) ? (
+            <>
+              {view.kind === "create" ? (
+                <fieldset className="min-w-0 border-0 p-0">
+                  <legend className="sr-only">
+                    {t("services.loginMethod")}
+                  </legend>
+                  <RadioGroup
+                    aria-label={t("services.newLoginMethod")}
+                    className="grid gap-2"
+                    onValueChange={(value) =>
+                      setDraft((current) => ({
+                        ...current,
+                        authorizationFlow: value as AuthorizationFlow,
+                      }))
+                    }
+                    value={draft.authorizationFlow ?? ""}
+                  >
+                    {draft.kind === "claude_subscription" ? (
+                      <ChoiceCard label={t("services.claudeOauth")} description={t("services.claudeOauthHint")}
+                        selected value="authorization_code" />
+                    ) : <>
+                    <ChoiceCard
+                      description={t("services.browserOauthCreateHint")}
+                      label={t("services.browserOauth")}
+                      selected={draft.authorizationFlow === "browser"}
+                      value="browser"
+                    />
+                    <ChoiceCard
+                      description={t("services.deviceCodeCreateHint")}
+                      label="Device Code"
+                      selected={draft.authorizationFlow === "device_code"}
+                      value="device_code"
+                    />
+                    </>}
+                  </RadioGroup>
+                  {draft.authorizationFlow === null ? (
+                    <small className="mt-2 block text-warning-foreground">
+                      {t("services.chooseLoginContinue")}
+                    </small>
+                  ) : null}
+                </fieldset>
+              ) : null}
+              <div className="flex items-start gap-2 rounded-md border border-success/20 bg-success-wash px-3 py-2.5 text-text-secondary">
+                <StatusDot className="mt-1.5" tone="positive" />
+                <div>
+                  <strong className="text-sm font-medium text-success-foreground">
+                    {view.kind === "create"
+                      ? t("services.saveThenLogin")
+                      : t("services.loginInList")}
+                  </strong>
+                  <p className="mt-0.5 text-xs">
+                    {t("services.independentAccounts")}
+                  </p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <Field label={t("services.apiAddress")}>
+                <Input
+                  maxLength={2048}
+                  placeholder={
+                    selectedPreset?.baseURLPlaceholder ??
+                    "https://api.example.com"
                   }
+                  required
+                  type="url"
+                  value={draft.baseURL}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      baseURL: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              <Field label={t("services.authScheme")}>
+                <Select
+                  value={draft.authScheme}
                   onValueChange={(value) =>
-                    setConvertTo(descriptor.id, value)
+                    setDraft((current) => ({
+                      ...current,
+                      authScheme: value as ServiceAuthScheme,
+                    }))
                   }
                 >
                   <SelectTrigger
-                    aria-label={t("services.localConvert", {
-                      protocol: protocolLabel(descriptor.id),
-                    })}
-                    className="h-8 w-full"
+                    aria-label={t("services.authScheme")}
+                    className="w-full"
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={localConversionPassthrough}>
-                      {t("services.passthrough")}
-                    </SelectItem>
-                    {targets.map((target) => (
-                      <SelectItem
-                        disabled={!target.enabled}
-                        key={target.id}
-                        value={target.id}
-                      >
-                        {t("services.convertTo", {
-                          protocol: protocolLabel(target.id),
-                        })}
-                        {target.enabled
-                          ? target.quality
-                            ? ` · ${conversionQualityLabels[target.quality]}`
-                            : ""
-                          : t("services.notEnabled")}
+                    {Object.entries(authLabels).map(([scheme, label]) => (
+                      <SelectItem key={scheme} value={scheme}>
+                        {label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              ) : (
-                <span className="text-micro text-muted-foreground max-[640px]:hidden">
-                  {capability ? t("services.passthrough") : ""}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-  const connectionFields = (
-    <div className="grid grid-cols-2 gap-3 max-[680px]:grid-cols-1 [&>label]:flex [&>label]:min-w-0 [&>label]:flex-col [&>label]:items-stretch [&>label]:gap-1.5 [&>label>span]:text-xs [&>label>span]:font-medium [&>label>span]:text-text-secondary [&>label>small]:text-xs [&>label>small]:font-normal [&>label>small]:text-muted-foreground">
-      <Label className="col-span-full">
-        <span>{t("services.serviceType")}</span>
-        <Select
-          disabled={view.kind === "edit"}
-          value={draft.kind}
-          onValueChange={(value) => selectKind(value as ServiceKind)}
-        >
-          <SelectTrigger aria-label={t("services.serviceType")} className="w-full">
-            <SelectValue>{serviceTypeOptionLabel(draft.kind)}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-          <SelectGroup>
-            <SelectLabel>{t("services.groupSubscription")}</SelectLabel>
-            <SelectItem value="codex_subscription">
-              {serviceTypeOptionLabel("codex_subscription")}
-            </SelectItem>
-          </SelectGroup>
-          <SelectGroup>
-            <SelectLabel>{t("services.groupGateway")}</SelectLabel>
-            <SelectItem value="newapi">
-              {serviceTypeOptionLabel("newapi")}
-            </SelectItem>
-          </SelectGroup>
-          <SelectGroup>
-            <SelectLabel>{t("services.groupAdvanced")}</SelectLabel>
-            {httpServicePresetIDs
-              .filter((kind) => kind !== "newapi")
-              .map((kind) => (
-                <SelectItem key={kind} value={kind}>
-                  {serviceTypeOptionLabel(kind)}
-                </SelectItem>
-              ))}
-          </SelectGroup>
-          </SelectContent>
-        </Select>
-        <small>
-          {draft.kind === "codex_subscription"
-            ? t("services.codexHint")
-            : selectedPreset?.description}
-        </small>
-      </Label>
-      <Label>
-        <span>{t("services.serviceName")}</span>
-        <Input
-          id="service-name"
-          maxLength={128}
-          placeholder={
-            draft.kind === "codex_subscription"
-              ? t("services.namePlaceholderCodex")
-              : t("services.namePlaceholderHttp")
-          }
-          required
-          value={draft.name}
-          onChange={(event) =>
-            setDraft((current) => ({
-              ...current,
-              name: event.target.value,
-            }))
-          }
-        />
-      </Label>
-      <Label className="col-span-full flex-row! items-center!">
-        <Checkbox
-          checked={draft.enabled}
-          onCheckedChange={(checked) =>
-            setDraft((current) => ({
-              ...current,
-              enabled: checked === true,
-            }))
-          }
-        />
-        <span>{t("services.enableThis")}</span>
-      </Label>
-      {draft.kind === "codex_subscription" &&
-      view.kind === "create" ? (
-        <fieldset className="col-span-full min-w-0 rounded-md border bg-muted p-3">
-          <legend className="px-1 text-xs font-medium text-text-secondary">{t("services.loginMethod")}</legend>
-          <RadioGroup
-            aria-label={t("services.newLoginMethod")}
-            className="grid grid-cols-2 gap-2 max-[520px]:grid-cols-1"
-            onValueChange={(value) =>
-              setDraft((current) => ({
-                ...current,
-                authorizationFlow: value as AuthorizationFlow,
-              }))
-            }
-            value={draft.authorizationFlow ?? ""}
-          >
-            <ChoiceCard
-              description={t("services.browserOauthCreateHint")}
-              label={t("services.browserOauth")}
-              selected={draft.authorizationFlow === "browser"}
-              value="browser"
-            />
-            <ChoiceCard
-              description={t("services.deviceCodeCreateHint")}
-              label="Device Code"
-              selected={draft.authorizationFlow === "device_code"}
-              value="device_code"
-            />
-          </RadioGroup>
-          {draft.authorizationFlow === null ? (
-            <small className="mt-2 block text-warning-foreground">
-              {t("services.chooseLoginContinue")}
-            </small>
-          ) : null}
-        </fieldset>
-      ) : null}
-      {draft.kind !== "codex_subscription" ? (
-        <>
-          <Label>
-            <span>{t("services.apiAddress")}</span>
-            <Input
-              maxLength={2048}
-              placeholder={
-                selectedPreset?.baseURLPlaceholder ??
-                "https://api.example.com"
-              }
-              required
-              type="url"
-              value={draft.baseURL}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  baseURL: event.target.value,
-                }))
-              }
-            />
-          </Label>
-          <Label>
-            <span>{t("services.authScheme")}</span>
-            <Select
-              value={draft.authScheme}
-              onValueChange={(value) =>
-                setDraft((current) => ({
-                  ...current,
-                  authScheme: value as ServiceAuthScheme,
-                }))
-              }
-            >
-              <SelectTrigger aria-label={t("services.authScheme")} className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-              {Object.entries(authLabels).map(([scheme, label]) => (
-                <SelectItem key={scheme} value={scheme}>
-                  {label}
-                </SelectItem>
-              ))}
-              </SelectContent>
-            </Select>
-          </Label>
-          {draft.authScheme === "custom_header" ? (
-            <Label>
-              <span>{t("services.headerName")}</span>
-              <Input
-                maxLength={128}
-                placeholder="X-Api-Key"
-                value={draft.headerName}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    headerName: event.target.value,
-                  }))
-                }
-              />
-            </Label>
-          ) : null}
-          {draft.authScheme !== "none" ? (
-            <Label>
-              <span>
-                {editingKind
-                  ? canKeepCredential
-                    ? t("services.apiKeyKeep")
-                    : t("services.apiKeyRequired")
-                  : "API Key"}
-              </span>
-              <Input
-                autoComplete="new-password"
-                maxLength={16_384}
-                placeholder={
-                  canKeepCredential
-                    ? t("services.apiKeySaved")
-                    : t("services.apiKeyPaste")
-                }
-                type="password"
-                value={draft.secret}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    secret: event.target.value,
-                  }))
-                }
-              />
-            </Label>
-          ) : null}
-          {editing?.service.http?.credential_ref ? (
-            <Label className="col-span-full flex-row! items-center!">
-              <Checkbox
-                checked={draft.removeCredential}
-                onCheckedChange={(checked) =>
-                  setDraft((current) => ({
-                    ...current,
-                    removeCredential: checked === true,
-                  }))
-                }
-              />
-              <span>{t("services.removeStoredKey")}</span>
-            </Label>
-          ) : null}
-        </>
-      ) : null}
-      {draft.kind === "codex_subscription" ? (
-        <div className="col-span-full flex items-start gap-2 rounded-md border border-success/20 bg-success-wash px-3 py-2.5 text-text-secondary">
-          <StatusDot className="mt-1.5" tone="positive" />
-          <div>
-            <strong className="text-sm font-medium text-success-foreground">
-              {view.kind === "create"
-                ? t("services.saveThenLogin")
-                : t("services.loginInList")}
-            </strong>
-            <p className="mt-0.5 text-xs">
-              {t("services.independentAccounts")}
-            </p>
-          </div>
+              </Field>
+              {draft.authScheme === "custom_header" ? (
+                <Field label={t("services.headerName")}>
+                  <Input
+                    maxLength={128}
+                    placeholder="X-Api-Key"
+                    value={draft.headerName}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        headerName: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              ) : null}
+              {draft.authScheme !== "none" ? (
+                <Field
+                  label={
+                    editingKind
+                      ? canKeepCredential
+                        ? t("services.apiKeyKeep")
+                        : t("services.apiKeyRequired")
+                      : "API Key"
+                  }
+                >
+                  <Input
+                    autoComplete="new-password"
+                    maxLength={16_384}
+                    placeholder={
+                      canKeepCredential
+                        ? t("services.apiKeySaved")
+                        : t("services.apiKeyPaste")
+                    }
+                    type="password"
+                    value={draft.secret}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        secret: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              ) : null}
+              {editing?.service.http?.credential_ref ? (
+                <Label className="flex items-start gap-2 border-t pt-4 text-xs font-normal text-muted-foreground">
+                  <Checkbox
+                    checked={draft.removeCredential}
+                    onCheckedChange={(checked) =>
+                      setDraft((current) => ({
+                        ...current,
+                        removeCredential: checked === true,
+                      }))
+                    }
+                  />
+                  <span>{t("services.removeStoredKey")}</span>
+                </Label>
+              ) : null}
+            </>
+          )}
         </div>
-      ) : null}
+      </Panel>
     </div>
   );
   const visibleEditorTab: EditorTab =
-    draft.kind === "codex_subscription" && editorTab === "protocols"
+    isSubscriptionKind(draft.kind) && editorTab === "protocols"
       ? "models"
       : editorTab;
 
   return (
-    <section className="flex min-h-0 w-full flex-1 flex-col" aria-labelledby="service-editor-heading">
+    <section
+      className="@container flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
+      aria-labelledby="service-editor-heading"
+    >
       <PageHeader
         back={{
           label: t("services.back"),
@@ -2069,19 +2385,27 @@ export function ServiceManager({
           noValidate
           onSubmit={(event) => void submit(event)}
         >
-          <fieldset className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-0 p-0 disabled:pointer-events-none disabled:opacity-70" disabled={!isReady || saving}>
+          <fieldset
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-0 p-0 disabled:pointer-events-none disabled:opacity-70"
+            disabled={!isReady || saving}
+          >
             <Tabs
               className="min-h-0 flex-1 gap-3"
               onValueChange={(value) => setEditorTab(value as EditorTab)}
               value={visibleEditorTab}
             >
-              <TabsList aria-label={t("services.tabsAria")} className="h-8 shrink-0">
+              <TabsList
+                aria-label={t("services.tabsAria")}
+                scrollable
+                className="h-9 max-w-full shrink-0"
+              >
                 <TabsTrigger
                   data-testid="service-editor-tab-connection"
                   onClick={() => setEditorTab("connection")}
                   type="button"
                   value="connection"
                 >
+                  <Cable aria-hidden="true" />
                   {t("services.tabConnection")}
                 </TabsTrigger>
                 <TabsTrigger
@@ -2090,6 +2414,7 @@ export function ServiceManager({
                   type="button"
                   value="models"
                 >
+                  <Boxes aria-hidden="true" />
                   {t("services.tabModels")}
                   <Badge
                     className="px-1.5 py-0 text-micro tabular-nums"
@@ -2100,13 +2425,14 @@ export function ServiceManager({
                     })}
                   </Badge>
                 </TabsTrigger>
-                {draft.kind === "codex_subscription" ? null : (
+                {isSubscriptionKind(draft.kind) ? null : (
                   <TabsTrigger
                     data-testid="service-editor-tab-protocols"
                     onClick={() => setEditorTab("protocols")}
                     type="button"
                     value="protocols"
                   >
+                    <SlidersHorizontal aria-hidden="true" />
                     {t("services.tabProtocols")}
                     <Badge
                       className="px-1.5 py-0 text-micro tabular-nums"
@@ -2118,9 +2444,10 @@ export function ServiceManager({
                     </Badge>
                   </TabsTrigger>
                 )}
+                <TabsTrigger data-testid="service-editor-tab-failure" onClick={() => setEditorTab("failure")} type="button" value="failure">{t("failure.title")}</TabsTrigger>
               </TabsList>
               <TabsContent
-                className="min-h-0 flex-1 overflow-y-auto pr-4"
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
                 data-tab-scroller=""
                 data-testid="service-editor-tab-panel"
                 value="connection"
@@ -2128,16 +2455,16 @@ export function ServiceManager({
                 {connectionFields}
               </TabsContent>
               <TabsContent
-                className="min-h-0 flex-1 overflow-y-auto pr-4"
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
                 data-tab-scroller=""
                 data-testid="service-editor-tab-panel"
                 value="models"
               >
                 {modelsEditor}
               </TabsContent>
-              {draft.kind === "codex_subscription" ? null : (
+              {isSubscriptionKind(draft.kind) ? null : (
                 <TabsContent
-                  className="min-h-0 flex-1 overflow-y-auto pr-4"
+                  className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
                   data-tab-scroller=""
                   data-testid="service-editor-tab-panel"
                   value="protocols"
@@ -2145,29 +2472,50 @@ export function ServiceManager({
                   {protocolEditor}
                 </TabsContent>
               )}
+              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1" data-tab-scroller="" data-testid="service-editor-tab-panel" value="failure">
+                <Panel className="mb-3 grid gap-3 p-4">
+                  <p className="text-sm">{t("failure.serviceGlobalHint")}</p>
+                  {!routingDefaults.loaded ? <p className="text-xs text-muted-foreground">{t("failure.defaultsUnavailable")}<Button type="button" variant="ghost" onClick={routingDefaults.reload}>{t("common.retry")}</Button></p> : null}
+                  <Label className="flex items-center gap-2"><Switch disabled={!routingDefaults.loaded} checked={draft.failurePolicy !== undefined} onCheckedChange={checked => setDraft(current => ({ ...current, failurePolicy: checked ? structuredClone(routingDefaults.default_failure_policy) : undefined }))} />{t("failure.serviceOverride")}</Label>
+                </Panel>
+                {draft.failurePolicy ? <FailurePolicyEditor value={draft.failurePolicy} onChange={failurePolicy => setDraft(current => ({ ...current, failurePolicy }))} /> : null}
+              </TabsContent>
             </Tabs>
           </fieldset>
-          <div className="z-4 mt-3 shrink-0 border-t px-0 pt-2.5 pb-1">
-            <Button
-              className="w-full"
-              data-testid="service-submit"
-              disabled={
-                !isReady ||
-                saving ||
-                (view.kind === "create" &&
-                  draft.kind === "codex_subscription" &&
-                  draft.authorizationFlow === null)
-              }
-              type="submit"
-            >
-              {saving
-                ? t("common.saving")
-                : view.kind === "edit"
-                  ? t("services.saveChanges")
-                  : draft.kind === "codex_subscription"
-                    ? t("services.addAndLogin")
-                    : t("services.saveService")}
-            </Button>
+          <div className="mt-3 flex shrink-0 items-center justify-between gap-3 border-t pt-3 pb-1">
+            <span className="text-xs text-muted-foreground">
+              {dirty ? t("services.unsavedChanges") : t("services.saveHint")}
+            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={saving}
+                onClick={() => onViewChange({ kind: "list" })}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                className="min-w-28"
+                data-testid="service-submit"
+                disabled={
+                  !isReady ||
+                  saving ||
+                  (view.kind === "create" &&
+                    isSubscriptionKind(draft.kind) &&
+                    draft.authorizationFlow === null)
+                }
+                type="submit"
+              >
+                {saving
+                  ? t("common.saving")
+                  : view.kind === "edit"
+                    ? t("services.saveChanges")
+                    : isSubscriptionKind(draft.kind)
+                      ? t("services.addAndLogin")
+                      : t("services.saveService")}
+              </Button>
+            </div>
           </div>
         </form>
       )}

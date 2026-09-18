@@ -28,12 +28,13 @@ type ServiceModelProber interface {
 }
 
 type serviceCreateRequest struct {
-	Name         string                `json:"name"`
-	Kind         *contract.ServiceKind `json:"kind"`
-	Enabled      json.RawMessage       `json:"enabled,omitempty"`
-	Models       json.RawMessage       `json:"models,omitempty"`
-	HTTP         json.RawMessage       `json:"http,omitempty"`
-	Capabilities json.RawMessage       `json:"capabilities,omitempty"`
+	FailurePolicy *contract.FailurePolicy `json:"failure_policy,omitempty"`
+	Name          string                  `json:"name"`
+	Kind          *contract.ServiceKind   `json:"kind"`
+	Enabled       json.RawMessage         `json:"enabled,omitempty"`
+	Models        json.RawMessage         `json:"models,omitempty"`
+	HTTP          json.RawMessage         `json:"http,omitempty"`
+	Capabilities  json.RawMessage         `json:"capabilities,omitempty"`
 }
 
 type serviceHTTPInput struct {
@@ -199,7 +200,7 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 	}
 	now := time.Now().UTC()
 	service := contract.Service{
-		ID: id, Name: input.Name, Kind: *input.Kind, Enabled: enabled,
+		ID: id, Name: input.Name, Kind: *input.Kind, Enabled: enabled, FailurePolicy: input.FailurePolicy,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	models, err := decodeServiceModels(input.Models)
@@ -219,9 +220,9 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "subscription services do not accept http or capabilities")
 			return
 		}
-		service.Capabilities = contract.DefaultOpenAICodexCapabilities()
+		service.Capabilities = input.Kind.SubscriptionProvider().Capabilities()
 		service.Subscription = &contract.SubscriptionConnection{
-			Provider:              contract.SubscriptionProviderOpenAICodex,
+			Provider:              input.Kind.SubscriptionProvider(),
 			Status:                contract.SubscriptionStatusDisconnected,
 			AuthorizationBoundary: handler.subscriptions.AuthorizationBoundary(),
 		}
@@ -356,6 +357,10 @@ func (handler *Handler) serviceAuthorization(writer http.ResponseWriter, request
 		if !ok {
 			return
 		}
+		if !flow.SupportedBy(current.Service.Kind.SubscriptionProvider()) {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_authorization_flow", "authorization flow is unsupported by this provider")
+			return
+		}
 		session, err := handler.subscriptions.BeginAuthorization(request.Context(), id, flow)
 		if err != nil {
 			switch {
@@ -388,6 +393,27 @@ func (handler *Handler) serviceAuthorization(writer http.ResponseWriter, request
 			return
 		}
 		writeJSON(writer, http.StatusAccepted, session)
+	case http.MethodPut:
+		if !requireMediaType(writer, request, "application/json") {
+			return
+		}
+		var input struct {
+			SessionID contract.AuthorizationSessionID `json:"session_id"`
+			Code      string                          `json:"code"`
+		}
+		if !decodeControlJSON(writer, request, &input) {
+			return
+		}
+		if input.SessionID.Validate() != nil || input.Code == "" || len(input.Code) > 8192 {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_authorization_code", "session_id and authorization code are required")
+			return
+		}
+		session, err := handler.subscriptions.CompleteAuthorizationCode(request.Context(), id, input.SessionID, input.Code)
+		if err != nil {
+			writeError(writer, http.StatusConflict, "authorization_code_failed", "authorization code could not be accepted; check the code and session, or sign in again")
+			return
+		}
+		writeJSON(writer, http.StatusOK, session)
 	case http.MethodGet:
 		session, ok := handler.subscriptions.GetAuthorization(request.Context(), id)
 		if !ok {
@@ -407,8 +433,8 @@ func (handler *Handler) serviceAuthorization(writer http.ResponseWriter, request
 		}
 		writeJSON(writer, http.StatusOK, session)
 	default:
-		writer.Header().Set("Allow", http.MethodPost+", "+http.MethodGet+", "+http.MethodDelete)
-		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST, GET, and DELETE are allowed")
+		writer.Header().Set("Allow", http.MethodPost+", "+http.MethodGet+", "+http.MethodPut+", "+http.MethodDelete)
+		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST, GET, PUT, and DELETE are allowed")
 	}
 }
 
@@ -820,14 +846,22 @@ func applyServicePatch(
 	if len(patch) == 0 {
 		return service, credential, fmt.Errorf("patch is empty")
 	}
-	allowed := map[string]bool{"name": true, "enabled": true, "models": true}
+	allowed := map[string]bool{"name": true, "enabled": true, "models": true, "failure_policy": true}
 	if service.Kind.IsHTTP() {
 		allowed["http"] = true
 		allowed["capabilities"] = true
 	}
 	for name, raw := range patch {
-		if !allowed[name] || isJSONNull(raw) {
+		if !allowed[name] || (isJSONNull(raw) && name != "failure_policy") {
 			return service, credential, fmt.Errorf("field %q cannot be patched", name)
+		}
+	}
+	if raw, ok := patch["failure_policy"]; ok {
+		service.FailurePolicy = nil
+		if !isJSONNull(raw) {
+			if err := strictUnmarshal(raw, &service.FailurePolicy); err != nil {
+				return service, credential, err
+			}
 		}
 	}
 	if raw, ok := patch["name"]; ok {
@@ -953,6 +987,11 @@ func probeSubscriptionResponses(
 	id contract.ServiceID,
 	manager *subscription.Manager,
 ) {
+	account, err := manager.Get(request.Context(), id)
+	if err != nil || account.Provider != contract.SubscriptionProviderOpenAICodex {
+		writeError(writer, http.StatusUnprocessableEntity, "subscription_probe_unsupported", "Responses probe requires a Codex subscription")
+		return
+	}
 	var body subscriptionResponsesProbeRequest
 	if request.Body != nil && request.ContentLength != 0 {
 		if !decodeControlJSON(writer, request, &body) {

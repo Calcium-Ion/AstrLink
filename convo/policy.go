@@ -100,8 +100,8 @@ func (policy Policy) minFingerprintRunes() int {
 //  3. KindFingerprint with the same restriction, skipped when fp is nil or
 //     the request carries no assistant digest.
 //
-// lookup may be nil, in which case Resolve only computes Inbound and
-// TurnIndex. Errors from lookup abort Resolve.
+// lookup may be nil, in which case Resolve only computes Inbound and Turn.
+// Errors from lookup abort Resolve.
 func (policy Policy) Resolve(
 	ctx context.Context,
 	summary RequestSummary,
@@ -157,30 +157,66 @@ func (policy Policy) Resolve(
 		decision.Matched = true
 		decision.Match = match
 	}
-	decision.TurnIndex = policy.NextTurnIndex(summary, matched)
+	var userFingerprint string
+	if fp != nil {
+		userFingerprint = fp.Fingerprint(summary.LastUserDigest)
+	}
+	decision.Turn = policy.NextTurn(summary, matched, userFingerprint)
 	return decision, nil
 }
 
-// NextTurnIndex derives the 1-based user turn of a request.
+// NextTurn places a request relative to the record it continues.
 //
-// When the request continues server-side state (Stateful) and the explicit
-// cursor matched a record that knows its turn, the body holds only the delta,
-// so the turn is the matched turn plus one if the delta contains a user
-// message. Otherwise the turn is the number of user messages in the replayed
-// history. nil means the protocol exposes no user turns.
-func (policy Policy) NextTurnIndex(summary RequestSummary, matched *Match) *int {
-	if matched != nil && summary.Stateful && matched.Kind == KindExplicit && matched.HasTurnIndex && matched.TurnIndex >= 1 {
-		next := matched.TurnIndex
+// The first request of a session is turn 1 whatever its history holds: a
+// client may replay a conversation that started elsewhere, and a harness may
+// replay notes, skill text, or a compaction summary as user messages. None of
+// that is knowable from one body, so the turn is never the absolute count of
+// user messages. Instead a request starts a new turn when, compared with the
+// matched record, its history holds more user messages or its newest user
+// text changed (userFingerprint is the keyed fingerprint of
+// summary.LastUserDigest, "" when the host has none). A request that changes
+// neither — the next call of an agent loop, which only appends assistant
+// and tool items — shares the matched turn.
+//
+// Stateful requests (Responses with previous_response_id) carry only the
+// delta, so "more user messages" means the delta contains one; the stored
+// count accumulates so a later full replay still compares correctly.
+//
+// A match whose record stored no turn cannot be compared and restarts the
+// count at 1. nil means the request has no user turns at all (completions,
+// a bare tool result on a stateful chain without a comparable match).
+func (policy Policy) NextTurn(summary RequestSummary, matched *Match, userFingerprint string) *TurnState {
+	if matched == nil || matched.Turn == nil || matched.Turn.Index < 1 {
+		if !summary.HasUserMessage {
+			return nil
+		}
+		return &TurnState{Index: 1, UserMessages: summary.UserTurnCount, LastUserFingerprint: userFingerprint}
+	}
+	previous := *matched.Turn
+	next := TurnState{Index: previous.Index, UserMessages: previous.UserMessages, LastUserFingerprint: previous.LastUserFingerprint}
+	if summary.Stateful {
 		if summary.HasUserMessage {
-			next++
+			next.Index++
+			next.UserMessages += summary.UserTurnCount
+			if userFingerprint != "" {
+				next.LastUserFingerprint = userFingerprint
+			}
 		}
 		return &next
 	}
-	if summary.UserTurnCount > 0 {
-		next := summary.UserTurnCount
+	if !summary.HasUserMessage {
 		return &next
 	}
-	return nil
+	progressed := summary.UserTurnCount > previous.UserMessages ||
+		(userFingerprint != "" && previous.LastUserFingerprint != "" && userFingerprint != previous.LastUserFingerprint)
+	if progressed {
+		next.Index++
+	}
+	next.UserMessages = summary.UserTurnCount
+	if userFingerprint != "" {
+		next.LastUserFingerprint = userFingerprint
+	}
+	return &next
 }
 
 // OutputCursors converts what a response produced into cursors the host

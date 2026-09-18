@@ -37,6 +37,7 @@ func (err methodNotAllowedError) Error() string {
 type Request struct {
 	Protocol           contract.ProtocolID
 	Model              string
+	ReasoningEffort    *string
 	Streaming          bool
 	PreviousResponseID string
 	ConversationID     string
@@ -127,6 +128,7 @@ func classify(request *http.Request) (Request, error) {
 	if result.Model == "" {
 		result.Model = metadata.Model
 	}
+	result.ReasoningEffort = metadata.ReasoningEffort
 	result.PreviousResponseID = metadata.PreviousResponseID
 	result.ConversationID = metadata.ConversationID
 	result.InputPreview = metadata.InputPreview
@@ -178,6 +180,7 @@ func matchProtocolRoute(path string) (protocolRoute, string, bool) {
 
 type requestMetadata struct {
 	Model              string
+	ReasoningEffort    *string
 	Stream             bool
 	PreviousResponseID string
 	ConversationID     string
@@ -205,6 +208,7 @@ func inspectConversationBestEffort(result *Request, request *http.Request) []byt
 	if json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return raw
 	}
+	result.ReasoningEffort = extractReasoningEffort(result.Protocol, fields)
 	summary, err := conversationPolicy.InspectFields(convoProto, fields)
 	if err != nil {
 		return raw
@@ -296,6 +300,7 @@ func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID) (r
 			return requestMetadata{}, errInvalidMetadata
 		}
 	}
+	metadata.ReasoningEffort = extractReasoningEffort(protocol, fields)
 	metadata.PreviousResponseID = extractProtocolCursor(fields, "previous_response_id")
 	if convoProto, ok := convoProtocol(protocol); ok {
 		// The summary walks the history once; conversation cursors and the

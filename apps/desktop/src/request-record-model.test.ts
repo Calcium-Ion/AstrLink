@@ -50,6 +50,21 @@ const fullRecord = {
   extensions: { note: "ignored" },
 };
 
+const fullSession = {
+  id: "session_keep",
+  title: "创建快捷方式",
+  started_at: "2026-08-16T10:00:00Z",
+  last_started_at: "2026-08-16T10:01:00Z",
+  completed_at: "2026-08-16T10:01:30Z",
+  turn_count: 2,
+  call_count: 3,
+  status: "succeeded",
+  requested_model: "gpt-4.1",
+  input_protocol: "openai.responses",
+  service_id: "service_01",
+  local_access_token_id: null,
+};
+
 const nullOptionalRecord = {
   id: "req_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   started_at: "2026-07-25T11:00:00Z",
@@ -74,6 +89,16 @@ const nullOptionalRecord = {
   privacy_restore: null,
 };
 
+describe("reasoning effort metadata", () => {
+  it("accepts explicit values and older records without the field", () => {
+    expect(parseRequestRecord({ ...fullRecord, reasoning_effort: "high" }).reasoning_effort).toBe("high");
+    expect(parseRequestSession({ ...fullSession, reasoning_effort: "xhigh" }).reasoning_effort).toBe("xhigh");
+    expect(parseRequestRecord(fullRecord).reasoning_effort).toBeNull();
+    expect(parseRequestSession(fullSession).reasoning_effort).toBeNull();
+    expect(() => parseRequestRecord({ ...fullRecord, reasoning_effort: 42 })).toThrow();
+  });
+});
+
 describe("request-record IPC contract", () => {
   it("round-trips a valid record and drops plan/extensions", () => {
     const parsed = parseRequestRecord(fullRecord);
@@ -95,6 +120,7 @@ describe("request-record IPC contract", () => {
       status: "succeeded",
       input_protocol: fullRecord.input_protocol,
       requested_model: fullRecord.requested_model,
+      reasoning_effort: null,
       streaming: true,
       route_id: fullRecord.route_id,
       service_id: fullRecord.service_id,
@@ -119,6 +145,7 @@ describe("request-record IPC contract", () => {
     });
     expect(parseRequestRecord(nullOptionalRecord)).toEqual({
       ...nullOptionalRecord,
+      reasoning_effort: null,
       parent_request_id: null,
       attempt_index: 1,
       child_count: 0,
@@ -170,6 +197,21 @@ describe("request-record IPC contract", () => {
     ).toThrow(/cursors\[0\]\.direction/);
   });
 
+  it("treats null trajectory arrays as empty", () => {
+    // A record stored without a trajectory keeps nil Go slices, which reach the
+    // desktop as `null`. Older records omit the keys entirely.
+    const parsed = parseRequestRecord({
+      ...fullRecord,
+      cursors: null,
+      events: null,
+    });
+    expect(parsed.cursors).toEqual([]);
+    expect(parsed.events).toEqual([]);
+    expect(() =>
+      parseRequestRecord({ ...fullRecord, events: "none" }),
+    ).toThrow(/events/);
+  });
+
   it("parses request-time privacy hit counts", () => {
     const parsed = parseRequestRecord({
       ...fullRecord,
@@ -215,6 +257,7 @@ describe("request-record IPC contract", () => {
       items: [
         {
           ...nullOptionalRecord,
+          reasoning_effort: null,
           parent_request_id: null,
           attempt_index: 1,
           child_count: 0,
@@ -265,6 +308,7 @@ describe("request-record IPC contract", () => {
       call_count: 3,
       status: "succeeded",
       requested_model: "gpt-4.1",
+      reasoning_effort: null,
       input_protocol: "openai.responses",
       service_id: "service_01",
       local_access_token_id: null,
@@ -383,11 +427,22 @@ describe("request-record IPC contract", () => {
     expect(statusLabel("failed")).toBe("失败");
     expect(statusLabel("cancelled")).toBe("已取消");
     expect(statusLabel("blocked")).toBe("已拦截");
+    expect(statusLabel("interrupted")).toBe("已中断");
     expect(statusTone("succeeded")).toBe("positive");
     expect(statusTone("failed")).toBe("negative");
     expect(statusTone("pending")).toBe("pending");
     expect(statusTone("cancelled")).toBe("pending");
-    expect(statusTone("blocked")).toBe("pending");
+    expect(statusTone("blocked")).toBe("blocked");
+    expect(statusTone("interrupted")).toBe("pending");
+  });
+
+  it("accepts the session-only interrupted status", () => {
+    expect(
+      parseRequestSession({ ...fullSession, status: "interrupted" }).status,
+    ).toBe("interrupted");
+    expect(() =>
+      parseRequestSession({ ...fullSession, status: "stopped" }),
+    ).toThrow("状态枚举无效");
   });
 
   it("treats a completed HTTP error as failed", () => {

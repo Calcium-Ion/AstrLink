@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -45,7 +46,9 @@ type AuditSettingsProvider interface {
 	GetAuditSettings(context.Context) (contract.AuditSettings, error)
 }
 
-// AuditBlobPersister encrypts and stores opt-in audit blobs after the response.
+// AuditBlobPersister encrypts and stores opt-in audit blobs. Request-side
+// blobs may be written while the call is still in flight; response-side
+// blobs wait until the stream ends (ADR 0007).
 type AuditBlobPersister interface {
 	GetOrCreateAuditKey(context.Context) ([]byte, error)
 	InsertAuditBlob(context.Context, storage.AuditBlob) error
@@ -58,6 +61,7 @@ type captureBuffer struct {
 	bytes     []byte
 	truncated bool
 	stopped   bool
+	complete  bool
 }
 
 func (buffer *captureBuffer) observe(chunk []byte) {
@@ -67,28 +71,50 @@ func (buffer *captureBuffer) observe(chunk []byte) {
 	if buffer.maxBytes <= 0 {
 		buffer.truncated = true
 		buffer.stopped = true
+		buffer.complete = true
 		return
 	}
 	remaining := buffer.maxBytes - len(buffer.bytes)
 	if remaining <= 0 {
 		buffer.truncated = true
 		buffer.stopped = true
+		buffer.complete = true
 		return
 	}
 	if len(chunk) > remaining {
 		buffer.bytes = append(buffer.bytes, chunk[:remaining]...)
 		buffer.truncated = true
 		buffer.stopped = true
+		buffer.complete = true
 		return
 	}
 	buffer.bytes = append(buffer.bytes, chunk...)
+}
+
+func (buffer *captureBuffer) markComplete() {
+	if buffer == nil {
+		return
+	}
+	buffer.complete = true
+}
+
+func (buffer *captureBuffer) readyToPersist() bool {
+	return buffer != nil && buffer.enabled && buffer.complete && len(buffer.bytes) > 0
 }
 
 func (buffer *captureBuffer) reset(enabled bool, maxBytes int) {
 	*buffer = captureBuffer{enabled: enabled, maxBytes: maxBytes}
 }
 
+type pendingAttemptRecord struct {
+	record     contract.RequestRecord
+	blobs      []storage.AuditBlob
+	eventCount int
+}
+
 type recordSession struct {
+	pendingAttempt           *pendingAttemptRecord
+	recovery                 *contract.RequestRecovery
 	id                       contract.RequestID
 	startedAt                time.Time
 	classified               Request
@@ -128,14 +154,20 @@ type recordSession struct {
 	// fingerprinter is nil when audit storage is unavailable; text-only
 	// linking is then skipped for this request.
 	fingerprinter *convo.Fingerprinter
-	turnIndex     *int
-	sessionLink   *contract.SessionLink
+	// turn is the user turn convo placed this request in, with the state the
+	// next linked request compares against; nil when the protocol has none.
+	turn        *convo.TurnState
+	sessionLink *contract.SessionLink
 	// inboundCursors are the explicit cursors the request named; they are
 	// stored so sibling requests naming the same conversation can link.
 	inboundCursors []contract.SessionCursor
 	// outputCursors are what the client-facing response produced.
-	outputCursors []contract.SessionCursor
-	events        []contract.RequestEvent
+	outputCursors  []contract.SessionCursor
+	events         []contract.RequestEvent
+	persistStore   RequestRecordStore
+	persistBlobs   AuditBlobPersister
+	persistLogf    func(string, ...any)
+	persistedAudit map[storage.AuditDirection]bool
 }
 
 func newRecordSession(
@@ -170,6 +202,7 @@ func newRecordSession(
 		httpMetaEnabled:         settings.HTTPMetaEnabled,
 		upstreamHTTPMetaEnabled: settings.HTTPMetaEnabled,
 		settings:                settings,
+		persistedAudit:          make(map[storage.AuditDirection]bool),
 	}
 	if accessTokenID != "" {
 		session.accessTokenID = &accessTokenID
@@ -177,19 +210,169 @@ func newRecordSession(
 	return session
 }
 
+func (session *recordSession) bindPersistence(
+	store RequestRecordStore,
+	blobs AuditBlobPersister,
+	logf func(string, ...any),
+) {
+	if session == nil {
+		return
+	}
+	session.persistStore = store
+	session.persistBlobs = blobs
+	session.persistLogf = logf
+}
+
 func (session *recordSession) persistPending(
 	ctx context.Context,
 	store RequestRecordStore,
 	logf func(string, ...any),
 ) {
-	if session == nil || store == nil {
+	if session == nil {
+		return
+	}
+	if store != nil {
+		session.persistStore = store
+	}
+	if logf != nil {
+		session.persistLogf = logf
+	}
+	session.persistAvailableAudit(ctx)
+}
+
+func (session *recordSession) liveAuditSummary() contract.AuditRecordSummary {
+	if session == nil {
+		return contract.NotCapturedAuditSummary()
+	}
+	return contract.AuditRecordSummary{
+		RequestBodyCaptured:              session.auditPersisted(storage.AuditDirectionRequest),
+		ResponseContentCaptured:          session.auditPersisted(storage.AuditDirectionResponse),
+		RequestBodyTruncated:             session.auditPersisted(storage.AuditDirectionRequest) && session.requestCapture.truncated,
+		ResponseContentTruncated:         session.auditPersisted(storage.AuditDirectionResponse) && session.responseCapture.truncated,
+		UpstreamRequestBodyCaptured:      session.auditPersisted(storage.AuditDirectionUpstreamRequest),
+		UpstreamResponseContentCaptured:  session.auditPersisted(storage.AuditDirectionUpstreamResponse),
+		UpstreamRequestBodyTruncated:     session.auditPersisted(storage.AuditDirectionUpstreamRequest) && session.upstreamRequestCapture.truncated,
+		UpstreamResponseContentTruncated: session.auditPersisted(storage.AuditDirectionUpstreamResponse) && session.upstreamResponseCapture.truncated,
+	}
+}
+
+func (session *recordSession) auditPersisted(direction storage.AuditDirection) bool {
+	return session != nil && session.persistedAudit[direction]
+}
+
+func (session *recordSession) markAuditPersisted(direction storage.AuditDirection) {
+	if session == nil {
+		return
+	}
+	if session.persistedAudit == nil {
+		session.persistedAudit = make(map[storage.AuditDirection]bool)
+	}
+	session.persistedAudit[direction] = true
+}
+
+func (session *recordSession) clearPersistedAudit(direction storage.AuditDirection) {
+	if session == nil || session.persistedAudit == nil {
+		return
+	}
+	delete(session.persistedAudit, direction)
+}
+
+// persistAvailableAudit writes request-side blobs that are already complete
+// and refreshes the pending metadata row. The request row is upserted before
+// any blob: audit_blobs.request_id references request_records(id), so a live
+// body that is ready on the first persist must not race the parent insert.
+// A second upsert follows successful blob writes so the pending row's audit
+// flags match what was actually stored. It must never delay inference: the
+// 500ms bound matches persistPending / pending_route_upsert.
+func (session *recordSession) persistAvailableAudit(ctx context.Context) {
+	if session == nil {
 		return
 	}
 	persistCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	if err := store.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
-		logRequestRecordFailure(logf, "pending_upsert", err)
+	if session.persistStore != nil {
+		if err := session.persistStore.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
+			logRequestRecordFailure(session.persistLogf, "live_audit_upsert", err)
+			return
+		}
 	}
+	if session.persistBlobs != nil {
+		session.persistReadyAuditBlobs(persistCtx, session.persistBlobs, session.persistLogf)
+	}
+	if session.persistStore == nil {
+		return
+	}
+	if err := session.persistStore.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
+		logRequestRecordFailure(session.persistLogf, "live_audit_upsert", err)
+	}
+}
+
+func (session *recordSession) persistReadyAuditBlobs(
+	ctx context.Context,
+	blobs AuditBlobPersister,
+	logf func(string, ...any),
+) {
+	key, keyErr := session.prepareAuditKey(ctx, blobs, logf)
+	if keyErr != nil || key == nil {
+		return
+	}
+	now := time.Now().UTC()
+	session.persistOneAuditBlob(ctx, blobs, logf, storage.AuditDirectionRequest, func() (storage.AuditBlob, bool) {
+		if !session.requestCapture.readyToPersist() {
+			return storage.AuditBlob{}, false
+		}
+		return session.sealCapture(storage.AuditDirectionRequest, &session.requestCapture, key, now, logf)
+	})
+	session.persistOneAuditBlob(ctx, blobs, logf, storage.AuditDirectionHTTPMeta, func() (storage.AuditBlob, bool) {
+		if !session.httpMetaCaptured {
+			return storage.AuditBlob{}, false
+		}
+		return session.sealHTTPMeta(key, now, logf)
+	})
+	session.persistOneAuditBlob(ctx, blobs, logf, storage.AuditDirectionUpstreamRequest, func() (storage.AuditBlob, bool) {
+		if !session.upstreamRequestCapture.readyToPersist() {
+			return storage.AuditBlob{}, false
+		}
+		return session.sealCapture(storage.AuditDirectionUpstreamRequest, &session.upstreamRequestCapture, key, now, logf)
+	})
+	session.persistOneAuditBlob(ctx, blobs, logf, storage.AuditDirectionUpstreamHTTPMeta, func() (storage.AuditBlob, bool) {
+		if !session.upstreamHTTPMetaCaptured {
+			return storage.AuditBlob{}, false
+		}
+		return session.sealUpstreamHTTPMeta(key, now, logf)
+	})
+}
+
+func (session *recordSession) persistOneAuditBlob(
+	ctx context.Context,
+	blobs AuditBlobPersister,
+	logf func(string, ...any),
+	direction storage.AuditDirection,
+	seal func() (storage.AuditBlob, bool),
+) {
+	if session.auditPersisted(direction) {
+		return
+	}
+	blob, ok := seal()
+	if !ok {
+		return
+	}
+	blob.RequestID = session.id
+	if err := blobs.InsertAuditBlob(ctx, blob); err != nil {
+		logRequestRecordFailure(logf, "live_audit_blob_insert", err)
+		return
+	}
+	session.markAuditPersisted(direction)
+}
+
+func (session *recordSession) noteInboundBodyReady() {
+	if session == nil {
+		return
+	}
+	if len(session.requestCapture.bytes) > 0 || session.requestCapture.complete {
+		session.requestCapture.markComplete()
+	}
+	session.persistAvailableAudit(context.Background())
 }
 
 func (session *recordSession) recordSnapshot(
@@ -220,16 +403,18 @@ func (session *recordSession) recordSnapshot(
 		Status:             session.status,
 		InputProtocol:      session.classified.Protocol,
 		RequestedModel:     requestedModel,
+		ReasoningEffort:    session.classified.ReasoningEffort,
 		Streaming:          session.classified.Streaming,
 		RouteID:            session.routeID,
 		ServiceID:          session.endpointID,
 		LocalAccessTokenID: session.accessTokenID,
 		Plan:               session.plan,
 		HTTPStatus:         httpStatus,
+		Recovery:           session.recovery,
 		LatencyMs:          latencyMs,
 		Usage:              session.attemptUsage(),
 		Error:              session.errorSummary,
-		Audit:              contract.NotCapturedAuditSummary(),
+		Audit:              session.liveAuditSummary(),
 		PrivacyRestore:     session.privacyRestore,
 		Events:             append([]contract.RequestEvent(nil), session.events...),
 	}
@@ -249,9 +434,14 @@ func (session *recordSession) recordSnapshot(
 		value := session.inputPreview
 		record.InputPreview = &value
 	}
-	if session.turnIndex != nil {
-		turn := *session.turnIndex
-		record.TurnIndex = &turn
+	if session.turn != nil && session.turn.Index >= 1 {
+		index, users := session.turn.Index, session.turn.UserMessages
+		record.TurnIndex = &index
+		record.TurnUserMessages = &users
+		if session.turn.LastUserFingerprint != "" {
+			fingerprint := session.turn.LastUserFingerprint
+			record.TurnUserFingerprint = &fingerprint
+		}
 	}
 	if session.sessionLink != nil {
 		link := *session.sessionLink
@@ -313,6 +503,7 @@ func (session *recordSession) attachRequestCapture(request *http.Request) {
 	}
 	session.requestCapture.mediaType = mediaType
 	if request.Body == nil || request.Body == http.NoBody {
+		session.requestCapture.markComplete()
 		return
 	}
 	request.Body = &requestCaptureBody{ReadCloser: request.Body, session: session}
@@ -327,6 +518,10 @@ func (body *requestCaptureBody) Read(p []byte) (int, error) {
 	n, err := body.ReadCloser.Read(p)
 	if n > 0 && body.session != nil {
 		body.session.requestCapture.observe(p[:n])
+	}
+	if errors.Is(err, io.EOF) && body.session != nil {
+		body.session.requestCapture.markComplete()
+		body.session.persistAvailableAudit(context.Background())
 	}
 	return n, err
 }
@@ -347,6 +542,20 @@ func (session *recordSession) noteServed(candidate endpoint.Resolved, plan contr
 }
 
 func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan contract.ExecutionPlan) {
+	model := candidate.UpstreamModel
+	if model == "" {
+		model = session.classified.Model
+	}
+	if session.recovery == nil {
+		session.recovery = &contract.RequestRecovery{}
+	}
+	session.recovery.UpstreamModel = model
+	if candidate.Path != nil {
+		session.recovery.PathID = candidate.Path.ID
+		session.recovery.PathName = candidate.Path.Name
+		session.recovery.PathVersion = candidate.Path.Version
+		session.recovery.StepID = candidate.Path.StepID
+	}
 	endpointID := candidate.Service.ID
 	session.endpointID = &endpointID
 	if candidate.RouteID != "" {
@@ -369,6 +578,7 @@ func (session *recordSession) beginNetworkAttempt(
 	if session == nil {
 		return
 	}
+	session.commitPendingAttempt(ctx, store, logf)
 	session.attemptIndex++
 	session.startedAt = time.Now().UTC()
 	session.networkAttemptOpen = true
@@ -377,14 +587,13 @@ func (session *recordSession) beginNetworkAttempt(
 	serviceName := string(candidate.Service.ID)
 	session.addEvent(contract.RequestEventRouted, contract.RequestStatusSucceeded, string(plan.Type)+" · "+serviceName)
 	session.addEvent(contract.RequestEventUpstream, contract.RequestStatusPending, string(plan.UpstreamProtocol))
-	if store == nil {
-		return
+	if store != nil {
+		session.persistStore = store
 	}
-	persistCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-	if err := store.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
-		logRequestRecordFailure(logf, "pending_route_upsert", err)
+	if logf != nil {
+		session.persistLogf = logf
 	}
+	session.persistAvailableAudit(ctx)
 }
 
 // observeOutboundCapture records the exact upstream request after transport
@@ -406,6 +615,8 @@ func (session *recordSession) observeOutboundCapture(outbound *http.Request) {
 	}
 	session.upstreamRequestCapture.mediaType = mediaType
 	if outbound.Body == nil || outbound.Body == http.NoBody {
+		session.upstreamRequestCapture.markComplete()
+		session.persistAvailableAudit(context.Background())
 		return
 	}
 	outbound.Body = &upstreamRequestCaptureBody{ReadCloser: outbound.Body, session: session}
@@ -420,6 +631,10 @@ func (body *upstreamRequestCaptureBody) Read(p []byte) (int, error) {
 	n, err := body.ReadCloser.Read(p)
 	if n > 0 && body.session != nil {
 		body.session.upstreamRequestCapture.observe(p[:n])
+	}
+	if errors.Is(err, io.EOF) && body.session != nil {
+		body.session.upstreamRequestCapture.markComplete()
+		body.session.persistAvailableAudit(context.Background())
 	}
 	return n, err
 }
@@ -579,9 +794,8 @@ func (session *recordSession) noteCancelled() {
 	session.status = contract.RequestStatusCancelled
 }
 
-// demoteCurrentAttemptToChild snapshots the failed network attempt into a new
-// independent child record, persists its upstream audit blobs, then resets
-// attempt-local state so the stable root id can represent the next attempt.
+// demoteCurrentAttemptToChild stages a failed attempt. It becomes an independent
+// child only when another actual network attempt begins.
 func (session *recordSession) demoteCurrentAttemptToChild(
 	ctx context.Context,
 	store RequestRecordStore,
@@ -633,35 +847,60 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 		}
 	}
 
-	if err := child.Validate(); err != nil {
-		logRequestRecordFailure(logf, "child_validate", err)
-		session.resetAttemptLocal()
+	if child.Recovery != nil {
+		copy := *child.Recovery
+		child.Recovery = &copy
+	}
+	// Keep the last real attempt on the root until another RoundTrip starts.
+	// Cancellation during backoff or locally rejected candidates create no child.
+	session.pendingAttempt = &pendingAttemptRecord{record: child, blobs: pendingBlobs, eventCount: len(session.events)}
+}
+
+func (session *recordSession) commitPendingAttempt(ctx context.Context, store RequestRecordStore, logf func(string, ...any)) {
+	pending := session.pendingAttempt
+	if pending == nil {
 		return
 	}
-	if store != nil {
+	session.pendingAttempt = nil
+	child := pending.record
+	persisted := true
+	if err := child.Validate(); err != nil {
+		logRequestRecordFailure(logf, "child_validate", err)
+		persisted = false
+	} else if store != nil {
 		if err := store.InsertRequestRecord(ctx, child); err != nil {
 			logRequestRecordFailure(logf, "child_insert", err)
-			session.resetAttemptLocal()
-			return
+			persisted = false
 		}
 	}
-	if blobs != nil {
-		for _, blob := range pendingBlobs {
-			if err := blobs.InsertAuditBlob(ctx, blob); err != nil {
-				logRequestRecordFailure(logf, "child_audit_blob_insert", err)
+	if persisted {
+		session.childCount++
+		if session.persistBlobs != nil {
+			for _, blob := range pending.blobs {
+				if err := session.persistBlobs.InsertAuditBlob(ctx, blob); err != nil {
+					logRequestRecordFailure(logf, "child_audit_blob_insert", err)
+				}
 			}
 		}
 	}
-	session.events = eventsWithoutAttempt(session.events, session.attemptIndex)
-	session.childCount++
-	session.resetAttemptLocal()
-	if store != nil {
-		persistCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		defer cancel()
-		if err := store.UpsertRequestRecord(persistCtx, session.recordSnapshot(nil, nil)); err != nil {
-			logRequestRecordFailure(logf, "root_reset_upsert", err)
+	if resetter, ok := session.persistBlobs.(interface {
+		DeleteUpstreamAuditBlobs(context.Context, contract.RequestID) error
+	}); ok {
+		if err := resetter.DeleteUpstreamAuditBlobs(ctx, session.id); err != nil {
+			logRequestRecordFailure(logf, "root_upstream_audit_reset", err)
 		}
 	}
+	// Preparation of the next target has already evaluated privacy. Preserve
+	// that decision while discarding the previous target's captures and status.
+	privacy := session.privacyRestore
+	events := eventsWithoutAttempt(session.events[:pending.eventCount], session.attemptIndex)
+	for _, event := range session.events[pending.eventCount:] {
+		event.AttemptIndex = session.attemptIndex + 1
+		events = append(events, event)
+	}
+	session.events = events
+	session.resetAttemptLocal()
+	session.privacyRestore = privacy
 }
 
 func (session *recordSession) resetAttemptLocal() {
@@ -670,6 +909,9 @@ func (session *recordSession) resetAttemptLocal() {
 	session.upstreamScanner = nil
 	session.status = contract.RequestStatusPending
 	session.httpStatus = 0
+	session.recovery = nil
+	session.outputResponseID = ""
+	session.outputCursors = nil
 	session.hasHTTPStatus = false
 	session.upstreamHTTPStatus = 0
 	session.hasUpstreamHTTPStatus = false
@@ -683,6 +925,9 @@ func (session *recordSession) resetAttemptLocal() {
 	session.upstreamResponseCapture.reset(session.settings.ResponseContentEnabled, session.settings.ResponseContentMaxBytes)
 	session.upstreamHTTPMeta = contract.AuditHTTPMeta{}
 	session.upstreamHTTPMetaCaptured = false
+	session.clearPersistedAudit(storage.AuditDirectionUpstreamRequest)
+	session.clearPersistedAudit(storage.AuditDirectionUpstreamResponse)
+	session.clearPersistedAudit(storage.AuditDirectionUpstreamHTTPMeta)
 	// Client-side captures and attemptIndex stay on the root until the next
 	// beginNetworkAttempt advances the index.
 }
@@ -734,6 +979,7 @@ func (session *recordSession) finish(
 			privacyRestoreSummaryText(*session.privacyRestore),
 		)
 	}
+	session.settleAcceptedEvent()
 	session.addEvent(contract.RequestEventCompleted, session.status, session.completedSummary())
 	session.closeOpenEvents(time.Now().UTC())
 	completed := time.Now().UTC()
@@ -741,12 +987,12 @@ func (session *recordSession) finish(
 	if latency < 0 {
 		latency = 0
 	}
-	audit := contract.NotCapturedAuditSummary()
+	audit := session.liveAuditSummary()
 	pendingBlobs := make([]storage.AuditBlob, 0, 6)
 	if blobs != nil {
 		key, keyErr := session.prepareAuditKey(ctx, blobs, logf)
 		if keyErr == nil && key != nil {
-			if blob, ok := session.sealCapture(storage.AuditDirectionRequest, &session.requestCapture, key, completed, logf); ok {
+			if blob, ok := session.sealUnpersistedCapture(storage.AuditDirectionRequest, &session.requestCapture, key, completed, logf); ok {
 				pendingBlobs = append(pendingBlobs, blob)
 				audit.RequestBodyCaptured = true
 				audit.RequestBodyTruncated = session.requestCapture.truncated
@@ -759,7 +1005,7 @@ func (session *recordSession) finish(
 			if blob, ok := session.sealHTTPMeta(key, completed, logf); ok {
 				pendingBlobs = append(pendingBlobs, blob)
 			}
-			if blob, ok := session.sealCapture(storage.AuditDirectionUpstreamRequest, &session.upstreamRequestCapture, key, completed, logf); ok {
+			if blob, ok := session.sealUnpersistedCapture(storage.AuditDirectionUpstreamRequest, &session.upstreamRequestCapture, key, completed, logf); ok {
 				pendingBlobs = append(pendingBlobs, blob)
 				audit.UpstreamRequestBodyCaptured = true
 				audit.UpstreamRequestBodyTruncated = session.upstreamRequestCapture.truncated
@@ -792,7 +1038,9 @@ func (session *recordSession) finish(
 		blob.RequestID = record.ID
 		if err := blobs.InsertAuditBlob(ctx, blob); err != nil {
 			logRequestRecordFailure(logf, "audit_blob_insert", err)
+			continue
 		}
+		session.markAuditPersisted(blob.Direction)
 	}
 }
 
@@ -833,6 +1081,19 @@ func (session *recordSession) prepareUpstreamAuditKey(
 		return nil, err
 	}
 	return key, nil
+}
+
+func (session *recordSession) sealUnpersistedCapture(
+	direction storage.AuditDirection,
+	buffer *captureBuffer,
+	key []byte,
+	createdAt time.Time,
+	logf func(string, ...any),
+) (storage.AuditBlob, bool) {
+	if session.auditPersisted(direction) {
+		return storage.AuditBlob{}, false
+	}
+	return session.sealCapture(direction, buffer, key, createdAt, logf)
 }
 
 func (session *recordSession) sealCapture(
@@ -996,7 +1257,7 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 	if err != nil {
 		logRequestRecordFailure(logf, "session_lookup", err)
 		// Resolve aborts on the first lookup error, so the partial decision
-		// may lack Inbound and TurnIndex; recompute both without storage.
+		// may lack Inbound and Turn; recompute both without storage.
 		decision, _ = conversationPolicy.Resolve(ctx, summary, session.fingerprinter, nil, time.Now())
 	}
 	if decision.Matched {
@@ -1006,7 +1267,7 @@ func (session *recordSession) resolveSession(ctx context.Context, store RequestR
 			Value: decision.Match.Value,
 		}
 	}
-	session.turnIndex = decision.TurnIndex
+	session.turn = decision.Turn
 	session.inboundCursors = contractCursors(decision.PersistentInbound())
 	if session.sessionID == "" {
 		session.sessionID = newSessionID()
@@ -1075,6 +1336,26 @@ func (session *recordSession) closeOpenEvents(ended time.Time) {
 		if session.events[index].EndedAt == nil {
 			end := ended
 			session.events[index].EndedAt = &end
+		}
+	}
+}
+
+// settleAcceptedEvent gives the accepted phase a terminal status once the
+// request is over. It is written pending while the call is in flight, and
+// closeOpenEvents only stamps ended_at, so without this the phase stays
+// pending forever and the desktop paints every finished call's client row as
+// still running. Acceptance itself succeeded whatever the outcome was; the
+// privacy, upstream and completed phases carry the failure.
+func (session *recordSession) settleAcceptedEvent() {
+	if session == nil {
+		return
+	}
+	for index := range session.events {
+		if session.events[index].Kind != contract.RequestEventAccepted {
+			continue
+		}
+		if session.events[index].Status == contract.RequestStatusPending {
+			session.events[index].Status = contract.RequestStatusSucceeded
 		}
 	}
 }

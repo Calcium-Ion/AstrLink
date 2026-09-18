@@ -57,7 +57,7 @@ sessionID := newSessionID()
 if decision.Matched {
     sessionID = decision.Match.SessionID
 }
-turn := decision.TurnIndex // *int; nil when the protocol has no user turns
+turn := decision.Turn // *TurnState; store it and return it from Lookup as Match.Turn
 
 // Response side: observe what the client receives. Either feed decoded SSE
 // events through ObserveEvent, or let Write frame the raw bytes.
@@ -93,26 +93,45 @@ excluded) whose stored cursors of `kind` contain any of `values`, subject to:
   client-chosen ids no response emits (`prompt_cache_key`, Claude Code
   session ids) still link sibling requests.
 
-`Match.TurnIndex` / `HasTurnIndex` should be filled when the matched record
-stored a turn; `NextTurnIndex` uses it for stateful Responses chains.
+`Match.Turn` must be the `Decision.Turn` you stored with the matched record
+(index, user-message count, newest-user-text fingerprint); `NextTurn` places
+the new request relative to it. A record without a stored turn restarts the
+count at 1.
 
 See `memindex` for a reference in-memory implementation with TTL and size
 bounds.
 
 ### Turn semantics
 
-A turn is one genuine user message. Tool results, `function_call_output`,
-`functionResponse`, and harness text are not turns. Harness text means
-`<system-reminder>` and `<skill>` blocks (stripped from either end of a
-user message, so the prompt that follows a skill injection still counts)
-and context-compaction summaries that a harness replays as a user message.
-An agent loop of eight model calls for one prompt therefore yields eight
-records with the same `TurnIndex`; hosts display it as "1 turn · 8 calls".
+A turn is one time a person typed. Nothing in a single request body says
+which `role=user` messages a person typed: coding-agent harnesses replay
+skill text, tool descriptions, and context-compaction summaries as user
+messages, each client in its own wording. So the turn is never the absolute
+count of user messages, and there is no list of harness phrases to
+recognise. Instead:
 
-For replayed histories `TurnIndex` is the count of user messages in the body.
-For stateful Responses chains (`previous_response_id`) the body has only the
-delta, so `TurnIndex` is the matched record's turn plus one when the delta
-contains a user message.
+- The first request of a session is turn 1, whatever its history holds.
+- A linked request starts a new turn when, compared with the record it
+  links to, its history holds **more user messages** or its **newest user
+  text changed** (`TurnState.UserMessages`, `TurnState.LastUserFingerprint`).
+  The next call of an agent loop appends only assistant and tool items, so
+  it changes neither and shares the turn: eight calls for one prompt are
+  eight records with the same `Index`, displayed as "1 turn · 8 calls".
+- A harness that compacts history and replays a new prompt has fewer
+  messages but a changed newest text: a new turn. A history that shrank
+  with the same newest text (trimmed for context) keeps its turn.
+- Stateful Responses chains (`previous_response_id`) carry only the delta;
+  a delta with a user message is a new turn and the stored count accumulates.
+
+Tool results, `function_call_output`, and `functionResponse` are never user
+messages. The one named exception is `<system-reminder>…</system-reminder>`:
+its content is dropped from both ends of a message because Claude Code
+attaches it to every tool result, and without that rule every tool result
+would be a user message. Any other closed `<tag>…</tag>` wrapper is
+unwrapped structurally (see `visibleText`): text outside the blocks is the
+user's words; a wholly wrapped message yields the innermost text of its last
+block, so `<user_query>q</user_query>` and `<skill>…</skill>\n\nprompt` both
+yield what the person typed.
 
 ### Fingerprints
 

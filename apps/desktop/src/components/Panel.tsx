@@ -60,3 +60,29 @@ export function PanelHeader({
     </div>
   );
 }
+
+/** A wrapping footer keeps supporting details beside the panel's actions. */
+export function PanelFooter({
+  actions,
+  children,
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & { actions?: ReactNode }) {
+  return (
+    <div
+      className={cn(
+        "mt-auto flex min-w-0 flex-wrap items-center justify-between gap-3 border-t bg-muted/40 px-4 py-3",
+        className,
+      )}
+      data-slot="panel-footer"
+      {...props}
+    >
+      {children ? <div className="min-w-0">{children}</div> : null}
+      {actions ? (
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {actions}
+        </div>
+      ) : null}
+    </div>
+  );
+}

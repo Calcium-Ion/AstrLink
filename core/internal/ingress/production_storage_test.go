@@ -139,15 +139,12 @@ func TestProductionGateRoutesToSelectedCodexSubscriptionService(t *testing.T) {
 			t.Fatalf("store subscription credential %s: %v", account.id, err)
 		}
 	}
-	if _, err := store.CreateRoute(ctx, contract.Route{
-		ID: "route_codex_work", Name: "Work Codex", Enabled: true, Priority: 0,
-		Match: contract.RouteMatch{Protocol: contract.ProtocolOpenAIResponses, Model: "gpt-5"},
-		Targets: []contract.RouteTarget{{
-			ServiceID: "service_codex_work", PlanType: contract.PlanTypeNative,
-			UpstreamProtocol: contract.ProtocolOpenAIResponses, Priority: 0,
-		}},
-	}); err != nil {
-		t.Fatalf("create Codex route: %v", err)
+	order, err := store.GetServiceOrder(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateServiceOrder(ctx, contract.ServiceOrder{ServiceIDs: []contract.ServiceID{"service_codex_work", "service_codex_personal"}}, order.ETag); err != nil {
+		t.Fatal(err)
 	}
 
 	resolver, err := endpoint.NewStoreResolver(store)

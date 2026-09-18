@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,7 +21,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
-const maxUpstreamAttempts = 3
+const maxUpstreamAttempts = 6
 
 type executionFailureKind uint8
 
@@ -94,23 +95,32 @@ func (handler *Handler) executeCandidates(
 		return
 	}
 	defer body.Close()
+	if session := recordSessionFromContext(request.Context()); session != nil {
+		if body.Replayable() || session.requestCapture.complete {
+			session.noteInboundBodyReady()
+		}
+	}
 
 	downstream := newCommitTrackingWriter(writer)
 	initialHeaders := downstream.Header().Clone()
 	controller, healthAware := handler.resolver.(endpoint.AttemptController)
-	attemptLimit := maxUpstreamAttempts
-	if !body.Replayable() {
-		attemptLimit = 1
-	}
-
-	attempts := 0
+	schedule := newRecoverySchedule(candidates, body.Replayable())
+	repairedTargets := map[string][]byte{}
 	var last executionFailure
-	for _, candidate := range candidates {
-		candidate.Service = candidate.CanonicalService()
-		candidate.BaseURL = candidate.EffectiveBaseURL()
-		if attempts >= attemptLimit {
+	var lastNetworkFailure executionFailure
+	var replayLastHTTP func()
+	for {
+		candidateIndex, hasNext := schedule.next(request.Context())
+		if !hasNext {
 			break
 		}
+		candidate := candidates[candidateIndex]
+		if candidate.Unavailable != "" {
+			continue
+		}
+		candidate.Service = candidate.CanonicalService()
+		candidate.BaseURL = candidate.EffectiveBaseURL()
+		policy := failurePolicy(candidate)
 		mode := candidate.Mode
 		if !mode.Valid() {
 			// Preserve the original M1 seam: an omitted mode is native.
@@ -127,6 +137,16 @@ func (handler *Handler) executeCandidates(
 		var plan contract.ExecutionPlan
 		var planErr error
 		convertTo := declaredConvertTo(candidate.Service, classified.Protocol, mode)
+		protocolModel := candidate.UpstreamModel
+		if protocolModel == "" {
+			protocolModel = classified.Model
+		}
+		if native := candidate.Service.Kind.ModelNativeProtocol(protocolModel); native != "" {
+			convertTo = ""
+			if native != classified.Protocol {
+				convertTo = native
+			}
+		}
 		if planType == contract.PlanTypeRelayKit || convertTo != "" {
 			if handler.conversionEngine == nil {
 				last = executionFailure{kind: executionFailureCapability, endpointID: candidate.Service.ID}
@@ -173,6 +193,9 @@ func (handler *Handler) executeCandidates(
 			continue
 		}
 
+		candidate.RequestedModel = classified.Model
+		candidate.UpstreamProtocol = plan.UpstreamProtocol
+		repairTarget := recoveryTargetKey(candidate)
 		attemptRequest, ok, bodyErr := body.Next(request.Context())
 		if bodyErr != nil || !ok {
 			if bodyErr == nil && last.kind != executionFailureNone {
@@ -187,6 +210,10 @@ func (handler *Handler) executeCandidates(
 				nil,
 			)
 			return
+		}
+
+		if repaired := repairedTargets[repairTarget]; repaired != nil {
+			replaceRecoveryRequestBody(attemptRequest, repaired)
 		}
 
 		if candidate.UpstreamModel != "" && plan.Type != contract.PlanTypeRelayKit {
@@ -251,6 +278,13 @@ func (handler *Handler) executeCandidates(
 			}
 		}
 
+		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription && plan.UpstreamProtocol == contract.ProtocolAnthropicMessages {
+			if err := prepareClaudeSubscriptionRequest(attemptRequest); err != nil {
+				finishPrivacy()
+				last = executionFailure{kind: executionFailureConfiguration, endpointID: candidate.Service.ID, err: err}
+				continue
+			}
+		}
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
 		if authorizeErr == nil {
@@ -288,7 +322,7 @@ func (handler *Handler) executeCandidates(
 			}
 			continue
 		}
-		if candidate.Service.Kind.IsSubscription() {
+		if candidate.Service.Kind == contract.ServiceKindCodexSubscription {
 			attemptRequest.URL.Path = strings.TrimPrefix(attemptRequest.URL.Path, "/v1")
 			if attemptRequest.URL.RawPath != "" {
 				attemptRequest.URL.RawPath = strings.TrimPrefix(attemptRequest.URL.RawPath, "/v1")
@@ -303,9 +337,32 @@ func (handler *Handler) executeCandidates(
 			}
 			continue
 		}
-		attempts++
 		health := newAttemptHealthOutcome(controller, candidate, healthAware)
 		recordSession := recordSessionFromContext(request.Context())
+		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription {
+			if headers == nil {
+				headers = make(http.Header)
+			}
+			if !strings.HasPrefix(attemptRequest.Header.Get("User-Agent"), "claude-cli/") {
+				headers.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
+			}
+			// Keep client feature flags while adding the subscription OAuth betas.
+			if beta := attemptRequest.Header.Get("Anthropic-Beta"); beta != "" {
+				headers.Set("Anthropic-Beta", beta+","+headers.Get("Anthropic-Beta"))
+			}
+		}
+		if candidate.Service.Kind == contract.ServiceKindOpenCodeGo || candidate.Service.Kind == contract.ServiceKindOpenCodeZen {
+			if headers == nil {
+				headers = make(http.Header)
+			}
+			headers.Set("User-Agent", "astrlink/0.1")
+			if attemptRequest.Header.Get("X-Opencode-Session") == "" && recordSession != nil {
+				sessionID := recordSession.sessionID
+				if sessionID != "" {
+					headers.Set("X-Opencode-Session", string(sessionID))
+				}
+			}
+		}
 
 		outWriter := http.ResponseWriter(downstream)
 		var aliasWriter *aliasRestoringWriter
@@ -314,6 +371,21 @@ func (handler *Handler) executeCandidates(
 		if recordSession != nil &&
 			(recordSession.responseCaptureEnabled() ||
 				recordSession.upstreamResponseCapture.enabled) {
+			attemptRequest.Header.Del("Accept-Encoding")
+		}
+		upstreamModel := candidate.UpstreamModel
+		if upstreamModel == "" {
+			upstreamModel = classified.Model
+		}
+		canRepairThinking := body.Replayable() && policy.AllowsThinkingSignatureRecovery() &&
+			supportsThinkingSignatureRecovery(plan, upstreamModel)
+		canRepairOpenAIReasoning := body.Replayable() && policy.AllowsOpenAIReasoningRecovery() &&
+			supportsOpenAIReasoningRecovery(plan, upstreamModel)
+		canRepairOpenAIFunction := body.Replayable() && policy.AllowsOpenAIFunctionOutputRecovery() &&
+			supportsOpenAIReasoningRecovery(plan, upstreamModel)
+		canRepairOpenAI := canRepairOpenAIReasoning || canRepairOpenAIFunction
+		if canRepairThinking || canRepairOpenAI {
+			// Inspect structured error messages without negotiating a compressed body.
 			attemptRequest.Header.Del("Accept-Encoding")
 		}
 		// Writer onion (outermost receives upstream bytes first):
@@ -351,6 +423,7 @@ func (handler *Handler) executeCandidates(
 				outWriter, handler.conversionEngine, plan, classified.Model, upstreamModel,
 			)
 			if planErr != nil {
+				health.Abandon()
 				finishPrivacy()
 				_ = attemptRequest.Body.Close()
 				last = executionFailure{kind: executionFailureConversionUnsupported, err: planErr, endpointID: candidate.Service.ID}
@@ -361,10 +434,11 @@ func (handler *Handler) executeCandidates(
 		deferHealthStatus := (restoring != nil || aliasWriter != nil || relayWriter != nil) && !classified.Streaming
 		var upstreamStatus atomic.Int32
 
-		attemptContext := newResponseStartContext(
-			request.Context(),
-			handler.responseStartTimeout,
-		)
+		responseTimeout := handler.responseStartTimeout
+		if policy.ResponseStartTimeoutSeconds != nil {
+			responseTimeout = time.Duration(*policy.ResponseStartTimeoutSeconds) * time.Second
+		}
+		attemptContext := newResponseStartContext(request.Context(), responseTimeout)
 		attemptRequest = attemptRequest.WithContext(attemptContext.Context())
 		startWriter := newResponseStartWriter(outWriter, func(status int) {
 			if attemptContext.ResponseStarted() {
@@ -378,8 +452,12 @@ func (handler *Handler) executeCandidates(
 			BaseURL:        baseURL,
 			RequestHeaders: headers,
 		}
-		if recordSession != nil {
-			forwardTarget.ObserveOutbound = func(outbound *http.Request) {
+		attemptStarted := false
+		forwardTarget.ObserveOutbound = func(outbound *http.Request) {
+			attemptStarted = true
+			schedule.started(candidateIndex)
+			replayLastHTTP = nil
+			if recordSession != nil {
 				recordSession.beginNetworkAttempt(
 					request.Context(),
 					candidate,
@@ -389,9 +467,105 @@ func (handler *Handler) executeCandidates(
 				)
 				recordSession.observeOutboundCapture(outbound)
 			}
+		}
+		if recordSession != nil {
 			forwardTarget.WrapResponseBody = recordSession.wrapUpstreamResponseBody
 		}
+		forwardTarget.HandleResponse = func(response *http.Response) error {
+			startWriter.markStarted(response.StatusCode)
+			if response.StatusCode >= 400 {
+				action := policy.ActionForStatus(response.StatusCode)
+				reason := "http_" + fmt.Sprint(response.StatusCode)
+				var repaired []byte
+				if schedule.policy.Strategy != contract.FailoverOnly && response.StatusCode == http.StatusBadRequest && !downstream.Committed() &&
+					(canRepairThinking || canRepairOpenAI) && repairedTargets[repairTarget] == nil &&
+					schedule.total < schedule.policy.MaxAttempts &&
+					(schedule.manual || schedule.counts[candidateIndex] <= policy.MaxRetries) {
+					data, complete := inspectRecoveryError(response)
+					if complete && canRepairThinking && isThinkingSignatureError(data) {
+						repaired = prepareReasoningRecovery(body, rectifyThinkingSignature)
+						if repaired != nil {
+							reason = thinkingSignatureRecoveryReason
+						}
+					} else if complete && canRepairOpenAI {
+						repairReason := ""
+						repaired = prepareReasoningRecovery(body, func(original []byte) ([]byte, bool) {
+							next, name, ok := rectifyOpenAIRequest(original, data, openAIRepairScope{
+								reasoning:      canRepairOpenAIReasoning,
+								functionOutput: canRepairOpenAIFunction,
+							})
+							if ok {
+								repairReason = name
+							}
+							return next, ok
+						})
+						if repaired != nil {
+							reason = repairReason
+						}
+					}
+					if repaired != nil {
+						action = contract.FailureRetry
+					}
+				}
+				retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
+				if response.StatusCode == http.StatusTooManyRequests {
+					if cooldown, ok := handler.resolver.(endpoint.RateLimitController); ok {
+						cooldown.RecordRateLimit(candidate, max(retryAfter, time.Duration(policy.InitialDelayMS)*time.Millisecond))
+					}
+				}
+				if schedule.recover(candidateIndex, action, retryAfter) {
+					if repaired != nil {
+						repairedTargets[repairTarget] = repaired
+					}
+					// Keep only a small complete error for the rare case where every
+					// remaining candidate fails local preparation or health admission.
+					stopRead := time.AfterFunc(time.Second, func() { attemptContext.cancel(context.DeadlineExceeded) })
+					data, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
+					stopRead.Stop()
+					_ = response.Body.Close()
+					complete := readErr == nil && len(data) <= 64*1024
+					savedHeaders := downstream.Header().Clone()
+					replayLastHTTP = func() {
+						resetResponseHeaders(downstream.Header(), savedHeaders)
+						if complete {
+							response.Body = io.NopCloser(bytes.NewReader(data))
+							_ = transport.WriteResponse(outWriter, response)
+							if relayWriter != nil {
+								_ = relayWriter.Finish()
+							}
+							if restoring != nil {
+								_ = restoring.Finish()
+							}
+							if aliasWriter != nil {
+								_ = aliasWriter.Finish()
+							}
+						} else {
+							writeInferenceError(downstream, response.StatusCode, "upstream_error", "upstream returned an error and no recovery target was available", false, nil)
+						}
+						if recordSession != nil {
+							recordSession.noteServed(candidate, plan)
+							recordSession.noteFailed(errorSummaryFromHTTPStatus(response.StatusCode))
+							recordSession.noteRecoveryStop("targets_exhausted")
+						}
+					}
+					return &retryHTTPError{status: response.StatusCode, reason: reason}
+				}
+				if recordSession != nil {
+					recordSession.noteRecoveryStop(schedule.stopReason)
+				}
+			}
+			return transport.WriteResponse(startWriter, response)
+		}
 		forwardErr := handler.forwarder.Forward(startWriter, attemptRequest, forwardTarget)
+		// Compatibility forwarders may not expose ObserveOutbound. The built-in
+		// transport always calls it immediately before I/O.
+		var preparationError *transport.TargetError
+		if !attemptStarted && !errors.As(forwardErr, &preparationError) {
+			schedule.started(candidateIndex)
+			replayLastHTTP = nil
+		}
+		var retryHTTP *retryHTTPError
+		_ = errors.As(forwardErr, &retryHTTP)
 		attemptContext.Stop()
 		timedOut := attemptContext.TimedOut()
 		relayConversionFailed := false
@@ -401,7 +575,7 @@ func (handler *Handler) executeCandidates(
 				relayConversionFailed = !downstream.Committed()
 			}
 		}
-		if restoring != nil && (forwardErr == nil || classified.Streaming) {
+		if retryHTTP == nil && restoring != nil && (forwardErr == nil || classified.Streaming) {
 			if finishErr := restoring.Finish(); finishErr != nil && forwardErr == nil {
 				forwardErr = transport.NewResponseError(finishErr)
 			}
@@ -416,16 +590,29 @@ func (handler *Handler) executeCandidates(
 				forwardErr = transport.NewResponseError(finishErr)
 			}
 		}
-		if relayWriter != nil && forwardErr != nil && !downstream.Committed() {
+		if retryHTTP == nil && relayWriter != nil && forwardErr != nil && !downstream.Committed() {
 			_ = relayWriter.streamClose()
 		}
 		finishPrivacy()
 		_ = attemptRequest.Body.Close()
 
+		if retryHTTP != nil {
+			health.RecordStatus(retryHTTP.status)
+			last = executionFailure{kind: executionFailureUpstream, err: retryHTTP, endpointID: candidate.Service.ID}
+			lastNetworkFailure = last
+			if recordSession != nil {
+				recordSession.noteRecoveryDecision(candidateIndex, schedule, retryHTTP.reason)
+			}
+			demoteFailedAttemptForRetry(request.Context(), recordSession, handler.requestRecords, handler.auditBlobs, errorSummaryFromHTTPStatus(retryHTTP.status), handler.recordLogger)
+			if relayWriter != nil {
+				_ = relayWriter.streamClose()
+			}
+			continue
+		}
 		if timedOut {
 			if forwardErr == nil {
 				forwardErr = context.DeadlineExceeded
-			} else if !errors.Is(forwardErr, context.DeadlineExceeded) {
+			} else if !isUpstreamTimeout(forwardErr) {
 				forwardErr = fmt.Errorf("%w: upstream response start", context.DeadlineExceeded)
 			}
 		}
@@ -438,10 +625,15 @@ func (handler *Handler) executeCandidates(
 			if session := recordSessionFromContext(request.Context()); session != nil {
 				session.noteServed(candidate, plan)
 				session.noteSucceeded()
+				if session.status == contract.RequestStatusSucceeded {
+					session.noteRecoveryStop("succeeded")
+					handler.rememberResponseAffinity(request.Context(), session, candidate, plan)
+				}
 			}
 			return
 		}
 		if request.Context().Err() != nil {
+			recordSession.noteRecoveryStop("cancelled")
 			health.Abandon()
 			return
 		}
@@ -462,6 +654,7 @@ func (handler *Handler) executeCandidates(
 		// Once headers, a flush, or body bytes reached the client, another
 		// upstream attempt could only corrupt the response.
 		if downstream.Committed() {
+			recordSession.noteRecoveryStop("response_committed")
 			if session := recordSessionFromContext(request.Context()); session != nil {
 				session.noteServed(candidate, plan)
 				session.noteFailed(errorSummaryFromInference(
@@ -501,6 +694,11 @@ func (handler *Handler) executeCandidates(
 			if !body.Replayable() {
 				break
 			}
+			if !schedule.recover(candidateIndex, contract.FailureFailover, 0) {
+				recordSession.noteRecoveryStop(schedule.stopReason)
+				break
+			}
+			recordSession.noteRecoveryDecision(candidateIndex, schedule, "conversion_failed")
 			demoteFailedAttemptForRetry(
 				request.Context(),
 				recordSession,
@@ -521,16 +719,27 @@ func (handler *Handler) executeCandidates(
 			err:        forwardErr,
 			endpointID: candidate.Service.ID,
 		}
+		lastNetworkFailure = last
 		if !safeRetryFailure || !body.Replayable() {
+			recordSession.noteRecoveryStop("body_not_replayable")
 			break
 		}
 		code := "upstream_unavailable"
 		fallback := upstreamUnavailableFallback
-		if errors.Is(forwardErr, context.DeadlineExceeded) {
+		if isUpstreamTimeout(forwardErr) {
 			code = "upstream_timeout"
 			fallback = upstreamTimeoutFallback
 		}
 		message := operatorTransportMessage(forwardErr, fallback)
+		action := policy.NetworkError
+		if isUpstreamTimeout(forwardErr) {
+			action = policy.ResponseTimeout
+		}
+		if !schedule.recover(candidateIndex, action, 0) {
+			recordSession.noteRecoveryStop(schedule.stopReason)
+			break
+		}
+		recordSession.noteRecoveryDecision(candidateIndex, schedule, code)
 		demoteFailedAttemptForRetry(
 			request.Context(),
 			recordSession,
@@ -541,7 +750,21 @@ func (handler *Handler) executeCandidates(
 		)
 	}
 
+	if session := recordSessionFromContext(request.Context()); session != nil && session.pendingAttempt != nil {
+		reason := schedule.stopReason
+		if reason == "" {
+			reason = "targets_exhausted"
+		}
+		session.noteRecoveryStop(reason)
+	}
 	if downstream.Committed() || request.Context().Err() != nil {
+		if request.Context().Err() != nil {
+			recordSessionFromContext(request.Context()).noteRecoveryStop("cancelled")
+		}
+		return
+	}
+	if replayLastHTTP != nil {
+		replayLastHTTP()
 		return
 	}
 	resetResponseHeaders(downstream.Header(), initialHeaders)
@@ -553,6 +776,9 @@ func (handler *Handler) executeCandidates(
 			endpoint.ErrNoHealthyEndpoint,
 		)
 		return
+	}
+	if lastNetworkFailure.kind != executionFailureNone {
+		last = lastNetworkFailure
 	}
 	handler.writeExecutionFailure(downstream, request, classified, last)
 }
@@ -629,7 +855,7 @@ func (handler *Handler) writeExecutionFailure(
 		status := http.StatusBadGateway
 		code := "upstream_unavailable"
 		fallback := upstreamUnavailableFallback
-		if errors.Is(failure.err, context.DeadlineExceeded) {
+		if isUpstreamTimeout(failure.err) {
 			status = http.StatusGatewayTimeout
 			code = "upstream_timeout"
 			fallback = upstreamTimeoutFallback
@@ -866,6 +1092,10 @@ func newAttemptHealthOutcome(
 }
 
 func (outcome *attemptHealthOutcome) RecordStatus(status int) {
+	if status == http.StatusTooManyRequests {
+		outcome.Abandon()
+		return
+	}
 	if status >= http.StatusInternalServerError {
 		outcome.Failure()
 		return
@@ -998,4 +1228,9 @@ func resetResponseHeaders(destination, source http.Header) {
 	for name, values := range source {
 		destination[name] = append([]string(nil), values...)
 	}
+}
+
+func isUpstreamTimeout(err error) bool {
+	var timeout net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeout) && timeout.Timeout())
 }

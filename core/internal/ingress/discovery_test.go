@@ -97,7 +97,7 @@ func TestModelDiscoveryAggregatesDeterministicallyWithRoutingOrderConflictWins(t
 				"endpoint-a.example": `{"object":"list","data":[{"id":"alpha-model"},{"id":"shared-model","owned_by":"delegated-a"}]}`,
 			},
 			wantPath: "/v1/models",
-			wantBody: `{"object":"list","data":[{"id":"alpha-model"},{"id":"delta-model"},{"id":"shared-model","owned_by":"native-b"},{"id":"zeta-model"}],"first_id":"alpha-model","has_more":false,"last_id":"zeta-model"}`,
+			wantBody: `{"object":"list","data":[{"id":"alpha-model"},{"id":"delta-model"},{"id":"shared-model","owned_by":"delegated-a"},{"id":"zeta-model"}],"first_id":"alpha-model","has_more":false,"last_id":"zeta-model"}`,
 		},
 		{
 			name:     "gemini path merges models arrays and drops page tokens",
@@ -109,7 +109,7 @@ func TestModelDiscoveryAggregatesDeterministicallyWithRoutingOrderConflictWins(t
 				"endpoint-a.example": `{"models":[{"name":"models/alpha"},{"name":"models/shared","version":"delegated-a"}]}`,
 			},
 			wantPath: "/v1beta/models?pageSize=3",
-			wantBody: `{"models":[{"name":"models/alpha"},{"name":"models/shared","version":"native-b"},{"name":"models/zeta"}]}`,
+			wantBody: `{"models":[{"name":"models/alpha"},{"name":"models/shared","version":"delegated-a"},{"name":"models/zeta"}]}`,
 		},
 	}
 
@@ -186,7 +186,7 @@ func TestModelDiscoveryAggregatesDeterministicallyWithRoutingOrderConflictWins(t
 	}
 }
 
-func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
+func TestModelDiscoveryIgnoresRetiredAliasPublicNames(t *testing.T) {
 	tests := []struct {
 		name     string
 		path     string
@@ -232,8 +232,8 @@ func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
 				}(),
 			},
 			upstream: `{"object":"list","data":[{"id":"shared-model","owned_by":"native-b"},{"id":"alpha-model"}]}`,
-			wantBody: `{"object":"list","data":[{"id":"alpha-model"},{"id":"shared-model","object":"model","created":0,"owned_by":"system"},{"id":"zeta-alias","object":"model","created":0,"owned_by":"system"}],"first_id":"alpha-model","has_more":false,"last_id":"zeta-alias"}`,
-			forbid:   []string{"provider/secret-upstream", "provider/zeta-real", "endpoint_b", "native-b"},
+			wantBody: `{"object":"list","data":[{"id":"alpha-model"},{"id":"provider/secret-upstream","object":"model","created":0,"owned_by":"system"},{"id":"provider/zeta-real","object":"model","created":0,"owned_by":"system"},{"id":"shared-model","owned_by":"native-b"}],"first_id":"alpha-model","has_more":false,"last_id":"shared-model"}`,
+			forbid:   []string{"endpoint_b", "zeta-alias"},
 		},
 		{
 			name:     "gemini alias appears as models/alias",
@@ -254,8 +254,8 @@ func TestModelDiscoveryIncludesAliasPublicNames(t *testing.T) {
 				},
 			},
 			upstream: `{"models":[{"name":"models/alpha"}]}`,
-			wantBody: `{"models":[{"name":"models/alpha"},{"name":"models/public-gemini","displayName":"public-gemini"}]}`,
-			forbid:   []string{"gemini-secret", "endpoint_b"},
+			wantBody: `{"models":[{"name":"models/alpha"},{"name":"models/gemini-secret","displayName":"gemini-secret"}]}`,
+			forbid:   []string{"public-gemini", "endpoint_b"},
 		},
 	}
 

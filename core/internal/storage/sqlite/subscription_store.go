@@ -12,18 +12,27 @@ import (
 )
 
 func (store *Store) ListSubscriptionAccounts(ctx context.Context) ([]contract.SubscriptionAccount, error) {
-	kind := contract.ServiceKindCodexSubscription
-	page, err := store.ListServices(ctx, storagecontract.ServiceListOptions{Limit: maxListLimit, Kind: &kind})
-	if err != nil {
-		return nil, fmt.Errorf("list subscription accounts: %w", err)
-	}
-	items := make([]contract.SubscriptionAccount, 0, len(page.Items))
-	for _, record := range page.Items {
-		account, err := record.Service.SubscriptionAccountView()
+	items := make([]contract.SubscriptionAccount, 0)
+	options := storagecontract.ServiceListOptions{Limit: maxListLimit}
+	for {
+		page, err := store.ListServices(ctx, options)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", storagecontract.ErrInvalidRecord, err)
+			return nil, fmt.Errorf("list subscription accounts: %w", err)
 		}
-		items = append(items, account)
+		for _, record := range page.Items {
+			if !record.Service.Kind.IsSubscription() {
+				continue
+			}
+			account, err := record.Service.SubscriptionAccountView()
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", storagecontract.ErrInvalidRecord, err)
+			}
+			items = append(items, account)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		options.Cursor = page.NextCursor
 	}
 	return items, nil
 }
@@ -51,6 +60,7 @@ func (store *Store) PutSubscriptionAccount(ctx context.Context, account contract
 			return fmt.Errorf("%w: service %q has kind %q", storagecontract.ErrConflict, account.ID, existing.Service.Kind)
 		}
 		service.Enabled = existing.Service.Enabled
+		service.FailurePolicy = existing.Service.FailurePolicy
 		service.Models = append([]string{}, existing.Service.Models...)
 		service.CreatedAt = existing.Service.CreatedAt
 	} else if !errors.Is(err, storagecontract.ErrNotFound) {
@@ -64,8 +74,8 @@ func (store *Store) PutSubscriptionAccount(ctx context.Context, account contract
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	_, err = store.db.ExecContext(
 		ctx,
-		`INSERT INTO services (id, document_json, created_at, updated_at)
-VALUES (?, ?, ?, ?)
+		`INSERT INTO services (id, document_json, created_at, updated_at, sort_position)
+VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_position), -1) + 1 FROM services))
 ON CONFLICT(id) DO UPDATE SET document_json = excluded.document_json, updated_at = excluded.updated_at`,
 		service.ID, string(document), service.CreatedAt.UTC().Format(time.RFC3339Nano), now,
 	)
@@ -79,7 +89,7 @@ func (store *Store) DeleteSubscriptionAccount(ctx context.Context, id contract.S
 	if err := id.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
-	result, err := store.db.ExecContext(ctx, `DELETE FROM services WHERE id = ? AND json_extract(document_json, '$.kind') = 'codex_subscription'`, id)
+	result, err := store.db.ExecContext(ctx, `DELETE FROM services WHERE id = ? AND json_extract(document_json, '$.kind') IN ('codex_subscription', 'claude_subscription')`, id)
 	if err != nil {
 		return fmt.Errorf("delete subscription account: %w", err)
 	}

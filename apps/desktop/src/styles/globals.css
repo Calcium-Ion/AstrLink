@@ -44,6 +44,9 @@
   --warning: #d2911a;
   --warning-foreground: #8a6013;
   --warning-wash: #fcf4e4;
+  --blocked: #9b4d73;
+  --blocked-foreground: #6e3150;
+  --blocked-wash: #f6eaf0;
   --violet: #2f6fe0;
   --violet-foreground: #1f5cc4;
   --violet-wash: #eaf2fc;
@@ -215,6 +218,9 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning-wash: var(--warning-wash);
+  --color-blocked: var(--blocked);
+  --color-blocked-foreground: var(--blocked-foreground);
+  --color-blocked-wash: var(--blocked-wash);
   --color-violet: var(--violet);
   --color-violet-foreground: var(--violet-foreground);
   --color-violet-wash: var(--violet-wash);

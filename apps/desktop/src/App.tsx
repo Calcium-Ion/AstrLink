@@ -8,14 +8,14 @@ import {
 import {
   Activity,
   Bot,
-  House,
-  KeyRound,
+  Home as House,
+  Key as KeyRound,
   Route,
   Server,
   Settings,
   ShieldCheck,
-  type LucideIcon,
-} from "lucide-react";
+  type AnimatedIcon,
+} from "@/components/icons";
 
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -55,10 +55,12 @@ import { ServiceManager, type ServiceManagerView } from "./ServiceManager";
 import type { Service } from "./service-model";
 import type { RequestRecord } from "./request-record-model";
 import {
-  aggregateTodayUsage,
-  startOfTodayIso,
-  type TodayUsageState,
-} from "./today-usage";
+  aggregateUsage,
+  DEFAULT_USAGE_RANGE_PRESET,
+  resolveUsageWindow,
+  type UsageRangePreset,
+  type UsageState,
+} from "./usage-range";
 
 type WorkspacePage =
   | { kind: "overview" }
@@ -94,17 +96,21 @@ const emptyTokenCatalog: AccessTokenCatalog = {
   stale: false,
 };
 
-const emptyTodayUsage: TodayUsageState = {
+const blockedUsage: UsageState = {
   status: "blocked",
   summary: null,
   error: null,
 };
 
+const USAGE_PAGE_LIMIT = 200;
+/** 4000 records covers a 30-day window at AstrLink's local traffic volume. */
+const USAGE_MAX_PAGES = 20;
+
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-const icons: Record<IconName, LucideIcon> = {
+const icons: Record<IconName, AnimatedIcon> = {
   activity: Activity,
   bot: Bot,
   home: House,
@@ -166,7 +172,10 @@ export default function App() {
   const [catalog, setCatalog] = useState<ServiceCatalog>(emptyCatalog);
   const [tokenCatalog, setTokenCatalog] =
     useState<AccessTokenCatalog>(emptyTokenCatalog);
-  const [todayUsage, setTodayUsage] = useState<TodayUsageState>(emptyTodayUsage);
+  const [usage, setUsage] = useState<UsageState>(blockedUsage);
+  const [usagePreset, setUsagePreset] = useState<UsageRangePreset>(
+    DEFAULT_USAGE_RANGE_PRESET,
+  );
   const [page, setPage] = useState<WorkspacePage>({ kind: "overview" });
   const [pendingPage, setPendingPage] = useState<WorkspacePage | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
@@ -175,7 +184,7 @@ export default function App() {
   const requestGateRef = useRef<RequestGate | null>(null);
   const catalogGeneration = useRef(0);
   const tokenCatalogGeneration = useRef(0);
-  const todayUsageGeneration = useRef(0);
+  const usageGeneration = useRef(0);
   const copyFeedbackTimer = useRef<number | null>(null);
   requestGateRef.current ??= new RequestGate();
   const requestGate = requestGateRef.current;
@@ -350,60 +359,64 @@ export default function App() {
     void refreshAccessTokens();
   }, [coreSessionKey, isReady, refreshAccessTokens]);
 
-  const refreshTodayUsage = useCallback(async () => {
-    const generation = todayUsageGeneration.current + 1;
-    todayUsageGeneration.current = generation;
+  const refreshUsage = useCallback(async () => {
+    const generation = usageGeneration.current + 1;
+    usageGeneration.current = generation;
     if (!isReady) {
-      setTodayUsage({ status: "blocked", summary: null, error: null });
+      setUsage(blockedUsage);
       return;
     }
 
-    setTodayUsage((current) => ({
+    // Keep the previous summary visible while a wider range loads, so
+    // switching presets never blanks the panel.
+    setUsage((current) => ({
       status: "loading",
       summary: current.summary,
       error: null,
     }));
     try {
+      const usageWindow = resolveUsageWindow(usagePreset, new Date());
       const accumulated: RequestRecord[] = [];
       let cursor: string | undefined;
       let nextCursor: string | null = null;
-      for (let pageIndex = 0; pageIndex < 5; pageIndex += 1) {
+      for (let pageIndex = 0; pageIndex < USAGE_MAX_PAGES; pageIndex += 1) {
         const page = await listRequestRecords({
-          from: startOfTodayIso(new Date()),
-          limit: 200,
+          from: usageWindow.from,
+          to: usageWindow.to,
+          limit: USAGE_PAGE_LIMIT,
           ...(cursor ? { cursor } : {}),
         });
-        if (todayUsageGeneration.current !== generation) return;
+        if (usageGeneration.current !== generation) return;
         accumulated.push(...page.items);
         nextCursor = page.next_cursor;
         if (!nextCursor) break;
         cursor = nextCursor;
       }
-      if (todayUsageGeneration.current !== generation) return;
-      setTodayUsage({
+      if (usageGeneration.current !== generation) return;
+      setUsage({
         status: "ready",
-        summary: aggregateTodayUsage(accumulated, nextCursor !== null),
+        summary: aggregateUsage(accumulated, usageWindow, nextCursor !== null),
         error: null,
       });
     } catch (error) {
-      if (todayUsageGeneration.current === generation) {
-        setTodayUsage((current) => ({
+      if (usageGeneration.current === generation) {
+        setUsage((current) => ({
           status: "error",
           summary: current.summary,
           error: messageOf(error, i18n.t("app.usageFailed")),
         }));
       }
     }
-  }, [isReady]);
+  }, [isReady, usagePreset]);
 
   useEffect(() => {
     if (!isReady) {
-      todayUsageGeneration.current += 1;
-      setTodayUsage({ status: "blocked", summary: null, error: null });
+      usageGeneration.current += 1;
+      setUsage(blockedUsage);
       return;
     }
-    void refreshTodayUsage();
-  }, [coreSessionKey, isReady, refreshTodayUsage]);
+    void refreshUsage();
+  }, [coreSessionKey, isReady, refreshUsage]);
 
   useEffect(
     () => () => {
@@ -605,7 +618,7 @@ export default function App() {
             // centred, so a single row of data never spans the whole window.
             "@container/workspace-surface mx-auto h-full min-h-0 w-full max-w-[1080px] min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
             page.kind !== "overview" && "flex flex-col",
-            ["list", "create", "edit", "tokens", "records", "safety"].includes(
+            ["list", "create", "edit", "tokens", "records", "safety", "routing"].includes(
               page.kind,
             )
               ? "overflow-hidden"
@@ -626,14 +639,15 @@ export default function App() {
               onCopy={(value, label) => void copyValue(value, label)}
               onManageServices={() => navigate({ kind: "list" })}
               onManageTokens={() => navigate({ kind: "tokens" })}
-              onOpenRecords={() => navigate({ kind: "records" })}
               onOpenService={(serviceId) => navigate({ kind: "edit", serviceId })}
               onRefreshServices={() => void refreshServices()}
-              onRefreshTodayUsage={() => void refreshTodayUsage()}
+              onRefreshUsage={() => void refreshUsage()}
               onRestart={() => void handleRestart()}
+              onUsagePresetChange={setUsagePreset}
               snapshot={snapshot}
-              todayUsage={todayUsage}
               tokenCatalog={tokenCatalog}
+              usage={usage}
+              usagePreset={usagePreset}
             />
           ) : page.kind === "tokens" ? (
             <AccessTokenManager

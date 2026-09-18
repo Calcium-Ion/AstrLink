@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>AstrLink - Loop Connection</title>
+  <desc>A capital A tied together by a closed ribbon that loops around both legs as its crossbar.</desc>
+  <defs>
+    <linearGradient id="loop-color" x1="104" y1="313" x2="408" y2="242" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20BBC7"/>
+      <stop offset=".56" stop-color="#7F8FE8"/>
+      <stop offset="1" stop-color="#DA7BAF"/>
+    </linearGradient>
+    <filter id="loop-shadow" x="24" y="28" width="464" height="468" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#26345E" flood-opacity=".14"/>
+    </filter>
+    <path id="loop-front" d="M118 301C116 342 187 332 264 302C349 269 408 249 401 219"/>
+    <mask id="loop-over" x="104" y="104" width="304" height="304" maskUnits="userSpaceOnUse">
+      <rect x="104" y="104" width="304" height="304" fill="#FFFFFF"/>
+      <use href="#loop-front" stroke="#000000" stroke-width="48" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <rect x="52" y="52" width="408" height="408" rx="92" fill="#F9FAFE" filter="url(#loop-shadow)"/>
+  <g id="loop-mark" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M118 301C112 270 167 255 247 249C328 243 395 180 401 219" stroke="url(#loop-color)" stroke-width="20"/>
+    <path d="M150 365L236 155Q256 117 276 155L362 365" stroke="#304074" stroke-width="44" mask="url(#loop-over)"/>
+    <use href="#loop-front" stroke="url(#loop-color)" stroke-width="30"/>
+  </g>
+</svg>

@@ -556,5 +556,49 @@ SET document_json = json_remove(document_json, '$.disabled_models')`,
 				`ALTER TABLE request_records ADD COLUMN session_link_json TEXT`,
 			},
 		},
+		{
+			Version: 23,
+			Name:    "conversation_turn_state",
+			// Turns are placed relative to the record a request links to
+			// (ADR 0015): a new turn starts when the history holds more user
+			// messages than that record's, or the newest user text changed.
+			// Both comparison values are stored per record. Rows written
+			// before this version keep NULLs; a request linking to one starts
+			// its count again at turn 1.
+			Statements: []string{
+				`ALTER TABLE request_records ADD COLUMN turn_user_messages INTEGER CHECK(turn_user_messages IS NULL OR turn_user_messages >= 0)`,
+				`ALTER TABLE request_records ADD COLUMN turn_user_fingerprint TEXT`,
+			},
+		},
+		{
+			Version: 24,
+			Name:    "request_reasoning_effort",
+			Statements: []string{
+				`ALTER TABLE request_records ADD COLUMN reasoning_effort TEXT CHECK(reasoning_effort IS NULL OR length(reasoning_effort) BETWEEN 1 AND 32)`,
+			},
+		},
+		{
+			Version: 25,
+			Name:    "routing_failure_policies",
+			Statements: []string{
+				`CREATE TABLE routing_settings (id INTEGER PRIMARY KEY CHECK(id = 1), document_json TEXT NOT NULL)`,
+				`INSERT INTO routing_settings VALUES (1, '{"default_failure_policy":{"max_retries":1,"initial_delay_ms":500,"max_delay_ms":5000,"network_error":"retry_and_failover","response_timeout":"retry_and_failover","http_status":{"408":"retry_and_failover","429":"retry_and_failover","500":"retry_and_failover","502":"retry_and_failover","503":"retry_and_failover","504":"retry_and_failover","529":"retry_and_failover","401":"failover","403":"failover"}},"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}')`,
+				`ALTER TABLE request_records ADD COLUMN recovery_json TEXT`,
+				`CREATE TABLE response_affinities (
+    principal TEXT NOT NULL, response_id TEXT NOT NULL, service_id TEXT NOT NULL,
+    upstream_model TEXT NOT NULL, upstream_protocol TEXT NOT NULL, plan_type TEXT NOT NULL,
+    created_at TEXT NOT NULL, PRIMARY KEY (principal, response_id)
+)`,
+			},
+		},
+		{Version: 26, Name: "reusable_recovery_paths", Statements: []string{
+			`CREATE TABLE recovery_paths (id TEXT PRIMARY KEY, document_json TEXT NOT NULL)`,
+		}},
+		{Version: 27, Name: "service_priority_order", Statements: []string{
+			`ALTER TABLE services ADD COLUMN sort_position INTEGER NOT NULL DEFAULT 0`,
+			`WITH positions AS (SELECT id, ROW_NUMBER() OVER (ORDER BY id) - 1 AS position FROM services) UPDATE services SET sort_position = (SELECT position FROM positions WHERE positions.id = services.id)`,
+			`CREATE INDEX services_order_idx ON services(sort_position, id)`,
+			`UPDATE routing_settings SET document_json = json_set(document_json, '$.strategy', 'failover_only')`,
+		}},
 	}
 }

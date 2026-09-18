@@ -20,6 +20,8 @@ const localPolicyWarningHeader = "X-AstrLink-Policy-Warning"
 // RequestHeaders may include authentication material prepared by a higher
 // layer. Forwarder does not log or otherwise retain those values.
 type Target struct {
+	// HandleResponse owns the body when set, and decides before any client bytes.
+	HandleResponse func(*http.Response) error
 	BaseURL        *url.URL
 	RequestHeaders http.Header
 	// ObserveOutbound runs after the outbound request is fully constructed and
@@ -116,9 +118,9 @@ func NewWithResponseHeaderTimeout(roundTripper http.RoundTripper, headerTimeout 
 // Forward sends request to target and copies the response as it arrives.
 // request.Context is inherited by the outbound request, so cancellation closes
 // the upstream round trip. Forward never retries.
-func (forwarder *Forwarder) Forward(writer http.ResponseWriter, request *http.Request, target Target) error {
+func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*http.Response, error) {
 	if err := validateTarget(target); err != nil {
-		return &TargetError{err: err}
+		return nil, &TargetError{err: err}
 	}
 
 	outbound := request.Clone(request.Context())
@@ -139,13 +141,13 @@ func (forwarder *Forwarder) Forward(writer http.ResponseWriter, request *http.Re
 
 	response, err := forwarder.roundTripper.RoundTrip(outbound)
 	if err != nil {
-		return &UpstreamError{err: err}
+		return nil, &UpstreamError{err: err}
 	}
 	if response == nil {
-		return &UpstreamError{err: errors.New("round trip returned a nil response")}
+		return nil, &UpstreamError{err: errors.New("round trip returned a nil response")}
 	}
 	if response.Body == nil {
-		return &UpstreamError{err: errors.New("round trip returned a response with a nil body")}
+		return nil, &UpstreamError{err: errors.New("round trip returned a response with a nil body")}
 	}
 
 	responseHeaders := response.Header.Clone()
@@ -157,17 +159,34 @@ func (forwarder *Forwarder) Forward(writer http.ResponseWriter, request *http.Re
 		body = target.WrapResponseBody(response.StatusCode, responseHeaders.Clone(), response.Body)
 		if body == nil {
 			_ = response.Body.Close()
-			return &UpstreamError{err: errors.New("response body wrapper returned nil")}
+			return nil, &UpstreamError{err: errors.New("response body wrapper returned nil")}
 		}
 	}
-	defer body.Close()
-	copyHeaders(writer.Header(), responseHeaders)
-	writer.WriteHeader(response.StatusCode)
+	response.Header = responseHeaders
+	response.Body = body
+	return response, nil
+}
 
+func (forwarder *Forwarder) Forward(writer http.ResponseWriter, request *http.Request, target Target) error {
+	response, err := forwarder.RoundTrip(request, target)
+	if err != nil {
+		return err
+	}
+	if target.HandleResponse != nil {
+		return target.HandleResponse(response)
+	}
+	return WriteResponse(writer, response)
+}
+
+// WriteResponse consumes and closes one response. Recovery belongs to the caller.
+func WriteResponse(writer http.ResponseWriter, response *http.Response) error {
+	defer response.Body.Close()
+	copyHeaders(writer.Header(), response.Header)
+	writer.WriteHeader(response.StatusCode)
 	if err := flush(writer); err != nil {
 		return &ResponseError{err: err}
 	}
-	if err := copyStreaming(writer, body); err != nil {
+	if err := copyStreaming(writer, response.Body); err != nil {
 		return &ResponseError{err: err}
 	}
 	return nil

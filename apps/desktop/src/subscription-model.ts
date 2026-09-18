@@ -1,4 +1,4 @@
-export type SubscriptionProvider = "openai_codex";
+export type SubscriptionProvider = "openai_codex" | "claude_code";
 
 export type SubscriptionStatus =
   | "disconnected"
@@ -14,7 +14,7 @@ export type AuthorizationSessionStatus =
   | "expired"
   | "failed";
 
-export type AuthorizationFlow = "browser" | "device_code";
+export type AuthorizationFlow = "browser" | "device_code" | "authorization_code";
 
 export interface SubscriptionError {
   code: string;
@@ -54,7 +54,7 @@ const rfc3339Pattern =
 const credentialLeakPattern =
   /(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:access_token|refresh_token|id_token|device_auth_id|code_verifier|authorization_code)["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i;
 
-const providers = new Set<SubscriptionProvider>(["openai_codex"]);
+const providers = new Set<SubscriptionProvider>(["openai_codex", "claude_code"]);
 const authorizationSessionStatuses = new Set<AuthorizationSessionStatus>([
   "pending",
   "completed",
@@ -63,6 +63,7 @@ const authorizationSessionStatuses = new Set<AuthorizationSessionStatus>([
   "failed",
 ]);
 const authorizationFlows = new Set<AuthorizationFlow>([
+  "authorization_code",
   "browser",
   "device_code",
 ]);
@@ -219,6 +220,9 @@ export function parseAuthorizationSession(value: unknown): AuthorizationSession 
     invalid("$.flow", "unknown authorization flow");
   }
   const flow = session.flow as AuthorizationFlow;
+  if ((session.provider === "claude_code") !== (flow === "authorization_code")) {
+    invalid("$.flow", "authorization flow is unsupported by provider");
+  }
 
   let authorizationURL: string | undefined;
   if (Object.hasOwn(session, "authorization_url")) {
@@ -228,7 +232,7 @@ export function parseAuthorizationSession(value: unknown): AuthorizationSession 
   const deviceCode = Object.hasOwn(session, "device_code")
     ? parseAuthorizationDeviceCode(session.device_code, "$.device_code")
     : undefined;
-  if (status === "pending" && flow === "browser") {
+  if (status === "pending" && (flow === "browser" || flow === "authorization_code")) {
     if (!authorizationURL) {
       invalid("$.authorization_url", "pending browser session requires authorization_url");
     }

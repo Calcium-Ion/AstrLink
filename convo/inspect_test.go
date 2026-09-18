@@ -66,15 +66,23 @@ func TestInspectOpenAIChatTextTurns(t *testing.T) {
 }
 
 // A coding-agent harness replays a compaction summary and skill injections as
-// role=user messages. Only the message a person typed is a turn, and the
-// preview must be that text, not the wrapper.
-func TestInspectOpenAIChatHarnessMessagesAreNotTurns(t *testing.T) {
+// role=user messages. Nothing in one body says which of them a person typed,
+// so they all count as user messages and the turn is left to NextTurn's
+// relative rule; what the summary must get right is the newest visible text,
+// which is the prompt after the wrapper, not the wrapper.
+func TestInspectOpenAIChatHarnessMessagesUnwrap(t *testing.T) {
 	summary := inspectFixture(t, OpenAIChat, "openai_chat", "harness_compaction_skill.json")
-	if summary.UserTurnCount != 1 || !summary.HasUserMessage {
-		t.Fatalf("UserTurnCount = %d, want 1 (compaction summary and <skill> blocks are harness)", summary.UserTurnCount)
+	if summary.UserTurnCount != 3 || !summary.HasUserMessage {
+		t.Fatalf("UserTurnCount = %d, want 3", summary.UserTurnCount)
 	}
-	if summary.LastUserText != "审核完先别改，给我结论" || summary.FirstUserText != summary.LastUserText {
-		t.Fatalf("user text = %q / %q", summary.FirstUserText, summary.LastUserText)
+	if summary.LastUserText != "审核完先别改，给我结论" {
+		t.Fatalf("LastUserText = %q, want the prompt after the <skill> block", summary.LastUserText)
+	}
+	if summary.FirstUserText != "The conversation history before this point was compacted into the following summary:" {
+		t.Fatalf("FirstUserText = %q, want the text outside the <summary> block", summary.FirstUserText)
+	}
+	if !reflect.DeepEqual(summary.LastUserDigest, DigestText("审核完先别改，给我结论", false)) {
+		t.Fatal("LastUserDigest must digest the unwrapped newest user text")
 	}
 	if want := []string{"call_3a3d1f9e8c7b6a5d4e3f2a1b"}; !reflect.DeepEqual(summary.EchoIDs, want) {
 		t.Fatalf("EchoIDs = %v, want %v", summary.EchoIDs, want)

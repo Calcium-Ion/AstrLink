@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>AstrLink - Gate</title>
+  <desc>Two offset gate leaves frame a four-point aperture in negative space.</desc>
+  <defs>
+    <filter id="gate-shadow" x="24" y="28" width="464" height="468" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#102F2D" flood-opacity=".14"/>
+    </filter>
+  </defs>
+  <rect x="52" y="52" width="408" height="408" rx="92" fill="#F8FBF9" filter="url(#gate-shadow)"/>
+  <g id="gate-mark">
+    <path d="M238 126H190C156 126 130 152 130 186V314C130 348 156 374 190 374H238V302L186 250L238 198V126Z" fill="#123E3A"/>
+    <path d="M274 138H322C356 138 382 164 382 198V326C382 360 356 386 322 386H274V314L326 262L274 210V138Z" fill="#26AC8C"/>
+  </g>
+</svg>

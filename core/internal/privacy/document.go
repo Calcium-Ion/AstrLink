@@ -126,8 +126,13 @@ func walkJSONStrings(
 			set: func(replacement string) {
 				set(replacement)
 			},
+			// Only re-validate after rewrite when the original string was
+			// already JSON. Tool transcripts often start with '{' (a truncated
+			// package.json, a shell dump plus stderr) without being JSON;
+			// treating those as structured payloads turns ActionRedact into an
+			// unconfigurable block.
 			validateStructuredJSON: context == jsonToolPayloadContext &&
-				looksLikeStructuredJSON(typed),
+				validStructuredJSON(typed),
 		})
 	case []any:
 		for index, child := range typed {
@@ -478,11 +483,6 @@ func anyTokenPlaceholder(redactions []Redaction) bool {
 		}
 	}
 	return false
-}
-
-func looksLikeStructuredJSON(value string) bool {
-	trimmed := strings.TrimSpace(value)
-	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
 }
 
 func validStructuredJSON(value string) bool {

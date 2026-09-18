@@ -18,6 +18,7 @@ import {
 } from "./window-chrome";
 import { i18n } from "./i18n";
 import { cn } from "@/lib/utils";
+import { Maximize, Minimize, SquareStack, X } from "@/components/icons";
 
 type ResizeDirection =
   | "East"
@@ -74,21 +75,10 @@ function ControlIcon({
   control: WindowControl;
   maximized: boolean;
 }): ReactNode {
-  if (control === "minimize") {
-    return <path d="M4 11.5h8" />;
-  }
-  if (control === "close") {
-    return <path d="m4.5 4.5 7 7m0-7-7 7" />;
-  }
-  if (maximized) {
-    return (
-      <>
-        <path d="M5.5 6.5h6v6h-6z" />
-        <path d="M4.5 10.5h-1v-7h7v1" />
-      </>
-    );
-  }
-  return <path d="M4 4h8v8H4z" />;
+  const Icon = control === "minimize" ? Minimize
+    : control === "close" ? X
+      : maximized ? SquareStack : Maximize;
+  return <Icon className="size-4" strokeWidth={1.6} />;
 }
 
 function controlLabel(control: WindowControl, maximized: boolean): string {
@@ -283,17 +273,10 @@ export function WindowChrome({
               title={label}
               type="button"
             >
-              <svg
-                aria-hidden="true"
-                className="size-4 stroke-current stroke-[1.1] [stroke-linecap:square] [stroke-linejoin:miter]"
-                fill="none"
-                viewBox="0 0 16 16"
-              >
-                <ControlIcon
-                  control={control}
-                  maximized={windowState.maximized}
-                />
-              </svg>
+              <ControlIcon
+                control={control}
+                maximized={windowState.maximized}
+              />
             </button>
           );
         })}

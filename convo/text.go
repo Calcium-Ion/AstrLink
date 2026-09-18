@@ -8,116 +8,218 @@ import (
 	"github.com/QuantumNous/astrlink/convo/internal/jsonx"
 )
 
-// harnessPrefixes mark user-role text that an agent harness injected rather
-// than a person typed: whole-message notes and context-compaction summaries
-// that replace the earlier history. Matching is case-insensitive on the
-// trimmed prefix, after harness tag blocks have been stripped.
-var harnessPrefixes = []string{
-	"the following deferred tools",
-	"available agent types",
-	"x-anthropic-billing-header",
-	"continue with the original user request",
-	// Pi / Paseo compaction.
-	"the conversation history before this point",
-	// Claude Code compaction.
-	"this session is being continued from a previous conversation",
-}
+// droppedTags name the one wrapper whose content is never the user's words and
+// whose presence must not make a message count: Claude Code appends
+// <system-reminder> blocks to tool results and to typed prompts alike, so
+// without this rule every tool result would be a turn. The list is one entry
+// on purpose. Every other harness convention (skill injections, compaction
+// summaries, attached-file wrappers) differs per client and per version, so
+// it is handled structurally by unwrapping instead of by name.
+var droppedTags = map[string]bool{"system-reminder": true}
 
-// harnessTags are XML-ish wrappers a harness prepends or appends to the text a
-// person typed. Their content is never the user's words, so a leading or
-// trailing block is removed before the message is judged. The list is closed
-// on purpose: many clients wrap the user's own text in tags (Cursor's
-// <user_query>, for one), and stripping those would erase the turn.
-var harnessTags = []string{
-	"system-reminder",
-	"skill",
-}
+// maxUnwrapDepth bounds how many nested wrappers visibleText opens.
+const maxUnwrapDepth = 4
 
-// visibleText strips harness tag blocks from both ends of text and returns
-// "" when nothing a person typed remains.
+// visibleText returns the words a person typed in one user message.
+//
+// Dropped blocks are removed from both ends. Then any closed <tag …>…</tag>
+// blocks at either end are peeled: text left outside them is the user's
+// words (a prompt after a <skill> injection, a note before a pasted <pre>).
+// When nothing is left the message was wholly wrapped and the last block in
+// document order is opened and judged the same way, so Cursor's
+// <additional_data>…</additional_data><user_query>q</user_query> yields q.
+// Unterminated tags are left alone: guessing where they end risks dropping
+// real text.
 func visibleText(raw string) string {
-	text := stripHarnessBlocks(raw)
-	if text == "" {
-		return ""
-	}
-	lower := strings.ToLower(text)
-	for _, prefix := range harnessPrefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return ""
-		}
-	}
-	return text
+	return visibleTextDepth(raw, maxUnwrapDepth)
 }
 
-// stripHarnessBlocks removes every leading and trailing <tag ...>...</tag>
-// block whose tag is in harnessTags and trims the remainder. An unterminated
-// block is left alone: guessing where it ends risks dropping real text.
-func stripHarnessBlocks(raw string) string {
+func visibleTextDepth(raw string, depth int) string {
+	_, text := peelBlocks(raw, func(name string) bool { return droppedTags[name] })
+	if text == "" || depth == 0 {
+		return text
+	}
+	blocks, rest := peelBlocks(text, func(string) bool { return true })
+	if rest != "" || len(blocks) == 0 {
+		return rest
+	}
+	return visibleTextDepth(blocks[len(blocks)-1], depth-1)
+}
+
+// peelBlocks removes every leading and trailing closed block whose tag name
+// satisfies accept and returns the removed inner texts in document order plus
+// the trimmed remainder.
+func peelBlocks(raw string, accept func(name string) bool) (blocks []string, rest string) {
 	text := strings.TrimSpace(raw)
+	var trailing []string
 	for text != "" {
-		rest, ok := stripLeadingHarnessBlock(text)
+		inner, after, ok := leadingBlock(text, accept)
 		if !ok {
 			break
 		}
-		text = strings.TrimSpace(rest)
+		blocks = append(blocks, inner)
+		text = strings.TrimSpace(after)
 	}
 	for text != "" {
-		rest, ok := stripTrailingHarnessBlock(text)
+		inner, before, ok := trailingBlock(text, accept)
 		if !ok {
 			break
 		}
-		text = strings.TrimSpace(rest)
+		trailing = append(trailing, inner)
+		text = strings.TrimSpace(before)
 	}
-	return text
+	for index := len(trailing) - 1; index >= 0; index-- {
+		blocks = append(blocks, trailing[index])
+	}
+	return blocks, text
 }
 
-func stripLeadingHarnessBlock(text string) (string, bool) {
-	for _, tag := range harnessTags {
-		if !hasOpenTag(text, tag) {
+// leadingBlock matches <name …>inner</name> at the start of text.
+func leadingBlock(text string, accept func(string) bool) (inner, rest string, ok bool) {
+	name, innerStart, ok := openTagAt(text, 0)
+	if !ok || !accept(name) {
+		return "", "", false
+	}
+	closeStart, closeEnd, ok := matchingClose(text, name, innerStart)
+	if !ok {
+		return "", "", false
+	}
+	return text[innerStart:closeStart], text[closeEnd:], true
+}
+
+// trailingBlock matches <name …>inner</name> at the end of text.
+func trailingBlock(text string, accept func(string) bool) (inner, rest string, ok bool) {
+	if !strings.HasSuffix(text, ">") {
+		return "", "", false
+	}
+	closeStart := strings.LastIndex(text, "</")
+	if closeStart < 0 {
+		return "", "", false
+	}
+	name := text[closeStart+2 : len(text)-1]
+	if !validTagName(name) || !accept(name) {
+		return "", "", false
+	}
+	openStart, innerStart, ok := matchingOpen(text, name, closeStart)
+	if !ok {
+		return "", "", false
+	}
+	return text[innerStart:closeStart], text[:openStart], true
+}
+
+// matchingClose finds the </name> that closes the block whose content starts
+// at from, honouring nested blocks of the same name.
+func matchingClose(text, name string, from int) (closeStart, closeEnd int, ok bool) {
+	depth := 1
+	closing := "</" + name + ">"
+	for index := from; index < len(text); {
+		next := strings.IndexByte(text[index:], '<')
+		if next < 0 {
+			return 0, 0, false
+		}
+		index += next
+		if strings.HasPrefix(text[index:], closing) {
+			depth--
+			if depth == 0 {
+				return index, index + len(closing), true
+			}
+			index += len(closing)
 			continue
 		}
-		closing := "</" + tag + ">"
-		end := strings.Index(text, closing)
-		if end < 0 {
-			return text, false
-		}
-		return text[end+len(closing):], true
-	}
-	return text, false
-}
-
-func stripTrailingHarnessBlock(text string) (string, bool) {
-	for _, tag := range harnessTags {
-		closing := "</" + tag + ">"
-		if !strings.HasSuffix(text, closing) {
+		if opened, innerStart, isOpen := openTagAt(text, index); isOpen && opened == name {
+			depth++
+			index = innerStart
 			continue
 		}
-		body := text[:len(text)-len(closing)]
-		start := strings.LastIndex(body, "<"+tag)
-		for start >= 0 && !hasOpenTag(body[start:], tag) {
-			start = strings.LastIndex(body[:start], "<"+tag)
-		}
-		if start < 0 {
-			return text, false
-		}
-		return text[:start], true
+		index++
 	}
-	return text, false
+	return 0, 0, false
 }
 
-// hasOpenTag reports whether text starts with <tag> or <tag followed by an
-// attribute, so <skill> matches but <skillful> does not.
-func hasOpenTag(text, tag string) bool {
-	open := "<" + tag
-	if !strings.HasPrefix(text, open) {
-		return false
+// matchingOpen finds the <name …> that the closing tag at closeStart pairs
+// with, honouring nested blocks of the same name.
+func matchingOpen(text, name string, closeStart int) (openStart, innerStart int, ok bool) {
+	type opener struct{ start, innerStart int }
+	var stack []opener
+	closing := "</" + name + ">"
+	for index := 0; index < closeStart; {
+		next := strings.IndexByte(text[index:closeStart], '<')
+		if next < 0 {
+			break
+		}
+		index += next
+		if strings.HasPrefix(text[index:], closing) {
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			index += len(closing)
+			continue
+		}
+		if opened, inner, isOpen := openTagAt(text, index); isOpen && opened == name {
+			if inner > closeStart {
+				// The opener's '>' is the closing tag's own: "<a </a>".
+				break
+			}
+			stack = append(stack, opener{index, inner})
+			index = inner
+			continue
+		}
+		index++
 	}
-	rest := text[len(open):]
-	if rest == "" {
-		return false
+	if len(stack) == 0 {
+		return 0, 0, false
 	}
-	switch rest[0] {
+	top := stack[len(stack)-1]
+	return top.start, top.innerStart, true
+}
+
+// openTagAt parses <name attrs…> at text[at:]. Self-closing tags and tags
+// with an invalid name are not openers.
+func openTagAt(text string, at int) (name string, innerStart int, ok bool) {
+	if at >= len(text) || text[at] != '<' {
+		return "", 0, false
+	}
+	end := at + 1
+	for end < len(text) && isTagNameByte(text[end], end > at+1) {
+		end++
+	}
+	name = text[at+1 : end]
+	if name == "" || end >= len(text) {
+		return "", 0, false
+	}
+	switch text[end] {
 	case '>', ' ', '\t', '\n', '\r', '/':
+	default:
+		return "", 0, false
+	}
+	close := strings.IndexByte(text[end:], '>')
+	if close < 0 {
+		return "", 0, false
+	}
+	innerStart = end + close + 1
+	if strings.HasSuffix(text[at:innerStart], "/>") {
+		return "", 0, false
+	}
+	return name, innerStart, true
+}
+
+func validTagName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index := 0; index < len(name); index++ {
+		if !isTagNameByte(name[index], index > 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTagNameByte(char byte, notFirst bool) bool {
+	switch {
+	case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char == '_':
+		return true
+	case notFirst && (char >= '0' && char <= '9' || char == '-' || char == '.' || char == ':'):
 		return true
 	}
 	return false

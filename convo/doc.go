@@ -16,7 +16,7 @@
 //
 // The package has no storage, logging, or network dependencies. Callers persist
 // the cursors a response produced and answer Lookup queries; Policy.Resolve
-// decides which stored session a new request continues. Policy.NextTurnIndex
-// derives the user-turn number so that an agent tool loop of many calls is
-// reported as one turn.
+// decides which stored session a new request continues. Policy.NextTurn
+// places the request relative to the record it continues, so an agent tool
+// loop of many calls is reported as one user turn.
 package convo

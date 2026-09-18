@@ -330,6 +330,22 @@ describe("RequestRecords", () => {
     });
   };
 
+  it("shows explicit reasoning effort beside the model and omits it for legacy sessions", async () => {
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, { reasoning_effort: "high" }),
+        sessionFromRecord(secondRecord),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const rows = container.querySelectorAll('[data-testid="request-session-row"]');
+    const badge = rows[0]?.querySelector('[aria-label="思考强度: high"]');
+    expect(badge?.textContent).toBe("high");
+    expect(badge?.parentElement?.textContent).toContain("gpt-4.1");
+    expect(rows[1]?.querySelector('[aria-label^="思考强度:"]')).toBeNull();
+  });
+
   it("renders a session stream instead of a wide table", async () => {
     await renderRecords();
 
@@ -396,7 +412,7 @@ describe("RequestRecords", () => {
     await act(async () => await Promise.resolve());
 
     expect(bridgeMocks.listRequestRecordChildren).toHaveBeenCalledWith(root.id);
-    expect(container.textContent).toContain("RETRY");
+    expect(container.textContent).toContain("重试");
     expect(container.textContent).toContain("子请求 1");
     expect(container.textContent).toContain("子请求 2");
     expect(container.querySelectorAll('[data-testid="trajectory-row"]').length).toBeGreaterThan(0);
@@ -414,6 +430,445 @@ describe("RequestRecords", () => {
     expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledWith(
       children[0].id,
     );
+  });
+
+  it("copies skill diagnostic metadata without captured bodies", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const root: RequestRecord = {
+      ...firstRecord,
+      input_preview: "给这个仓库适配一下",
+      events: [
+        {
+          kind: "completed",
+          started_at: firstRecord.started_at,
+          ended_at: firstRecord.completed_at,
+          status: "succeeded",
+          summary: "succeeded",
+          attempt_index: 1,
+        },
+      ],
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValueOnce({
+      items: [sessionFromRecord(root)],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValueOnce({
+      ...sessionFromRecord(root),
+      turns: [root],
+    });
+
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${root.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    const copyButton = exactButton("复制诊断信息");
+    expect(copyButton.title).toContain("不含请求/响应正文");
+    await act(async () => {
+      copyButton.click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const copied = writeText.mock.calls[0]?.[0] as string;
+    expect(copied).toContain("astrlink-debug");
+    expect(copied).toContain(root.id);
+    expect(copied).toContain("给这个仓库适配一下");
+    expect(copied).toContain('"kind": "completed"');
+    expect(copied).not.toContain("secret");
+    expect(copied).not.toContain("hello");
+    expect(copied).not.toContain("Bearer");
+  });
+
+  // The detail carries every root turn of the conversation, and the children
+  // fetch is one request per root that retried. Tying either to the session
+  // list poll meant a 95-turn conversation re-downloaded and rebuilt its whole
+  // trajectory every second while the operator read it.
+  it("stops reloading a settled conversation while the list keeps polling", async () => {
+    vi.useFakeTimers();
+    const root: RequestRecord = { ...firstRecord, child_count: 1 };
+    const summary = sessionFromRecord(root);
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [summary],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValue({
+      ...summary,
+      turns: [root],
+    });
+    bridgeMocks.listRequestRecordChildren.mockResolvedValue({
+      items: [
+        {
+          ...secondRecord,
+          id: "req_settledchildaaaaaaaaaaaaaaaaaa",
+          parent_request_id: root.id,
+          attempt_index: 1,
+          child_count: 0,
+        },
+      ],
+      next_cursor: null,
+    });
+
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${root.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+    expect(container.querySelector('[data-testid="trajectory-row"]')).not.toBeNull();
+
+    bridgeMocks.getRequestSession.mockClear();
+    bridgeMocks.listRequestRecordChildren.mockClear();
+    bridgeMocks.listRequestSessions.mockClear();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(bridgeMocks.listRequestSessions).toHaveBeenCalled();
+    expect(bridgeMocks.getRequestSession).not.toHaveBeenCalled();
+    expect(bridgeMocks.listRequestRecordChildren).not.toHaveBeenCalled();
+  });
+
+  // A 95-turn conversation is roughly 1400 phase rows. Mounting them all is
+  // what made the trajectory tab unusable, so past a threshold the list is
+  // windowed and only a screenful plus overscan reaches the DOM.
+  it("windows a long trajectory instead of mounting every row", async () => {
+    const sessionId = "sess_windowed_aaaaaaaaaaaaaaaaaa";
+    const firstStartedAt = Date.parse("2026-07-25T10:00:00Z");
+    const turns: RequestRecord[] = Array.from({ length: 90 }, (_, index) => ({
+      ...firstRecord,
+      id: `req_windowed_${String(index).padStart(19, "0")}`,
+      session_id: sessionId,
+      turn_index: index + 1,
+      started_at: new Date(firstStartedAt + index * 4000).toISOString(),
+      completed_at: new Date(firstStartedAt + index * 4000 + 2000).toISOString(),
+    }));
+    const summary = sessionFromRecord(turns[0]!, {
+      id: sessionId,
+      last_started_at: turns[turns.length - 1]!.started_at,
+      completed_at: turns[turns.length - 1]!.completed_at,
+      turn_count: turns.length,
+      call_count: turns.length,
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [summary],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValue({ ...summary, turns });
+
+    // happy-dom has no layout, and the windowing math reads `offsetHeight` for
+    // the viewport and for each row. Give it the two numbers a browser would.
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
+      function offsetHeight(this: HTMLElement) {
+        if (this.dataset.testid === "trajectory-list") return 600;
+        return this.dataset.index === undefined ? 0 : 32;
+      },
+    );
+
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${sessionId}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+
+    const mounted = container.querySelectorAll('[data-testid="trajectory-row"]');
+    // 90 turns × (1 header + 6 phases) is 630 rows; a 600px viewport of 32px
+    // rows plus overscan is well under a hundred.
+    expect(mounted.length).toBeGreaterThan(10);
+    expect(mounted.length).toBeLessThan(100);
+
+    // The scroll range still covers every row, so the scrollbar and the
+    // call-aligned strip sync keep telling the truth.
+    const spacer = container.querySelector(
+      '[data-testid="trajectory-list"] > ol',
+    ) as HTMLElement;
+    expect(Number.parseFloat(spacer.style.height)).toBeGreaterThan(630 * 30);
+
+    // happy-dom reports clientHeight 0, so the open-to-latest scroll stays
+    // put. Selection is still resolved from the row model, and the inspector
+    // opens on the newest row even though that row is offscreen.
+    expect(
+      container.querySelector('[data-testid="trajectory-inspector"]'),
+    ).not.toBeNull();
+
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="trajectory-row"][data-chip="POLICY"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    expect(
+      container
+        .querySelector('[data-testid="trajectory-inspector"]')
+        ?.getAttribute("data-focus-chip"),
+    ).toBe("POLICY");
+  });
+
+  it("opens a long trajectory on the latest call in the list", async () => {
+    const sessionId = "sess_open_latest_aaaaaaaaaaaaaaa";
+    const firstStartedAt = Date.parse("2026-07-25T10:00:00Z");
+    const turns: RequestRecord[] = Array.from({ length: 90 }, (_, index) => ({
+      ...firstRecord,
+      id: `req_open_latest_${String(index).padStart(16, "0")}`,
+      session_id: sessionId,
+      turn_index: index + 1,
+      started_at: new Date(firstStartedAt + index * 4000).toISOString(),
+      completed_at: new Date(firstStartedAt + index * 4000 + 2000).toISOString(),
+    }));
+    const last = turns[turns.length - 1]!;
+    const first = turns[0]!;
+    const summary = sessionFromRecord(first, {
+      id: sessionId,
+      last_started_at: last.started_at,
+      completed_at: last.completed_at,
+      turn_count: turns.length,
+      call_count: turns.length,
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [summary],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValue({ ...summary, turns });
+
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
+      function offsetHeight(this: HTMLElement) {
+        if (this.dataset.testid === "trajectory-list") return 600;
+        return this.dataset.index === undefined ? 0 : 32;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(
+      function clientHeight(this: HTMLElement) {
+        if (this.dataset.testid === "trajectory-list") return 600;
+        return 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+      function scrollHeight(this: HTMLElement) {
+        if (this.dataset.testid === "trajectory-list") return 630 * 32;
+        return 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollTo").mockImplementation(
+      function scrollTo(this: HTMLElement, arg?: ScrollToOptions | number) {
+        if (typeof arg === "object" && arg.top !== undefined) {
+          this.scrollTop = arg.top;
+        }
+      },
+    );
+
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${sessionId}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+
+    expect(
+      container.querySelector(
+        `[data-testid="trajectory-row"][data-row-id="${last.id}:turn"]`,
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        `[data-testid="trajectory-row"][data-row-id="${first.id}:turn"]`,
+      ),
+    ).toBeNull();
+  });
+
+  it("collapses a long idle gap on the timeline and selects a phase from a segment", async () => {
+    const sessionId = "sess_timeline_gap_aaaaaaaaaaaaaaaa";
+    const turn1: RequestRecord = {
+      ...firstRecord,
+      id: "req_timeline_gap_1aaaaaaaaaaaaaaaaaaaa",
+      session_id: sessionId,
+      turn_index: 1,
+      started_at: "2026-07-25T10:00:00Z",
+      completed_at: "2026-07-25T10:00:02Z",
+    };
+    const turn2: RequestRecord = {
+      ...firstRecord,
+      id: "req_timeline_gap_2aaaaaaaaaaaaaaaaaaaa",
+      session_id: sessionId,
+      turn_index: 2,
+      started_at: "2026-07-25T10:05:02Z",
+      completed_at: "2026-07-25T10:05:22Z",
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValueOnce({
+      items: [
+        sessionFromRecord(turn1, {
+          last_started_at: turn2.started_at,
+          completed_at: turn2.completed_at,
+          turn_count: 2,
+          call_count: 2,
+        }),
+      ],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValueOnce({
+      ...sessionFromRecord(turn1, {
+        last_started_at: turn2.started_at,
+        completed_at: turn2.completed_at,
+        turn_count: 2,
+        call_count: 2,
+      }),
+      turns: [turn1, turn2],
+    });
+
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${sessionId}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+
+    const gaps = [...container.querySelectorAll('[data-testid="trajectory-gap"]')];
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]?.getAttribute("title")).toContain("5m 00s");
+
+    const calls = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-testid="trajectory-call"]',
+      ),
+    ];
+    expect(new Set(calls.map((node) => node.getAttribute("data-request-id")))).toEqual(
+      new Set([turn1.id, turn2.id]),
+    );
+
+    // Minimum widths scale with duration against the session's own knee, which
+    // is the median of the 2 s and 20 s call here, so the strip stays
+    // proportional even once it outgrows the viewport and scrolls sideways.
+    // The 2 s call is above the 6px clickable floor once the knee is 96px.
+    const minWidthOf = (requestId: string) =>
+      Number.parseFloat(
+        calls
+          .find((node) => node.getAttribute("data-request-id") === requestId)!
+          .style.minWidth.replace("px", ""),
+      );
+    expect(minWidthOf(turn1.id)).toBeCloseTo(17.45, 1);
+    expect(minWidthOf(turn2.id)).toBeCloseTo(153.37, 1);
+
+    const header = container.querySelector(
+      '[data-testid="trajectory-timeline"]',
+    )?.previousElementSibling;
+    expect(header?.textContent).toContain("客户端");
+    expect(header?.textContent).toContain("网关");
+    expect(header?.textContent).toContain("上游");
+    expect(
+      container.querySelector('[data-testid="trajectory-phase"][data-chip="CLIENT"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="trajectory-phase"][data-chip="POLICY"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="trajectory-phase"][data-chip="UPSTREAM"]'),
+    ).not.toBeNull();
+
+    const labels = [
+      ...container.querySelectorAll('[data-testid="trajectory-turn-label"]'),
+    ];
+    expect(labels.map((label) => label.textContent)).toEqual(["1", "2"]);
+
+    bridgeMocks.getRequestAuditContent.mockClear();
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="trajectory-phase"][data-chip="POLICY"]',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    const policyRow = container.querySelector(
+      '[data-testid="trajectory-row"][data-chip="POLICY"]',
+    );
+    expect(policyRow?.getAttribute("data-selected")).toBe("true");
+    expect(
+      [
+        ...container.querySelectorAll(
+          '[data-testid="inspector-tab"]',
+        ),
+      ].map((tab) => tab.getAttribute("data-chip")),
+    ).toEqual(["CLIENT", "POLICY", "ROUTE", "UPSTREAM", "RESTORE", "RESULT"]);
+    expect(
+      container
+        .querySelector('[data-testid="inspector-section"]')
+        ?.getAttribute("data-chip"),
+    ).toBe("POLICY");
+    expect(
+      container
+        .querySelector('[data-testid="inspector-tab"][data-chip="POLICY"]')
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      [
+        ...container.querySelectorAll(
+          '[data-testid="trajectory-row"][data-highlighted="true"]',
+        ),
+      ].map((row) => [
+        row.getAttribute("data-request-id"),
+        row.getAttribute("data-chip"),
+      ]),
+    ).toEqual([
+      [turn1.id, "CLIENT"],
+      [turn1.id, "POLICY"],
+      [turn1.id, "ROUTE"],
+      [turn1.id, "UPSTREAM"],
+      [turn1.id, "RESTORE"],
+      [turn1.id, "RESULT"],
+    ]);
+    expect(
+      container
+        .querySelector('[data-testid="trajectory-inspector"]')
+        ?.getAttribute("data-focus-chip"),
+    ).toBe("POLICY");
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledWith(turn1.id);
+
+    await act(async () => {
+      (labels[1] as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    const afterTurn = container.querySelector(
+      '[data-testid="trajectory-inspector"]',
+    );
+    expect(afterTurn?.getAttribute("data-focus-chip")).toBe("TURN");
+    expect(afterTurn?.getAttribute("data-request-id")).toBe(turn2.id);
   });
 
   it("lets the trajectory list scroll and paints HTTP 403 as a failure", async () => {
@@ -482,14 +937,14 @@ describe("RequestRecords", () => {
       ...container.querySelectorAll('[data-testid="trajectory-row"][data-tone="failed"]'),
     ];
     expect(failed.length).toBe(2);
-    expect(failed.some((row) => row.textContent?.includes("RESULT"))).toBe(true);
+    expect(failed.some((row) => row.textContent?.includes("结果"))).toBe(true);
     expect(
       failed.some((row) => row.querySelector(".bg-destructive") !== null),
     ).toBe(true);
     const inspector = container.querySelector(
       '[data-testid="trajectory-inspector"]',
     );
-    expect(inspector?.getAttribute("data-chip")).toBe("RESULT");
+    expect(inspector?.getAttribute("data-focus-chip")).toBe("RESULT");
     const http = inspector?.querySelector('[data-testid="inspector-http"]');
     expect(http?.textContent).toContain("HTTP 403");
     expect(http?.className).toContain("text-destructive");
@@ -498,7 +953,154 @@ describe("RequestRecords", () => {
     ).toContain("失败");
   });
 
-  it("opens a side inspector for the selected phase without moving the list", async () => {
+  it("attributes a cancelled HTTP 200 stream to the client, not upstream", async () => {
+    const aborted: RequestRecord = {
+      ...firstRecord,
+      status: "cancelled",
+      recovery: {
+        delay_ms: 0,
+        stop_reason: "cancelled",
+        upstream_model: "glm-5.3-flash",
+      },
+      events: [
+        {
+          kind: "accepted",
+          started_at: firstRecord.started_at,
+          ended_at: firstRecord.started_at,
+          status: "succeeded",
+          summary: "glm-5.3-flash · anthropic.messages",
+          attempt_index: 0,
+        },
+        {
+          kind: "upstream",
+          started_at: firstRecord.started_at,
+          ended_at: firstRecord.completed_at,
+          status: "cancelled",
+          summary: "HTTP 200 · 23973 → 151",
+          attempt_index: 1,
+        },
+        {
+          kind: "completed",
+          started_at: firstRecord.completed_at ?? firstRecord.started_at,
+          ended_at: firstRecord.completed_at,
+          status: "cancelled",
+          summary: "HTTP 200 · 23973 → 151",
+          attempt_index: 1,
+        },
+      ],
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValueOnce({
+      items: [sessionFromRecord(aborted)],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValueOnce({
+      ...sessionFromRecord(aborted),
+      turns: [aborted],
+    });
+    bridgeMocks.listRequestRecordChildren.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${aborted.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+
+    const upstream = container.querySelector(
+      '[data-testid="trajectory-row"][data-chip="UPSTREAM"]',
+    );
+    const result = container.querySelector(
+      '[data-testid="trajectory-row"][data-chip="RESULT"]',
+    );
+    expect(upstream?.getAttribute("data-tone")).toBe("ok");
+    expect(upstream?.textContent).toContain("HTTP 200");
+    expect(upstream?.textContent).not.toContain("客户端断开");
+    expect(result?.getAttribute("data-tone")).toBe("cancelled");
+    expect(result?.textContent).toContain("客户端断开");
+    expect(
+      container.querySelector('[data-testid="trajectory-cancel-note"]')
+        ?.textContent,
+    ).toContain("问题在客户端");
+  });
+
+  it("labels a stopped agent loop as interrupted, not cancelled", async () => {
+    const stopped = sessionFromRecord(firstRecord, {
+      status: "interrupted",
+      turn_count: 3,
+      call_count: 12,
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValueOnce({
+      items: [stopped],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValueOnce({
+      ...stopped,
+      turns: [firstRecord],
+    });
+    bridgeMocks.listRequestRecordChildren.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+
+    await renderRecords();
+    expect(
+      container.querySelector('[data-testid="request-session-row"]')
+        ?.textContent,
+    ).toContain("已中断");
+
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${stopped.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    // The badge sits beside session-scoped metrics, so it must report the
+    // conversation outcome rather than the selected call's own status.
+    expect(
+      container.querySelector('[data-testid="record-status"]')?.textContent,
+    ).toContain("已中断");
+    expect(firstRecord.status).toBe("succeeded");
+  });
+
+  it("paints a privacy-blocked session differently from in-progress or interrupted", async () => {
+    const blocked = sessionFromRecord(firstRecord, { status: "blocked" });
+    const interrupted = sessionFromRecord(secondRecord, {
+      status: "interrupted",
+      id: "sess_interrupted_aaaaaaaaaaaaaaaa",
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValueOnce({
+      items: [blocked, interrupted],
+      next_cursor: null,
+    });
+
+    await renderRecords();
+
+    const blockedRow = container.querySelector(
+      `[data-session-id="${blocked.id}"]`,
+    );
+    const interruptedRow = container.querySelector(
+      `[data-session-id="${interrupted.id}"]`,
+    );
+    expect(blockedRow?.textContent).toContain("已拦截");
+    expect(blockedRow?.querySelector('[data-tone="blocked"]')).not.toBeNull();
+    expect(blockedRow?.querySelector('[data-tone="pending"]')).toBeNull();
+    expect(interruptedRow?.querySelector('[data-tone="pending"]')).not.toBeNull();
+    expect(interruptedRow?.querySelector('[data-tone="blocked"]')).toBeNull();
+  });
+
+  it("opens a side inspector for the selected call without moving the list", async () => {
     await renderRecords();
     await act(async () => {
       (
@@ -533,12 +1135,51 @@ describe("RequestRecords", () => {
     const after = container.querySelector(
       '[data-testid="trajectory-inspector"]',
     );
-    expect(after?.getAttribute("data-chip")).toBe("POLICY");
+    expect(after?.getAttribute("data-focus-chip")).toBe("POLICY");
+    expect(after?.getAttribute("data-request-id")).toBe(firstRecord.id);
+    expect(
+      [
+        ...after!.querySelectorAll('[data-testid="inspector-tab"]'),
+      ].map((tab) => tab.getAttribute("data-chip")),
+    ).toEqual(["CLIENT", "POLICY", "ROUTE", "UPSTREAM", "RESTORE", "RESULT"]);
+    expect(
+      after
+        ?.querySelector('[data-testid="inspector-tab"][data-chip="POLICY"]')
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      after?.querySelector('[data-testid="inspector-section"]')?.getAttribute("data-chip"),
+    ).toBe("POLICY");
     expect(after?.textContent).toContain("命中");
     expect(after?.textContent).toContain("邮箱 ×2");
     expect(after?.textContent).toContain("电话 ×1");
+    expect(after?.textContent).not.toContain("客户端响应");
+    expect(after?.textContent).not.toContain("上游响应");
     expect(after?.querySelector('[data-testid="redacted-request-details"]')).toBeNull();
     expect(list.scrollTop).toBe(48);
+
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="trajectory-row"][data-chip="RESULT"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    const afterResult = container.querySelector(
+      '[data-testid="trajectory-inspector"]',
+    );
+    expect(
+      afterResult
+        ?.querySelector('[data-testid="inspector-tab"][data-chip="RESULT"]')
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      afterResult
+        ?.querySelector('[data-testid="inspector-section"]')
+        ?.getAttribute("data-chip"),
+    ).toBe("RESULT");
+    expect(afterResult?.textContent).toContain("客户端响应");
+    expect(afterResult?.textContent).not.toContain("上游响应");
   });
 
   it("lists recorded POLICY hits even when the captured body has no placeholders", async () => {
@@ -705,10 +1346,13 @@ describe("RequestRecords", () => {
     const inspector = container.querySelector(
       '[data-testid="trajectory-inspector"]',
     );
+    const restore = inspector?.querySelector(
+      '[data-testid="inspector-section"][data-chip="RESTORE"]',
+    );
     expect(
-      inspector?.querySelector('[data-testid="restore-channels"]')?.textContent,
+      restore?.querySelector('[data-testid="restore-channels"]')?.textContent,
     ).toBe("可见文本 5 · 工具参数 0");
-    const hits = inspector?.querySelector('[data-testid="privacy-hits"]');
+    const hits = restore?.querySelector('[data-testid="privacy-hits"]');
     expect(hits?.textContent).toContain("邮箱 ×1");
     expect(hits?.textContent).toContain("电话 ×1");
     expect(hits?.textContent).toContain("redacted-a1b2c3d4e5f6@private.invalid");
@@ -794,6 +1438,199 @@ describe("RequestRecords", () => {
     expect(inspector?.textContent).toContain("请求和响应捕获");
   });
 
+  it("shows a pending client request body instead of the enable-capture hint", async () => {
+    const pending: RequestRecord = {
+      ...firstRecord,
+      completed_at: null,
+      status: "pending",
+      http_status: null,
+      latency_ms: null,
+      audit: { ...emptyAudit, request_body_captured: true },
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [sessionFromRecord(pending)],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValue(sessionDetail(pending));
+    bridgeMocks.getRequestAuditContent.mockResolvedValue({
+      request_id: pending.id,
+      http_meta: null,
+      request_body: {
+        media_type: "application/json",
+        content: '{"model":"gpt-4.1","input":"live body"}',
+        truncated: false,
+        captured_bytes: 40,
+      },
+      response_content: null,
+      upstream_http_meta: null,
+      upstream_request_body: null,
+      upstream_response_content: null,
+    });
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${pending.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="trajectory-row"][data-chip="CLIENT"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => await Promise.resolve());
+
+    const inspector = container.querySelector(
+      '[data-testid="trajectory-inspector"]',
+    );
+    expect(inspector?.textContent).toContain("live body");
+    expect(inspector?.textContent).not.toContain("请求和响应捕获");
+  });
+
+  it("says in-progress content is not ready yet instead of asking to enable capture", async () => {
+    const pending: RequestRecord = {
+      ...firstRecord,
+      completed_at: null,
+      status: "pending",
+      http_status: null,
+      latency_ms: null,
+      audit: { ...emptyAudit, request_body_captured: true },
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [sessionFromRecord(pending)],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValue(sessionDetail(pending));
+    bridgeMocks.getRequestAuditContent.mockResolvedValue({
+      request_id: pending.id,
+      http_meta: null,
+      request_body: {
+        media_type: "application/json",
+        content: '{"ok":true}',
+        truncated: false,
+        captured_bytes: 11,
+      },
+      response_content: null,
+      upstream_http_meta: null,
+      upstream_request_body: null,
+      upstream_response_content: null,
+    });
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${pending.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="trajectory-row"][data-chip="RESULT"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+
+    const hint = container.querySelector(
+      '[data-testid="inspector-missing-body"]',
+    );
+    expect(hint?.textContent).toContain("进行中");
+    expect(hint?.textContent).not.toContain("请求和响应捕获");
+  });
+
+  it("refetches audit when a pending record's captured flags flip", async () => {
+    vi.useFakeTimers();
+    const pending: RequestRecord = {
+      ...firstRecord,
+      completed_at: null,
+      status: "pending",
+      http_status: null,
+      latency_ms: null,
+      audit: { ...emptyAudit },
+    };
+    const captured: RequestRecord = {
+      ...pending,
+      audit: { ...emptyAudit, request_body_captured: true },
+    };
+    let latestTurn = pending;
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [sessionFromRecord(pending)],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockImplementation(async (sessionId: string) => {
+      if (sessionId === pending.id) return sessionDetail(latestTurn);
+      throw new Error(`missing session ${sessionId}`);
+    });
+    bridgeMocks.getRequestAuditContent.mockResolvedValue({
+      request_id: pending.id,
+      http_meta: null,
+      request_body: null,
+      response_content: null,
+      upstream_http_meta: null,
+      upstream_request_body: null,
+      upstream_response_content: null,
+    });
+    await renderRecords();
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${pending.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="trajectory-row"][data-chip="CLIENT"]',
+        ) as HTMLButtonElement
+      )?.click();
+    });
+    expect(
+      container.querySelector('[data-testid="inspector-missing-body"]')
+        ?.textContent,
+    ).toContain("进行中");
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(1);
+
+    latestTurn = captured;
+    bridgeMocks.getRequestAuditContent.mockResolvedValue({
+      request_id: pending.id,
+      http_meta: null,
+      request_body: {
+        media_type: "application/json",
+        content: '{"input":"now captured"}',
+        truncated: false,
+        captured_bytes: 24,
+      },
+      response_content: null,
+      upstream_http_meta: null,
+      upstream_request_body: null,
+      upstream_response_content: null,
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await act(async () => await Promise.resolve());
+    await act(async () => await Promise.resolve());
+
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(2);
+    const inspector = container.querySelector(
+      '[data-testid="trajectory-inspector"]',
+    );
+    expect(inspector?.textContent).toContain("now captured");
+  });
+
   it("filters locally so a later status update can still reach the row", async () => {
     await renderRecords();
     bridgeMocks.listRequestSessions.mockClear();
@@ -824,8 +1661,57 @@ describe("RequestRecords", () => {
 
     expect(bridgeMocks.listRequestSessions).toHaveBeenCalledWith({
       limit: 50,
+      kind: "inference",
       cursor: "cursor-1",
     });
+  });
+
+  it("defaults to model calls and separates compact discovery rows with their own pagination and polling", async () => {
+    vi.useFakeTimers();
+    const discovery = sessionFromRecord(firstRecord, {
+      id: "req_discovery", title: "未命名会话", input_protocol: "openai.models",
+      requested_model: null, service_id: null,
+    });
+    const failedDiscovery = { ...discovery, id: "req_discovery_failed", input_protocol: "google.models", status: "failed" as const };
+    bridgeMocks.listRequestSessions.mockImplementation(async (query) => ({
+      items: query.kind === "inference" ? [sessionFromRecord(firstRecord)]
+        : query.kind === "discovery" ? [discovery, failedDiscovery]
+        : [sessionFromRecord(firstRecord), discovery, failedDiscovery],
+      next_cursor: query.cursor ? null : `${query.kind ?? "all"}-cursor`,
+    }));
+    bridgeMocks.getRequestSession.mockResolvedValue({ ...discovery, turns: [{ ...firstRecord, id: discovery.id, input_protocol: "openai.models" }] });
+    await renderRecords();
+    expect(bridgeMocks.listRequestSessions).toHaveBeenCalledWith({ limit: 50, kind: "inference" });
+    expect(container.querySelectorAll('[data-testid="request-session-row"]')).toHaveLength(1);
+    await act(async () => exactButton("模型获取").focus());
+    const rows = container.querySelectorAll('[data-testid="request-session-row"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain("获取模型列表");
+    expect(rows[0].textContent).toContain("GET /v1/models");
+    expect(rows[0].textContent).not.toMatch(/未命名会话|未指定模型|正在选择服务|轮/);
+    expect(rows[1].textContent).toContain("失败");
+    await act(async () => { exactButton("加载更早记录").click(); });
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({ limit: 50, kind: "discovery", cursor: "discovery-cursor" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({ limit: 50, kind: "discovery" });
+    await act(async () => { (rows[0] as HTMLButtonElement).click(); });
+    expect(bridgeMocks.getRequestSession).toHaveBeenCalledWith(discovery.id);
+    await act(async () => { exactButton("实时监控").click(); });
+    await act(async () => exactButton("全部").focus());
+    expect(container.querySelectorAll('[data-testid="request-session-row"]')).toHaveLength(3);
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({ limit: 50, kind: undefined });
+  });
+
+  it("discards a previous kind's in-flight page after switching views", async () => {
+    const pendingPage = deferred<{ items: RequestSession[]; next_cursor: string | null }>();
+    bridgeMocks.listRequestSessions.mockReturnValueOnce(pendingPage.promise);
+    await renderRecords();
+    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [], next_cursor: null });
+    await act(async () => exactButton("模型获取").focus());
+    await act(async () => pendingPage.resolve({ items: [sessionFromRecord(firstRecord)], next_cursor: "old-cursor" }));
+    expect(container.querySelectorAll('[data-testid="request-session-row"]')).toHaveLength(0);
+    expect(container.textContent).toContain("没有匹配的模型获取请求");
+    expect(container.textContent).not.toContain("加载更早记录");
   });
 
   it("auto-decrypts on detail open, tabs metadata vs content, and caches across back-navigation", async () => {
@@ -845,8 +1731,8 @@ describe("RequestRecords", () => {
     expect(container.querySelector("h1")?.textContent).toBe("gpt-4.1");
     expect(container.textContent).toContain("追踪");
     expect(container.textContent).toContain("/v1/responses");
-    expect(container.textContent).toContain("Turns");
-    expect(container.textContent).toContain("CLIENT");
+    expect(container.textContent).toContain("轮次");
+    expect(container.textContent).toContain("客户端");
     expect(container.textContent).not.toContain("POST /v1/responses?stream=true");
 
     await act(async () => {
@@ -931,6 +1817,26 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("未捕获");
   });
 
+  it("closes the copy menu with Escape while keeping the detail open", async () => {
+    await renderRecords();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(`[data-session-id="${firstRecord.id}"]`)!.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="复制与导出选项"]')!.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
+      );
+    });
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    await act(async () => {
+      document.querySelector('[role="menu"]')!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(container.querySelector("#request-detail-heading")).not.toBeNull();
+  });
+
   it("exports the decrypted bundle as a txt file from the copy split button", async () => {
     await renderRecords();
     await act(async () => {
@@ -945,7 +1851,7 @@ describe("RequestRecords", () => {
     await act(async () => await Promise.resolve());
 
     const trigger = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="导出请求记录"]',
+      'button[aria-label="复制与导出选项"]',
     );
     if (!trigger) throw new Error("Missing export menu");
     await act(async () => {
@@ -997,7 +1903,7 @@ describe("RequestRecords", () => {
     await act(async () => await Promise.resolve());
 
     const trigger = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="导出请求记录"]',
+      'button[aria-label="复制与导出选项"]',
     );
     if (!trigger) throw new Error("Missing export menu");
     await act(async () => {

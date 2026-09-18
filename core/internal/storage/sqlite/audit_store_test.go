@@ -54,6 +54,54 @@ func TestAuditSettingsDefaultsAndKeyOnce(t *testing.T) {
 	}
 }
 
+func TestAuditBlobUpsertReplacesSameDirection(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	ctx := context.Background()
+	key, err := store.GetOrCreateAuditKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := contract.RequestRecord{
+		ID: "request_upsert", StartedAt: store.now(), Status: contract.RequestStatusPending,
+		InputProtocol: contract.ProtocolOpenAIChat, Audit: contract.NotCapturedAuditSummary(),
+	}
+	if err := store.InsertRequestRecord(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	firstNonce, firstCipher, err := storagecontract.SealAuditBlob(key, []byte(`{"first":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertAuditBlob(ctx, storagecontract.AuditBlob{
+		RequestID: "request_upsert", Direction: storagecontract.AuditDirectionHTTPMeta,
+		MediaType: "application/json", Nonce: firstNonce, Ciphertext: firstCipher, CapturedBytes: 14,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondNonce, secondCipher, err := storagecontract.SealAuditBlob(key, []byte(`{"second":true,"status":200}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertAuditBlob(ctx, storagecontract.AuditBlob{
+		RequestID: "request_upsert", Direction: storagecontract.AuditDirectionHTTPMeta,
+		MediaType: "application/json", Nonce: secondNonce, Ciphertext: secondCipher, CapturedBytes: 29,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := store.GetAuditBlobsByRequest(ctx, "request_upsert")
+	if err != nil || len(blobs) != 1 {
+		t.Fatalf("blobs=%#v err=%v", blobs, err)
+	}
+	plain, err := storagecontract.OpenAuditBlob(key, blobs[0].Nonce, blobs[0].Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != `{"second":true,"status":200}` || blobs[0].CapturedBytes != 29 {
+		t.Fatalf("upserted blob=%#v plain=%s", blobs[0], plain)
+	}
+}
+
 func TestAuditBlobCascadeDeletePurgeAndSweep(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
 	defer store.Close()

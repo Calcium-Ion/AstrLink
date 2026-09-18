@@ -45,7 +45,23 @@ func (resolver candidateResolver) ResolveCandidates(context.Context, endpoint.Re
 	if resolver.err != nil {
 		return nil, resolver.err
 	}
-	return append([]endpoint.Resolved(nil), resolver.candidates...), nil
+	// Legacy fallback tests explicitly use no same-target retries and a budget
+	// of three. Recovery tests provide their own policy, including the defaults.
+	candidates := append([]endpoint.Resolved(nil), resolver.candidates...)
+	for index := range candidates {
+		if candidates[index].FailurePolicy == nil && candidates[index].CanonicalService().FailurePolicy == nil {
+			policy := contract.DefaultFailurePolicy()
+			policy.MaxRetries = 0
+			policy.InitialDelayMS = 0
+			candidates[index].FailurePolicy = &policy
+		}
+		if candidates[index].Failover == nil {
+			policy := contract.DefaultFailoverPolicy()
+			policy.MaxAttempts = 3
+			candidates[index].Failover = &policy
+		}
+	}
+	return candidates, nil
 }
 
 type healthRecordingResolver struct {
@@ -978,9 +994,11 @@ func TestInferencePlaneRecordsMetadataWithoutChangingClientBytes(t *testing.T) {
 	if record.Usage == nil || record.Usage.TotalTokens != 5 {
 		t.Fatalf("usage=%#v", record.Usage)
 	}
-	encoded, _ := json.Marshal(record)
-	if strings.Contains(string(encoded), "provider/secret-upstream") {
-		t.Fatalf("upstream model leaked into record: %s", encoded)
+	if record.Recovery == nil || record.Recovery.UpstreamModel != "provider/secret-upstream" {
+		t.Fatalf("actual model missing from privileged recovery metadata: %+v", record.Recovery)
+	}
+	if strings.Contains(response.Body.String(), "provider/secret-upstream") {
+		t.Fatal("private model leaked to client")
 	}
 	if record.Audit.RequestBodyCaptured || record.Audit.ResponseContentCaptured {
 		t.Fatalf("5a audit flags should report not captured: %#v", record.Audit)
@@ -1000,6 +1018,20 @@ func TestInferencePlaneRecordsMetadataWithoutChangingClientBytes(t *testing.T) {
 	}
 	if !containsEventKinds(kinds, contract.RequestEventAccepted, contract.RequestEventPrivacy, contract.RequestEventRouted, contract.RequestEventUpstream, contract.RequestEventCompleted) {
 		t.Fatalf("events=%v", kinds)
+	}
+	// The accepted phase is written pending while the call is in flight. A
+	// finished record must not keep it, or the desktop paints the client row
+	// of a long-finished call as still running.
+	for _, event := range record.Events {
+		if event.Kind != contract.RequestEventAccepted {
+			continue
+		}
+		if event.Status != contract.RequestStatusSucceeded {
+			t.Fatalf("accepted event status=%q want succeeded", event.Status)
+		}
+		if event.EndedAt == nil {
+			t.Fatal("accepted event must be closed")
+		}
 	}
 }
 
@@ -1136,7 +1168,13 @@ func (store *memoryRequestRecordStore) FindSessionLink(
 			if !ok {
 				continue
 			}
-			return storage.SessionLinkMatch{SessionID: *record.SessionID, TurnIndex: record.TurnIndex, Value: value}, true, nil
+			match := storage.SessionLinkMatch{
+				SessionID: *record.SessionID, TurnIndex: record.TurnIndex, TurnUserMessages: record.TurnUserMessages, Value: value,
+			}
+			if record.TurnUserFingerprint != nil {
+				match.TurnUserFingerprint = *record.TurnUserFingerprint
+			}
+			return match, true, nil
 		}
 	}
 	return storage.SessionLinkMatch{}, false, nil

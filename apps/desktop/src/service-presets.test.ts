@@ -34,6 +34,7 @@ describe("HTTP service product presets", () => {
 
   it("does not expose API-key services as Codex, Claude, or Gemini subscriptions", () => {
     expect(httpServicePresetIDs).toEqual([
+      "opencode_go", "opencode_zen", "kimi_coding", "glm_coding", "minimax_coding",
       "newapi",
       "openai_compatible",
       "openai",

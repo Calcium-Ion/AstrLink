@@ -55,7 +55,11 @@ shortcut.
 Resolver priority is global native first, then explicitly declared delegated.
 Delegated mode still forwards the original protocol bytes and relies on the
 selected gateway to perform any upstream conversion; AstrLink does not invoke
-RelayKit. Route rules, health-aware fallback, and retries are not implemented.
+RelayKit. Fixed and classified routes share a retry/failover loop with global
+defaults, optional service/route overrides, response-commit boundaries, and
+per-request attempt budgets. Configure defaults once via
+`GET/PATCH /control/v1/routing-settings`; services inherit them automatically.
+Unmatched requests do not switch services unless explicitly enabled.
 
 The inference boundary rejects non-canonical Host values, browser `Origin`
 requests, query-string tokens, simple form/text POST media types, and malformed

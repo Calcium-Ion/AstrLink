@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
@@ -111,7 +112,7 @@ func (prober *Prober) ProbeHTTP(
 	if err != nil {
 		return nil, err
 	}
-	if kind == contract.ServiceKindAnthropic {
+	if kind == contract.ServiceKindAnthropic || kind == contract.ServiceKindKimiCoding || kind == contract.ServiceKindMiniMaxCoding || kind == contract.ServiceKindGLMCoding {
 		headers.Set("Anthropic-Version", "2023-06-01")
 	}
 	return prober.probeHTTPPages(probeContext, connection.BaseURL, headers, protocol, kind == contract.ServiceKindAnthropic)
@@ -133,6 +134,15 @@ func (prober *Prober) probeSubscription(
 			return nil, context.DeadlineExceeded
 		}
 		return nil, fmt.Errorf("%w: %v", ErrNotConnected, err)
+	}
+	account, err := prober.subscriptions.Get(probeContext, serviceID)
+	if err != nil {
+		return nil, ErrNotConnected
+	}
+	if account.Provider == contract.SubscriptionProviderClaudeCode {
+		headers := make(http.Header)
+		accountauth.ApplyClaudeAPIHeaders(headers, tokens)
+		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, true)
 	}
 	models, err := prober.subscriptions.Provider().ListModels(probeContext, tokens)
 	if err != nil {
@@ -313,7 +323,9 @@ func kindSupportsDiscovery(kind contract.ServiceKind, protocol contract.Protocol
 		return protocol == contract.ProtocolOpenAIModels || protocol == contract.ProtocolGoogleModels
 	case contract.ServiceKindGemini:
 		return protocol == contract.ProtocolGoogleModels
-	case contract.ServiceKindOpenAI, contract.ServiceKindOpenAICompatible, contract.ServiceKindAnthropic:
+	case contract.ServiceKindOpenAI, contract.ServiceKindOpenAICompatible, contract.ServiceKindAnthropic,
+		contract.ServiceKindOpenCodeGo, contract.ServiceKindOpenCodeZen, contract.ServiceKindKimiCoding,
+		contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding:
 		return protocol == contract.ProtocolOpenAIModels
 	default:
 		return false

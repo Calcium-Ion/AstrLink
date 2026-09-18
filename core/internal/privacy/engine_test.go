@@ -430,6 +430,36 @@ func TestEngineRevalidatesStructuredToolArgumentStringsAfterRedaction(t *testing
 	}
 }
 
+func TestEngineRedactsInvalidLookingToolResultTextWithoutBlocking(t *testing.T) {
+	// Anthropic tool_result text that starts with '{' but is not JSON — the
+	// shape of `cat package.json | head` plus stderr. Redact must continue.
+	const body = `{
+		"messages":[{
+			"role":"user",
+			"content":[{
+				"type":"tool_result",
+				"tool_use_id":"call_1",
+				"content":[{
+					"type":"text",
+					"text":"{\n  \"name\": \"paseo\",\n  \"author\": {\"email\":\"alice@example.com\"}\n[stderr]\nls: missing\n"
+				}]
+			}]
+		}]
+	}`
+	result, err := newTestEngine(t, nil).Inspect(context.Background(), Policy{
+		Enabled: true, Mode: ModeRegex, Action: ActionRedact,
+	}, contract.ProtocolAnthropicMessages, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != DecisionRedact {
+		t.Fatalf("decision = %s, findings = %#v", result.Decision, result.Findings)
+	}
+	if bytes.Contains(result.Body, []byte("alice@example.com")) {
+		t.Fatalf("email was not redacted: %s", result.Body)
+	}
+}
+
 func TestModelModeNeverFallsBackToRegex(t *testing.T) {
 	called := false
 	model := DetectorFunc(func(_ context.Context, input DetectInput) ([]Finding, error) {

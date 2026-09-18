@@ -71,8 +71,8 @@ func (store *Store) FindSessionLink(
 	// client-chosen ids such as prompt_cache_key that no response emits.
 	query := strings.Builder{}
 	args := make([]any, 0, 5*len(cleaned)+2*len(scopeArgs)+1)
-	query.WriteString(`SELECT session_id, turn_index, value FROM (
-SELECT r.session_id, r.turn_index, c.value AS value,
+	query.WriteString(`SELECT session_id, turn_index, turn_user_messages, turn_user_fingerprint, value FROM (
+SELECT r.session_id, r.turn_index, r.turn_user_messages, r.turn_user_fingerprint, c.value AS value,
        CASE WHEN c.direction = 'out' THEN 0 ELSE 1 END AS priority,
        r.started_at, r.id
 FROM request_record_cursors c
@@ -89,7 +89,7 @@ WHERE c.kind = ? AND c.value IN (` + placeholders + `)`)
 	if kind == contract.SessionCursorExplicit {
 		query.WriteString(`
 UNION ALL
-SELECT r.session_id, r.turn_index,
+SELECT r.session_id, r.turn_index, r.turn_user_messages, r.turn_user_fingerprint,
        CASE WHEN r.output_response_id IN (` + placeholders + `) THEN r.output_response_id ELSE r.previous_response_id END AS value,
        CASE WHEN r.output_response_id IN (` + placeholders + `) THEN 0 ELSE 1 END AS priority,
        r.started_at, r.id
@@ -107,11 +107,12 @@ WHERE (r.output_response_id IN (` + placeholders + `) OR r.previous_response_id 
 ) ORDER BY priority ASC, started_at DESC, id DESC LIMIT 1`)
 
 	var (
-		sessionID sql.NullString
-		turnIndex sql.NullInt64
-		value     sql.NullString
+		sessionID, turnUserFingerprint, value sql.NullString
+		turnIndex, turnUserMessages           sql.NullInt64
 	)
-	err := store.db.QueryRowContext(ctx, query.String(), args...).Scan(&sessionID, &turnIndex, &value)
+	err := store.db.QueryRowContext(ctx, query.String(), args...).Scan(
+		&sessionID, &turnIndex, &turnUserMessages, &turnUserFingerprint, &value,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storagecontract.SessionLinkMatch{}, false, nil
@@ -129,6 +130,13 @@ WHERE (r.output_response_id IN (` + placeholders + `) OR r.previous_response_id 
 	if turnIndex.Valid && turnIndex.Int64 >= 1 {
 		turn := int(turnIndex.Int64)
 		match.TurnIndex = &turn
+		if turnUserMessages.Valid && turnUserMessages.Int64 >= 0 {
+			users := int(turnUserMessages.Int64)
+			match.TurnUserMessages = &users
+		}
+		if turnUserFingerprint.Valid {
+			match.TurnUserFingerprint = turnUserFingerprint.String
+		}
 	}
 	return match, true, nil
 }
@@ -137,6 +145,9 @@ func (store *Store) ListRequestSessions(
 	ctx context.Context,
 	options storagecontract.RequestSessionListOptions,
 ) (storagecontract.RequestSessionPage, error) {
+	if options.Kind != "" && options.Kind != "inference" && options.Kind != "discovery" {
+		return storagecontract.RequestSessionPage{}, fmt.Errorf("%w: kind must be inference or discovery", storagecontract.ErrInvalidArgument)
+	}
 	limit := options.Limit
 	if limit == 0 {
 		limit = defaultListLimit
@@ -167,6 +178,15 @@ FROM (
   FROM request_records
   WHERE parent_request_id IS NULL`)
 	args := make([]any, 0, 16)
+	// Classify before LIMIT so discovery traffic cannot consume call-list pages.
+	if options.Kind != "" {
+		if options.Kind == "discovery" {
+			query.WriteString(` AND input_protocol IN (?, ?)`)
+		} else {
+			query.WriteString(` AND input_protocol NOT IN (?, ?)`)
+		}
+		args = append(args, string(contract.ProtocolOpenAIModels), string(contract.ProtocolGoogleModels))
+	}
 	if options.From != nil {
 		query.WriteString(` AND started_at >= ?`)
 		args = append(args, options.From.UTC().Format(time.RFC3339Nano))
@@ -374,8 +394,9 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 		CompletedAt:        latest.CompletedAt,
 		TurnCount:          countUserTurns(turns),
 		CallCount:          callCount,
-		Status:             latest.EffectiveStatus(),
+		Status:             sessionStatus(turns, latest),
 		RequestedModel:     latest.RequestedModel,
+		ReasoningEffort:    latest.ReasoningEffort,
 		InputProtocol:      latest.InputProtocol,
 		ServiceID:          latest.ServiceID,
 		LocalAccessTokenID: latest.LocalAccessTokenID,
@@ -384,6 +405,26 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 		return contract.RequestSession{}, fmt.Errorf("%w: session %q: %v", storagecontract.ErrInvalidRecord, id, err)
 	}
 	return session, nil
+}
+
+// sessionStatus reports the conversation outcome from its last call, except
+// that a trailing client abort cannot erase answers already delivered: an
+// agent loop the operator stops after fifty successful calls is interrupted,
+// not cancelled. Cancelled stays for a conversation that produced nothing.
+// This mirrors the record-level rule in ingress, where a cancel never
+// downgrades a call that already succeeded. A trailing failure or block is
+// left alone, because those are what the operator needs to see first.
+func sessionStatus(turns []contract.RequestRecord, latest contract.RequestRecord) contract.SessionStatus {
+	status := contract.SessionStatusFromRequest(latest.EffectiveStatus())
+	if status != contract.SessionStatusCancelled {
+		return status
+	}
+	for _, turn := range turns {
+		if turn.EffectiveStatus() == contract.RequestStatusSucceeded {
+			return contract.SessionStatusInterrupted
+		}
+	}
+	return status
 }
 
 // countUserTurns counts user turns from records in time order. Consecutive

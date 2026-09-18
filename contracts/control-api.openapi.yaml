@@ -241,6 +241,57 @@ paths:
                   version: null
                   available: false
                   edges: []
+  /control/v1/service-order:
+    get:
+      operationId: getServiceOrder
+      summary: Read the complete global service priority order
+      security:
+        - controlToken: []
+      responses:
+        '200':
+          description: All service IDs in priority order, including disabled services
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+    put:
+      operationId: updateServiceOrder
+      summary: Atomically replace the complete service order
+      security:
+        - controlToken: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceOrder'
+      responses:
+        '200':
+          description: Saved order
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceOrder'
+        '412':
+          description: Service membership or order has changed; reload before retrying
+        '422':
+          description: Duplicate, missing or unknown service IDs
+        '428':
+          description: If-Match is required
   /control/v1/services:
     x-astrlink-implementation-status: implemented
     get:
@@ -392,7 +443,7 @@ paths:
     post:
       tags: [Services]
       operationId: beginServiceAuthorization
-      summary: Start browser or Device Code OAuth for this subscription service only.
+      summary: Start provider-specific OAuth for this subscription service only.
       requestBody:
         required: false
         description: Omit the body only for legacy browser-flow callers; JSON bodies must include an explicit flow.
@@ -420,6 +471,42 @@ paths:
           $ref: "#/components/responses/UnprocessableEntity"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+    put:
+      tags: [Services]
+      operationId: completeServiceAuthorization
+      summary: Exchange a Claude authorization code for the active service session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, code]
+              properties:
+                session_id:
+                  $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+                code:
+                  type: string
+                  minLength: 1
+                  maxLength: 8192
+                  writeOnly: true
+                  description: Short-lived code#state from the registered Claude callback page. Never persisted or returned.
+              additionalProperties: false
+      responses:
+        "200":
+          description: Completed authorization session without credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     get:
       tags: [Services]
       operationId: getServiceAuthorization
@@ -771,7 +858,10 @@ paths:
           in: query
           schema:
             type: boolean
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Route page.
           headers:
@@ -793,7 +883,10 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RouteCreate"
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "201":
           description: Route created.
           headers:
@@ -823,7 +916,10 @@ paths:
       tags: [Routes]
       operationId: getRoute
       summary: Read one route.
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Route details.
           headers:
@@ -851,7 +947,10 @@ paths:
           application/merge-patch+json:
             schema:
               $ref: "#/components/schemas/RoutePatch"
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Updated route.
           headers:
@@ -879,7 +978,10 @@ paths:
       summary: Delete a route.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "204":
           description: Route deleted.
         "401":
@@ -1276,7 +1378,10 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/AutoClassifierLocalProbeRequest"
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Content-pinned local package identity and frozen taxonomy mapping.
           headers:
@@ -1300,7 +1405,10 @@ paths:
       tags: [Auto Classifier]
       operationId: listAutoClassifierInstallations
       summary: List local classifier installations.
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Installed classifier packages.
           headers:
@@ -1323,7 +1431,10 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/AutoClassifierInstallRequest"
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "202":
           description: Installation accepted and ready.
           headers:
@@ -1361,7 +1472,10 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/AutoClassifierClassifyPreviewRequest"
+      deprecated: true
       responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Category, logits, latency, and routing eligibility.
           headers:
@@ -1379,6 +1493,182 @@ paths:
           $ref: "#/components/responses/UnprocessableEntity"
         "500":
           $ref: "#/components/responses/InternalServerError"
+  /control/v1/recovery-paths:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Routes]
+      operationId: listRecoveryPaths
+      deprecated: true
+      responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
+        "200":
+          description: All reusable paths, versions, and references.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RecoveryPathRecord"
+                additionalProperties: false
+    post:
+      tags: [Routes]
+      operationId: createRecoveryPath
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoveryPathCreate"
+      deprecated: true
+      responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
+        "201":
+          description: Created path and strong version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryPathRecord"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/recovery-paths/{path_id}:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - name: path_id
+        in: path
+        required: true
+        schema:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    get:
+      tags: [Routes]
+      operationId: getRecoveryPath
+      deprecated: true
+      responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
+        "200":
+          description: Path and its current references.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryPathRecord"
+    patch:
+      tags: [Routes]
+      operationId: updateRecoveryPath
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/RecoveryPathPatch"
+      deprecated: true
+      responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
+        "200":
+          description: Updated path; active requests retain their original snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryPathRecord"
+        "412":
+          description: The path version changed.
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      tags: [Routes]
+      operationId: deleteRecoveryPath
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: {type: string}
+      deprecated: true
+      responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
+        "204":
+          description: Path removed.
+        "409":
+          description: A route, category, or default still references this path.
+        "412":
+          description: The path version changed.
+  /control/v1/recovery-paths/preview:
+    x-astrlink-implementation-status: implemented
+    post:
+      tags: [Routes]
+      operationId: previewRecoveryPath
+      summary: Simulate the actual scheduler without saving, waiting, or sending inference requests.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoveryPreviewInput"
+      deprecated: true
+      responses:
+        '410':
+          description: Legacy routing feature retired; use service order and routing settings
+        "200":
+          description: Actual attempt ordering and skipped steps for synthetic outcomes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryPreview"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/routing-settings:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Routes]
+      operationId: getRoutingSettings
+      summary: Read failure handling for requests without a matching route.
+      responses:
+        "200":
+          description: Persisted routing settings, applied to new requests.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Routes]
+      operationId: updateRoutingSettings
+      summary: Configure unmatched request retries and service switching.
+      description: Switching defaults to false on installation and upgrade. Matching routes own their own target lists and are unaffected by this switch. In-flight requests retain their configuration snapshot.
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/RoutingSettingsPatch"
+      responses:
+        "200":
+          description: Updated routing settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
   /control/v1/audit-settings:
     x-astrlink-implementation-status: implemented
     get:
@@ -1636,6 +1926,14 @@ paths:
         appear as singleton sessions whose id is the request id. Does not return
         request or response body content.
       parameters:
+        - name: kind
+          in: query
+          description: >
+            Filters before pagination. Discovery includes openai.models and
+            google.models; inference includes all other protocols. Omit for all.
+          schema:
+            type: string
+            enum: [inference, discovery]
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/From"
@@ -1654,6 +1952,11 @@ paths:
             $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         - name: status
           in: query
+          description: >
+            Keeps sessions that contain at least one root record with this
+            status. It filters records, not the aggregated session outcome, so
+            the returned status field may differ and SessionStatus values
+            without a record counterpart are not accepted.
           schema:
             $ref: "#/components/schemas/RequestStatus"
       responses:
@@ -2006,10 +2309,394 @@ components:
           maxLength: 64
           pattern: "^(?:[0-9a-f]{7,64}|unknown)$"
       additionalProperties: false
+    FailureAction:
+      type: string
+      enum: [stop, retry, failover, retry_and_failover]
+      description: Applies only to replayable requests before client response commitment. Retry and switching permissions are further bounded by the route and request budget.
+    RecoveryPathNode:
+      type: object
+      required: [id, service_id, upstream_protocol, plan_type]
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        upstream_protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        plan_type:
+          $ref: ./protocol-capabilities.schema.json#/$defs/PlanType
+        upstream_model:
+          type: string
+          maxLength: 256
+          description: Empty or omitted preserves the requested model.
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: Automatic targets only; omission inherits the effective policy.
+      additionalProperties: false
+    RecoveryPath:
+      type: object
+      required: [id, name, protocol, mode]
+      properties:
+        id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        mode:
+          type: string
+          enum: [automatic, steps]
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/RecoveryPathNode"
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/RecoveryPathNode"
+          description: Same execution target may appear at most six times; node IDs remain unique.
+        strategy:
+          type: string
+          enum: [retry_first, failover_first, failover_only]
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 20
+        failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
+      oneOf:
+        - properties:
+            mode: {const: automatic}
+          required: [targets]
+          not:
+            required: [steps]
+        - properties:
+            mode: {const: steps}
+            steps:
+              items:
+                not:
+                  required: [max_retries]
+          required: [steps]
+          not:
+            anyOf:
+              - required: [targets]
+              - required: [strategy]
+      additionalProperties: false
+    RecoveryPathCreate:
+      type: object
+      required: [name, protocol, mode]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        protocol:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+        mode:
+          type: string
+          enum: [automatic, steps]
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/RecoveryPathNode"
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/RecoveryPathNode"
+          description: Same execution target may appear at most six times; node IDs remain unique.
+        strategy:
+          type: string
+          enum: [retry_first, failover_first, failover_only]
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 20
+        failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
+      oneOf:
+        - properties:
+            mode: {const: automatic}
+          required: [targets]
+          not:
+            required: [steps]
+        - properties:
+            mode: {const: steps}
+            steps:
+              items:
+                not:
+                  required: [max_retries]
+          required: [steps]
+          not:
+            anyOf:
+              - required: [targets]
+              - required: [strategy]
+      additionalProperties: false
+    RecoveryPathPatch:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          $ref: "#/components/schemas/RecoveryPath/properties/name"
+        protocol:
+          $ref: "#/components/schemas/RecoveryPath/properties/protocol"
+        mode:
+          $ref: "#/components/schemas/RecoveryPath/properties/mode"
+        targets:
+          oneOf:
+            - $ref: "#/components/schemas/RecoveryPath/properties/targets"
+            - type: "null"
+        steps:
+          oneOf:
+            - $ref: "#/components/schemas/RecoveryPath/properties/steps"
+            - type: "null"
+        strategy:
+          oneOf:
+            - $ref: "#/components/schemas/RecoveryPath/properties/strategy"
+            - type: "null"
+        max_attempts:
+          oneOf:
+            - $ref: "#/components/schemas/RecoveryPath/properties/max_attempts"
+            - type: "null"
+        failure_policy:
+          oneOf:
+            - $ref: "#/components/schemas/RecoveryPath/properties/failure_policy"
+            - type: "null"
+      additionalProperties: false
+    RecoveryPathRecord:
+      type: object
+      required: [path, etag, references]
+      properties:
+        path:
+          $ref: "#/components/schemas/RecoveryPath"
+        etag:
+          type: string
+          pattern: '^"sha256:[0-9a-f]{64}"$'
+        references:
+          type: array
+          items:
+            type: object
+            required: [name, protocol, override]
+            properties:
+              route_id:
+                $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+              name: {type: string, maxLength: 128}
+              protocol:
+                $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
+              category_id: {type: string, maxLength: 64}
+              override: {type: boolean}
+            additionalProperties: false
+      additionalProperties: false
+    RecoveryPreviewInput:
+      type: object
+      required: [path, streaming, error]
+      properties:
+        path:
+          $ref: "#/components/schemas/RecoveryPath"
+        model: {type: string, maxLength: 256}
+        streaming: {type: boolean}
+        error:
+          type: string
+          pattern: '^(network_error|response_timeout|[45][0-9]{2})$'
+        success_at: {type: integer, minimum: 0, maximum: 20}
+        retry_after: {type: string, maxLength: 128}
+        route_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        category_id: {type: string, maxLength: 64}
+      additionalProperties: false
+    RecoveryPreview:
+      type: object
+      required: [steps, stop_reason, max_attempts]
+      properties:
+        stop_reason: {type: string, maxLength: 128}
+        max_attempts: {type: integer, minimum: 1, maximum: 20}
+        steps:
+          type: array
+          items:
+            type: object
+            required: [step_id, service_id, model, action, status, wait_min_ms, wait_max_ms]
+            properties:
+              step_id:
+                $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+              service_id:
+                $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+              model: {type: string, maxLength: 256}
+              action: {type: string, enum: [initial, retry, failover]}
+              status: {type: string, enum: [failed, succeeded, skipped]}
+              reason: {type: string, maxLength: 128}
+              wait_min_ms: {type: integer, minimum: 0}
+              wait_max_ms: {type: integer, minimum: 0}
+            additionalProperties: false
+      additionalProperties: false
+    FailurePolicy:
+      type: object
+      required: [max_retries, initial_delay_ms, max_delay_ms, network_error, response_timeout, http_status]
+      properties:
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 1
+        initial_delay_ms:
+          type: integer
+          minimum: 0
+          maximum: 60000
+          default: 500
+        max_delay_ms:
+          type: integer
+          minimum: 0
+          maximum: 60000
+          default: 5000
+          description: Must be at least initial_delay_ms. A longer Retry-After prevents retrying this target and permits switching only if the error rule allows it.
+        response_start_timeout_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          description: Omission uses the global timeout. Zero is unlimited. Never imposes a deadline on a started stream.
+        thinking_signature_recovery:
+          type: boolean
+          default: true
+          description: On a recognized Claude Messages thinking signature HTTP 400, repair assistant history and retry the same target once within existing attempt limits. Explicit HTTP 400 rules prohibiting retries take precedence. Manual paths require a later step for the same target. Omission enables recovery; false disables it.
+        openai_reasoning_recovery:
+          type: boolean
+          default: true
+          description: On a recognized OpenAI Responses or Responses Compact reasoning HTTP 400, repair rejected reasoning ciphertext or identified item fields and retry the same target once within existing attempt limits. Preserves summaries, tool pairs, previous_response_id and compaction context. Explicit HTTP 400 rules prohibiting retries take precedence. Manual paths require a later step for the same target. Omission enables recovery; false disables it.
+        openai_function_output_recovery:
+          type: boolean
+          default: false
+          description: Opt-in. On a recognized OpenAI Responses or Responses Compact HTTP 400 for encrypted function or custom-tool output, drop encrypted output parts, keep plaintext, and retry the same target once within existing attempt limits. When a reasoning ciphertext repair already runs, this also clears those output parts in the same attempt. Tool call_id pairs and compaction stay intact. Explicit HTTP 400 rules prohibiting retries take precedence. Omission disables recovery; true enables it.
+        network_error:
+          $ref: "#/components/schemas/FailureAction"
+        response_timeout:
+          $ref: "#/components/schemas/FailureAction"
+        http_status:
+          type: object
+          propertyNames:
+            pattern: '^[45][0-9]{2}$'
+          additionalProperties:
+            $ref: "#/components/schemas/FailureAction"
+          description: Unlisted statuses stop, except recognized thinking signature, OpenAI reasoning, or opt-in encrypted function-output errors when the corresponding repair switch is enabled. Defaults permit retry and switching for 408, 429, 500, 502, 503, 504, 529; 401 and 403 permit switching only.
+      additionalProperties: false
+      description: A complete policy. Missing service policy inherits RoutingSettings.default_failure_policy; missing route policy uses each service policy (or the global policy). A route override replaces the entire inherited policy. Missing route failover inherits global strategy and max_attempts with switching enabled.
+    FailoverPolicy:
+      type: object
+      required: [enabled, strategy, max_attempts]
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        strategy:
+          type: string
+          enum: [retry_first, failover_first, failover_only]
+          default: retry_first
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 6
+          description: Total actual upstream inference requests, including the first request, retries and backups.
+      additionalProperties: false
+    ServiceOrder:
+      type: object
+      additionalProperties: false
+      required: [service_ids]
+      properties:
+        service_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            pattern: '^[a-z][a-z0-9_-]{2,95}$'
+    RoutingSettings:
+      type: object
+      required: [allow_unmatched_failover, strategy, max_attempts, default_failure_policy]
+      properties:
+        default_recovery_paths:
+          type: object
+          additionalProperties:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        default_failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
+        allow_unmatched_failover:
+          type: boolean
+          default: false
+        strategy:
+          type: string
+          enum: [retry_first, failover_first, failover_only]
+          default: retry_first
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 6
+      additionalProperties: false
+    RoutingSettingsPatch:
+      type: object
+      minProperties: 1
+      properties:
+        default_recovery_paths:
+          type: object
+          additionalProperties:
+            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        default_failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
+        allow_unmatched_failover:
+          type: boolean
+        strategy:
+          type: string
+          enum: [retry_first, failover_first, failover_only]
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 20
+      additionalProperties: false
+    RequestRecovery:
+      type: object
+      required: [delay_ms]
+      properties:
+        path_id: {type: string, maxLength: 128}
+        path_name: {type: string, maxLength: 128}
+        path_version: {type: string, maxLength: 128}
+        step_id: {type: string, maxLength: 128}
+        upstream_model:
+          type: string
+          maxLength: 256
+          description: Actual model used by this attempt. Privileged local metadata; never injected into public inference errors.
+        action:
+          type: string
+          enum: [retry, failover]
+        reason:
+          type: string
+          maxLength: 128
+        delay_ms:
+          type: integer
+          minimum: 0
+          maximum: 60000
+        stop_reason:
+          type: string
+          maxLength: 128
+      additionalProperties: false
     ServiceKind:
       type: string
       enum:
         - codex_subscription
+        - claude_subscription
+        - opencode_go
+        - opencode_zen
+        - kimi_coding
+        - glm_coding
+        - minimax_coding
         - newapi
         - openai
         - anthropic
@@ -2017,8 +2704,8 @@ components:
         - openai_compatible
         - custom
       description: >
-        Product-level service type. `codex_subscription` is browser-authorized;
-        every other current value is an HTTP API service.
+        Product-level service type. Codex and Claude subscriptions use OAuth.
+        Coding plans and other HTTP services use provider-issued API keys.
     HTTPServiceConnection:
       type: object
       required: [base_url, auth]
@@ -2045,7 +2732,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [openai_codex]
+          enum: [openai_codex, claude_code]
         status:
           type: string
           enum: [disconnected, authorizing, connected, needs_reauth, error]
@@ -2077,6 +2764,8 @@ components:
       type: object
       required: [id, name, kind, enabled, models, capabilities, created_at, updated_at]
       properties:
+        failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         name:
@@ -2107,7 +2796,7 @@ components:
       oneOf:
         - properties:
             kind:
-              const: codex_subscription
+              enum: [codex_subscription, claude_subscription]
           required: [subscription]
           not:
             required: [http]
@@ -2137,6 +2826,8 @@ components:
       type: object
       required: [name, kind]
       properties:
+        failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
         name:
           type: string
           minLength: 1
@@ -2158,7 +2849,7 @@ components:
       oneOf:
         - properties:
             kind:
-              const: codex_subscription
+              enum: [codex_subscription, claude_subscription]
           not:
             anyOf:
               - required: [http]
@@ -2190,6 +2881,10 @@ components:
       type: object
       minProperties: 1
       properties:
+        failure_policy:
+          oneOf:
+            - $ref: "#/components/schemas/FailurePolicy"
+            - type: "null"
         name:
           type: string
           minLength: 1
@@ -2304,6 +2999,12 @@ components:
         - priority
         - match
       properties:
+        recovery_path_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
+        failover:
+          $ref: "#/components/schemas/FailoverPolicy"
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         name:
@@ -2348,9 +3049,13 @@ components:
                     $ref: "#/components/schemas/AstrLinkAutoModel"
                 required: [model]
             not:
-              required: [targets]
+              anyOf:
+                - required: [targets]
+                - required: [recovery_path_id]
           else:
-            required: [targets]
+            oneOf:
+              - required: [targets]
+              - required: [recovery_path_id]
             properties:
               match:
                 not:
@@ -2365,6 +3070,12 @@ components:
       type: object
       required: [name, priority, match]
       properties:
+        recovery_path_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        failure_policy:
+          $ref: "#/components/schemas/FailurePolicy"
+        failover:
+          $ref: "#/components/schemas/FailoverPolicy"
         name:
           type: string
           minLength: 1
@@ -2408,9 +3119,13 @@ components:
                     $ref: "#/components/schemas/AstrLinkAutoModel"
                 required: [model]
             not:
-              required: [targets]
+              anyOf:
+                - required: [targets]
+                - required: [recovery_path_id]
           else:
-            required: [targets]
+            oneOf:
+              - required: [targets]
+              - required: [recovery_path_id]
             properties:
               match:
                 not:
@@ -2425,6 +3140,18 @@ components:
       type: object
       minProperties: 1
       properties:
+        recovery_path_id:
+          oneOf:
+            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            - type: "null"
+        failure_policy:
+          oneOf:
+            - $ref: "#/components/schemas/FailurePolicy"
+            - type: "null"
+        failover:
+          oneOf:
+            - $ref: "#/components/schemas/FailoverPolicy"
+            - type: "null"
         name:
           type: string
           minLength: 1
@@ -2509,8 +3236,13 @@ components:
       additionalProperties: false
     RouteCategory:
       type: object
-      required: [category_id, targets]
+      required: [category_id]
+      oneOf:
+        - required: [targets]
+        - required: [recovery_path_id]
       properties:
+        recovery_path_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         category_id:
           type: string
           minLength: 1
@@ -3587,6 +4319,15 @@ components:
     RequestStatus:
       type: string
       enum: [pending, succeeded, failed, cancelled, blocked]
+    SessionStatus:
+      type: string
+      enum: [pending, succeeded, failed, cancelled, blocked, interrupted]
+      description: >
+        Outcome of a whole conversation, taken from its last call. interrupted
+        has no record-level counterpart: the conversation delivered at least
+        one successful answer and then the client abandoned the last stream,
+        so a stopped agent loop is not reported as if nothing had run.
+        cancelled is kept for a conversation that produced nothing.
     RequestRecord:
       type: object
       required:
@@ -3616,6 +4357,8 @@ components:
         - input_preview
         - events
       properties:
+        recovery:
+          $ref: "#/components/schemas/RequestRecovery"
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         parent_request_id:
@@ -3648,6 +4391,11 @@ components:
         requested_model:
           type: [string, "null"]
           maxLength: 256
+        reasoning_effort:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 32
+          description: Explicit client-requested reasoning level, normalized to lowercase. Null for unspecified levels and historical records; never inferred from model names or token budgets.
         streaming:
           type: boolean
         route_id:
@@ -3715,7 +4463,26 @@ components:
           description: |
             1-based user turn within the session. Every model call of one agent
             loop shares the same value, so a session's turn_count can be far below
-            its call_count. Null when the protocol has no user turns or on legacy rows.
+            its call_count. The first record of a session is turn 1 whatever its
+            history holds; a later record starts a new turn when its history has
+            more user messages than the record it links to, or the newest user
+            text changed. Null when the protocol has no user turns or on legacy rows.
+        turn_user_messages:
+          type: [integer, "null"]
+          minimum: 0
+          description: |
+            Number of user messages in this request's history (cumulative for
+            stateful Responses chains). The next linked request compares its own
+            count against this. Null whenever turn_index is null.
+        turn_user_fingerprint:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 256
+          description: |
+            Keyed fingerprint of this request's newest user text, compared by the
+            next linked request to notice a new prompt at an unchanged message
+            count (a harness that compacted history). Null without a fingerprint
+            key or when turn_index is null. Reveals nothing about the text.
         session_link:
           oneOf:
             - $ref: "#/components/schemas/SessionLink"
@@ -3830,10 +4597,15 @@ components:
           type: integer
           minimum: 1
         status:
-          $ref: "#/components/schemas/RequestStatus"
+          $ref: "#/components/schemas/SessionStatus"
         requested_model:
           type: [string, "null"]
           maxLength: 256
+        reasoning_effort:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 32
+          description: Explicit client-requested reasoning level, normalized to lowercase. Null for unspecified levels and historical records; never inferred from model names or token budgets.
         input_protocol:
           $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
         service_id:
@@ -4269,7 +5041,8 @@ components:
       additionalProperties: false
     AuthorizationFlow:
       type: string
-      enum: [browser, device_code]
+      enum: [browser, device_code, authorization_code]
+      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback.
     AuthorizationStartRequest:
       type: object
       required: [flow]
@@ -4297,7 +5070,7 @@ components:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         provider:
           type: string
-          enum: [openai_codex]
+          enum: [openai_codex, claude_code]
         status:
           type: string
           enum: [pending, completed, cancelled, expired, failed]
@@ -4327,7 +5100,7 @@ components:
               status:
                 const: pending
               flow:
-                const: browser
+                enum: [browser, authorization_code]
             required: [status, flow]
           then:
             required: [authorization_url]

@@ -18,8 +18,6 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
-	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
-	"github.com/QuantumNous/astrlink/core/internal/automodel"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
@@ -124,32 +122,6 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		autoClassifierRegistry, err := automodel.NewRegistry(
-			filepath.Join(dataDirectory, "auto-classifier"),
-		)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure local classifier model: %v", err)
-			os.Exit(1)
-		}
-		if classifierWorkerPath == "" {
-			classifierWorkerPath, err = autoclassifier.SiblingExecutablePath()
-			if err != nil {
-				_ = store.Close()
-				logger.Printf("locate local classifier worker: %v", err)
-				os.Exit(1)
-			}
-		}
-		classifierWorker, err := autoclassifier.New(autoclassifier.Config{
-			ExecutablePath: classifierWorkerPath,
-			Model:          autoClassifierRegistry,
-		})
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure local classifier worker: %v", err)
-			os.Exit(1)
-		}
-		defer classifierWorker.Close()
 		privacyWorker, err := privacyworker.New(privacyworker.Config{
 			ExecutablePath: privacyWorkerPath,
 			Model:          privacyModel,
@@ -186,8 +158,17 @@ func main() {
 			logger.Printf("configure subscription manager: %v", err)
 			os.Exit(1)
 		}
+		resolver, err := endpoint.NewStoreResolver(store)
+		if err != nil {
+			_ = store.Close()
+			logger.Printf("configure persistent endpoint resolver: %v", err)
+			os.Exit(1)
+		}
+		resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
+		resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
 		handler, err := controlapi.NewWithDependencies(config.Version, controlapi.Dependencies{
 			ServiceStore:       store,
+			RecoveryResolver:   resolver,
 			RouteStore:         store,
 			AccessTokenManager: accessTokenManager,
 			PolicyStore:        store,
@@ -200,8 +181,6 @@ func main() {
 			AuditBlobs:         store,
 			Subscriptions:      subscriptionManager,
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
-			AutoClassifiers:    autoClassifierRegistry,
-			AutoClassifier:     classifierWorker,
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,
@@ -216,14 +195,6 @@ func main() {
 			_, err := store.SweepExpiredAuditData(ctx)
 			return err
 		}
-		resolver, err := endpoint.NewStoreResolver(store)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure persistent endpoint resolver: %v", err)
-			os.Exit(1)
-		}
-		resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
-		resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
 		inferenceHandler, err := ingress.NewProduction(ingress.Dependencies{
 			Resolver:   resolver,
 			Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager),
@@ -249,7 +220,6 @@ func main() {
 			RecordLogger:             logger.Printf,
 			AllowedHost:              config.InferenceListen,
 			ConversionEngine:         conversionEngine,
-			Classifier:               classifierWorker,
 			MaxConcurrentInspections: maxConcurrentInspections,
 			ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
 		})

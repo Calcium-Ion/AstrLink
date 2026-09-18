@@ -17,6 +17,7 @@ core/coverage.out
 apps/desktop/node_modules/
 apps/desktop/dist/
 apps/desktop/src-tauri/icons/.branding-hash
+apps/desktop/src-tauri/icons/tray/.branding-hash
 
 # Local desktop installers (unsigned debug/dev DMGs)
 /*.dmg

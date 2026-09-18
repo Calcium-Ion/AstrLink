@@ -12,11 +12,11 @@ func TestLookupScopesAndDirections(t *testing.T) {
 	base := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
 	index := New(Options{})
 	index.Put(Record{
-		SessionID: "s-old", Principal: "tok-a", At: base.Add(-2 * time.Hour), TurnIndex: 1, HasTurnIndex: true,
+		SessionID: "s-old", Principal: "tok-a", At: base.Add(-2 * time.Hour), Turn: &convo.TurnState{Index: 1, UserMessages: 1},
 		Cursors: []convo.Cursor{{Kind: convo.KindEchoID, Direction: convo.DirectionOut, Value: "call_old"}},
 	})
 	index.Put(Record{
-		SessionID: "s-new", Principal: "tok-a", At: base.Add(-1 * time.Hour), TurnIndex: 2, HasTurnIndex: true,
+		SessionID: "s-new", Principal: "tok-a", At: base.Add(-1 * time.Hour), Turn: &convo.TurnState{Index: 2, UserMessages: 2, LastUserFingerprint: "fp1_user"},
 		Cursors: []convo.Cursor{
 			{Kind: convo.KindEchoID, Direction: convo.DirectionOut, Value: "call_new"},
 			{Kind: convo.KindExplicit, Direction: convo.DirectionIn, Value: "conv_1"},
@@ -26,8 +26,11 @@ func TestLookupScopesAndDirections(t *testing.T) {
 	ctx := context.Background()
 
 	match, ok, err := index.Lookup(ctx, "tok-a", convo.KindEchoID, []string{"call_old", "call_new"}, convo.Scope{SamePrincipal: true})
-	if err != nil || !ok || match.SessionID != "s-new" || match.TurnIndex != 2 || match.Value != "call_new" {
+	if err != nil || !ok || match.SessionID != "s-new" || match.Value != "call_new" {
 		t.Fatalf("most recent record must win: %+v %v %v", match, ok, err)
+	}
+	if match.Turn == nil || *match.Turn != (convo.TurnState{Index: 2, UserMessages: 2, LastUserFingerprint: "fp1_user"}) {
+		t.Fatalf("Turn = %+v, want the stored state", match.Turn)
 	}
 	if _, ok, _ := index.Lookup(ctx, "tok-b", convo.KindEchoID, []string{"call_new"}, convo.Scope{SamePrincipal: true}); ok {
 		t.Fatal("other principal must not match")
@@ -51,15 +54,15 @@ func TestLookupScopesAndDirections(t *testing.T) {
 	// A newer record that consumed resp_1 must not outrank the record that
 	// produced it: the continuation builds on the producer's turn.
 	index.Put(Record{
-		SessionID: "s-producer", Principal: "tok-a", At: base.Add(-50 * time.Minute), TurnIndex: 1, HasTurnIndex: true,
+		SessionID: "s-producer", Principal: "tok-a", At: base.Add(-50 * time.Minute), Turn: &convo.TurnState{Index: 1, UserMessages: 1},
 		Cursors: []convo.Cursor{{Kind: convo.KindExplicit, Direction: convo.DirectionOut, Value: "resp_1"}},
 	})
 	index.Put(Record{
-		SessionID: "s-consumer", Principal: "tok-a", At: base.Add(-40 * time.Minute), TurnIndex: 7, HasTurnIndex: true,
+		SessionID: "s-consumer", Principal: "tok-a", At: base.Add(-40 * time.Minute), Turn: &convo.TurnState{Index: 7, UserMessages: 7},
 		Cursors: []convo.Cursor{{Kind: convo.KindExplicit, Direction: convo.DirectionIn, Value: "resp_1"}},
 	})
 	match, ok, _ = index.Lookup(ctx, "tok-a", convo.KindExplicit, []string{"resp_1"}, convo.Scope{})
-	if !ok || match.SessionID != "s-producer" || match.TurnIndex != 1 {
+	if !ok || match.SessionID != "s-producer" || match.Turn == nil || match.Turn.Index != 1 {
 		t.Fatalf("producer must outrank newer consumer: %+v", match)
 	}
 }

@@ -1,28 +1,36 @@
 import type { ReactNode } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export function PageHeader({
   actions,
+  actionsClassName,
   back,
+  className,
   description,
+  headingLevel = 1,
   title,
   titleId,
   variant = "plain",
 }: {
   actions?: ReactNode;
+  actionsClassName?: string;
   back?: {
     label: string;
     onClick: () => void;
   };
+  // Lets a page tighten the default spacing when its own toolbar follows.
+  className?: string;
   description?: ReactNode;
+  headingLevel?: 1 | 2;
   title: string;
   titleId?: string;
   variant?: "card" | "plain" | "compact";
 }) {
   const compact = variant === "compact";
+  const Heading = headingLevel === 1 ? "h1" : "h2";
   return (
     <header
       className={cn(
@@ -35,6 +43,7 @@ export function PageHeader({
           : !compact
             ? "mb-5 border-b pb-4"
             : null,
+        className,
       )}
       data-slot="page-header"
     >
@@ -65,7 +74,7 @@ export function PageHeader({
             /
           </span>
         ) : null}
-        <h1
+        <Heading
           className={cn(
             "font-semibold tracking-tight",
             compact ? "truncate text-sm" : "text-xl",
@@ -73,7 +82,7 @@ export function PageHeader({
           id={titleId}
         >
           {title}
-        </h1>
+        </Heading>
         {compact || !description ? null : (
           <p className="mt-1 max-w-[64ch] truncate text-xs text-text-secondary [&_code]:text-text-secondary">
             {description}
@@ -81,7 +90,9 @@ export function PageHeader({
         )}
       </div>
       {actions ? (
-        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+        <div className={cn("flex shrink-0 items-center gap-2", actionsClassName)}>
+          {actions}
+        </div>
       ) : null}
     </header>
   );

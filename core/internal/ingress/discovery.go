@@ -112,6 +112,15 @@ func (handler *Handler) aggregateModelDiscovery(
 			return
 		}
 	}
+	if session := recordSessionFromContext(request.Context()); session != nil {
+		decision := "allow"
+		for _, result := range results {
+			if result.warning != "" {
+				decision = "warn"
+			}
+		}
+		session.notePrivacyDecision(decision, contract.RequestStatusSucceeded)
+	}
 	mergeInput := results
 	if lister, ok := handler.resolver.(endpoint.AliasLister); ok {
 		mappings, aliasErr := lister.ListAliasModelMappings(request.Context(), classified.Protocol)
@@ -171,6 +180,13 @@ func (handler *Handler) aggregateModelDiscovery(
 		handler.writeDiscoveryFailure(writer, request, classified, results)
 		return
 	}
+	visible := merged[:0]
+	for _, entry := range merged {
+		if entry.id != contract.AstrLinkAutoModelID && entry.id != "models/"+contract.AstrLinkAutoModelID {
+			visible = append(visible, entry)
+		}
+	}
+	merged = visible
 	body, err := encodeDiscoveryList(classified.Protocol, merged)
 	if err != nil {
 		writeInferenceError(
@@ -246,7 +262,9 @@ func (handler *Handler) fetchModelDiscovery(
 
 	fetchContext, cancelFetch := context.WithTimeout(request.Context(), defaultDiscoveryTimeout)
 	defer cancelFetch()
-	fetchRequest := request.Clone(fetchContext)
+	// Discovery fans out concurrently; only the aggregator may mutate the
+	// client request record. Policy evaluation still runs for each service.
+	fetchRequest := request.Clone(withRecordSession(fetchContext, nil))
 	fetchRequest.Body = http.NoBody
 	fetchRequest.GetBody = nil
 	fetchRequest.ContentLength = 0
@@ -294,7 +312,7 @@ func (handler *Handler) fetchModelDiscovery(
 			endpointID: candidate.Service.ID,
 		}}
 	}
-	if candidate.Service.Kind.IsSubscription() {
+	if candidate.Service.Kind == contract.ServiceKindCodexSubscription {
 		fetchRequest.URL.Path = strings.TrimPrefix(fetchRequest.URL.Path, "/v1")
 		if fetchRequest.URL.RawPath != "" {
 			fetchRequest.URL.RawPath = strings.TrimPrefix(fetchRequest.URL.RawPath, "/v1")
@@ -350,7 +368,7 @@ func (handler *Handler) fetchModelDiscovery(
 		}}
 	}
 	discoveryBody := recorder.body.Bytes()
-	if candidate.Service.Kind.IsSubscription() {
+	if candidate.Service.Kind == contract.ServiceKindCodexSubscription {
 		list, decodeErr := subscription.DecodeCodexModels(discoveryBody)
 		if decodeErr != nil {
 			health.Failure()

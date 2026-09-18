@@ -2,9 +2,15 @@ import type { HTMLAttributes } from "react";
 
 import { cn } from "@/lib/utils";
 
-export type StatusTone = "negative" | "neutral" | "pending" | "positive";
+export type StatusTone =
+  | "blocked"
+  | "negative"
+  | "neutral"
+  | "pending"
+  | "positive";
 
 const toneClasses: Record<StatusTone, string> = {
+  blocked: "bg-blocked",
   negative: "bg-destructive",
   neutral: "bg-muted-foreground",
   pending: "bg-warning",
@@ -24,6 +30,7 @@ export function StatusDot({
         toneClasses[tone],
         className,
       )}
+      data-tone={tone}
       {...props}
     />
   );

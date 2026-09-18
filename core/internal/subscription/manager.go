@@ -23,13 +23,16 @@ type authorizationAttempt struct {
 	completed bool
 }
 
-// Manager owns SubscriptionAccount lifecycle for openai_codex.
+// Manager owns subscription lifecycle and isolates each provider's OAuth client.
 type Manager struct {
 	mu                      sync.Mutex
 	accounts                AccountStore
 	credentials             accountauth.AccountCredentialStore
 	sessions                *accountauth.SessionManager
 	tokens                  *accountauth.TokenSource
+	claudeSessions          *accountauth.SessionManager
+	claudeTokens            *accountauth.TokenSource
+	claudeConfig            accountauth.OAuthConfig
 	provider                *CodexProvider
 	now                     func() time.Time
 	newID                   func() (contract.SubscriptionAccountID, error)
@@ -47,7 +50,7 @@ type usageCacheEntry struct {
 	until time.Time
 }
 
-func NewManager(accounts AccountStore, credentials accountauth.AccountCredentialStore, oauth accountauth.OAuthConfig) (*Manager, error) {
+func NewManager(accounts AccountStore, credentials accountauth.AccountCredentialStore, oauth accountauth.OAuthConfig, claudeOverrides ...accountauth.OAuthConfig) (*Manager, error) {
 	if accounts == nil {
 		return nil, fmt.Errorf("subscription account store is required")
 	}
@@ -71,7 +74,41 @@ func NewManager(accounts AccountStore, credentials accountauth.AccountCredential
 	tokenClient := accountauth.NewTokenClient(oauth)
 	manager.tokens = accountauth.NewTokenSource(credentials, tokenClient, oauth.RefreshSkew, now)
 	manager.tokens.SetHooks(manager.onTokenRotated, manager.onInvalidGrant)
+	claude := accountauth.OAuthConfig{HTTPClient: oauth.HTTPClient, Now: now}
+	if len(claudeOverrides) > 0 {
+		claude = claudeOverrides[0]
+	}
+	claude.Provider = contract.SubscriptionProviderClaudeCode
+	claude = claude.Normalize()
+	manager.claudeConfig = claude
+	manager.claudeSessions = accountauth.NewSessionManager(claude, credentials, manager.persistAuthorizedTokens)
+	manager.claudeTokens = accountauth.NewTokenSource(credentials, accountauth.NewTokenClient(claude), claude.RefreshSkew, now)
+	manager.claudeTokens.SetHooks(manager.onTokenRotated, manager.onInvalidGrant)
 	return manager, nil
+}
+
+func (manager *Manager) sessionsFor(provider contract.SubscriptionProvider) *accountauth.SessionManager {
+	if provider == contract.SubscriptionProviderClaudeCode {
+		return manager.claudeSessions
+	}
+	return manager.sessions
+}
+
+func (manager *Manager) tokensFor(provider contract.SubscriptionProvider) *accountauth.TokenSource {
+	if provider == contract.SubscriptionProviderClaudeCode {
+		return manager.claudeTokens
+	}
+	return manager.tokens
+}
+
+func (manager *Manager) invalidateTokens(id contract.ServiceID) {
+	manager.tokens.Invalidate(id)
+	manager.claudeTokens.Invalidate(id)
+}
+
+func (manager *Manager) activateTokens(id contract.ServiceID) {
+	manager.tokens.Activate(id)
+	manager.claudeTokens.Activate(id)
 }
 
 func (manager *Manager) AuthorizationBoundary() string {
@@ -106,11 +143,16 @@ func (manager *Manager) BeginAuthorization(
 	id contract.ServiceID,
 	flow contract.AuthorizationFlow,
 ) (contract.AuthorizationSession, error) {
+	account, err := manager.Get(ctx, id)
+	if err != nil {
+		return contract.AuthorizationSession{}, err
+	}
+	sessions := manager.sessionsFor(account.Provider)
 	attemptID, err := manager.reserveAuthorizationAttempt(ctx, id)
 	if err != nil {
 		return contract.AuthorizationSession{}, err
 	}
-	manager.tokens.Invalidate(id)
+	manager.invalidateTokens(id)
 	previous, err := manager.markAuthorizing(ctx, id, attemptID)
 	if err != nil {
 		manager.abortAuthorizationAttempt(
@@ -120,7 +162,7 @@ func (manager *Manager) BeginAuthorization(
 		)
 		return contract.AuthorizationSession{}, err
 	}
-	session, err := manager.sessions.Begin(ctx, id, flow)
+	session, err := sessions.Begin(ctx, id, flow)
 	if err != nil {
 		manager.rollbackAuthorizationAttempt(ctx, id, attemptID, previous)
 		if errors.Is(err, accountauth.ErrCredentialStoreUnavailable) {
@@ -129,7 +171,7 @@ func (manager *Manager) BeginAuthorization(
 		return contract.AuthorizationSession{}, err
 	}
 	if !manager.finishAuthorizationStart(id, attemptID, session.ID) {
-		_, _ = manager.sessions.Cancel(ctx, id)
+		_, _ = sessions.Cancel(ctx, id)
 		return contract.AuthorizationSession{}, fmt.Errorf("authorization was interrupted by an account lifecycle change")
 	}
 	return session, nil
@@ -140,6 +182,9 @@ func (manager *Manager) GetAuthorization(
 	id contract.ServiceID,
 ) (contract.AuthorizationSession, bool) {
 	session, ok := manager.sessions.Get(id)
+	if !ok {
+		session, ok = manager.claudeSessions.Get(id)
+	}
 	if !ok {
 		manager.reconcileEndedAuthorization(ctx, id, &contract.SubscriptionError{
 			Code:    accountauth.ErrCodeSessionInterrupted,
@@ -179,7 +224,11 @@ func (manager *Manager) reconcileEndedAuthorization(
 }
 
 func (manager *Manager) CancelAuthorization(ctx context.Context, id contract.ServiceID) (contract.AuthorizationSession, error) {
-	session, err := manager.sessions.Cancel(ctx, id)
+	account, err := manager.Get(ctx, id)
+	if err != nil {
+		return contract.AuthorizationSession{}, err
+	}
+	session, err := manager.sessionsFor(account.Provider).Cancel(ctx, id)
 	if err != nil {
 		return session, err
 	}
@@ -217,8 +266,9 @@ func (manager *Manager) Logout(ctx context.Context, id contract.SubscriptionAcco
 	defer manager.endLifecycleTransition(id)
 
 	manager.sessions.CancelAllForService(id)
+	manager.claudeSessions.CancelAllForService(id)
 	manager.clearAuthorizationAttempt(id)
-	manager.tokens.Invalidate(id)
+	manager.invalidateTokens(id)
 	manager.clearUsageCache(id)
 	if err := manager.credentials.Delete(ctx, id); err != nil {
 		return contract.SubscriptionAccount{}, fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
@@ -257,8 +307,9 @@ func (manager *Manager) CleanupCredentialsForDelete(ctx context.Context, id cont
 	defer manager.endLifecycleTransition(id)
 
 	manager.sessions.CancelAllForService(id)
+	manager.claudeSessions.CancelAllForService(id)
 	manager.clearAuthorizationAttempt(id)
-	manager.tokens.Invalidate(id)
+	manager.invalidateTokens(id)
 	manager.clearUsageCache(id)
 	if err := manager.credentials.Delete(ctx, id); err != nil {
 		return fmt.Errorf("%w: %v", ErrCredentialUnavailable, err)
@@ -283,7 +334,7 @@ func (manager *Manager) AccessToken(ctx context.Context, id contract.Subscriptio
 		}
 		return accountauth.AccountTokens{}, fmt.Errorf("subscription account is not connected")
 	}
-	return manager.tokens.AccessToken(ctx, id)
+	return manager.tokensFor(account.Provider).AccessToken(ctx, id)
 }
 
 func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsage, error) {
@@ -300,7 +351,16 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w", ErrNotConnected)
 	}
-	usage, err := manager.provider.Usage(ctx, tokens)
+	account, err := manager.Get(ctx, id)
+	if err != nil {
+		return contract.SubscriptionUsage{}, err
+	}
+	var usage contract.SubscriptionUsage
+	if account.Provider == contract.SubscriptionProviderClaudeCode {
+		usage, err = manager.claudeUsage(ctx, tokens)
+	} else {
+		usage, err = manager.provider.Usage(ctx, tokens)
+	}
 	if err != nil {
 		return contract.SubscriptionUsage{}, err
 	}
@@ -316,6 +376,13 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 }
 
 func (manager *Manager) ConsumeReset(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsageReset, error) {
+	account, err := manager.Get(ctx, id)
+	if err != nil {
+		return contract.SubscriptionUsageReset{}, err
+	}
+	if account.Provider != contract.SubscriptionProviderOpenAICodex {
+		return contract.SubscriptionUsageReset{}, ErrResetUnavailable
+	}
 	tokens, err := manager.AccessToken(ctx, id)
 	if err != nil {
 		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w", ErrNotConnected)
@@ -349,6 +416,21 @@ func (manager *Manager) Provider() *CodexProvider { return manager.provider }
 
 func (manager *Manager) APIBaseURL() string { return manager.provider.APIBaseURL() }
 
+func (manager *Manager) APIBaseURLFor(provider contract.SubscriptionProvider) string {
+	if provider == contract.SubscriptionProviderClaudeCode {
+		return manager.claudeConfig.APIBaseURL
+	}
+	return manager.APIBaseURL()
+}
+
+func (manager *Manager) CompleteAuthorizationCode(ctx context.Context, id contract.ServiceID, sessionID contract.AuthorizationSessionID, code string) (contract.AuthorizationSession, error) {
+	account, err := manager.Get(ctx, id)
+	if err != nil {
+		return contract.AuthorizationSession{}, err
+	}
+	return manager.sessionsFor(account.Provider).CompleteCode(ctx, id, sessionID, code)
+}
+
 func (manager *Manager) persistAuthorizedTokens(ctx context.Context, session contract.AuthorizationSession, tokens accountauth.AccountTokens) error {
 	if session.ServiceID == "" {
 		return fmt.Errorf("authorization session is missing service_id")
@@ -356,13 +438,13 @@ func (manager *Manager) persistAuthorizedTokens(ctx context.Context, session con
 	if err := manager.reserveProviderAccount(ctx, session, tokens.AccountID); err != nil {
 		return err
 	}
-	reservedProviderID := tokens.AccountID
+	reservedProviderID := string(session.Provider) + ":" + tokens.AccountID
 	defer manager.releaseProviderAccount(reservedProviderID, session.ServiceID)
 
 	// An explicit authorization replaces any older credential generation. The
 	// token-source barrier waits without holding manager.mu, so an in-flight
 	// refresh cannot overwrite the newly authorized credentials.
-	manager.tokens.Invalidate(session.ServiceID)
+	manager.invalidateTokens(session.ServiceID)
 	if err := manager.credentials.Put(ctx, session.ServiceID, tokens); err != nil {
 		return err
 	}
@@ -395,7 +477,7 @@ func (manager *Manager) persistAuthorizedTokens(ctx context.Context, session con
 		_ = manager.credentials.Delete(ctx, session.ServiceID)
 		return err
 	}
-	manager.tokens.Activate(session.ServiceID)
+	manager.activateTokens(session.ServiceID)
 	return nil
 }
 
@@ -496,7 +578,7 @@ func (manager *Manager) rollbackAuthorizationAttempt(
 		previous.UpdatedAt = manager.now().UTC()
 		if manager.accounts.PutAccount(ctx, previous) == nil &&
 			previous.Status == contract.SubscriptionStatusConnected {
-			manager.tokens.Activate(id)
+			manager.activateTokens(id)
 		}
 	}
 	manager.mu.Unlock()
@@ -512,7 +594,7 @@ func (manager *Manager) abortAuthorizationAttempt(
 	if attempt, ok := manager.authorizationAttempts[id]; ok && attempt.id == attemptID {
 		delete(manager.authorizationAttempts, id)
 		if reactivate && !manager.lifecycleTransitions[id] {
-			manager.tokens.Activate(id)
+			manager.activateTokens(id)
 		}
 	}
 }
@@ -580,8 +662,12 @@ func (manager *Manager) reserveProviderAccount(
 	if !ok || (attempt.sessionID != "" && attempt.sessionID != session.ID) {
 		return fmt.Errorf("authorization session was superseded")
 	}
-	if _, err := manager.accounts.GetAccount(ctx, session.ServiceID); err != nil {
+	account, err := manager.accounts.GetAccount(ctx, session.ServiceID)
+	if err != nil {
 		return err
+	}
+	if account.Provider != session.Provider {
+		return fmt.Errorf("authorization provider does not match service")
 	}
 	accounts, err := manager.accounts.ListAccounts(ctx)
 	if err != nil {
@@ -589,16 +675,17 @@ func (manager *Manager) reserveProviderAccount(
 	}
 	for _, existing := range accounts {
 		if existing.ID != session.ServiceID && providerAccountID != "" &&
-			existing.ProviderAccountID == providerAccountID {
+			existing.Provider == session.Provider && existing.ProviderAccountID == providerAccountID {
 			return fmt.Errorf("%w: service %q", ErrAccountAlreadyConnected, existing.ID)
 		}
 	}
-	if owner, exists := manager.pendingProviderAccounts[providerAccountID]; providerAccountID != "" &&
+	key := string(session.Provider) + ":" + providerAccountID
+	if owner, exists := manager.pendingProviderAccounts[key]; providerAccountID != "" &&
 		exists && owner != session.ServiceID {
 		return fmt.Errorf("%w: service %q", ErrAccountAlreadyConnected, owner)
 	}
 	if providerAccountID != "" {
-		manager.pendingProviderAccounts[providerAccountID] = session.ServiceID
+		manager.pendingProviderAccounts[key] = session.ServiceID
 	}
 	return nil
 }

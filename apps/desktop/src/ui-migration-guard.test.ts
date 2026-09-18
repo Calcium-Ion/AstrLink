@@ -21,7 +21,12 @@ const migratedSources = [
   "RequestRecords.tsx",
   "RequestTrajectory.tsx",
   "RouteManager.tsx",
+  "AutoRoutesPanel.tsx",
+  "FixedRoutesPanel.tsx",
+  "RoutingSettingsPanel.tsx",
   "SafetyPolicy.tsx",
+  "TrajectoryInspector.tsx",
+  "TrajectoryInspectorWindow.tsx",
   "ServiceManager.tsx",
   "ServiceModelsEditor.tsx",
   "SettingsCenter.tsx",
@@ -33,6 +38,8 @@ const migratedSources = [
   "components/EmptyState.tsx",
   "components/Field.tsx",
   "components/FormMessage.tsx",
+  "components/LoadingState.tsx",
+  "components/Metric.tsx",
   "components/Panel.tsx",
   "components/SectionKicker.tsx",
   "components/StatusDot.tsx",
@@ -112,10 +119,12 @@ describe("paper/hairline design system", () => {
     expect(globals).toContain("--destructive: #c2384f;");
     expect(globals).toContain("--success: #1f9d6b;");
     expect(globals).toContain("--warning: #d2911a;");
+    expect(globals).toContain("--blocked: #9b4d73;");
     expect(globals).toContain("--violet: #2f6fe0;");
     expect(globals).toContain("--color-primary: var(--primary);");
     expect(globals).toContain("--color-success: var(--success);");
     expect(globals).toContain("--color-warning: var(--warning);");
+    expect(globals).toContain("--color-blocked: var(--blocked);");
     expect(globals).toContain("--color-violet: var(--violet);");
   });
 
@@ -125,8 +134,8 @@ describe("paper/hairline design system", () => {
 
     // Logo art stays indigo / periwinkle. UI brand ink is an independent
     // pure blue and must not be retied to those logo stops.
-    expect(logo).toContain("#26336F");
-    expect(logo).toContain("#768DF6");
+    expect(logo).toContain("#304074");
+    expect(logo).toContain("#7F8FE8");
     expect(globals).toContain("--primary: #1d4d87;");
     expect(globals).toContain("--tide: #3b82f6;");
     expect(globals).toContain("--color-tide: var(--tide);");

@@ -138,6 +138,33 @@ func TestRequestSessionControlAPI(t *testing.T) {
 	if len(detail.Turns) != 1 || detail.Turns[0].ID != "request_sess" {
 		t.Fatalf("detail=%#v", detail)
 	}
+	for _, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIModels, contract.ProtocolGoogleModels} {
+		discovery := record
+		discovery.ID = contract.RequestID("request_discovery_" + strings.Split(string(protocol), ".")[0])
+		discovery.SessionID = nil
+		discovery.InputProtocol = protocol
+		if err := store.InsertRequestRecord(context.Background(), discovery); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		kind  string
+		count int
+	}{{"inference", 1}, {"discovery", 2}, {"", 3}} {
+		response := requestRecordHTTP(t, handler, http.MethodGet, RequestSessionsPath+"?kind="+test.kind, "", "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("kind=%s status=%d body=%s", test.kind, response.Code, response.Body.String())
+		}
+		var page requestSessionPageResponse
+		decode(t, response, &page)
+		if len(page.Items) != test.count {
+			t.Fatalf("kind=%s page=%#v", test.kind, page)
+		}
+	}
+	response = requestRecordHTTP(t, handler, http.MethodGet, RequestSessionsPath+"?kind=invalid", "", "")
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid kind status=%d", response.Code)
+	}
 }
 
 func requestRecordHTTP(

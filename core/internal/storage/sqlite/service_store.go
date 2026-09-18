@@ -42,7 +42,7 @@ func (store *Store) CreateService(
 	defer rollbackOnError(transaction, &err)
 	timestamp := now.Format(time.RFC3339Nano)
 	if _, err = transaction.ExecContext(ctx,
-		`INSERT INTO services (id, document_json, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO services (id, document_json, created_at, updated_at, sort_position) VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_position), -1) + 1 FROM services))`,
 		service.ID, string(document), service.CreatedAt.UTC().Format(time.RFC3339Nano), timestamp,
 	); err != nil {
 		var exists int
@@ -213,13 +213,6 @@ func (store *Store) DeleteService(ctx context.Context, id contract.ServiceID, ex
 	}
 	if entityTag([]byte(document)) != expectedETag {
 		return fmt.Errorf("%w: service %q", storagecontract.ErrPrecondition, id)
-	}
-	referenced, referenceErr := routeReferencesEndpoint(ctx, transaction, id)
-	if referenceErr != nil {
-		return referenceErr
-	}
-	if referenced {
-		return fmt.Errorf("%w: service %q is referenced by a route", storagecontract.ErrConflict, id)
 	}
 	if _, err = transaction.ExecContext(ctx, `DELETE FROM services WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete service: %w", err)

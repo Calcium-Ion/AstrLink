@@ -328,6 +328,11 @@
     "HTTPServiceKind": {
       "type": "string",
       "enum": [
+        "opencode_go",
+        "opencode_zen",
+        "kimi_coding",
+        "glm_coding",
+        "minimax_coding",
         "newapi",
         "openai",
         "anthropic",
@@ -335,7 +340,7 @@
         "openai_compatible",
         "custom"
       ],
-      "description": "HTTP service adapter ID. `custom` is the extension adapter; routing must use capabilities, never infer protocol support from service kind."
+      "description": "HTTP service adapter ID. Capabilities declare enabled protocols. OpenCode adapters additionally select the model's native protocol from their published endpoint tables."
     },
     "CredentialRef": {
       "type": "string",

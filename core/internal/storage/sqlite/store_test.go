@@ -210,7 +210,7 @@ func TestEndpointUpdateUsesETagAndRotatesOrDeletesCredentialAtomically(t *testin
 	}
 }
 
-func TestEndpointDeleteChecksETagRouteReferencesAndCredentialCascade(t *testing.T) {
+func TestEndpointDeleteChecksETagIgnoresRetiredRoutesAndCascadesCredentials(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
 	defer store.Close()
 	ctx := context.Background()
@@ -235,12 +235,6 @@ func TestEndpointDeleteChecksETagRouteReferencesAndCredentialCascade(t *testing.
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`INSERT INTO routes (id, document_json, created_at, updated_at) VALUES (?, ?, ?, ?)`, route.ID, document, "now", "now"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.DeleteEndpoint(ctx, created.Endpoint.ID, created.ETag); !errors.Is(err, storagecontract.ErrConflict) {
-		t.Fatalf("referenced DeleteEndpoint error = %v", err)
-	}
-	if _, err := store.db.Exec(`DELETE FROM routes WHERE id = ?`, route.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.DeleteEndpoint(ctx, created.Endpoint.ID, created.ETag); err != nil {

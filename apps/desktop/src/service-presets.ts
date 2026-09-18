@@ -5,13 +5,9 @@ import type {
   ServiceCapability,
 } from "./service-model";
 
-export type HTTPServicePresetID =
-  | "newapi"
-  | "openai_compatible"
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "custom";
+export type HTTPServicePresetID = HTTPServiceKind;
+
+export const codingPlanPresetIDs: HTTPServicePresetID[] = ["opencode_go", "opencode_zen", "kimi_coding", "glm_coding", "minimax_coding"];
 
 export interface ProtocolDescriptor {
   id: string;
@@ -32,6 +28,7 @@ export interface HTTPServicePreset {
   headerName: string;
   capabilities: ServiceCapability[];
   advancedOnStart: boolean;
+  models?: string[];
 }
 
 export const localConversionPassthrough = "none";
@@ -185,6 +182,34 @@ const profileDefinitions: Readonly<
     }
   >
 > = {
+  opencode_go: {
+    id: "opencode_go", label: "OpenCode Go", description: "", defaultName: "OpenCode Go",
+    kind: "opencode_go", baseURL: "https://opencode.ai/zen/go/v1", baseURLPlaceholder: "https://opencode.ai/zen/go/v1",
+    authScheme: "bearer", headerName: "", capabilityIDs: ["openai.responses", "openai.chat", "anthropic.messages", "openai.models"], advancedOnStart: false,
+  },
+  opencode_zen: {
+    id: "opencode_zen", label: "OpenCode Zen", description: "", defaultName: "OpenCode Zen",
+    kind: "opencode_zen", baseURL: "https://opencode.ai/zen/v1", baseURLPlaceholder: "https://opencode.ai/zen/v1",
+    authScheme: "bearer", headerName: "", capabilityIDs: ["openai.responses", "openai.chat", "anthropic.messages", "openai.models"], advancedOnStart: false,
+  },
+  kimi_coding: {
+    id: "kimi_coding", label: "Kimi Coding", description: "", defaultName: "Kimi Coding",
+    kind: "kimi_coding", baseURL: "https://api.kimi.ai/coding", baseURLPlaceholder: "https://api.kimi.ai/coding",
+    authScheme: "anthropic_api_key", headerName: "", capabilityIDs: ["anthropic.messages", "openai.models"], advancedOnStart: false,
+    models: ["kimi-for-coding"],
+  },
+  glm_coding: {
+    id: "glm_coding", label: "GLM Coding Plan", description: "", defaultName: "GLM Coding Plan",
+    kind: "glm_coding", baseURL: "https://open.bigmodel.cn/api/anthropic", baseURLPlaceholder: "https://open.bigmodel.cn/api/anthropic",
+    authScheme: "bearer", headerName: "", capabilityIDs: ["anthropic.messages"], advancedOnStart: false,
+    models: ["glm-5.3", "glm-5.3-flash"],
+  },
+  minimax_coding: {
+    id: "minimax_coding", label: "MiniMax Coding Plan", description: "", defaultName: "MiniMax Coding Plan",
+    kind: "minimax_coding", baseURL: "https://api.minimax.cn/anthropic", baseURLPlaceholder: "https://api.minimax.cn/anthropic",
+    authScheme: "bearer", headerName: "", capabilityIDs: ["anthropic.messages"], advancedOnStart: false,
+    models: ["MiniMax-M3"],
+  },
   newapi: {
     id: "newapi",
     label: "New API",
@@ -312,6 +337,12 @@ export function httpServicePreset(
 
 function localizeHttpPreset(preset: HTTPServicePreset): HTTPServicePreset {
   switch (preset.id) {
+    case "opencode_go":
+    case "opencode_zen":
+    case "kimi_coding":
+    case "glm_coding":
+    case "minimax_coding":
+      return { ...preset, description: i18n.t(`presets.${preset.id}Description`) };
     case "newapi":
       return {
         ...preset,
@@ -367,6 +398,11 @@ export function httpServiceKindLabel(kind: HTTPServiceKind): string {
       gemini: "Gemini",
       openai_compatible: i18n.t("kind.openai_compatible"),
       custom: i18n.t("kind.custom"),
+      opencode_go: "OpenCode Go",
+      opencode_zen: "OpenCode Zen",
+      kimi_coding: "Kimi Coding",
+      glm_coding: "GLM Coding Plan",
+      minimax_coding: "MiniMax Coding Plan",
     } satisfies Record<HTTPServiceKind, string>
   )[kind];
 }

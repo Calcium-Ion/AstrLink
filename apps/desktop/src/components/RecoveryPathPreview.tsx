@@ -1,0 +1,8 @@
+import { ArrowRight } from "@/components/icons";
+import { useT } from "../i18n";
+import type { RecoveryPreview } from "../recovery-path-model";
+import type { RoutableService } from "../service-model";
+import { Badge } from "./ui/badge";
+export function RecoveryPathPreview({preview,services}:{preview:RecoveryPreview;services:RoutableService[]}){
+ const t=useT();return <div aria-live="polite" className="grid gap-3"><ol className="flex list-none flex-wrap items-center gap-2 p-0" aria-label={t("paths.preview")}>{preview.steps.map((step,index)=><li key={`${step.step_id}:${index}`} className="flex min-w-0 items-center gap-2">{index>0?<ArrowRight className="size-3.5" />:null}<div className={`grid min-w-0 gap-1 rounded-md border p-2 text-xs ${step.status==="skipped"?"bg-muted text-muted-foreground":"bg-card"}`}><span className="font-medium">{step.action==="retry"?`${t("paths.retry")} `:""}{services.find(service=>service.id===step.service_id)?.name??step.service_id}</span><span className="break-all">{step.model||t("paths.sameModel")}</span><Badge variant="secondary">{t(`paths.${step.status}`)}</Badge>{step.wait_max_ms>0?<span>{t("paths.wait",{min:step.wait_min_ms,max:step.wait_max_ms})}</span>:null}{step.status==="skipped"&&step.reason?<span>{t(`paths.reasons.${step.reason}`,{defaultValue:t(`failure.stops.${step.reason}`,{defaultValue:step.reason})})}</span>:null}</div></li>)}</ol><p className="text-xs text-muted-foreground">{t("failure.stopped")}：{t(`failure.stops.${preview.stop_reason}`,{defaultValue:preview.stop_reason})} · {t("paths.budget",{count:preview.max_attempts})}</p></div>
+}

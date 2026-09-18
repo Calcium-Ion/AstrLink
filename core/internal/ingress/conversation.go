@@ -88,9 +88,16 @@ func sessionLookup(store RequestRecordStore, accessTokenID *contract.AccessToken
 			return convo.Match{}, false, err
 		}
 		result := convo.Match{SessionID: string(match.SessionID), Kind: kind, Value: match.Value}
-		if match.TurnIndex != nil {
-			result.TurnIndex = *match.TurnIndex
-			result.HasTurnIndex = true
+		// A row that stored a turn but no comparison state (written before
+		// migration v23) cannot tell the next request whether it is a new
+		// turn; treat it as unknown so the count restarts instead of
+		// incrementing on every call of a loop.
+		if match.TurnIndex != nil && match.TurnUserMessages != nil {
+			result.Turn = &convo.TurnState{
+				Index:               *match.TurnIndex,
+				UserMessages:        *match.TurnUserMessages,
+				LastUserFingerprint: match.TurnUserFingerprint,
+			}
 		}
 		return result, true, nil
 	}

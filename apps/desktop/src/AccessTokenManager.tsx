@@ -1,6 +1,5 @@
 import {
   type FormEvent,
-  type ReactNode,
   useCallback,
   useEffect,
   useRef,
@@ -9,16 +8,21 @@ import {
 import {
   Check,
   Copy,
-  KeyRound,
+  Key as KeyRound,
   LoaderCircle,
   Plus,
   RefreshCw,
-  Trash2,
-} from "lucide-react";
+  Shredder as Trash2,
+} from "@/components/icons";
 
+import { CompactCount } from "@/components/CompactCount";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FormMessage } from "@/components/FormMessage";
-import { StatusDot } from "@/components/StatusDot";
+import { DataField, DataRow } from "@/components/DataRow";
+import { EmptyState } from "@/components/EmptyState";
+import { Field } from "@/components/Field";
+import { ListToolbar } from "@/components/ListToolbar";
+import { Panel } from "@/components/Panel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,8 +33,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 import {
   createAccessToken,
@@ -43,7 +45,7 @@ import type { RequestRecord } from "./request-record-model";
 import { i18n } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
-import { aggregateTodayUsage, startOfTodayIso } from "./today-usage";
+import { aggregateUsageRecords, startOfTodayIso } from "./usage-range";
 
 export type AccessTokenCatalogStatus =
   | "blocked"
@@ -60,7 +62,6 @@ export interface AccessTokenCatalog {
 
 type TokenUsageSlice = {
   total_tokens: number;
-  capped: boolean;
 };
 
 type TokenUsageStats = {
@@ -88,11 +89,11 @@ function createdAtLabel(value: string): string {
   }).format(date);
 }
 
-function formatTokenCount(slice: TokenUsageSlice | null, status: TokenUsageStats["status"]): string {
-  if (status === "loading" && slice === null) return "…";
-  if (slice === null) return "—";
-  const base = slice.total_tokens.toLocaleString();
-  return slice.capped ? `${base}+` : base;
+function tokenCountPlaceholder(
+  slice: TokenUsageSlice | null,
+  status: TokenUsageStats["status"],
+): string {
+  return status === "loading" && slice === null ? "…" : "—";
 }
 
 async function loadTokenUsageSlice(
@@ -114,8 +115,10 @@ async function loadTokenUsageSlice(
     if (!nextCursor) break;
     cursor = nextCursor;
   }
-  const summary = aggregateTodayUsage(accumulated, nextCursor !== null);
-  return { total_tokens: summary.total_tokens, capped: summary.capped };
+  const aggregate = aggregateUsageRecords(accumulated);
+  return {
+    total_tokens: aggregate.totals.total_tokens,
+  };
 }
 
 export function AccessTokenManager({
@@ -134,6 +137,7 @@ export function AccessTokenManager({
   onTokenDeleted: (tokenId: string) => void;
 }) {
   const t = i18n.t.bind(i18n);
+  const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -156,6 +160,7 @@ export function AccessTokenManager({
     revealGeneration.current += 1;
     usageGeneration.current += 1;
     setCreateOpen(false);
+    setQuery("");
     setName("");
     setCreating(false);
     setDeletingID(null);
@@ -332,14 +337,21 @@ export function AccessTokenManager({
     }
   };
 
+  const search = query.trim().toLocaleLowerCase();
+  const visibleTokens = catalog.items.filter((token) =>
+    `${token.name} ${token.hint}`.toLocaleLowerCase().includes(search),
+  );
+
   const catalogBusy =
-    catalog.status === "loading" ||
-    creating ||
-    deletingID !== null;
+    catalog.status === "loading" || creating || deletingID !== null;
 
   return (
-    <section className="flex min-h-0 w-full flex-1 flex-col" aria-labelledby="token-manager-heading">
+    <section
+      className="@container flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
+      aria-labelledby="token-manager-heading"
+    >
       <PageHeader
+        className="@max-[560px]:flex-wrap @max-[560px]:items-start @max-[560px]:gap-3"
         actions={
           <>
             <Button
@@ -348,6 +360,7 @@ export function AccessTokenManager({
                 setCreateOpen(true);
                 setError(null);
               }}
+              size="sm"
               type="button"
             >
               <Plus />
@@ -357,10 +370,19 @@ export function AccessTokenManager({
               variant="outline"
               disabled={!isReady || catalogBusy}
               onClick={refresh}
+              size="sm"
               type="button"
             >
-              <RefreshCw className={catalog.status === "loading" ? "animate-spin motion-reduce:animate-none" : undefined} />
-              {catalog.status === "loading" ? t("common.refreshing") : t("common.refresh")}
+              <RefreshCw
+                className={
+                  catalog.status === "loading"
+                    ? "animate-spin motion-reduce:animate-none"
+                    : undefined
+                }
+              />
+              {catalog.status === "loading"
+                ? t("common.refreshing")
+                : t("common.refresh")}
             </Button>
           </>
         }
@@ -371,9 +393,7 @@ export function AccessTokenManager({
 
       {(!isReady || catalog.status === "blocked") && (
         <FormMessage className="mb-3" tone="notice">
-          {catalog.items.length
-            ? t("tokens.stale")
-            : t("tokens.blocked")}
+          {catalog.items.length ? t("tokens.stale") : t("tokens.blocked")}
         </FormMessage>
       )}
       {catalog.status === "error" && catalog.error ? (
@@ -387,139 +407,196 @@ export function AccessTokenManager({
         </FormMessage>
       ) : null}
 
-      <ScrollArea
+      <div className="mb-3 shrink-0">
+        <ListToolbar
+          title={t("tokens.listLabel")}
+          count={
+            search
+              ? `${visibleTokens.length} / ${catalog.items.length}`
+              : catalog.items.length
+          }
+          query={query}
+          onQueryChange={setQuery}
+          searchLabel={t("tokens.search")}
+          placeholder={t("tokens.searchPlaceholder")}
+          clearLabel={t("common.clearSearch")}
+        />
+      </div>
+      <div
         aria-busy={catalog.status === "loading"}
         aria-label={t("tokens.listLabel")}
-        className="min-h-0"
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-1 pr-1"
       >
-        <div className="grid content-start gap-2">
-          {catalog.status === "blocked" && catalog.items.length === 0 ? (
-            <TokenBoardState
-              description={t("tokens.waitingHint")}
-              title={t("tokens.waiting")}
-            />
-          ) : catalog.status === "loading" && catalog.items.length === 0 ? (
-            <div className="grid gap-2" aria-label={t("tokens.loading")}>
-              <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
-              <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
-              <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
-            </div>
-          ) : catalog.status === "error" && catalog.items.length === 0 ? (
-            <TokenBoardState
-              action={
-                <Button
-                  variant="outline"
-                  disabled={!isReady}
-                  onClick={refresh}
-                  type="button"
-                >
-                  {t("common.retry")}
-                </Button>
-              }
-              description={t("tokens.unavailableHint")}
-              title={t("tokens.unavailable")}
-            />
-          ) : catalog.items.length === 0 ? (
-            <TokenBoardState
-              action={
-                <Button
-                  disabled={!isReady}
-                  onClick={() => setCreateOpen(true)}
-                  type="button"
-                >
-                  <Plus />
-                  {t("tokens.createToken")}
-                </Button>
-              }
-              description={t("tokens.emptyHint")}
-              title={t("tokens.empty")}
-            />
-          ) : (
-            catalog.items.map((token) => {
+        {catalog.status === "blocked" && catalog.items.length === 0 ? (
+          <EmptyState
+            description={t("tokens.waitingHint")}
+            title={t("tokens.waiting")}
+          />
+        ) : catalog.status === "loading" && catalog.items.length === 0 ? (
+          <div className="grid gap-2" aria-label={t("tokens.loading")}>
+            <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
+            <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
+            <span className="h-[4.75rem] animate-pulse rounded-md border bg-muted" />
+          </div>
+        ) : catalog.status === "error" && catalog.items.length === 0 ? (
+          <EmptyState
+            action={
+              <Button
+                variant="outline"
+                disabled={!isReady}
+                onClick={refresh}
+                type="button"
+              >
+                {t("common.retry")}
+              </Button>
+            }
+            description={t("tokens.unavailableHint")}
+            title={t("tokens.unavailable")}
+          />
+        ) : catalog.items.length === 0 ? (
+          <EmptyState
+            action={
+              <Button
+                disabled={!isReady}
+                onClick={() => setCreateOpen(true)}
+                type="button"
+              >
+                <Plus />
+                {t("tokens.createToken")}
+              </Button>
+            }
+            description={t("tokens.emptyHint")}
+            title={t("tokens.empty")}
+          />
+        ) : visibleTokens.length === 0 ? (
+          <EmptyState
+            title={t("common.noSearchResults")}
+            description={t("tokens.noSearchResults")}
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setQuery("")}
+                type="button"
+              >
+                {t("common.clearSearch")}
+              </Button>
+            }
+          />
+        ) : (
+          <Panel>
+            {visibleTokens.map((token) => {
               const isCopying = copyingID === token.id;
               const isCopied = copiedID === token.id;
               const usage = usageByToken[token.id];
-              const usageStatus = usage?.status ?? (isReady ? "loading" : "error");
+              const usageStatus =
+                usage?.status ?? (isReady ? "loading" : "error");
               return (
-                <article
-                  className="min-w-0 rounded-md border bg-card"
-                  data-testid="access-token-row"
+                <DataRow
+                  asChild
+                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-5 gap-y-3 py-4 @[720px]:grid-cols-[minmax(0,1fr)_minmax(160px,0.6fr)_auto]"
                   key={token.id}
                 >
-                  <div className="flex min-w-0 items-center gap-2 px-3.5 py-3 max-[560px]:flex-wrap">
-                    <StatusDot tone="positive" />
-                    <strong className="truncate text-sm font-medium">{token.name}</strong>
-                    <code className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
-                      {token.hint}
-                    </code>
+                  <article data-testid="access-token-row">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-text-secondary">
+                        <KeyRound aria-hidden="true" className="size-4" />
+                      </span>
+                      <div className="grid min-w-0 gap-1">
+                        <strong
+                          className="truncate text-sm font-semibold"
+                          title={token.name}
+                        >
+                          {token.name}
+                        </strong>
+                        <code
+                          className="truncate font-mono text-xs text-muted-foreground"
+                          title={token.hint}
+                        >
+                          {token.hint}
+                        </code>
+                        <span className="text-micro text-muted-foreground tabular-nums">
+                          {t("tokens.createdAt")} ·{" "}
+                          {createdAtLabel(token.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="order-3 col-span-2 grid grid-cols-2 gap-5 pl-12 @[720px]:order-none @[720px]:col-span-1 @[720px]:pl-0">
+                      <DataField
+                        label={t("tokens.todayTokens")}
+                        value={
+                          <CompactCount
+                            placeholder={tokenCountPlaceholder(
+                              usage?.today ?? null,
+                              usageStatus,
+                            )}
+                            value={usage?.today?.total_tokens}
+                          />
+                        }
+                      />
+                      <DataField
+                        label={t("tokens.lifetimeTokens")}
+                        value={
+                          <CompactCount
+                            placeholder={tokenCountPlaceholder(
+                              usage?.lifetime ?? null,
+                              usageStatus,
+                            )}
+                            value={usage?.lifetime?.total_tokens}
+                          />
+                        }
+                      />
+                    </div>
                     <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!isReady || deletingID !== null || copyingID !== null}
-                      onClick={() => void copyToken(token.id)}
-                      type="button"
-                    >
-                      {isCopying ? (
-                        <LoaderCircle className="animate-spin motion-reduce:animate-none" />
-                      ) : isCopied ? (
-                        <Check />
-                      ) : (
-                        <Copy />
-                      )}
-                      {isCopying ? t("common.copying") : isCopied ? t("common.copied") : t("common.copy")}
-                    </Button>
-                    <Button
-                      className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-                      disabled={!isReady || deletingID !== null}
-                      onClick={() => {
-                        revealGeneration.current += 1;
-                        setCopyingID(null);
-                        setCopiedID(null);
-                        setPendingDelete(token);
-                        setError(null);
-                      }}
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                    >
-                      <Trash2 />
-                      {deletingID === token.id ? t("tokens.deleting") : t("common.delete")}
-                    </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={
+                          !isReady || deletingID !== null || copyingID !== null
+                        }
+                        onClick={() => void copyToken(token.id)}
+                        type="button"
+                      >
+                        {isCopying ? (
+                          <LoaderCircle animateOnHover={false} className="animate-spin motion-reduce:animate-none" />
+                        ) : isCopied ? (
+                          <Check />
+                        ) : (
+                          <Copy />
+                        )}
+                        {isCopying
+                          ? t("common.copying")
+                          : isCopied
+                            ? t("common.copied")
+                            : t("common.copy")}
+                      </Button>
+                      <Button
+                        className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+                        disabled={!isReady || deletingID !== null}
+                        onClick={() => {
+                          revealGeneration.current += 1;
+                          setCopyingID(null);
+                          setCopiedID(null);
+                          setPendingDelete(token);
+                          setError(null);
+                        }}
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Trash2 />
+                        {deletingID === token.id
+                          ? t("tokens.deleting")
+                          : t("common.delete")}
+                      </Button>
                     </div>
-                  </div>
-                  <dl className="grid grid-cols-3 gap-3 border-t px-3.5 py-2 max-[560px]:grid-cols-1">
-                    <div className="min-w-0">
-                      <dt className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
-                        {t("tokens.todayTokens")}
-                      </dt>
-                      <dd className="mt-0.5 text-xs tabular-nums">
-                        {formatTokenCount(usage?.today ?? null, usageStatus)}
-                      </dd>
-                    </div>
-                    <div className="min-w-0">
-                      <dt className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
-                        {t("tokens.lifetimeTokens")}
-                      </dt>
-                      <dd className="mt-0.5 text-xs tabular-nums">
-                        {formatTokenCount(usage?.lifetime ?? null, usageStatus)}
-                      </dd>
-                    </div>
-                    <div className="min-w-0">
-                      <dt className="text-micro tracking-[0.06em] text-muted-foreground uppercase">
-                        {t("tokens.createdAt")}
-                      </dt>
-                      <dd className="mt-0.5 text-xs tabular-nums">
-                        {createdAtLabel(token.created_at)}
-                      </dd>
-                    </div>
-                  </dl>
-                </article>
+                  </article>
+                </DataRow>
               );
-            })
-          )}
-        </div>
-      </ScrollArea>
+            })}
+          </Panel>
+        )}
+      </div>
 
       <Dialog
         open={createOpen}
@@ -540,9 +617,8 @@ export function AccessTokenManager({
             <DialogTitle>{t("tokens.createTitle")}</DialogTitle>
             <DialogDescription>{t("tokens.createHint")}</DialogDescription>
           </DialogHeader>
-            <form onSubmit={(event) => void submitCreate(event)}>
-              <div className="grid gap-2">
-              <Label htmlFor="access-token-name">{t("tokens.name")}</Label>
+          <form onSubmit={(event) => void submitCreate(event)}>
+            <Field htmlFor="access-token-name" label={t("tokens.name")}>
               <Input
                 autoComplete="off"
                 id="access-token-name"
@@ -552,29 +628,33 @@ export function AccessTokenManager({
                 ref={nameInput}
                 value={name}
               />
-              </div>
-              <DialogFooter className="mt-5">
-                <Button
-                  variant="outline"
-                  disabled={creating}
-                  onClick={() => {
-                    setCreateOpen(false);
-                    setName("");
-                  }}
-                  type="button"
-                >
-                  {t("common.cancel")}
-                </Button>
-                <Button disabled={creating} type="submit">
-                  {creating ? t("tokens.creating") : t("tokens.create")}
-                </Button>
-              </DialogFooter>
-            </form>
+            </Field>
+            <DialogFooter className="mt-5">
+              <Button
+                variant="outline"
+                disabled={creating}
+                onClick={() => {
+                  setCreateOpen(false);
+                  setName("");
+                }}
+                type="button"
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button disabled={creating} type="submit">
+                {creating ? t("tokens.creating") : t("tokens.create")}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
       <ConfirmDialog
         cancelLabel={t("common.cancel")}
-        confirmLabel={deletingID === pendingDelete?.id ? t("tokens.deleting") : t("tokens.confirmDelete")}
+        confirmLabel={
+          deletingID === pendingDelete?.id
+            ? t("tokens.deleting")
+            : t("tokens.confirmDelete")
+        }
         description={
           <>
             <p>
@@ -593,28 +673,5 @@ export function AccessTokenManager({
         title={t("tokens.deleteTitle")}
       />
     </section>
-  );
-}
-
-function TokenBoardState({
-  action,
-  description,
-  title,
-}: {
-  action?: ReactNode;
-  description: string;
-  title: string;
-}) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 px-8 py-14 text-center text-xs text-muted-foreground">
-      <KeyRound
-        aria-hidden="true"
-        className="mb-1 size-5 text-muted-foreground"
-        strokeWidth={1.5}
-      />
-      <p className="text-sm font-medium text-foreground">{title}</p>
-      <span>{description}</span>
-      {action ? <div className="mt-2">{action}</div> : null}
-    </div>
   );
 }

@@ -1,3 +1,13 @@
+import { RecoveryPathPicker } from "./components/RecoveryPathPicker";
+import { useRecoveryPaths } from "./use-recovery-paths";
+import { pathNodes, type RecoveryPathRecord } from "./recovery-path-model";
+import { newPathNodeID } from "./RecoveryPathEditor";
+import { createRecoveryPath } from "./bridge";
+import { useRoutingDefaults } from "./use-routing-defaults";
+import { FailoverEditor, RecoverySummary } from "./components/FailoverEditor";
+import { BackupTargetsEditor } from "./components/BackupTargetsEditor";
+import type { RoutePlanType } from "./route-model";
+import { parseFailurePolicy, parseFailoverPolicy, type FailurePolicy, type FailoverPolicy } from "./failure-policy-model";
 import { useEffect, useMemo, useState } from "react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -76,14 +86,18 @@ export const autoCategories = [
 ] as const;
 
 interface CategoryDraft {
+ recoveryPathId?:string;
   id: string;
   serviceId: string;
-  planType: "native" | "delegated";
+  planType: RoutePlanType;
+  upstreamProtocol?: string;
   upstreamModel: string;
   extraTargets: RouteTarget[];
 }
 
 interface AutoDraft {
+  failurePolicy?: FailurePolicy;
+  failover?: FailoverPolicy;
   protocol: string;
   enabled: boolean;
   name: string;
@@ -102,7 +116,7 @@ export interface AutoRoutingShowcaseProps {
 function modesFor(
   service: RoutableService | undefined,
   protocol: string,
-): Array<"native" | "delegated"> {
+): RoutePlanType[] {
   if (!service) return [];
   return [
     ...new Set(
@@ -155,19 +169,22 @@ function draftFromRoute(
   return {
     protocol,
     enabled: route?.enabled ?? true,
+    failurePolicy: route?.failure_policy, failover: route?.failover,
     name: route?.name ?? i18n.t("auto.banner", { protocol: protocolLabel(protocol) }),
     categories: autoCategories.map((category) => {
       const found = route?.categories?.find(
         (item) => item.category_id === category.id,
       );
-      const [primary, ...extra] = found?.targets ?? [];
+      if(found?.recovery_path_id)return {...emptyCategory(category.id,services,protocol),recoveryPathId:found.recovery_path_id};
+      const [primary, ...extra] = [...(found?.targets ?? [])].sort((a, b) => a.priority - b.priority);
       if (!primary) {
         return emptyCategory(category.id, services, protocol);
       }
       return {
         id: category.id,
         serviceId: primary.service_id,
-        planType: primary.plan_type === "delegated" ? "delegated" : "native",
+        planType: primary.plan_type,
+        upstreamProtocol: primary.upstream_protocol,
         upstreamModel: primary.upstream_model ?? "",
         extraTargets: extra,
       };
@@ -187,28 +204,38 @@ function autoRouteForProtocol(routes: Route[], protocol: string): Route | undefi
 
 function filledCategories(draft: AutoDraft): CategoryDraft[] {
   return draft.categories.filter(
-    (category) => category.serviceId && category.upstreamModel.trim(),
+    (category) => category.recoveryPathId || (category.serviceId && category.upstreamModel.trim()),
   );
 }
 
 function validateAutoDraft(
   draft: AutoDraft,
   services: RoutableService[],
+ paths:RecoveryPathRecord[],
 ): string | null {
+  try { if (draft.failurePolicy) parseFailurePolicy(draft.failurePolicy); if (draft.failover) parseFailoverPolicy(draft.failover); } catch { return i18n.t("failure.invalid"); }
   const filled = filledCategories(draft);
   if (filled.length < 2) {
     return i18n.t("auto.needTwo");
   }
-  const models = new Set(filled.map((category) => category.upstreamModel.trim()));
+  const models = new Set(filled.flatMap(category=>category.recoveryPathId?pathNodes(paths.find(record=>record.path.id===category.recoveryPathId)?.path??{id:"missing",name:"",protocol:draft.protocol,mode:"steps",steps:[]}).map(node=>node.upstream_model??""):[category.upstreamModel.trim()]));
   if (models.size < 2) {
     return i18n.t("auto.needDistinct");
   }
   for (const category of filled) {
+ if(category.recoveryPathId){const record=paths.find(record=>record.path.id===category.recoveryPathId);if(!record||record.path.protocol!==draft.protocol||pathNodes(record.path).some(node=>!node.upstream_model))return i18n.t("paths.invalidCategory");continue}
     const meta = autoCategories.find((item) => item.id === category.id);
     const label = meta ? i18n.t(meta.labelKey) : category.id;
     const service = services.find((item) => item.id === category.serviceId);
     if (!service) {
       return i18n.t("auto.missingService", { category: label });
+    }
+    const seen = new Set([`${category.serviceId}:${category.planType}:${category.upstreamProtocol ?? draft.protocol}:${category.upstreamModel.trim()}`]);
+    for (const target of category.extraTargets) {
+      const backup = services.find(service => service.id === target.service_id);
+      const key = `${target.service_id}:${target.plan_type}:${target.upstream_protocol}:${target.upstream_model}`;
+      if (!backup || !target.upstream_model || !backup.models.includes(target.upstream_model) || !modesFor(backup, target.plan_type === "relaykit" ? target.upstream_protocol : draft.protocol).includes(target.plan_type === "relaykit" ? "native" : target.plan_type) || seen.has(key)) return i18n.t("failure.invalid");
+      seen.add(key);
     }
     const model = category.upstreamModel.trim();
     if ([...model].length > 256) {
@@ -217,7 +244,7 @@ function validateAutoDraft(
     if (!service.models.includes(model)) {
       return i18n.t("auto.modelNotListed", { category: label });
     }
-    if (!modesFor(service, draft.protocol).includes(category.planType)) {
+    if (!modesFor(service, category.planType === "relaykit" ? (category.upstreamProtocol ?? draft.protocol) : draft.protocol).includes(category.planType === "relaykit" ? "native" : category.planType)) {
       return i18n.t("auto.protocolUnsupported", { category: label });
     }
   }
@@ -226,16 +253,17 @@ function validateAutoDraft(
 
 function categoriesFromDraft(draft: AutoDraft): RouteCategory[] {
   return filledCategories(draft).map((category) => {
+ if(category.recoveryPathId)return {category_id:category.id,recovery_path_id:category.recoveryPathId};
     const primary: RouteTarget = {
       service_id: category.serviceId,
       plan_type: category.planType,
-      upstream_protocol: draft.protocol,
+      upstream_protocol: category.planType === "relaykit" ? (category.upstreamProtocol ?? draft.protocol) : draft.protocol,
       priority: 0,
       upstream_model: category.upstreamModel.trim(),
     };
     return {
       category_id: category.id,
-      targets: [primary, ...category.extraTargets],
+      targets: [primary, ...category.extraTargets].map((target, index) => ({ ...target, priority: index * 10 })),
     };
   });
 }
@@ -248,6 +276,8 @@ function createInputFromAutoDraft(draft: AutoDraft): RouteCreateInput {
     match: { protocol: draft.protocol, model: AUTO_MODEL_ID },
     selection: { mode: "auto", taxonomy_id: AUTO_TAXONOMY_ID },
     categories: categoriesFromDraft(draft),
+    ...(draft.failurePolicy ? { failure_policy: draft.failurePolicy } : {}),
+    ...(draft.failover ? { failover: draft.failover } : {}),
   };
 }
 
@@ -265,6 +295,9 @@ export function AutoRoutingShowcase({
   onRouteSaved,
   onDirtyChange,
 }: AutoRoutingShowcaseProps = {}) {
+  const routingDefaults = useRoutingDefaults(isReady);
+ const pathCatalog=useRecoveryPaths(isReady);
+  const inheritedFailover = { enabled: true, strategy: routingDefaults.strategy, max_attempts: routingDefaults.max_attempts };
   const t = i18n.t.bind(i18n);
   const live = services !== undefined;
   const catalog = services ?? noServices;
@@ -346,7 +379,7 @@ export function AutoRoutingShowcase({
   };
 
   const save = async () => {
-    const issue = validateAutoDraft(draft, catalog);
+    const issue = validateAutoDraft(draft, catalog, pathCatalog.records);
     if (issue) {
       setError(issue);
       return;
@@ -367,6 +400,7 @@ export function AutoRoutingShowcase({
               selection: input.selection,
               targets: null,
               categories: input.categories,
+              failure_policy: input.failure_policy ?? null, failover: input.failover ?? null,
             },
           )
         : await createRoute(input);
@@ -381,8 +415,8 @@ export function AutoRoutingShowcase({
   };
 
   const servicesForProtocol = useMemo(
-    () => compatibleServices(catalog, protocol),
-    [catalog, protocol],
+    () => catalog.filter(service => compatibleServices([service], protocol).length || draft.categories.some(category => category.serviceId === service.id)),
+    [catalog, protocol, draft.categories],
   );
 
   return (
@@ -483,6 +517,8 @@ export function AutoRoutingShowcase({
                   </p>
                   {live && current ? (
                     <div className="mt-3 grid gap-2">
+ <RecoveryPathPicker value={current.recoveryPathId} protocol={protocol} services={catalog} ready={isReady} auto hasOverride={!!draft.failurePolicy||!!draft.failover} onChange={recoveryPathId=>{updateCategory(category.id,item=>({...item,recoveryPathId}));pathCatalog.reload()}} onSaveLegacy={()=>{const selected=categoriesFromDraft(draft).find(item=>item.category_id===category.id);if(!selected?.targets)return;void createRecoveryPath({name:`${categoryLabel} · ${protocolLabel(protocol)}`,protocol,mode:"automatic",targets:selected.targets.map(target=>({id:newPathNodeID(),service_id:target.service_id,upstream_model:target.upstream_model,upstream_protocol:target.upstream_protocol,plan_type:target.plan_type})),...(draft.failurePolicy?{failure_policy:draft.failurePolicy}:{}),...(draft.failover?{strategy:draft.failover.strategy,max_attempts:draft.failover.max_attempts}:{})}).then(record=>{updateCategory(category.id,item=>({...item,recoveryPathId:record.path.id}));pathCatalog.reload();setError(t("paths.unbound"))}).catch(error=>setError(String(error)))}}/>
+ {!current.recoveryPathId?<>
                       <Field label={t("auto.serviceFor", { category: categoryLabel })}>
                         <Select
                           onValueChange={(serviceId) => {
@@ -491,6 +527,7 @@ export function AutoRoutingShowcase({
                             updateCategory(category.id, (item) => ({
                               ...item,
                               serviceId,
+                              upstreamProtocol: protocol,
                               planType: nextModes.includes(item.planType)
                                 ? item.planType
                                 : (nextModes[0] ?? "native"),
@@ -535,6 +572,19 @@ export function AutoRoutingShowcase({
                           <span className="truncate">{current.upstreamModel}</span>
                         </p>
                       ) : null}
+                      <BackupTargetsEditor value={current.extraTargets} protocol={protocol} services={catalog}
+                        onChange={extraTargets => updateCategory(category.id, item => ({ ...item, extraTargets }))}
+                        onPromote={index => updateCategory(category.id, item => {
+                          const target = item.extraTargets[index];
+                          const previous: RouteTarget = { service_id: item.serviceId, upstream_model: item.upstreamModel, plan_type: item.planType, upstream_protocol: item.upstreamProtocol ?? protocol, priority: 0 };
+                          return { ...item, serviceId: target.service_id, upstreamModel: target.upstream_model ?? "", planType: target.plan_type, upstreamProtocol: target.upstream_protocol, extraTargets: [previous, ...item.extraTargets.filter((_, at) => at !== index)].map((value, at) => ({ ...value, priority: (at + 1) * 10 })) };
+                        })} />
+                      {routingDefaults.loaded ? <RecoverySummary value={draft.failover ?? inheritedFailover} override={draft.failurePolicy} inheritedFailurePolicy={routingDefaults.default_failure_policy}
+                        targets={[{ service_id: current.serviceId, upstream_model: current.upstreamModel }, ...current.extraTargets].map(target => {
+                          const service = catalog.find(item => item.id === target.service_id);
+                          return { name: `${service?.name ?? target.service_id} / ${target.upstream_model ?? ""}`, policy: service?.failure_policy };
+                        })} /> : null}
+                    </>:null}
                     </div>
                   ) : null}
                 </Panel>
@@ -543,6 +593,13 @@ export function AutoRoutingShowcase({
           </div>
         )}
 
+        {live ? <div className="mt-4"><FailoverEditor onReloadDefaults={routingDefaults.reload} defaultsLoaded={routingDefaults.loaded} onResetOrder={draft.failover ? () => setDraft(current => ({ ...current, failover: undefined })) : undefined} value={draft.failover ?? inheritedFailover} inheritedFailurePolicy={routingDefaults.default_failure_policy} override={draft.failurePolicy}
+          title={t("auto.failureTitle")}
+          scopeHint={t("auto.failureScope", { protocol: protocolLabel(protocol) })}
+          overrideLabel={t("auto.failureOverride")}
+          overrideHint={t("auto.failureOverrideHint", { protocol: protocolLabel(protocol) })}
+          onChange={failover => setDraft(current => ({ ...current, failover }))}
+          onOverrideChange={failurePolicy => setDraft(current => ({ ...current, failurePolicy }))} /></div> : null}
         {live ? (
           <div className="mt-3 flex justify-end">
             <Button

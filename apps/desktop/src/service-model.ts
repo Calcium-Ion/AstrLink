@@ -1,3 +1,4 @@
+import { parseFailurePolicy, type FailurePolicy } from "./failure-policy-model";
 import { i18n } from "./i18n";
 import type {
   SubscriptionError,
@@ -6,6 +7,11 @@ import type {
 } from "./subscription-model";
 
 export type HTTPServiceKind =
+  | "opencode_go"
+  | "opencode_zen"
+  | "kimi_coding"
+  | "glm_coding"
+  | "minimax_coding"
   | "newapi"
   | "openai"
   | "anthropic"
@@ -34,7 +40,12 @@ export interface ServiceCapability {
 
 export type ModelDiscoveryProtocol = "openai.models" | "google.models";
 
-export type ServiceKind = "codex_subscription" | HTTPServiceKind;
+export type SubscriptionServiceKind = "codex_subscription" | "claude_subscription";
+export type ServiceKind = SubscriptionServiceKind | HTTPServiceKind;
+
+export function isSubscriptionKind(kind: unknown): kind is SubscriptionServiceKind {
+  return kind === "codex_subscription" || kind === "claude_subscription";
+}
 
 export interface HTTPServiceConnection {
   base_url: string;
@@ -55,6 +66,7 @@ export interface SubscriptionServiceConnection {
 }
 
 export interface Service {
+  failure_policy?: FailurePolicy;
   id: string;
   name: string;
   kind: ServiceKind;
@@ -69,7 +81,7 @@ export interface Service {
 
 export type RoutableService = Pick<
   Service,
-  "id" | "name" | "enabled" | "models" | "capabilities"
+  "id" | "name" | "enabled" | "models" | "capabilities" | "failure_policy"
 >;
 
 export interface ServicePage {
@@ -83,13 +95,15 @@ export interface ServiceRecord {
 }
 
 export type SubscriptionServiceCreateInput = {
+  failure_policy?: FailurePolicy;
   name: string;
-  kind: "codex_subscription";
+  kind: SubscriptionServiceKind;
   enabled?: boolean;
   models?: string[];
 };
 
 export type HTTPServiceCreateInput = {
+  failure_policy?: FailurePolicy;
   name: string;
   kind: HTTPServiceKind;
   enabled?: boolean;
@@ -107,6 +121,7 @@ export type ServiceCreateInput =
   | HTTPServiceCreateInput;
 
 export type ServicePatchInput = {
+  failure_policy?: FailurePolicy | null;
   name?: string;
   enabled?: boolean;
   models?: string[];
@@ -148,6 +163,7 @@ const credentialLeakPattern =
   /(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|code_verifier=[A-Za-z0-9._~-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i;
 
 const httpKinds = new Set<HTTPServiceKind>([
+  "opencode_go", "opencode_zen", "kimi_coding", "glm_coding", "minimax_coding",
   "newapi",
   "openai",
   "anthropic",
@@ -342,7 +358,7 @@ function parseSubscriptionConnection(
     ],
     path,
   );
-  if (subscription.provider !== "openai_codex") {
+  if (subscription.provider !== "openai_codex" && subscription.provider !== "claude_code") {
     invalid(`${path}.provider`, "unknown subscription provider");
   }
   if (
@@ -353,7 +369,7 @@ function parseSubscriptionConnection(
   }
   const status = subscription.status as SubscriptionStatus;
   const result: SubscriptionServiceConnection = {
-    provider: "openai_codex",
+    provider: subscription.provider,
     status,
   };
   for (const [field, max] of [
@@ -406,14 +422,14 @@ export function parseService(value: unknown, path = "$"): Service {
   keysAt(
     service,
     ["id", "name", "kind", "enabled", "models", "capabilities", "created_at", "updated_at"],
-    ["http", "subscription"],
+    ["http", "subscription", "failure_policy"],
     path,
   );
   const id = stringAt(service.id, `${path}.id`, 3, 96);
   if (!resourceIDPattern.test(id)) invalid(`${path}.id`, "invalid service ID");
   const name = stringAt(service.name, `${path}.name`, 1, 128);
   if (
-    service.kind !== "codex_subscription" &&
+    !isSubscriptionKind(service.kind) &&
     (typeof service.kind !== "string" ||
       !httpKinds.has(service.kind as HTTPServiceKind))
   ) {
@@ -433,23 +449,25 @@ export function parseService(value: unknown, path = "$"): Service {
     invalid(`${path}.updated_at`, "must not precede created_at");
   }
 
-  if (service.kind === "codex_subscription") {
+  if (isSubscriptionKind(service.kind)) {
     if (!Object.hasOwn(service, "subscription") || Object.hasOwn(service, "http")) {
       invalid(path, "subscription service requires only subscription");
+    }
+    const subscription = parseSubscriptionConnection(service.subscription, `${path}.subscription`);
+    if (subscription.provider !== (service.kind === "claude_subscription" ? "claude_code" : "openai_codex")) {
+      invalid(`${path}.subscription.provider`, "provider does not match service kind");
     }
     return {
       id,
       name,
-      kind: "codex_subscription",
+      kind: service.kind,
       enabled: service.enabled,
       models,
       capabilities,
-      subscription: parseSubscriptionConnection(
-        service.subscription,
-        `${path}.subscription`,
-      ),
+      subscription,
       created_at: createdAt,
       updated_at: updatedAt,
+      ...(Object.hasOwn(service, "failure_policy") ? { failure_policy: parseFailurePolicy(service.failure_policy, `${path}.failure_policy`) } : {}),
     };
   }
   if (!Object.hasOwn(service, "http") || Object.hasOwn(service, "subscription")) {
@@ -465,6 +483,7 @@ export function parseService(value: unknown, path = "$"): Service {
     http: parseHTTPConnection(service.http, `${path}.http`),
     created_at: createdAt,
     updated_at: updatedAt,
+      ...(Object.hasOwn(service, "failure_policy") ? { failure_policy: parseFailurePolicy(service.failure_policy, `${path}.failure_policy`) } : {}),
   };
 }
 

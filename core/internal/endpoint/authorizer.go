@@ -58,7 +58,11 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 			return nil, fmt.Errorf("load subscription credential: %w", err)
 		}
 		headers := make(http.Header)
-		accountauth.ApplyCodexAPIHeaders(headers, tokens, "", "")
+		if endpoint.Kind == contract.ServiceKindClaudeSubscription {
+			accountauth.ApplyClaudeAPIHeaders(headers, tokens)
+		} else {
+			accountauth.ApplyCodexAPIHeaders(headers, tokens, "", "")
+		}
 		return headers, nil
 	}
 	return nil, fmt.Errorf("unsupported service kind %q", endpoint.Kind)

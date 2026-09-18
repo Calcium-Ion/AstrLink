@@ -15,6 +15,8 @@ import App from "./App";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { getPreferences } from "./bridge";
 import { applyLocale, i18n, useT } from "./i18n";
+import { TrajectoryInspectorWindow } from "./TrajectoryInspectorWindow";
+import { isTrajectoryInspectorWindow } from "./trajectory-inspector-window";
 import { WindowChrome } from "./WindowChrome";
 import { getDesktopPlatform } from "./window-chrome";
 import "./styles/globals.css";
@@ -39,15 +41,20 @@ function LocaleGate({ children }: { children: ReactNode }) {
   return children;
 }
 
+// Every window loads this bundle; the label decides which app it becomes.
+const surface = isTrajectoryInspectorWindow() ? (
+  <TrajectoryInspectorWindow />
+) : (
+  <App />
+);
+
 createRoot(root).render(
   <StrictMode>
     <I18nextProvider i18n={i18n}>
       <LocaleGate>
         <TooltipProvider>
           <WindowChrome platform={desktopPlatform} />
-          <AppErrorBoundary>
-            <App />
-          </AppErrorBoundary>
+          <AppErrorBoundary>{surface}</AppErrorBoundary>
           <Toaster position="bottom-right" />
         </TooltipProvider>
       </LocaleGate>

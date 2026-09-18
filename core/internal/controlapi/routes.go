@@ -16,13 +16,16 @@ import (
 )
 
 type routeCreateRequest struct {
-	Name       *string         `json:"name"`
-	Enabled    json.RawMessage `json:"enabled,omitempty"`
-	Priority   *int            `json:"priority"`
-	Match      json.RawMessage `json:"match"`
-	Selection  json.RawMessage `json:"selection,omitempty"`
-	Targets    json.RawMessage `json:"targets,omitempty"`
-	Categories json.RawMessage `json:"categories,omitempty"`
+	RecoveryPathID contract.RecoveryPathID  `json:"recovery_path_id,omitempty"`
+	FailurePolicy  *contract.FailurePolicy  `json:"failure_policy,omitempty"`
+	Failover       *contract.FailoverPolicy `json:"failover,omitempty"`
+	Name           *string                  `json:"name"`
+	Enabled        json.RawMessage          `json:"enabled,omitempty"`
+	Priority       *int                     `json:"priority"`
+	Match          json.RawMessage          `json:"match"`
+	Selection      json.RawMessage          `json:"selection,omitempty"`
+	Targets        json.RawMessage          `json:"targets,omitempty"`
+	Categories     json.RawMessage          `json:"categories,omitempty"`
 }
 
 type routePageResponse struct {
@@ -131,7 +134,9 @@ func (handler *Handler) createRoute(writer http.ResponseWriter, request *http.Re
 
 func routeFromCreate(id contract.RouteID, input routeCreateRequest) (contract.Route, error) {
 	route := contract.Route{
-		ID:       id,
+		ID:             id,
+		RecoveryPathID: input.RecoveryPathID,
+		FailurePolicy:  input.FailurePolicy, Failover: input.Failover,
 		Name:     *input.Name,
 		Enabled:  true,
 		Priority: *input.Priority,
@@ -241,6 +246,26 @@ func applyRoutePatch(route contract.Route, patch map[string]json.RawMessage) (co
 		case "match":
 			if isJSONNull(raw) || strictUnmarshal(raw, &route.Match) != nil {
 				return route, fmt.Errorf("match must be an object")
+			}
+		case "recovery_path_id":
+			if isJSONNull(raw) {
+				route.RecoveryPathID = ""
+			} else if strictUnmarshal(raw, &route.RecoveryPathID) != nil {
+				return route, fmt.Errorf("invalid recovery_path_id")
+			}
+		case "failure_policy":
+			route.FailurePolicy = nil
+			if !isJSONNull(raw) {
+				if err := strictUnmarshal(raw, &route.FailurePolicy); err != nil {
+					return route, err
+				}
+			}
+		case "failover":
+			route.Failover = nil
+			if !isJSONNull(raw) {
+				if err := strictUnmarshal(raw, &route.Failover); err != nil {
+					return route, err
+				}
 			}
 		case "selection":
 			if isJSONNull(raw) {

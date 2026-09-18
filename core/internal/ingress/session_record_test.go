@@ -103,9 +103,10 @@ func newSessionHarness(t *testing.T, protocol contract.ProtocolID, path string, 
 	harness := &sessionHarness{t: t, store: &memoryRequestRecordStore{}, path: path, contentType: "application/json"}
 	dependencies := Dependencies{
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
-			Endpoint:      validEndpoint(protocol, options.streaming),
-			UpstreamModel: "provider/secret-upstream",
-			RouteID:       "route_alias",
+			Endpoint:          validEndpoint(protocol, options.streaming),
+			UpstreamModel:     "provider/secret-upstream",
+			RouteID:           "route_alias",
+			SingleTargetRoute: true,
 		}}},
 		RequestRecords: harness.store,
 		AuditBlobs:     options.auditBlobs,
@@ -248,6 +249,63 @@ func TestInferencePlaneLinksChatToolLoopIntoOneTurnAndFollowUpIntoNext(t *testin
 	assertTurn(t, followUp, 2)
 	if followUp.InputPreview == nil || *followUp.InputPreview != "第二个文件是做什么的" {
 		t.Fatalf("preview must be the newest user text, got %v", followUp.InputPreview)
+	}
+}
+
+// A coding-agent harness (Paseo driving Qwen here) replays a compaction
+// summary and skill injections as role=user messages, and later compacts
+// again mid-session. Turns must come from what changed relative to the linked
+// record, not from counting user messages or recognising harness phrasing.
+func TestInferencePlaneCountsTurnsRelativeToLinkedRecord(t *testing.T) {
+	harness := newSessionHarness(t, contract.ProtocolOpenAIChat, "/v1/chat/completions", sessionHarnessOptions{
+		auditBlobs: &memoryAuditBlobs{},
+	})
+	const (
+		summary = `{"role":"user","content":"The conversation history before this point was compacted into the following summary:\n\n<summary>\nmerged upstream, three tests failing\n</summary>"}`
+		skill   = `{"role":"user","content":"<skill name=\"paseo-advisor\">\nSpin up an advisor.\n</skill>"}`
+		prompt  = `{"role":"user","content":"<skill name=\"paseo-advisor\">\nSpin up an advisor.\n</skill>\n\n审核完先别改，给我结论"}`
+		toolUse = `{"role":"assistant","content":null,"tool_calls":[{"id":"` + chatToolCallID + `","type":"function","function":{"name":"list_files","arguments":"{}"}}]}`
+		result  = `{"role":"tool","tool_call_id":"` + chatToolCallID + `","content":"a.go"}`
+	)
+
+	// Three user messages in the very first body: still turn 1.
+	step1 := harness.serve(`{"model":"public-alias","messages":[`+summary+`,`+skill+`,`+prompt+`]}`, chatLoopResponseStep1)
+	assertTurn(t, step1, 1)
+	if step1.TurnUserMessages == nil || *step1.TurnUserMessages != 3 || step1.TurnUserFingerprint == nil {
+		t.Fatalf("step1 turn state = %v / %v, want 3 user messages and a fingerprint", step1.TurnUserMessages, step1.TurnUserFingerprint)
+	}
+	if step1.InputPreview == nil || *step1.InputPreview != "审核完先别改，给我结论" {
+		t.Fatalf("step1 preview = %v, want the prompt after the <skill> block", step1.InputPreview)
+	}
+
+	// The loop continues: same user messages, same newest text → same turn.
+	const reply = "仓库里有 a.go 和 b.go 两个文件，a.go 定义了入口，b.go 放的是流式处理的辅助函数和重试逻辑。"
+	step2 := harness.serve(`{"model":"public-alias","messages":[`+summary+`,`+skill+`,`+prompt+`,`+toolUse+`,`+result+`]}`,
+		`{"id":"chatcmpl-loop-2","choices":[{"index":0,"message":{"role":"assistant","content":"`+reply+`"},"finish_reason":"stop"}]}`)
+	assertSameSession(t, step1, step2)
+	assertLinkedVia(t, step2, contract.SessionCursorEchoID)
+	assertTurn(t, step2, 1)
+	if *step2.TurnUserFingerprint != *step1.TurnUserFingerprint {
+		t.Fatal("unchanged newest user text must keep its fingerprint")
+	}
+
+	// The harness compacts again and the person types a new prompt: fewer
+	// user messages than before, but the newest text changed → turn 2.
+	const (
+		summary2 = `{"role":"user","content":"The conversation history before this point was compacted into the following summary:\n\n<summary>\nadvisor reviewed, no changes yet\n</summary>"}`
+		prompt2  = `{"role":"user","content":"<skill name=\"paseo-advisor\">\nSpin up an advisor.\n</skill>\n\n好，现在开始改"}`
+		replay   = `{"role":"assistant","content":"` + reply + `"}`
+	)
+	step3 := harness.serve(`{"model":"public-alias","messages":[`+summary2+`,`+replay+`,`+prompt2+`]}`,
+		`{"id":"chatcmpl-loop-3","choices":[{"index":0,"message":{"role":"assistant","content":"开始。"},"finish_reason":"stop"}]}`)
+	assertSameSession(t, step1, step3)
+	assertLinkedVia(t, step3, contract.SessionCursorFingerprint)
+	assertTurn(t, step3, 2)
+	if step3.TurnUserMessages == nil || *step3.TurnUserMessages != 2 || *step3.TurnUserFingerprint == *step2.TurnUserFingerprint {
+		t.Fatalf("step3 turn state = %v / %v, want 2 user messages and a new fingerprint", step3.TurnUserMessages, step3.TurnUserFingerprint)
+	}
+	if step3.InputPreview == nil || *step3.InputPreview != "好，现在开始改" {
+		t.Fatalf("step3 preview = %v", step3.InputPreview)
 	}
 }
 

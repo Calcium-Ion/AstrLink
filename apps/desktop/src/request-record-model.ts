@@ -7,6 +7,13 @@ export type RequestStatus =
   | "cancelled"
   | "blocked";
 
+/**
+ * Outcome of a whole conversation. `interrupted` has no record-level
+ * counterpart: the session delivered answers and then the client abandoned
+ * the last stream, so a stopped agent loop is not painted as if nothing ran.
+ */
+export type SessionStatus = RequestStatus | "interrupted";
+
 export interface RequestUsage {
   input_tokens: number;
   output_tokens: number;
@@ -91,7 +98,17 @@ export interface SessionLink {
   value: string;
 }
 
+export interface RequestRecovery {
+ path_id?:string;path_name?:string;path_version?:string;step_id?:string;
+  upstream_model?: string;
+  action?: "retry" | "failover";
+  reason?: string;
+  delay_ms: number;
+  stop_reason?: string;
+}
+
 export interface RequestRecord {
+  recovery?: RequestRecovery;
   id: string;
   parent_request_id: string | null;
   attempt_index: number;
@@ -101,6 +118,7 @@ export interface RequestRecord {
   status: RequestStatus;
   input_protocol: string;
   requested_model: string | null;
+  reasoning_effort?: string | null;
   streaming: boolean;
   route_id: string | null;
   service_id: string | null;
@@ -145,8 +163,9 @@ export interface RequestSession {
   completed_at: string | null;
   turn_count: number;
   call_count: number;
-  status: RequestStatus;
+  status: SessionStatus;
   requested_model: string | null;
+  reasoning_effort?: string | null;
   input_protocol: string;
   service_id: string | null;
   local_access_token_id: string | null;
@@ -161,7 +180,14 @@ export interface RequestSessionDetail extends RequestSession {
   turns: RequestRecord[];
 }
 
+export type RequestSessionKind = "inference" | "discovery";
+
+export function isModelDiscoveryProtocol(protocol: string): boolean {
+  return protocol === "openai.models" || protocol === "google.models";
+}
+
 export interface RequestSessionListQuery {
+  kind?: RequestSessionKind;
   limit?: number;
   cursor?: string;
   from?: string;
@@ -169,6 +195,8 @@ export interface RequestSessionListQuery {
   protocol?: string;
   service_id?: string;
   local_access_token_id?: string;
+  // Filters on record status, not on the aggregated session outcome, so it
+  // cannot name a session-only status such as interrupted.
   status?: RequestStatus;
 }
 
@@ -234,6 +262,8 @@ const statuses = new Set<RequestStatus>([
   "cancelled",
   "blocked",
 ]);
+
+const sessionStatuses = new Set<SessionStatus>([...statuses, "interrupted"]);
 
 function invalid(path: string, message: string): never {
   throw new Error(`请求记录数据无效（${path}）：${message}`);
@@ -445,6 +475,23 @@ function parsePrivacyHits(value: unknown, path: string): PrivacyHitCount[] {
   });
 }
 
+function parseRecovery(value: unknown, path: string): RequestRecovery {
+  const record = objectAt(value, path);
+  const delay = intAt(record.delay_ms, `${path}.delay_ms`);
+  if (delay < 0 || delay > 60000) invalid(path, "invalid recovery delay");
+  if (record.action !== undefined && record.action !== "retry" && record.action !== "failover") invalid(path, "invalid recovery action");
+  const result: RequestRecovery = { delay_ms: delay };
+  if (record.action) result.action = record.action as RequestRecovery["action"];
+  for (const key of ["upstream_model", "reason", "stop_reason", "path_id", "path_name", "path_version", "step_id"] as const) {
+    if (record[key] !== undefined) {
+      const text = stringAt(record[key], `${path}.${key}`);
+      if ([...text].length > (key === "upstream_model" ? 256 : 128)) invalid(path, "recovery text too long");
+      result[key] = text;
+    }
+  }
+  return result;
+}
+
 export function parseRequestRecord(value: unknown): RequestRecord {
   return parseRequestRecordAt(value, "$");
 }
@@ -469,6 +516,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
   if (childCount < 0) invalid(`${path}.child_count`, "不得为负数");
 
   return {
+    ...(record.recovery === undefined ? {} : { recovery: parseRecovery(record.recovery, `${path}.recovery`) }),
     id: stringAt(record.id, `${path}.id`),
     parent_request_id: Object.hasOwn(record, "parent_request_id")
       ? nullableStringAt(record.parent_request_id, `${path}.parent_request_id`)
@@ -483,6 +531,10 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
       record.requested_model,
       `${path}.requested_model`,
     ),
+    reasoning_effort:
+      record.reasoning_effort == null
+        ? null
+        : nullableStringAt(record.reasoning_effort, `${path}.reasoning_effort`),
     streaming: boolAt(record.streaming, `${path}.streaming`),
     route_id: nullableStringAt(record.route_id, `${path}.route_id`),
     service_id: nullableStringAt(record.service_id, `${path}.service_id`),
@@ -517,9 +569,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     turn_index: parseTurnIndex(record.turn_index, `${path}.turn_index`),
     session_link: parseSessionLink(record.session_link, `${path}.session_link`),
     cursors: parseSessionCursors(record.cursors, `${path}.cursors`),
-    events: Object.hasOwn(record, "events")
-      ? parseRequestEvents(record.events, `${path}.events`)
-      : [],
+    events: parseRequestEvents(record.events, `${path}.events`),
   };
 }
 
@@ -584,6 +634,9 @@ const eventKinds = new Set<RequestEventKind>([
 ]);
 
 function parseRequestEvents(value: unknown, path: string): RequestEvent[] {
+  // A record with no trajectory arrives as a nil Go slice, i.e. `null`, and
+  // records written before events existed omit the key. Both mean "no events".
+  if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) invalid(path, "应为数组");
   return value.map((item, index) => {
     const event = objectAt(item, `${path}[${index}]`);
@@ -621,7 +674,7 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
   const session = objectAt(value, path);
   if (
     typeof session.status !== "string" ||
-    !statuses.has(session.status as RequestStatus)
+    !sessionStatuses.has(session.status as SessionStatus)
   ) {
     invalid(`${path}.status`, "状态枚举无效");
   }
@@ -638,11 +691,15 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
     completed_at: nullableStringAt(session.completed_at, `${path}.completed_at`),
     turn_count: turnCount,
     call_count: callCount,
-    status: session.status as RequestStatus,
+    status: session.status as SessionStatus,
     requested_model: nullableStringAt(
       session.requested_model,
       `${path}.requested_model`,
     ),
+    reasoning_effort:
+      session.reasoning_effort == null
+        ? null
+        : nullableStringAt(session.reasoning_effort, `${path}.reasoning_effort`),
     input_protocol: stringAt(session.input_protocol, `${path}.input_protocol`),
     service_id: nullableStringAt(session.service_id, `${path}.service_id`),
     local_access_token_id: nullableStringAt(
@@ -804,22 +861,24 @@ export function displayRequestStatus(
   return status;
 }
 
-export function statusLabel(status: RequestStatus): string {
+export function statusLabel(status: SessionStatus): string {
   return i18n.t(`status.${status}`);
 }
 
 export function statusTone(
-  status: RequestStatus,
-): "positive" | "negative" | "neutral" | "pending" {
+  status: SessionStatus,
+): "blocked" | "positive" | "negative" | "neutral" | "pending" {
   switch (status) {
     case "succeeded":
       return "positive";
     case "failed":
       return "negative";
+    case "blocked":
+      return "blocked";
     case "pending":
       return "pending";
     case "cancelled":
-    case "blocked":
+    case "interrupted":
       return "pending";
   }
 }

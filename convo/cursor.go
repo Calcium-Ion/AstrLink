@@ -90,13 +90,30 @@ type Scope struct {
 	NotBefore     time.Time
 }
 
+// TurnState is what a record remembers about its user turn so the next
+// request in the session can be placed relative to it. Hosts store it with
+// the record and return it from Lookup; Policy.NextTurn produces it.
+type TurnState struct {
+	// Index is the 1-based user turn within the session.
+	Index int
+	// UserMessages is how many user messages the request's history held
+	// (cumulative for stateful chains). A later request whose history holds
+	// more user messages has started a new turn.
+	UserMessages int
+	// LastUserFingerprint is the keyed fingerprint of the newest user text,
+	// or "" when the host has no Fingerprinter. A changed fingerprint at an
+	// unchanged count (a harness that compacted history, a client that edited
+	// the last message) also starts a new turn.
+	LastUserFingerprint string
+}
+
 // Match is a stored record that a Lookup found for one of the queried values.
 type Match struct {
-	SessionID    string
-	TurnIndex    int
-	HasTurnIndex bool
-	Kind         Kind
-	Value        string
+	SessionID string
+	Kind      Kind
+	Value     string
+	// Turn is the matched record's stored turn state, nil when unknown.
+	Turn *TurnState
 }
 
 // Lookup is the only callback from convo into the host's storage. It must
@@ -114,9 +131,9 @@ type Decision struct {
 	Matched bool
 	// Match describes the winning record; zero when Matched is false.
 	Match Match
-	// TurnIndex is the 1-based user turn this request belongs to, or nil when
-	// the protocol has no user turns.
-	TurnIndex *int
+	// Turn is the user turn this request belongs to, or nil when the protocol
+	// has no user turns. Hosts store it and hand it back through Match.Turn.
+	Turn *TurnState
 	// Inbound lists every cursor the request carried, in layer order. Hosts
 	// should persist the KindExplicit entries (see PersistentInbound); the
 	// others are lookup keys only.

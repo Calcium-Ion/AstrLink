@@ -1,3 +1,6 @@
+use crate::failure_policy::{
+    validate_failover, validate_failure_policy, validate_routing_settings,
+};
 use std::{
     collections::HashSet,
     fmt::Write as _,
@@ -1077,16 +1080,68 @@ impl CoreManager {
     }
 
     pub async fn list_services(&self) -> Result<serde_json::Value, String> {
-        let (_, body) = self
+        let mut items = Vec::new();
+        let mut cursor = String::new();
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let query = format!("limit=200&cursor={}", percent_encode_query(&cursor));
+            let (_, body) = self
+                .authenticated_control(
+                    Method::GET,
+                    &format!("{SERVICES_PATH}?{}", query),
+                    None,
+                    None,
+                )
+                .await?;
+            let page: serde_json::Value = serde_json::from_slice(&body)
+                .map_err(|error| format!("invalid service list: {error}"))?;
+            items.extend(
+                page["items"]
+                    .as_array()
+                    .ok_or("service list omitted items")?
+                    .iter()
+                    .cloned(),
+            );
+            cursor = page["next_cursor"].as_str().unwrap_or("").to_string();
+            if cursor.is_empty() {
+                break;
+            }
+            if !seen.insert(cursor.clone()) {
+                return Err("service pagination did not advance".into());
+            }
+        }
+        Ok(serde_json::json!({"items": items, "next_cursor": null}))
+    }
+
+    pub async fn get_service_order(&self) -> Result<serde_json::Value, String> {
+        let (etag, body) = self
+            .authenticated_control(Method::GET, "/control/v1/service-order", None, None)
+            .await?;
+        service_order_record(etag, &body)
+    }
+
+    pub async fn update_service_order(
+        &self,
+        service_ids: Vec<String>,
+        etag: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_strong_etag(etag)?;
+        let mut seen = std::collections::HashSet::new();
+        for id in &service_ids {
+            validate_resource_id(id)?;
+            if !seen.insert(id) {
+                return Err("duplicate service ID".into());
+            }
+        }
+        let (etag, body) = self
             .authenticated_control(
-                Method::GET,
-                &format!("{SERVICES_PATH}?limit=200"),
-                None,
-                None,
+                Method::PUT,
+                "/control/v1/service-order",
+                Some(serde_json::json!({"service_ids": service_ids})),
+                Some(etag),
             )
             .await?;
-        serde_json::from_slice(&body)
-            .map_err(|error| format!("service list returned invalid JSON: {error}"))
+        service_order_record(etag, &body)
     }
 
     pub async fn list_routes(&self) -> Result<serde_json::Value, String> {
@@ -1355,6 +1410,9 @@ impl CoreManager {
         &self,
         input: serde_json::Value,
     ) -> Result<ServiceRecordResponse, String> {
+        if let Some(policy) = input.get("failure_policy").filter(|value| !value.is_null()) {
+            validate_failure_policy(policy)?;
+        }
         let (etag, body) = self
             .authenticated_control(Method::POST, SERVICES_PATH, Some(input), None)
             .await?;
@@ -1369,6 +1427,9 @@ impl CoreManager {
     ) -> Result<ServiceRecordResponse, String> {
         validate_resource_id(service_id)?;
         validate_etag(etag)?;
+        if let Some(policy) = patch.get("failure_policy").filter(|value| !value.is_null()) {
+            validate_failure_policy(policy)?;
+        }
         let (etag, body) = self
             .authenticated_control(
                 Method::PATCH,
@@ -1501,6 +1562,30 @@ impl CoreManager {
         parse_authorization_session(&body)
     }
 
+    pub async fn complete_service_authorization(
+        &self,
+        service_id: &str,
+        session_id: &str,
+        code: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        validate_resource_id(session_id)?;
+        if code.is_empty() || code.len() > 8192 {
+            return Err(
+                "authorization code is required and must be at most 8192 bytes".to_string(),
+            );
+        }
+        let (_, body) = self
+            .authenticated_control(
+                Method::PUT,
+                &format!("{SERVICES_PATH}/{service_id}/authorization"),
+                Some(serde_json::json!({ "session_id": session_id, "code": code })),
+                None,
+            )
+            .await?;
+        parse_authorization_session(&body)
+    }
+
     pub async fn cancel_service_authorization(
         &self,
         service_id: &str,
@@ -1547,7 +1632,7 @@ impl CoreManager {
         &self,
         query: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let qs = build_request_record_query(&query)?;
+        let qs = build_request_session_query(&query)?;
         let (_, body) = self
             .authenticated_control(
                 Method::GET,
@@ -1651,6 +1736,35 @@ impl CoreManager {
             .map_err(|error| format!("request audit content returned invalid JSON: {error}"))
     }
 
+    pub async fn get_routing_settings(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/routing-settings", None, None)
+            .await?;
+        let value = serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid routing settings: {error}"))?;
+        validate_routing_settings(&value, false)?;
+        Ok(value)
+    }
+
+    pub async fn update_routing_settings(
+        &self,
+        patch: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        validate_routing_settings(&patch, true)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::PATCH,
+                "/control/v1/routing-settings",
+                Some(patch),
+                None,
+            )
+            .await?;
+        let value = serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid routing settings: {error}"))?;
+        validate_routing_settings(&value, false)?;
+        Ok(value)
+    }
+
     pub async fn get_audit_settings(&self) -> Result<serde_json::Value, String> {
         let (_, body) = self
             .authenticated_control(Method::GET, "/control/v1/audit-settings", None, None)
@@ -1737,7 +1851,6 @@ impl CoreManager {
             ),
             None => None,
         };
-        let timeout = control_request_timeout(&method, path);
         let mut last_error = None;
         for attempt in 0..2 {
             match self
@@ -1748,7 +1861,6 @@ impl CoreManager {
                     encoded_body.as_deref(),
                     if_match,
                     &control_token,
-                    timeout,
                 )
                 .await
             {
@@ -1781,12 +1893,11 @@ impl CoreManager {
         encoded_body: Option<&[u8]>,
         if_match: Option<&str>,
         control_token: &str,
-        timeout: Duration,
     ) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), String> {
         let mut request = self
             .client
             .request(method.clone(), url)
-            .timeout(timeout)
+            .timeout(control_request_timeout(&method, path))
             .header(header::AUTHORIZATION, format!("Bearer {control_token}"));
         if let Some(etag) = if_match {
             request = request.header(header::IF_MATCH, etag);
@@ -2108,9 +2219,31 @@ fn parse_authorization_session(body: &[u8]) -> Result<serde_json::Value, String>
 fn service_record(etag: Option<String>, body: &[u8]) -> Result<ServiceRecordResponse, String> {
     let etag = etag.ok_or_else(|| "Core service response omitted ETag".to_string())?;
     validate_etag(&etag)?;
-    let service = serde_json::from_slice(body)
+    let service: serde_json::Value = serde_json::from_slice(body)
         .map_err(|error| format!("service response returned invalid JSON: {error}"))?;
+    if let Some(policy) = service.get("failure_policy") {
+        validate_failure_policy(policy)?;
+    }
     Ok(ServiceRecordResponse { service, etag })
+}
+
+fn service_order_record(etag: Option<String>, body: &[u8]) -> Result<serde_json::Value, String> {
+    let etag = etag.ok_or("Core service order omitted ETag")?;
+    validate_strong_etag(&etag)?;
+    let order: serde_json::Value =
+        serde_json::from_slice(body).map_err(|error| format!("invalid service order: {error}"))?;
+    let ids = order["service_ids"]
+        .as_array()
+        .ok_or("service order omitted service_ids")?;
+    let mut seen = std::collections::HashSet::new();
+    for id in ids {
+        let id = id.as_str().ok_or("invalid service ID")?;
+        validate_resource_id(id)?;
+        if !seen.insert(id) {
+            return Err("duplicate service ID".into());
+        }
+    }
+    Ok(serde_json::json!({"service_ids": ids, "etag": etag}))
 }
 
 fn route_record(etag: Option<String>, body: &[u8]) -> Result<RouteRecordResponse, String> {
@@ -2158,8 +2291,12 @@ fn validate_route_value(route: &serde_json::Value) -> Result<(), String> {
             "match",
             "selection",
             "targets",
+            "categories",
+            "recovery_path_id",
+            "failure_policy",
+            "failover",
         ],
-        &["id", "name", "enabled", "priority", "match", "targets"],
+        &["id", "name", "enabled", "priority", "match"],
         "route",
     )?;
     let id = validate_string(&object["id"], 3, 96, "route id")?;
@@ -2180,8 +2317,12 @@ fn validate_route_create_input(input: &serde_json::Value) -> Result<(), String> 
             "match",
             "selection",
             "targets",
+            "categories",
+            "recovery_path_id",
+            "failure_policy",
+            "failover",
         ],
-        &["name", "priority", "match", "targets"],
+        &["name", "priority", "match"],
         "route create input",
     )?;
     validate_route_common(object, false)
@@ -2201,17 +2342,40 @@ fn validate_route_common(
     }
     validate_route_priority(&object["priority"], "route priority")?;
     let public_model = validate_route_match(&object["match"])?;
-    if public_model == Some("astrlink/auto") {
-        return Err(
-            "astrlink/auto routes are unavailable until the classifier runtime is ready"
-                .to_string(),
+    if let Some(policy) = object.get("failure_policy") {
+        validate_failure_policy(policy)?;
+    }
+    if let Some(policy) = object.get("failover") {
+        validate_failover(policy)?;
+    }
+    let auto = object
+        .get("selection")
+        .and_then(|value| value["mode"].as_str())
+        == Some("auto");
+    if let Some(selection) = object.get("selection") {
+        validate_route_selection(selection)?;
+    }
+    if auto {
+        if public_model != Some("astrlink/auto")
+            || object.contains_key("targets")
+            || object.contains_key("recovery_path_id")
+        {
+            return Err("auto routes require astrlink/auto and category targets".into());
+        }
+        return validate_route_categories(
+            &object["categories"],
+            object["match"]["protocol"].as_str().unwrap_or(""),
         );
     }
-    if let Some(selection) = object.get("selection") {
-        validate_exact_object_keys(selection, &["mode"], "route selection")?;
-        if selection["mode"] != "priority" {
-            return Err("only priority route selection is available in this build".to_string());
+    if public_model == Some("astrlink/auto") || object.contains_key("categories") {
+        return Err("priority routes cannot use auto model or categories".into());
+    }
+    if let Some(id) = object.get("recovery_path_id") {
+        crate::recovery_path::id(id)?;
+        if object.contains_key("targets") {
+            return Err("path and targets are mutually exclusive".into());
         }
+        return Ok(());
     }
     let targets = object["targets"]
         .as_array()
@@ -2242,6 +2406,8 @@ fn validate_route_patch(patch: &serde_json::Value) -> Result<(), String> {
     }
     for (field, value) in object {
         match field.as_str() {
+            "recovery_path_id" if value.is_null() => {}
+            "recovery_path_id" => crate::recovery_path::id(value)?,
             "name" => {
                 validate_metadata_string(value, 1, 128, "route patch name")?;
             }
@@ -2249,20 +2415,15 @@ fn validate_route_patch(patch: &serde_json::Value) -> Result<(), String> {
             "priority" => {
                 validate_route_priority(value, "route patch priority")?;
             }
+            "failure_policy" if value.is_null() => {}
+            "failure_policy" => validate_failure_policy(value)?,
+            "failover" if value.is_null() => {}
+            "failover" => validate_failover(value)?,
             "match" => {
-                if validate_route_match(value)? == Some("astrlink/auto") {
-                    return Err("astrlink/auto routes are unavailable until the classifier runtime is ready".to_string());
-                }
+                validate_route_match(value)?;
             }
             "selection" if value.is_null() => {}
-            "selection" => {
-                validate_exact_object_keys(value, &["mode"], "route patch selection")?;
-                if value["mode"] != "priority" {
-                    return Err(
-                        "only priority route selection is available in this build".to_string()
-                    );
-                }
-            }
+            "selection" => validate_route_selection(value)?,
             "targets" if value.is_null() => {}
             "targets" => {
                 let targets = value
@@ -2283,9 +2444,70 @@ fn validate_route_patch(patch: &serde_json::Value) -> Result<(), String> {
                 }
             }
             "categories" if value.is_null() => {}
+            "categories" => validate_route_categories(value, "")?,
             "enabled" => return Err("route patch enabled must be a boolean".to_string()),
             _ => return Err(format!("route patch contains unexpected field {field}")),
         }
+    }
+    Ok(())
+}
+
+fn validate_route_selection(value: &serde_json::Value) -> Result<(), String> {
+    match value["mode"].as_str() {
+        Some("priority") => validate_exact_object_keys(value, &["mode"], "route selection"),
+        Some("auto") => {
+            validate_exact_object_keys(value, &["mode", "taxonomy_id"], "route selection")?;
+            validate_string(&value["taxonomy_id"], 1, 64, "taxonomy_id")?;
+            Ok(())
+        }
+        _ => Err("unknown route selection mode".into()),
+    }
+}
+
+fn validate_route_categories(value: &serde_json::Value, protocol: &str) -> Result<(), String> {
+    let categories = value.as_array().ok_or("categories must be an array")?;
+    if categories.len() < 2 {
+        return Err("auto routes require at least two categories".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    let mut models = std::collections::HashSet::new();
+    for category in categories {
+        validate_allowed_object_keys(
+            category.as_object().ok_or("invalid category")?,
+            &["category_id", "targets", "recovery_path_id"],
+            &["category_id"],
+            "route category",
+        )?;
+        let id = validate_string(&category["category_id"], 1, 64, "category_id")?;
+        if !ids.insert(id) {
+            return Err("duplicate category_id".into());
+        }
+        if let Some(id) = category.get("recovery_path_id") {
+            crate::recovery_path::id(id)?;
+            if category.get("targets").is_some() {
+                return Err("category path and targets are mutually exclusive".into());
+            }
+            continue;
+        }
+        let targets = category["targets"]
+            .as_array()
+            .ok_or("category targets must be an array")?;
+        if targets.is_empty() || targets.len() > 200 {
+            return Err("category requires 1 through 200 targets".into());
+        }
+        for target in targets {
+            validate_route_target(target, protocol, true, "category target")?;
+            let model =
+                validate_string(&target["upstream_model"], 1, 256, "category upstream_model")?;
+            models.insert(model);
+        }
+    }
+    if models.len() < 2
+        && !categories
+            .iter()
+            .any(|c| c.get("recovery_path_id").is_some())
+    {
+        return Err("auto routes require two distinct models".into());
     }
     Ok(())
 }
@@ -2326,14 +2548,17 @@ fn validate_route_target(
     let service_id = validate_string(&object["service_id"], 3, 96, &format!("{field} service_id"))?;
     validate_resource_id(service_id)?;
     match object["plan_type"].as_str() {
-        Some("native" | "delegated") => {}
+        Some("native" | "delegated" | "relaykit") => {}
         _ => return Err(format!("{field} plan_type is unavailable")),
     }
     let upstream_protocol = validate_protocol_id(
         &object["upstream_protocol"],
         &format!("{field} upstream_protocol"),
     )?;
-    if !ingress_protocol.is_empty() && upstream_protocol != ingress_protocol {
+    if object["plan_type"] != "relaykit"
+        && !ingress_protocol.is_empty()
+        && upstream_protocol != ingress_protocol
+    {
         return Err(format!("{field} must preserve the ingress protocol"));
     }
     validate_route_priority(&object["priority"], &format!("{field} priority"))?;
@@ -3732,10 +3957,10 @@ fn validate_resource_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-const SUBSCRIPTION_PROVIDERS: &[&str] = &["openai_codex"];
+const SUBSCRIPTION_PROVIDERS: &[&str] = &["openai_codex", "claude_code"];
 const AUTHORIZATION_SESSION_STATUSES: &[&str] =
     &["pending", "completed", "cancelled", "expired", "failed"];
-const AUTHORIZATION_FLOWS: &[&str] = &["browser", "device_code"];
+const AUTHORIZATION_FLOWS: &[&str] = &["browser", "device_code", "authorization_code"];
 
 fn validate_subscription_provider(value: &str) -> Result<(), String> {
     if !SUBSCRIPTION_PROVIDERS.contains(&value) {
@@ -3922,6 +4147,10 @@ fn parse_authorization_session_value(
         .and_then(|item| item.as_str())
         .ok_or_else(|| "authorization session omitted flow".to_string())?;
     validate_authorization_flow(flow)?;
+
+    if (provider == "claude_code") != (flow == "authorization_code") {
+        return Err("authorization flow is unsupported by provider".to_string());
+    }
     let service_id = object
         .get("service_id")
         .and_then(|item| item.as_str())
@@ -3963,7 +4192,7 @@ fn parse_authorization_session_value(
     if let Some(device_code) = device_code {
         session["device_code"] = parse_authorization_device_code_value(device_code)?;
     }
-    if status == "pending" && flow == "browser" {
+    if status == "pending" && (flow == "browser" || flow == "authorization_code") {
         if authorization_url.is_none() {
             return Err(
                 "pending browser authorization session requires authorization_url".to_string(),
@@ -4018,6 +4247,26 @@ fn timestamp_query_charset_ok(value: &str) -> bool {
                 b'0'..=b'9' | b'T' | b'Z' | b'z' | b':' | b'+' | b'.' | b'-'
             )
         })
+}
+
+fn build_request_session_query(query: &serde_json::Value) -> Result<String, String> {
+    let mut record_query = query.clone();
+    let kind = record_query
+        .as_object_mut()
+        .and_then(|object| object.remove("kind"));
+    let mut qs = build_request_record_query(&record_query)?;
+    if let Some(kind) = kind {
+        let kind = kind
+            .as_str()
+            .filter(|value| matches!(*value, "inference" | "discovery"))
+            .ok_or_else(|| {
+                "request session query kind must be inference or discovery".to_string()
+            })?;
+        qs.push(if qs.is_empty() { '?' } else { '&' });
+        qs.push_str("kind=");
+        qs.push_str(kind);
+    }
+    Ok(qs)
 }
 
 fn build_request_record_query(query: &serde_json::Value) -> Result<String, String> {
@@ -4595,8 +4844,94 @@ mod windows_job {
     }
 }
 
+impl CoreManager {
+    pub async fn recovery_paths(
+        &self,
+        operation: &str,
+        id: Option<String>,
+        etag: Option<String>,
+        input: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        use crate::recovery_path::{
+            validate_path, validate_preview, validate_preview_input, validate_record,
+        };
+        let base = "/control/v1/recovery-paths";
+        let (method, path) = match operation {
+            "list" => (Method::GET, base.to_string()),
+            "create" => {
+                validate_path(input.as_ref().ok_or("path input is required")?, false, true)?;
+                (Method::POST, base.to_string())
+            }
+            "preview" => {
+                validate_preview_input(input.as_ref().ok_or("preview input is required")?)?;
+                (Method::POST, format!("{base}/preview"))
+            }
+            "get" | "update" | "delete" => {
+                let id = id.as_deref().ok_or("path ID is required")?;
+                validate_resource_id(id)?;
+                if operation != "get" {
+                    validate_strong_etag(etag.as_deref().ok_or("path version is required")?)?;
+                }
+                if operation == "update" {
+                    validate_path(input.as_ref().ok_or("path patch is required")?, true, false)?;
+                }
+                (
+                    if operation == "get" {
+                        Method::GET
+                    } else if operation == "update" {
+                        Method::PATCH
+                    } else {
+                        Method::DELETE
+                    },
+                    format!("{base}/{id}"),
+                )
+            }
+            _ => return Err("unknown recovery path operation".into()),
+        };
+        let (_, body) = self
+            .authenticated_control(method, &path, input, etag.as_deref())
+            .await?;
+        if operation == "delete" {
+            return Ok(serde_json::Value::Null);
+        }
+        let value: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        if operation == "list" {
+            let object = value.as_object().ok_or("invalid path page")?;
+            if object.len() != 1 {
+                return Err("invalid path page fields".into());
+            };
+            for record in value["items"].as_array().ok_or("invalid path page items")? {
+                validate_record(record)?;
+            }
+        } else if operation == "preview" {
+            validate_preview(&value)?;
+        } else {
+            validate_record(&value)?;
+        }
+        Ok(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn service_order_requires_strong_etag_and_distinct_ids() {
+        let tag = format!("\"sha256:{}\"", "a".repeat(64));
+        let body = br#"{"service_ids":["service_b","service_a"]}"#;
+        let record = super::service_order_record(Some(tag.clone()), body).unwrap();
+        assert_eq!(record["service_ids"][0], "service_b");
+        assert_eq!(record["etag"], tag);
+        assert!(super::service_order_record(None, body).is_err());
+        assert!(super::service_order_record(Some("W/\"old\"".into()), body).is_err());
+        assert!(super::service_order_record(
+            Some(tag.clone()),
+            br#"{"service_ids":["service_a","service_a"]}"#
+        )
+        .is_err());
+        assert!(
+            super::service_order_record(Some(tag), br#"{"service_ids":["bad/path"]}"#).is_err()
+        );
+    }
     use super::*;
 
     #[test]
@@ -4614,6 +4949,14 @@ mod tests {
         browser["flow"] = serde_json::json!("browser");
         browser["authorization_url"] = serde_json::json!("https://auth.openai.com/oauth/authorize");
         assert!(parse_authorization_session_value(&browser).is_ok());
+
+        let mut claude = browser.clone();
+        claude["provider"] = serde_json::json!("claude_code");
+        claude["flow"] = serde_json::json!("authorization_code");
+        claude["authorization_url"] = serde_json::json!("https://claude.com/cai/oauth/authorize");
+        assert!(parse_authorization_session_value(&claude).is_ok());
+        claude["code"] = serde_json::json!("secret#state");
+        assert!(parse_authorization_session_value(&claude).is_err());
 
         let mut device = common.clone();
         device["flow"] = serde_json::json!("device_code");
@@ -4734,6 +5077,32 @@ mod tests {
         assert_eq!(percent_encode_query("/"), "%2F");
         assert_eq!(percent_encode_query(" "), "%20");
         assert_eq!(percent_encode_query("猫"), "%E7%8C%AB");
+    }
+
+    #[test]
+    fn build_request_session_query_classifies_without_changing_record_queries() {
+        assert_eq!(
+            build_request_session_query(&serde_json::json!({"kind": "inference", "limit": 50}))
+                .unwrap(),
+            "?limit=50&kind=inference"
+        );
+        assert_eq!(
+            build_request_session_query(&serde_json::json!({"kind": "discovery", "cursor": "a+b"}))
+                .unwrap(),
+            "?cursor=a%2Bb&kind=discovery"
+        );
+        assert_eq!(
+            build_request_session_query(&serde_json::json!({})).unwrap(),
+            ""
+        );
+        for kind in [
+            serde_json::json!("all"),
+            serde_json::json!(null),
+            serde_json::json!(true),
+        ] {
+            assert!(build_request_session_query(&serde_json::json!({"kind": kind})).is_err());
+        }
+        assert!(build_request_record_query(&serde_json::json!({"kind": "inference"})).is_err());
     }
 
     #[test]
@@ -5328,7 +5697,17 @@ mod tests {
         });
         assert!(validate_route_create_input(&auto)
             .unwrap_err()
-            .contains("unexpected field categories"));
+            .contains("at least two categories"));
+        let mut valid_auto = auto;
+        valid_auto["categories"] = serde_json::json!([
+            {"category_id":"code","targets":[{"service_id":"service_a","plan_type":"native","upstream_protocol":"openai.responses","upstream_model":"code-model","priority":0},{"service_id":"service_b","plan_type":"delegated","upstream_protocol":"openai.responses","upstream_model":"backup-model","priority":1}]},
+            {"category_id":"general","targets":[{"service_id":"service_a","plan_type":"native","upstream_protocol":"openai.responses","upstream_model":"general-model","priority":0}]}
+        ]);
+        valid_auto["failover"] =
+            serde_json::json!({"enabled":true,"strategy":"failover_first","max_attempts":6});
+        validate_route_create_input(&valid_auto).expect("auto routing with backup targets");
+        validate_route_patch(&serde_json::json!({"failure_policy":null,"failover":null}))
+            .expect("restore inherited policy");
     }
 
     #[test]

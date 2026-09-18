@@ -56,8 +56,8 @@ func TestResolveLayerOrderAndScopes(t *testing.T) {
 	if calls[2].kind != KindFingerprint || calls[2].scope != wantScope || calls[2].values[0] != fp.Fingerprint(digest) {
 		t.Fatalf("fingerprint layer = %+v", calls[2])
 	}
-	if got := *decision.TurnIndex; got != 2 {
-		t.Fatalf("TurnIndex = %d, want 2", got)
+	if decision.Turn == nil || decision.Turn.Index != 1 || decision.Turn.UserMessages != 2 || decision.Turn.LastUserFingerprint != "" {
+		t.Fatalf("Turn = %+v, want index 1 with 2 user messages (no user digest to fingerprint)", decision.Turn)
 	}
 	wantInbound := []Cursor{
 		{KindExplicit, DirectionIn, "conv_1"},
@@ -74,11 +74,14 @@ func TestResolveLayerOrderAndScopes(t *testing.T) {
 	// Explicit hit stops the cascade.
 	calls = nil
 	decision, err = policy.Resolve(context.Background(), summary, fp, recordingLookup(&calls, map[Kind]Match{
-		KindExplicit: {SessionID: "s1", TurnIndex: 3, HasTurnIndex: true},
+		KindExplicit: {SessionID: "s1", Turn: &TurnState{Index: 3, UserMessages: 2}},
 		KindEchoID:   {SessionID: "s2"},
 	}), now)
 	if err != nil || !decision.Matched || decision.Match.SessionID != "s1" || decision.Match.Kind != KindExplicit {
 		t.Fatalf("decision = %+v err = %v", decision, err)
+	}
+	if decision.Turn == nil || decision.Turn.Index != 3 {
+		t.Fatalf("Turn = %+v, want the matched turn 3 (same user-message count, no digest)", decision.Turn)
 	}
 	if len(calls) != 1 {
 		t.Fatalf("explicit hit must stop lookups, got %d calls", len(calls))
@@ -122,7 +125,7 @@ func TestResolveErrorsAndNilLookup(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	decision, err := policy.Resolve(context.Background(), summary, nil, nil, time.Now())
-	if err != nil || decision.Matched || *decision.TurnIndex != 1 || len(decision.Inbound) != 1 {
+	if err != nil || decision.Matched || decision.Turn == nil || decision.Turn.Index != 1 || len(decision.Inbound) != 1 {
 		t.Fatalf("nil lookup decision = %+v err = %v", decision, err)
 	}
 	// A lookup that says ok but returns an empty session id is ignored.
@@ -134,39 +137,72 @@ func TestResolveErrorsAndNilLookup(t *testing.T) {
 	}
 }
 
-func TestNextTurnIndex(t *testing.T) {
+func TestNextTurn(t *testing.T) {
 	policy := DefaultPolicy()
-	ptr := func(n int) *int { return &n }
+	replay := func(users int) RequestSummary {
+		return RequestSummary{UserTurnCount: users, HasUserMessage: users > 0}
+	}
+	stateful := func(users int) RequestSummary {
+		return RequestSummary{Stateful: true, UserTurnCount: users, HasUserMessage: users > 0}
+	}
+	matched := func(turn TurnState) *Match { return &Match{Kind: KindEchoID, Turn: &turn} }
 	cases := []struct {
-		name    string
-		summary RequestSummary
-		matched *Match
-		want    *int
+		name        string
+		summary     RequestSummary
+		matched     *Match
+		fingerprint string
+		want        *TurnState
 	}{
-		{"replayed history counts user messages", RequestSummary{UserTurnCount: 3, HasUserMessage: true}, nil, ptr(3)},
-		{"replayed history ignores match", RequestSummary{UserTurnCount: 3, HasUserMessage: true}, &Match{Kind: KindEchoID, TurnIndex: 7, HasTurnIndex: true}, ptr(3)},
-		{"stateful with user message increments", RequestSummary{Stateful: true, UserTurnCount: 1, HasUserMessage: true}, &Match{Kind: KindExplicit, TurnIndex: 4, HasTurnIndex: true}, ptr(5)},
-		{"stateful tool output keeps turn", RequestSummary{Stateful: true}, &Match{Kind: KindExplicit, TurnIndex: 4, HasTurnIndex: true}, ptr(4)},
-		{"stateful without matched turn falls back", RequestSummary{Stateful: true, UserTurnCount: 1, HasUserMessage: true}, &Match{Kind: KindExplicit}, ptr(1)},
-		{"stateful matched via echo falls back", RequestSummary{Stateful: true, UserTurnCount: 1, HasUserMessage: true}, &Match{Kind: KindEchoID, TurnIndex: 4, HasTurnIndex: true}, ptr(1)},
-		{"no user turns", RequestSummary{}, nil, nil},
-		{"stateful tool output without match", RequestSummary{Stateful: true}, nil, nil},
+		// The first record is turn 1 no matter how much history it replays:
+		// harness notes, skill text, or a conversation started elsewhere.
+		{"first request is turn 1", replay(3), nil, "fp_a", &TurnState{1, 3, "fp_a"}},
+		{"first request without fingerprinter", replay(3), nil, "", &TurnState{1, 3, ""}},
+		{"no user turns", replay(0), nil, "", nil},
+		{"matched record without turn restarts", replay(3), &Match{Kind: KindEchoID}, "fp_a", &TurnState{1, 3, "fp_a"}},
+		// Agent loop: the next call appends assistant + tool items only.
+		{"same count same text keeps turn", replay(3), matched(TurnState{4, 3, "fp_a"}), "fp_a", &TurnState{4, 3, "fp_a"}},
+		{"same count without fingerprints keeps turn", replay(3), matched(TurnState{4, 3, ""}), "", &TurnState{4, 3, ""}},
+		{"same count, one side unfingerprinted, keeps turn", replay(3), matched(TurnState{4, 3, ""}), "fp_b", &TurnState{4, 3, "fp_b"}},
+		// A person typed again.
+		{"more user messages starts a turn", replay(4), matched(TurnState{4, 3, "fp_a"}), "fp_b", &TurnState{5, 4, "fp_b"}},
+		// Compaction: fewer messages but a new prompt at the end.
+		{"fewer messages with new text starts a turn", replay(2), matched(TurnState{4, 3, "fp_a"}), "fp_b", &TurnState{5, 2, "fp_b"}},
+		{"fewer messages same text keeps turn", replay(2), matched(TurnState{4, 3, "fp_a"}), "fp_a", &TurnState{4, 2, "fp_a"}},
+		// Stateful Responses chain: the body is a delta.
+		{"stateful user delta increments", stateful(1), &Match{Kind: KindExplicit, Turn: &TurnState{4, 6, "fp_a"}}, "fp_b", &TurnState{5, 7, "fp_b"}},
+		{"stateful tool output keeps turn", stateful(0), &Match{Kind: KindExplicit, Turn: &TurnState{4, 6, "fp_a"}}, "", &TurnState{4, 6, "fp_a"}},
+		{"stateful without matched turn restarts", stateful(1), &Match{Kind: KindExplicit}, "fp_a", &TurnState{1, 1, "fp_a"}},
+		{"stateful tool output without match", stateful(0), nil, "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := policy.NextTurnIndex(tc.summary, tc.matched)
+			got := policy.NextTurn(tc.summary, tc.matched, tc.fingerprint)
 			if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
-				t.Fatalf("NextTurnIndex = %v, want %v", deref(got), deref(tc.want))
+				t.Fatalf("NextTurn = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
 }
 
-func deref(p *int) any {
-	if p == nil {
-		return nil
+func TestResolveFingerprintsLastUserText(t *testing.T) {
+	policy := DefaultPolicy()
+	fp := NewFingerprinter([]byte("k"))
+	prompt := RequestSummary{UserTurnCount: 1, HasUserMessage: true, LastUserDigest: DigestText("list TODOs", false)}
+	decision, err := policy.Resolve(context.Background(), prompt, fp, nil, time.Now())
+	if err != nil || decision.Turn == nil || decision.Turn.LastUserFingerprint != fp.Fingerprint(prompt.LastUserDigest) {
+		t.Fatalf("decision = %+v err = %v", decision, err)
 	}
-	return *p
+	// A harness compacts the history down to one message that is a new prompt:
+	// the count did not grow, but the text did change.
+	edited := RequestSummary{UserTurnCount: 1, HasUserMessage: true, LastUserDigest: DigestText("now fix them", false)}
+	lookup := func(context.Context, Kind, []string, Scope) (Match, bool, error) {
+		return Match{SessionID: "s1", Turn: decision.Turn}, true, nil
+	}
+	edited.EchoIDs = []string{"call_7f3a9c2e1b4d4e8fa1c2"}
+	next, err := policy.Resolve(context.Background(), edited, fp, lookup, time.Now())
+	if err != nil || !next.Matched || next.Turn == nil || next.Turn.Index != 2 {
+		t.Fatalf("changed user text at equal count must start a turn: %+v err = %v", next, err)
+	}
 }
 
 func TestOutputCursors(t *testing.T) {

@@ -98,6 +98,7 @@ func (function PolicyWarningReporterFunc) ReportPolicyWarning(
 }
 
 type Handler struct {
+	affinities               responseAffinities
 	resolver                 endpoint.Resolver
 	authorizer               endpoint.Authorizer
 	forwarder                Forwarder
@@ -198,7 +199,7 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		dependencies.Authorizer = endpoint.NewSecretAuthorizer(nil)
 	}
 	if dependencies.Forwarder == nil {
-		dependencies.Forwarder = transport.NewWithResponseHeaderTimeout(nil, dependencies.ResponseStartTimeout)
+		dependencies.Forwarder = transport.New(nil)
 	}
 	return &Handler{
 		resolver: dependencies.Resolver, authorizer: dependencies.Authorizer, forwarder: dependencies.Forwarder,
@@ -263,14 +264,27 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		session.finish(context.Background(), handler.requestRecords, handler.auditBlobs, handler.recordLogger)
 	}()
 
+	if classified.Model == contract.AstrLinkAutoModelID {
+		writeInferenceError(outWriter, http.StatusGone, "routing_feature_retired", "astrlink/auto is retired; request an explicit model", false, nil)
+		session.noteFailed(errorSummaryFromInference("routing_feature_retired", "automatic routing is retired", false))
+		return
+	}
+	category := ""
 	candidates, err := handler.resolveCandidates(request.Context(), endpoint.ResolveRequest{
-		Protocol:  classified.Protocol,
-		Model:     classified.Model,
-		Streaming: classified.Streaming,
-		Category:  handler.autoCategory(request.Context(), classified),
+		Protocol:     classified.Protocol,
+		Model:        classified.Model,
+		Streaming:    classified.Streaming,
+		Category:     category,
+		Continuation: classified.PreviousResponseID != "",
 	})
 	if err != nil {
 		handler.writeResolveError(outWriter, request, classified, err)
+		return
+	}
+	candidates, err = handler.bindResponseAffinity(request.Context(), classified, candidates)
+	if err != nil {
+		writeInferenceError(outWriter, http.StatusConflict, "response_affinity_unavailable", err.Error(), false, nil)
+		session.noteFailed(errorSummaryFromInference("response_affinity_unavailable", err.Error(), false))
 		return
 	}
 	if classified.Protocol.IsModelDiscovery() {
@@ -573,6 +587,7 @@ func (handler *Handler) loadAuditSettings(ctx context.Context) contract.AuditSet
 func (handler *Handler) startRecordSession(request *http.Request, classified Request) *recordSession {
 	accessTokenID, _ := AccessTokenIDFromContext(request.Context())
 	session := newRecordSession(classified, accessTokenID, handler.loadAuditSettings(request.Context()))
+	session.bindPersistence(handler.requestRecords, handler.auditBlobs, handler.recordLogger)
 	if handler.requestRecords != nil {
 		session.fingerprinter = handler.sessionFingerprints.get(request.Context(), handler.auditBlobs, handler.recordLogger)
 	}

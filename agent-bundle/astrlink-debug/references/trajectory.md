@@ -18,9 +18,13 @@ Useful session fields:
 - `session_id` groups requests from one client conversation
 - `turn_index` is the 1-based **user turn**. Every model call of one agent
   loop (tool call → tool result → next call) shares the same value, so a
-  session summary reads `1 turn · 8 calls`. Harness text replayed as
-  `role=user` (`<system-reminder>` / `<skill>` blocks, compaction
-  summaries) is not a turn. `null` means the protocol has no user turns
+  session summary reads `1 turn · 8 calls`. It is relative, not a count:
+  the first record of a session is turn 1 however many `role=user`
+  messages its history holds (harnesses replay skill text and compaction
+  summaries as user messages), and a linked record starts a new turn only
+  when it has more user messages than the record it links to
+  (`turn_user_messages`) or its newest user text changed
+  (`turn_user_fingerprint`). `null` means the protocol has no user turns
   (completions) or the row predates linking.
 - `session_link` tells how the record joined its session; `null` means it
   started the session. `kind` is one of:

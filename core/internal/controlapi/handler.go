@@ -15,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
+	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -40,6 +41,7 @@ const (
 )
 
 type Dependencies struct {
+	RecoveryResolver   *endpoint.StoreResolver
 	ServiceStore       storage.ServiceStore
 	RouteStore         storage.RouteStore
 	AccessTokenManager AccessTokenManager
@@ -81,29 +83,33 @@ type PrivacyModelRegistry interface {
 }
 
 type Handler struct {
-	version         contract.VersionResponse
-	capabilities    contract.CapabilitiesResponse
-	serviceStore    storage.ServiceStore
-	routeStore      storage.RouteStore
-	accessTokens    AccessTokenManager
-	policyStore     storage.PolicyStore
-	privacyModels   PrivacyModelRegistry
-	privacyFilter   privacy.Filter
-	policyChanged   func(contract.Policy)
-	requestRecords  storage.RequestRecordStore
-	auditSettings   storage.AuditSettingsStore
-	auditKeys       storage.AuditKeyStore
-	auditBlobs      storage.AuditBlobStore
-	subscriptions   *subscription.Manager
-	serviceModels   ServiceModelProber
-	autoClassifiers AutoClassifierRegistry
-	autoClassifier  AutoClassifier
-	controlToken    []byte
-	newServiceID    func() (contract.ServiceID, error)
-	newRouteID      func() (contract.RouteID, error)
-	mux             *http.ServeMux
-	privacyMu       sync.Mutex
-	shutdown        context.CancelFunc
+	recoveryPaths     storage.RecoveryPathStore
+	recoveryResolver  *endpoint.StoreResolver
+	routingSettings   storage.RoutingSettingsStore
+	routingSettingsMu sync.Mutex
+	version           contract.VersionResponse
+	capabilities      contract.CapabilitiesResponse
+	serviceStore      storage.ServiceStore
+	routeStore        storage.RouteStore
+	accessTokens      AccessTokenManager
+	policyStore       storage.PolicyStore
+	privacyModels     PrivacyModelRegistry
+	privacyFilter     privacy.Filter
+	policyChanged     func(contract.Policy)
+	requestRecords    storage.RequestRecordStore
+	auditSettings     storage.AuditSettingsStore
+	auditKeys         storage.AuditKeyStore
+	auditBlobs        storage.AuditBlobStore
+	subscriptions     *subscription.Manager
+	serviceModels     ServiceModelProber
+	autoClassifiers   AutoClassifierRegistry
+	autoClassifier    AutoClassifier
+	controlToken      []byte
+	newServiceID      func() (contract.ServiceID, error)
+	newRouteID        func() (contract.RouteID, error)
+	mux               *http.ServeMux
+	privacyMu         sync.Mutex
+	shutdown          context.CancelFunc
 }
 
 func New(version contract.VersionResponse) *Handler {
@@ -129,7 +135,11 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	if dependencies.ConversionEngine != nil {
 		capabilities.ConversionEngine = relaykitbridge.Descriptor(dependencies.ConversionEngine)
 	}
+	recoveryPaths, _ := dependencies.ServiceStore.(storage.RecoveryPathStore)
+	routingSettings, _ := dependencies.ServiceStore.(storage.RoutingSettingsStore)
 	handler := &Handler{
+		routingSettings: routingSettings,
+		recoveryPaths:   recoveryPaths, recoveryResolver: dependencies.RecoveryResolver,
 		version:         version,
 		capabilities:    capabilities,
 		serviceStore:    dependencies.ServiceStore,
@@ -153,6 +163,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		shutdown:        dependencies.Shutdown,
 		mux:             http.NewServeMux(),
 	}
+	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource))
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, contract.HealthResponse{Status: "ok"})
 	}))
@@ -179,11 +190,9 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		}
 		handler.registerServiceRoutes()
 	}
-	if handler.routeStore != nil {
-		if handler.newRouteID == nil {
-			handler.newRouteID = randomRouteID
-		}
-		handler.registerRouteRoutes()
+	handler.mux.HandleFunc(ServiceOrderPath, handler.authenticated(handler.serviceOrderResource))
+	for _, path := range []string{RoutesPath, RoutesPath + "/", RecoveryPathsPath, RecoveryPathsPath + "/", AutoClassifierPath, AutoClassifierPath + "/"} {
+		handler.mux.HandleFunc(path, handler.authenticated(handler.retiredRouting))
 	}
 	if handler.accessTokens != nil {
 		handler.registerAccessTokenRoutes()
@@ -193,9 +202,6 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	}
 	if handler.policyStore != nil && handler.privacyModels != nil {
 		handler.registerPrivacyModelsRoutes()
-	}
-	if handler.autoClassifiers != nil && handler.autoClassifier != nil {
-		handler.registerAutoClassifierRoutes()
 	}
 	if handler.requestRecords != nil {
 		handler.registerRequestRecordRoutes()

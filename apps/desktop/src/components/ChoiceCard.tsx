@@ -8,6 +8,7 @@ export function ChoiceCard({
   className,
   description,
   disabled,
+  id,
   label,
   selected,
   value,
@@ -15,6 +16,7 @@ export function ChoiceCard({
   className?: string;
   description?: ReactNode;
   disabled?: boolean;
+  id?: string;
   label: string;
   selected: boolean;
   value: string;
@@ -24,10 +26,18 @@ export function ChoiceCard({
       className={cn(
         "flex min-w-0 cursor-pointer items-start gap-2 rounded-md border bg-card p-2.5 transition-colors hover:border-primary/40",
         selected && "border-primary/50 bg-accent",
+        disabled && "cursor-not-allowed opacity-50 hover:border-border",
         className,
       )}
+      htmlFor={id}
     >
-      <RadioGroupItem aria-label={label} disabled={disabled} value={value} />
+      <RadioGroupItem
+        aria-label={label}
+        className="shrink-0"
+        disabled={disabled}
+        id={id}
+        value={value}
+      />
       <span className="grid min-w-0 gap-0.5">
         <strong className="text-sm font-medium">{label}</strong>
         {description ? (

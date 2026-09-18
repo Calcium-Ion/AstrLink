@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>AstrLink - 2A OPEN</title>
+  <desc>A refined A monogram threaded through a continuous cyan, periwinkle and rose ribbon. Variant 2A: open loop.</desc>
+  <defs>
+    <linearGradient id="loop-2a-color" x1="-152" y1="0" x2="152" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20BBC7"/>
+      <stop offset=".56" stop-color="#7F8FE8"/>
+      <stop offset="1" stop-color="#DA7BAF"/>
+    </linearGradient>
+    <filter id="loop-2a-shadow" x="24" y="28" width="464" height="468" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#26345E" flood-opacity=".14"/>
+    </filter>
+    <path id="loop-2a-ring" d="M-152 0A152 45 0 1 1 152 0A152 45 0 1 1 -152 0Z M-132 -3A132 21 0 1 0 132 -3A132 21 0 1 0 -132 -3Z" transform="translate(256 280) rotate(-13)" fill-rule="evenodd"/>
+    <path id="loop-2a-front" d="M-152 0C-152 24.853 -83.947 45 0 45C83.947 45 152 24.853 152 0L132 -3C132 8.598 72.902 18 0 18C-72.902 18 -132 8.598 -132 -3Z" transform="translate(256 280) rotate(-13)"/>
+    <mask id="loop-2a-crossing" x="88" y="104" width="340" height="306" maskUnits="userSpaceOnUse">
+      <rect x="88" y="104" width="340" height="306" fill="#FFFFFF"/>
+      <use href="#loop-2a-front" fill="#000000" stroke="#000000" stroke-width="14" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+  <rect x="52" y="52" width="408" height="408" rx="92" fill="#F9FAFE" filter="url(#loop-2a-shadow)"/>
+  <g id="loop-2a-mark">
+    <use href="#loop-2a-ring" fill="url(#loop-2a-color)"/>
+    <path d="M150 365L236 155Q256 117 276 155L362 365" stroke="#304074" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" mask="url(#loop-2a-crossing)"/>
+    <use href="#loop-2a-front" fill="url(#loop-2a-color)"/>
+  </g>
+</svg>

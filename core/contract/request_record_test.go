@@ -171,8 +171,10 @@ func TestRequestRecordValidation(t *testing.T) {
 		{
 			name: "accepts conversation cursor fields",
 			mutate: func(record *RequestRecord) {
-				turn := 2
+				turn, users, fingerprint := 2, 3, "fp1_0123456789abcdef0123456789abcdef"
 				record.TurnIndex = &turn
+				record.TurnUserMessages = &users
+				record.TurnUserFingerprint = &fingerprint
 				record.SessionLink = &SessionLink{Kind: SessionCursorEchoID, Value: "call_7f3a9c2e1b4d4e8fa1c2"}
 				record.Cursors = []SessionCursor{
 					{Kind: SessionCursorExplicit, Direction: SessionCursorIn, Value: "conv_1"},
@@ -188,6 +190,32 @@ func TestRequestRecordValidation(t *testing.T) {
 				record.TurnIndex = &turn
 			},
 			wantErr: "turn_index",
+		},
+		{
+			name: "rejects turn state without a turn index",
+			mutate: func(record *RequestRecord) {
+				users := 1
+				record.TurnUserMessages = &users
+			},
+			wantErr: "turn_user_messages requires turn_index",
+		},
+		{
+			name: "rejects negative turn user messages",
+			mutate: func(record *RequestRecord) {
+				turn, users := 1, -1
+				record.TurnIndex = &turn
+				record.TurnUserMessages = &users
+			},
+			wantErr: "turn_user_messages",
+		},
+		{
+			name: "rejects empty turn user fingerprint",
+			mutate: func(record *RequestRecord) {
+				turn, fingerprint := 1, ""
+				record.TurnIndex = &turn
+				record.TurnUserFingerprint = &fingerprint
+			},
+			wantErr: "turn_user_fingerprint",
 		},
 		{
 			name: "rejects unknown session link kind",

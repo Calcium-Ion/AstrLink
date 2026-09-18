@@ -119,15 +119,25 @@ pub fn start(app: &AppHandle) {
     });
 }
 
-pub fn reload_main_window(app: &AppHandle) {
-    match app.get_webview_window("main") {
-        Some(window) => {
-            if let Err(error) = window.reload() {
-                eprintln!("[astrlink dev] webview.reload failed: {error}");
+/// Reloads every webview, not just `main`: a detached window left on the old
+/// bundle keeps running stale code until `make dev` is restarted.
+///
+/// Reports whether any webview reloaded, so the supervisor only marks a
+/// generation as seen once it actually landed somewhere.
+pub fn reload_windows(app: &AppHandle) -> bool {
+    let mut reloaded = false;
+    for (label, window) in app.webview_windows() {
+        match window.reload() {
+            Ok(()) => reloaded = true,
+            Err(error) => {
+                eprintln!("[astrlink dev] webview.reload failed for {label}: {error}");
             }
         }
-        None => eprintln!("[astrlink dev] main window is not available to reload"),
     }
+    if !reloaded {
+        eprintln!("[astrlink dev] no webview is available to reload");
+    }
+    reloaded
 }
 
 async fn supervise(app: AppHandle, endpoint: Url) {
@@ -163,14 +173,9 @@ fn apply_tick(app: &AppHandle, state: &mut SupervisorState, endpoint: &Url, tick
     match tick.action {
         SupervisorAction::Remember { .. } | SupervisorAction::Idle => true,
         SupervisorAction::Reload { generation } => {
-            if let Some(window) = app.get_webview_window("main") {
-                eprintln!("[astrlink dev] frontend rebuild #{generation} -> reloading webview");
-                match window.reload() {
-                    Ok(()) => state.commit_seen(generation),
-                    Err(error) => {
-                        eprintln!("[astrlink dev] webview.reload failed: {error}");
-                    }
-                }
+            eprintln!("[astrlink dev] frontend rebuild #{generation} -> reloading webviews");
+            if reload_windows(app) {
+                state.commit_seen(generation);
             }
             true
         }

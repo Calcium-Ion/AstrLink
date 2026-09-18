@@ -33,6 +33,7 @@ type circuitBreakerConfig struct {
 }
 
 type circuitBreaker struct {
+	rateLimits       map[string]time.Time
 	mu               sync.Mutex
 	states           map[contract.ServiceID]circuitState
 	failureThreshold int
@@ -68,6 +69,9 @@ func (breaker *circuitBreaker) available(candidate Resolved) bool {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
+	if deadline := breaker.rateLimits[rateLimitKey(candidate)]; breaker.now().Before(deadline) {
+		return false
+	}
 	state := breaker.states[candidate.CanonicalService().ID]
 	switch state.phase {
 	case circuitClosed:
@@ -92,6 +96,9 @@ func (breaker *circuitBreaker) begin(candidate Resolved) bool {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
+	if deadline := breaker.rateLimits[rateLimitKey(candidate)]; breaker.now().Before(deadline) {
+		return false
+	}
 	state := breaker.states[candidate.CanonicalService().ID]
 	switch state.phase {
 	case circuitClosed:
@@ -175,4 +182,44 @@ func (breaker *circuitBreaker) abandon(candidate Resolved) {
 	// the abandoned probe immediately.
 	state.phase = circuitOpen
 	breaker.states[candidate.CanonicalService().ID] = state
+}
+
+func rateLimitKey(candidate Resolved) string {
+	model := candidate.UpstreamModel
+	if model == "" {
+		model = candidate.RequestedModel
+	}
+	plan := candidate.PlanType
+	if plan == "" {
+		plan = contract.PlanTypeNative
+		if candidate.Mode == contract.CapabilityModeDelegated {
+			plan = contract.PlanTypeDelegated
+		}
+	}
+	return string(candidate.CanonicalService().ID) + "\x00" + string(candidate.UpstreamProtocol) + "\x00" + model + "\x00" + string(plan)
+}
+func (breaker *circuitBreaker) rateLimit(candidate Resolved, duration time.Duration) {
+	if breaker == nil || duration <= 0 {
+		return
+	}
+	breaker.mu.Lock()
+	defer breaker.mu.Unlock()
+	if breaker.rateLimits == nil {
+		breaker.rateLimits = make(map[string]time.Time)
+	}
+	now := breaker.now()
+	for key, deadline := range breaker.rateLimits {
+		if !now.Before(deadline) {
+			delete(breaker.rateLimits, key)
+		}
+	}
+	key := rateLimitKey(candidate)
+	if deadline := now.Add(duration); deadline.After(breaker.rateLimits[key]) {
+		breaker.rateLimits[key] = deadline
+	}
+}
+func (resolver *StoreResolver) RecordRateLimit(candidate Resolved, duration time.Duration) {
+	if resolver != nil {
+		resolver.breaker.rateLimit(candidate, duration)
+	}
 }

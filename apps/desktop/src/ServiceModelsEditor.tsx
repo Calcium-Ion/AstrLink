@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus, X } from "@/components/icons";
 import { useT } from "./i18n";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -151,7 +151,7 @@ function ModelListHeader({
         size="icon-xs"
         variant="ghost"
       >
-        −
+        <X className="size-3" />
       </Button>
     </div>
   );
@@ -188,7 +188,7 @@ function ModelRow({
         size="icon-xs"
         variant="ghost"
       >
-        ×
+        <X className="size-3" />
       </Button>
     </DataRow>
   );
@@ -392,7 +392,7 @@ export function ServiceModelsEditor({
           size="icon-sm"
           variant="outline"
         >
-          {adding ? "−" : "+"}
+          {adding ? <X className="size-4" /> : <Plus className="size-4" />}
         </Button>
       </div>
 

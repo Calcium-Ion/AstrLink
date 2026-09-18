@@ -203,7 +203,7 @@ raise "authorization sessions must identify their flow" unless authorization_ses
                                                           authorization_session.dig("properties", "flow", "$ref") == "#/components/schemas/AuthorizationFlow"
 raise "authorization sessions must support Device Code instructions" unless authorization_session.fetch("properties").key?("device_code")
 authorization_flow = openapi.dig("components", "schemas", "AuthorizationFlow")
-raise "authorization flow choices drifted" unless authorization_flow.fetch("enum") == %w[browser device_code]
+raise "authorization flow choices drifted" unless authorization_flow.fetch("enum") == %w[browser device_code authorization_code]
 authorization_start = openapi.dig("components", "schemas", "AuthorizationStartRequest")
 raise "authorization start must reject unknown fields" unless authorization_start.fetch("additionalProperties") == false &&
                                                                authorization_start.fetch("required") == ["flow"] &&
@@ -248,8 +248,9 @@ raise "RouteTarget must use service_id" unless route_target.fetch("required").in
 
 route_category = openapi.dig("components", "schemas", "RouteCategory")
 category_id = route_category.dig("properties", "category_id")
-raise "RouteCategory shape drifted" unless route_category.fetch("required") == %w[category_id targets] &&
-                                           route_category.fetch("properties").keys == %w[category_id targets] &&
+raise "RouteCategory shape drifted" unless route_category.fetch("required") == %w[category_id] &&
+                                           route_category.fetch("properties").keys.sort == %w[category_id recovery_path_id targets] &&
+                                           route_category.fetch("oneOf") == [{"required"=>["targets"]},{"required"=>["recovery_path_id"]}] &&
                                            category_id.fetch("type") == "string" &&
                                            category_id.fetch("minLength") == 1 &&
                                            category_id.fetch("maxLength") == 64 &&
@@ -278,10 +279,10 @@ expected_route_shape_condition = [{
         "required" => %w[model]
       }
     },
-    "not" => { "required" => %w[targets] }
+    "not" => { "anyOf" => [{"required"=>%w[targets]},{"required"=>%w[recovery_path_id]}] }
   },
   "else" => {
-    "required" => %w[targets],
+    "oneOf" => [{"required"=>%w[targets]},{"required"=>%w[recovery_path_id]}],
     "properties" => {
       "match" => {
         "not" => {
@@ -528,3 +529,11 @@ raise "local privacy model probe must accept only one path" unless local_probe.f
                                                                local_probe.fetch("additionalProperties") == false
 
 puts "validated #{reference_count} local $ref values, frozen fixtures, Alpha relay and classification-route invariants, and audit patch semantics"
+
+# Reusable paths use array order; manual steps may revisit a target but never
+# inherit an automatic retry count.
+path = openapi.dig("components", "schemas", "RecoveryPath")
+raise "RecoveryPath modes drifted" unless path.dig("properties", "mode", "enum") == %w[automatic steps]
+raise "RecoveryPath steps must be bounded" unless path.dig("properties", "steps", "maxItems") == 20
+raise "RecoveryPath must reject unknown fields" unless path["additionalProperties"] == false
+raise "RecoveryPath preview missing" unless openapi.dig("paths", "/control/v1/recovery-paths/preview", "post", "operationId") == "previewRecoveryPath"

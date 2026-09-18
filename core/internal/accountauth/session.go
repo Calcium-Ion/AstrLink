@@ -32,6 +32,7 @@ type trackedSession struct {
 	public         contract.AuthorizationSession
 	secrets        *sessionSecrets
 	completing     bool
+	exchanging     bool
 	completionDone chan struct{}
 }
 
@@ -82,11 +83,20 @@ func (manager *SessionManager) Begin(
 	if !flow.Valid() {
 		return contract.AuthorizationSession{}, fmt.Errorf("unknown authorization flow %q", flow)
 	}
+	if manager.config.Provider == contract.SubscriptionProviderClaudeCode {
+		if flow != contract.AuthorizationFlowCode {
+			return contract.AuthorizationSession{}, fmt.Errorf("Claude Code requires authorization_code flow")
+		}
+	} else if flow == contract.AuthorizationFlowCode {
+		return contract.AuthorizationSession{}, fmt.Errorf("authorization_code flow is unavailable for this provider")
+	}
 	if err := manager.store.Available(ctx); err != nil {
 		return contract.AuthorizationSession{}, fmt.Errorf("%w", ErrCredentialStoreUnavailable)
 	}
 
 	switch flow {
+	case contract.AuthorizationFlowCode:
+		return manager.beginCodeAuthorization(serviceID)
 	case contract.AuthorizationFlowBrowser:
 		session, err := manager.beginBrowserAuthorization(serviceID)
 		if !errors.Is(err, ErrCallbackPortsUnavailable) {
@@ -354,7 +364,11 @@ func (manager *SessionManager) listenLoopback() (net.Listener, int, error) {
 }
 
 func (manager *SessionManager) buildAuthorizeURL(redirectURI, state, challenge string) (string, error) {
-	endpoint, err := url.Parse(strings.TrimRight(manager.config.Issuer, "/") + "/oauth/authorize")
+	authorizeURL := manager.config.AuthorizeURL
+	if authorizeURL == "" {
+		authorizeURL = strings.TrimRight(manager.config.Issuer, "/") + "/oauth/authorize"
+	}
+	endpoint, err := url.Parse(authorizeURL)
 	if err != nil {
 		return "", err
 	}
@@ -366,9 +380,13 @@ func (manager *SessionManager) buildAuthorizeURL(redirectURI, state, challenge s
 	query.Set("code_challenge", challenge)
 	query.Set("code_challenge_method", "S256")
 	query.Set("state", state)
-	query.Set("id_token_add_organizations", "true")
-	query.Set("codex_cli_simplified_flow", "true")
-	query.Set("originator", manager.config.Originator)
+	if manager.config.Provider == contract.SubscriptionProviderClaudeCode {
+		query.Set("code", "true")
+	} else {
+		query.Set("id_token_add_organizations", "true")
+		query.Set("codex_cli_simplified_flow", "true")
+		query.Set("originator", manager.config.Originator)
+	}
 	for key, values := range manager.config.ExtraAuthQuery {
 		for _, value := range values {
 			query.Add(key, value)
@@ -429,6 +447,7 @@ func (manager *SessionManager) callbackHandler(sessionID contract.AuthorizationS
 
 func (manager *SessionManager) completeSession(ctx context.Context, sessionID contract.AuthorizationSessionID, tokens AccountTokens) error {
 	manager.mu.Lock()
+	manager.expirePendingLocked()
 	session := manager.sessions[sessionID]
 	if session == nil ||
 		session.public.Status != contract.AuthorizationSessionStatusPending ||

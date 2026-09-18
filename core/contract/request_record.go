@@ -95,6 +95,37 @@ func (status RequestStatus) Valid() bool {
 	}
 }
 
+// SessionStatus is the outcome of a whole conversation. It carries every
+// record status plus interrupted, which no single record can hold: the
+// conversation produced answers and then the client abandoned the last
+// stream. Keeping it off RequestStatus means a record or a phase event can
+// never claim an outcome that only exists once calls are aggregated.
+type SessionStatus string
+
+const (
+	SessionStatusPending     SessionStatus = "pending"
+	SessionStatusSucceeded   SessionStatus = "succeeded"
+	SessionStatusFailed      SessionStatus = "failed"
+	SessionStatusCancelled   SessionStatus = "cancelled"
+	SessionStatusBlocked     SessionStatus = "blocked"
+	SessionStatusInterrupted SessionStatus = "interrupted"
+)
+
+func (status SessionStatus) Valid() bool {
+	switch status {
+	case SessionStatusPending, SessionStatusSucceeded, SessionStatusFailed,
+		SessionStatusCancelled, SessionStatusBlocked, SessionStatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+// SessionStatusFromRequest lifts one record outcome onto the session scale.
+func SessionStatusFromRequest(status RequestStatus) SessionStatus {
+	return SessionStatus(status)
+}
+
 // Usage uses OpenAI-style input accounting: input_tokens includes all
 // prompt-side tokens (uncached, cache read, cache write/creation, and
 // multimodal input such as images). cache_read_tokens / cache_write_tokens
@@ -296,15 +327,18 @@ func (link SessionLink) Validate() error {
 }
 
 type RequestRecord struct {
-	ID                 RequestID              `json:"id"`
-	ParentRequestID    *RequestID             `json:"parent_request_id"`
-	AttemptIndex       int                    `json:"attempt_index"`
-	ChildCount         int                    `json:"child_count"`
-	StartedAt          time.Time              `json:"started_at"`
-	CompletedAt        *time.Time             `json:"completed_at"`
-	Status             RequestStatus          `json:"status"`
-	InputProtocol      ProtocolID             `json:"input_protocol"`
-	RequestedModel     *string                `json:"requested_model"`
+	Recovery        *RequestRecovery `json:"recovery,omitempty"`
+	ID              RequestID        `json:"id"`
+	ParentRequestID *RequestID       `json:"parent_request_id"`
+	AttemptIndex    int              `json:"attempt_index"`
+	ChildCount      int              `json:"child_count"`
+	StartedAt       time.Time        `json:"started_at"`
+	CompletedAt     *time.Time       `json:"completed_at"`
+	Status          RequestStatus    `json:"status"`
+	InputProtocol   ProtocolID       `json:"input_protocol"`
+	RequestedModel  *string          `json:"requested_model"`
+	// ReasoningEffort is the explicitly requested level; nil means unspecified or historical.
+	ReasoningEffort    *string                `json:"reasoning_effort"`
 	Streaming          bool                   `json:"streaming"`
 	RouteID            *RouteID               `json:"route_id"`
 	ServiceID          *ServiceID             `json:"service_id"`
@@ -324,6 +358,13 @@ type RequestRecord struct {
 	// of one agent loop shares the same value. Null when the protocol has no
 	// user turns or on legacy rows.
 	TurnIndex *int `json:"turn_index"`
+	// TurnUserMessages and TurnUserFingerprint are what the next request in
+	// the session compares itself against to decide whether it starts a new
+	// turn: the number of user messages this request's history held and the
+	// keyed fingerprint of its newest user text (null without a fingerprint
+	// key). Set together with TurnIndex; the fingerprint may be null.
+	TurnUserMessages    *int    `json:"turn_user_messages"`
+	TurnUserFingerprint *string `json:"turn_user_fingerprint"`
 	// SessionLink tells how this record joined its session; null when it
 	// started the session.
 	SessionLink *SessionLink `json:"session_link"`
@@ -335,6 +376,11 @@ type RequestRecord struct {
 }
 
 func (record RequestRecord) Validate() error {
+	if record.Recovery != nil {
+		if err := record.Recovery.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := record.ID.Validate(); err != nil {
 		return err
 	}
@@ -367,6 +413,11 @@ func (record RequestRecord) Validate() error {
 	if record.RequestedModel != nil {
 		if *record.RequestedModel == "" || utf8.RuneCountInString(*record.RequestedModel) > 256 {
 			return fmt.Errorf("requested_model must contain 1 to 256 characters when set")
+		}
+	}
+	if record.ReasoningEffort != nil {
+		if err := validateBoundedText("reasoning_effort", *record.ReasoningEffort, 32, false); err != nil {
+			return err
 		}
 	}
 	if record.RouteID != nil {
@@ -435,6 +486,22 @@ func (record RequestRecord) Validate() error {
 	if record.TurnIndex != nil && *record.TurnIndex < 1 {
 		return fmt.Errorf("turn_index must be at least 1 when set")
 	}
+	if record.TurnUserMessages != nil {
+		if record.TurnIndex == nil {
+			return fmt.Errorf("turn_user_messages requires turn_index")
+		}
+		if *record.TurnUserMessages < 0 {
+			return fmt.Errorf("turn_user_messages must be non-negative")
+		}
+	}
+	if record.TurnUserFingerprint != nil {
+		if record.TurnIndex == nil {
+			return fmt.Errorf("turn_user_fingerprint requires turn_index")
+		}
+		if err := validateProtocolCursor("turn_user_fingerprint", *record.TurnUserFingerprint); err != nil {
+			return err
+		}
+	}
 	if record.SessionLink != nil {
 		if err := record.SessionLink.Validate(); err != nil {
 			return fmt.Errorf("session_link: %w", err)
@@ -475,8 +542,9 @@ type RequestSession struct {
 	CompletedAt        *time.Time     `json:"completed_at"`
 	TurnCount          int            `json:"turn_count"`
 	CallCount          int            `json:"call_count"`
-	Status             RequestStatus  `json:"status"`
+	Status             SessionStatus  `json:"status"`
 	RequestedModel     *string        `json:"requested_model"`
+	ReasoningEffort    *string        `json:"reasoning_effort"`
 	InputProtocol      ProtocolID     `json:"input_protocol"`
 	ServiceID          *ServiceID     `json:"service_id"`
 	LocalAccessTokenID *AccessTokenID `json:"local_access_token_id"`
@@ -496,7 +564,7 @@ func (session RequestSession) Validate() error {
 		return fmt.Errorf("session counts must be at least 1")
 	}
 	if !session.Status.Valid() {
-		return fmt.Errorf("unknown request status %q", session.Status)
+		return fmt.Errorf("unknown session status %q", session.Status)
 	}
 	if err := session.InputProtocol.Validate(); err != nil {
 		return fmt.Errorf("input protocol: %w", err)
@@ -504,6 +572,11 @@ func (session RequestSession) Validate() error {
 	if session.RequestedModel != nil {
 		if *session.RequestedModel == "" || utf8.RuneCountInString(*session.RequestedModel) > 256 {
 			return fmt.Errorf("requested_model must contain 1 to 256 characters when set")
+		}
+	}
+	if session.ReasoningEffort != nil {
+		if err := validateBoundedText("reasoning_effort", *session.ReasoningEffort, 32, false); err != nil {
+			return err
 		}
 	}
 	if session.ServiceID != nil {

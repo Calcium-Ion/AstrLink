@@ -28,12 +28,15 @@ import {
   getPrivacyPolicy,
   getRoute,
   getService,
+  getServiceOrder,
+  updateServiceOrder,
   getServiceAuthorization,
   getServiceUsage,
   resetServiceUsage,
   installPrivacyModel,
   listRoutes,
   listServices,
+  listRequestSessions,
   listAccessTokens,
   listPrivacyModelInstallations,
   listPrivacyPolicies,
@@ -85,6 +88,18 @@ function validSnapshot(): Record<string, unknown> {
 }
 
 describe("desktop bridge contract", () => {
+  it("roundtrips ordered service IDs and rejects malformed order responses", async () => {
+    const record = { service_ids: ["service_b", "service_a"], etag: '"sha256:abc"' };
+    invokeMock.mockResolvedValueOnce(record);
+    await expect(getServiceOrder()).resolves.toEqual(record);
+    expect(invokeMock).toHaveBeenLastCalledWith("get_service_order");
+    invokeMock.mockResolvedValueOnce(record);
+    await expect(updateServiceOrder(record.service_ids, record.etag)).resolves.toEqual(record);
+    expect(invokeMock).toHaveBeenLastCalledWith("update_service_order", { serviceIds: record.service_ids, etag: record.etag });
+    invokeMock.mockResolvedValueOnce({ ...record, service_ids: ["service_a", "service_a"] });
+    await expect(getServiceOrder()).rejects.toThrow("Invalid service order");
+    await expect(updateServiceOrder(["bad/path"], record.etag)).rejects.toThrow("Invalid service order");
+  });
   beforeEach(() => {
     invokeMock.mockReset();
     downloadMocks.downloadTextFile.mockReset();
@@ -93,6 +108,16 @@ describe("desktop bridge contract", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("forwards session kind and cursor through the native bridge", async () => {
+    invokeMock.mockResolvedValue({ items: [], next_cursor: null });
+    await listRequestSessions({ kind: "discovery", limit: 50, cursor: "older" });
+    expect(invokeMock).toHaveBeenCalledWith("list_request_sessions", {
+      query: { kind: "discovery", limit: 50, cursor: "older" },
+    });
+    await listRequestSessions();
+    expect(invokeMock).toHaveBeenLastCalledWith("list_request_sessions", { query: {} });
   });
 
   it("returns the browser fallback only after native bridge detection", async () => {

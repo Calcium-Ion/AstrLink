@@ -10,6 +10,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 // Engine adapts AstrLink's protocol-neutral boundary to RelayKit.
@@ -37,8 +39,13 @@ func (e *Engine) ConvertRequest(ctx context.Context, in ConvertRequestInput) (Co
 	}
 	publicModel := firstNonEmpty(in.PublicModel, model)
 	upstreamModel := firstNonEmpty(in.UpstreamModel, publicModel)
+	upstreamModel, reasoningState, err := splitReasoningSuffix(target, upstreamModel)
+	if err != nil {
+		return ConvertRequestOutput{}, fmt.Errorf("convert request %s to %s: %w", in.From, in.To, err)
+	}
 	setRequestModel(request, upstreamModel)
 	meta := newMeta(publicModel, upstreamModel, in.UpstreamModel != "", in.Streaming || streamed)
+	meta.ReasoningConversion = reasoningState
 	result, err := relayconvert.ConvertRequest(ctx, meta, target, request)
 	if err != nil {
 		return ConvertRequestOutput{}, fmt.Errorf("convert request %s to %s: %w", in.From, in.To, err)
@@ -86,6 +93,28 @@ func newMeta(publicModel, upstreamModel string, override, streaming bool) *convm
 			DefaultMaxTokens: func(string) int { return 8192 },
 		}},
 	}
+}
+
+// splitReasoningSuffix keeps the reasoning-suffix behaviour RelayKit applied
+// itself before v0.2.0: a "-thinking" / "-nothinking" / "-thinking-<budget>" /
+// effort tail ("-high", "-low", ...) on a known Claude or Gemini upstream model
+// name is turned into reasoning intent and the base name is sent upstream.
+// RelayKit now leaves suffix parsing to the host, so the intent is handed over
+// through convmeta.Values.ReasoningConversion. Other targets keep the model
+// name untouched: OpenAI-compatible proxies define their own suffix vocabulary
+// and must see the configured name as-is.
+func splitReasoningSuffix(target types.RelayFormat, model string) (string, *dto.ReasoningConversionState, error) {
+	if target != types.RelayFormatClaude && target != types.RelayFormatGemini {
+		return model, nil, nil
+	}
+	baseModel, intent, ok, err := reasoning.ParseKnownProviderModelSuffix(model, true)
+	if err != nil {
+		return "", nil, err
+	}
+	if !ok {
+		return model, nil, nil
+	}
+	return baseModel, reasoning.StateFromIntent(intent), nil
 }
 
 func decodeRequest(protocol contract.ProtocolID, body []byte) (any, string, bool, error) {

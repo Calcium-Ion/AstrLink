@@ -191,6 +191,96 @@ func TestRelayKitResponsesToClaude(t *testing.T) {
 	}
 }
 
+func TestRelayKitStreamsOpenAIChatUpstreamAsResponsesSSE(t *testing.T) {
+	engine := relaykitbridge.NewEngine()
+	upstream := validEndpoint(contract.ProtocolOpenAIChat, true)
+	var sawStream bool
+	handler := NewWithDependencies(Dependencies{
+		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
+			Endpoint: upstream, PlanType: contract.PlanTypeRelayKit,
+			UpstreamProtocol: contract.ProtocolOpenAIChat, UpstreamModel: "gpt-upstream",
+		}}},
+		ConversionEngine: engine,
+		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(request.Body)
+			var payload struct {
+				Stream bool `json:"stream"`
+			}
+			_ = json.Unmarshal(body, &payload)
+			sawStream = payload.Stream
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": {"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(
+					`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-upstream","choices":[{"index":0,"delta":{"role":"assistant","content":"hel"},"finish_reason":null}]}` + "\n\n" +
+						`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-upstream","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}` + "\n\n" +
+						"data: [DONE]\n\n",
+				)),
+			}, nil
+		})),
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(
+		`{"model":"public-responses","input":"hi","stream":true}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !sawStream {
+		t.Fatalf("status=%d stream=%v body=%s", response.Code, sawStream, response.Body.String())
+	}
+	raw := response.Body.String()
+	if strings.Contains(raw, `"Payload"`) || strings.Contains(raw, "[DONE]") {
+		t.Fatalf("responses SSE carries RelayKit wrapper or chat terminator: %s", raw)
+	}
+	var (
+		eventTypes []string
+		text       strings.Builder
+	)
+	for _, frame := range strings.Split(strings.TrimSpace(raw), "\n\n") {
+		var eventType, data string
+		for _, line := range strings.Split(frame, "\n") {
+			switch {
+			case strings.HasPrefix(line, "event: "):
+				eventType = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "data: "):
+				data = strings.TrimPrefix(line, "data: ")
+			}
+		}
+		var payload struct {
+			Type           string `json:"type"`
+			SequenceNumber *int   `json:"sequence_number"`
+			Delta          string `json:"delta"`
+			Response       *struct {
+				Model string `json:"model"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal([]byte(data), &payload); err != nil {
+			t.Fatalf("frame %q: %v", frame, err)
+		}
+		if eventType == "" || payload.Type != eventType {
+			t.Fatalf("frame event %q does not match payload type %q: %s", eventType, payload.Type, data)
+		}
+		if payload.SequenceNumber == nil || *payload.SequenceNumber != len(eventTypes) {
+			t.Fatalf("frame %d has sequence_number %v: %s", len(eventTypes), payload.SequenceNumber, data)
+		}
+		if payload.Response != nil && payload.Response.Model != "public-responses" {
+			t.Fatalf("response model = %q, want public-responses: %s", payload.Response.Model, data)
+		}
+		if payload.Type == "response.output_text.delta" {
+			text.WriteString(payload.Delta)
+		}
+		eventTypes = append(eventTypes, eventType)
+	}
+	if eventTypes[0] != "response.created" || eventTypes[len(eventTypes)-1] != "response.completed" {
+		t.Fatalf("event sequence = %v", eventTypes)
+	}
+	if text.String() != "hello" {
+		t.Fatalf("streamed text = %q, want hello (events %v)", text.String(), eventTypes)
+	}
+}
+
 func TestRelayKitPrivacyRedactRestoreSurvivesConversion(t *testing.T) {
 	engine := relaykitbridge.NewEngine()
 	upstream := validEndpoint(contract.ProtocolAnthropicMessages, true)
@@ -336,5 +426,47 @@ func jsonResponse(status int, body string) *http.Response {
 		StatusCode: status,
 		Header:     http.Header{"Content-Type": {"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestHTTPRecoveryUsesSameLoopForEveryExecutionPlan(t *testing.T) {
+	for _, plan := range []contract.PlanType{contract.PlanTypeNative, contract.PlanTypeDelegated, contract.PlanTypeRelayKit} {
+		t.Run(string(plan), func(t *testing.T) {
+			policy := contract.DefaultFailurePolicy()
+			policy.InitialDelayMS = 0
+			candidates := recoveryCandidates(1, policy, contract.DefaultFailoverPolicy())
+			candidates[0].PlanType = plan
+			candidates[0].UpstreamModel = "actual"
+			if plan == contract.PlanTypeDelegated {
+				candidates[0].Mode = contract.CapabilityModeDelegated
+				candidates[0].Endpoint.Capabilities[0].Mode = contract.CapabilityModeDelegated
+			}
+			if plan == contract.PlanTypeRelayKit {
+				candidates[0].Endpoint.Capabilities = []contract.Capability{{Protocol: contract.ProtocolAnthropicMessages, Mode: contract.CapabilityModeNative}}
+				candidates[0].UpstreamProtocol = contract.ProtocolAnthropicMessages
+			}
+			attempts := 0
+			handler := NewWithDependencies(Dependencies{Resolver: candidateResolver{candidates: candidates}, ConversionEngine: relaykitbridge.NewEngine(), Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				attempts++
+				body, _ := io.ReadAll(request.Body)
+				if !strings.Contains(string(body), `"model":"actual"`) {
+					t.Fatalf("attempt %d lost model mapping: %s", attempts, body)
+				}
+				if attempts == 1 {
+					return jsonResponse(503, `{"error":{"message":"retry"}}`), nil
+				}
+				if plan == contract.PlanTypeRelayKit {
+					return jsonResponse(200, `{"id":"msg_done","type":"message","role":"assistant","model":"actual","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`), nil
+				}
+				return jsonResponse(200, `{"id":"chat_done","model":"actual","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`), nil
+			}))})
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"public","messages":[{"role":"user","content":"hello"}]}`))
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(response, request)
+			if attempts != 2 || response.Code != 200 || strings.Contains(response.Body.String(), "retry") || strings.Contains(response.Body.String(), `"model":"actual"`) {
+				t.Fatalf("attempts=%d status=%d body=%s", attempts, response.Code, response.Body.String())
+			}
+		})
 	}
 }

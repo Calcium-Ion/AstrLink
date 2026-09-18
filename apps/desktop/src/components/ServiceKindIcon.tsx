@@ -1,5 +1,5 @@
-import { Anthropic, Codex, Gemini, NewAPI, OpenAI } from "@lobehub/icons";
-import { Cable } from "lucide-react";
+import { Anthropic, Claude, Codex, Gemini, Kimi, Minimax, NewAPI, OpenAI, OpenCode, Zhipu } from "@lobehub/icons";
+import { Connect as Cable } from "@/components/icons";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -21,6 +21,17 @@ function kindMark(kind: ServiceKind, size: number): ReactNode {
       return <NewAPI.Color size={size} />;
     case "codex_subscription":
       return <Codex.Color size={size} />;
+    case "claude_subscription":
+      return <Claude.Color size={size} />;
+    case "opencode_go":
+    case "opencode_zen":
+      return <OpenCode size={size} />;
+    case "kimi_coding":
+      return <Kimi size={size} />;
+    case "glm_coding":
+      return <Zhipu.Color size={size} />;
+    case "minimax_coding":
+      return <Minimax.Color size={size} />;
     case "openai":
     case "openai_compatible":
       return <OpenAI size={size} />;

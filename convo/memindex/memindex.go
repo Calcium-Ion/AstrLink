@@ -20,9 +20,8 @@ type Record struct {
 	// Principal scopes KindEchoID and KindFingerprint matches (API key,
 	// user, tenant). Empty principals only match empty principals.
 	Principal string
-	// TurnIndex is the request's user turn when known.
-	TurnIndex    int
-	HasTurnIndex bool
+	// Turn is the request's turn state (Decision.Turn) when known.
+	Turn *convo.TurnState
 	// At is when the request started; used for Scope.NotBefore and TTL.
 	At time.Time
 	// Cursors are the persisted inbound explicit cursors plus every output
@@ -65,6 +64,10 @@ func New(options Options) *Index {
 func (index *Index) Put(record Record) {
 	stored := record
 	stored.Cursors = append([]convo.Cursor(nil), record.Cursors...)
+	if record.Turn != nil {
+		turn := *record.Turn
+		stored.Turn = &turn
+	}
 	index.mu.Lock()
 	defer index.mu.Unlock()
 	index.records = append(index.records, &stored)
@@ -156,13 +159,12 @@ func (index *Index) Lookup(_ context.Context, principal string, kind convo.Kind,
 			}
 		}
 		if best != nil {
-			return convo.Match{
-				SessionID:    best.SessionID,
-				TurnIndex:    best.TurnIndex,
-				HasTurnIndex: best.HasTurnIndex,
-				Kind:         kind,
-				Value:        bestValue,
-			}, true, nil
+			match := convo.Match{SessionID: best.SessionID, Kind: kind, Value: bestValue}
+			if best.Turn != nil {
+				turn := *best.Turn
+				match.Turn = &turn
+			}
+			return match, true, nil
 		}
 	}
 	return convo.Match{}, false, nil

@@ -1,6 +1,7 @@
 package accountauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 const (
@@ -60,6 +63,10 @@ var (
 // It defaults to the official public Codex OAuth client and registered
 // localhost callback ports.
 type OAuthConfig struct {
+	Provider              contract.SubscriptionProvider
+	AuthorizeURL          string
+	TokenURL              string
+	CodeRedirectURI       string
 	ClientID              string
 	Issuer                string
 	APIBaseURL            string
@@ -84,6 +91,12 @@ func (config OAuthConfig) Normalize() OAuthConfig {
 }
 
 func (config OAuthConfig) normalized() OAuthConfig {
+	if config.Provider == "" {
+		config.Provider = contract.SubscriptionProviderOpenAICodex
+	}
+	if config.Provider == contract.SubscriptionProviderClaudeCode {
+		config = normalizeClaudeConfig(config)
+	}
 	if strings.TrimSpace(config.ClientID) == "" {
 		config.ClientID = DefaultCodexOAuthClientID
 	}
@@ -169,6 +182,9 @@ func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, originator, 
 }
 
 type tokenResponse struct {
+	Account struct {
+		UUID string `json:"uuid"`
+	} `json:"account"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	IDToken      string `json:"id_token"`
@@ -194,6 +210,13 @@ func (client *TokenClient) ExchangeCode(ctx context.Context, code, verifier, red
 	values.Set("redirect_uri", redirectURI)
 	values.Set("client_id", client.config.ClientID)
 	values.Set("code_verifier", verifier)
+	if client.config.Provider == contract.SubscriptionProviderClaudeCode {
+		parts := strings.SplitN(code, "#", 2)
+		values.Set("code", parts[0])
+		if len(parts) == 2 {
+			values.Set("state", parts[1])
+		}
+	}
 	return client.requestToken(ctx, values)
 }
 
@@ -207,11 +230,28 @@ func (client *TokenClient) Refresh(ctx context.Context, refreshToken string) (Ac
 
 func (client *TokenClient) requestToken(ctx context.Context, values url.Values) (AccountTokens, error) {
 	endpoint := strings.TrimRight(client.config.Issuer, "/") + "/oauth/token"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
+	if client.config.TokenURL != "" {
+		endpoint = client.config.TokenURL
+	}
+	var bodyReader io.Reader = strings.NewReader(values.Encode())
+	contentType := "application/x-www-form-urlencoded"
+	if client.config.Provider == contract.SubscriptionProviderClaudeCode {
+		payload := make(map[string]string, len(values))
+		for key := range values {
+			payload[key] = values.Get(key)
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return AccountTokens{}, err
+		}
+		bodyReader = bytes.NewReader(body)
+		contentType = "application/json"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bodyReader)
 	if err != nil {
 		return AccountTokens{}, err
 	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Accept", "application/json")
 	response, err := client.config.HTTPClient.Do(request)
 	if err != nil {
@@ -244,6 +284,9 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 		return AccountTokens{}, fmt.Errorf("token response missing refresh_token")
 	}
 	accountID := accountIDFromIDToken(parsed.IDToken)
+	if client.config.Provider == contract.SubscriptionProviderClaudeCode {
+		accountID = parsed.Account.UUID
+	}
 	return AccountTokens{
 		AccessToken:  parsed.AccessToken,
 		RefreshToken: refresh,

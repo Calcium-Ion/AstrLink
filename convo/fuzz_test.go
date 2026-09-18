@@ -1,6 +1,9 @@
 package convo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 var fuzzProtocols = []Protocol{OpenAIChat, OpenAIResponses, AnthropicMessages, GeminiGenerateContent}
 
@@ -60,6 +63,25 @@ func FuzzObserverWrite(f *testing.F) {
 			if summary.OutputID != "" && !validCursorValue(summary.OutputID) {
 				t.Fatalf("invalid output id %q", summary.OutputID)
 			}
+		}
+	})
+}
+
+// FuzzVisibleText checks that unwrapping never panics and only ever returns a
+// trimmed slice of its input: it may drop text, never invent it.
+func FuzzVisibleText(f *testing.F) {
+	f.Add("<user_query>\nhi\n</user_query>")
+	f.Add("<a><a>x</a> y</a><system-reminder>z</system-reminder>")
+	f.Add("<skill name=\"s\">body</skill>\n\nprompt")
+	f.Add("<br/> <3 </b> <a>")
+	f.Add("</>")
+	f.Fuzz(func(t *testing.T, text string) {
+		got := visibleText(text)
+		if got != strings.TrimSpace(got) {
+			t.Fatalf("visibleText(%q) = %q is not trimmed", text, got)
+		}
+		if !strings.Contains(text, got) {
+			t.Fatalf("visibleText(%q) = %q is not a slice of the input", text, got)
 		}
 	})
 }

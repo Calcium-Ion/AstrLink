@@ -143,6 +143,9 @@ func (writer *relayKitResponseWriter) convertStreamFrames(final bool) error {
 	return nil
 }
 
+// parseSSEFrame maps one upstream SSE frame onto the engine-neutral event
+// boundary. OpenAI Chat's "data: [DONE]" terminator has no DTO; it is reported
+// as the "done" event so the bridge can hand terminal conversion to Finalize.
 func parseSSEFrame(frame []byte) (string, []byte) {
 	eventType := "data"
 	var data [][]byte
@@ -154,7 +157,11 @@ func parseSSEFrame(frame []byte) (string, []byte) {
 			data = append(data, bytes.TrimSpace(line[len("data:"):]))
 		}
 	}
-	return eventType, bytes.Join(data, []byte("\n"))
+	payload := bytes.Join(data, []byte("\n"))
+	if bytes.Equal(payload, []byte("[DONE]")) {
+		return "done", payload
+	}
+	return eventType, payload
 }
 
 func (writer *relayKitResponseWriter) writeEvents(events []relaykitbridge.ResponseEvent) error {

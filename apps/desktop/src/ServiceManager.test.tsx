@@ -7,9 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridgeMocks = vi.hoisted(() => ({
   beginServiceAuthorization: vi.fn(),
   cancelServiceAuthorization: vi.fn(),
+  completeServiceAuthorization: vi.fn(),
   createService: vi.fn(),
   deleteService: vi.fn(),
   getService: vi.fn(),
+  getServiceOrder: vi.fn().mockResolvedValue({ service_ids: [], etag: '"order"' }),
+  updateServiceOrder: vi.fn(),
+  getRoutingSettings: vi.fn(),
   getServiceAuthorization: vi.fn(),
   getServiceUsage: vi.fn(),
   logoutService: vi.fn(),
@@ -29,6 +33,7 @@ const notifyMocks = vi.hoisted(() => ({
 }));
 vi.mock("./notify", () => ({ notify: notifyMocks }));
 
+import { defaultFailurePolicy } from "./failure-policy-model";
 import { ServiceManager } from "./ServiceManager";
 import type { Service } from "./service-model";
 
@@ -95,7 +100,12 @@ async function chooseOption(label: string, option: string): Promise<void> {
     await Promise.resolve();
   });
   const item = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-    (candidate) => candidate.textContent?.trim() === option,
+    (candidate) => {
+      const label = candidate.cloneNode(true) as HTMLElement;
+      // Decorative brand SVGs contain titles that are not part of the option name.
+      label.querySelectorAll('[aria-hidden="true"]').forEach((icon) => icon.remove());
+      return label.textContent?.trim() === option;
+    },
   );
   if (!item) throw new Error(`Missing select option: ${option}`);
   await act(async () => {
@@ -132,11 +142,39 @@ async function chooseMenuItem(label: string): Promise<void> {
   });
 }
 
+function previewModelCheckbox(model: string): HTMLButtonElement {
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+  if (!dialog) throw new Error("Missing model preview dialog");
+  const row = [...dialog.querySelectorAll<HTMLElement>("label")].find(
+    (label) => label.querySelector("code")?.textContent === model,
+  );
+  const checkbox = row?.querySelector<HTMLButtonElement>('[role="checkbox"]');
+  if (!checkbox) throw new Error(`Missing preview model: ${model}`);
+  return checkbox;
+}
+
+async function togglePreviewModel(model: string): Promise<void> {
+  const checkbox = previewModelCheckbox(model);
+  await act(async () => {
+    checkbox.click();
+    await Promise.resolve();
+  });
+}
+
+function applySelectedButton(): HTMLButtonElement {
+  const apply = [...document.querySelectorAll("button")].find((button) =>
+    button.textContent?.startsWith("应用所选模型"),
+  );
+  if (!apply) throw new Error("Missing apply button");
+  return apply;
+}
+
 describe("ServiceManager", () => {
   let root: Root;
   let container: HTMLDivElement;
 
   beforeEach(() => {
+    bridgeMocks.getRoutingSettings.mockResolvedValue({ default_failure_policy: defaultFailurePolicy(), allow_unmatched_failover: false, strategy: "retry_first", max_attempts: 6 });
     (
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -153,8 +191,61 @@ describe("ServiceManager", () => {
     container.remove();
   });
 
+  it("waits for saved priority before showing rows on every page entry", async () => {
+    for (let entry = 0; entry < 2; entry++) {
+      let resolveOrder!: (value: unknown) => void;
+      bridgeMocks.getServiceOrder.mockReturnValueOnce(new Promise((resolve) => {
+        resolveOrder = resolve;
+      }));
+      await act(async () => root.render(
+        <ServiceManager catalogError={null} catalogStatus="ready" isReady
+          services={[codexService, gatewayService]} protocols={[]} view={{ kind: "list" }}
+          onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
+          onServiceSaved={() => {}} onViewChange={() => {}} />,
+      ));
+      expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(0);
+      await act(async () => resolveOrder({
+        service_ids: [gatewayService.id, codexService.id], etag: '"saved-order"',
+      }));
+      expect([...container.querySelectorAll('[data-testid="service-card"]')].map(row => row.getAttribute("aria-label")))
+        .toEqual([gatewayService.name, codexService.name]);
+      await act(async () => root.render(null));
+    }
+  });
+
+  it("uses compact supplier rows during dragging and restores details when cancelled", async () => {
+    bridgeMocks.getServiceOrder.mockResolvedValueOnce({
+      service_ids: [gatewayService.id, codexService.id], etag: '"order"',
+    });
+    await act(async () => root.render(
+      <ServiceManager catalogError={null} catalogStatus="ready" isReady
+        services={[gatewayService, codexService]} protocols={[]} view={{ kind: "list" }}
+        onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
+        onServiceSaved={() => {}} onViewChange={() => {}} />,
+    ));
+    const list = container.querySelector("ol")!;
+    list.setPointerCapture = vi.fn();
+    list.hasPointerCapture = () => false;
+    const handle = list.querySelector("button")!;
+    await act(async () => handle.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true, button: 0, pointerId: 1, clientY: 20,
+    })));
+    await act(async () => list.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true, pointerId: 1, clientY: 30,
+    })));
+    expect(container.querySelectorAll('[data-testid="service-card"][data-sorting="true"]')).toHaveLength(2);
+    expect(container.textContent).toContain("new-api");
+    expect(container.textContent).toContain("Codex personal");
+    expect(container.textContent).not.toContain(gatewayService.http!.base_url);
+    expect(list.querySelector('[role="switch"]')).toBeNull();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    expect(container.querySelector('[data-testid="service-card"][data-sorting="true"]')).toBeNull();
+    expect(container.textContent).toContain(gatewayService.http!.base_url);
+    expect(bridgeMocks.updateServiceOrder).not.toHaveBeenCalled();
+  });
+
   async function openEditorTab(
-    tab: "connection" | "models" | "protocols",
+    tab: "connection" | "models" | "protocols" | "failure",
   ): Promise<void> {
     const trigger = container.querySelector<HTMLButtonElement>(
       `[data-testid="service-editor-tab-${tab}"]`,
@@ -165,6 +256,55 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
   }
+
+  it("creates a Claude subscription with its own authorization flow", async () => {
+    const claude: Service = { ...codexService, id: "service_claude", name: "Claude Code", kind: "claude_subscription",
+      subscription: { provider: "claude_code", status: "disconnected" } };
+    bridgeMocks.createService.mockResolvedValue({ service: claude, etag });
+    bridgeMocks.beginServiceAuthorization.mockResolvedValue({ kind: "session", session: {
+      id: "authorization_claude", provider: "claude_code", status: "pending", flow: "authorization_code",
+      authorization_url: "https://claude.com/cai/oauth/authorize", service_id: claude.id,
+      created_at: timestamp, updated_at: timestamp, expires_at: "2099-09-18T00:00:00Z",
+    }});
+    await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
+      onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
+      onViewChange={() => {}} protocols={[]} services={[]} view={{ kind: "create" }} />));
+    await chooseOption("服务类型", "Claude Code 订阅");
+    expect(container.querySelector<HTMLInputElement>("#service-name")?.value).toBe("Claude Code");
+    expect(container.querySelector('[role="radio"][aria-label="Device Code"]')).toBeNull();
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(bridgeMocks.createService).toHaveBeenCalledWith({ name: "Claude Code", kind: "claude_subscription", enabled: true, models: [] });
+    expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith("service_claude", "authorization_code");
+  });
+
+  it("submits a Claude code only to its active service and clears the input", async () => {
+    const claude: Service = { ...codexService, id: "service_claude", name: "Claude Code", kind: "claude_subscription",
+      subscription: { provider: "claude_code", status: "disconnected" } };
+    const session = { id: "authorization_claude", provider: "claude_code", status: "pending", flow: "authorization_code",
+      authorization_url: "https://claude.com/cai/oauth/authorize", service_id: claude.id,
+      created_at: timestamp, updated_at: timestamp, expires_at: "2099-09-18T00:00:00Z" };
+    bridgeMocks.beginServiceAuthorization.mockResolvedValue({ kind: "session", session });
+    bridgeMocks.getServiceAuthorization.mockResolvedValue(session);
+    bridgeMocks.completeServiceAuthorization.mockResolvedValue({ ...session, status: "completed", authorization_url: undefined });
+    await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
+      onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
+      onViewChange={() => {}} protocols={[]} services={[claude]} view={{ kind: "list" }} />));
+    await openServiceOverflow("Claude Code");
+    await chooseMenuItem("登录");
+    const start = [...document.querySelectorAll("button")].find((button) => button.textContent === "开始登录");
+    expect(start).toBeDefined();
+    await act(async () => start!.click());
+    const input = document.querySelector<HTMLInputElement>("#claude-authorization-code")!;
+    expect(input.type).toBe("password");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "code-secret#state");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(bridgeMocks.completeServiceAuthorization).toHaveBeenCalledWith("service_claude", "authorization_claude", "code-secret#state");
+    expect(document.querySelector("#claude-authorization-code")).toBeNull();
+    expect(document.body.textContent).not.toContain("code-secret");
+  });
 
   it("renders multiple Codex subscriptions and a gateway in one service list", async () => {
     await act(async () => {
@@ -202,7 +342,56 @@ describe("ServiceManager", () => {
     expect(container.querySelector('[data-testid="subscription-usage"]')).toBeNull();
   });
 
-  it("shows rolling quota and reset on a connected Codex card", async () => {
+  it("combines status and search filters and clears both from an empty result", async () => {
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[gatewayService, { ...codexService, enabled: false }]}
+          view={{ kind: "list" }}
+        />,
+      );
+    });
+    const disabledFilter = [...container.querySelectorAll<HTMLButtonElement>('button[role="radio"]')]
+      .find((button) => button.textContent?.startsWith("已停用"));
+    if (!disabledFilter) throw new Error("Missing disabled filter");
+    await act(async () => disabledFilter.click());
+    expect(disabledFilter.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="service-card"]')?.textContent).toContain("Codex personal");
+
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索服务"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (!search || !setter) throw new Error("Missing service search");
+    await act(async () => {
+      setter.call(search, "gateway.example");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(0);
+    const clear = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "清除筛选");
+    if (!clear) throw new Error("Missing clear filters");
+    await act(async () => clear.click());
+    expect(search.value).toBe("");
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(2);
+
+    await act(async () => {
+      setter.call(search, "gateway.example");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="service-card"]')?.textContent).toContain("new-api");
+  });
+
+  it("shows rolling quota and reset on a connected Codex row", async () => {
     const connected: Service = {
       ...codexService,
       enabled: false,
@@ -269,9 +458,13 @@ describe("ServiceManager", () => {
       "Plus",
     );
     expect(container.textContent).toContain("5 小时");
-    expect(container.textContent).toContain("已用 34%");
+    const rollingQuota = container.querySelector('[role="progressbar"][aria-label="5 小时"]');
+    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("34");
+    expect(rollingQuota?.getAttribute("aria-valuetext")).toBe("已用 34%");
     expect(container.textContent).toContain("7 天");
-    expect(container.textContent).toContain("已用 12%");
+    const weeklyQuota = container.querySelector('[role="progressbar"][aria-label="7 天"]');
+    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("12");
+    expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("已用 12%");
     expect(container.textContent).toMatch(/重置/);
     expect(container.textContent).toContain("重置 ×2");
     expect(container.textContent).toContain("附加额度");
@@ -280,7 +473,7 @@ describe("ServiceManager", () => {
     expect(container.textContent).not.toContain("gpt-reserve");
     expect(container.querySelectorAll('[data-testid="subscription-usage"]')).toHaveLength(1);
     expect(container.querySelector('[data-tone="ok"]')).not.toBeNull();
-    expect(container.querySelector(".bg-success")).not.toBeNull();
+    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
   });
 
   it("expands extra limits and confirms a manual reset", async () => {
@@ -345,7 +538,13 @@ describe("ServiceManager", () => {
     await act(async () => {
       extras.click();
     });
-    expect(container.textContent).toContain("GPT-5.3-Codex-Spark");
+    expect(extras.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("GPT-5.3-Codex-Spark");
+    expect(container.textContent).not.toContain("GPT-5.3-Codex-Spark");
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(extras.getAttribute("aria-expanded")).toBe("false");
 
     const reset = container.querySelector<HTMLButtonElement>(
       '[data-testid="subscription-usage-reset"]',
@@ -597,10 +796,62 @@ describe("ServiceManager", () => {
       protocol: "openai.models",
     });
     expect(document.body.textContent).toContain("选择服务支持的模型");
-    const apply = [...document.querySelectorAll("button")].find((button) =>
-      button.textContent?.startsWith("应用所选模型"),
+    // Only the already allow-listed model opens checked; the discovery is opt-in.
+    expect(previewModelCheckbox("gpt-5").getAttribute("aria-checked")).toBe("true");
+    expect(previewModelCheckbox("gpt-4.1").getAttribute("aria-checked")).toBe(
+      "false",
     );
-    await act(async () => apply?.click());
+    expect(applySelectedButton().textContent).toBe("应用所选模型（1）");
+
+    await togglePreviewModel("gpt-4.1");
+    const apply = applySelectedButton();
+    expect(apply.textContent).toBe("应用所选模型（2）");
+    await act(async () => apply.click());
+    expect(container.textContent).toContain("2 个模型");
+  });
+
+  it("preselects every model when the service has no allowlist yet", async () => {
+    const emptyGateway: Service = { ...gatewayService, models: [] };
+    bridgeMocks.getService.mockResolvedValue({ service: emptyGateway, etag });
+    bridgeMocks.probeDraftServiceModels.mockResolvedValue({
+      service_id: emptyGateway.id,
+      protocol: "openai.models",
+      model_ids: ["gpt-4.1", "gpt-5"],
+    });
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[emptyGateway]}
+          view={{ kind: "edit", serviceId: emptyGateway.id }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    await openEditorTab("models");
+    const fetchModels = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "获取模型列表",
+    );
+    await act(async () => {
+      fetchModels?.click();
+      await Promise.resolve();
+    });
+
+    expect(previewModelCheckbox("gpt-4.1").getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(previewModelCheckbox("gpt-5").getAttribute("aria-checked")).toBe("true");
+    const apply = applySelectedButton();
+    expect(apply.textContent).toBe("应用所选模型（2）");
+    await act(async () => apply.click());
     expect(container.textContent).toContain("2 个模型");
   });
 
@@ -659,11 +910,15 @@ describe("ServiceManager", () => {
     expect(document.body.textContent).toContain("部分协议获取失败");
     expect(document.body.textContent).toContain("current-model");
     expect(document.body.textContent).toContain("openai-model");
-    const apply = [...document.querySelectorAll("button")].find((button) =>
-      button.textContent?.startsWith("应用所选模型"),
+    expect(
+      previewModelCheckbox("current-model").getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(previewModelCheckbox("openai-model").getAttribute("aria-checked")).toBe(
+      "false",
     );
-    await act(async () => apply?.click());
-    expect(container.textContent).toContain("2 个模型");
+    const apply = applySelectedButton();
+    await act(async () => apply.click());
+    expect(container.textContent).toContain("1 个模型");
   });
 
   it("groups allow-listed models and supports search plus clear", async () => {
@@ -921,10 +1176,20 @@ describe("ServiceManager", () => {
     expect(document.body.textContent).toContain("选择服务支持的模型");
     expect(document.body.textContent).toContain("gpt-4o");
     expect(document.body.textContent).not.toContain("此前已停用");
-    const apply = [...document.querySelectorAll("button")].find((button) =>
-      button.textContent?.startsWith("应用所选模型"),
+    expect(previewModelCheckbox("gpt-4o").getAttribute("aria-checked")).toBe(
+      "false",
     );
-    await act(async () => apply?.click());
+
+    const selectAll = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "全选",
+    );
+    await act(async () => {
+      selectAll?.click();
+      await Promise.resolve();
+    });
+    const apply = applySelectedButton();
+    expect(apply.textContent).toBe("应用所选模型（3）");
+    await act(async () => apply.click());
 
     expect(container.textContent).toContain("3 个模型");
     expect(
@@ -1060,6 +1325,7 @@ describe("ServiceManager", () => {
       {
         name: gatewayService.name,
         enabled: true,
+        failure_policy: null,
         models: ["gpt-5"],
         http: {
           base_url: gatewayService.http?.base_url,
@@ -1138,7 +1404,7 @@ describe("ServiceManager", () => {
       );
     });
     expect(notifyMocks.success).toHaveBeenCalledWith(
-      "Codex 服务已添加，可稍后从服务列表重新登录。",
+      "订阅服务已添加，可稍后从服务列表重新登录。",
     );
   });
 
@@ -1832,4 +2098,27 @@ describe("ServiceManager", () => {
     });
     expect(bridgeMocks.updateService).not.toHaveBeenCalled();
   });
+  it("inherits global settings until an optional service exception is enabled", async () => {
+    const policy = { ...defaultFailurePolicy(), max_retries: 3 };
+    bridgeMocks.getRoutingSettings.mockResolvedValue({ default_failure_policy: policy, allow_unmatched_failover: false, strategy: "retry_first", max_attempts: 6 });
+    bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
+    bridgeMocks.updateService.mockResolvedValue({ service: gatewayService, etag });
+    await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}} onViewChange={() => {}} protocols={[]} services={[gatewayService]} view={{ kind: "edit", serviceId: gatewayService.id }} />));
+    await openEditorTab("failure");
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find(button => button.closest("label")?.textContent?.includes("为这个服务单独设置"))!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).toContain("默认跟随路由页面的默认策略");
+    expect(container.textContent).not.toContain("遇到这些错误时");
+    await act(async () => toggle.click());
+    const retries = container.querySelector<HTMLInputElement>('[data-testid="service-editor-tab-panel"][data-state="active"] input[type="number"]');
+    expect(retries?.value).toBe("3");
+    await act(async () => toggle.click());
+    expect(container.querySelector('[data-testid="service-form"]')?.className).toContain("overflow-hidden");
+    await openEditorTab("models");
+    await openEditorTab("failure");
+    expect(container.querySelector('[data-testid="service-editor-tab-panel"][data-state="active"]')?.className).toContain("overflow-y-auto");
+    await act(async () => { container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(bridgeMocks.updateService).toHaveBeenCalledWith(gatewayService.id, etag, expect.objectContaining({ failure_policy: null }));
+  });
+
 });

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>AstrLink - Woven Connection</title>
+  <desc>A capital A crossed by a flowing ribbon, passing behind the left leg and in front of the right, between two connection nodes.</desc>
+  <defs>
+    <linearGradient id="weave-color" x1="108" y1="324" x2="398" y2="232" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20BBC7"/>
+      <stop offset=".55" stop-color="#7F8FE8"/>
+      <stop offset="1" stop-color="#DA7BAF"/>
+    </linearGradient>
+    <filter id="weave-shadow" x="24" y="28" width="464" height="468" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#26345E" flood-opacity=".14"/>
+    </filter>
+    <path id="weave-ribbon" d="M112 324C166 345 206 274 256 276C306 278 347 292 400 232"/>
+    <mask id="weave-over" x="100" y="104" width="312" height="304" maskUnits="userSpaceOnUse">
+      <rect x="100" y="104" width="312" height="304" fill="#FFFFFF"/>
+      <path d="M256 276C306 278 347 292 400 232" stroke="#000000" stroke-width="46"/>
+    </mask>
+    <mask id="weave-node-openings" x="90" y="104" width="330" height="304" maskUnits="userSpaceOnUse">
+      <rect x="90" y="104" width="330" height="304" fill="#FFFFFF"/>
+      <circle cx="112" cy="324" r="7" fill="#000000"/>
+      <circle cx="400" cy="232" r="7" fill="#000000"/>
+    </mask>
+  </defs>
+  <rect x="52" y="52" width="408" height="408" rx="92" fill="#F9FAFE" filter="url(#weave-shadow)"/>
+  <g id="weave-mark" mask="url(#weave-node-openings)">
+    <use href="#weave-ribbon" stroke="url(#weave-color)" stroke-width="28" stroke-linecap="round"/>
+    <path d="M148 365L234 159Q256 115 278 159L364 365" stroke="#304074" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" mask="url(#weave-over)"/>
+    <circle cx="112" cy="324" r="11" stroke="#20BBC7" stroke-width="8"/>
+    <circle cx="400" cy="232" r="11" stroke="#DA7BAF" stroke-width="8"/>
+  </g>
+</svg>

@@ -217,7 +217,7 @@ func TestStoreResolverImplementsAttemptControllerWithDefaultCircuit(t *testing.T
 	}
 }
 
-func TestStoreResolverExcludesOpenAutomaticCandidateButKeepsExplicitPin(t *testing.T) {
+func TestStoreResolverExcludesOpenCandidatesIncludingRetiredPins(t *testing.T) {
 	tests := []struct {
 		name        string
 		routes      []contract.Route
@@ -229,7 +229,7 @@ func TestStoreResolverExcludesOpenAutomaticCandidateButKeepsExplicitPin(t *testi
 			wantOpenErr: true,
 		},
 		{
-			name: "single target route remains usable",
+			name: "retired single target route cannot bypass health",
 			routes: []contract.Route{
 				resolverRoute(
 					"route_pin",
@@ -238,7 +238,8 @@ func TestStoreResolverExcludesOpenAutomaticCandidateButKeepsExplicitPin(t *testi
 					resolverTarget("endpoint_health", contract.PlanTypeNative, 0),
 				),
 			},
-			wantPinned: true,
+			wantPinned:  false,
+			wantOpenErr: true,
 		},
 	}
 	for _, test := range tests {
@@ -300,5 +301,37 @@ func healthCandidate(pinned bool) Resolved {
 		Endpoint: contract.Endpoint{ID: "endpoint_health"},
 		Mode:     contract.CapabilityModeNative,
 		Pinned:   pinned,
+	}
+}
+
+func TestRateLimitCooldownIsIsolatedAndConcurrent(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	breaker := newCircuitBreaker(circuitBreakerConfig{Now: func() time.Time { return now }})
+	a := healthCandidate(false)
+	a.UpstreamModel = "a"
+	a.UpstreamProtocol = contract.ProtocolOpenAIChat
+	b := a
+	b.UpstreamModel = "b"
+	var group sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			breaker.rateLimit(a, time.Second)
+			if breaker.begin(a) {
+				t.Error("rate-limited target admitted")
+			}
+			if !breaker.available(b) {
+				t.Error("other model blocked")
+			}
+		}()
+	}
+	group.Wait()
+	if len(breaker.states) != 0 {
+		t.Fatal("rate limit altered failure circuit")
+	}
+	now = now.Add(time.Second)
+	if !breaker.begin(a) {
+		t.Fatal("cooldown did not expire")
 	}
 }

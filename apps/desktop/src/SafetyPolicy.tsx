@@ -1,7 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  ArrowUpRight,
+  Boxes,
+  Flask as FlaskConical,
+  SlidersHorizontal as ListFilter,
+  LockKeyhole,
+  RotateCcw,
+  ScanText as ScanLine,
+  SlidersHorizontal,
+  type AnimatedIcon,
+} from "@/components/icons";
+import { Panel, PanelFooter, PanelHeader } from "@/components/Panel";
+import { ChoiceCard } from "@/components/ChoiceCard";
+import { Field } from "@/components/Field";
+import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,7 +32,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { RadioGroup } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -815,6 +831,37 @@ function StreamingRestoreDemoDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PolicySection({
+  title,
+  icon: Icon,
+  actions,
+  description,
+  children,
+}: {
+  title: string;
+  icon: AnimatedIcon;
+  actions?: ReactNode;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Panel className="@container">
+      <PanelHeader actions={actions} className="items-center">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <Icon aria-hidden="true" className="size-4 shrink-0 text-primary" />
+          {title}
+        </h2>
+        {description ? (
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
+      </PanelHeader>
+      <div className="grid min-w-0 gap-4 p-4">{children}</div>
+    </Panel>
   );
 }
 
@@ -1936,16 +1983,17 @@ export function SafetyPolicy({
       data-testid="safety-policy"
     >
       <PageHeader
+        className="@max-[520px]:flex-col @max-[520px]:items-start @max-[520px]:gap-3"
         actions={
           <>
             {record !== null && saving ? (
-              <span className="mr-[3px] text-xs font-semibold text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 {t("common.saving")}
               </span>
             ) : null}
             {policy !== null ? (
               <>
-                <Label className="mr-1 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted-foreground">
+                <Label className="inline-flex cursor-pointer items-center gap-2.5 border-r pr-3 text-xs font-medium">
                   <span>{t("safety.enable")}</span>
                   <Switch
                     aria-label={t("safety.enable")}
@@ -1957,26 +2005,6 @@ export function SafetyPolicy({
                     title={
                       cannotEnableLocalModel
                         ? t("safety.needReadyModel")
-                        : undefined
-                    }
-                  />
-                </Label>
-                <Label className="mr-1 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted-foreground">
-                  <span>{t("safety.restore")}</span>
-                  <Switch
-                    aria-label={t("safety.restore")}
-                    checked={policy.response_restore}
-                    disabled={saving || policy.request_action !== "redact"}
-                    id="privacy-response-restore"
-                    onCheckedChange={(checked) =>
-                      void patchPolicy({
-                        response_restore: checked,
-                      })
-                    }
-                    size="sm"
-                    title={
-                      policy.request_action !== "redact"
-                        ? t("safety.restoreHint")
                         : undefined
                     }
                   />
@@ -1996,7 +2024,9 @@ export function SafetyPolicy({
               variant="outline"
               type="button"
             >
-              {status === "loading" ? t("common.refreshing") : t("common.refresh")}
+              {status === "loading"
+                ? t("common.refreshing")
+                : t("common.refresh")}
             </Button>
           </>
         }
@@ -2006,7 +2036,9 @@ export function SafetyPolicy({
       />
 
       {error ? (
-        <FormMessage className="mb-2.5 shrink-0" tone="error">{error}</FormMessage>
+        <FormMessage className="mb-2.5 shrink-0" tone="error">
+          {error}
+        </FormMessage>
       ) : null}
 
       {status === "loading" && record === null ? (
@@ -2039,12 +2071,10 @@ export function SafetyPolicy({
         >
           <TabsList
             aria-label={t("safety.workspace")}
-            className="h-9 w-full max-w-[420px] shrink-0"
+            className="h-9 w-fit shrink-0"
           >
-            <TabsTrigger
-              onClick={() => setWorkspace("policy")}
-              value="policy"
-            >
+            <TabsTrigger onClick={() => setWorkspace("policy")} value="policy">
+              <SlidersHorizontal aria-hidden="true" />
               {t("safety.tabPolicy")}
             </TabsTrigger>
             <TabsTrigger
@@ -2052,12 +2082,11 @@ export function SafetyPolicy({
               onClick={() => setWorkspace("dryRun")}
               value="dryRun"
             >
+              <FlaskConical aria-hidden="true" />
               {t("safety.run")}
             </TabsTrigger>
-            <TabsTrigger
-              onClick={() => setWorkspace("models")}
-              value="models"
-            >
+            <TabsTrigger onClick={() => setWorkspace("models")} value="models">
+              <Boxes aria-hidden="true" />
               {t("safety.tabModels")}
             </TabsTrigger>
           </TabsList>
@@ -2068,223 +2097,656 @@ export function SafetyPolicy({
             hidden={workspace !== "policy"}
             value="policy"
           >
-            <div className="grid min-w-0 gap-3 pb-2">
-            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-              <legend className="mb-1.5 flex items-center justify-between gap-2 px-0 text-sm font-medium text-text-secondary">
-                <span>{t("safety.detector")}</span>
-                {!selectedModelReady ? (
+            <div className="mx-auto grid w-full min-w-0 max-w-6xl items-start gap-4 pb-4 pr-1 @[760px]:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.3fr)]">
+              <div className="grid min-w-0 gap-4">
+                <PolicySection
+                  title={t("safety.detector")}
+                  icon={ScanLine}
+                  actions={
+                    !selectedModelReady ? (
+                      <Button
+                        className="h-auto gap-1 px-0 py-0 text-xs font-medium"
+                        onClick={() => {
+                          setWorkspace("models");
+                          setView(
+                            installations.length > 0 ? "installed" : "catalog",
+                          );
+                        }}
+                        size="sm"
+                        type="button"
+                        variant="link"
+                      >
+                        {t("safety.goToModels")}
+                        <ArrowUpRight aria-hidden="true" className="size-3.5" />
+                      </Button>
+                    ) : null
+                  }
+                >
+                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+                    <legend className="sr-only">{t("safety.detector")}</legend>
+                    <RadioGroup
+                      className="grid min-w-0 grid-cols-2 gap-2"
+                      disabled={saving}
+                      onValueChange={(value) => {
+                        if (value === "regex") {
+                          useRegex();
+                        } else if (selectedInstallation !== null) {
+                          chooseInstallation(selectedInstallation);
+                        }
+                      }}
+                      value={policy.detector}
+                    >
+                      <ChoiceCard
+                        className="items-center"
+                        id="privacy-detector-regex"
+                        label="Regex"
+                        description={t("safety.regexAlways")}
+                        selected={policy.detector === "regex"}
+                        disabled={saving}
+                        value="regex"
+                      />
+                      <ChoiceCard
+                        className="items-center"
+                        id="privacy-detector-local-model"
+                        label={t("safety.localModels")}
+                        description={
+                          selectedInstallation === null
+                            ? t("safety.chooseInstalled")
+                            : `${selectedInstallation.name} · ${selectedInstallation.variant_name}`
+                        }
+                        selected={policy.detector === "local_model"}
+                        disabled={saving || !selectedModelReady}
+                        value="local_model"
+                      />
+                    </RadioGroup>
+                  </fieldset>
+
+                  {policy.detector === "regex" ? (
+                    <fieldset
+                      className="min-w-0 border-0 p-0"
+                      disabled={saving || fillingBuiltinRules}
+                    >
+                      <legend className="mb-2 px-0 text-xs font-medium text-text-secondary">
+                        {t("safety.regexSource")}
+                      </legend>
+                      <RadioGroup
+                        className="grid min-w-0 grid-cols-2 gap-2"
+                        disabled={saving || fillingBuiltinRules}
+                        onValueChange={(value) => {
+                          if (value === "builtin" || value === "custom") {
+                            changeRegexSource(value);
+                          }
+                        }}
+                        value={policy.regex_source}
+                      >
+                        <ChoiceCard
+                          className="items-center"
+                          id="privacy-regex-source-builtin"
+                          label={t("safety.builtinRules")}
+                          description={t("safety.builtinFixed")}
+                          selected={policy.regex_source === "builtin"}
+                          disabled={saving || fillingBuiltinRules}
+                          value="builtin"
+                        />
+                        <ChoiceCard
+                          className="items-center"
+                          id="privacy-regex-source-custom"
+                          label={t("safety.customRules")}
+                          description={t("safety.customListOnly")}
+                          selected={policy.regex_source === "custom"}
+                          disabled={saving || fillingBuiltinRules}
+                          value="custom"
+                        />
+                      </RadioGroup>
+
+                      {policy.regex_source === "builtin" ? (
+                        <div className="mt-3">
+                          <HelpDisclosure title={t("safety.ruleCoverage")}>
+                            <p className="text-xs leading-relaxed">
+                              {t("safety.builtinCoverage", {
+                                kinds: regexKindOptions()
+                                  .map((option) => option.label)
+                                  .join(t("safety.listJoin")),
+                              })}
+                            </p>
+                            <p>{t("safety.builtinHint")}</p>
+                          </HelpDisclosure>
+                        </div>
+                      ) : (
+                        <div className="mt-3 grid min-w-0 gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                              disabled={saving || fillingBuiltinRules}
+                              onClick={addCustomRegexRule}
+                              size="sm"
+                              type="button"
+                              variant="outline"
+                            >
+                              {t("safety.addRule")}
+                            </Button>
+                            <Button
+                              disabled={saving || fillingBuiltinRules}
+                              onClick={() => {
+                                if (policy.custom_regex_rules.length > 0) {
+                                  setConfirmFillBuiltinRules(true);
+                                } else {
+                                  void fillBuiltinRules();
+                                }
+                              }}
+                              size="sm"
+                              type="button"
+                              variant="outline"
+                            >
+                              {t("safety.fillBuiltin")}
+                            </Button>
+                            <span className="text-sm text-muted-foreground">
+                              {policy.custom_regex_rules.length}/
+                              {MAX_PRIVACY_CUSTOM_REGEX_RULES}
+                            </span>
+                          </div>
+                          {policy.custom_regex_rules.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              {t("safety.noCustomRules")}
+                            </p>
+                          ) : (
+                            <ul className="grid min-w-0 gap-2">
+                              {policy.custom_regex_rules.map((rule, index) => (
+                                <li
+                                  className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[640px]:grid-cols-[8.5rem_minmax(0,1fr)_auto] @[640px]:items-start"
+                                  key={`regex-rule-${index}`}
+                                >
+                                  <Select
+                                    disabled={saving || fillingBuiltinRules}
+                                    onValueChange={(value) =>
+                                      changeCustomRegexKind(
+                                        index,
+                                        value as PrivacyRegexDetectorKind,
+                                      )
+                                    }
+                                    value={rule.kind}
+                                  >
+                                    <SelectTrigger
+                                      aria-label={t("safety.ruleKind", {
+                                        index: index + 1,
+                                      })}
+                                      className="h-9 w-full px-3 text-sm"
+                                      size="sm"
+                                    >
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {regexKindOptions().map((option) => (
+                                        <SelectItem
+                                          key={option.value}
+                                          value={option.value}
+                                        >
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Input
+                                    aria-label={t("safety.rulePattern", {
+                                      index: index + 1,
+                                    })}
+                                    className="h-9 min-w-0 font-mono text-sm md:text-sm"
+                                    disabled={saving || fillingBuiltinRules}
+                                    onBlur={() =>
+                                      commitCustomRegexPattern(index)
+                                    }
+                                    onChange={(event) => {
+                                      const value = event.currentTarget.value;
+                                      setRegexPatternDrafts((current) => {
+                                        const next = [...current];
+                                        next[index] = value;
+                                        return next;
+                                      });
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.currentTarget.blur();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        setRegexPatternDrafts(
+                                          policy.custom_regex_rules.map(
+                                            (item) => item.pattern,
+                                          ),
+                                        );
+                                      }
+                                    }}
+                                    placeholder={t("safety.re2Hint")}
+                                    value={
+                                      regexPatternDrafts[index] ?? rule.pattern
+                                    }
+                                  />
+                                  <Button
+                                    disabled={saving || fillingBuiltinRules}
+                                    onClick={() => removeCustomRegexRule(index)}
+                                    size="sm"
+                                    type="button"
+                                    variant="ghost"
+                                  >
+                                    {t("common.delete")}
+                                  </Button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </fieldset>
+                  ) : null}
+
+                  <div className="border-t pt-4">
+                    <Field
+                      htmlFor="privacy-request-action"
+                      label={t("safety.requestAction")}
+                    >
+                      <Select
+                        disabled={saving}
+                        onValueChange={changeAction}
+                        value={policy.request_action}
+                      >
+                        <SelectTrigger
+                          aria-label={t("safety.requestAction")}
+                          className="h-9 w-full px-3 text-sm"
+                          id="privacy-request-action"
+                          size="sm"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {policy.request_action === "allow" ? (
+                            <SelectItem disabled value="allow">
+                              {t("safety.allowCompat")}
+                            </SelectItem>
+                          ) : null}
+                          <SelectItem value="redact">
+                            {actionLabel("redact")}
+                          </SelectItem>
+                          <SelectItem value="block">
+                            {actionLabel("block")}
+                          </SelectItem>
+                          <SelectItem value="warn">
+                            {actionLabel("warn")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </div>
+                  <div className="border-t pt-3">
+                    <HelpDisclosure
+                      title={t("safety.advancedDetection")}
+                      open={policy.detector === "local_model"}
+                    >
+                      <Field
+                        htmlFor="privacy-min-confidence"
+                        label={t("safety.minConfidence")}
+                        hint={t("safety.minConfidenceHint")}
+                      >
+                        <Input
+                          aria-label={t("safety.minConfidence")}
+                          className="h-9 w-28 px-3 text-sm md:text-sm"
+                          disabled={saving}
+                          id="privacy-min-confidence"
+                          max="1"
+                          min="0"
+                          onBlur={commitMinConfidence}
+                          onChange={(event) =>
+                            setMinConfidenceDraft(event.currentTarget.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.currentTarget.blur();
+                            } else if (event.key === "Escape") {
+                              event.preventDefault();
+                              setMinConfidenceDraft(
+                                policy.min_confidence.toFixed(2),
+                              );
+                            }
+                          }}
+                          step="0.01"
+                          type="number"
+                          value={minConfidenceDraft}
+                        />
+                      </Field>
+                    </HelpDisclosure>
+                  </div>
+                </PolicySection>
+
+                <PolicySection
+                  title={t("safety.responseHandling")}
+                  icon={RotateCcw}
+                >
+                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+                    <legend className="sr-only">
+                      {t("safety.restoreScope")}
+                    </legend>
+                    <div className="grid min-w-0 divide-y">
+                      <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 pb-3 font-normal">
+                        <span className="flex min-w-0 flex-col gap-1">
+                          <strong className="text-sm font-medium">
+                            {t("safety.restore")}
+                          </strong>
+                          <small className="text-xs leading-relaxed text-muted-foreground">
+                            {t("safety.responseRestoreDetail")}
+                          </small>
+                        </span>
+                        <Switch
+                          aria-label={t("safety.restore")}
+                          checked={policy.response_restore}
+                          disabled={
+                            saving || policy.request_action !== "redact"
+                          }
+                          id="privacy-response-restore"
+                          onCheckedChange={(checked) =>
+                            void patchPolicy({
+                              response_restore: checked,
+                            })
+                          }
+                          size="sm"
+                          title={
+                            policy.request_action !== "redact"
+                              ? t("safety.restoreHint")
+                              : undefined
+                          }
+                        />
+                      </Label>
+                      <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <strong className="text-sm font-medium leading-snug">
+                            {t("safety.restoreTools")}
+                          </strong>
+                          <small
+                            className="text-xs leading-relaxed text-muted-foreground"
+                            title={t("safety.restoreToolsDetail")}
+                          >
+                            {t("safety.restoreToolsShort")}
+                            <span className="sr-only">
+                              {t("safety.restoreToolsDetail")}
+                            </span>
+                          </small>
+                        </span>
+                        <Switch
+                          aria-label={t("safety.restoreTools")}
+                          checked={policy.restore_tool_arguments}
+                          disabled={saving || !policy.response_restore}
+                          onCheckedChange={(checked) =>
+                            void patchPolicy({
+                              restore_tool_arguments: checked,
+                            })
+                          }
+                          size="sm"
+                          title={
+                            policy.response_restore
+                              ? undefined
+                              : t("safety.restoreToolsHint")
+                          }
+                        />
+                      </Label>
+                      <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <strong className="text-sm font-medium leading-snug">
+                            {t("safety.injectNotice")}
+                          </strong>
+                          <small className="text-xs leading-relaxed text-muted-foreground">
+                            {t("safety.injectNoticeHint", {
+                              style: placeholderStyleLabel("token"),
+                            })}
+                          </small>
+                        </span>
+                        <Switch
+                          aria-label={t("safety.injectNotice")}
+                          checked={policy.placeholder_notice}
+                          disabled={saving}
+                          onCheckedChange={(checked) =>
+                            void patchPolicy({ placeholder_notice: checked })
+                          }
+                          size="sm"
+                        />
+                      </Label>
+                    </div>
+                  </fieldset>
                   <Button
-                    className="h-auto px-0 py-0 text-sm font-medium"
-                    onClick={() => {
-                      setWorkspace("models");
-                      setView(installations.length > 0 ? "installed" : "catalog");
-                    }}
+                    className="h-auto w-fit gap-1 px-0 py-0 text-xs font-medium"
+                    onClick={() => setStreamingDemoOpen(true)}
                     size="sm"
                     type="button"
                     variant="link"
                   >
-                    {t("safety.goToModels")}
+                    {t("safety.viewStreamingDemo")}
+                    <ArrowUpRight aria-hidden="true" className="size-3.5" />
                   </Button>
-                ) : null}
-              </legend>
-              <RadioGroup
-                className="grid min-w-0 grid-cols-2 gap-2"
-                disabled={saving}
-                onValueChange={(value) => {
-                  if (value === "regex") {
-                    useRegex();
-                  } else if (selectedInstallation !== null) {
-                    chooseInstallation(selectedInstallation);
+                </PolicySection>
+              </div>
+              <div className="grid min-w-0 gap-4">
+                <PolicySection
+                  title={t("safety.perKindRedact")}
+                  icon={SlidersHorizontal}
+                  description={t("safety.redactTypesHint")}
+                  actions={
+                    <Badge variant="secondary">
+                      {t("safety.enabledTypes", {
+                        count: PRIVACY_KINDS.filter(
+                          (kind) => kindRuleFor(kind).enabled,
+                        ).length,
+                        total: PRIVACY_KINDS.length,
+                      })}
+                    </Badge>
                   }
-                }}
-                value={policy.detector}
-              >
-                <Label
-                  className={cn(
-                    "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors",
-                    policy.detector === "regex" && "border-primary/35 bg-accent",
-                  )}
-                  htmlFor="privacy-detector-regex"
                 >
-                  <RadioGroupItem
-                    aria-label="Regex"
-                    className="shrink-0"
-                    id="privacy-detector-regex"
-                    value="regex"
-                  />
-                  <span className="flex min-w-0 flex-col">
-                    <strong className="text-sm font-medium leading-none">Regex</strong>
-                    <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
-                      {t("safety.regexAlways")}
-                    </small>
-                  </span>
-                </Label>
-                <Label
-                  className={cn(
-                    "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors has-[[data-disabled]]:cursor-not-allowed has-[[data-disabled]]:opacity-50",
-                    policy.detector === "local_model" && "border-primary/35 bg-accent",
-                  )}
-                  htmlFor="privacy-detector-local-model"
-                >
-                  <RadioGroupItem
-                    aria-label={t("safety.localModels")}
-                    className="shrink-0"
-                    disabled={!selectedModelReady}
-                    id="privacy-detector-local-model"
-                    value="local_model"
-                  />
-                  <span className="flex min-w-0 flex-col">
-                    <strong className="text-sm font-medium leading-none">{t("safety.localModels")}</strong>
-                    <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
-                      {selectedInstallation === null
-                        ? t("safety.chooseInstalled")
-                        : `${selectedInstallation.name} · ${selectedInstallation.variant_name}`}
-                    </small>
-                  </span>
-                </Label>
-              </RadioGroup>
-            </fieldset>
-
-            {policy.detector === "regex" ? (
-              <fieldset className="min-w-0 border-0 p-0" disabled={saving || fillingBuiltinRules}>
-                <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
-                  {t("safety.regexSource")}
-                </legend>
-                <RadioGroup
-                  className="grid min-w-0 grid-cols-2 gap-2"
-                  disabled={saving || fillingBuiltinRules}
-                  onValueChange={(value) => {
-                    if (value === "builtin" || value === "custom") {
-                      changeRegexSource(value);
-                    }
-                  }}
-                  value={policy.regex_source}
-                >
-                  <Label
-                    className={cn(
-                      "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors",
-                      policy.regex_source === "builtin" && "border-primary/35 bg-accent",
-                    )}
-                    htmlFor="privacy-regex-source-builtin"
-                  >
-                    <RadioGroupItem
-                      aria-label={t("safety.builtinRules")}
-                      className="shrink-0"
-                      id="privacy-regex-source-builtin"
-                      value="builtin"
-                    />
-                    <span className="flex min-w-0 flex-col">
-                      <strong className="text-sm font-medium leading-none">{t("safety.builtinRules")}</strong>
-                      <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
-                        {t("safety.builtinFixed")}
-                      </small>
-                    </span>
-                  </Label>
-                  <Label
-                    className={cn(
-                      "flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border bg-card px-2.5 font-normal transition-colors",
-                      policy.regex_source === "custom" && "border-primary/35 bg-accent",
-                    )}
-                    htmlFor="privacy-regex-source-custom"
-                  >
-                    <RadioGroupItem
-                      aria-label={t("safety.customRules")}
-                      className="shrink-0"
-                      id="privacy-regex-source-custom"
-                      value="custom"
-                    />
-                    <span className="flex min-w-0 flex-col">
-                      <strong className="text-sm font-medium leading-none">{t("safety.customRules")}</strong>
-                      <small className="mt-0.5 overflow-hidden text-sm leading-none text-muted-foreground text-ellipsis whitespace-nowrap">
-                        {t("safety.customListOnly")}
-                      </small>
-                    </span>
-                  </Label>
-                </RadioGroup>
-
-                {policy.regex_source === "builtin" ? (
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                    {t("safety.builtinCoverage", {
-                      kinds: regexKindOptions()
-                        .map((option) => option.label)
-                        .join(t("safety.listJoin")),
-                    })}
-                  </p>
-                ) : (
-                  <div className="mt-3 grid min-w-0 gap-2">
+                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+                    <legend className="sr-only">
+                      {t("safety.perKindRedact")}
+                    </legend>
+                    <div className="mb-3">
+                      <HelpDisclosure title={t("safety.placeholderGuide")}>
+                        <p className="text-xs leading-relaxed">
+                          {t("safety.styleHintLead", {
+                            natural: placeholderStyleLabel("natural"),
+                            token: placeholderStyleLabel("token"),
+                          })}
+                          <code className="font-mono">&lt;PRIVATE_…&gt;</code>
+                          {t("safety.styleHintTail")}
+                        </p>
+                        <ul className="grid gap-2">
+                          {PRIVACY_KINDS.filter((kind) =>
+                            PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind),
+                          ).map((kind) => (
+                            <li key={kind}>
+                              <strong className="font-medium text-foreground">
+                                {canonicalKindLabel(kind)}：
+                              </strong>
+                              {placeholderStyleLockReason(kind)}
+                            </li>
+                          ))}
+                        </ul>
+                      </HelpDisclosure>
+                    </div>
+                    <ul className="min-w-0 divide-y">
+                      {PRIVACY_KINDS.map((kind) => {
+                        const rule = kindRuleFor(kind);
+                        const lockReason = placeholderStyleLockReason(kind);
+                        const styleLocked =
+                          PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind);
+                        const unreachable =
+                          policy.detector === "regex" &&
+                          localModelOnlyKinds.has(kind);
+                        return (
+                          <li
+                            className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2.5 first:pt-0 last:pb-0"
+                            data-testid={`privacy-kind-rule-${kind}`}
+                            key={kind}
+                          >
+                            <span className="flex min-w-0 flex-col gap-1">
+                              <strong className="text-sm font-medium leading-snug">
+                                {canonicalKindLabel(kind)}
+                              </strong>
+                              {unreachable ? (
+                                <small className="text-xs text-muted-foreground">
+                                  {t("safety.localOnlyShort")}
+                                </small>
+                              ) : styleLocked ? (
+                                <small
+                                  className="flex items-center gap-1 text-xs text-muted-foreground"
+                                  title={lockReason}
+                                >
+                                  <LockKeyhole
+                                    aria-hidden="true"
+                                    className="size-3"
+                                  />
+                                  {t("safety.fixedStyle")}
+                                </small>
+                              ) : null}
+                              {lockReason || unreachable ? (
+                                <span
+                                  className="sr-only"
+                                  id={`privacy-kind-hint-${kind}`}
+                                >
+                                  {unreachable
+                                    ? t("safety.localOnlyKind")
+                                    : null}{" "}
+                                  {lockReason}
+                                </span>
+                              ) : null}
+                            </span>
+                            <span className="flex shrink-0 items-center gap-2">
+                              <Select
+                                disabled={
+                                  saving || styleLocked || !rule.enabled
+                                }
+                                onValueChange={(value) =>
+                                  saveKindRule(kind, {
+                                    style: value as PlaceholderStyle,
+                                  })
+                                }
+                                value={rule.style}
+                              >
+                                <SelectTrigger
+                                  aria-label={t("safety.styleFor", {
+                                    kind: canonicalKindLabel(kind),
+                                  })}
+                                  aria-describedby={
+                                    lockReason || unreachable
+                                      ? `privacy-kind-hint-${kind}`
+                                      : undefined
+                                  }
+                                  className="h-8 w-36 px-2.5 text-xs @[440px]:w-56"
+                                  size="sm"
+                                  title={
+                                    styleLocked
+                                      ? lockReason
+                                      : placeholderStyleLabel(rule.style)
+                                  }
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="natural">
+                                    {placeholderStyleLabel("natural")}
+                                  </SelectItem>
+                                  <SelectItem value="token">
+                                    {placeholderStyleLabel("token")}
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Switch
+                                aria-label={t("safety.redactKind", {
+                                  kind: canonicalKindLabel(kind),
+                                })}
+                                checked={rule.enabled}
+                                disabled={saving}
+                                onCheckedChange={(enabled) =>
+                                  saveKindRule(kind, { enabled })
+                                }
+                                size="sm"
+                              />
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </fieldset>
+                </PolicySection>
+                <PolicySection title={t("safety.allowlist")} icon={ListFilter}>
+                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+                    <legend className="sr-only">{t("safety.allowlist")}</legend>
+                    <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+                      {t("safety.allowlistHint")}
+                    </p>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button
-                        disabled={saving || fillingBuiltinRules}
-                        onClick={addCustomRegexRule}
+                        disabled={saving || allowlistPending}
+                        onClick={addAllowlistRule}
                         size="sm"
                         type="button"
                         variant="outline"
                       >
-                        {t("safety.addRule")}
-                      </Button>
-                      <Button
-                        disabled={saving || fillingBuiltinRules}
-                        onClick={() => {
-                          if (policy.custom_regex_rules.length > 0) {
-                            setConfirmFillBuiltinRules(true);
-                          } else {
-                            void fillBuiltinRules();
-                          }
-                        }}
-                        size="sm"
-                        type="button"
-                        variant="outline"
-                      >
-                        {t("safety.fillBuiltin")}
+                        {t("safety.addAllowlist")}
                       </Button>
                       <span className="text-sm text-muted-foreground">
-                        {policy.custom_regex_rules.length}/{MAX_PRIVACY_CUSTOM_REGEX_RULES}
+                        {policy.allowlist_rules.length}/
+                        {MAX_PRIVACY_ALLOWLIST_RULES}
                       </span>
                     </div>
-                    {policy.custom_regex_rules.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        {t("safety.noCustomRules")}
+                    {policy.allowlist_rules.length === 0 &&
+                    !allowlistPending ? (
+                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                        {t("safety.allowlistEmpty")}
                       </p>
                     ) : (
-                      <ul className="grid min-w-0 gap-2">
-                        {policy.custom_regex_rules.map((rule, index) => (
+                      <ul className="mt-2 grid min-w-0 gap-1.5">
+                        {[
+                          ...policy.allowlist_rules,
+                          ...(allowlistPending
+                            ? [{ type: allowlistPendingType, value: "" }]
+                            : []),
+                        ].map((rule, index) => (
                           <li
-                            className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[640px]:grid-cols-[8.5rem_minmax(0,1fr)_auto] @[640px]:items-start"
-                            key={`regex-rule-${index}`}
+                            className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 @[400px]:grid-cols-[120px_minmax(0,1fr)_auto]"
+                            key={`${rule.type}-${index}`}
                           >
                             <Select
-                              disabled={saving || fillingBuiltinRules}
+                              disabled={saving}
                               onValueChange={(value) =>
-                                changeCustomRegexKind(
+                                changeAllowlistType(
                                   index,
-                                  value as PrivacyRegexDetectorKind,
+                                  value as PrivacyAllowlistType,
                                 )
                               }
-                              value={rule.kind}
+                              value={rule.type}
                             >
                               <SelectTrigger
-                                aria-label={t("safety.ruleKind", { index: index + 1 })}
-                                className="h-9 w-full px-3 text-sm"
+                                aria-label={t("safety.allowlistKind", {
+                                  index: index + 1,
+                                })}
+                                className="h-9 w-full px-2.5 text-xs"
                                 size="sm"
                               >
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {regexKindOptions().map((option) => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
+                                {ALLOWLIST_TYPES.map((type) => (
+                                  <SelectItem key={type} value={type}>
+                                    {allowlistTypeLabel(type)}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
                             <Input
-                              aria-label={t("safety.rulePattern", { index: index + 1 })}
-                              className="h-9 min-w-0 font-mono text-sm md:text-sm"
-                              disabled={saving || fillingBuiltinRules}
-                              onBlur={() => commitCustomRegexPattern(index)}
+                              aria-label={t("safety.allowlistValue", {
+                                index: index + 1,
+                              })}
+                              autoFocus={
+                                allowlistPending &&
+                                index === policy.allowlist_rules.length
+                              }
+                              className="col-span-2 row-start-2 h-9 min-w-0 font-mono text-sm md:text-sm @[400px]:col-span-1 @[400px]:row-start-auto"
+                              disabled={saving}
+                              onBlur={() => commitAllowlistValue(index)}
                               onChange={(event) => {
                                 const value = event.currentTarget.value;
-                                setRegexPatternDrafts((current) => {
+                                setAllowlistDrafts((current) => {
                                   const next = [...current];
                                   next[index] = value;
                                   return next;
@@ -2295,347 +2757,33 @@ export function SafetyPolicy({
                                   event.currentTarget.blur();
                                 } else if (event.key === "Escape") {
                                   event.preventDefault();
-                                  setRegexPatternDrafts(
-                                    policy.custom_regex_rules.map((item) => item.pattern),
+                                  setAllowlistDrafts(
+                                    policy.allowlist_rules.map(
+                                      (item) => item.value,
+                                    ),
                                   );
+                                  setAllowlistPending(false);
                                 }
                               }}
-                              placeholder={t("safety.re2Hint")}
-                              value={regexPatternDrafts[index] ?? rule.pattern}
+                              placeholder={allowlistTypePlaceholders[rule.type]}
+                              value={allowlistDrafts[index] ?? rule.value}
                             />
                             <Button
-                              disabled={saving || fillingBuiltinRules}
-                              onClick={() => removeCustomRegexRule(index)}
+                              disabled={saving}
+                              onClick={() => removeAllowlistRule(index)}
                               size="sm"
                               type="button"
                               variant="ghost"
                             >
-                              {t("common.delete")}
+                              {t("safety.remove")}
                             </Button>
                           </li>
                         ))}
                       </ul>
                     )}
-                  </div>
-                )}
-              </fieldset>
-            ) : null}
-
-            <div className="grid min-w-0 gap-3 @[560px]:grid-cols-2">
-            <Label
-              className="grid min-w-0 gap-1.5 font-normal"
-              htmlFor="privacy-min-confidence"
-            >
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <strong className="text-sm font-medium">{t("safety.minConfidence")}</strong>
-                <small className="text-sm leading-snug text-muted-foreground">
-                  {t("safety.minConfidenceHint")}
-                </small>
-              </span>
-              <Input
-                aria-label={t("safety.minConfidence")}
-                className="h-9 w-full px-3 text-sm md:text-sm"
-                disabled={saving}
-                id="privacy-min-confidence"
-                max="1"
-                min="0"
-                onBlur={commitMinConfidence}
-                onChange={(event) =>
-                  setMinConfidenceDraft(event.currentTarget.value)
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.currentTarget.blur();
-                  } else if (event.key === "Escape") {
-                    event.preventDefault();
-                    setMinConfidenceDraft(policy.min_confidence.toFixed(2));
-                  }
-                }}
-                step="0.01"
-                type="number"
-                value={minConfidenceDraft}
-              />
-            </Label>
-
-            <Label
-              className="grid min-w-0 gap-1.5 font-normal"
-              htmlFor="privacy-request-action"
-            >
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <strong className="text-sm font-medium">{t("safety.requestAction")}</strong>
-                <small className="text-sm leading-snug text-muted-foreground">{t("safety.reviewLater")}</small>
-              </span>
-              <Select
-                disabled={saving}
-                onValueChange={changeAction}
-                value={policy.request_action}
-              >
-                <SelectTrigger
-                  aria-label={t("safety.requestAction")}
-                  className="h-9 w-full px-3 text-sm"
-                  id="privacy-request-action"
-                  size="sm"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {policy.request_action === "allow" ? (
-                    <SelectItem disabled value="allow">{t("safety.allowCompat")}</SelectItem>
-                  ) : null}
-                  <SelectItem value="redact">{actionLabel("redact")}</SelectItem>
-                  <SelectItem value="block">{actionLabel("block")}</SelectItem>
-                  <SelectItem value="warn">{actionLabel("warn")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </Label>
-            </div>
-
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              {policy.detector === "regex" && policy.regex_source === "custom"
-                ? t("safety.customHint")
-                : t("safety.builtinHint")}
-              {" "}
-              <Button
-                className="h-auto px-0 py-0 text-sm font-medium"
-                onClick={() => setStreamingDemoOpen(true)}
-                size="sm"
-                type="button"
-                variant="link"
-              >
-                {t("safety.viewStreamingDemo")}
-              </Button>
-            </p>
-
-            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-              <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
-                {t("safety.perKindRedact")}
-              </legend>
-              <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
-                {t("safety.styleHintLead", {
-                  natural: placeholderStyleLabel("natural"),
-                  token: placeholderStyleLabel("token"),
-                })}
-                <code className="font-mono">&lt;PRIVATE_…&gt;</code>
-                {t("safety.styleHintTail")}
-              </p>
-              <ul className="grid min-w-0 gap-1.5">
-                {PRIVACY_KINDS.map((kind) => {
-                  const rule = kindRuleFor(kind);
-                  const lockReason = placeholderStyleLockReason(kind);
-                  const styleLocked = PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind);
-                  const unreachable =
-                    policy.detector === "regex" && localModelOnlyKinds.has(kind);
-                  return (
-                    <li
-                      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-card px-2.5 py-2"
-                      data-testid={`privacy-kind-rule-${kind}`}
-                      key={kind}
-                    >
-                      <span className="flex min-w-0 flex-col gap-0.5">
-                        <strong className="text-sm font-medium leading-none">
-                          {canonicalKindLabel(kind)}
-                        </strong>
-                        <small className="text-sm leading-snug text-muted-foreground">
-                          {unreachable
-                            ? t("safety.localOnlyKind")
-                            : (lockReason ?? t("safety.chooseStyle"))}
-                        </small>
-                      </span>
-                      <span className="flex shrink-0 items-center gap-2">
-                        <Select
-                          disabled={saving || styleLocked || !rule.enabled}
-                          onValueChange={(value) =>
-                            saveKindRule(kind, { style: value as PlaceholderStyle })
-                          }
-                          value={rule.style}
-                        >
-                          <SelectTrigger
-                            aria-label={t("safety.styleFor", { kind: canonicalKindLabel(kind) })}
-                            className="h-8 w-[132px] px-2.5 text-sm"
-                            size="sm"
-                            title={styleLocked ? lockReason : undefined}
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="natural">
-                              {placeholderStyleLabel("natural")}
-                            </SelectItem>
-                            <SelectItem value="token">
-                              {placeholderStyleLabel("token")}
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Switch
-                          aria-label={t("safety.redactKind", { kind: canonicalKindLabel(kind) })}
-                          checked={rule.enabled}
-                          disabled={saving}
-                          onCheckedChange={(enabled) =>
-                            saveKindRule(kind, { enabled })
-                          }
-                          size="sm"
-                        />
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </fieldset>
-
-            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-              <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
-                {t("safety.allowlist")}
-              </legend>
-              <p className="mb-2 text-sm leading-relaxed text-muted-foreground">
-                {t("safety.allowlistHint")}
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  disabled={saving || allowlistPending}
-                  onClick={addAllowlistRule}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {t("safety.addAllowlist")}
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  {policy.allowlist_rules.length}/{MAX_PRIVACY_ALLOWLIST_RULES}
-                </span>
+                  </fieldset>
+                </PolicySection>
               </div>
-              {policy.allowlist_rules.length === 0 && !allowlistPending ? (
-                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  {t("safety.allowlistEmpty")}
-                </p>
-              ) : (
-                <ul className="mt-2 grid min-w-0 gap-1.5">
-                  {[
-                    ...policy.allowlist_rules,
-                    ...(allowlistPending
-                      ? [{ type: allowlistPendingType, value: "" }]
-                      : []),
-                  ].map((rule, index) => (
-                    <li
-                      className="grid min-w-0 grid-cols-[132px_minmax(0,1fr)_auto] items-center gap-2"
-                      key={`${rule.type}-${index}`}
-                    >
-                      <Select
-                        disabled={saving}
-                        onValueChange={(value) =>
-                          changeAllowlistType(index, value as PrivacyAllowlistType)
-                        }
-                        value={rule.type}
-                      >
-                        <SelectTrigger
-                          aria-label={t("safety.allowlistKind", { index: index + 1 })}
-                          className="h-9 px-2.5 text-sm"
-                          size="sm"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ALLOWLIST_TYPES.map((type) => (
-                            <SelectItem key={type} value={type}>
-                              {allowlistTypeLabel(type)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        aria-label={t("safety.allowlistValue", { index: index + 1 })}
-                        autoFocus={allowlistPending && index === policy.allowlist_rules.length}
-                        className="h-9 min-w-0 font-mono text-sm md:text-sm"
-                        disabled={saving}
-                        onBlur={() => commitAllowlistValue(index)}
-                        onChange={(event) => {
-                          const value = event.currentTarget.value;
-                          setAllowlistDrafts((current) => {
-                            const next = [...current];
-                            next[index] = value;
-                            return next;
-                          });
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.currentTarget.blur();
-                          } else if (event.key === "Escape") {
-                            event.preventDefault();
-                            setAllowlistDrafts(
-                              policy.allowlist_rules.map((item) => item.value),
-                            );
-                            setAllowlistPending(false);
-                          }
-                        }}
-                        placeholder={allowlistTypePlaceholders[rule.type]}
-                        value={allowlistDrafts[index] ?? rule.value}
-                      />
-                      <Button
-                        disabled={saving}
-                        onClick={() => removeAllowlistRule(index)}
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        {t("safety.remove")}
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </fieldset>
-
-            <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-              <legend className="mb-1.5 px-0 text-sm font-medium text-text-secondary">
-                {t("safety.restoreScope")}
-              </legend>
-              <div className="grid min-w-0 gap-1.5">
-                <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 rounded-md border bg-card px-2.5 py-2 font-normal">
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <strong className="text-sm font-medium leading-none">
-                      {t("safety.restoreTools")}
-                    </strong>
-                    <small className="text-sm leading-snug text-muted-foreground">
-                      {t("safety.restoreToolsDetail")}
-                    </small>
-                  </span>
-                  <Switch
-                    aria-label={t("safety.restoreTools")}
-                    checked={policy.restore_tool_arguments}
-                    disabled={saving || !policy.response_restore}
-                    onCheckedChange={(checked) =>
-                      void patchPolicy({ restore_tool_arguments: checked })
-                    }
-                    size="sm"
-                    title={
-                      policy.response_restore
-                        ? undefined
-                        : t("safety.restoreToolsHint")
-                    }
-                  />
-                </Label>
-                <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 rounded-md border bg-card px-2.5 py-2 font-normal">
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <strong className="text-sm font-medium leading-none">
-                      {t("safety.injectNotice")}
-                    </strong>
-                    <small className="text-sm leading-snug text-muted-foreground">
-                      {t("safety.injectNoticeHint", {
-                        style: placeholderStyleLabel("token"),
-                      })}
-                    </small>
-                  </span>
-                  <Switch
-                    aria-label={t("safety.injectNotice")}
-                    checked={policy.placeholder_notice}
-                    disabled={saving}
-                    onCheckedChange={(checked) =>
-                      void patchPolicy({ placeholder_notice: checked })
-                    }
-                    size="sm"
-                  />
-                </Label>
-              </div>
-            </fieldset>
             </div>
           </TabsContent>
 
@@ -2933,26 +3081,23 @@ export function SafetyPolicy({
           </TabsContent>
 
           <TabsContent
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            className="@container/models flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             forceMount
             hidden={workspace !== "models"}
             value="models"
           >
             <div className="flex min-w-0 shrink-0 items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="text-base font-semibold tracking-tight">
+                <h3 className="text-sm font-semibold tracking-tight">
                   {t("safety.localPrivacyModels")}
                 </h3>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {t("safety.modelsStayLocal")}
                 </p>
               </div>
-              <Badge
-                className="shrink-0 rounded-full border-transparent bg-success-wash px-2 py-0.5 text-xs font-medium text-success-foreground"
-                variant="outline"
-              >
+              <StatusBadge tone={readyCount > 0 ? "positive" : "neutral"}>
                 {t("safety.readyCount", { count: readyCount })}
-              </Badge>
+              </StatusBadge>
             </div>
 
             <Tabs
@@ -2961,32 +3106,30 @@ export function SafetyPolicy({
               value={view}
             >
               <TabsList
-                className="grid h-auto w-full shrink-0 grid-cols-2 gap-0 rounded-md bg-muted p-[3px] @[560px]:grid-cols-4"
+                className="w-full shrink-0 justify-start border-b"
                 aria-label={t("safety.modelView")}
+                scrollable
+                variant="line"
               >
                 <TabsTrigger
-                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("catalog")}
                   value="catalog"
                 >
                   {t("safety.builtin")}
                 </TabsTrigger>
                 <TabsTrigger
-                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("installed")}
                   value="installed"
                 >
                   {t("safety.installedCount", { count: installations.length })}
                 </TabsTrigger>
                 <TabsTrigger
-                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("local")}
                   value="local"
                 >
                   {t("safety.localImport")}
                 </TabsTrigger>
                 <TabsTrigger
-                  className="h-auto rounded-sm px-2 py-2 text-sm font-medium"
                   onClick={() => setView("custom")}
                   value="custom"
                 >
@@ -2994,7 +3137,7 @@ export function SafetyPolicy({
                 </TabsTrigger>
               </TabsList>
               <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="catalog">
-                <div className="grid gap-3">
+                <div className="grid items-stretch gap-3 pb-3 pr-1 @[760px]/models:grid-cols-2">
                   {catalog.map((model) => {
                     const variant = variantForCatalog(
                       model,
@@ -3011,32 +3154,24 @@ export function SafetyPolicy({
                           ) ?? null);
                     const variantSelectID = `privacy-catalog-variant-${model.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
                     return (
-                      <article className="grid min-w-0 gap-3 rounded-md border bg-muted p-3.5" key={model.id}>
-                        <div className="flex min-w-0 items-start justify-between gap-2.5">
-                          <div className="flex min-w-0 flex-col gap-1">
-                            <strong className="min-w-0 overflow-hidden text-sm font-medium text-ellipsis">
-                              {model.name}
-                            </strong>
-                            <span className="text-sm leading-snug text-muted-foreground">
-                              {model.source === "official" ? t("safety.official") : t("safety.community")} ·{" "}
-                              {model.license}
-                            </span>
-                          </div>
-                          <Badge
-                            className="shrink-0 px-2 py-0.5 text-xs"
-                            variant="secondary"
-                          >
-                            {model.languages.join(" / ")}
-                          </Badge>
-                        </div>
-                        <p className="text-sm leading-relaxed text-text-secondary">{model.summary}</p>
-                        <div className="grid gap-2.5">
-                          <div className="flex min-w-0 flex-wrap items-end justify-between gap-2.5">
-                            <Label
-                              className="grid min-w-[180px] flex-1 gap-1.5 text-sm leading-normal font-medium"
+                      <Panel asChild className="flex flex-col" key={model.id}>
+                        <article>
+                          <div className="flex flex-1 flex-col gap-3 p-4">
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-semibold leading-snug break-words">{model.name}</h4>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                <span>{model.source === "official" ? t("safety.official") : t("safety.community")} · {model.license}</span>
+                                {model.languages.map((language) => (
+                                  <Badge key={language} variant="secondary">{language}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                            <p className="text-xs leading-relaxed text-text-secondary">{model.summary}</p>
+                            <Field
+                              className="mt-auto"
                               htmlFor={variantSelectID}
+                              label={t("safety.version")}
                             >
-                              <span>{t("safety.version")}</span>
                               <Select
                                 onValueChange={(variantID) => {
                                   setSelectedVariants((current) => ({
@@ -3053,7 +3188,7 @@ export function SafetyPolicy({
                               >
                                 <SelectTrigger
                                   aria-label={t("safety.versionsFor", { name: model.name })}
-                                  className="h-9 w-full px-3 text-sm"
+                                  className="w-full"
                                   id={variantSelectID}
                                   size="sm"
                                 >
@@ -3069,65 +3204,58 @@ export function SafetyPolicy({
                                   ))}
                                 </SelectContent>
                               </Select>
-                            </Label>
-                            <div className="flex flex-wrap gap-2.5 pb-1.5 text-sm text-muted-foreground">
-                              <span>
-                                {t("safety.downloadSizeInline", {
-                                  size: formatBytes(variant?.bytes_total ?? 0),
-                                })}
-                              </span>
-                              <span>
-                                {t("safety.memoryInline", {
-                                  size: formatBytes(variant?.estimated_ram_bytes ?? 0),
-                                })}
-                              </span>
+                            </Field>
+                          </div>
+                          <PanelFooter actions={
+                              existing === null ? (
+                                <Button
+                                  disabled={
+                                    variant === null ||
+                                    operationBusy !== null ||
+                                    catalogProbeBusy !== null ||
+                                    probing
+                                  }
+                                  onClick={() => {
+                                    if (variant === null) return;
+                                    void prepareCatalogInstallation(model, variant);
+                                  }}
+                                  size="sm"
+                                  type="button"
+                                >
+                                  {catalogProbeBusy === model.id
+                                    ? t("common.checking")
+                                    : t("safety.checkAndInstall")}
+                                </Button>
+                              ) : (
+                                <Button
+                                  onClick={() => setView("installed")}
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  {t("safety.viewStatus", {
+                                    status: installationStatusLabel(existing.status),
+                                  })}
+                                </Button>
+                              )
+                          }>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+                              <span>{t("safety.downloadSizeInline", { size: formatBytes(variant?.bytes_total ?? 0) })}</span>
+                              <span>{t("safety.memoryInline", { size: formatBytes(variant?.estimated_ram_bytes ?? 0) })}</span>
                             </div>
-                          </div>
-                          <div className="flex justify-end">
-                            {existing === null ? (
-                              <Button
-                                disabled={
-                                  variant === null ||
-                                  operationBusy !== null ||
-                                  catalogProbeBusy !== null ||
-                                  probing
-                                }
-                                onClick={() => {
-                                  if (variant === null) return;
-                                  void prepareCatalogInstallation(model, variant);
-                                }}
-                                size="sm"
-                                type="button"
-                              >
-                                {catalogProbeBusy === model.id
-                                  ? t("common.checking")
-                                  : t("safety.checkAndInstall")}
-                              </Button>
-                            ) : (
-                              <Button
-                                onClick={() => setView("installed")}
-                                size="sm"
-                                type="button"
-                                variant="outline"
-                              >
-                                {t("safety.viewStatus", {
-                                  status: installationStatusLabel(existing.status),
-                                })}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </article>
+                          </PanelFooter>
+                        </article>
+                      </Panel>
                     );
                   })}
                   {catalog.length === 0 ? (
-                    <p className="rounded-xl border border-dashed p-5 text-center text-xs text-muted-foreground">{t("safety.catalogEmpty")}</p>
+                    <EmptyState className="col-span-full" title={t("safety.catalogEmpty")} />
                   ) : null}
                 </div>
               </TabsContent>
 
               <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="installed">
-                <div className="grid gap-3">
+                <div className="grid items-start gap-3 pb-3 pr-1 @[760px]/models:grid-cols-2">
                   {installations.map((installation) => {
                     const selected =
                       policy.local_model_id === installation.id;
@@ -3157,184 +3285,181 @@ export function SafetyPolicy({
                         ? installation.languages.join(" / ")
                         : t("safety.languageUnknown");
                     return (
-                      <article
+                      <Panel
+                        asChild
                         className={cn(
-                          "grid gap-3 rounded-md border bg-muted p-3.5",
+                          "flex h-full flex-col",
                           selected && "border-primary/40 bg-accent/50 ring-1 ring-primary/10",
                         )}
                         key={installation.id}
                       >
-                        <div className="flex min-w-0 items-start justify-between gap-2.5">
-                          <div className="min-w-0">
-                            <strong className="block min-w-0 overflow-hidden text-sm font-medium text-ellipsis">
-                              {installation.name}
-                            </strong>
-                            <span className="mt-1 block text-sm leading-snug text-muted-foreground">
-                              {installation.variant_name} ·{" "}
-                              {installation.quantization}
-                            </span>
-                          </div>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "bg-muted text-muted-foreground",
-                              installation.status === "ready" && "border-success/25 bg-success-wash text-success-foreground",
-                              installation.status === "downloading" && "border-primary/25 bg-accent text-accent-foreground",
-                              installation.status === "error" && "border-destructive/25 bg-danger-wash text-danger-foreground",
-                            )}
-                          >
-                            {selected
-                              ? t("safety.policySelected")
-                              : installation.source === "local" &&
-                                  installation.status === "downloading"
-                                ? t("safety.importing")
-                                : installationStatusLabel(installation.status)}
-                          </Badge>
-                        </div>
-                        <p className="text-sm leading-relaxed text-muted-foreground">
-                          {sourceLabel} · {licenseLabel} · {languageLabel} ·{" "}
-                          {installation.repo_id}
-                        </p>
-                        {installation.status === "downloading" ? (
-                          <div className="grid gap-1.5">
-                            <div className="flex items-center justify-between text-sm text-muted-foreground">
-                              <span>
-                                {hasDownloadTotal
-                                  ? `${formatBytes(
-                                      installation.bytes_downloaded,
-                                    )} / ${formatBytes(
-                                      installation.bytes_total,
-                                    )}`
-                                  : installation.source === "local"
-                                    ? t("safety.preparingImport")
-                                    : t("safety.preparingDownload")}
-                              </span>
-                              <strong>
-                                {hasDownloadTotal ? `${progress}%` : t("safety.preparing")}
-                              </strong>
+                        <article>
+                          <div className="grid gap-3 p-4">
+                            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2.5">
+                              <div className="min-w-0">
+                                <strong className="block text-sm font-semibold break-words">
+                                  {installation.name}
+                                </strong>
+                                <span className="mt-1 block text-xs leading-snug text-muted-foreground">
+                                  {installation.variant_name} ·{" "}
+                                  {installation.quantization}
+                                </span>
+                              </div>
+                              <StatusBadge
+                                tone={installation.status === "ready" ? "positive" : installation.status === "error" ? "negative" : "pending"}
+                              >
+                                {selected
+                                  ? t("safety.policySelected")
+                                  : installation.source === "local" &&
+                                      installation.status === "downloading"
+                                    ? t("safety.importing")
+                                    : installationStatusLabel(installation.status)}
+                              </StatusBadge>
                             </div>
-                            <Progress
-                              aria-label={t("safety.progressAria", {
-                                name: installation.name,
-                                action:
-                                  installation.source === "local"
-                                    ? t("safety.import")
-                                    : t("safety.download"),
-                              })}
-                              value={progress}
-                            />
-                          </div>
-                        ) : (
-                          <p className="text-sm leading-relaxed text-muted-foreground">
-                            {installation.error === null
-                              ? t("safety.diskAndRam", {
-                                  disk: formatBytes(installation.bytes_total),
-                                  ram: formatBytes(installation.estimated_ram_bytes),
-                                })
-                              : installationErrorLabel(installation.error)}
-                          </p>
-                        )}
-                        {Object.keys(installation.label_mapping).length > 0 ? (
-                          <details className="rounded-lg border bg-card px-3 py-2.5 text-sm">
-                            <summary className="cursor-pointer font-semibold">
-                              {t("safety.labelMappingCount", {
-                                count: Object.keys(installation.label_mapping).length,
-                              })}
-                            </summary>
-                            <div className="mt-2 grid gap-1 text-sm text-muted-foreground">
-                              {Object.entries(installation.label_mapping).map(
-                                ([label, kind]) => (
-                                  <span key={label}>
-                                    <code>{label}</code>
-                                    {" → "}
-                                    {kind ?? t("safety.ignore")}
+                            <div className="space-y-1 text-xs leading-relaxed text-muted-foreground">
+                              <p>{sourceLabel} · {licenseLabel} · {languageLabel}</p>
+                              <p className="break-all">{installation.repo_id}</p>
+                            </div>
+                            {installation.status === "downloading" ? (
+                              <div className="grid gap-1.5">
+                                <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
+                                  <span>
+                                    {hasDownloadTotal
+                                      ? `${formatBytes(
+                                          installation.bytes_downloaded,
+                                        )} / ${formatBytes(
+                                          installation.bytes_total,
+                                        )}`
+                                      : installation.source === "local"
+                                        ? t("safety.preparingImport")
+                                        : t("safety.preparingDownload")}
                                   </span>
-                                ),
-                              )}
-                            </div>
-                          </details>
-                        ) : null}
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          {installation.status === "ready" ? (
+                                  <strong>
+                                    {hasDownloadTotal ? `${progress}%` : t("safety.preparing")}
+                                  </strong>
+                                </div>
+                                <Progress
+                                  aria-label={t("safety.progressAria", {
+                                    name: installation.name,
+                                    action:
+                                      installation.source === "local"
+                                        ? t("safety.import")
+                                        : t("safety.download"),
+                                  })}
+                                  value={progress}
+                                />
+                              </div>
+                            ) : (
+                              <p className="text-xs leading-relaxed text-muted-foreground">
+                                {installation.error === null
+                                  ? t("safety.diskAndRam", {
+                                      disk: formatBytes(installation.bytes_total),
+                                      ram: formatBytes(installation.estimated_ram_bytes),
+                                    })
+                                  : installationErrorLabel(installation.error)}
+                              </p>
+                            )}
+                            {Object.keys(installation.label_mapping).length > 0 ? (
+                              <details className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
+                                <summary className="cursor-pointer font-semibold">
+                                  {t("safety.labelMappingCount", {
+                                    count: Object.keys(installation.label_mapping).length,
+                                  })}
+                                </summary>
+                                <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+                                  {Object.entries(installation.label_mapping).map(
+                                    ([label, kind]) => (
+                                      <span key={label}>
+                                        <code>{label}</code>
+                                        {" → "}
+                                        {kind ?? t("safety.ignore")}
+                                      </span>
+                                    ),
+                                  )}
+                                </div>
+                              </details>
+                            ) : null}
+                          </div>
+                          <PanelFooter actions={<>
+                            {installation.status === "ready" ? (
+                              <Button
+                                disabled={saving || selected}
+                                onClick={() =>
+                                  chooseInstallation(installation)
+                                }
+                                size="sm"
+                                type="button"
+                                variant={selected ? "secondary" : "default"}
+                              >
+                                {selected ? t("safety.currentModel") : t("safety.usedByPolicy")}
+                              </Button>
+                            ) : null}
+                            {installation.status === "error" &&
+                            installation.source !== "local" ? (
+                              <Button
+                                disabled={operationBusy !== null}
+                                onClick={() => {
+                                  const retryVariant: PrivacyModelVariant = {
+                                    id: installation.variant_id,
+                                    name: installation.variant_name,
+                                    quantization: installation.quantization,
+                                    bytes_total: installation.bytes_total,
+                                    estimated_ram_bytes:
+                                      installation.estimated_ram_bytes,
+                                    recommended: false,
+                                    supported: true,
+                                    unsupported_reason: null,
+                                  };
+                                  void startInstallation(
+                                    installation.id,
+                                    installation.name,
+                                    retryVariant,
+                                    {
+                                      repo_id: installation.repo_id,
+                                      revision: installation.revision,
+                                      variant_id: installation.variant_id,
+                                      label_mapping:
+                                        installation.label_mapping,
+                                    },
+                                  );
+                                }}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                {t("safety.retry")}
+                              </Button>
+                            ) : null}
                             <Button
-                              disabled={saving || selected}
+                              disabled={
+                                operationBusy !== null || selected
+                              }
                               onClick={() =>
-                                chooseInstallation(installation)
+                                void removeInstallation(installation)
                               }
                               size="sm"
                               type="button"
-                              variant={selected ? "secondary" : "default"}
+                              variant="destructive"
                             >
-                              {selected ? t("safety.currentModel") : t("safety.usedByPolicy")}
+                              {operationBusy === installation.id
+                                ? t("common.processing")
+                                : installation.status === "downloading"
+                                  ? t("common.cancel")
+                                  : t("common.delete")}
                             </Button>
-                          ) : null}
-                          {installation.status === "error" &&
-                          installation.source !== "local" ? (
-                            <Button
-                              disabled={operationBusy !== null}
-                              onClick={() => {
-                                const retryVariant: PrivacyModelVariant = {
-                                  id: installation.variant_id,
-                                  name: installation.variant_name,
-                                  quantization: installation.quantization,
-                                  bytes_total: installation.bytes_total,
-                                  estimated_ram_bytes:
-                                    installation.estimated_ram_bytes,
-                                  recommended: false,
-                                  supported: true,
-                                  unsupported_reason: null,
-                                };
-                                void startInstallation(
-                                  installation.id,
-                                  installation.name,
-                                  retryVariant,
-                                  {
-                                    repo_id: installation.repo_id,
-                                    revision: installation.revision,
-                                    variant_id: installation.variant_id,
-                                    label_mapping:
-                                      installation.label_mapping,
-                                  },
-                                );
-                              }}
-                              size="sm"
-                              type="button"
-                              variant="outline"
-                            >
-                              {t("safety.retry")}
-                            </Button>
-                          ) : null}
-                          <Button
-                            disabled={
-                              operationBusy !== null || selected
-                            }
-                            onClick={() =>
-                              void removeInstallation(installation)
-                            }
-                            size="sm"
-                            type="button"
-                            variant="destructive"
-                          >
-                            {operationBusy === installation.id
-                              ? t("common.processing")
-                              : installation.status === "downloading"
-                                ? t("common.cancel")
-                                : t("common.delete")}
-                          </Button>
-                        </div>
-                      </article>
+                          </>} />
+                        </article>
+                      </Panel>
                     );
                   })}
                   {installations.length === 0 ? (
-                    <p className="rounded-xl border border-dashed p-5 text-center text-xs text-muted-foreground">
-                      {t("safety.noneInstalled")}
-                    </p>
+                    <EmptyState className="col-span-full" title={t("safety.noneInstalled")} />
                   ) : null}
                 </div>
               </TabsContent>
 
               <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="local">
-                <div className="grid gap-3.5 rounded-md border bg-muted p-3.5">
+                <Panel className="grid max-w-3xl gap-4 p-4">
                   <div className="grid gap-3 @[560px]:grid-cols-[minmax(0,1fr)_auto] @[560px]:items-end">
                     <Label
                       className="grid gap-1.5 text-xs font-medium"
@@ -3370,7 +3495,7 @@ export function SafetyPolicy({
                       {probing ? t("common.checking") : t("safety.checkLocal")}
                     </Button>
                   </div>
-                  <p className="rounded-lg bg-card px-3 py-2.5 text-sm leading-relaxed text-muted-foreground" id="local-model-mount-note">
+                  <p className="rounded-md bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground" id="local-model-mount-note">
                     {t("safety.localMountNoteLead")}
                     <code>smb://</code>、<code>file://</code>
                     {t("safety.localMountNoteTail")}
@@ -3475,11 +3600,11 @@ export function SafetyPolicy({
                       {t("safety.localOnnxHint")}
                     </p>
                   )}
-                </div>
+                </Panel>
               </TabsContent>
 
               <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="custom">
-                <div className="grid gap-3.5 rounded-md border bg-muted p-3.5">
+                <Panel className="grid max-w-3xl gap-4 p-4">
                   <div className="grid gap-3 @[560px]:grid-cols-2">
                     <Label
                       className="grid gap-1.5 text-xs font-medium"
@@ -3516,7 +3641,7 @@ export function SafetyPolicy({
                       />
                     </Label>
                     <Button
-                      className="justify-self-end"
+                      className="justify-self-end @[560px]:col-span-2"
                       disabled={
                         probing ||
                         operationBusy !== null ||
@@ -3629,7 +3754,7 @@ export function SafetyPolicy({
                       {t("safety.customProbeHint")}
                     </p>
                   )}
-                </div>
+                </Panel>
               </TabsContent>
             </Tabs>
           </TabsContent>

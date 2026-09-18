@@ -49,7 +49,8 @@ func TestTwelveEdgesConvertRequestResponseAndStream(t *testing.T) {
 				t.Fatalf("NewResponseStream: %v", err)
 			}
 			chunk := sampleStreamChunk(t, edge.To)
-			if _, err := stream.Convert(context.Background(), ResponseEvent{Type: streamEventType(edge.To), Data: chunk}); err != nil {
+			chunkEvents, err := stream.Convert(context.Background(), ResponseEvent{Type: streamEventType(edge.To), Data: chunk})
+			if err != nil {
 				t.Fatalf("Convert stream chunk: %v", err)
 			}
 			events, err := stream.Finalize(context.Background())
@@ -64,7 +65,54 @@ func TestTwelveEdgesConvertRequestResponseAndStream(t *testing.T) {
 				// protocols must emit a terminal/completion event.
 				t.Fatalf("Finalize returned no events")
 			}
+			for _, event := range append(chunkEvents, events...) {
+				assertStreamEventShape(t, edge.From, event)
+			}
 		})
+	}
+}
+
+// assertStreamEventShape checks that a converted stream event is a bare
+// protocol payload (never a RelayKit wrapper such as {"Type","Payload"}), that
+// event-typed protocols carry the SSE event name, and that any model field
+// visible to the client has been restored to the public model.
+func assertStreamEventShape(t *testing.T, protocol contract.ProtocolID, event ResponseEvent) {
+	t.Helper()
+	if event.Type == "done" {
+		if protocol != contract.ProtocolOpenAIChat || string(event.Data) != "[DONE]" {
+			t.Fatalf("unexpected done marker for %s: %q", protocol, event.Data)
+		}
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		t.Fatalf("stream event is not a JSON object: %v data=%s", err, event.Data)
+	}
+	if _, wrapped := payload["Payload"]; wrapped {
+		t.Fatalf("RelayKit wrapper leaked onto the wire: %s", event.Data)
+	}
+	switch protocol {
+	case contract.ProtocolOpenAIChat, contract.ProtocolGoogleGenerateContent:
+		if event.Type != "data" {
+			t.Fatalf("event type = %q, want data: %s", event.Type, event.Data)
+		}
+	case contract.ProtocolOpenAIResponses, contract.ProtocolAnthropicMessages:
+		if event.Type == "" || payload["type"] != event.Type {
+			t.Fatalf("event type %q does not match payload type %#v: %s", event.Type, payload["type"], event.Data)
+		}
+	}
+	if protocol == contract.ProtocolOpenAIResponses {
+		if _, ok := payload["sequence_number"]; !ok {
+			t.Fatalf("responses event missing sequence_number: %s", event.Data)
+		}
+		if response, ok := payload["response"].(map[string]any); ok {
+			if model, ok := response["model"].(string); ok && model != "" && model != "public-model" {
+				t.Fatalf("responses model = %q, want public-model: %s", model, event.Data)
+			}
+		}
+	}
+	if model, ok := payload["model"].(string); ok && model != "" && model != "public-model" {
+		t.Fatalf("model = %q, want public-model: %s", model, event.Data)
 	}
 }
 

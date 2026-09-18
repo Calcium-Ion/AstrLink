@@ -153,13 +153,20 @@ func (store *Store) InsertAuditBlob(ctx context.Context, blob storagecontract.Au
 	}
 	_, err := store.db.ExecContext(ctx, `INSERT INTO audit_blobs (
     request_id, direction, media_type, nonce, ciphertext, truncated, captured_bytes, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(request_id, direction) DO UPDATE SET
+    media_type = excluded.media_type,
+    nonce = excluded.nonce,
+    ciphertext = excluded.ciphertext,
+    truncated = excluded.truncated,
+    captured_bytes = excluded.captured_bytes,
+    created_at = excluded.created_at`,
 		string(blob.RequestID), string(blob.Direction), blob.MediaType,
 		blob.Nonce, blob.Ciphertext, boolToInt(blob.Truncated), blob.CapturedBytes,
 		createdAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
-		return fmt.Errorf("insert audit blob: %w", err)
+		return fmt.Errorf("upsert audit blob: %w", err)
 	}
 	return nil
 }
@@ -326,3 +333,13 @@ var (
 	_ storagecontract.AuditBlobStore      = (*Store)(nil)
 	_ storagecontract.AuditRetentionStore = (*Store)(nil)
 )
+
+// DeleteUpstreamAuditBlobs resets the root's attempt-local audit after its old
+// upstream content has been saved on a failed child. Client-side audit remains.
+func (store *Store) DeleteUpstreamAuditBlobs(ctx context.Context, id contract.RequestID) error {
+	if err := id.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
+	_, err := store.db.ExecContext(ctx, `DELETE FROM audit_blobs WHERE request_id = ? AND direction IN ('upstream_request', 'upstream_response', 'upstream_http_meta')`, id)
+	return err
+}

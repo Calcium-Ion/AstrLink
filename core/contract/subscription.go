@@ -28,15 +28,32 @@ func containsCredentialLeak(value string) bool {
 type SubscriptionAccountID = ServiceID
 
 // SubscriptionProvider enumerates supported subscription providers.
-// Alpha ships only openai_codex; Claude/Gemini remain Post-Alpha.
 type SubscriptionProvider string
 
 const (
 	SubscriptionProviderOpenAICodex SubscriptionProvider = "openai_codex"
+	SubscriptionProviderClaudeCode  SubscriptionProvider = "claude_code"
 )
 
 func (provider SubscriptionProvider) Valid() bool {
-	return provider == SubscriptionProviderOpenAICodex
+	return provider == SubscriptionProviderOpenAICodex || provider == SubscriptionProviderClaudeCode
+}
+
+func (provider SubscriptionProvider) ServiceKind() ServiceKind {
+	if provider == SubscriptionProviderClaudeCode {
+		return ServiceKindClaudeSubscription
+	}
+	return ServiceKindCodexSubscription
+}
+
+func (provider SubscriptionProvider) Capabilities() []Capability {
+	if provider == SubscriptionProviderClaudeCode {
+		return []Capability{
+			{Protocol: ProtocolAnthropicMessages, Mode: CapabilityModeNative, Streaming: true},
+			{Protocol: ProtocolOpenAIModels, Mode: CapabilityModeNative},
+		}
+	}
+	return DefaultOpenAICodexCapabilities()
 }
 
 // SubscriptionStatus is the non-sensitive authorization lifecycle state.
@@ -234,10 +251,18 @@ type AuthorizationFlow string
 const (
 	AuthorizationFlowBrowser    AuthorizationFlow = "browser"
 	AuthorizationFlowDeviceCode AuthorizationFlow = "device_code"
+	AuthorizationFlowCode       AuthorizationFlow = "authorization_code"
 )
 
 func (flow AuthorizationFlow) Valid() bool {
-	return flow == AuthorizationFlowBrowser || flow == AuthorizationFlowDeviceCode
+	return flow == AuthorizationFlowBrowser || flow == AuthorizationFlowDeviceCode || flow == AuthorizationFlowCode
+}
+
+func (flow AuthorizationFlow) SupportedBy(provider SubscriptionProvider) bool {
+	if provider == SubscriptionProviderClaudeCode {
+		return flow == AuthorizationFlowCode
+	}
+	return provider == SubscriptionProviderOpenAICodex && (flow == AuthorizationFlowBrowser || flow == AuthorizationFlowDeviceCode)
 }
 
 // AuthorizationDeviceCode contains the non-secret information a user needs to
@@ -292,9 +317,12 @@ func (session AuthorizationSession) Validate() error {
 	if !session.Flow.Valid() {
 		return fmt.Errorf("unknown authorization flow %q", session.Flow)
 	}
+	if !session.Flow.SupportedBy(session.Provider) {
+		return fmt.Errorf("authorization flow is unsupported by provider")
+	}
 	if session.Status == AuthorizationSessionStatusPending {
 		switch session.Flow {
-		case AuthorizationFlowBrowser:
+		case AuthorizationFlowBrowser, AuthorizationFlowCode:
 			if session.DeviceCode != nil {
 				return fmt.Errorf("browser authorization session must not include device_code")
 			}

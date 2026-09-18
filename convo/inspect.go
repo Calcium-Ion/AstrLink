@@ -23,7 +23,9 @@ type RequestSummary struct {
 	// EchoIDs are ids earlier responses produced, newest first, deduplicated,
 	// entropy-checked, and bounded by Policy.MaxInboundEchoIDs.
 	EchoIDs []string
-	// UserTurnCount is the number of genuine user messages in the history.
+	// UserTurnCount is the number of user messages in the history (in the
+	// delta only, when Stateful). Tool results and messages that are only
+	// dropped harness blocks do not count.
 	UserTurnCount int
 	// HasUserMessage is UserTurnCount > 0; kept separate for readability at
 	// call sites that combine it with Stateful.
@@ -32,6 +34,10 @@ type RequestSummary struct {
 	// visible text, or nil when there is none or it is shorter than
 	// Policy.MinFingerprintRunes.
 	AssistantDigest []byte
+	// LastUserDigest is the normalized digest of the newest user message's
+	// visible text, or nil when there is none. Policy.NextTurn fingerprints
+	// it to notice a new turn whose history has the same user-message count.
+	LastUserDigest []byte
 	// LastUserText and FirstUserText are visible user texts bounded by
 	// Policy.MaxUserTextBytes. They are raw: hosts must redact before display.
 	LastUserText  string
@@ -79,6 +85,7 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 			summary.HasUserMessage = true
 			summary.LastUserText = truncateBytes(visible, policy.maxUserTextBytes())
 			summary.FirstUserText = summary.LastUserText
+			summary.LastUserDigest = DigestText(visible, false)
 		}
 		return summary, nil
 	}
@@ -101,6 +108,7 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 					summary.FirstUserText = truncateBytes(text, policy.maxUserTextBytes())
 				}
 				summary.LastUserText = truncateBytes(text, policy.maxUserTextBytes())
+				summary.LastUserDigest = DigestText(text, false)
 			}
 		}
 		echoIDs = append(echoIDs, adapter.InboundEchoIDs(item)...)

@@ -26,6 +26,8 @@ type RequestRecordPage struct {
 // RequestRecordStore persists always-on inference metadata records (ADR 0007).
 // Implementations must validate every row on read so corrupt history fails closed.
 type RequestSessionListOptions struct {
+	// Kind is empty for all, inference for calls, or discovery for model listings.
+	Kind               string
 	Limit              int
 	Cursor             string
 	From               *time.Time
@@ -55,7 +57,12 @@ type SessionCursorScope struct {
 // SessionLinkMatch is the root record FindSessionLink selected.
 type SessionLinkMatch struct {
 	SessionID contract.SessionID
-	TurnIndex *int
+	// TurnIndex, TurnUserMessages, and TurnUserFingerprint are the matched
+	// record's stored turn state (contract.RequestRecord fields of the same
+	// name); TurnIndex is nil on rows written before turns existed.
+	TurnIndex           *int
+	TurnUserMessages    *int
+	TurnUserFingerprint string
 	// Value is the queried cursor value that matched.
 	Value string
 }

@@ -15,7 +15,7 @@ func (function endpointReaderFunc) ListEndpoints(ctx context.Context, options st
 	return function(ctx, options)
 }
 
-func TestStoreResolverSelectsDeterministicNativeCapabilityWithModelAndStreaming(t *testing.T) {
+func TestStoreResolverSelectsServiceBeforeCapabilityMode(t *testing.T) {
 	reader := endpointReaderFunc(func(_ context.Context, options storage.EndpointListOptions) (storage.EndpointPage, error) {
 		if options.Enabled == nil || !*options.Enabled || options.Limit != 200 {
 			t.Fatalf("list options = %#v", options)
@@ -37,13 +37,13 @@ func TestStoreResolverSelectsDeterministicNativeCapabilityWithModelAndStreaming(
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if resolved.Endpoint.ID != "endpoint_03" || resolved.Mode != contract.CapabilityModeNative {
-		t.Fatalf("resolved endpoint = %q, want endpoint_03", resolved.Endpoint.ID)
+	if resolved.Endpoint.ID != "endpoint_01" || resolved.Mode != contract.CapabilityModeDelegated {
+		t.Fatalf("resolved endpoint = %q, want endpoint_01", resolved.Endpoint.ID)
 	}
 	resolved, err = resolver.Resolve(context.Background(), ResolveRequest{
 		Protocol: contract.ProtocolOpenAIResponses, Model: "other", Streaming: true,
 	})
-	if err != nil || resolved.Endpoint.ID != "endpoint_04" {
+	if err != nil || resolved.Endpoint.ID != "endpoint_01" {
 		t.Fatalf("unrestricted resolution = %#v, %v", resolved, err)
 	}
 }

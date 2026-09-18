@@ -1,3 +1,4 @@
+import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
 import {
   useEffect,
   useMemo,
@@ -5,11 +6,25 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ArrowLeft, ChevronDown } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  Copy,
+  SlidersHorizontal as ListFilter,
+  MessageSquare,
+  RefreshCw,
+  SlidersHorizontal as Settings2,
+  Shredder as Trash2,
+} from "@/components/icons";
 
 import { ConfirmDialog as AppConfirmDialog } from "@/components/ConfirmDialog";
+import { DataRow } from "@/components/DataRow";
+import { EmptyState } from "@/components/EmptyState";
+import { FilterSelect } from "@/components/FilterSelect";
 import { FormMessage } from "@/components/FormMessage";
-import { ModelBrandIcon } from "@/components/ModelBrandIcon";
+import { IconButton } from "@/components/IconButton";
+import { ModelLabel } from "@/components/ModelLabel";
+import { StatusBadge } from "@/components/StatusBadge";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +32,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,13 +47,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -48,6 +57,7 @@ import {
   bundleFilename,
   type BundleFormat,
 } from "./audit-bundle";
+import { buildSkillDiagnostic } from "./skill-diagnostic";
 import type { AuditSettings, AuditSettingsPatch } from "./audit-settings-model";
 import {
   deleteRequestRecord,
@@ -61,7 +71,8 @@ import {
   updateAuditSettings,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback, type CopyFeedback } from "./copy-feedback";
-import { i18n } from "./i18n";
+import { i18n, useT } from "./i18n";
+import { useLiveClock } from "./live-clock";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import type { RoutableService } from "./service-model";
@@ -72,7 +83,7 @@ import {
   type RecordFilters,
 } from "./request-live-model";
 import {
-  displayRequestStatus,
+  isModelDiscoveryProtocol,
   statusLabel,
   statusTone,
   type AuditContent,
@@ -80,7 +91,8 @@ import {
   type RequestRecord,
   type RequestSession,
   type RequestSessionDetail,
-  type RequestStatus,
+  type RequestSessionKind,
+  type SessionStatus,
 } from "./request-record-model";
 import { RequestTrajectory } from "./RequestTrajectory";
 import {
@@ -94,14 +106,14 @@ import { protocolEntryPath } from "./service-presets";
 
 const PAGE_LIMIT = 50;
 const POLL_INTERVAL_MS = 1000;
-const LIVE_CLOCK_INTERVAL_MS = 100;
 const AUDIT_CACHE_MAX_RECORDS = 5;
 const AUDIT_CACHE_MAX_BYTES = 32 * 1024 * 1024;
-const STATUSES: RequestStatus[] = [
+const STATUSES: SessionStatus[] = [
   "pending",
   "succeeded",
   "failed",
   "cancelled",
+  "interrupted",
   "blocked",
 ];
 const EMPTY_FILTERS: RecordFilters = {
@@ -111,6 +123,7 @@ const EMPTY_FILTERS: RecordFilters = {
 };
 
 type RecordsView = "monitor" | "detail";
+type RecordsKind = RequestSessionKind | "all";
 type DetailTab = "trajectory" | "content" | "audit";
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
@@ -133,6 +146,53 @@ function auditContentBytes(content: AuditContent): number {
   );
 }
 
+/** Everything the list row shows, so the detail only reloads when it moved. */
+function sessionSummaryKey(session: RequestSession): string {
+  return [
+    session.id,
+    session.status,
+    session.requested_model ?? "",
+    session.reasoning_effort ?? "",
+    session.turn_count,
+    session.call_count,
+    session.last_started_at,
+    session.completed_at ?? "",
+  ].join("|");
+}
+
+/**
+ * Everything the detail view draws from a conversation. Replacing an unchanged
+ * detail rebuilds every trajectory row and refires the retry-children fetch for
+ * every root, so an idle poll has to be able to prove nothing moved.
+ */
+function sessionDetailKey(detail: RequestSessionDetail): string {
+  const parts: Array<string | number> = [
+    sessionSummaryKey(detail),
+    detail.turns.length,
+  ];
+  for (const turn of detail.turns) {
+    parts.push(
+      turn.id,
+      turn.status,
+      turn.requested_model ?? "",
+      turn.reasoning_effort ?? "",
+      turn.http_status ?? "",
+      turn.latency_ms ?? "",
+      turn.completed_at ?? "",
+      turn.child_count,
+      turn.events.length,
+      turn.audit.request_body_captured ? "1" : "0",
+      turn.audit.response_content_captured ? "1" : "0",
+      turn.audit.upstream_request_body_captured ? "1" : "0",
+      turn.audit.upstream_response_content_captured ? "1" : "0",
+    );
+    for (const event of turn.events) {
+      parts.push(event.kind, event.status, event.ended_at ?? "");
+    }
+  }
+  return parts.join("|");
+}
+
 export function RequestRecords({
   coreSessionKey,
   isReady,
@@ -144,6 +204,7 @@ export function RequestRecords({
 }) {
   const t = i18n.t.bind(i18n);
   const [view, setView] = useState<RecordsView>("monitor");
+  const [kind, setKind] = useState<RecordsKind>("inference");
   const [live, setLive] = useState<LiveState>({
     items: [],
     queued: [],
@@ -168,7 +229,6 @@ export function RequestRecords({
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<AuditSettings | null>(null);
@@ -188,6 +248,7 @@ export function RequestRecords({
   );
 
   const generationRef = useRef(0);
+  const listGenerationRef = useRef(0);
   const auditGenerationRef = useRef(0);
   const auditCacheRef = useRef<Map<string, AuditContent>>(new Map());
   const pollInFlightRef = useRef(false);
@@ -236,27 +297,57 @@ export function RequestRecords({
     );
   }, [overlayRecords, selectedTurnId, selectedTurns]);
 
+  // The detail carries every root turn of the conversation, so it must not be
+  // refetched just because the session list poll handed back a new array. It
+  // reloads when the summary says the conversation moved, and keeps its own 1 s
+  // loop while a call is in flight so the running turn's phases stay live.
+  const selectedSummaryKey = useMemo(() => {
+    const summary = selectedId
+      ? allRecords.find((session) => session.id === selectedId)
+      : undefined;
+    return summary ? sessionSummaryKey(summary) : null;
+  }, [allRecords, selectedId]);
+  const detailIsLive =
+    selectedId !== null &&
+    (selectedSession?.status === "pending" ||
+      selectedTurns.some((turn) => turn.status === "pending"));
+
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
-    void getRequestSession(selectedId)
-      .then((detail) => {
+    const load = async () => {
+      try {
+        const detail = await getRequestSession(selectedId);
         if (cancelled) return;
-        setOverlaySessions((current) => ({ ...current, [detail.id]: detail }));
+        setOverlaySessions((current) => {
+          const previous = current[detail.id];
+          if (previous && sessionDetailKey(previous) === sessionDetailKey(detail)) {
+            return current;
+          }
+          return { ...current, [detail.id]: detail };
+        });
         setSelectedTurnId((current) => {
           if (current && detail.turns.some((turn) => turn.id === current)) {
             return current;
           }
           return detail.turns[detail.turns.length - 1]?.id ?? null;
         });
-      })
-      .catch(() => {
+      } catch {
         /* detail view shows missing via selectedSession === null */
-      });
+      }
+    };
+    void load();
+    if (!detailIsLive) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = window.setInterval(() => void load(), POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, [selectedId, live.items]);
+  }, [selectedId, selectedSummaryKey, detailIsLive]);
   const protocolOptions = useMemo(() => {
     const protocols = new Set<string>();
     services.forEach((service) =>
@@ -265,25 +356,12 @@ export function RequestRecords({
       ),
     );
     allRecords.forEach((session) => protocols.add(session.input_protocol));
-    return [...protocols].sort();
-  }, [allRecords, services]);
-
-  const needsLiveClock = useMemo(() => {
-    if (allRecords.some((session) => session.status === "pending")) return true;
-    return selectedTurns.some(
-      (record) => record.status === "pending" || record.latency_ms === null,
-    );
-  }, [allRecords, selectedTurns]);
-
-  useEffect(() => {
-    if (!needsLiveClock) return;
-    setNowMs(Date.now());
-    const timer = window.setInterval(
-      () => setNowMs(Date.now()),
-      LIVE_CLOCK_INTERVAL_MS,
-    );
-    return () => window.clearInterval(timer);
-  }, [needsLiveClock]);
+    return [...protocols]
+      .filter((protocol) =>
+        kind === "all" || isModelDiscoveryProtocol(protocol) === (kind === "discovery"),
+      )
+      .sort();
+  }, [allRecords, services, kind]);
 
   useEffect(() => {
     const generation = generationRef.current + 1;
@@ -313,30 +391,7 @@ export function RequestRecords({
     setError(null);
     setSyncWarning(null);
 
-    if (!isReady) {
-      setLive({ items: [], queued: [], nextCursor: null });
-      setListStatus("blocked");
-      setListError(null);
-      return;
-    }
-    setLive({ items: [], queued: [], nextCursor: null });
-    setListStatus("loading");
-    setListError(null);
-    void listRequestSessions({ limit: PAGE_LIMIT })
-      .then((page) => {
-        if (generationRef.current !== generation) return;
-        setLive({
-          items: page.items,
-          queued: [],
-          nextCursor: page.next_cursor,
-        });
-        setListStatus("ready");
-      })
-      .catch((requestError: unknown) => {
-        if (generationRef.current !== generation) return;
-        setListStatus("error");
-        setListError(listErrorMessage(requestError));
-      });
+    if (!isReady) return;
     void getAuditSettings()
       .then((current) => {
         if (generationRef.current !== generation) return;
@@ -350,8 +405,45 @@ export function RequestRecords({
   }, [coreSessionKey, isReady]);
 
   useEffect(() => {
+    const generation = ++listGenerationRef.current;
+    pollInFlightRef.current = false;
+    pollFailureRef.current = 0;
+    atTopRef.current = true;
+    if (monitorScrollRef.current) monitorScrollRef.current.scrollTop = 0;
+    setLive({ items: [], queued: [], nextCursor: null });
+    setLoadingMore(false);
+    setListError(null);
+    setSyncWarning(null);
+    setListStatus(isReady ? "loading" : "blocked");
     if (!isReady) return;
-    const generation = generationRef.current;
+    pollInFlightRef.current = true;
+    void listRequestSessions({
+      limit: PAGE_LIMIT,
+      kind: kind === "all" ? undefined : kind,
+    })
+      .then((page) => {
+        if (listGenerationRef.current !== generation) return;
+        setLive({ items: page.items, queued: [], nextCursor: page.next_cursor });
+        setListStatus("ready");
+      })
+      .catch((requestError: unknown) => {
+        if (listGenerationRef.current !== generation) return;
+        setListStatus("error");
+        setListError(listErrorMessage(requestError));
+      })
+      .finally(() => {
+        if (listGenerationRef.current === generation) {
+          pollInFlightRef.current = false;
+        }
+      });
+    return () => {
+      listGenerationRef.current += 1;
+    };
+  }, [coreSessionKey, isReady, kind]);
+
+  useEffect(() => {
+    if (!isReady) return;
+    const generation = listGenerationRef.current;
     const poll = async (manual = false) => {
       if (
         pollInFlightRef.current ||
@@ -361,8 +453,11 @@ export function RequestRecords({
       }
       pollInFlightRef.current = true;
       try {
-        const page = await listRequestSessions({ limit: PAGE_LIMIT });
-        if (generationRef.current !== generation) return;
+        const page = await listRequestSessions({
+          limit: PAGE_LIMIT,
+          kind: kind === "all" ? undefined : kind,
+        });
+        if (listGenerationRef.current !== generation) return;
         setLive((current) => {
           const queueNew =
             current.queued.length > 0 ||
@@ -374,13 +469,21 @@ export function RequestRecords({
             page.items,
             queueNew,
           );
+          const nextCursor =
+            current.items.length === 0 ? page.next_cursor : current.nextCursor;
+          // Keeping the old state object when the poll brought nothing new is
+          // what stops the whole page from re-rendering every second.
+          if (
+            merged.items === current.items &&
+            merged.queued === current.queued &&
+            nextCursor === current.nextCursor
+          ) {
+            return current;
+          }
           return {
             items: merged.items,
             queued: merged.queued,
-            nextCursor:
-              current.items.length === 0
-                ? page.next_cursor
-                : current.nextCursor,
+            nextCursor,
           };
         });
         pollFailureRef.current = 0;
@@ -389,7 +492,7 @@ export function RequestRecords({
         setListStatus("ready");
         if (manual) notify.success(i18n.t("records.synced"));
       } catch (requestError: unknown) {
-        if (generationRef.current !== generation) return;
+        if (listGenerationRef.current !== generation) return;
         pollFailureRef.current += 1;
         if (manual) {
           setError(
@@ -402,7 +505,9 @@ export function RequestRecords({
           setSyncWarning(i18n.t("records.liveInterrupted"));
         }
       } finally {
-        pollInFlightRef.current = false;
+        if (listGenerationRef.current === generation) {
+          pollInFlightRef.current = false;
+        }
       }
     };
     const timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
@@ -419,11 +524,12 @@ export function RequestRecords({
       document.removeEventListener("visibilitychange", onVisibilityChange);
       manualPollRef.current = null;
     };
-  }, [coreSessionKey, isReady]);
+  }, [coreSessionKey, isReady, kind]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      // Menus and dialogs consume Escape before it reaches the page.
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       if (pendingConfirm) {
         setPendingConfirm(null);
         return;
@@ -478,6 +584,14 @@ export function RequestRecords({
   // Pending records are never cached so the content refreshes once the
   // record reaches a terminal status.
   const selectedIsPending = selected?.status === "pending";
+  const selectedAuditKey = selected
+    ? [
+        selected.audit.request_body_captured,
+        selected.audit.response_content_captured,
+        selected.audit.upstream_request_body_captured,
+        selected.audit.upstream_response_content_captured,
+      ].join(":")
+    : "";
   useEffect(() => {
     if (view !== "detail" || !selected) return;
     const cached = auditCacheRef.current.get(selected.id);
@@ -511,7 +625,7 @@ export function RequestRecords({
         if (auditGenerationRef.current === generation) setAuditLoading(false);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, selectedId, selected?.id, selectedIsPending]);
+  }, [view, selectedId, selected?.id, selectedIsPending, selectedAuditKey]);
 
   const openDetail = (sessionId: string) => {
     selectedFocusRef.current = sessionId;
@@ -560,16 +674,17 @@ export function RequestRecords({
 
   const loadMore = async () => {
     if (!live.nextCursor || loadingMore) return;
-    const generation = generationRef.current;
+    const generation = listGenerationRef.current;
     const cursor = live.nextCursor;
     setLoadingMore(true);
     setError(null);
     try {
       const page = await listRequestSessions({
         limit: PAGE_LIMIT,
+        kind: kind === "all" ? undefined : kind,
         cursor,
       });
-      if (generationRef.current !== generation) return;
+      if (listGenerationRef.current !== generation) return;
       setLive((current) => {
         const known = new Set(
           [...current.items, ...current.queued].map((session) => session.id),
@@ -584,13 +699,15 @@ export function RequestRecords({
         };
       });
     } catch (requestError: unknown) {
+      if (listGenerationRef.current !== generation) return;
       setError(messageOf(requestError, i18n.t("records.loadMoreFailed")));
     } finally {
-      setLoadingMore(false);
+      if (listGenerationRef.current === generation) setLoadingMore(false);
     }
   };
 
   const commitDelete = async (requestId: string) => {
+    const generation = listGenerationRef.current;
     setDeleting(true);
     setError(null);
     try {
@@ -604,7 +721,11 @@ export function RequestRecords({
           ),
         ),
       );
-      const page = await listRequestSessions({ limit: PAGE_LIMIT });
+      const page = await listRequestSessions({
+        limit: PAGE_LIMIT,
+        kind: kind === "all" ? undefined : kind,
+      });
+      if (listGenerationRef.current !== generation) return;
       setLive({
         items: page.items,
         queued: [],
@@ -629,6 +750,7 @@ export function RequestRecords({
   const commitPurge = async (
     input: { scope: "all" } | { scope: "before"; before: string },
   ) => {
+    const generation = listGenerationRef.current;
     setPurgeBusy(true);
     setError(null);
     try {
@@ -641,7 +763,11 @@ export function RequestRecords({
           blobs: result.deleted_audit_blobs,
         }),
       );
-      const page = await listRequestSessions({ limit: PAGE_LIMIT });
+      const page = await listRequestSessions({
+        limit: PAGE_LIMIT,
+        kind: kind === "all" ? undefined : kind,
+      });
+      if (listGenerationRef.current !== generation) return;
       setLive({
         items: page.items,
         queued: [],
@@ -765,11 +891,7 @@ export function RequestRecords({
         <PageHeader
           actions={
             <>
-              <span className="mr-[3px] inline-flex items-center gap-[7px] text-xs font-semibold text-muted-foreground max-[720px]:mr-auto">
-                <StatusDot tone="positive" />
-                {t("records.syncEverySecond")}
-              </span>
-              <Label className="mr-1 inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted-foreground">
+              <Label className="mr-2 inline-flex cursor-pointer items-center gap-2 text-xs font-normal text-text-secondary @max-[760px]:mr-auto">
                 <span>{t("records.captureTitle")}</span>
                 {settings ? (
                   <Switch
@@ -784,34 +906,61 @@ export function RequestRecords({
                 )}
               </Label>
               <Button
-                variant="outline"
+                variant="ghost"
                 disabled={!isReady}
                 onClick={() => setPurgeOpen(true)}
+                size="sm"
                 type="button"
               >
+                <Trash2 aria-hidden="true" />
                 {t("records.purgeEllipsis")}
               </Button>
               <Button
                 variant="outline"
                 disabled={!isReady}
                 onClick={() => void openSettings()}
+                size="sm"
                 type="button"
               >
+                <Settings2 aria-hidden="true" />
                 {t("records.auditSettings")}
               </Button>
             </>
           }
+          actionsClassName="flex-wrap @max-[760px]:w-full"
+          className="mb-0 gap-4 pb-4 @max-[760px]:items-start @max-[760px]:flex-col @max-[760px]:gap-3"
           description={t("records.description")}
           title={t("records.title")}
           titleId="request-records-heading"
         />
       ) : null}
       <div className="flex h-full min-h-0 min-w-0 flex-1">
-        <section
+        <Tabs
           aria-labelledby="request-records-heading"
-          className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden"
           hidden={view !== "monitor"}
+          value={kind}
+          onValueChange={(value) => {
+            setKind(value as RecordsKind);
+            setFilters((current) => ({ ...current, protocol: "" }));
+            setError(null);
+          }}
         >
+          <TabsList
+            aria-label={t("records.kind")}
+            className="w-full shrink-0 justify-start border-b"
+            variant="line"
+          >
+            <TabsTrigger className="flex-none" value="inference">
+              <MessageSquare aria-hidden="true" />
+              {t("records.inference")}
+            </TabsTrigger>
+            <TabsTrigger className="flex-none" value="discovery">
+              <ListFilter aria-hidden="true" />
+              {t("records.discovery")}
+            </TabsTrigger>
+            <TabsTrigger className="flex-none" value="all">{t("common.all")}</TabsTrigger>
+          </TabsList>
           {error ? (
             <FormMessage className="mt-2.5 shrink-0" tone="error">
               {error}
@@ -824,103 +973,143 @@ export function RequestRecords({
             </FormMessage>
           ) : null}
 
-          <div
-            className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain"
+          <TabsContent
+            value={kind}
+            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
             data-testid="request-records-scroll"
             onScroll={(event) => {
               atTopRef.current = event.currentTarget.scrollTop <= 8;
             }}
             ref={monitorScrollRef}
           >
-            <div className="sticky top-0 z-7 flex items-end justify-between border-b bg-background py-3 @max-[720px]:items-stretch @max-[720px]:flex-col @max-[720px]:gap-2">
-              <div className="flex items-end gap-2 @max-[720px]:grid @max-[720px]:grid-cols-2">
-                <FilterSelect
-                  label={t("records.status")}
-                  onChange={(status) =>
-                    setFilters((current) => ({
-                      ...current,
-                      status: status as RequestStatus | "",
-                    }))
-                  }
-                  options={[
-                    { label: t("common.all"), value: "" },
-                    ...STATUSES.map((status) => ({
-                      label: statusLabel(status),
-                      value: status,
-                    })),
-                  ]}
-                  value={filters.status}
-                />
-                <FilterSelect
-                  label={t("records.service")}
-                  onChange={(serviceId) =>
-                    setFilters((current) => ({ ...current, serviceId }))
-                  }
-                  options={[
-                    { label: t("common.all"), value: "" },
-                    ...services.map((service) => ({
-                      label: service.name,
-                      value: service.id,
-                    })),
-                  ]}
-                  value={filters.serviceId}
-                />
-                <FilterSelect
-                  label={t("records.protocol")}
-                  onChange={(protocol) =>
-                    setFilters((current) => ({ ...current, protocol }))
-                  }
-                  options={[
-                    { label: t("common.all"), value: "" },
-                    ...protocolOptions.map((protocol) => ({
-                      label: protocolEntryPath(protocol),
-                      value: protocol,
-                    })),
-                  ]}
-                  value={filters.protocol}
-                />
+            <div className="sticky top-0 z-7">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background py-3">
+                <div className="grid min-w-0 flex-1 basis-96 grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.2fr)] gap-2 @[760px]:max-w-xl">
+                  <FilterSelect
+                    ariaLabel={t("records.filter", { label: t("records.status") })}
+                    className="w-full"
+                    label={t("records.status")}
+                    onChange={(status) =>
+                      setFilters((current) => ({
+                        ...current,
+                        status: status as SessionStatus | "",
+                      }))
+                    }
+                    options={[
+                      { label: t("common.all"), value: "" },
+                      ...STATUSES.map((status) => ({
+                        label: statusLabel(status),
+                        value: status,
+                      })),
+                    ]}
+                    value={filters.status}
+                  />
+                  <FilterSelect
+                    ariaLabel={t("records.filter", { label: t("records.service") })}
+                    className="w-full"
+                    label={t("records.service")}
+                    onChange={(serviceId) =>
+                      setFilters((current) => ({ ...current, serviceId }))
+                    }
+                    options={[
+                      { label: t("common.all"), value: "" },
+                      ...services.map((service) => ({
+                        label: service.name,
+                        value: service.id,
+                      })),
+                    ]}
+                    value={filters.serviceId}
+                  />
+                  <FilterSelect
+                    ariaLabel={t("records.filter", { label: t("records.protocol") })}
+                    className="w-full"
+                    label={t("records.protocol")}
+                    onChange={(protocol) =>
+                      setFilters((current) => ({ ...current, protocol }))
+                    }
+                    options={[
+                      { label: t("common.all"), value: "" },
+                      ...protocolOptions.map((protocol) => ({
+                        label: protocolEntryPath(protocol),
+                        value: protocol,
+                      })),
+                    ]}
+                    value={filters.protocol}
+                  />
+                </div>
+                <div className="ml-auto flex shrink-0 items-center gap-3">
+                  <span className="inline-flex items-center gap-1.5 text-micro text-muted-foreground">
+                    <StatusDot
+                      tone={
+                        !isReady
+                          ? "neutral"
+                          : syncWarning || listStatus === "error"
+                            ? "pending"
+                            : "positive"
+                      }
+                    />
+                    {t("records.syncEverySecond")}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    disabled={!isReady || listStatus === "loading"}
+                    onClick={() => manualPollRef.current?.()}
+                    size="sm"
+                    type="button"
+                  >
+                    <RefreshCw aria-hidden="true" />
+                    {t("common.refresh")}
+                  </Button>
+                </div>
               </div>
-              <Button
-                className="@max-[720px]:self-end"
-                variant="outline"
-                disabled={!isReady || pollInFlightRef.current}
-                onClick={() => manualPollRef.current?.()}
-                type="button"
-              >
-                {t("common.refresh")}
-              </Button>
+              {/* Floating inside the sticky toolbar, and absolute so it adds
+                  no height: the pill follows the toolbar without anyone
+                  hardcoding its height as a top offset. */}
+              {queuedVisibleCount > 0 ? (
+                <div className="relative">
+                  <Button
+                    className="absolute top-2 left-1/2 -translate-x-1/2 shadow-md"
+                    onClick={applyQueue}
+                    size="sm"
+                    type="button"
+                  >
+                    {t("records.newRecords", { count: queuedVisibleCount })}
+                  </Button>
+                </div>
+              ) : null}
             </div>
 
-            {queuedVisibleCount > 0 ? (
-              <Button
-                className="sticky top-[88px] z-6 mx-auto mt-2 flex shadow-md @max-[720px]:top-[155px]"
-                onClick={applyQueue}
-                type="button"
-              >
-                {t("records.newRecords", { count: queuedVisibleCount })}
-              </Button>
-            ) : null}
-
             {!isReady || listStatus === "blocked" ? (
-              <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
-                <strong className="text-xs">{t("records.waitingReady")}</strong>
-                <span className="mt-1.5 text-xs text-muted-foreground">{t("records.waitingHint")}</span>
-              </div>
+              <EmptyState
+                className="my-4 min-h-64"
+                title={t("records.waitingReady")}
+                description={t("records.waitingHint")}
+              />
             ) : listStatus === "error" && listError ? (
-              <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
-                <strong className="text-xs">{t("records.readFailedTitle")}</strong>
-                <span className="mt-1.5 text-xs text-muted-foreground">{listError}</span>
-              </div>
+              <EmptyState
+                className="my-4 min-h-64"
+                title={t("records.readFailedTitle")}
+                description={listError}
+              />
             ) : listStatus === "loading" && live.items.length === 0 ? (
               <RecordSkeleton />
             ) : visibleItems.length === 0 ? (
-              <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
-                <strong className="text-xs">{t("records.empty")}</strong>
-                <span className="mt-1.5 text-xs text-muted-foreground">{t("records.emptyHint")}</span>
-              </div>
+              <EmptyState
+                className="my-4 min-h-64"
+                title={t(
+                  kind === "discovery" ? "records.emptyDiscovery"
+                    : kind === "inference" ? "records.emptyInference" : "records.empty",
+                )}
+                action={
+                  filters.status || filters.serviceId || filters.protocol ? (
+                    <Button variant="outline" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+                      {t("records.clearFilters")}
+                    </Button>
+                  ) : undefined
+                }
+              />
             ) : (
               <SessionStream
-                nowMs={nowMs}
                 onOpen={openDetail}
                 selectedId={selectedId}
                 services={services}
@@ -939,8 +1128,8 @@ export function RequestRecords({
                 {loadingMore ? t("common.loading") : t("records.loadEarlier")}
               </Button>
             ) : null}
-          </div>
-        </section>
+          </TabsContent>
+        </Tabs>
 
         {view === "detail" && selectedSession && selected ? (
           <RecordDetail
@@ -948,7 +1137,6 @@ export function RequestRecords({
             auditError={auditError}
             auditLoading={auditLoading}
             deleting={deleting}
-            nowMs={nowMs}
             onBack={returnToMonitor}
             onClearDecrypted={clearDecrypted}
             onDelete={() =>
@@ -960,6 +1148,7 @@ export function RequestRecords({
             onSelectTurn={setSelectedTurnId}
             record={selected}
             serviceName={serviceLabel(selected.service_id, services)}
+            serviceNames={Object.fromEntries(services.map(service => [service.id, service.name]))}
             session={selectedSession}
             turns={selectedTurns}
           />
@@ -1047,108 +1236,221 @@ export function RequestRecords({
   );
 }
 
+/**
+ * The moving durations in the detail view. Each one owns its own clock so the
+ * trajectory list and the timeline beside it are never in the repaint path of
+ * a label counting up.
+ */
+function SessionElapsed({ session }: { session: RequestSession }) {
+  const nowMs = useLiveClock(session.completed_at === null);
+  return <>{formatDuration(sessionElapsedMs(session, nowMs))}</>;
+}
+
+function SessionDuration({
+  session,
+  turns,
+}: {
+  session: RequestSession;
+  turns: RequestRecord[];
+}) {
+  const lastTurn = turns[turns.length - 1];
+  const nowMs = useLiveClock(
+    Boolean(lastTurn && lastTurn.latency_ms === null && !lastTurn.completed_at),
+  );
+  return (
+    <>
+      {formatSessionDuration(
+        session.started_at,
+        session.last_started_at,
+        turns,
+        nowMs,
+      )}
+    </>
+  );
+}
+
+function RecordLatency({ record }: { record: RequestRecord }) {
+  const nowMs = useLiveClock(
+    record.latency_ms === null && !record.completed_at,
+  );
+  return <>{formatDuration(liveDurationMs(record, nowMs))}</>;
+}
+
 function SessionStream({
   sessions,
   services,
   selectedId,
-  nowMs,
   onOpen,
 }: {
   sessions: RequestSession[];
   services: RoutableService[];
   selectedId: string | null;
-  nowMs: number;
   onOpen: (sessionId: string) => void;
 }) {
   const t = i18n.t.bind(i18n);
-  const groups = groupSessionsByDate(sessions, new Date(nowMs));
+  // Only the date buckets need "now", and those turn over once a day.
+  const groups = groupSessionsByDate(sessions);
   return (
-    <div className="px-3 pb-3" role="feed" aria-label={t("records.sessionFlow")}>
+    <div className="pb-3" role="feed" aria-label={t("records.sessionFlow")}>
       {groups.map((group) => (
         <section className="mt-3 first:mt-0" key={group.key}>
-          <div className="flex items-center gap-2.5 py-2 text-xs font-medium text-muted-foreground after:h-px after:flex-1 after:bg-border">
+          <div className="flex items-center gap-2 px-3 pt-4 pb-2 text-xs font-medium text-muted-foreground">
             <span>{group.label}</span>
-            <small className="font-medium">
+            <Badge className="font-normal tabular-nums" variant="secondary">
               {t("records.countItems", { count: group.sessions.length })}
-            </small>
+            </Badge>
           </div>
-          {group.sessions.map((session) => (
-            <SessionRow
-              key={session.id}
-              nowMs={nowMs}
-              onOpen={() => onOpen(session.id)}
-              selected={session.id === selectedId}
-              serviceName={serviceLabel(session.service_id, services)}
-              session={session}
-            />
-          ))}
+          {group.sessions.map((session) =>
+            isModelDiscoveryProtocol(session.input_protocol) ? (
+              <DiscoveryRow
+                key={session.id}
+                onOpen={() => onOpen(session.id)}
+                selected={session.id === selectedId}
+                session={session}
+              />
+            ) : (
+              <SessionRow
+                key={session.id}
+                onOpen={() => onOpen(session.id)}
+                selected={session.id === selectedId}
+                serviceName={serviceLabel(session.service_id, services)}
+                session={session}
+              />
+            ),
+          )}
         </section>
       ))}
     </div>
   );
 }
 
+function DiscoveryRow({
+  session,
+  selected,
+  onOpen,
+}: {
+  session: RequestSession;
+  selected: boolean;
+  onOpen: () => void;
+}) {
+  const t = useT();
+  const nowMs = useLiveClock(session.completed_at === null);
+  const last = new Date(session.last_started_at);
+  return (
+    <DataRow
+      asChild
+      className="grid grid-cols-[5rem_minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2.5 @[680px]:grid-cols-[5rem_minmax(0,1fr)_5rem_6rem]"
+    >
+      <Button
+        aria-current={selected ? "true" : undefined}
+        className="h-auto w-full rounded-none bg-transparent text-left font-normal whitespace-normal text-foreground hover:bg-muted/60 focus-visible:bg-accent focus-visible:ring-inset aria-[current=true]:bg-accent"
+        data-session-id={session.id}
+        data-testid="request-session-row"
+        onClick={onOpen}
+        type="button"
+        variant="ghost"
+      >
+        <StatusBadge
+          className="col-start-1 row-start-1"
+          tone={session.status === "cancelled" ? "neutral" : statusTone(session.status)}
+        >
+          {statusLabel(session.status)}
+        </StatusBadge>
+        <span className="col-start-2 row-start-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-xs font-medium">{t("records.fetchModels")}</span>
+          <code className="truncate text-micro text-muted-foreground">
+            GET {protocolEntryPath(session.input_protocol)}
+          </code>
+        </span>
+        <span className="col-start-2 row-start-2 text-micro tabular-nums text-muted-foreground @[680px]:col-start-3 @[680px]:row-start-1 @[680px]:text-right">
+          {formatDuration(sessionElapsedMs(session, nowMs))}
+        </span>
+        <time
+          className="col-start-3 row-start-1 text-right text-micro tabular-nums text-muted-foreground @[680px]:col-start-4"
+          dateTime={session.last_started_at}
+          title={formatDateTime(session.last_started_at)}
+        >
+          {Number.isNaN(last.getTime())
+            ? session.last_started_at
+            : last.toLocaleTimeString(dateTimeLocale(), { hour12: false })}
+        </time>
+      </Button>
+    </DataRow>
+  );
+}
+
 function SessionRow({
   session,
   serviceName,
-  nowMs,
   selected,
   onOpen,
 }: {
   session: RequestSession;
   serviceName: string | null;
-  nowMs: number;
   selected: boolean;
   onOpen: () => void;
 }) {
   const t = i18n.t.bind(i18n);
+  // The elapsed time is interpolated into a translated sentence, so the row is
+  // the smallest thing that can repaint it. Only a live conversation ticks.
+  const nowMs = useLiveClock(session.completed_at === null);
   const last = new Date(session.last_started_at);
+  const resolvedServiceName =
+    serviceName ?? session.service_id ?? t("records.selectingService");
   return (
-    <Button
-      aria-current={selected ? "true" : undefined}
-      className="grid h-auto w-full grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2 rounded-none border-b bg-transparent px-3 py-2.5 text-left text-foreground shadow-none hover:bg-muted focus-visible:bg-accent aria-[current=true]:bg-accent"
-      data-session-id={session.id}
-      data-testid="request-session-row"
-      onClick={onOpen}
-      type="button"
-      variant="ghost"
+    <DataRow
+      asChild
+      className="grid grid-cols-[5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-3 @[680px]:grid-cols-[5rem_minmax(0,1fr)_15rem]"
     >
-      <span
-        className={cn(
-          "inline-flex h-5 items-center justify-center rounded-sm px-1 text-micro font-semibold tracking-wide",
-          session.status === "succeeded" && "bg-success text-primary-foreground",
-          session.status === "failed" && "bg-destructive text-primary-foreground",
-          session.status === "blocked" && "bg-warning text-primary-foreground",
-          session.status === "pending" && "bg-warning text-primary-foreground",
-          session.status === "cancelled" && "bg-muted text-muted-foreground",
-        )}
+      <Button
+        aria-current={selected ? "true" : undefined}
+        className="h-auto w-full rounded-none bg-transparent text-left font-normal whitespace-normal text-foreground hover:bg-muted/60 focus-visible:bg-accent focus-visible:ring-inset aria-[current=true]:bg-accent"
+        data-session-id={session.id}
+        data-testid="request-session-row"
+        onClick={onOpen}
+        type="button"
+        variant="ghost"
       >
-        {statusLabel(session.status)}
-      </span>
-      <span className="grid min-w-0 gap-1">
-        <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-          <strong className="truncate text-sm font-medium">
-            {session.title}
-          </strong>
-          <span className="inline-flex max-w-[10rem] min-w-0 items-center gap-1 overflow-hidden text-sm font-medium">
-            <ModelBrandIcon model={session.requested_model} />
-            <span className="min-w-0 truncate">
-              {session.requested_model ?? t("records.unspecifiedModel")}
-            </span>
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+        <StatusBadge
+          className="col-start-1 row-start-1 @[680px]:row-span-2 @[680px]:row-start-1"
+          tone={session.status === "cancelled" ? "neutral" : statusTone(session.status)}
+        >
+          {statusLabel(session.status)}
+        </StatusBadge>
+        <strong
+          className="col-start-2 row-start-1 min-w-0 truncate text-sm font-medium"
+          title={session.title}
+        >
+          {session.title}
+        </strong>
+        <span className="contents @[680px]:col-start-3 @[680px]:row-span-2 @[680px]:row-start-1 @[680px]:flex @[680px]:min-w-0 @[680px]:flex-col @[680px]:items-end @[680px]:gap-1">
+          <ModelLabel
+            className="col-start-2 row-start-2 text-xs text-text-secondary"
+            fallback={t("records.unspecifiedModel")}
+            model={session.requested_model}
+            reasoningEffort={session.reasoning_effort}
+          />
+          <time
+            className="col-start-3 row-start-1 shrink-0 text-micro tabular-nums text-muted-foreground"
+            dateTime={session.last_started_at}
+            title={formatDateTime(session.last_started_at)}
+          >
             {Number.isNaN(last.getTime())
               ? session.last_started_at
               : last.toLocaleTimeString(dateTimeLocale(), { hour12: false })}
-          </span>
+          </time>
         </span>
-        <span className="flex min-w-0 items-center gap-2 overflow-hidden text-micro text-muted-foreground">
-          <code className="shrink-0 font-mono text-micro">
+        <span className="col-span-2 col-start-2 row-start-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-micro text-muted-foreground @[680px]:col-span-1 @[680px]:col-start-2 @[680px]:row-start-2">
+          <code
+            className="max-w-full truncate font-mono text-micro"
+            title={protocolEntryPath(session.input_protocol)}
+          >
             {protocolEntryPath(session.input_protocol)}
           </code>
-          <span className="truncate">{serviceName ?? session.service_id ?? t("records.selectingService")}</span>
-          <span>
-            →{" "}
+          <span className="max-w-32 truncate" title={resolvedServiceName}>
+            {resolvedServiceName}
+          </span>
+          <span className="tabular-nums">
             {t(
               session.turn_count === session.call_count
                 ? "records.sessionMetaTurns"
@@ -1161,17 +1463,17 @@ function SessionRow({
             )}
           </span>
         </span>
-      </span>
-    </Button>
+      </Button>
+    </DataRow>
   );
 }
 
 function RecordDetail({
+  serviceNames,
   record,
   session,
   turns,
   serviceName,
-  nowMs,
   auditContent,
   auditLoading,
   auditError,
@@ -1183,10 +1485,10 @@ function RecordDetail({
   onRegisterRecords,
 }: {
   record: RequestRecord;
+  serviceNames: Record<string, string>;
   session: RequestSession;
   turns: RequestRecord[];
   serviceName: string | null;
-  nowMs: number;
   auditContent: AuditContent | null;
   auditLoading: boolean;
   auditError: string | null;
@@ -1197,13 +1499,16 @@ function RecordDetail({
   onSelectTurn: (requestId: string) => void;
   onRegisterRecords: (records: Record<string, RequestRecord>) => void;
 }) {
-  const t = i18n.t.bind(i18n);
+  const t = useT();
   const copyFeedback = useCopyFeedback();
   const [bundleSize, setBundleSize] = useState<number | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>("trajectory");
   const [childrenByRoot, setChildrenByRoot] = useState<
     Record<string, RequestRecord[]>
   >({});
+  const rootId = record.parent_request_id ?? record.id;
+  const rootRecord = turns.find(turn => turn.id === rootId) ?? record;
+  const recoveryRecords = [...(childrenByRoot[rootId] ?? []), rootRecord];
   const isChild = record.parent_request_id !== null;
   const requestPart = auditContent?.request_body ?? null;
   const responsePart = auditContent?.response_content ?? null;
@@ -1214,15 +1519,29 @@ function RecordDetail({
     setDetailTab("trajectory");
   }, [session.id]);
 
+  // One request per root that retried, so this must not re-run on a new `turns`
+  // array alone: a conversation with 95 turns would refire a burst of calls
+  // every time the detail reloaded. Pin the roots until the set or one of their
+  // attempt counts actually changes.
+  const rootsWithChildren = useMemo(
+    () => turns.filter((turn) => turn.child_count > 0),
+    [turns],
+  );
+  const childRootsKey = rootsWithChildren
+    .map((turn) => `${turn.id}:${turn.child_count}`)
+    .join(",");
+  const childRoots = useMemo(() => rootsWithChildren, [childRootsKey]);
+
   useEffect(() => {
-    const roots = turns.filter((turn) => turn.child_count > 0);
-    if (roots.length === 0) {
-      setChildrenByRoot({});
+    if (childRoots.length === 0) {
+      setChildrenByRoot((current) =>
+        Object.keys(current).length === 0 ? current : {},
+      );
       return;
     }
     let cancelled = false;
     void Promise.all(
-      roots.map(async (turn) => {
+      childRoots.map(async (turn) => {
         const page = await listRequestRecordChildren(turn.id);
         return [turn.id, page.items] as const;
       }),
@@ -1242,7 +1561,7 @@ function RecordDetail({
     return () => {
       cancelled = true;
     };
-  }, [turns]);
+  }, [childRoots]);
 
   const copyBundle = (includeBodies: boolean) => {
     const bundle = buildRecordBundle(record, auditContent, {
@@ -1253,7 +1572,18 @@ function RecordDetail({
     copyFeedback.copy(includeBodies ? "bundle" : "bundle-meta", bundle);
   };
 
-  const visibleStatus = displayRequestStatus(record.status, record.http_status);
+  const copySkillDiagnostic = () => {
+    copyFeedback.copy(
+      "skill-diagnostic",
+      buildSkillDiagnostic({
+        session,
+        selectedRequestId: record.id,
+        turns,
+        childrenByRoot,
+        serviceNames,
+      }),
+    );
+  };
 
   const exportBundle = (format: BundleFormat) => {
     const bundle = buildRecordBundle(record, auditContent, {
@@ -1274,13 +1604,13 @@ function RecordDetail({
   return (
     <section
       aria-labelledby="request-detail-heading"
-      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className="@container/detail flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
     >
       <header
-        className="flex min-w-0 shrink-0 items-center justify-between gap-3 border-b py-2"
+        className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-2"
         data-slot="page-header"
       >
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-1 basis-64 items-center gap-2">
           <Button
             aria-label={t("records.live")}
             className="h-auto gap-1 px-0 py-0.5 text-micro text-muted-foreground no-underline hover:bg-transparent hover:text-foreground hover:no-underline has-[>svg]:px-0"
@@ -1296,27 +1626,46 @@ function RecordDetail({
             /
           </span>
           <h1
-            className="truncate text-sm font-semibold tracking-tight"
+            className="truncate text-sm font-semibold"
             id="request-detail-heading"
+            title={isModelDiscoveryProtocol(session.input_protocol) ? t("records.fetchModels") : session.title}
           >
-            {session.title}
+            {isModelDiscoveryProtocol(session.input_protocol) ? t("records.fetchModels") : session.title}
           </h1>
-          <span
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 py-0.5"
+          <StatusBadge
+            className="shrink-0"
             data-testid="record-status"
+            tone={statusTone(session.status)}
           >
-            <StatusDot tone={statusTone(visibleStatus)} />
-            <strong className="text-xs font-medium">
-              {statusLabel(visibleStatus)}
-            </strong>
-            {record.status === "pending" ? (
-              <span className="text-micro text-muted-foreground">
-                {formatDuration(liveDurationMs(record, nowMs))}
+            {statusLabel(session.status)}
+            {session.status === "pending" ? (
+              <span className="ml-1.5 tabular-nums">
+                <SessionElapsed session={session} />
               </span>
             ) : null}
-          </span>
+          </StatusBadge>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          {copyFeedback.activeKey === "bundle-meta" ? (
+            <span className="text-micro text-muted-foreground" role="status">
+              {copyButtonLabel(copyFeedback, "bundle-meta")}
+            </span>
+          ) : null}
+          <Button
+            data-testid="copy-skill-diagnostic"
+            onClick={copySkillDiagnostic}
+            size="sm"
+            title={t("records.copySkillDiagnosticHint")}
+            type="button"
+            variant="outline"
+          >
+            <Copy aria-hidden="true" />
+            {copyButtonLabel(
+              copyFeedback,
+              "skill-diagnostic",
+              t("records.copySkillDiagnostic"),
+            )}
+          </Button>
           <div className="inline-flex">
             <Button
               className="rounded-r-none"
@@ -1324,6 +1673,7 @@ function RecordDetail({
               size="sm"
               type="button"
             >
+              <Copy aria-hidden="true" />
               {copyButtonLabel(
                 copyFeedback,
                 "bundle",
@@ -1336,7 +1686,7 @@ function RecordDetail({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
-                  aria-label={t("records.exportRecord")}
+                  aria-label={t("records.copyExportOptions")}
                   className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
                   size="sm"
                   type="button"
@@ -1345,6 +1695,11 @@ function RecordDetail({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => copyBundle(false)}>
+                  <Copy aria-hidden="true" />
+                  {copyButtonLabel(copyFeedback, "bundle-meta", t("records.copyMetaHttp"))}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => exportBundle("markdown")}>
                   {t("records.exportMarkdown")}
                 </DropdownMenuItem>
@@ -1354,33 +1709,15 @@ function RecordDetail({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <Button
-            onClick={() => copyBundle(false)}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            {copyButtonLabel(
-              copyFeedback,
-              "bundle-meta",
-              t("records.copyMetaHttp"),
-            )}
-          </Button>
-          <Button
+          <IconButton
             className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
             disabled={deleting || record.status === "pending"}
+            label={record.status === "pending" ? t("records.deletePending") : deleting ? t("records.deleting") : t("common.delete")}
             onClick={onDelete}
-            size="sm"
-            title={
-              record.status === "pending"
-                ? t("records.deletePending")
-                : undefined
-            }
             type="button"
-            variant="outline"
           >
-            {deleting ? t("records.deleting") : t("common.delete")}
-          </Button>
+            <Trash2 aria-hidden="true" />
+          </IconButton>
         </div>
       </header>
 
@@ -1389,7 +1726,7 @@ function RecordDetail({
         onValueChange={(value) => setDetailTab(value as DetailTab)}
         value={detailTab}
       >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b py-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-1.5">
           <TabsList aria-label={t("records.sections")} className="h-8">
             <TabsTrigger
               onClick={() => setDetailTab("trajectory")}
@@ -1407,31 +1744,28 @@ function RecordDetail({
               {t("records.tabAudit")}
             </TabsTrigger>
           </TabsList>
-          <dl className="flex shrink-0 items-center gap-3 text-micro text-muted-foreground">
-            <div>
-              {t("records.entry")}{" "}
-              <code className="font-mono text-foreground">
+          <dl className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-micro text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <dt>{t("records.entry")}</dt>
+              <dd className="min-w-0 truncate font-mono text-foreground" title={protocolEntryPath(record.input_protocol, { streaming: record.streaming })}>
                 {protocolEntryPath(record.input_protocol, {
                   streaming: record.streaming,
                 })}
-              </code>
+              </dd>
             </div>
-            <div>
-              Duration{" "}
-              <strong className="text-foreground">
-                {formatSessionDuration(
-                  session.started_at,
-                  session.last_started_at,
-                  turns,
-                  nowMs,
-                )}
-              </strong>
+            <div className="flex items-center gap-1.5">
+              <dt>{t("records.duration")}</dt>
+              <dd className="font-medium tabular-nums text-foreground">
+                <SessionDuration session={session} turns={turns} />
+              </dd>
             </div>
-            <div>
-              Turns <strong className="text-foreground">{session.turn_count}</strong>
+            <div className="flex items-center gap-1.5">
+              <dt>{t("records.turns")}</dt>
+              <dd className="font-medium tabular-nums text-foreground">{session.turn_count}</dd>
             </div>
-            <div>
-              Calls <strong className="text-foreground">{session.call_count}</strong>
+            <div className="flex items-center gap-1.5">
+              <dt>{t("records.calls")}</dt>
+              <dd className="font-medium tabular-nums text-foreground">{session.call_count}</dd>
             </div>
           </dl>
         </div>
@@ -1446,7 +1780,6 @@ function RecordDetail({
             auditLoading={auditLoading}
             childrenByRoot={childrenByRoot}
             copyFeedback={copyFeedback}
-            nowMs={nowMs}
             onSelectRequest={onSelectTurn}
             selectedRequestId={record.id}
             turns={turns}
@@ -1462,10 +1795,10 @@ function RecordDetail({
               <DetailField
                 label={t("records.model")}
                 value={
-                  <span className="inline-flex min-w-0 items-center gap-1">
-                    <ModelBrandIcon model={record.requested_model} />
-                    {record.requested_model ?? "—"}
-                  </span>
+                  <ModelLabel
+                    model={record.requested_model}
+                    reasoningEffort={record.reasoning_effort}
+                  />
                 }
               />
               <DetailField
@@ -1522,7 +1855,7 @@ function RecordDetail({
               <Metric label="HTTP" value={record.http_status ?? "—"} />
               <Metric
                 label={t("records.latency")}
-                value={formatDuration(liveDurationMs(record, nowMs))}
+                value={<RecordLatency record={record} />}
                 live={record.status === "pending"}
               />
               <Metric
@@ -1574,6 +1907,8 @@ function RecordDetail({
               </p>
             )}
           </DetailSection>
+
+          {record.recovery || recoveryRecords.length > 1 ? <DetailSection title={t("failure.details")}><RecoveryChain records={recoveryRecords} serviceNames={serviceNames} /><RecoveryDetails value={record.recovery} /></DetailSection> : null}
 
           {record.error ? (
             <DetailSection tone="error" title={t("records.error")}>
@@ -1834,43 +2169,6 @@ function AuditSummaryCard({
         />
       </dl>
     </article>
-  );
-}
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ label: string; value: string }>;
-}) {
-  const t = i18n.t.bind(i18n);
-  return (
-    <Label className="grid items-stretch gap-1.5 text-xs font-semibold text-text-secondary @max-[720px]:last:col-span-full">
-      <span>{label}</span>
-      <Select
-        onValueChange={(next) => onChange(next === "__all__" ? "" : next)}
-        value={value || "__all__"}
-      >
-        <SelectTrigger aria-label={t("records.filter", { label })} className="h-8 min-w-[120px] @max-[720px]:w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem
-              key={option.value || "__all__"}
-              value={option.value || "__all__"}
-            >
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Label>
   );
 }
 

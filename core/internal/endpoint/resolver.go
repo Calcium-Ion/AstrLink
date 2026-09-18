@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 )
@@ -51,16 +52,23 @@ type ResolveRequest struct {
 	Protocol  contract.ProtocolID
 	Model     string
 	Streaming bool
+	// Continuation keeps eligible targets available for exact affinity binding.
+	// Ingress must bind the response ID before attempting any target.
+	Continuation bool
 	// Category is the classifier label for auto routes. Empty means fail-open
 	// across every category's targets in document order.
 	Category string
 }
 
 type Resolved struct {
-	Service  contract.Service
-	Endpoint contract.Endpoint // compatibility view for legacy callers
-	BaseURL  string
-	Mode     contract.CapabilityMode
+	Path          *RecoveryPathSnapshot
+	Unavailable   string
+	FailurePolicy *contract.FailurePolicy
+	Failover      *contract.FailoverPolicy
+	Service       contract.Service
+	Endpoint      contract.Endpoint // compatibility view for legacy callers
+	BaseURL       string
+	Mode          contract.CapabilityMode
 	// PlanType is explicit for routed candidates. An empty value retains the
 	// historical Mode-derived native/delegated behavior.
 	PlanType contract.PlanType
@@ -69,13 +77,16 @@ type Resolved struct {
 	UpstreamProtocol contract.ProtocolID
 	// RouteID is set when an explicit persisted Route produced this candidate.
 	RouteID contract.RouteID
+	// SingleTargetRoute reflects the document before capability/health filtering.
+	SingleTargetRoute bool
 	// Pinned marks a Route that names exactly one distinct Endpoint. A pinned
 	// Endpoint still must be enabled and capable, but may bypass circuit-open
 	// exclusion when the caller explicitly chose it.
 	Pinned bool
 	// UpstreamModel is the per-target model rewrite from an explicit Route
 	// (ADR 0006). Empty means no rewrite.
-	UpstreamModel string
+	UpstreamModel  string
+	RequestedModel string
 }
 
 func (resolved Resolved) CanonicalService() contract.Service {
@@ -165,3 +176,6 @@ type UnavailableResolver struct{}
 func (UnavailableResolver) Resolve(context.Context, ResolveRequest) (Resolved, error) {
 	return Resolved{}, ErrUnavailable
 }
+
+// RateLimitController applies upstream-requested cooldown without treating 429 as success.
+type RateLimitController interface{ RecordRateLimit(Resolved, time.Duration) }

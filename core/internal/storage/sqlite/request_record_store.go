@@ -16,10 +16,10 @@ import (
 
 const requestRecordSelectColumns = `
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
-    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
+    requested_model, reasoning_effort, streaming, route_id, service_id, local_access_token_id, plan_json,
     http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
-    turn_index, session_link_json,
+    turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json,
     (SELECT COUNT(*) FROM request_records children
      WHERE children.parent_request_id = request_records.id) AS child_count,
     (SELECT json_group_array(json_object('kind', kind, 'direction', direction, 'value', value))
@@ -29,21 +29,21 @@ const requestRecordSelectColumns = `
 
 const requestRecordInsertColumns = `
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
-    requested_model, streaming, route_id, service_id, local_access_token_id, plan_json,
+    requested_model, reasoning_effort, streaming, route_id, service_id, local_access_token_id, plan_json,
     http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
-    turn_index, session_link_json`
+    turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json`
 
-const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (row requestRecordRow) insertArgs() []any {
 	return []any{
 		row.id, row.parentRequestID, row.attemptIndex, row.startedAt, row.completedAt, row.status,
-		row.inputProtocol, row.requestedModel, row.streaming, row.routeID, row.endpointID,
+		row.inputProtocol, row.requestedModel, row.reasoningEffort, row.streaming, row.routeID, row.endpointID,
 		row.localAccessTokenID, row.planJSON, row.httpStatus, row.latencyMs, row.usageJSON,
 		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.sessionID, row.previousResponseID,
 		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
-		row.turnIndex, row.sessionLinkJSON,
+		row.turnIndex, row.sessionLinkJSON, row.turnUserMessages, row.turnUserFingerprint, row.recoveryJSON,
 	}
 }
 
@@ -103,6 +103,7 @@ ON CONFLICT(id) DO UPDATE SET
     status = excluded.status,
     input_protocol = excluded.input_protocol,
     requested_model = excluded.requested_model,
+    reasoning_effort = excluded.reasoning_effort,
     streaming = excluded.streaming,
     route_id = excluded.route_id,
     service_id = excluded.service_id,
@@ -120,7 +121,10 @@ ON CONFLICT(id) DO UPDATE SET
     input_preview = excluded.input_preview,
     events_json = excluded.events_json,
     turn_index = excluded.turn_index,
-    session_link_json = excluded.session_link_json
+    session_link_json = excluded.session_link_json,
+    turn_user_messages = excluded.turn_user_messages,
+    recovery_json = excluded.recovery_json,
+    turn_user_fingerprint = excluded.turn_user_fingerprint
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 		row.insertArgs()...,
 	)
@@ -523,33 +527,37 @@ WHERE parent_request_id IN (
 }
 
 type requestRecordRow struct {
-	id                 string
-	parentRequestID    any
-	attemptIndex       int
-	startedAt          string
-	completedAt        any
-	status             string
-	inputProtocol      string
-	requestedModel     any
-	streaming          int
-	routeID            any
-	endpointID         any
-	localAccessTokenID any
-	planJSON           any
-	httpStatus         any
-	latencyMs          any
-	usageJSON          any
-	errorJSON          any
-	auditJSON          string
-	privacyRestoreJSON any
-	sessionID          any
-	previousResponseID any
-	outputResponseID   any
-	inputPreview       any
-	eventsJSON         any
-	createdAt          string
-	turnIndex          any
-	sessionLinkJSON    any
+	recoveryJSON        any
+	id                  string
+	parentRequestID     any
+	attemptIndex        int
+	startedAt           string
+	completedAt         any
+	status              string
+	inputProtocol       string
+	requestedModel      any
+	reasoningEffort     any
+	streaming           int
+	routeID             any
+	endpointID          any
+	localAccessTokenID  any
+	planJSON            any
+	httpStatus          any
+	latencyMs           any
+	usageJSON           any
+	errorJSON           any
+	auditJSON           string
+	privacyRestoreJSON  any
+	sessionID           any
+	previousResponseID  any
+	outputResponseID    any
+	inputPreview        any
+	eventsJSON          any
+	createdAt           string
+	turnIndex           any
+	sessionLinkJSON     any
+	turnUserMessages    any
+	turnUserFingerprint any
 }
 
 func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) (requestRecordRow, error) {
@@ -567,11 +575,21 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 		auditJSON:     string(auditJSON),
 		createdAt:     createdAt.Format(time.RFC3339Nano),
 	}
+	if record.Recovery != nil {
+		encoded, err := json.Marshal(record.Recovery)
+		if err != nil {
+			return row, err
+		}
+		row.recoveryJSON = string(encoded)
+	}
 	if record.ParentRequestID != nil {
 		row.parentRequestID = string(*record.ParentRequestID)
 	}
 	if record.CompletedAt != nil {
 		row.completedAt = record.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if record.ReasoningEffort != nil {
+		row.reasoningEffort = *record.ReasoningEffort
 	}
 	if record.RequestedModel != nil {
 		row.requestedModel = *record.RequestedModel
@@ -641,6 +659,12 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 	if record.TurnIndex != nil {
 		row.turnIndex = *record.TurnIndex
 	}
+	if record.TurnUserMessages != nil {
+		row.turnUserMessages = *record.TurnUserMessages
+	}
+	if record.TurnUserFingerprint != nil {
+		row.turnUserFingerprint = *record.TurnUserFingerprint
+	}
 	if record.SessionLink != nil {
 		encoded, err := json.Marshal(record.SessionLink)
 		if err != nil {
@@ -656,24 +680,25 @@ type scannable interface {
 }
 
 func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
+	var recoveryJSON sql.NullString
 	var (
-		id, startedAt, status, inputProtocol, auditJSON, createdAt string
-		parentRequestID                                            sql.NullString
-		attemptIndex, childCount, streaming                        int
-		completedAt, requestedModel, routeID, endpointID           sql.NullString
-		localAccessTokenID, planJSON, usageJSON, errorJSON         sql.NullString
-		privacyRestoreJSON                                         sql.NullString
-		sessionID, previousResponseID, outputResponseID            sql.NullString
-		inputPreview, eventsJSON                                   sql.NullString
-		sessionLinkJSON, cursorsJSON                               sql.NullString
-		httpStatus, latencyMs, turnIndex                           sql.NullInt64
+		id, startedAt, status, inputProtocol, auditJSON, createdAt        string
+		parentRequestID                                                   sql.NullString
+		attemptIndex, childCount, streaming                               int
+		completedAt, requestedModel, reasoningEffort, routeID, endpointID sql.NullString
+		localAccessTokenID, planJSON, usageJSON, errorJSON                sql.NullString
+		privacyRestoreJSON                                                sql.NullString
+		sessionID, previousResponseID, outputResponseID                   sql.NullString
+		inputPreview, eventsJSON                                          sql.NullString
+		sessionLinkJSON, cursorsJSON, turnUserFingerprint                 sql.NullString
+		httpStatus, latencyMs, turnIndex, turnUserMessages                sql.NullInt64
 	)
 	if err := row.Scan(
 		&id, &parentRequestID, &attemptIndex, &startedAt, &completedAt, &status, &inputProtocol,
-		&requestedModel, &streaming, &routeID, &endpointID, &localAccessTokenID, &planJSON,
+		&requestedModel, &reasoningEffort, &streaming, &routeID, &endpointID, &localAccessTokenID, &planJSON,
 		&httpStatus, &latencyMs, &usageJSON, &errorJSON, &auditJSON, &privacyRestoreJSON,
 		&sessionID, &previousResponseID, &outputResponseID, &inputPreview, &eventsJSON,
-		&createdAt, &turnIndex, &sessionLinkJSON, &childCount, &cursorsJSON,
+		&createdAt, &turnIndex, &sessionLinkJSON, &turnUserMessages, &turnUserFingerprint, &recoveryJSON, &childCount, &cursorsJSON,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -690,6 +715,11 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		InputProtocol: contract.ProtocolID(inputProtocol),
 		Streaming:     streaming != 0,
 	}
+	if recoveryJSON.Valid {
+		if err := json.Unmarshal([]byte(recoveryJSON.String), &record.Recovery); err != nil {
+			return record, fmt.Errorf("%w: recovery metadata", storagecontract.ErrInvalidRecord)
+		}
+	}
 	if parentRequestID.Valid {
 		value := contract.RequestID(parentRequestID.String)
 		record.ParentRequestID = &value
@@ -701,6 +731,9 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		}
 		completed = completed.UTC()
 		record.CompletedAt = &completed
+	}
+	if reasoningEffort.Valid {
+		record.ReasoningEffort = &reasoningEffort.String
 	}
 	if requestedModel.Valid {
 		model := requestedModel.String
@@ -787,6 +820,14 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	if turnIndex.Valid {
 		value := int(turnIndex.Int64)
 		record.TurnIndex = &value
+		if turnUserMessages.Valid {
+			users := int(turnUserMessages.Int64)
+			record.TurnUserMessages = &users
+		}
+		if turnUserFingerprint.Valid && turnUserFingerprint.String != "" {
+			fingerprint := turnUserFingerprint.String
+			record.TurnUserFingerprint = &fingerprint
+		}
 	}
 	if sessionLinkJSON.Valid && sessionLinkJSON.String != "" {
 		var link contract.SessionLink

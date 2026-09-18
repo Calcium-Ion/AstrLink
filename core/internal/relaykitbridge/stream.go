@@ -1,6 +1,7 @@
 package relaykitbridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,6 +38,9 @@ func (e *Engine) NewResponseStream(_ context.Context, options StreamOptions) (Re
 	upstream := firstNonEmpty(options.UpstreamModel, options.PublicModel)
 	state, err := relayconvert.NewResponseStreamState(from, to, relayconvert.ResponseStreamOptions{
 		ID: options.ID, Model: upstream, Created: options.Created, IncludeUsage: options.IncludeUsage,
+		// sequence_number is required by the current Responses SSE contract;
+		// RelayKit keeps it opt-in so legacy hosts are not changed by upgrades.
+		EmitSequenceNumber: true,
 	})
 	if err != nil {
 		return nil, err
@@ -56,7 +60,7 @@ func (s *responseStream) Convert(ctx context.Context, event ResponseEvent) ([]Re
 	if s.finalized {
 		return nil, errors.New("response stream is finalized")
 	}
-	if event.Type == "done" {
+	if event.Type == "done" || bytes.Equal(bytes.TrimSpace(event.Data), []byte("[DONE]")) {
 		return nil, nil // finalization owns terminal conversion; [DONE] has no DTO.
 	}
 	response, err := decodeResponse(s.from, event.Data, true)
@@ -151,17 +155,18 @@ func decodeResponse(protocol contract.ProtocolID, body []byte, stream bool) (any
 func responseEvents(protocol contract.ProtocolID, publicModel string, results []relayconvert.ResponseResult) ([]ResponseEvent, error) {
 	events := make([]ResponseEvent, 0, len(results))
 	for _, result := range results {
-		restoreResponseModel(result.Value, publicModel)
-		values := flattenResponseValue(result.Value)
-		for _, value := range values {
-			body, err := json.Marshal(value)
+		for _, item := range flattenResponseValue(result.Value) {
+			restoreResponseModel(item.value, publicModel)
+			body, err := json.Marshal(item.value)
 			if err != nil {
 				return nil, fmt.Errorf("marshal stream response: %w", err)
 			}
-			eventType := ""
-			switch value := value.(type) {
+			eventType := item.eventType
+			switch value := item.value.(type) {
 			case *dto.ResponsesStreamResponse:
-				eventType = value.Type
+				if value.Type != "" {
+					eventType = value.Type
+				}
 			case *dto.ClaudeResponse:
 				eventType = value.Type
 			}
@@ -174,15 +179,54 @@ func responseEvents(protocol contract.ProtocolID, publicModel string, results []
 	return events, nil
 }
 
-func flattenResponseValue(value any) []any {
+// streamValue is one wire payload extracted from a RelayKit stream result.
+// value is always a pointer so restoreResponseModel can mutate it in place.
+type streamValue struct {
+	value     any
+	eventType string
+}
+
+// flattenResponseValue normalises the shapes RelayKit stream converters
+// return: slices of Claude events, Chat-to-Responses event wrappers (whose
+// Payload is the actual Responses SSE body and whose Type is the SSE event
+// name), and DTOs passed by value instead of by pointer.
+func flattenResponseValue(value any) []streamValue {
 	switch items := value.(type) {
+	case nil:
+		return nil
 	case []*dto.ClaudeResponse:
-		values := make([]any, 0, len(items))
+		values := make([]streamValue, 0, len(items))
 		for _, item := range items {
-			values = append(values, item)
+			if item != nil {
+				values = append(values, streamValue{value: item})
+			}
 		}
 		return values
+	case relayconvert.ChatToResponsesStreamEvent:
+		payload := items.Payload
+		return []streamValue{{value: &payload, eventType: items.Type}}
+	case *relayconvert.ChatToResponsesStreamEvent:
+		if items == nil {
+			return nil
+		}
+		payload := items.Payload
+		return []streamValue{{value: &payload, eventType: items.Type}}
+	case []relayconvert.ChatToResponsesStreamEvent:
+		values := make([]streamValue, 0, len(items))
+		for _, item := range items {
+			payload := item.Payload
+			values = append(values, streamValue{value: &payload, eventType: item.Type})
+		}
+		return values
+	case dto.ChatCompletionsStreamResponse:
+		return []streamValue{{value: &items}}
+	case dto.ResponsesStreamResponse:
+		return []streamValue{{value: &items}}
+	case dto.ClaudeResponse:
+		return []streamValue{{value: &items}}
+	case dto.GeminiChatResponse:
+		return []streamValue{{value: &items}}
 	default:
-		return []any{value}
+		return []streamValue{{value: value}}
 	}
 }

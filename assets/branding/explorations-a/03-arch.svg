@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>AstrLink - Arch A</title>
+  <desc>A softly arched capital A with a broad opening and a solid crossbar.</desc>
+  <defs>
+    <filter id="arch-shadow" x="24" y="28" width="464" height="468" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#50322F" flood-opacity=".14"/>
+    </filter>
+  </defs>
+  <rect x="52" y="52" width="408" height="408" rx="92" fill="#FFFAF8" filter="url(#arch-shadow)"/>
+  <g id="arch-mark" stroke="#CA6258" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M144 360L163 226C171 171 207 140 256 140C305 140 341 171 349 226L368 360" stroke-width="58"/>
+    <path d="M158 290H354" stroke-width="48"/>
+  </g>
+</svg>

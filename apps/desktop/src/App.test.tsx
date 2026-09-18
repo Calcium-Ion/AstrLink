@@ -11,11 +11,12 @@ describe("desktop application shell", () => {
     expect(markup).toContain("概览");
     expect(markup).toContain("API 服务");
     expect(markup).toContain("访问令牌");
-    expect(markup).toContain("路由与模型");
+    expect(markup).toContain("路由");
     expect(markup).toContain("Agent 工具");
     expect(markup).toContain("设置");
     expect(markup).toContain("API 地址");
-    expect(markup).toContain("今日消耗");
+    expect(markup).toContain("用量概览");
+    expect(markup).toContain("按日 Token");
     expect(markup).toContain("预估费用");
     expect(markup).toContain("请求记录");
     expect(markup).toContain("按服务");

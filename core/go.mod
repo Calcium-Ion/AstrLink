@@ -4,7 +4,8 @@ go 1.25.1
 
 require (
 	github.com/QuantumNous/astrlink/convo v0.0.0
-	github.com/QuantumNous/new-api/relaykit v0.1.1
+	github.com/QuantumNous/new-api/relaykit v0.2.0
+	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/sys v0.34.0
 	modernc.org/sqlite v1.38.2
 )
@@ -27,7 +28,6 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
-	github.com/zalando/go-keyring v0.2.6 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/text v0.35.0 // indirect
 	modernc.org/libc v1.66.3 // indirect

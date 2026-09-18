@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>AstrLink - Tidal</title>
+  <desc>Two flowing window halves bend around an ascending channel.</desc>
+  <defs>
+    <filter id="tidal-shadow" x="24" y="28" width="464" height="468" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#243B46" flood-opacity=".14"/>
+    </filter>
+  </defs>
+  <rect x="52" y="52" width="408" height="408" rx="92" fill="#F7FAFC" filter="url(#tidal-shadow)"/>
+  <g id="tidal-mark">
+    <path d="M158 136H322C335 136 340 152 329 160C277 198 278 243 238 271C210 290 178 291 134 288V160C134 147 145 136 158 136Z" transform="translate(-6 -8)" fill="#226A83"/>
+    <path d="M354 376H190C177 376 172 360 183 352C235 314 234 269 274 241C302 222 334 221 378 224V352C378 365 367 376 354 376Z" transform="translate(6 8)" fill="#48BFC0"/>
+  </g>
+</svg>

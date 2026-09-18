@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	RequestsPath         = "/control/v1/requests"
-	RequestsPurgePath    = RequestsPath + "/purge"
-	RequestSessionsPath  = "/control/v1/request-sessions"
+	RequestsPath        = "/control/v1/requests"
+	RequestsPurgePath   = RequestsPath + "/purge"
+	RequestSessionsPath = "/control/v1/request-sessions"
 )
 
 type requestRecordPageResponse struct {
@@ -91,11 +91,21 @@ func (handler *Handler) requestSessionItem(writer http.ResponseWriter, request *
 }
 
 func parseRequestSessionListOptions(request *http.Request) (storage.RequestSessionListOptions, error) {
-	recordOptions, err := parseRequestRecordListOptions(request)
+	query := request.URL.Query()
+	if len(query["kind"]) > 1 {
+		return storage.RequestSessionListOptions{}, fmt.Errorf("query parameter must occur once")
+	}
+	kind := query.Get("kind")
+	if kind != "" && kind != "inference" && kind != "discovery" {
+		return storage.RequestSessionListOptions{}, fmt.Errorf("kind must be inference or discovery")
+	}
+	query.Del("kind")
+	recordOptions, err := parseRequestRecordQuery(query)
 	if err != nil {
 		return storage.RequestSessionListOptions{}, err
 	}
 	return storage.RequestSessionListOptions{
+		Kind:               kind,
 		Limit:              recordOptions.Limit,
 		Cursor:             recordOptions.Cursor,
 		From:               recordOptions.From,
@@ -357,7 +367,10 @@ func (handler *Handler) purgeRequestRecords(writer http.ResponseWriter, request 
 }
 
 func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecordListOptions, error) {
-	query := request.URL.Query()
+	return parseRequestRecordQuery(request.URL.Query())
+}
+
+func parseRequestRecordQuery(query url.Values) (storage.RequestRecordListOptions, error) {
 	for name := range query {
 		switch name {
 		case "limit", "cursor", "from", "to", "protocol", "service_id", "local_access_token_id", "status":

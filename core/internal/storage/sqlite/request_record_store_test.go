@@ -286,18 +286,92 @@ func TestRequestSessionStoreTreatsLegacyHTTPErrorAsFailed(t *testing.T) {
 	if err != nil || len(page.Items) != 1 {
 		t.Fatalf("sessions=%#v err=%v", page, err)
 	}
-	if page.Items[0].Status != contract.RequestStatusFailed {
+	if page.Items[0].Status != contract.SessionStatusFailed {
 		t.Fatalf("list status=%q", page.Items[0].Status)
 	}
 	detail, err := store.GetRequestSession(ctx, string(sessionID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.Status != contract.RequestStatusFailed {
+	if detail.Status != contract.SessionStatusFailed {
 		t.Fatalf("detail status=%q", detail.Status)
 	}
 	if detail.Turns[0].Status != contract.RequestStatusSucceeded {
 		t.Fatalf("stored turn status should stay succeeded, got %q", detail.Turns[0].Status)
+	}
+}
+
+func TestRequestSessionStoreReportsAStoppedLoopAsInterrupted(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "sessions-interrupted.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 9, 3, 12, 6, 55, 0, time.UTC)
+
+	insert := func(id string, session contract.SessionID, offset time.Duration, status contract.RequestStatus) {
+		t.Helper()
+		completed := start.Add(offset + time.Second)
+		httpStatus := http.StatusOK
+		record := contract.RequestRecord{
+			ID: contract.RequestID(id), StartedAt: start.Add(offset), CompletedAt: &completed,
+			Status: status, InputProtocol: contract.ProtocolOpenAIChat,
+			HTTPStatus: &httpStatus, Audit: contract.NotCapturedAuditSummary(),
+			SessionID: &session,
+		}
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatalf("InsertRequestRecord(%s): %v", id, err)
+		}
+	}
+
+	stopped := contract.SessionID("session_stopped_loop")
+	insert("request_loop_one", stopped, 0, contract.RequestStatusSucceeded)
+	insert("request_loop_two", stopped, time.Minute, contract.RequestStatusSucceeded)
+	insert("request_loop_three", stopped, 2*time.Minute, contract.RequestStatusCancelled)
+
+	silent := contract.SessionID("session_stopped_at_once")
+	insert("request_solo", silent, 3*time.Minute, contract.RequestStatusCancelled)
+
+	broken := contract.SessionID("session_failed_tail")
+	insert("request_broken_one", broken, 4*time.Minute, contract.RequestStatusSucceeded)
+	insert("request_broken_two", broken, 5*time.Minute, contract.RequestStatusFailed)
+
+	for _, test := range []struct {
+		session contract.SessionID
+		want    contract.SessionStatus
+	}{
+		// Answers were delivered before the operator hit stop.
+		{stopped, contract.SessionStatusInterrupted},
+		// Nothing was delivered, so the cancel is the whole story.
+		{silent, contract.SessionStatusCancelled},
+		// A trailing failure must stay loud even after successful calls.
+		{broken, contract.SessionStatusFailed},
+	} {
+		detail, err := store.GetRequestSession(ctx, string(test.session))
+		if err != nil {
+			t.Fatalf("GetRequestSession(%s): %v", test.session, err)
+		}
+		if detail.Status != test.want {
+			t.Fatalf("%s status=%q want %q", test.session, detail.Status, test.want)
+		}
+	}
+
+	// The derived session status must not rewrite the stored call outcomes.
+	detail, err := store.GetRequestSession(ctx, string(stopped))
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := detail.Turns[len(detail.Turns)-1]
+	if last.Status != contract.RequestStatusCancelled {
+		t.Fatalf("stored tail status=%q want cancelled", last.Status)
+	}
+
+	page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range page.Items {
+		if item.ID == stopped && item.Status != contract.SessionStatusInterrupted {
+			t.Fatalf("list status=%q want interrupted", item.Status)
+		}
 	}
 }
 
@@ -347,6 +421,62 @@ func TestListRequestSessionsHonorsSQLLimitWithManyRoots(t *testing.T) {
 	}
 }
 
+func TestRequestSessionKindFiltersBeforePagination(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "session-kind.db"))
+	defer store.Close()
+	ctx := context.Background()
+	start := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	// A full page of newer discovery traffic must not hide older calls.
+	for index := 0; index < 65; index++ {
+		protocol := contract.ProtocolOpenAIResponses
+		if index >= 3 {
+			protocol = contract.ProtocolOpenAIModels
+			if index%2 == 0 {
+				protocol = contract.ProtocolGoogleModels
+			}
+		}
+		record := contract.RequestRecord{
+			ID:        contract.RequestID(fmt.Sprintf("request_kind_%03d", index)),
+			StartedAt: start.Add(time.Duration(index) * time.Second),
+			Status:    contract.RequestStatusSucceeded, InputProtocol: protocol,
+			Audit: contract.NotCapturedAuditSummary(),
+		}
+		if index == 64 {
+			record.Status = contract.RequestStatusFailed
+		}
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Kind: "inference", Limit: 2})
+	if err != nil || len(page.Items) != 2 || page.Items[0].ID != "request_kind_002" || page.NextCursor == "" {
+		t.Fatalf("call page=%#v err=%v", page, err)
+	}
+	next, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Kind: "inference", Limit: 2, Cursor: page.NextCursor})
+	if err != nil || len(next.Items) != 1 || next.Items[0].ID != "request_kind_000" || next.NextCursor != "" {
+		t.Fatalf("older calls=%#v err=%v", next, err)
+	}
+	discovery, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Kind: "discovery", Limit: 100})
+	if err != nil || len(discovery.Items) != 62 || discovery.Items[0].Status != contract.SessionStatusFailed {
+		t.Fatalf("discovery=%#v err=%v", discovery, err)
+	}
+	for _, item := range discovery.Items {
+		if item.InputProtocol != contract.ProtocolOpenAIModels && item.InputProtocol != contract.ProtocolGoogleModels {
+			t.Fatalf("call leaked into discovery: %#v", item)
+		}
+	}
+	all, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Limit: 100})
+	if err != nil || len(all.Items) != 65 {
+		t.Fatalf("all=%#v err=%v", all, err)
+	}
+	if _, err := store.GetRequestSession(ctx, "request_kind_064"); err != nil {
+		t.Fatalf("discovery detail unavailable: %v", err)
+	}
+	if _, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{Kind: "invalid"}); !errors.Is(err, storagecontract.ErrInvalidArgument) {
+		t.Fatalf("invalid kind err=%v", err)
+	}
+}
+
 func TestRequestRecordCursorsRoundTripScopeAndCascade(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "cursors.db"))
 	defer store.Close()
@@ -355,12 +485,13 @@ func TestRequestRecordCursorsRoundTripScopeAndCascade(t *testing.T) {
 	tokenA := contract.AccessTokenID("token_a")
 	tokenB := contract.AccessTokenID("token_b")
 	sessionA := contract.SessionID("session_a")
-	turnOne := 1
+	turnOne, userMessages, userFingerprint := 1, 3, "fp1_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 	pending := contract.RequestRecord{
 		ID: "request_cur_a", StartedAt: start, Status: contract.RequestStatusPending,
 		InputProtocol: contract.ProtocolOpenAIChat, Audit: contract.NotCapturedAuditSummary(),
 		LocalAccessTokenID: &tokenA, SessionID: &sessionA, TurnIndex: &turnOne,
+		TurnUserMessages: &userMessages, TurnUserFingerprint: &userFingerprint,
 		Cursors: []contract.SessionCursor{
 			{Kind: contract.SessionCursorExplicit, Direction: contract.SessionCursorIn, Value: "conv_shared"},
 		},
@@ -391,12 +522,18 @@ func TestRequestRecordCursorsRoundTripScopeAndCascade(t *testing.T) {
 	if len(got.Cursors) != 4 || got.TurnIndex == nil || *got.TurnIndex != 1 {
 		t.Fatalf("stored record = %+v", got)
 	}
+	if got.TurnUserMessages == nil || *got.TurnUserMessages != 3 || got.TurnUserFingerprint == nil || *got.TurnUserFingerprint != userFingerprint {
+		t.Fatalf("turn state not round-tripped: %v / %v", got.TurnUserMessages, got.TurnUserFingerprint)
+	}
 
 	scopedA := storagecontract.SessionCursorScope{SamePrincipal: true, LocalAccessTokenID: &tokenA}
 	scopedB := storagecontract.SessionCursorScope{SamePrincipal: true, LocalAccessTokenID: &tokenB}
 	match, ok, err := store.FindSessionLink(ctx, contract.SessionCursorEchoID, []string{"call_missing", "call_7f3a9c2e1b4d4e8fa1c2"}, scopedA)
 	if err != nil || !ok || match.SessionID != sessionA || match.Value != "call_7f3a9c2e1b4d4e8fa1c2" || match.TurnIndex == nil || *match.TurnIndex != 1 {
 		t.Fatalf("echo match = %+v ok=%v err=%v", match, ok, err)
+	}
+	if match.TurnUserMessages == nil || *match.TurnUserMessages != 3 || match.TurnUserFingerprint != userFingerprint {
+		t.Fatalf("match must carry the turn state: %+v", match)
 	}
 	if _, ok, err := store.FindSessionLink(ctx, contract.SessionCursorEchoID, []string{"call_7f3a9c2e1b4d4e8fa1c2"}, scopedB); err != nil || ok {
 		t.Fatalf("other token must not match: ok=%v err=%v", ok, err)

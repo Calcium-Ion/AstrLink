@@ -27,13 +27,10 @@ func Example_toolLoop() {
 		}
 		observer := convo.NewResponseObserver(convo.OpenAIChat, true)
 		_, _ = observer.Write([]byte(responseSSE))
-		record := memindex.Record{SessionID: sessionID, Principal: principal, At: now}
-		if decision.TurnIndex != nil {
-			record.TurnIndex, record.HasTurnIndex = *decision.TurnIndex, true
-		}
+		record := memindex.Record{SessionID: sessionID, Principal: principal, At: now, Turn: decision.Turn}
 		record.Cursors = append(decision.PersistentInbound(), policy.OutputCursors(observer.Summary(), fp)...)
 		index.Put(record)
-		fmt.Printf("session=%s turn=%d linked=%v\n", sessionID, record.TurnIndex, decision.Matched)
+		fmt.Printf("session=%s turn=%d linked=%v\n", sessionID, decision.Turn.Index, decision.Matched)
 		return sessionID
 	}
 

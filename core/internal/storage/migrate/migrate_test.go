@@ -298,8 +298,8 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	if err := database.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 22 {
-		t.Fatalf("schema version = %d, want 22", version)
+	if int64(version) != DefaultMigrations()[len(DefaultMigrations())-1].Version {
+		t.Fatalf("schema version = %d, want latest", version)
 	}
 	var privacyDefaults string
 	if err := database.QueryRow(
@@ -318,7 +318,7 @@ func TestDefaultMigrationsUpgradeVersionTwoWithoutLosingExistingData(t *testing.
 	}
 	var sessionColumns int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('request_records')
-WHERE name IN ('session_id', 'previous_response_id', 'output_response_id', 'input_preview', 'events_json', 'turn_index', 'session_link_json')`).Scan(&sessionColumns); err != nil || sessionColumns != 7 {
+WHERE name IN ('session_id', 'previous_response_id', 'output_response_id', 'input_preview', 'events_json', 'turn_index', 'session_link_json', 'turn_user_messages', 'turn_user_fingerprint')`).Scan(&sessionColumns); err != nil || sessionColumns != 9 {
 		t.Fatalf("session trajectory columns = %d err=%v", sessionColumns, err)
 	}
 	var cursorTable int
@@ -709,6 +709,10 @@ func TestHTTPMetaMigrationPreservesAuditBlobsAndWidensDirection(t *testing.T) {
 	}
 	if err := full.Up(context.Background()); err != nil {
 		t.Fatalf("upgrade to version 10: %v", err)
+	}
+	var historicalEffort sql.NullString
+	if err := database.QueryRow(`SELECT reasoning_effort FROM request_records WHERE id = 'request_v9'`).Scan(&historicalEffort); err != nil || historicalEffort.Valid {
+		t.Fatalf("historical reasoning effort must remain unknown: %#v err=%v", historicalEffort, err)
 	}
 
 	var count int

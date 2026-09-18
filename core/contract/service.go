@@ -20,20 +20,27 @@ type ServiceID string
 type ServiceKind string
 
 const (
-	ServiceKindCodexSubscription ServiceKind = "codex_subscription"
-	ServiceKindNewAPI            ServiceKind = "newapi"
-	ServiceKindOpenAI            ServiceKind = "openai"
-	ServiceKindAnthropic         ServiceKind = "anthropic"
-	ServiceKindGemini            ServiceKind = "gemini"
-	ServiceKindOpenAICompatible  ServiceKind = "openai_compatible"
-	ServiceKindCustom            ServiceKind = "custom"
+	ServiceKindCodexSubscription  ServiceKind = "codex_subscription"
+	ServiceKindClaudeSubscription ServiceKind = "claude_subscription"
+	ServiceKindOpenCodeGo         ServiceKind = "opencode_go"
+	ServiceKindOpenCodeZen        ServiceKind = "opencode_zen"
+	ServiceKindKimiCoding         ServiceKind = "kimi_coding"
+	ServiceKindGLMCoding          ServiceKind = "glm_coding"
+	ServiceKindMiniMaxCoding      ServiceKind = "minimax_coding"
+	ServiceKindNewAPI             ServiceKind = "newapi"
+	ServiceKindOpenAI             ServiceKind = "openai"
+	ServiceKindAnthropic          ServiceKind = "anthropic"
+	ServiceKindGemini             ServiceKind = "gemini"
+	ServiceKindOpenAICompatible   ServiceKind = "openai_compatible"
+	ServiceKindCustom             ServiceKind = "custom"
 )
 
 func (kind ServiceKind) Valid() bool {
 	switch kind {
 	case ServiceKindCodexSubscription, ServiceKindNewAPI, ServiceKindOpenAI,
 		ServiceKindAnthropic, ServiceKindGemini, ServiceKindOpenAICompatible,
-		ServiceKindCustom:
+		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindOpenCodeGo,
+		ServiceKindOpenCodeZen, ServiceKindKimiCoding, ServiceKindGLMCoding, ServiceKindMiniMaxCoding:
 		return true
 	default:
 		return false
@@ -41,7 +48,17 @@ func (kind ServiceKind) Valid() bool {
 }
 
 func (kind ServiceKind) IsSubscription() bool {
-	return kind == ServiceKindCodexSubscription
+	return kind == ServiceKindCodexSubscription || kind == ServiceKindClaudeSubscription
+}
+
+func (kind ServiceKind) SubscriptionProvider() SubscriptionProvider {
+	if kind == ServiceKindClaudeSubscription {
+		return SubscriptionProviderClaudeCode
+	}
+	if kind == ServiceKindCodexSubscription {
+		return SubscriptionProviderOpenAICodex
+	}
+	return ""
 }
 
 func (kind ServiceKind) IsHTTP() bool {
@@ -111,7 +128,7 @@ func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
 		AccountHint:           connection.AccountHint,
 		ProviderAccountID:     connection.ProviderAccountID,
 		CredentialRef:         connection.CredentialRef,
-		Capabilities:          DefaultOpenAICodexCapabilities(),
+		Capabilities:          connection.Provider.Capabilities(),
 		AuthorizationBoundary: connection.AuthorizationBoundary,
 		TokenExpiresAt:        connection.TokenExpiresAt,
 		LastRefreshAt:         connection.LastRefreshAt,
@@ -125,19 +142,25 @@ func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
 // Service is the canonical configured API-service aggregate. Exactly one
 // variant payload is present, determined by Kind.
 type Service struct {
-	ID           ServiceID               `json:"id"`
-	Name         string                  `json:"name"`
-	Kind         ServiceKind             `json:"kind"`
-	Enabled      bool                    `json:"enabled"`
-	Models       []string                `json:"models"`
-	Capabilities []Capability            `json:"capabilities"`
-	HTTP         *HTTPConnection         `json:"http,omitempty"`
-	Subscription *SubscriptionConnection `json:"subscription,omitempty"`
-	CreatedAt    time.Time               `json:"created_at,omitempty"`
-	UpdatedAt    time.Time               `json:"updated_at,omitempty"`
+	FailurePolicy *FailurePolicy          `json:"failure_policy,omitempty"`
+	ID            ServiceID               `json:"id"`
+	Name          string                  `json:"name"`
+	Kind          ServiceKind             `json:"kind"`
+	Enabled       bool                    `json:"enabled"`
+	Models        []string                `json:"models"`
+	Capabilities  []Capability            `json:"capabilities"`
+	HTTP          *HTTPConnection         `json:"http,omitempty"`
+	Subscription  *SubscriptionConnection `json:"subscription,omitempty"`
+	CreatedAt     time.Time               `json:"created_at,omitempty"`
+	UpdatedAt     time.Time               `json:"updated_at,omitempty"`
 }
 
 func (service Service) Validate() error {
+	if service.FailurePolicy != nil {
+		if err := service.FailurePolicy.Validate(); err != nil {
+			return fmt.Errorf("failure_policy: %w", err)
+		}
+	}
 	if err := service.ID.Validate(); err != nil {
 		return err
 	}
@@ -159,8 +182,8 @@ func (service Service) Validate() error {
 		if service.Subscription == nil || service.HTTP != nil {
 			return fmt.Errorf("subscription service requires only the subscription connection")
 		}
-		if service.Subscription.Provider != SubscriptionProviderOpenAICodex {
-			return fmt.Errorf("codex_subscription requires provider %q", SubscriptionProviderOpenAICodex)
+		if service.Subscription.Provider != service.Kind.SubscriptionProvider() {
+			return fmt.Errorf("%s requires provider %q", service.Kind, service.Kind.SubscriptionProvider())
 		}
 		if err := service.Subscription.Validate(service.ID); err != nil {
 			return fmt.Errorf("subscription: %w", err)
@@ -172,8 +195,8 @@ func (service Service) Validate() error {
 	if err := validateServiceModels(service.Models); err != nil {
 		return err
 	}
-	if service.Kind.IsSubscription() && !equalCapabilities(service.Capabilities, DefaultOpenAICodexCapabilities()) {
-		return fmt.Errorf("codex subscription capabilities are fixed")
+	if service.Kind.IsSubscription() && !equalCapabilities(service.Capabilities, service.Kind.SubscriptionProvider().Capabilities()) {
+		return fmt.Errorf("subscription capabilities are fixed by provider")
 	}
 	seen := make(map[string]struct{}, len(service.Capabilities))
 	for index, capability := range service.Capabilities {
@@ -288,7 +311,7 @@ func NormalizeServiceModels(models []string) ([]string, error) {
 
 func ServiceFromSubscriptionAccount(account SubscriptionAccount) Service {
 	return Service{
-		ID: account.ID, Name: account.DisplayName, Kind: ServiceKindCodexSubscription,
+		ID: account.ID, Name: account.DisplayName, Kind: account.Provider.ServiceKind(),
 		Enabled:      account.Status != SubscriptionStatusDisconnected,
 		Models:       []string{},
 		Capabilities: append([]Capability(nil), account.Capabilities...),

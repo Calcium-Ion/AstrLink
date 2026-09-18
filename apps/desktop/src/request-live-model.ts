@@ -2,11 +2,13 @@ import { i18n } from "./i18n";
 import type {
   RequestRecord,
   RequestSession,
-  RequestStatus,
+  SessionStatus,
 } from "./request-record-model";
 
 export interface RecordFilters {
-  status: RequestStatus | "";
+  // The monitor list is a session stream, so the status filter spans the
+  // session scale and can name interrupted, which no record carries.
+  status: SessionStatus | "";
   serviceId: string;
   protocol: string;
 }

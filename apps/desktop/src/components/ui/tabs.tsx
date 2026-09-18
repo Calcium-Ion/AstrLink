@@ -41,14 +41,15 @@ const tabsListVariants = cva(
 function TabsList({
   className,
   variant = "default",
+  scrollable = false,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> &
-  VariantProps<typeof tabsListVariants>) {
+  VariantProps<typeof tabsListVariants> & { scrollable?: boolean }) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
       data-variant={variant}
-      className={cn(tabsListVariants({ variant }), className)}
+      className={cn(tabsListVariants({ variant }), scrollable && "max-w-full justify-start overflow-x-auto [&>[data-slot=tabs-trigger]]:flex-none", className)}
       {...props}
     />
   )

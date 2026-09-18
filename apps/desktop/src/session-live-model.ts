@@ -19,6 +19,29 @@ export interface SessionMergeResult {
   added: number;
 }
 
+/**
+ * A poll of an idle gateway returns the same bytes it returned a second ago.
+ * Handing those back as fresh objects re-rendered the monitor list, the open
+ * session detail and every trajectory row behind it once a second, so a merge
+ * that changed nothing has to be indistinguishable from no merge at all.
+ */
+function sameSession(left: RequestSession, right: RequestSession): boolean {
+  return (
+    left.title === right.title &&
+    left.started_at === right.started_at &&
+    left.last_started_at === right.last_started_at &&
+    left.completed_at === right.completed_at &&
+    left.turn_count === right.turn_count &&
+    left.call_count === right.call_count &&
+    left.status === right.status &&
+    left.requested_model === right.requested_model &&
+    (left.reasoning_effort ?? null) === (right.reasoning_effort ?? null) &&
+    left.input_protocol === right.input_protocol &&
+    left.service_id === right.service_id &&
+    left.local_access_token_id === right.local_access_token_id
+  );
+}
+
 export function mergeLiveSessions(
   items: RequestSession[],
   queued: RequestSession[],
@@ -27,15 +50,20 @@ export function mergeLiveSessions(
 ): SessionMergeResult {
   const incomingById = new Map(incoming.map((session) => [session.id, session]));
   const known = new Set<string>();
-  const updatedItems = items.map((session) => {
+  let moved = false;
+  const adopt = (session: RequestSession): RequestSession => {
     known.add(session.id);
-    return incomingById.get(session.id) ?? session;
-  });
-  const updatedQueue = queued.map((session) => {
-    known.add(session.id);
-    return incomingById.get(session.id) ?? session;
-  });
+    const next = incomingById.get(session.id);
+    if (!next || sameSession(next, session)) return session;
+    moved = true;
+    return next;
+  };
+  const updatedItems = items.map(adopt);
+  const updatedQueue = queued.map(adopt);
   const additions = incoming.filter((session) => !known.has(session.id));
+  if (!moved && additions.length === 0) {
+    return { items, queued, added: 0 };
+  }
   if (queueNew) {
     return {
       items: updatedItems,

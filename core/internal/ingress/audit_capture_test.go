@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
@@ -32,9 +34,10 @@ func (store *memoryAuditSettings) GetAuditSettings(context.Context) (contract.Au
 }
 
 type memoryAuditBlobs struct {
-	key   []byte
-	blobs []storage.AuditBlob
-	fail  bool
+	key     []byte
+	blobs   []storage.AuditBlob
+	fail    bool
+	records *memoryRequestRecordStore
 }
 
 func (store *memoryAuditBlobs) GetOrCreateAuditKey(context.Context) ([]byte, error) {
@@ -48,8 +51,116 @@ func (store *memoryAuditBlobs) InsertAuditBlob(_ context.Context, blob storage.A
 	if store.fail {
 		return io.ErrUnexpectedEOF
 	}
+	if store.records != nil {
+		found := false
+		for _, record := range store.records.records {
+			if record.ID == blob.RequestID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("upsert audit blob: constraint failed: FOREIGN KEY constraint failed (787)")
+		}
+	}
+	for index := range store.blobs {
+		if store.blobs[index].RequestID == blob.RequestID &&
+			store.blobs[index].Direction == blob.Direction {
+			store.blobs[index] = blob
+			return nil
+		}
+	}
 	store.blobs = append(store.blobs, blob)
 	return nil
+}
+
+func TestIngressAuditPersistsClientRequestWhilePending(t *testing.T) {
+	const requestBody = `{"model":"m","input":"hello"}`
+	const responseBody = `{"id":"r","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	records := &memoryRequestRecordStore{}
+	blobs := &memoryAuditBlobs{records: records}
+	settings := &memoryAuditSettings{settings: contract.AuditSettings{
+		RequestBodyEnabled: true, ResponseContentEnabled: true,
+		RequestBodyMaxBytes: 1024, ResponseContentMaxBytes: 1024,
+		MetadataRetentionDays: 30, ContentRetentionDays: 7,
+	}}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler := NewWithDependencies(Dependencies{
+		Resolver:       candidateResolver{candidates: []endpoint.Resolved{{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}}},
+		RequestRecords: records,
+		AuditSettings:  settings,
+		AuditBlobs:     blobs,
+		Forwarder: forwarderFunc(func(writer http.ResponseWriter, request *http.Request, _ transport.Target) error {
+			close(started)
+			<-release
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusOK)
+			_, err := writer.Write([]byte(responseBody))
+			return err
+		}),
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(requestBody))
+		req.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("forwarder did not start")
+	}
+	if len(records.records) != 1 || records.records[0].Status != contract.RequestStatusPending {
+		t.Fatalf("pending records=%#v", records.records)
+	}
+	if !records.records[0].Audit.RequestBodyCaptured {
+		t.Fatalf("pending audit=%#v", records.records[0].Audit)
+	}
+	if records.records[0].Audit.ResponseContentCaptured {
+		t.Fatal("response should still be uncaptured while the call is in flight")
+	}
+	var requestBlob *storage.AuditBlob
+	for index := range blobs.blobs {
+		if blobs.blobs[index].Direction == storage.AuditDirectionRequest {
+			requestBlob = &blobs.blobs[index]
+			break
+		}
+	}
+	if requestBlob == nil {
+		t.Fatalf("missing request blob among %#v", blobs.blobs)
+	}
+	plain, err := storage.OpenAuditBlob(blobs.key, requestBlob.Nonce, requestBlob.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != requestBody {
+		t.Fatalf("pending request plain=%q", plain)
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not finish")
+	}
+	record := records.records[len(records.records)-1]
+	if record.Status != contract.RequestStatusSucceeded || !record.Audit.RequestBodyCaptured ||
+		!record.Audit.ResponseContentCaptured {
+		t.Fatalf("terminal record=%#v", record)
+	}
+	var sawRequest, sawResponse bool
+	for _, blob := range blobs.blobs {
+		switch blob.Direction {
+		case storage.AuditDirectionRequest:
+			sawRequest = true
+		case storage.AuditDirectionResponse:
+			sawResponse = true
+		}
+	}
+	if !sawRequest || !sawResponse {
+		t.Fatalf("terminal blobs=%#v", blobs.blobs)
+	}
 }
 
 func TestIngressAuditCaptureNonStreamingRoundTrip(t *testing.T) {
