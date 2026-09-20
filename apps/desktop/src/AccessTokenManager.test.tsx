@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridgeMocks = vi.hoisted(() => ({
   createAccessToken: vi.fn(),
   deleteAccessToken: vi.fn(),
-  listRequestRecords: vi.fn(),
+  listAccessTokenUsage: vi.fn(),
   revealAccessToken: vi.fn(),
 }));
 
@@ -93,10 +93,7 @@ describe("AccessTokenManager", () => {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
-    bridgeMocks.listRequestRecords.mockResolvedValue({
-      items: [],
-      next_cursor: null,
-    });
+    bridgeMocks.listAccessTokenUsage.mockResolvedValue({ items: [] });
     container = document.createElement("div");
     document.body.append(container);
     reactRoot = createRoot(container);
@@ -117,6 +114,7 @@ describe("AccessTokenManager", () => {
         <AccessTokenManager
           catalog={catalog}
           coreSessionKey={session}
+          inferenceURL="http://127.0.0.1:8317"
           isReady
           onRefresh={() => undefined}
           onTokenCreated={() => undefined}
@@ -192,6 +190,7 @@ describe("AccessTokenManager", () => {
         <AccessTokenManager
           catalog={readyCatalog([firstToken])}
           coreSessionKey="session-1"
+          inferenceURL="http://127.0.0.1:8317"
           isReady
           onRefresh={onRefresh}
           onTokenCreated={() => undefined}
@@ -234,6 +233,7 @@ describe("AccessTokenManager", () => {
         <AccessTokenManager
           catalog={readyCatalog(items)}
           coreSessionKey="session-1"
+          inferenceURL="http://127.0.0.1:8317"
           isReady
           onRefresh={() => undefined}
           onTokenCreated={(token) => setItems((current) => [token, ...current])}
@@ -290,6 +290,7 @@ describe("AccessTokenManager", () => {
         <AccessTokenManager
           catalog={readyCatalog(items)}
           coreSessionKey="session-1"
+          inferenceURL="http://127.0.0.1:8317"
           isReady
           onRefresh={() => undefined}
           onTokenCreated={(token) => setItems((current) => [token, ...current])}
@@ -330,58 +331,12 @@ describe("AccessTokenManager", () => {
     expect(container.querySelector('[data-testid="access-token-row"]')).toBeNull();
   });
 
-  it("loads today and lifetime token totals from request records", async () => {
-    bridgeMocks.listRequestRecords.mockImplementation(
-      async (query: { local_access_token_id?: string; from?: string }) => {
-        const total = query.from ? 30 : 90;
-        return {
-          items: [
-            {
-              id: "req_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              parent_request_id: null,
-              attempt_index: 1,
-              child_count: 0,
-              started_at: "2026-07-25T10:00:00Z",
-              completed_at: "2026-07-25T10:00:01Z",
-              status: "succeeded",
-              input_protocol: "openai.chat",
-              requested_model: null,
-              streaming: false,
-              route_id: null,
-              service_id: null,
-              local_access_token_id: query.local_access_token_id ?? null,
-              http_status: 200,
-              latency_ms: 10,
-              usage: {
-                input_tokens: total,
-                output_tokens: 0,
-                total_tokens: total,
-              },
-              error: null,
-              audit: {
-                request_body_captured: false,
-                response_content_captured: false,
-                request_body_truncated: false,
-                response_content_truncated: false,
-                upstream_request_body_captured: false,
-                upstream_response_content_captured: false,
-                upstream_request_body_truncated: false,
-                upstream_response_content_truncated: false,
-              },
-              privacy_restore: null,
-              session_id: null,
-              previous_response_id: null,
-              output_response_id: null,
-              input_preview: null,
-              events: [],
-            },
-          ],
-          next_cursor: null,
-        };
-      },
-    );
+  it("loads all token totals in one call and fills unused tokens with zero", async () => {
+    bridgeMocks.listAccessTokenUsage.mockResolvedValue({
+      items: [{ token_id: firstToken.id, today_tokens: 30, total_tokens: 90 }],
+    });
 
-    await renderManager(readyCatalog([firstToken]));
+    await renderManager(readyCatalog([firstToken, secondToken]));
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
@@ -390,10 +345,35 @@ describe("AccessTokenManager", () => {
     const tokenRow = row(firstToken.name);
     expect(tokenRow.textContent).toContain("今日 Token30");
     expect(tokenRow.textContent).toContain("累计 Token90");
-    expect(bridgeMocks.listRequestRecords).toHaveBeenCalled();
-    expect(bridgeMocks.listRequestRecords.mock.calls[0]?.[0]).toMatchObject({
-      local_access_token_id: firstToken.id,
-      limit: 200,
+    expect(row(secondToken.name).textContent).toContain("今日 Token0");
+    expect(row(secondToken.name).textContent).toContain("累计 Token0");
+    expect(bridgeMocks.listAccessTokenUsage).toHaveBeenCalledOnce();
+    const todayFrom = new Date(bridgeMocks.listAccessTokenUsage.mock.calls[0][0]);
+    expect(todayFrom.getHours()).toBe(0);
+    expect(todayFrom.getMinutes()).toBe(0);
+    expect(todayFrom.getSeconds()).toBe(0);
+  });
+
+  it("ignores usage from an old Core session", async () => {
+    let finish: ((value: unknown) => void) | undefined;
+    bridgeMocks.listAccessTokenUsage.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    await renderManager(readyCatalog([firstToken]));
+    expect(row(firstToken.name).textContent).toContain("今日 Token…");
+    await renderManager(readyCatalog([firstToken]), "session-2");
+    await act(async () => {
+      finish?.({ items: [{ token_id: firstToken.id, today_tokens: 999, total_tokens: 999 }] });
     });
+    expect(row(firstToken.name).textContent).toContain("累计 Token0");
+    expect(row(firstToken.name).textContent).not.toContain("999");
+  });
+
+  it("keeps the last usage on refresh failure instead of displaying a false zero", async () => {
+    bridgeMocks.listAccessTokenUsage.mockResolvedValueOnce({
+      items: [{ token_id: firstToken.id, today_tokens: 30, total_tokens: 90 }],
+    });
+    await renderManager(readyCatalog([firstToken]));
+    bridgeMocks.listAccessTokenUsage.mockRejectedValueOnce(new Error("unavailable"));
+    await renderManager(readyCatalog([firstToken]));
+    expect(row(firstToken.name).textContent).toContain("累计 Token90");
   });
 });

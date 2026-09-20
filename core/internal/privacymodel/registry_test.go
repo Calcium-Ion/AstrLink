@@ -259,7 +259,7 @@ func TestRegistryRetriesTransientAssetFailuresAndLogsSanitizedReason(t *testing.
 	}
 }
 
-func TestDownloadAssetRetryRollsBackPartialProgress(t *testing.T) {
+func TestDownloadAssetRetryRetainsPartialProgress(t *testing.T) {
 	repository := newFakeHFRepository(t)
 	repository.requestedRevision = repository.revision
 	repository.truncateFailures["model_int8.onnx"] = 1
@@ -316,8 +316,8 @@ func TestDownloadAssetRetryRollsBackPartialProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downloadAssetWithPosition: %v", err)
 	}
-	if progressAtRetry != 0 {
-		t.Fatalf("partial progress at retry=%d, want 0", progressAtRetry)
+	if progressAtRetry != int64(len(document)/2) {
+		t.Fatalf("partial progress at retry=%d, want %d", progressAtRetry, len(document)/2)
 	}
 	current, err := registry.GetInstallation(id)
 	if err != nil ||

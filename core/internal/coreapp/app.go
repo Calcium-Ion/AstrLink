@@ -26,15 +26,18 @@ const (
 )
 
 type Config struct {
-	InferenceListen   string
-	ControlListen     string
-	ControlSocketPath string
-	Version           contract.VersionResponse
+	InferenceListen       string
+	InferencePortFallback bool
+	ControlListen         string
+	ControlSocketPath     string
+	Version               contract.VersionResponse
 }
 
 type Dependencies struct {
 	InferenceHandler http.Handler
-	ControlHandler   http.Handler
+	// NewInferenceHandler builds the production Host gate from the bound address.
+	NewInferenceHandler func(address string) (http.Handler, error)
+	ControlHandler      http.Handler
 	// RetentionSweep deletes expired request records and audit blobs.
 	// Nil disables the startup/hourly retention loop (headless mode).
 	RetentionSweep func(context.Context) error
@@ -110,6 +113,14 @@ func runWithDependencies(
 	}
 
 	inferenceListener, err := listen("tcp", config.InferenceListen)
+	if config.InferencePortFallback && errors.Is(err, addressInUse) {
+		// Bind directly instead of probing and releasing a port: the listener
+		// remains owned until shutdown, so another process cannot claim it.
+		inferenceListener, err = listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("inference address %s is occupied; listen on fallback port: %w", config.InferenceListen, err)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("listen on inference plane: %w", err)
 	}
@@ -122,6 +133,12 @@ func runWithDependencies(
 	defer controlListener.Close()
 
 	inferenceHandler := dependencies.InferenceHandler
+	if dependencies.NewInferenceHandler != nil {
+		inferenceHandler, err = dependencies.NewInferenceHandler(inferenceListener.Addr().String())
+		if err != nil {
+			return fmt.Errorf("configure production inference gate: %w", err)
+		}
+	}
 	if inferenceHandler == nil {
 		inferenceHandler = ingress.New()
 	}

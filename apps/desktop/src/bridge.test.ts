@@ -14,6 +14,8 @@ vi.mock("./download-text-file", () => downloadMocks);
 
 import {
   cancelPrivacyModelInstallation,
+  pausePrivacyModelInstallation,
+  resumePrivacyModelInstallation,
   createAccessToken,
   createRoute,
   createService,
@@ -38,6 +40,8 @@ import {
   listServices,
   listRequestSessions,
   listAccessTokens,
+  listAccessTokenUsage,
+  getUsageSummary,
   listPrivacyModelInstallations,
   listPrivacyPolicies,
   probeLocalPrivacyModel,
@@ -59,6 +63,7 @@ import {
   uninstallAgentDebug,
 } from "./bridge";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
+import { emptyUsageTotals, resolveUsageWindow } from "./usage-range";
 
 function validSnapshot(): Record<string, unknown> {
   return {
@@ -74,6 +79,7 @@ function validSnapshot(): Record<string, unknown> {
       control_url: "http://127.0.0.1:49152",
     },
     last_error: null,
+    inference_port_fallback: null,
     recovery_attempt: 0,
     recovery_scheduled_in_ms: null,
     health: { status: "ok" },
@@ -88,6 +94,16 @@ function validSnapshot(): Record<string, unknown> {
 }
 
 describe("desktop bridge contract", () => {
+  it("requests one aggregate for the complete usage window", async () => {
+    const window = resolveUsageWindow("1d", new Date(2026, 8, 19, 12));
+    invokeMock.mockResolvedValueOnce({ totals: emptyUsageTotals(), by_day: [], by_hour: [], by_service: [], by_model: [], scanned_records: 0 });
+    const result = await getUsageSummary(window);
+    expect(invokeMock).toHaveBeenCalledWith("get_usage_summary", {
+      from: window.from, to: window.to, timeZone: window.time_zone, bucket: "hour",
+    });
+    expect(result.by_hour).toHaveLength(24);
+    expect(result.capped).toBe(false);
+  });
   it("roundtrips ordered service IDs and rejects malformed order responses", async () => {
     const record = { service_ids: ["service_b", "service_a"], etag: '"sha256:abc"' };
     invokeMock.mockResolvedValueOnce(record);
@@ -144,6 +160,23 @@ describe("desktop bridge contract", () => {
     expect(invokeMock).toHaveBeenCalledWith(command);
     expect(parsed).toEqual(wireSnapshot);
     expect(parsed.capabilities?.protocols).toHaveLength(8);
+  });
+
+  it("keeps fallback metadata tied to the advertised inference address", async () => {
+    const snapshot = validSnapshot();
+    snapshot.inference_port_fallback = { requested_port: 9000, active_port: 8317 };
+    invokeMock.mockResolvedValueOnce(snapshot);
+    await expect(getCoreStatus()).resolves.toMatchObject({
+      inference_port_fallback: { requested_port: 9000, active_port: 8317 },
+    });
+    for (const fallback of [
+      { requested_port: 9000, active_port: 8318 },
+      { requested_port: 8317, active_port: 8317 },
+      { requested_port: 0, active_port: 8317 },
+    ]) {
+      invokeMock.mockResolvedValueOnce({ ...snapshot, inference_port_fallback: fallback });
+      await expect(getCoreStatus()).rejects.toThrow("inference_port_fallback");
+    }
   });
 
   it("rejects a snapshot with a missing frozen field", async () => {
@@ -336,6 +369,13 @@ describe("desktop bridge contract", () => {
       next_cursor: null,
     });
     expect(invokeMock).toHaveBeenLastCalledWith("list_access_tokens");
+
+    const usage = { items: [{ token_id: token.id, today_tokens: 10, total_tokens: 100 }] };
+    invokeMock.mockResolvedValueOnce(usage);
+    await expect(listAccessTokenUsage("2026-09-19T00:00:00.000Z")).resolves.toEqual(usage);
+    expect(invokeMock).toHaveBeenLastCalledWith("list_access_token_usage", {
+      todayFrom: "2026-09-19T00:00:00.000Z",
+    });
 
     invokeMock.mockResolvedValueOnce({
       token,
@@ -580,6 +620,13 @@ describe("desktop bridge contract", () => {
       { installationId: installation.id },
     );
 
+    invokeMock.mockResolvedValueOnce({ ...installation, status: "paused" });
+    await expect(pausePrivacyModelInstallation(installation.id)).resolves.toMatchObject({ status: "paused" });
+    expect(invokeMock).toHaveBeenLastCalledWith("pause_privacy_model_installation", { installationId: installation.id });
+    invokeMock.mockResolvedValueOnce(installation);
+    await expect(resumePrivacyModelInstallation(installation.id)).resolves.toEqual(installation);
+    expect(invokeMock).toHaveBeenLastCalledWith("resume_privacy_model_installation", { installationId: installation.id });
+    await expect(resumePrivacyModelInstallation("../invalid")).rejects.toThrow();
     invokeMock.mockResolvedValueOnce(undefined);
     await cancelPrivacyModelInstallation(installation.id);
     expect(invokeMock).toHaveBeenLastCalledWith(

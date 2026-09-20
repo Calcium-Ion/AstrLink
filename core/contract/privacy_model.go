@@ -36,6 +36,7 @@ const (
 	PrivacyModelCatalogSourceCommunity PrivacyModelCatalogSource = "community"
 
 	PrivacyModelStatusDownloading PrivacyModelStatus = "downloading"
+	PrivacyModelStatusPaused      PrivacyModelStatus = "paused"
 	PrivacyModelStatusReady       PrivacyModelStatus = "ready"
 	PrivacyModelStatusError       PrivacyModelStatus = "error"
 
@@ -129,6 +130,7 @@ func (source PrivacyModelCatalogSource) Valid() bool {
 
 func (status PrivacyModelStatus) Valid() bool {
 	return status == PrivacyModelStatusDownloading ||
+		status == PrivacyModelStatusPaused ||
 		status == PrivacyModelStatusReady ||
 		status == PrivacyModelStatusError
 }
@@ -433,7 +435,7 @@ func ValidatePrivacyModelInstallation(installation PrivacyModelInstallation) err
 		}
 	}
 	switch installation.Status {
-	case PrivacyModelStatusDownloading:
+	case PrivacyModelStatusDownloading, PrivacyModelStatusPaused:
 		if installation.Error != nil || installation.InstalledAt != nil {
 			return fmt.Errorf("downloading installation has invalid terminal fields")
 		}

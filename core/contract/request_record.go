@@ -131,14 +131,24 @@ func SessionStatusFromRequest(status RequestStatus) SessionStatus {
 // multimodal input such as images). cache_read_tokens / cache_write_tokens
 // are subsets of that input when the upstream reports them.
 type Usage struct {
-	InputTokens      int  `json:"input_tokens"`
-	OutputTokens     int  `json:"output_tokens"`
-	TotalTokens      int  `json:"total_tokens"`
-	CacheReadTokens  *int `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
+	CacheWrite1hTokens *int  `json:"cache_write_1h_tokens,omitempty"`
+	InputAudioTokens   *int  `json:"input_audio_tokens,omitempty"`
+	OutputAudioTokens  *int  `json:"output_audio_tokens,omitempty"`
+	ThinkingEnabled    *bool `json:"thinking_enabled,omitempty"`
+	BillingIncomplete  bool  `json:"billing_incomplete,omitempty"`
+	InputTokens        int   `json:"input_tokens"`
+	OutputTokens       int   `json:"output_tokens"`
+	TotalTokens        int   `json:"total_tokens"`
+	CacheReadTokens    *int  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens   *int  `json:"cache_write_tokens,omitempty"`
 }
 
 func (usage Usage) Validate() error {
+	for _, count := range []*int{usage.CacheWrite1hTokens, usage.InputAudioTokens, usage.OutputAudioTokens} {
+		if count != nil && *count < 0 {
+			return fmt.Errorf("billing token counts must be non-negative")
+		}
+	}
 	if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 {
 		return fmt.Errorf("usage token counts must be non-negative")
 	}

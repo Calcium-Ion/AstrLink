@@ -15,4 +15,32 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   )
 }
 
-export { Textarea }
+/** Select and reveal text inside the editor without scrolling the app workspace. */
+function selectTextareaRange(input: HTMLTextAreaElement, start: number, end: number) {
+  input.focus({ preventScroll: true })
+  input.setSelectionRange(start, end)
+
+  // setSelectionRange does not scroll to off-screen text in WKWebView/Chromium.
+  // A hidden mirror uses the same wrapping and typography to locate the line.
+  const style = getComputedStyle(input)
+  const mirror = document.createElement("div")
+  for (const property of [
+    "font-family", "font-size", "font-weight", "font-style", "line-height",
+    "letter-spacing", "word-spacing", "text-indent", "text-transform", "tab-size",
+    "padding-top", "padding-right", "padding-bottom", "padding-left", "direction",
+    "word-break",
+  ]) mirror.style.setProperty(property, style.getPropertyValue(property))
+  Object.assign(mirror.style, {
+    position: "fixed", top: "0", left: "0", visibility: "hidden", pointerEvents: "none",
+    boxSizing: "border-box", width: `${input.clientWidth}px`, whiteSpace: "pre-wrap", overflowWrap: "break-word",
+  })
+  mirror.textContent = input.value.slice(0, start)
+  const marker = document.createElement("span")
+  marker.textContent = input.value.slice(start, end) || " "
+  mirror.append(marker)
+  document.body.append(mirror)
+  input.scrollTop = Math.max(0, marker.offsetTop - input.clientHeight / 3)
+  mirror.remove()
+}
+
+export { Textarea, selectTextareaRange }

@@ -308,11 +308,19 @@ export function usageWindowHourSlots(
   const zone = window.time_zone || undefined;
   const end = new Date(window.to);
   const slots: Array<{ date: string; hour: number }> = [];
+  const seen = new Set<string>();
   let at = startOfZonedHour(new Date(window.from), zone);
-  for (let step = 0; step < 24 && at < end; step += 1) {
+  // A fall-back day has 25 elapsed hours. Both occurrences of a repeated
+  // local hour share one chart bucket, but the final hour must still appear.
+  for (let step = 0; step < 26 && at < end; step += 1) {
     const zoned = zonedDateTime(at, zone);
-    slots.push({ date: zonedDayKey(at, zone), hour: zoned.hour });
-    at = addZonedHours(at, 1, zone);
+    const date = zonedDayKey(at, zone);
+    const key = `${date}T${zoned.hour}`;
+    if (!seen.has(key)) {
+      slots.push({ date, hour: zoned.hour });
+      seen.add(key);
+    }
+    at = new Date(at.getTime() + 3_600_000);
   }
   return slots;
 }

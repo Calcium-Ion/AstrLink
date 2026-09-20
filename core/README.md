@@ -20,6 +20,12 @@ exactly one JSON line; operational errors are written to stderr:
 {"event":"ready","core_version":"0.1.0-dev","control_api_version":"v1","protocol_contract_version":"v1","inference_url":"http://127.0.0.1:8317","control_url":"http://127.0.0.1:54321"}
 ```
 
+Desktop launchers pass `--inference-port-fallback`: if the requested inference
+port is occupied, Core binds an ephemeral loopback port and publishes the actual
+address in `ready`. The production Host gate uses that bound address. Other
+bind errors still fail startup. Standalone launches keep the fixed-port behavior
+unless the flag is explicitly enabled.
+
 The control URL always exposes these frozen read-only bootstrap endpoints:
 
 - `GET /control/v1/health`

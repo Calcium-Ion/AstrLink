@@ -83,7 +83,7 @@ func TestUsageScannerProtocols(t *testing.T) {
 			},
 		},
 		{
-			name:      "anthropic input plus output deltas",
+			name:      "anthropic output usage is cumulative",
 			protocol:  contract.ProtocolAnthropicMessages,
 			streaming: true,
 			chunks: []string{
@@ -91,7 +91,7 @@ func TestUsageScannerProtocols(t *testing.T) {
 				"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":2}}\n",
 				"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n",
 			},
-			want: &contract.Usage{InputTokens: 11, OutputTokens: 5, TotalTokens: 16},
+			want: &contract.Usage{InputTokens: 11, OutputTokens: 3, TotalTokens: 14},
 		},
 		{
 			name:      "anthropic stream normalizes cache into input",
@@ -288,4 +288,33 @@ func gzipBytes(t *testing.T, plain []byte) []byte {
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
+}
+
+func TestBillingUsageKeepsCacheTTLAndStreamCompletion(t *testing.T) {
+	scanner := newUsageScanner(contract.ProtocolAnthropicMessages, true)
+	scanner.observe([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":30,\"cache_creation\":{\"ephemeral_1h_input_tokens\":8}}}}\n\n"))
+	usage := scanner.Usage()
+	if usage == nil || usage.InputTokens != 60 || usage.CacheWrite1hTokens == nil || *usage.CacheWrite1hTokens != 8 || scanner.complete {
+		t.Fatalf("partial=%+v complete=%v", usage, scanner.complete)
+	}
+	scanner.observe([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":12}}\n\n"))
+	usage = scanner.Usage()
+	if usage.OutputTokens != 12 || !scanner.complete {
+		t.Fatalf("final=%+v complete=%v", usage, scanner.complete)
+	}
+}
+
+func TestBillingUsageAudioAndGeminiThoughts(t *testing.T) {
+	scanner := newUsageScanner(contract.ProtocolOpenAIChat, false)
+	scanner.observe([]byte(`{"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_tokens_details":{"audio_tokens":20},"completion_tokens_details":{"audio_tokens":10}}}`))
+	usage := scanner.Usage()
+	if usage == nil || usage.InputAudioTokens == nil || *usage.InputAudioTokens != 20 || usage.OutputAudioTokens == nil || *usage.OutputAudioTokens != 10 {
+		t.Fatalf("audio=%+v", usage)
+	}
+	scanner = newUsageScanner(contract.ProtocolGoogleGenerateContent, true)
+	scanner.observe([]byte("data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":100,\"candidatesTokenCount\":30,\"thoughtsTokenCount\":20,\"totalTokenCount\":150}}\n\n"))
+	usage = scanner.Usage()
+	if usage == nil || usage.OutputTokens != 50 || usage.TotalTokens != 150 || !scanner.complete {
+		t.Fatalf("thoughts=%+v", usage)
+	}
 }

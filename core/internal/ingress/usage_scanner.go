@@ -15,6 +15,7 @@ import (
 // usageScanner is a passive observer of client-facing response bytes. It never
 // modifies the stream and never fails the response; overflow disables capture.
 type usageScanner struct {
+	complete         bool
 	protocol         contract.ProtocolID
 	streaming        bool
 	disabled         bool
@@ -24,12 +25,13 @@ type usageScanner struct {
 	contentEncoding  string
 	encodingCaptured bool
 	// Anthropic accumulates across message_start / message_delta events.
-	anthropicInput      *int
-	anthropicOutput     int
-	anthropicCacheRead  *int
-	anthropicCacheWrite *int
-	anthropicSeen       bool
-	outputID            string
+	anthropicInput        *int
+	anthropicOutput       int
+	anthropicCacheRead    *int
+	anthropicCacheWrite   *int
+	anthropicCacheWrite1h *int
+	anthropicSeen         bool
+	outputID              string
 	// observer collects session cursors from the same decoded events the
 	// usage parser sees, so the response is parsed exactly once. nil for
 	// protocols without conversation history.
@@ -123,6 +125,9 @@ func (scanner *usageScanner) Usage() *contract.Usage {
 			scanner.anthropicCacheWrite,
 		)
 	}
+	if scanner.usage != nil && scanner.protocol == contract.ProtocolAnthropicMessages {
+		scanner.usage.CacheWrite1hTokens = scanner.anthropicCacheWrite1h
+	}
 	return scanner.usage
 }
 
@@ -209,6 +214,7 @@ func (scanner *usageScanner) parseNonStreaming(body []byte) {
 		return
 	}
 	scanner.parseEventJSON(body)
+	scanner.complete = scanner.usage != nil
 }
 
 func (scanner *usageScanner) parseEventJSON(payload []byte) {
@@ -246,6 +252,7 @@ func (scanner *usageScanner) parseOpenAIResponses(document map[string]json.RawMe
 			if json.Unmarshal(rawResponse, &response) == nil {
 				scanner.noteOutputID(response["id"])
 				if usage := decodeOpenAIResponsesUsage(response["usage"]); usage != nil {
+					scanner.complete = true
 					scanner.usage = usage
 				}
 				return
@@ -263,11 +270,12 @@ func decodeOpenAIResponsesUsage(raw json.RawMessage) *contract.Usage {
 		return nil
 	}
 	var payload struct {
-		InputTokens        *int            `json:"input_tokens"`
-		OutputTokens       *int            `json:"output_tokens"`
-		TotalTokens        *int            `json:"total_tokens"`
-		CachedInputTokens  *int            `json:"cached_input_tokens"`
-		InputTokensDetails json.RawMessage `json:"input_tokens_details"`
+		InputTokens         *int            `json:"input_tokens"`
+		OutputTokens        *int            `json:"output_tokens"`
+		TotalTokens         *int            `json:"total_tokens"`
+		CachedInputTokens   *int            `json:"cached_input_tokens"`
+		InputTokensDetails  json.RawMessage `json:"input_tokens_details"`
+		OutputTokensDetails json.RawMessage `json:"output_tokens_details"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return nil
@@ -279,12 +287,15 @@ func decodeOpenAIResponsesUsage(raw json.RawMessage) *contract.Usage {
 	if cacheRead == nil {
 		cacheRead = payload.CachedInputTokens
 	}
-	return normalizeOpenAIStyleUsage(
+	usage := normalizeOpenAIStyleUsage(
 		*payload.InputTokens,
 		*payload.OutputTokens,
 		*payload.TotalTokens,
 		cacheRead,
 	)
+	usage.InputAudioTokens = audioTokensFromDetails(payload.InputTokensDetails)
+	usage.OutputAudioTokens = audioTokensFromDetails(payload.OutputTokensDetails)
+	return usage
 }
 
 func (scanner *usageScanner) parseOpenAIChat(document map[string]json.RawMessage) {
@@ -294,10 +305,11 @@ func (scanner *usageScanner) parseOpenAIChat(document map[string]json.RawMessage
 		return
 	}
 	var payload struct {
-		PromptTokens        *int            `json:"prompt_tokens"`
-		CompletionTokens    *int            `json:"completion_tokens"`
-		TotalTokens         *int            `json:"total_tokens"`
-		PromptTokensDetails json.RawMessage `json:"prompt_tokens_details"`
+		PromptTokens            *int            `json:"prompt_tokens"`
+		CompletionTokens        *int            `json:"completion_tokens"`
+		TotalTokens             *int            `json:"total_tokens"`
+		PromptTokensDetails     json.RawMessage `json:"prompt_tokens_details"`
+		CompletionTokensDetails json.RawMessage `json:"completion_tokens_details"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return
@@ -311,6 +323,9 @@ func (scanner *usageScanner) parseOpenAIChat(document map[string]json.RawMessage
 		*payload.TotalTokens,
 		cachedTokensFromDetails(payload.PromptTokensDetails),
 	)
+	scanner.usage.InputAudioTokens = audioTokensFromDetails(payload.PromptTokensDetails)
+	scanner.usage.OutputAudioTokens = audioTokensFromDetails(payload.CompletionTokensDetails)
+	scanner.complete = true
 }
 
 func (scanner *usageScanner) parseAnthropic(document map[string]json.RawMessage) {
@@ -319,6 +334,8 @@ func (scanner *usageScanner) parseAnthropic(document map[string]json.RawMessage)
 		_ = json.Unmarshal(raw, &eventType)
 	}
 	switch eventType {
+	case "message_stop":
+		scanner.complete = true
 	case "message_start":
 		var message struct {
 			ID    string                `json:"id"`
@@ -333,6 +350,12 @@ func (scanner *usageScanner) parseAnthropic(document map[string]json.RawMessage)
 			}
 		}
 	case "message_delta":
+		var delta struct {
+			StopReason *string `json:"stop_reason"`
+		}
+		if json.Unmarshal(document["delta"], &delta) == nil && delta.StopReason != nil {
+			scanner.complete = true
+		}
 		if raw, ok := document["usage"]; ok {
 			var usage anthropicUsagePayload
 			if json.Unmarshal(raw, &usage) == nil {
@@ -344,6 +367,9 @@ func (scanner *usageScanner) parseAnthropic(document map[string]json.RawMessage)
 			var usage anthropicUsagePayload
 			if raw, ok := document["usage"]; ok && json.Unmarshal(raw, &usage) == nil {
 				if usage.InputTokens != nil && usage.OutputTokens != nil {
+					if usage.CacheCreation != nil {
+						scanner.anthropicCacheWrite1h = usage.CacheCreation.OneHour
+					}
 					scanner.usage = normalizeAnthropicUsage(
 						usage.InputTokens,
 						usage.OutputTokens,
@@ -361,9 +387,15 @@ type anthropicUsagePayload struct {
 	OutputTokens             *int `json:"output_tokens"`
 	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+	CacheCreation            *struct {
+		OneHour *int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 }
 
 func (scanner *usageScanner) applyAnthropicUsage(usage anthropicUsagePayload, accumulateOutput bool) {
+	if usage.CacheCreation != nil {
+		scanner.anthropicCacheWrite1h = usage.CacheCreation.OneHour
+	}
 	if usage.InputTokens != nil {
 		scanner.anthropicInput = usage.InputTokens
 		scanner.anthropicSeen = true
@@ -378,7 +410,7 @@ func (scanner *usageScanner) applyAnthropicUsage(usage anthropicUsagePayload, ac
 	}
 	if usage.OutputTokens != nil {
 		if accumulateOutput {
-			scanner.anthropicOutput += *usage.OutputTokens
+			scanner.anthropicOutput = max(scanner.anthropicOutput, *usage.OutputTokens)
 		} else {
 			scanner.anthropicOutput = *usage.OutputTokens
 		}
@@ -388,6 +420,16 @@ func (scanner *usageScanner) applyAnthropicUsage(usage anthropicUsagePayload, ac
 
 func (scanner *usageScanner) parseGemini(document map[string]json.RawMessage) {
 	scanner.noteOutputID(document["responseId"])
+	var candidates []struct {
+		FinishReason string `json:"finishReason"`
+	}
+	if json.Unmarshal(document["candidates"], &candidates) == nil {
+		for _, c := range candidates {
+			if c.FinishReason != "" {
+				scanner.complete = true
+			}
+		}
+	}
 	raw, ok := document["usageMetadata"]
 	if !ok || len(raw) == 0 || string(raw) == "null" {
 		return
@@ -397,6 +439,7 @@ func (scanner *usageScanner) parseGemini(document map[string]json.RawMessage) {
 		CandidatesTokenCount    *int `json:"candidatesTokenCount"`
 		TotalTokenCount         *int `json:"totalTokenCount"`
 		CachedContentTokenCount *int `json:"cachedContentTokenCount"`
+		ThoughtsTokenCount      int  `json:"thoughtsTokenCount"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return
@@ -406,7 +449,7 @@ func (scanner *usageScanner) parseGemini(document map[string]json.RawMessage) {
 	}
 	scanner.usage = normalizeOpenAIStyleUsage(
 		*payload.PromptTokenCount,
-		*payload.CandidatesTokenCount,
+		*payload.CandidatesTokenCount+payload.ThoughtsTokenCount,
 		*payload.TotalTokenCount,
 		payload.CachedContentTokenCount,
 	)
@@ -513,4 +556,14 @@ func (writer *usageScanningWriter) FlushError() error {
 
 func (writer *usageScanningWriter) Unwrap() http.ResponseWriter {
 	return writer.ResponseWriter
+}
+
+func audioTokensFromDetails(raw json.RawMessage) *int {
+	var details struct {
+		Audio *int `json:"audio_tokens"`
+	}
+	if json.Unmarshal(raw, &details) != nil {
+		return nil
+	}
+	return details.Audio
 }

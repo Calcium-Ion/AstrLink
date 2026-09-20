@@ -4,7 +4,6 @@ use crate::failure_policy::{
 use std::{
     collections::HashSet,
     fmt::Write as _,
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
@@ -226,6 +225,7 @@ fn sidecar_args(
     inference_port: u16,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
+    use_system_proxy: bool,
 ) -> Result<Vec<String>, String> {
     let data_directory = data_directory
         .to_str()
@@ -237,6 +237,7 @@ fn sidecar_args(
         data_directory.to_string(),
         "--inference-listen".to_string(),
         format!("127.0.0.1:{inference_port}"),
+        "--inference-port-fallback".to_string(),
         "--control-listen".to_string(),
         "127.0.0.1:0".to_string(),
         "--control-token-stdin".to_string(),
@@ -244,22 +245,11 @@ fn sidecar_args(
         max_concurrent_inspections.to_string(),
         "--response-start-timeout-seconds".to_string(),
         response_start_timeout_seconds.to_string(),
+        format!(
+            "--outbound-proxy={}",
+            if use_system_proxy { "system" } else { "direct" }
+        ),
     ])
-}
-
-fn ensure_inference_port_available(port: u16, locale: Locale) -> Result<(), String> {
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-    TcpListener::bind(address)
-        .map(drop)
-        .map_err(|error| inference_port_error(port, &error, locale))
-}
-
-fn inference_port_error(port: u16, error: &std::io::Error, locale: Locale) -> String {
-    i18n::t(
-        locale,
-        "host.sidecar.portBusy",
-        &[("port", &port.to_string()), ("error", &error.to_string())],
-    )
 }
 
 fn recovery_delay(attempt: u8) -> Duration {
@@ -375,6 +365,12 @@ pub struct CapabilitiesResponse {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct InferencePortFallback {
+    pub requested_port: u16,
+    pub active_port: u16,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct CoreSnapshot {
     pub phase: CorePhase,
     pub pid: Option<u32>,
@@ -383,6 +379,7 @@ pub struct CoreSnapshot {
     pub version: Option<VersionResponse>,
     pub capabilities: Option<CapabilitiesResponse>,
     pub last_error: Option<String>,
+    pub inference_port_fallback: Option<InferencePortFallback>,
     pub recovery_attempt: u8,
     pub recovery_scheduled_in_ms: Option<u64>,
 }
@@ -400,8 +397,10 @@ struct CoreInner {
     last_error: Option<String>,
     app_handle: Option<AppHandle>,
     inference_port: u16,
+    started_inference_port: Option<u16>,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
+    use_system_proxy: bool,
     locale: Locale,
     auto_recover: bool,
     recovery_attempt: u8,
@@ -426,8 +425,10 @@ impl Default for CoreInner {
             last_error: None,
             app_handle: None,
             inference_port: 8317,
+            started_inference_port: None,
             max_concurrent_inspections: 16,
             response_start_timeout_seconds: 0,
+            use_system_proxy: true,
             locale: Locale::En,
             auto_recover: true,
             recovery_attempt: 0,
@@ -440,6 +441,17 @@ impl Default for CoreInner {
 }
 
 impl CoreInner {
+    fn inference_port_fallback(&self) -> Option<InferencePortFallback> {
+        let requested_port = self.started_inference_port?;
+        let active_port = reqwest::Url::parse(&self.ready.as_ref()?.inference_url)
+            .ok()?
+            .port_or_known_default()?;
+        (requested_port != active_port).then_some(InferencePortFallback {
+            requested_port,
+            active_port,
+        })
+    }
+
     fn lifecycle(&self) -> LifecycleState {
         LifecycleState {
             generation: self.generation,
@@ -458,6 +470,7 @@ impl CoreInner {
 
     fn clear_handshake(&mut self) {
         self.ready = None;
+        self.started_inference_port = None;
         self.health = None;
         self.version = None;
         self.capabilities = None;
@@ -526,6 +539,7 @@ impl CoreManager {
             inner.phase = CorePhase::Spawning;
             inner.pid = None;
             inner.clear_handshake();
+            inner.started_inference_port = Some(inner.inference_port);
             inner.last_error = None;
             inner.clear_process_guard();
             clear_published_control_session();
@@ -552,6 +566,7 @@ impl CoreManager {
                 inner.inference_port,
                 inner.max_concurrent_inspections,
                 inner.response_start_timeout_seconds,
+                inner.use_system_proxy,
             ) {
                 Ok(arguments) => arguments,
                 Err(message) => {
@@ -559,12 +574,6 @@ impl CoreManager {
                     return Err(message);
                 }
             };
-            if let Err(message) =
-                ensure_inference_port_available(inner.inference_port, inner.locale)
-            {
-                Self::fail_generation_locked(&mut inner, generation, message.clone());
-                return Err(message);
-            }
 
             let command = match app.shell().sidecar("astrlink-core") {
                 Ok(command) => command.args(arguments),
@@ -701,6 +710,7 @@ impl CoreManager {
         inference_port: u16,
         max_concurrent_inspections: u16,
         response_start_timeout_seconds: u32,
+        use_system_proxy: bool,
         auto_recover: bool,
         locale: Locale,
     ) {
@@ -708,6 +718,7 @@ impl CoreManager {
         inner.inference_port = inference_port;
         inner.max_concurrent_inspections = max_concurrent_inspections;
         inner.response_start_timeout_seconds = response_start_timeout_seconds;
+        inner.use_system_proxy = use_system_proxy;
         inner.locale = locale;
         inner.auto_recover = auto_recover;
         if !auto_recover {
@@ -908,6 +919,7 @@ impl CoreManager {
             version: inner.version.clone(),
             capabilities: inner.capabilities.clone(),
             last_error: inner.last_error.clone(),
+            inference_port_fallback: inner.inference_port_fallback(),
             recovery_attempt: inner.recovery_attempt,
             recovery_scheduled_in_ms: inner.recovery_scheduled_at.map(|deadline| {
                 deadline
@@ -977,6 +989,12 @@ impl CoreManager {
                 return;
             }
             inner.ready = Some(ready.clone());
+            if let Some(fallback) = inner.inference_port_fallback() {
+                eprintln!(
+                    "inference port {} is occupied; using 127.0.0.1:{} for this run",
+                    fallback.requested_port, fallback.active_port
+                );
+            }
             inner.phase = CorePhase::Handshaking;
         }
 
@@ -1216,6 +1234,42 @@ impl CoreManager {
             .map_err(|error| format!("access token list returned invalid JSON: {error}"))
     }
 
+    pub async fn get_usage_summary(
+        &self,
+        from: &str,
+        to: &str,
+        time_zone: &str,
+        bucket: &str,
+    ) -> Result<serde_json::Value, String> {
+        let path = format!(
+            "/control/v1/usage-summary?from={}&to={}&time_zone={}&bucket={}",
+            percent_encode_query(from),
+            percent_encode_query(to),
+            percent_encode_query(time_zone),
+            percent_encode_query(bucket)
+        );
+        let (_, body) = self
+            .authenticated_control(Method::GET, &path, None, None)
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("usage summary returned invalid JSON: {error}"))
+    }
+
+    pub async fn list_access_token_usage(
+        &self,
+        today_from: &str,
+    ) -> Result<serde_json::Value, String> {
+        let path = format!(
+            "/control/v1/access-token-usage?today_from={}",
+            percent_encode_query(today_from)
+        );
+        let (_, body) = self
+            .authenticated_control(Method::GET, &path, None, None)
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("access token usage returned invalid JSON: {error}"))
+    }
+
     pub async fn create_access_token(&self, name: &str) -> Result<serde_json::Value, String> {
         let (_, body) = self
             .authenticated_control(
@@ -1378,6 +1432,39 @@ impl CoreManager {
         parse_privacy_model_installation(&body)
     }
 
+    pub async fn pause_privacy_model_installation(
+        &self,
+        installation_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.privacy_model_download_action(installation_id, "pause")
+            .await
+    }
+
+    pub async fn resume_privacy_model_installation(
+        &self,
+        installation_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.privacy_model_download_action(installation_id, "resume")
+            .await
+    }
+
+    async fn privacy_model_download_action(
+        &self,
+        installation_id: &str,
+        action: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_privacy_model_id(installation_id)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::POST,
+                &format!("{PRIVACY_MODELS_PATH}/{installation_id}/{action}"),
+                None,
+                None,
+            )
+            .await?;
+        parse_privacy_model_installation(&body)
+    }
+
     pub async fn delete_privacy_model_installation(
         &self,
         installation_id: &str,
@@ -1452,6 +1539,58 @@ impl CoreManager {
         )
         .await?;
         Ok(())
+    }
+
+    pub async fn pricing(
+        &self,
+        operation: &str,
+        service_id: Option<&str>,
+        input: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let base = "/control/v1/pricing";
+        let (method, path, body) = match operation {
+            "status" | "catalog" => (Method::GET, format!("{base}/{operation}"), None),
+            "sync" => (Method::POST, format!("{base}/sync"), None),
+            "report" | "configure" | "backfill" => {
+                let id = service_id.ok_or("service ID is required")?;
+                validate_resource_id(id)?;
+                let path = format!("{base}/services/{id}");
+                match operation {
+                    "configure" => (
+                        Method::PUT,
+                        path,
+                        Some(input.ok_or("pricing configuration is required")?),
+                    ),
+                    "backfill" => (Method::POST, format!("{path}/backfill"), None),
+                    _ => (Method::GET, path, None),
+                }
+            }
+            "summary" => {
+                let value = input.as_ref().ok_or("billing range is required")?;
+                let from = value
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .ok_or("from is required")?;
+                let to = value
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .ok_or("to is required")?;
+                (
+                    Method::GET,
+                    format!(
+                        "{base}/summary?from={}&to={}",
+                        percent_encode_query(from),
+                        percent_encode_query(to)
+                    ),
+                    None,
+                )
+            }
+            _ => return Err("unsupported pricing operation".into()),
+        };
+        let (_, body) = self
+            .authenticated_control(method, &path, body, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "pricing returned invalid JSON".into())
     }
 
     pub async fn get_service_usage(&self, service_id: &str) -> Result<serde_json::Value, String> {
@@ -2146,6 +2285,9 @@ fn is_request_record_list_path(path: &str) -> bool {
 
 fn control_request_timeout(method: &Method, path: &str) -> Duration {
     let path = control_path(path);
+    if method == Method::POST && path.starts_with("/control/v1/pricing/") {
+        return Duration::from_secs(150);
+    }
     if method == Method::POST
         && (path == SERVICE_MODEL_PROBES_PATH
             || (path.starts_with(&format!("{SERVICES_PATH}/")) && path.ends_with("/probe-models")))
@@ -2155,7 +2297,8 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     if method == Method::POST
         && (path == PRIVACY_MODEL_PROBE_PATH
             || path == LOCAL_PRIVACY_MODEL_PROBE_PATH
-            || path == PRIVACY_MODELS_PATH)
+            || path == PRIVACY_MODELS_PATH
+            || (path.starts_with(&format!("{PRIVACY_MODELS_PATH}/")) && path.ends_with("/resume")))
     {
         return PRIVACY_MODEL_METADATA_TIMEOUT;
     }
@@ -2164,6 +2307,9 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     }
     if (method == Method::PATCH && path == "/control/v1/policies/policy_privacy_default")
         || (method == Method::DELETE && path.starts_with("/control/v1/privacy-models/"))
+        || (method == Method::POST
+            && path.starts_with(&format!("{PRIVACY_MODELS_PATH}/"))
+            && path.ends_with("/pause"))
     {
         return PRIVACY_MUTATION_TIMEOUT;
     }
@@ -3584,7 +3730,7 @@ fn validate_privacy_model_installation(installation: &serde_json::Value) -> Resu
     let status = object["status"]
         .as_str()
         .ok_or_else(|| "privacy model installation status must be a string".to_string())?;
-    if !matches!(status, "downloading" | "ready" | "error") {
+    if !matches!(status, "downloading" | "paused" | "ready" | "error") {
         return Err("privacy model installation status is invalid".to_string());
     }
     let downloaded = safe_json_integer(
@@ -3618,7 +3764,7 @@ fn validate_privacy_model_installation(installation: &serde_json::Value) -> Resu
         _ => return Err("privacy model installation installed_at is invalid".to_string()),
     };
     match status {
-        "downloading" if error.is_none() && installed_at.is_none() => {}
+        "downloading" | "paused" if error.is_none() && installed_at.is_none() => {}
         "ready"
             if error.is_none() && installed_at.is_some() && total > 0 && downloaded == total => {}
         "error" if error.is_some() && installed_at.is_none() => {}
@@ -5972,6 +6118,32 @@ mod tests {
     }
 
     #[test]
+    fn accepts_paused_model_and_rejects_inconsistent_terminal_fields() {
+        let mut installation = privacy_installation_value();
+        installation["status"] = serde_json::json!("paused");
+        assert!(validate_privacy_model_installation(&installation).is_ok());
+        installation["error"] = serde_json::json!("download_failed");
+        assert!(validate_privacy_model_installation(&installation).is_err());
+        installation["error"] = serde_json::Value::Null;
+        installation["installed_at"] = serde_json::json!("2026-09-19T00:00:00Z");
+        assert!(validate_privacy_model_installation(&installation).is_err());
+        assert_eq!(
+            control_request_timeout(
+                &Method::POST,
+                &format!("{PRIVACY_MODELS_PATH}/model_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/resume")
+            ),
+            PRIVACY_MODEL_METADATA_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(
+                &Method::POST,
+                &format!("{PRIVACY_MODELS_PATH}/model_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pause")
+            ),
+            PRIVACY_MUTATION_TIMEOUT
+        );
+    }
+
+    #[test]
     fn rejects_privacy_model_contract_boundary_drift() {
         let empty_labels = serde_json::to_vec(&serde_json::json!({
             "repo_id": "example/privacy-filter",
@@ -6172,7 +6344,7 @@ mod tests {
 
     #[test]
     fn sidecar_receives_pid_and_data_path_but_not_control_token_in_arguments() {
-        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0)
+        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0, true)
             .expect("test path should be valid UTF-8");
         assert_eq!(
             arguments,
@@ -6183,6 +6355,7 @@ mod tests {
                 "/tmp/astrlink-data".to_string(),
                 "--inference-listen".to_string(),
                 "127.0.0.1:8317".to_string(),
+                "--inference-port-fallback".to_string(),
                 "--control-listen".to_string(),
                 "127.0.0.1:0".to_string(),
                 "--control-token-stdin".to_string(),
@@ -6190,8 +6363,39 @@ mod tests {
                 "16".to_string(),
                 "--response-start-timeout-seconds".to_string(),
                 "0".to_string(),
+                "--outbound-proxy=system".to_string(),
             ]
         );
+        let direct = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0, false)
+            .expect("valid path");
+        assert!(direct.iter().any(|arg| arg == "--outbound-proxy=direct"));
+        assert!(!direct.iter().any(|arg| arg == "--outbound-proxy=system"));
+    }
+
+    #[test]
+    fn fallback_notice_tracks_the_started_port_and_clears_on_stop() {
+        let manager = CoreManager::new();
+        {
+            let mut inner = manager.lock_inner();
+            inner.started_inference_port = Some(9000);
+            inner.ready =
+                Some(parse_ready_announcement(&ready_line("http://127.0.0.1:43210")).unwrap());
+        }
+        // Saving new preferences must not rewrite the reason for this run's fallback.
+        manager.configure(8317, 16, 0, true, true, Locale::En);
+        let fallback = manager.snapshot().inference_port_fallback.unwrap();
+        assert_eq!(fallback.requested_port, 9000);
+        assert_eq!(fallback.active_port, 8317);
+        assert_eq!(manager.lock_inner().inference_port, 8317);
+        manager.lock_inner().clear_handshake();
+        assert!(manager.snapshot().inference_port_fallback.is_none());
+        {
+            let mut inner = manager.lock_inner();
+            inner.started_inference_port = Some(8317);
+            inner.ready =
+                Some(parse_ready_announcement(&ready_line("http://127.0.0.1:43210")).unwrap());
+        }
+        assert!(manager.snapshot().inference_port_fallback.is_none());
     }
 
     #[test]
@@ -6202,17 +6406,6 @@ mod tests {
         assert_eq!(recovery_delay(4), Duration::from_secs(8));
         assert_eq!(recovery_delay(5), Duration::from_secs(16));
         assert_eq!(recovery_delay(99), Duration::from_secs(16));
-    }
-
-    #[test]
-    fn occupied_inference_port_has_a_clear_error() {
-        let error = inference_port_error(
-            8317,
-            &std::io::Error::new(std::io::ErrorKind::AddrInUse, "address in use"),
-            Locale::ZhCN,
-        );
-        assert!(error.contains("8317"));
-        assert!(error.contains("占用或不可用"));
     }
 
     #[cfg(target_os = "linux")]

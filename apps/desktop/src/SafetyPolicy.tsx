@@ -3,8 +3,8 @@ import {
   ArrowUpRight,
   Boxes,
   Flask as FlaskConical,
-  SlidersHorizontal as ListFilter,
   LockKeyhole,
+  Plus,
   RotateCcw,
   ScanText as ScanLine,
   SlidersHorizontal,
@@ -13,7 +13,10 @@ import {
 import { Panel, PanelFooter, PanelHeader } from "@/components/Panel";
 import { ChoiceCard } from "@/components/ChoiceCard";
 import { Field } from "@/components/Field";
+import { ListToolbar } from "@/components/ListToolbar";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
+import { HelpPopover } from "@/components/HelpPopover";
+import { SplitWorkspace } from "@/components/SplitWorkspace";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
@@ -31,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup } from "@/components/ui/radio-group";
 import {
@@ -42,7 +46,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+import { Textarea, selectTextareaRange } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 import {
@@ -55,6 +59,8 @@ import {
   getPrivacyRegexBuiltinRules,
   installPrivacyModel,
   listPrivacyModelInstallations,
+  pausePrivacyModelInstallation,
+  resumePrivacyModelInstallation,
   probeLocalPrivacyModel,
   probePrivacyModel,
   updatePrivacyPolicy,
@@ -79,10 +85,8 @@ import {
   type PrivacyAllowlistRule,
   type PrivacyAllowlistType,
   type PrivacyCatalogModel,
-  type PrivacyDetector,
-  type PrivacyDryRunFinding,
   type PrivacyDryRunProtocol,
-  type PrivacyDryRunResult,
+  type PrivacyDryRunResult as PrivacyDryRunResultData,
   type PrivacyKindRule,
   type PrivacyLabelMapping,
   type PrivacyModelInstallation,
@@ -94,12 +98,13 @@ import {
   type PrivacyRegexDetectorKind,
   type PrivacyRegexRule,
   type PrivacyRegexSource,
-  type PrivacySuppressionReason,
 } from "./privacy-policy-model";
 import { PageHeader } from "./PageHeader";
+import { PrivacyDryRunResult, type CompletedPrivacyDryRun } from "./PrivacyDryRunResult";
+import type { DryRunTextSpan } from "./privacy-dry-run-model";
 
 type SafetyPolicyStatus = "blocked" | "loading" | "ready" | "error";
-type WorkspaceView = "policy" | "dryRun" | "models";
+type WorkspaceView = "detection" | "redaction" | "dryRun" | "models";
 type ModelView = "catalog" | "installed" | "custom" | "local";
 type ProbeView = Extract<ModelView, "custom" | "local">;
 
@@ -166,39 +171,115 @@ function dryRunSampleDescription(id: string): string {
 const dryRunSamplePresets: ReadonlyArray<DryRunSamplePreset> = [
   {
     id: "mixed-contact",
-    text: "请联系虚构用户 Alice：alice@example.com，电话 +65 6123 4567；测试卡号 4242 4242 4242 4242。",
+    text: `请帮我整理这条售后工单，并拟一封回复邮件。
+
+客户：陈宇
+联系邮箱：chen.yu@outlook.com
+联系电话：+86 138 7426 5903
+订单号：SO-20260918-0472
+客户反馈：上周收到的显示器右下角有亮点，重启和更换线缆后仍然存在。请先通过邮件确认换货流程，工作日 18 点后可以电话联系。`,
   },
   {
     id: "account",
-    text: "请将退款打到测试账户，account number: 12345678901；IBAN 为 GB82WEST12345698765432。",
+    text: `请从下面的付款邮件中提取收款信息，整理成财务审批摘要。
+
+Hi Finance,
+Please reimburse GBP 486.50 for my train tickets and hotel stay. The receipts are attached.
+Beneficiary: Olivia Bennett
+Bank: NatWest
+Account number: 31926819
+IBAN: GB29NWBK60161331926819
+Card used for the booking: 5200 8282 8282 8210
+Please email the remittance advice to olivia.bennett@outlook.com once the transfer is complete.
+Thanks,
+Olivia`,
   },
   {
     id: "network",
-    text: "故障信息：客户端 IP 192.0.2.10，回调地址 https://private.example/callback?ticket=demo。",
+    text: `订单服务发布后间歇性返回 502，请根据这段日志分析可能的原因，并给出排查顺序。
+
+2026-09-19T09:42:18+08:00 ERROR upstream request timed out
+service=order-api instance=order-api-7c8f6b
+client_ip=10.24.8.16
+upstream=http://172.16.12.8:8080/api/orders
+callback_url=https://hooks.example.com/payments/notify?merchant_id=M839204
+request_id=req_82f194ab3c7d
+connect_time_ms=8 response_time_ms=30000 retry_count=3`,
   },
   {
     id: "secret",
-    text: '以下均为虚构测试值：api_key=example_test_key_1234567890，password="demo_password_123456"。',
+    text: `这份应用配置部署后一直报数据库连接失败，帮我检查字段和连接参数是否有问题。
+
+openai:
+  base_url: https://api.openai.com/v1
+  api_key: sk-proj-8Qm2V7n4R9p6X3k5L1c8D4s7H2w9F6j3
+database:
+  host: 10.24.6.12
+  port: 5432
+  user: billing_service
+  password: R7n4Q2v8K6m9X3p5
+  database: billing
+webhook:
+  secret: whsec_L2m8Q4v7N9c3R6p1X5k8D2s4`,
   },
   {
     id: "zh-profile",
-    text: "以下为虚构资料：李明住在上海市测试区示例路 88 号，出生日期为 1990-01-02，邮箱 liming@example.cn。",
+    text: `请根据下面的信息生成入职登记表，并列出还需要补充的材料。
+
+姓名：周雨桐
+出生日期：1993 年 7 月 16 日
+手机：+86 136 8247 5902
+邮箱：yutong.zhou@outlook.com
+现住址：杭州市西湖区文三路 268 号 3 幢 602 室
+入职日期：2026 年 10 月 12 日
+紧急联系人：周建国（父亲）
+紧急联系电话：+86 139 2764 8305
+岗位：产品设计师，入职当天需要领取电脑和门禁卡。`,
   },
   {
     id: "en-profile",
-    text: "Fictional profile: Alice Doe lives at 123 Example Street, Testville, and was born on January 2, 1990.",
+    text: `Draft a hotel check-in email using the booking details below. Ask whether early check-in and luggage storage are available.
+
+Guest: Emily Carter
+Date of birth: 12 March 1988
+Home address: 27 Willow Lane, Bristol BS8 2JQ, United Kingdom
+Email: emily.carter@outlook.com
+Mobile: +44 7700 900742
+Booking reference: HTL-928471
+Arrival: 18 October 2026, around 10:30 a.m.
+Departure: 21 October 2026
+The guest would prefer a quiet room away from the lift.`,
   },
   {
     id: "mixed-language",
-    text: "虚构客户王小明于 2025-08-01 提交 ticket，电话 +86 138 0013 8000，邮箱 wang@example.com，访问 https://support.example/ticket/42。",
+    text: `把下面的客户会议记录整理成一封英文跟进邮件，保留报价和交付时间的要求。
+
+9 月 19 日，陈宇与 Sophie Martin 讨论了下一批设备的采购安排。
+Sophie: Please send the revised quote to sophie.martin@outlook.com and cc daniel.ross@gmail.com. We need delivery before October 15.
+陈宇：先按 120 台出报价，运费单独列出来。交付时间如果有变化，直接打我手机 +86 138 7426 5903。
+跟进链接：https://crm.example.com/deals/D-928471
+待办：周三前确认库存，再由 Sophie 审核采购单。`,
   },
   {
     id: "clean",
-    text: "请把这段公开产品说明总结成三点，并给出一个简短标题。",
+    text: `请将下面的更新说明整理成一段面向用户的发布公告，语气简洁，不要添加原文没有的功能。
+
+本次更新支持将多份文档合并导出，导出时可以选择是否保留目录和页码。搜索结果新增按文件类型筛选，并优化了大文件的打开速度。
+修复了离线状态下编辑内容偶尔无法自动保存的问题。已打开的文档会继续保留，更新完成后无需重新导入。`,
   },
   {
     id: "numeric-boundary",
-    text: "订单号 1234567890，测试卡号 4242 4242 4242 4241，地址 999.999.1.1；这些都不应按高置信度 PII 处理。",
+    text: `请分析这段批处理日志的性能瓶颈，重点看耗时、吞吐量和重试次数。
+
+job_id=batch-20260919-0842
+订单流水号：2026091900014827
+version=2.18.3
+http_status=504
+elapsed_ms=30000 retry_count=3
+processed_rows=128000 failed_rows=42
+batch_size=500 memory_limit_mb=2048
+unit_price=129.90 total_amount=15588.00
+任务在第三次重试后完成，但平均每秒处理行数比上一批下降了约两成。`,
   },
 ];
 
@@ -330,15 +411,7 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-function prettyJSON(value: string): string {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
-  }
-}
-
-function summarizeDryRunFindings(result: PrivacyDryRunResult): string {
+function summarizeDryRunFindings(result: PrivacyDryRunResultData): string {
   if (result.findings.length === 0) {
     return i18n.t("privacy.noHit");
   }
@@ -352,65 +425,11 @@ function summarizeDryRunFindings(result: PrivacyDryRunResult): string {
     .join(" · ");
 }
 
-function dryRunKindLabel(kind: CanonicalPrivacyKind): string {
-  return canonicalKindLabel(kind);
-}
-
-function dryRunLiveSummary(result: PrivacyDryRunResult): string {
+function dryRunLiveSummary(result: PrivacyDryRunResultData): string {
   return i18n.t("safety.dryRunDone", {
     action: actionLabel(result.decision),
     summary: summarizeDryRunFindings(result),
   });
-}
-
-function dryRunConfidenceReason(
-  confidence: number,
-  minConfidence: number,
-  detector: PrivacyDetector,
-  mode: "hit" | "suppressed",
-): string {
-  if (detector === "regex" && mode === "hit") {
-    return i18n.t("safety.regexConfidenceN/A");
-  }
-  const comparison = mode === "hit" ? "≥" : "<";
-  return `${confidence.toFixed(2)} ${comparison} ${minConfidence.toFixed(2)}`;
-}
-
-function suppressionReasonLabel(reason: PrivacySuppressionReason): string {
-  switch (reason) {
-    case "low_confidence":
-      return i18n.t("safety.belowConfidence");
-    case "kind_disabled":
-      return i18n.t("safety.kindDisabled");
-    case "allowlisted":
-      return i18n.t("safety.allowlisted");
-    case "placeholder":
-      return i18n.t("safety.alreadyFake");
-    case "unrepresentable":
-      return i18n.t("safety.poolExhausted");
-  }
-}
-
-/**
- * A suppressed finding used to mean exactly one thing—too low a confidence—so
- * the reason was derivable from the score. It now has several causes, and only
- * the low-confidence one is about the score.
- */
-function dryRunSuppressionReason(
-  finding: PrivacyDryRunFinding,
-  minConfidence: number,
-  detector: PrivacyDetector,
-): string {
-  const reason = finding.reason;
-  if (reason === undefined || reason === "low_confidence") {
-    return dryRunConfidenceReason(
-      finding.confidence,
-      minConfidence,
-      detector,
-      "suppressed",
-    );
-  }
-  return suppressionReasonLabel(reason);
 }
 
 function recommendedVariant(
@@ -840,16 +859,21 @@ function PolicySection({
   actions,
   description,
   children,
+  className,
 }: {
   title: string;
   icon: AnimatedIcon;
+  className?: string;
   actions?: ReactNode;
   description?: string;
   children: ReactNode;
 }) {
   return (
-    <Panel className="@container">
-      <PanelHeader actions={actions} className="items-center">
+    <Panel className={cn("@container", className)}>
+      <PanelHeader
+        actions={actions}
+        className="shrink-0 flex-wrap items-center [&>div:first-child]:basis-48 [&>div:first-child]:flex-1"
+      >
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <Icon aria-hidden="true" className="size-4 shrink-0 text-primary" />
           {title}
@@ -876,7 +900,8 @@ export function SafetyPolicy({
   const [installations, setInstallations] = useState<
     PrivacyModelInstallation[]
   >([]);
-  const [workspace, setWorkspace] = useState<WorkspaceView>("policy");
+  const [workspace, setWorkspace] = useState<WorkspaceView>("detection");
+  const [allowlistQuery, setAllowlistQuery] = useState("");
   const [view, setView] = useState<ModelView>("catalog");
   const [selectedVariants, setSelectedVariants] = useState<
     Record<string, string>
@@ -902,7 +927,7 @@ export function SafetyPolicy({
   const [dryRunSample, setDryRunSample] = useState(defaultDryRunSample);
   const [dryRunBusy, setDryRunBusy] = useState(false);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
-  const [dryRunResult, setDryRunResult] = useState<PrivacyDryRunResult | null>(
+  const [dryRunResult, setDryRunResult] = useState<CompletedPrivacyDryRun | null>(
     null,
   );
   const [minConfidenceDraft, setMinConfidenceDraft] = useState("");
@@ -926,6 +951,8 @@ export function SafetyPolicy({
   const pollRequestRef = useRef(0);
   const dryRunRequestRef = useRef(0);
   const dryRunResultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const dryRunWorkspaceRef = useRef<HTMLDivElement>(null);
+  const dryRunInputRef = useRef<HTMLTextAreaElement>(null);
   const persistedMinConfidence = record?.policy.min_confidence;
   const persistedCustomRegexRules = record?.policy.custom_regex_rules;
   const persistedAllowlistRules = record?.policy.allowlist_rules;
@@ -957,7 +984,17 @@ export function SafetyPolicy({
 
   useEffect(() => {
     if (dryRunResult === null) return;
-    dryRunResultHeadingRef.current?.focus();
+    const heading = dryRunResultHeadingRef.current;
+    heading?.focus({ preventScroll: true });
+    const workspace = dryRunWorkspaceRef.current;
+    const panel = heading?.closest<HTMLElement>('[data-slot="panel"]');
+    const resultScroller = panel?.querySelector<HTMLElement>("[data-tab-scroller]");
+    if (resultScroller) resultScroller.scrollTop = 0;
+    // Stacked panels need to reveal the completed result. Only move their inner
+    // scroller; keep the page header and navigation fixed.
+    if (workspace && panel && workspace.scrollHeight > workspace.clientHeight) {
+      workspace.scrollTop += panel.getBoundingClientRect().top - workspace.getBoundingClientRect().top;
+    }
   }, [dryRunResult]);
 
   const load = async (generation: number) => {
@@ -1005,7 +1042,8 @@ export function SafetyPolicy({
     setPendingModelAction(null);
     setPendingInstallation(null);
     setStreamingDemoOpen(false);
-    setWorkspace("policy");
+    setWorkspace("detection");
+    setAllowlistQuery("");
     setProbe(null);
     setProbeView(null);
     setCustomMappingOpen(false);
@@ -1336,6 +1374,7 @@ export function SafetyPolicy({
       setError(t("safety.tooManyAllowlist", { max: MAX_PRIVACY_ALLOWLIST_RULES }));
       return;
     }
+    setAllowlistQuery("");
     setAllowlistDrafts((current) => [...current, ""]);
     setAllowlistPending(true);
   };
@@ -1471,6 +1510,13 @@ export function SafetyPolicy({
     setDryRunResult(null);
   };
 
+  const locateDryRunSpan = (span: DryRunTextSpan) => {
+    const input = dryRunInputRef.current;
+    if (!input || input.value !== span.text) return;
+    if (dryRunWorkspaceRef.current) dryRunWorkspaceRef.current.scrollTop = 0;
+    selectTextareaRange(input, span.start, span.end);
+  };
+
   const runDryRun = async () => {
     if (
       !isReady ||
@@ -1486,13 +1532,11 @@ export function SafetyPolicy({
       const message = t("safety.dryRunOff");
       setDryRunResult(null);
       setDryRunError(message);
-      setError(message);
       return;
     }
-    const sample = dryRunSample.trim();
-    if (sample === "") {
+    const sample = dryRunSample;
+    if (sample.trim() === "") {
       setDryRunError(t("privacy.sampleRequired"));
-      setError(t("privacy.sampleRequired"));
       return;
     }
     if (utf8ByteLength(sample) > MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES) {
@@ -1500,7 +1544,6 @@ export function SafetyPolicy({
         kib: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES / 1024,
       });
       setDryRunError(message);
-      setError(message);
       return;
     }
     if (
@@ -1509,7 +1552,6 @@ export function SafetyPolicy({
       !selectedModelReady
     ) {
       setDryRunError(t("safety.dryRunModelNotReady"));
-      setError(t("safety.dryRunModelNotReady"));
       return;
     }
     const generation = generationRef.current;
@@ -1536,7 +1578,12 @@ export function SafetyPolicy({
       ) {
         return;
       }
-      setDryRunResult(result);
+      setDryRunResult({
+        ...result,
+        protocol: dryRunProtocol,
+        detector: record.policy.detector,
+        minConfidence: record.policy.min_confidence,
+      });
       setDryRunError(null);
       setWorkspace("dryRun");
     } catch (caught) {
@@ -1549,7 +1596,6 @@ export function SafetyPolicy({
       setDryRunResult(null);
       const message = messageOf(caught, t("safety.dryRunFailed"));
       setDryRunError(message);
-      setError(message);
     } finally {
       if (
         generationRef.current === generation &&
@@ -1703,6 +1749,31 @@ export function SafetyPolicy({
         probeRequestRef.current === request
       ) {
         setCatalogProbeBusy(null);
+      }
+    }
+  };
+
+  const changeDownloadState = async (installation: PrivacyModelInstallation) => {
+    if (!isReady || coreSessionKey === null || operationBusy !== null) return;
+    const pausing = installation.status === "downloading";
+    const generation = generationRef.current;
+    const request = ++operationRequestRef.current;
+    setOperationBusy(installation.id);
+    setError(null);
+    try {
+      const updated = await (pausing
+        ? pausePrivacyModelInstallation(installation.id)
+        : resumePrivacyModelInstallation(installation.id));
+      if (generationRef.current !== generation || operationRequestRef.current !== request) return;
+      // Invalidate progress requests issued before this action completed.
+      pollRequestRef.current += 1;
+      setInstallations((current) => mergeInstallation(current, updated));
+    } catch (actionError) {
+      if (generationRef.current !== generation || operationRequestRef.current !== request) return;
+      setError(messageOf(actionError, t(pausing ? "safety.pauseFailed" : "safety.resumeFailed")));
+    } finally {
+      if (generationRef.current === generation && operationRequestRef.current === request) {
+        setOperationBusy(null);
       }
     }
   };
@@ -1940,6 +2011,20 @@ export function SafetyPolicy({
   }
 
   const policy = record?.policy ?? null;
+  const normalizedAllowlistQuery = allowlistQuery.trim().toLocaleLowerCase();
+  const visibleAllowlistRules = [
+    ...(policy?.allowlist_rules ?? []),
+    ...(allowlistPending ? [{ type: allowlistPendingType, value: "" }] : []),
+  ]
+    // Keep the persisted index: filtering must never redirect an edit or removal.
+    .map((rule, index) => ({ rule, index }))
+    .filter(({ rule, index }) =>
+      index === policy?.allowlist_rules.length ||
+      !normalizedAllowlistQuery ||
+      `${allowlistTypeLabel(rule.type)} ${rule.value}`
+        .toLocaleLowerCase()
+        .includes(normalizedAllowlistQuery),
+    );
   const cannotEnableLocalModel =
     policy?.enabled === false &&
     policy.detector === "local_model" &&
@@ -1983,6 +2068,7 @@ export function SafetyPolicy({
       data-testid="safety-policy"
     >
       <PageHeader
+        variant="compact"
         className="@max-[520px]:flex-col @max-[520px]:items-start @max-[520px]:gap-3"
         actions={
           <>
@@ -2071,14 +2157,19 @@ export function SafetyPolicy({
         >
           <TabsList
             aria-label={t("safety.workspace")}
-            className="h-9 w-fit shrink-0"
+            className="shrink-0"
+            scrollable
           >
-            <TabsTrigger onClick={() => setWorkspace("policy")} value="policy">
+            <TabsTrigger value="detection">
+              <ScanLine aria-hidden="true" />
+              {t("safety.detectionAndRestore")}
+            </TabsTrigger>
+            <TabsTrigger value="redaction">
               <SlidersHorizontal aria-hidden="true" />
-              {t("safety.tabPolicy")}
+              {t("safety.redactionRules")}
             </TabsTrigger>
             <TabsTrigger
-              aria-label={t("safety.dryRunResult")}
+              aria-label={t("safety.run")}
               onClick={() => setWorkspace("dryRun")}
               value="dryRun"
             >
@@ -2092,455 +2183,455 @@ export function SafetyPolicy({
           </TabsList>
 
           <TabsContent
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+            data-tab-scroller
             forceMount
-            hidden={workspace !== "policy"}
-            value="policy"
+            hidden={workspace !== "detection"}
+            value="detection"
           >
-            <div className="mx-auto grid w-full min-w-0 max-w-6xl items-start gap-4 pb-4 pr-1 @[760px]:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.3fr)]">
-              <div className="grid min-w-0 gap-4">
-                <PolicySection
-                  title={t("safety.detector")}
-                  icon={ScanLine}
-                  actions={
-                    !selectedModelReady ? (
-                      <Button
-                        className="h-auto gap-1 px-0 py-0 text-xs font-medium"
-                        onClick={() => {
-                          setWorkspace("models");
-                          setView(
-                            installations.length > 0 ? "installed" : "catalog",
-                          );
-                        }}
-                        size="sm"
-                        type="button"
-                        variant="link"
-                      >
-                        {t("safety.goToModels")}
-                        <ArrowUpRight aria-hidden="true" className="size-3.5" />
-                      </Button>
-                    ) : null
-                  }
-                >
-                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-                    <legend className="sr-only">{t("safety.detector")}</legend>
+            <div className="mx-auto grid w-full min-w-0 max-w-6xl items-start gap-4 pb-4 pr-1 @[880px]:grid-cols-2">
+              <PolicySection
+                title={t("safety.detector")}
+                description={t("safety.description")}
+                icon={ScanLine}
+                actions={
+                  !selectedModelReady ? (
+                    <Button
+                      className="h-auto gap-1 px-0 py-0 text-xs font-medium"
+                      onClick={() => {
+                        setWorkspace("models");
+                        setView(
+                          installations.length > 0 ? "installed" : "catalog",
+                        );
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="link"
+                    >
+                      {t("safety.goToModels")}
+                      <ArrowUpRight aria-hidden="true" className="size-3.5" />
+                    </Button>
+                  ) : null
+                }
+              >
+                <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+                  <legend className="sr-only">{t("safety.detector")}</legend>
+                  <RadioGroup
+                    className="grid min-w-0 grid-cols-2 gap-2"
+                    disabled={saving}
+                    onValueChange={(value) => {
+                      if (value === "regex") {
+                        useRegex();
+                      } else if (selectedInstallation !== null) {
+                        chooseInstallation(selectedInstallation);
+                      }
+                    }}
+                    value={policy.detector}
+                  >
+                    <ChoiceCard
+                      className="items-center"
+                      id="privacy-detector-regex"
+                      label="Regex"
+                      description={t("safety.regexAlways")}
+                      selected={policy.detector === "regex"}
+                      disabled={saving}
+                      value="regex"
+                    />
+                    <ChoiceCard
+                      className="items-center"
+                      id="privacy-detector-local-model"
+                      label={t("safety.localModels")}
+                      description={
+                        selectedInstallation === null
+                          ? t("safety.chooseInstalled")
+                          : `${selectedInstallation.name} · ${selectedInstallation.variant_name}`
+                      }
+                      selected={policy.detector === "local_model"}
+                      disabled={saving || !selectedModelReady}
+                      value="local_model"
+                    />
+                  </RadioGroup>
+                </fieldset>
+
+                {policy.detector === "regex" ? (
+                  <fieldset
+                    className="min-w-0 border-0 p-0"
+                    disabled={saving || fillingBuiltinRules}
+                  >
+                    <legend className="mb-2 px-0 text-xs font-medium text-text-secondary">
+                      {t("safety.regexSource")}
+                    </legend>
                     <RadioGroup
                       className="grid min-w-0 grid-cols-2 gap-2"
-                      disabled={saving}
+                      disabled={saving || fillingBuiltinRules}
                       onValueChange={(value) => {
-                        if (value === "regex") {
-                          useRegex();
-                        } else if (selectedInstallation !== null) {
-                          chooseInstallation(selectedInstallation);
+                        if (value === "builtin" || value === "custom") {
+                          changeRegexSource(value);
                         }
                       }}
-                      value={policy.detector}
+                      value={policy.regex_source}
                     >
                       <ChoiceCard
                         className="items-center"
-                        id="privacy-detector-regex"
-                        label="Regex"
-                        description={t("safety.regexAlways")}
-                        selected={policy.detector === "regex"}
-                        disabled={saving}
-                        value="regex"
+                        id="privacy-regex-source-builtin"
+                        label={t("safety.builtinRules")}
+                        description={t("safety.builtinFixed")}
+                        selected={policy.regex_source === "builtin"}
+                        disabled={saving || fillingBuiltinRules}
+                        value="builtin"
                       />
                       <ChoiceCard
                         className="items-center"
-                        id="privacy-detector-local-model"
-                        label={t("safety.localModels")}
-                        description={
-                          selectedInstallation === null
-                            ? t("safety.chooseInstalled")
-                            : `${selectedInstallation.name} · ${selectedInstallation.variant_name}`
-                        }
-                        selected={policy.detector === "local_model"}
-                        disabled={saving || !selectedModelReady}
-                        value="local_model"
+                        id="privacy-regex-source-custom"
+                        label={t("safety.customRules")}
+                        description={t("safety.customListOnly")}
+                        selected={policy.regex_source === "custom"}
+                        disabled={saving || fillingBuiltinRules}
+                        value="custom"
                       />
                     </RadioGroup>
-                  </fieldset>
 
-                  {policy.detector === "regex" ? (
-                    <fieldset
-                      className="min-w-0 border-0 p-0"
-                      disabled={saving || fillingBuiltinRules}
-                    >
-                      <legend className="mb-2 px-0 text-xs font-medium text-text-secondary">
-                        {t("safety.regexSource")}
-                      </legend>
-                      <RadioGroup
-                        className="grid min-w-0 grid-cols-2 gap-2"
-                        disabled={saving || fillingBuiltinRules}
-                        onValueChange={(value) => {
-                          if (value === "builtin" || value === "custom") {
-                            changeRegexSource(value);
-                          }
-                        }}
-                        value={policy.regex_source}
-                      >
-                        <ChoiceCard
-                          className="items-center"
-                          id="privacy-regex-source-builtin"
-                          label={t("safety.builtinRules")}
-                          description={t("safety.builtinFixed")}
-                          selected={policy.regex_source === "builtin"}
-                          disabled={saving || fillingBuiltinRules}
-                          value="builtin"
-                        />
-                        <ChoiceCard
-                          className="items-center"
-                          id="privacy-regex-source-custom"
-                          label={t("safety.customRules")}
-                          description={t("safety.customListOnly")}
-                          selected={policy.regex_source === "custom"}
-                          disabled={saving || fillingBuiltinRules}
-                          value="custom"
-                        />
-                      </RadioGroup>
-
-                      {policy.regex_source === "builtin" ? (
-                        <div className="mt-3">
-                          <HelpDisclosure title={t("safety.ruleCoverage")}>
-                            <p className="text-xs leading-relaxed">
-                              {t("safety.builtinCoverage", {
-                                kinds: regexKindOptions()
-                                  .map((option) => option.label)
-                                  .join(t("safety.listJoin")),
-                              })}
-                            </p>
-                            <p>{t("safety.builtinHint")}</p>
-                          </HelpDisclosure>
+                    {policy.regex_source === "builtin" ? (
+                      <div className="mt-3">
+                        <HelpDisclosure title={t("safety.ruleCoverage")}>
+                          <p className="text-xs leading-relaxed">
+                            {t("safety.builtinCoverage", {
+                              kinds: regexKindOptions()
+                                .map((option) => option.label)
+                                .join(t("safety.listJoin")),
+                            })}
+                          </p>
+                          <p>{t("safety.builtinHint")}</p>
+                        </HelpDisclosure>
+                      </div>
+                    ) : (
+                      <div className="mt-3 grid min-w-0 gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            disabled={saving || fillingBuiltinRules}
+                            onClick={addCustomRegexRule}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            {t("safety.addRule")}
+                          </Button>
+                          <Button
+                            disabled={saving || fillingBuiltinRules}
+                            onClick={() => {
+                              if (policy.custom_regex_rules.length > 0) {
+                                setConfirmFillBuiltinRules(true);
+                              } else {
+                                void fillBuiltinRules();
+                              }
+                            }}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            {t("safety.fillBuiltin")}
+                          </Button>
+                          <span className="text-sm text-muted-foreground">
+                            {policy.custom_regex_rules.length}/
+                            {MAX_PRIVACY_CUSTOM_REGEX_RULES}
+                          </span>
                         </div>
-                      ) : (
-                        <div className="mt-3 grid min-w-0 gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Button
-                              disabled={saving || fillingBuiltinRules}
-                              onClick={addCustomRegexRule}
-                              size="sm"
-                              type="button"
-                              variant="outline"
-                            >
-                              {t("safety.addRule")}
-                            </Button>
-                            <Button
-                              disabled={saving || fillingBuiltinRules}
-                              onClick={() => {
-                                if (policy.custom_regex_rules.length > 0) {
-                                  setConfirmFillBuiltinRules(true);
-                                } else {
-                                  void fillBuiltinRules();
-                                }
-                              }}
-                              size="sm"
-                              type="button"
-                              variant="outline"
-                            >
-                              {t("safety.fillBuiltin")}
-                            </Button>
-                            <span className="text-sm text-muted-foreground">
-                              {policy.custom_regex_rules.length}/
-                              {MAX_PRIVACY_CUSTOM_REGEX_RULES}
-                            </span>
-                          </div>
-                          {policy.custom_regex_rules.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">
-                              {t("safety.noCustomRules")}
-                            </p>
-                          ) : (
-                            <ul className="grid min-w-0 gap-2">
-                              {policy.custom_regex_rules.map((rule, index) => (
-                                <li
-                                  className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[640px]:grid-cols-[8.5rem_minmax(0,1fr)_auto] @[640px]:items-start"
-                                  key={`regex-rule-${index}`}
+                        {policy.custom_regex_rules.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            {t("safety.noCustomRules")}
+                          </p>
+                        ) : (
+                          <ul className="grid min-w-0 gap-2">
+                            {policy.custom_regex_rules.map((rule, index) => (
+                              <li
+                                className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[640px]:grid-cols-[8.5rem_minmax(0,1fr)_auto] @[640px]:items-start"
+                                key={`regex-rule-${index}`}
+                              >
+                                <Select
+                                  disabled={saving || fillingBuiltinRules}
+                                  onValueChange={(value) =>
+                                    changeCustomRegexKind(
+                                      index,
+                                      value as PrivacyRegexDetectorKind,
+                                    )
+                                  }
+                                  value={rule.kind}
                                 >
-                                  <Select
-                                    disabled={saving || fillingBuiltinRules}
-                                    onValueChange={(value) =>
-                                      changeCustomRegexKind(
-                                        index,
-                                        value as PrivacyRegexDetectorKind,
-                                      )
-                                    }
-                                    value={rule.kind}
-                                  >
-                                    <SelectTrigger
-                                      aria-label={t("safety.ruleKind", {
-                                        index: index + 1,
-                                      })}
-                                      className="h-9 w-full px-3 text-sm"
-                                      size="sm"
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {regexKindOptions().map((option) => (
-                                        <SelectItem
-                                          key={option.value}
-                                          value={option.value}
-                                        >
-                                          {option.label}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  <Input
-                                    aria-label={t("safety.rulePattern", {
+                                  <SelectTrigger
+                                    aria-label={t("safety.ruleKind", {
                                       index: index + 1,
                                     })}
-                                    className="h-9 min-w-0 font-mono text-sm md:text-sm"
-                                    disabled={saving || fillingBuiltinRules}
-                                    onBlur={() =>
-                                      commitCustomRegexPattern(index)
-                                    }
-                                    onChange={(event) => {
-                                      const value = event.currentTarget.value;
-                                      setRegexPatternDrafts((current) => {
-                                        const next = [...current];
-                                        next[index] = value;
-                                        return next;
-                                      });
-                                    }}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.currentTarget.blur();
-                                      } else if (event.key === "Escape") {
-                                        event.preventDefault();
-                                        setRegexPatternDrafts(
-                                          policy.custom_regex_rules.map(
-                                            (item) => item.pattern,
-                                          ),
-                                        );
-                                      }
-                                    }}
-                                    placeholder={t("safety.re2Hint")}
-                                    value={
-                                      regexPatternDrafts[index] ?? rule.pattern
-                                    }
-                                  />
-                                  <Button
-                                    disabled={saving || fillingBuiltinRules}
-                                    onClick={() => removeCustomRegexRule(index)}
+                                    className="h-9 w-full px-3 text-sm"
                                     size="sm"
-                                    type="button"
-                                    variant="ghost"
                                   >
-                                    {t("common.delete")}
-                                  </Button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
-                    </fieldset>
-                  ) : null}
-
-                  <div className="border-t pt-4">
-                    <Field
-                      htmlFor="privacy-request-action"
-                      label={t("safety.requestAction")}
-                    >
-                      <Select
-                        disabled={saving}
-                        onValueChange={changeAction}
-                        value={policy.request_action}
-                      >
-                        <SelectTrigger
-                          aria-label={t("safety.requestAction")}
-                          className="h-9 w-full px-3 text-sm"
-                          id="privacy-request-action"
-                          size="sm"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {policy.request_action === "allow" ? (
-                            <SelectItem disabled value="allow">
-                              {t("safety.allowCompat")}
-                            </SelectItem>
-                          ) : null}
-                          <SelectItem value="redact">
-                            {actionLabel("redact")}
-                          </SelectItem>
-                          <SelectItem value="block">
-                            {actionLabel("block")}
-                          </SelectItem>
-                          <SelectItem value="warn">
-                            {actionLabel("warn")}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  </div>
-                  <div className="border-t pt-3">
-                    <HelpDisclosure
-                      title={t("safety.advancedDetection")}
-                      open={policy.detector === "local_model"}
-                    >
-                      <Field
-                        htmlFor="privacy-min-confidence"
-                        label={t("safety.minConfidence")}
-                        hint={t("safety.minConfidenceHint")}
-                      >
-                        <Input
-                          aria-label={t("safety.minConfidence")}
-                          className="h-9 w-28 px-3 text-sm md:text-sm"
-                          disabled={saving}
-                          id="privacy-min-confidence"
-                          max="1"
-                          min="0"
-                          onBlur={commitMinConfidence}
-                          onChange={(event) =>
-                            setMinConfidenceDraft(event.currentTarget.value)
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.currentTarget.blur();
-                            } else if (event.key === "Escape") {
-                              event.preventDefault();
-                              setMinConfidenceDraft(
-                                policy.min_confidence.toFixed(2),
-                              );
-                            }
-                          }}
-                          step="0.01"
-                          type="number"
-                          value={minConfidenceDraft}
-                        />
-                      </Field>
-                    </HelpDisclosure>
-                  </div>
-                </PolicySection>
-
-                <PolicySection
-                  title={t("safety.responseHandling")}
-                  icon={RotateCcw}
-                >
-                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-                    <legend className="sr-only">
-                      {t("safety.restoreScope")}
-                    </legend>
-                    <div className="grid min-w-0 divide-y">
-                      <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 pb-3 font-normal">
-                        <span className="flex min-w-0 flex-col gap-1">
-                          <strong className="text-sm font-medium">
-                            {t("safety.restore")}
-                          </strong>
-                          <small className="text-xs leading-relaxed text-muted-foreground">
-                            {t("safety.responseRestoreDetail")}
-                          </small>
-                        </span>
-                        <Switch
-                          aria-label={t("safety.restore")}
-                          checked={policy.response_restore}
-                          disabled={
-                            saving || policy.request_action !== "redact"
-                          }
-                          id="privacy-response-restore"
-                          onCheckedChange={(checked) =>
-                            void patchPolicy({
-                              response_restore: checked,
-                            })
-                          }
-                          size="sm"
-                          title={
-                            policy.request_action !== "redact"
-                              ? t("safety.restoreHint")
-                              : undefined
-                          }
-                        />
-                      </Label>
-                      <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
-                        <span className="flex min-w-0 flex-col gap-0.5">
-                          <strong className="text-sm font-medium leading-snug">
-                            {t("safety.restoreTools")}
-                          </strong>
-                          <small
-                            className="text-xs leading-relaxed text-muted-foreground"
-                            title={t("safety.restoreToolsDetail")}
-                          >
-                            {t("safety.restoreToolsShort")}
-                            <span className="sr-only">
-                              {t("safety.restoreToolsDetail")}
-                            </span>
-                          </small>
-                        </span>
-                        <Switch
-                          aria-label={t("safety.restoreTools")}
-                          checked={policy.restore_tool_arguments}
-                          disabled={saving || !policy.response_restore}
-                          onCheckedChange={(checked) =>
-                            void patchPolicy({
-                              restore_tool_arguments: checked,
-                            })
-                          }
-                          size="sm"
-                          title={
-                            policy.response_restore
-                              ? undefined
-                              : t("safety.restoreToolsHint")
-                          }
-                        />
-                      </Label>
-                      <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
-                        <span className="flex min-w-0 flex-col gap-0.5">
-                          <strong className="text-sm font-medium leading-snug">
-                            {t("safety.injectNotice")}
-                          </strong>
-                          <small className="text-xs leading-relaxed text-muted-foreground">
-                            {t("safety.injectNoticeHint", {
-                              style: placeholderStyleLabel("token"),
-                            })}
-                          </small>
-                        </span>
-                        <Switch
-                          aria-label={t("safety.injectNotice")}
-                          checked={policy.placeholder_notice}
-                          disabled={saving}
-                          onCheckedChange={(checked) =>
-                            void patchPolicy({ placeholder_notice: checked })
-                          }
-                          size="sm"
-                        />
-                      </Label>
-                    </div>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {regexKindOptions().map((option) => (
+                                      <SelectItem
+                                        key={option.value}
+                                        value={option.value}
+                                      >
+                                        {option.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  aria-label={t("safety.rulePattern", {
+                                    index: index + 1,
+                                  })}
+                                  className="h-9 min-w-0 font-mono text-sm md:text-sm"
+                                  disabled={saving || fillingBuiltinRules}
+                                  onBlur={() =>
+                                    commitCustomRegexPattern(index)
+                                  }
+                                  onChange={(event) => {
+                                    const value = event.currentTarget.value;
+                                    setRegexPatternDrafts((current) => {
+                                      const next = [...current];
+                                      next[index] = value;
+                                      return next;
+                                    });
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.currentTarget.blur();
+                                    } else if (event.key === "Escape") {
+                                      event.preventDefault();
+                                      setRegexPatternDrafts(
+                                        policy.custom_regex_rules.map(
+                                          (item) => item.pattern,
+                                        ),
+                                      );
+                                    }
+                                  }}
+                                  placeholder={t("safety.re2Hint")}
+                                  value={
+                                    regexPatternDrafts[index] ?? rule.pattern
+                                  }
+                                />
+                                <Button
+                                  disabled={saving || fillingBuiltinRules}
+                                  onClick={() => removeCustomRegexRule(index)}
+                                  size="sm"
+                                  type="button"
+                                  variant="ghost"
+                                >
+                                  {t("common.delete")}
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                   </fieldset>
-                  <Button
-                    className="h-auto w-fit gap-1 px-0 py-0 text-xs font-medium"
-                    onClick={() => setStreamingDemoOpen(true)}
-                    size="sm"
-                    type="button"
-                    variant="link"
+                ) : null}
+
+                <div className="border-t pt-4">
+                  <Field
+                    htmlFor="privacy-request-action"
+                    label={t("safety.requestAction")}
                   >
-                    {t("safety.viewStreamingDemo")}
-                    <ArrowUpRight aria-hidden="true" className="size-3.5" />
-                  </Button>
-                </PolicySection>
-              </div>
-              <div className="grid min-w-0 gap-4">
-                <PolicySection
-                  title={t("safety.perKindRedact")}
-                  icon={SlidersHorizontal}
-                  description={t("safety.redactTypesHint")}
-                  actions={
+                    <Select
+                      disabled={saving}
+                      onValueChange={changeAction}
+                      value={policy.request_action}
+                    >
+                      <SelectTrigger
+                        aria-label={t("safety.requestAction")}
+                        className="h-9 w-full px-3 text-sm"
+                        id="privacy-request-action"
+                        size="sm"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {policy.request_action === "allow" ? (
+                          <SelectItem disabled value="allow">
+                            {t("safety.allowCompat")}
+                          </SelectItem>
+                        ) : null}
+                        <SelectItem value="redact">
+                          {actionLabel("redact")}
+                        </SelectItem>
+                        <SelectItem value="block">
+                          {actionLabel("block")}
+                        </SelectItem>
+                        <SelectItem value="warn">
+                          {actionLabel("warn")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+                <div className="border-t pt-3">
+                  <HelpDisclosure
+                    title={t("safety.advancedDetection")}
+                    open={policy.detector === "local_model"}
+                  >
+                    <Field
+                      htmlFor="privacy-min-confidence"
+                      label={t("safety.minConfidence")}
+                      hint={t("safety.minConfidenceHint")}
+                    >
+                      <Input
+                        aria-label={t("safety.minConfidence")}
+                        className="h-9 w-28 px-3 text-sm md:text-sm"
+                        disabled={saving}
+                        id="privacy-min-confidence"
+                        max="1"
+                        min="0"
+                        onBlur={commitMinConfidence}
+                        onChange={(event) =>
+                          setMinConfidenceDraft(event.currentTarget.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            setMinConfidenceDraft(
+                              policy.min_confidence.toFixed(2),
+                            );
+                          }
+                        }}
+                        step="0.01"
+                        type="number"
+                        value={minConfidenceDraft}
+                      />
+                    </Field>
+                  </HelpDisclosure>
+                </div>
+              </PolicySection>
+
+              <PolicySection
+                title={t("safety.responseHandling")}
+                icon={RotateCcw}
+              >
+                <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
+                  <legend className="sr-only">
+                    {t("safety.restoreScope")}
+                  </legend>
+                  <div className="grid min-w-0 divide-y">
+                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 pb-3 font-normal">
+                      <span className="flex min-w-0 flex-col gap-1">
+                        <strong className="text-sm font-medium">
+                          {t("safety.restore")}
+                        </strong>
+                        <small className="text-xs leading-relaxed text-muted-foreground">
+                          {t("safety.responseRestoreDetail")}
+                        </small>
+                      </span>
+                      <Switch
+                        aria-label={t("safety.restore")}
+                        checked={policy.response_restore}
+                        disabled={
+                          saving || policy.request_action !== "redact"
+                        }
+                        id="privacy-response-restore"
+                        onCheckedChange={(checked) =>
+                          void patchPolicy({
+                            response_restore: checked,
+                          })
+                        }
+                        size="sm"
+                        title={
+                          policy.request_action !== "redact"
+                            ? t("safety.restoreHint")
+                            : undefined
+                        }
+                      />
+                    </Label>
+                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <strong className="text-sm font-medium leading-snug">
+                          {t("safety.restoreTools")}
+                        </strong>
+                        <small
+                          className="text-xs leading-relaxed text-muted-foreground"
+                          title={t("safety.restoreToolsDetail")}
+                        >
+                          {t("safety.restoreToolsShort")}
+                          <span className="sr-only">
+                            {t("safety.restoreToolsDetail")}
+                          </span>
+                        </small>
+                      </span>
+                      <Switch
+                        aria-label={t("safety.restoreTools")}
+                        checked={policy.restore_tool_arguments}
+                        disabled={saving || !policy.response_restore}
+                        onCheckedChange={(checked) =>
+                          void patchPolicy({
+                            restore_tool_arguments: checked,
+                          })
+                        }
+                        size="sm"
+                        title={
+                          policy.response_restore
+                            ? undefined
+                            : t("safety.restoreToolsHint")
+                        }
+                      />
+                    </Label>
+                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <strong className="text-sm font-medium leading-snug">
+                          {t("safety.injectNotice")}
+                        </strong>
+                        <small className="text-xs leading-relaxed text-muted-foreground">
+                          {t("safety.injectNoticeHint", {
+                            style: placeholderStyleLabel("token"),
+                          })}
+                        </small>
+                      </span>
+                      <Switch
+                        aria-label={t("safety.injectNotice")}
+                        checked={policy.placeholder_notice}
+                        disabled={saving}
+                        onCheckedChange={(checked) =>
+                          void patchPolicy({ placeholder_notice: checked })
+                        }
+                        size="sm"
+                      />
+                    </Label>
+                  </div>
+                </fieldset>
+                <Button
+                  className="h-auto w-fit gap-1 px-0 py-0 text-xs font-medium"
+                  onClick={() => setStreamingDemoOpen(true)}
+                  size="sm"
+                  type="button"
+                  variant="link"
+                >
+                  {t("safety.viewStreamingDemo")}
+                  <ArrowUpRight aria-hidden="true" className="size-3.5" />
+                </Button>
+              </PolicySection>
+            </div>
+          </TabsContent>
+          <TabsContent
+            className="min-h-0 min-w-0 flex-1 overflow-hidden"
+            data-tab-scroller
+            forceMount
+            hidden={workspace !== "redaction"}
+            value="redaction"
+          >
+            <SplitWorkspace className="@[720px]:grid-cols-[minmax(0,0.95fr)_minmax(0,1.15fr)]">
+              <Panel className="@container flex min-h-0 flex-col">
+                <PanelHeader className="shrink-0 items-center px-3 py-2" actions={
+                  <>
                     <Badge variant="secondary">
                       {t("safety.enabledTypes", {
-                        count: PRIVACY_KINDS.filter(
-                          (kind) => kindRuleFor(kind).enabled,
-                        ).length,
+                        count: PRIVACY_KINDS.filter((kind) => kindRuleFor(kind).enabled).length,
                         total: PRIVACY_KINDS.length,
                       })}
                     </Badge>
-                  }
-                >
-                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-                    <legend className="sr-only">
-                      {t("safety.perKindRedact")}
-                    </legend>
-                    <div className="mb-3">
-                      <HelpDisclosure title={t("safety.placeholderGuide")}>
+                    <HelpPopover label={t("safety.placeholderGuide")}>
+                      <div className="grid gap-3">
+                        <p>{t("safety.redactTypesHint")}</p>
                         <p className="text-xs leading-relaxed">
                           {t("safety.styleHintLead", {
                             natural: placeholderStyleLabel("natural"),
@@ -2561,523 +2652,433 @@ export function SafetyPolicy({
                             </li>
                           ))}
                         </ul>
-                      </HelpDisclosure>
-                    </div>
-                    <ul className="min-w-0 divide-y">
-                      {PRIVACY_KINDS.map((kind) => {
-                        const rule = kindRuleFor(kind);
-                        const lockReason = placeholderStyleLockReason(kind);
-                        const styleLocked =
-                          PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind);
-                        const unreachable =
-                          policy.detector === "regex" &&
-                          localModelOnlyKinds.has(kind);
-                        return (
-                          <li
-                            className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-2.5 first:pt-0 last:pb-0"
-                            data-testid={`privacy-kind-rule-${kind}`}
-                            key={kind}
-                          >
-                            <span className="flex min-w-0 flex-col gap-1">
-                              <strong className="text-sm font-medium leading-snug">
-                                {canonicalKindLabel(kind)}
-                              </strong>
-                              {unreachable ? (
-                                <small className="text-xs text-muted-foreground">
-                                  {t("safety.localOnlyShort")}
-                                </small>
-                              ) : styleLocked ? (
-                                <small
-                                  className="flex items-center gap-1 text-xs text-muted-foreground"
-                                  title={lockReason}
-                                >
-                                  <LockKeyhole
-                                    aria-hidden="true"
-                                    className="size-3"
-                                  />
-                                  {t("safety.fixedStyle")}
-                                </small>
-                              ) : null}
-                              {lockReason || unreachable ? (
-                                <span
-                                  className="sr-only"
-                                  id={`privacy-kind-hint-${kind}`}
-                                >
-                                  {unreachable
-                                    ? t("safety.localOnlyKind")
-                                    : null}{" "}
-                                  {lockReason}
-                                </span>
-                              ) : null}
-                            </span>
-                            <span className="flex shrink-0 items-center gap-2">
-                              <Select
-                                disabled={
-                                  saving || styleLocked || !rule.enabled
-                                }
-                                onValueChange={(value) =>
-                                  saveKindRule(kind, {
-                                    style: value as PlaceholderStyle,
-                                  })
-                                }
-                                value={rule.style}
+                      </div>
+                    </HelpPopover>
+                  </>
+                }>
+                  <h2 className="text-sm font-semibold">{t("safety.perKindRedact")}</h2>
+                </PanelHeader>
+                <fieldset className="flex min-h-0 flex-1 flex-col border-0 px-3" disabled={saving}>
+                  <legend className="sr-only">{t("safety.perKindRedact")}</legend>
+                  <ul className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-tab-scroller>
+                    {PRIVACY_KINDS.map((kind) => {
+                      const rule = kindRuleFor(kind);
+                      const lockReason = placeholderStyleLockReason(kind);
+                      const styleLocked =
+                        PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind);
+                      const unreachable =
+                        policy.detector === "regex" &&
+                        localModelOnlyKinds.has(kind);
+                      return (
+                        <li
+                          className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b py-2.5"
+                          data-testid={`privacy-kind-rule-${kind}`}
+                          key={kind}
+                        >
+                          <span className="flex min-w-0 flex-col gap-1">
+                            <strong className="text-sm font-medium leading-snug">
+                              {canonicalKindLabel(kind)}
+                            </strong>
+                            {unreachable ? (
+                              <small className="text-xs text-muted-foreground">
+                                {t("safety.localOnlyShort")}
+                              </small>
+                            ) : styleLocked ? (
+                              <small
+                                className="flex items-center gap-1 text-xs text-muted-foreground"
+                                title={lockReason}
                               >
-                                <SelectTrigger
-                                  aria-label={t("safety.styleFor", {
-                                    kind: canonicalKindLabel(kind),
-                                  })}
-                                  aria-describedby={
-                                    lockReason || unreachable
-                                      ? `privacy-kind-hint-${kind}`
-                                      : undefined
-                                  }
-                                  className="h-8 w-36 px-2.5 text-xs @[440px]:w-56"
-                                  size="sm"
-                                  title={
-                                    styleLocked
-                                      ? lockReason
-                                      : placeholderStyleLabel(rule.style)
-                                  }
-                                >
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="natural">
-                                    {placeholderStyleLabel("natural")}
-                                  </SelectItem>
-                                  <SelectItem value="token">
-                                    {placeholderStyleLabel("token")}
-                                  </SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <Switch
-                                aria-label={t("safety.redactKind", {
-                                  kind: canonicalKindLabel(kind),
-                                })}
-                                checked={rule.enabled}
-                                disabled={saving}
-                                onCheckedChange={(enabled) =>
-                                  saveKindRule(kind, { enabled })
-                                }
-                                size="sm"
-                              />
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </fieldset>
-                </PolicySection>
-                <PolicySection title={t("safety.allowlist")} icon={ListFilter}>
-                  <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
-                    <legend className="sr-only">{t("safety.allowlist")}</legend>
-                    <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
-                      {t("safety.allowlistHint")}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        disabled={saving || allowlistPending}
-                        onClick={addAllowlistRule}
-                        size="sm"
-                        type="button"
-                        variant="outline"
-                      >
-                        {t("safety.addAllowlist")}
-                      </Button>
-                      <span className="text-sm text-muted-foreground">
-                        {policy.allowlist_rules.length}/
-                        {MAX_PRIVACY_ALLOWLIST_RULES}
-                      </span>
-                    </div>
-                    {policy.allowlist_rules.length === 0 &&
-                    !allowlistPending ? (
-                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                        {t("safety.allowlistEmpty")}
-                      </p>
-                    ) : (
-                      <ul className="mt-2 grid min-w-0 gap-1.5">
-                        {[
-                          ...policy.allowlist_rules,
-                          ...(allowlistPending
-                            ? [{ type: allowlistPendingType, value: "" }]
-                            : []),
-                        ].map((rule, index) => (
-                          <li
-                            className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 @[400px]:grid-cols-[120px_minmax(0,1fr)_auto]"
-                            key={`${rule.type}-${index}`}
-                          >
+                                <LockKeyhole
+                                  aria-hidden="true"
+                                  className="size-3"
+                                />
+                                {t("safety.fixedStyle")}
+                              </small>
+                            ) : null}
+                            {lockReason || unreachable ? (
+                              <span
+                                className="sr-only"
+                                id={`privacy-kind-hint-${kind}`}
+                              >
+                                {unreachable
+                                  ? t("safety.localOnlyKind")
+                                  : null}{" "}
+                                {lockReason}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
                             <Select
-                              disabled={saving}
-                              onValueChange={(value) =>
-                                changeAllowlistType(
-                                  index,
-                                  value as PrivacyAllowlistType,
-                                )
+                              disabled={
+                                saving || styleLocked || !rule.enabled
                               }
-                              value={rule.type}
+                              onValueChange={(value) =>
+                                saveKindRule(kind, {
+                                  style: value as PlaceholderStyle,
+                                })
+                              }
+                              value={rule.style}
                             >
                               <SelectTrigger
-                                aria-label={t("safety.allowlistKind", {
-                                  index: index + 1,
+                                aria-label={t("safety.styleFor", {
+                                  kind: canonicalKindLabel(kind),
                                 })}
-                                className="h-9 w-full px-2.5 text-xs"
+                                aria-describedby={
+                                  lockReason || unreachable
+                                    ? `privacy-kind-hint-${kind}`
+                                    : undefined
+                                }
+                                className="h-8 w-32 px-2 text-xs @[400px]:w-36"
                                 size="sm"
+                                title={
+                                  styleLocked
+                                    ? lockReason
+                                    : placeholderStyleLabel(rule.style)
+                                }
                               >
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {ALLOWLIST_TYPES.map((type) => (
-                                  <SelectItem key={type} value={type}>
-                                    {allowlistTypeLabel(type)}
-                                  </SelectItem>
-                                ))}
+                                <SelectItem value="natural">
+                                  {placeholderStyleLabel("natural")}
+                                </SelectItem>
+                                <SelectItem value="token">
+                                  {placeholderStyleLabel("token")}
+                                </SelectItem>
                               </SelectContent>
                             </Select>
-                            <Input
-                              aria-label={t("safety.allowlistValue", {
+                            <Switch
+                              aria-label={t("safety.redactKind", {
+                                kind: canonicalKindLabel(kind),
+                              })}
+                              checked={rule.enabled}
+                              disabled={saving}
+                              onCheckedChange={(enabled) =>
+                                saveKindRule(kind, { enabled })
+                              }
+                              size="sm"
+                            />
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </fieldset>
+              </Panel>
+              <Panel className="@container flex min-h-0 flex-col gap-2 p-3">
+                <ListToolbar
+                  title={t("safety.allowlist")}
+                  count={`${policy.allowlist_rules.length} / ${MAX_PRIVACY_ALLOWLIST_RULES}`}
+                  query={allowlistQuery}
+                  onQueryChange={setAllowlistQuery}
+                  searchLabel={t("safety.searchAllowlist")}
+                  placeholder={t("safety.searchAllowlist")}
+                  clearLabel={t("safety.clearAllowlistSearch")}
+                  help={{
+                    label: t("safety.allowlistHelp"),
+                    content: t("safety.allowlistHint"),
+                  }}
+                  actions={
+                    <Button
+                      disabled={
+                        saving || allowlistPending ||
+                        policy.allowlist_rules.length >= MAX_PRIVACY_ALLOWLIST_RULES
+                      }
+                      onClick={addAllowlistRule}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <Plus aria-hidden="true" />
+                      {t("safety.addAllowlist")}
+                    </Button>
+                  }
+                />
+                <fieldset
+                  className="flex min-h-0 min-w-0 flex-1 flex-col border-0 p-0"
+                  disabled={saving}
+                >
+                  <legend className="sr-only">{t("safety.allowlist")}</legend>
+                  {visibleAllowlistRules.length === 0 ? (
+                    <EmptyState
+                      title={t(normalizedAllowlistQuery
+                        ? "safety.noAllowlistMatches"
+                        : "safety.allowlistEmpty")}
+                      description={normalizedAllowlistQuery
+                        ? t("safety.tryAnotherAllowlistSearch")
+                        : undefined}
+                    />
+                  ) : (
+                    <ul
+                      className="grid min-h-0 min-w-0 flex-1 content-start gap-2 overflow-y-auto overscroll-contain pr-1"
+                      data-tab-scroller
+                    >
+                      {visibleAllowlistRules.map(({ rule, index }) => (
+                        <li
+                          className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 @[340px]:grid-cols-[112px_minmax(0,1fr)_auto] @[440px]:grid-cols-[128px_minmax(0,1fr)_auto]"
+                          key={`${rule.type}-${index}`}
+                        >
+                          <Select
+                            disabled={saving}
+                            onValueChange={(value) =>
+                              changeAllowlistType(
+                                index,
+                                value as PrivacyAllowlistType,
+                              )
+                            }
+                            value={rule.type}
+                          >
+                            <SelectTrigger
+                              aria-label={t("safety.allowlistKind", {
                                 index: index + 1,
                               })}
-                              autoFocus={
-                                allowlistPending &&
-                                index === policy.allowlist_rules.length
-                              }
-                              className="col-span-2 row-start-2 h-9 min-w-0 font-mono text-sm md:text-sm @[400px]:col-span-1 @[400px]:row-start-auto"
-                              disabled={saving}
-                              onBlur={() => commitAllowlistValue(index)}
-                              onChange={(event) => {
-                                const value = event.currentTarget.value;
-                                setAllowlistDrafts((current) => {
-                                  const next = [...current];
-                                  next[index] = value;
-                                  return next;
-                                });
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  event.currentTarget.blur();
-                                } else if (event.key === "Escape") {
-                                  event.preventDefault();
-                                  setAllowlistDrafts(
-                                    policy.allowlist_rules.map(
-                                      (item) => item.value,
-                                    ),
-                                  );
-                                  setAllowlistPending(false);
-                                }
-                              }}
-                              placeholder={allowlistTypePlaceholders[rule.type]}
-                              value={allowlistDrafts[index] ?? rule.value}
-                            />
-                            <Button
-                              disabled={saving}
-                              onClick={() => removeAllowlistRule(index)}
+                              className="h-9 w-full px-2.5 text-xs"
                               size="sm"
-                              type="button"
-                              variant="ghost"
                             >
-                              {t("safety.remove")}
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </fieldset>
-                </PolicySection>
-              </div>
-            </div>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ALLOWLIST_TYPES.map((type) => (
+                                <SelectItem key={type} value={type}>
+                                  {allowlistTypeLabel(type)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            aria-label={t("safety.allowlistValue", {
+                              index: index + 1,
+                            })}
+                            autoFocus={
+                              allowlistPending &&
+                              index === policy.allowlist_rules.length
+                            }
+                            className="col-span-2 row-start-2 h-9 min-w-0 font-mono text-sm md:text-sm @[340px]:col-span-1 @[340px]:row-start-auto"
+                            disabled={saving}
+                            onBlur={() => commitAllowlistValue(index)}
+                            onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              setAllowlistDrafts((current) => {
+                                const next = [...current];
+                                next[index] = value;
+                                return next;
+                              });
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.currentTarget.blur();
+                              } else if (event.key === "Escape") {
+                                event.preventDefault();
+                                setAllowlistDrafts(
+                                  policy.allowlist_rules.map(
+                                    (item) => item.value,
+                                  ),
+                                );
+                                setAllowlistPending(false);
+                              }
+                            }}
+                            placeholder={allowlistTypePlaceholders[rule.type]}
+                            value={allowlistDrafts[index] ?? rule.value}
+                          />
+                          <Button
+                            disabled={saving}
+                            onClick={() => removeAllowlistRule(index)}
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                          >
+                            {t("safety.remove")}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </fieldset>
+              </Panel>
+            </SplitWorkspace>
           </TabsContent>
 
           <TabsContent
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+            className="min-h-0 min-w-0 flex-1 overflow-hidden"
             forceMount
             hidden={workspace !== "dryRun"}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void runDryRun();
+              }
+            }}
             value="dryRun"
           >
-            <div className="grid min-w-0 gap-3 pb-2">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-base font-semibold tracking-tight">
-                  {t("safety.run")}
-                </h3>
-                <p className="mt-1 text-sm leading-relaxed text-text-secondary">
-                  {t("safety.dryRunHint")}
-                </p>
-              </div>
-              <Button
-                className="h-auto shrink-0 px-0 py-0 text-sm font-medium"
-                onClick={() => setWorkspace("policy")}
-                size="sm"
-                type="button"
-                variant="link"
-              >
-                {t("safety.backToPolicy")}
-              </Button>
-            </div>
-
-              <Label
-                className="grid min-w-0 gap-2 font-normal @[560px]:grid-cols-[minmax(0,1fr)_240px] @[560px]:items-center"
-                htmlFor="privacy-dry-run-protocol"
-              >
-                <span className="flex min-w-0 flex-col gap-1">
-                  <strong className="text-sm font-medium">{t("safety.protocol")}</strong>
-                  <small className="text-sm leading-snug text-muted-foreground">
-                    {t("safety.protocolHint")}
-                  </small>
-                </span>
-                <Select
-                  disabled={dryRunBusy}
-                  onValueChange={(value) => {
-                    setDryRunProtocol(value as PrivacyDryRunProtocol);
-                    setDryRunError(null);
-                    setDryRunResult(null);
-                  }}
-                  value={dryRunProtocol}
-                >
-                  <SelectTrigger
-                    aria-label={t("safety.dryRunProtocol")}
-                    className="h-9 w-full px-3 text-sm"
-                    id="privacy-dry-run-protocol"
-                    size="sm"
+            <SplitWorkspace ref={dryRunWorkspaceRef}>
+              <Panel className="flex min-h-0 flex-col" data-testid="dry-run-input-panel">
+                <PanelHeader className="shrink-0 flex-wrap items-center gap-2 px-3 py-2" actions={
+                  <Select
+                    disabled={dryRunBusy}
+                    onValueChange={(id) => {
+                      const preset = dryRunSamplePresets.find((item) => item.id === id);
+                      if (preset) changeDryRunSample(preset.text);
+                    }}
+                    value={selectedDryRunPreset?.id ?? "custom"}
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {dryRunProtocolOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Label>
-              <div className="grid gap-2">
-                <div className="flex items-center justify-between gap-3">
-                  <Label
-                    className="items-start leading-normal font-normal"
-                    htmlFor="privacy-dry-run-sample"
-                  >
-                    <strong className="text-sm font-medium">{t("safety.sampleTextShort")}</strong>
-                  </Label>
-                  <small className="text-sm text-muted-foreground">
-                    {t("safety.sampleCount", { count: dryRunSamplePresets.length })}
-                  </small>
-                </div>
-                <div
-                  aria-label={t("safety.dryRunSample")}
-                  className="flex flex-wrap gap-1.5"
-                  role="group"
-                >
-                  {dryRunSamplePresets.map((preset) => {
-                    const selected = selectedDryRunPreset?.id === preset.id;
-                    return (
-                      <Button
-                        aria-pressed={selected}
-                        className={cn(
-                          "h-7 px-2.5 text-sm",
-                          selected && "border-primary/45 bg-accent text-accent-foreground",
-                        )}
-                        disabled={dryRunBusy}
-                        key={preset.id}
-                        onClick={() => changeDryRunSample(preset.text)}
-                        size="xs"
-                        title={dryRunSampleDescription(preset.id)}
-                        type="button"
-                        variant="outline"
-                      >
-                        {dryRunSampleLabel(preset.id)}
-                      </Button>
-                    );
-                  })}
-                </div>
-                <small className="text-sm leading-relaxed text-muted-foreground">
-                  {selectedDryRunPreset
-                    ? dryRunSampleDescription(selectedDryRunPreset.id)
-                    : t("safety.customSample")}
-                </small>
+                    <SelectTrigger aria-label={t("safety.loadSample")} className="w-auto min-w-36 text-xs" size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem disabled value="custom">{t("safety.customInput")}</SelectItem>
+                      {dryRunSamplePresets.map((preset) => (
+                        <SelectItem key={preset.id} value={preset.id}>
+                          {dryRunSampleLabel(preset.id)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                }>
+                  <div className="flex items-center gap-1 whitespace-nowrap">
+                    <Label htmlFor="privacy-dry-run-sample" className="text-sm font-semibold">
+                      {t("safety.sampleTextShort")}
+                    </Label>
+                    <HelpPopover label={t("safety.testHelp")}>
+                      <div className="grid gap-2">
+                        <p>{t("safety.dryRunHint")}</p>
+                        <p>{t("safety.testShortcut")}</p>
+                        <p>{t("safety.sampleCount", { count: dryRunSamplePresets.length })}</p>
+                        <p>{selectedDryRunPreset
+                          ? dryRunSampleDescription(selectedDryRunPreset.id)
+                          : t("safety.customSample")}</p>
+                      </div>
+                    </HelpPopover>
+                  </div>
+                </PanelHeader>
                 <Textarea
                   aria-label={t("safety.sampleText")}
-                  className="min-h-24 text-sm leading-relaxed"
+                  aria-invalid={dryRunSampleOverLimit}
+                  className="h-0 min-h-0 flex-1 resize-none field-sizing-fixed rounded-none border-0 p-3 text-sm leading-relaxed focus-visible:ring-inset"
                   id="privacy-dry-run-sample"
+                  ref={dryRunInputRef}
                   disabled={dryRunBusy}
-                  onChange={(event) => {
-                    changeDryRunSample(event.currentTarget.value);
-                  }}
-                  rows={4}
+                  onChange={(event) => changeDryRunSample(event.currentTarget.value)}
+                  placeholder={t("safety.inputPlaceholder")}
                   value={dryRunSample}
                 />
-                <small className={cn(
-                  "justify-self-end text-sm text-muted-foreground",
-                  dryRunSampleOverLimit && "font-medium text-destructive",
-                )}>
-                  {t("safety.sampleBytes", {
-                    used: dryRunSampleBytes.toLocaleString(),
-                    max: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString(),
-                  })}
-                </small>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  aria-busy={dryRunBusy}
-                  disabled={
-                    dryRunBusy ||
-                    saving ||
-                    dryRunSample.trim() === "" ||
-                    dryRunSampleOverLimit ||
-                    (policy.enabled &&
-                      policy.detector === "local_model" &&
-                      !selectedModelReady)
-                  }
-                  onClick={() => {
-                    void runDryRun();
-                  }}
-                  size="sm"
-                  type="button"
-                >
-                  {dryRunBusy ? t("safety.running") : t("safety.run")}
-                </Button>
-                {dryRunSampleOverLimit ? (
-                  <small className="text-sm text-destructive">{t("safety.sampleTooLongHint")}</small>
-                ) : !policy.enabled ? (
-                  <small className="text-sm text-muted-foreground">{t("safety.dryRunOffHint")}</small>
-                ) : policy.enabled &&
-                  policy.detector === "local_model" &&
-                  !selectedModelReady ? (
-                  <small className="text-sm text-muted-foreground">{t("safety.needReadyModelHint")}</small>
-                ) : (
-                  <small className="text-sm text-muted-foreground">{t("safety.previewCurrent")}</small>
-                )}
-              </div>
-              {dryRunError !== null ? (
-                <FormMessage tone="error">{dryRunError}</FormMessage>
-              ) : null}
+                <PanelFooter className="gap-2 px-3 py-2" actions={
+                  <>
+                    <Button disabled={dryRunBusy || !dryRunSample} onClick={() => {
+                      changeDryRunSample("");
+                      if (dryRunWorkspaceRef.current) dryRunWorkspaceRef.current.scrollTop = 0;
+                      dryRunInputRef.current?.focus({ preventScroll: true });
+                    }} size="xs" type="button" variant="ghost">
+                      {t("safety.clearSample")}
+                    </Button>
+                    <Button
+                      aria-keyshortcuts="Meta+Enter Control+Enter"
+                      title={t("safety.testShortcut")}
+                      aria-busy={dryRunBusy}
+                      disabled={
+                        dryRunBusy || saving || dryRunSample.trim() === "" ||
+                        dryRunSampleOverLimit ||
+                        (policy.enabled && policy.detector === "local_model" && !selectedModelReady)
+                      }
+                      onClick={() => void runDryRun()}
+                      size="sm"
+                      type="button"
+                    >
+                      <FlaskConical aria-hidden="true" />
+                      {dryRunBusy ? t("safety.running") : t("safety.startTest")}
+                    </Button>
+                  </>
+                }>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          disabled={dryRunBusy}
+                          size="xs"
+                          title={dryRunProtocolOptions.find((option) => option.value === dryRunProtocol)?.label}
+                          type="button"
+                          variant="ghost"
+                        >
+                          <SlidersHorizontal aria-hidden="true" />
+                          {t("safety.protocolSettings")}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start">
+                        <Field label={t("safety.protocol")} hint={t("safety.protocolHint")} htmlFor="privacy-dry-run-protocol">
+                          <Select
+                            disabled={dryRunBusy}
+                            onValueChange={(value) => {
+                              setDryRunProtocol(value as PrivacyDryRunProtocol);
+                              setDryRunError(null);
+                              setDryRunResult(null);
+                            }}
+                            value={dryRunProtocol}
+                          >
+                            <SelectTrigger aria-label={t("safety.dryRunProtocol")} className="w-full" id="privacy-dry-run-protocol" size="sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {dryRunProtocolOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                      </PopoverContent>
+                    </Popover>
+                    <span className={cn("text-xs tabular-nums text-muted-foreground", dryRunSampleOverLimit && "text-destructive")}
+                      title={t("safety.sampleBytes", { used: dryRunSampleBytes.toLocaleString(), max: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString() })}>
+                      {formatBytes(dryRunSampleBytes)} / {formatBytes(MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES)}
+                    </span>
+                  </div>
+                </PanelFooter>
+              </Panel>
 
-            <div className="grid gap-3 border-t pt-4">
-              <h3
-                className="text-base font-semibold tracking-tight outline-none"
-                id="dry-run-result-heading"
-                ref={dryRunResultHeadingRef}
-                tabIndex={-1}
-              >
-                {t("safety.dryRunResult")}
-              </h3>
-            <p aria-live="polite" className="sr-only">
-              {dryRunBusy
-                ? t("safety.running")
-                : dryRunResult !== null
-                  ? dryRunLiveSummary(dryRunResult)
-                  : ""}
-            </p>
-              {dryRunBusy ? (
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {t("safety.running")}
+              <Panel className="flex min-h-0 flex-col" data-testid="dry-run-output-panel">
+                <PanelHeader className="shrink-0 items-center px-3 py-2" actions={
+                  <>
+                    <Badge variant="secondary">{t("safety.localPreviewOnly")}</Badge>
+                    <Button
+                      className="@[720px]:hidden"
+                      onClick={() => {
+                        if (dryRunWorkspaceRef.current) dryRunWorkspaceRef.current.scrollTop = 0;
+                        dryRunInputRef.current?.focus({ preventScroll: true });
+                      }}
+                      size="xs"
+                      type="button"
+                      variant="ghost"
+                    >
+                      {t("safety.backToInput")}
+                    </Button>
+                  </>
+                }>
+                  <h2 className="text-sm font-semibold outline-none" id="dry-run-result-heading" ref={dryRunResultHeadingRef} tabIndex={-1}>
+                    {t("safety.dryRunResult")}
+                  </h2>
+                </PanelHeader>
+                <p aria-live="polite" className="sr-only">
+                  {dryRunBusy ? t("safety.running") : dryRunResult ? dryRunLiveSummary(dryRunResult) : ""}
                 </p>
-              ) : dryRunResult !== null ? (
-                <div
-                  className="grid gap-3"
-                  data-testid="safety-dry-run-result"
-                >
-                  <p className="text-sm text-muted-foreground">{t("safety.localPreviewOnly")}</p>
-                  <div className="flex items-center justify-between gap-3 rounded-md bg-accent px-3 py-2 text-sm text-accent-foreground">
-                    <span>{t("safety.decision")}</span>
-                    <strong className="font-medium">{actionLabel(dryRunResult.decision)}</strong>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 text-sm">
-                    <span>{t("safety.hitKinds")}</span>
-                    <strong>{summarizeDryRunFindings(dryRunResult)}</strong>
-                  </div>
-                  {dryRunResult.findings.length > 0 ? (
-                    <div className="grid gap-2">
-                      <span className="text-sm font-medium text-success-foreground">{t("safety.passedJudgment")}</span>
-                      <ul className="grid gap-2">
-                        {dryRunResult.findings.map((finding, index) => (
-                          <li
-                            className="rounded-lg border bg-card px-3 py-2 text-sm"
-                            key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
-                          >
-                            <strong className="font-medium">{dryRunKindLabel(finding.kind)}</strong>
-                            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                              {t("safety.position")}{" "}
-                              <code className="break-all">{finding.path}</code>
-                            </p>
-                            <p className="mt-0.5 text-sm leading-relaxed">
-                              {dryRunConfidenceReason(
-                                finding.confidence,
-                                policy.min_confidence,
-                                policy.detector,
-                                "hit",
-                              )}
-                            </p>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {dryRunResult.suppressed_findings.length > 0 ? (
-                    <div className="grid gap-2 rounded-lg bg-warning-wash/60 p-2">
-                      <span className="text-sm font-medium text-warning-foreground">{t("safety.suppressed")}</span>
-                      <ul className="grid gap-2">
-                        {dryRunResult.suppressed_findings.map(
-                          (finding, index) => (
-                            <li
-                              className="rounded-lg border bg-card px-3 py-2 text-sm"
-                              key={`${finding.path}:${finding.start}:${finding.end}:${finding.kind}:${index}`}
-                            >
-                              <strong className="font-medium">{dryRunKindLabel(finding.kind)}</strong>
-                              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                                {t("safety.position")}{" "}
-                                <code className="break-all">{finding.path}</code>
-                              </p>
-                              <p className="mt-0.5 text-sm leading-relaxed">
-                                {dryRunSuppressionReason(
-                                  finding,
-                                  policy.min_confidence,
-                                  policy.detector,
-                                )}
-                              </p>
-                            </li>
-                          ),
-                        )}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {dryRunResult.redactions !== undefined &&
-                  dryRunResult.redactions.length > 0 ? (
-                    <div className="grid gap-2">
-                      <span className="text-sm font-medium">{t("safety.placeholderCompare")}</span>
-                      <ul className="grid gap-2">
-                        {dryRunResult.redactions.map((redaction) => (
-                          <li
-                            className="rounded-lg border bg-card px-3 py-2 text-sm"
-                            key={redaction.placeholder}
-                          >
-                            <code className="break-all">{redaction.placeholder}</code>
-                            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                              {dryRunKindLabel(redaction.kind)} ·{" "}
-                              {placeholderStyleLabel(redaction.style)}
-                            </p>
-                            <p className="mt-0.5 text-sm leading-relaxed">
-                              {t("safety.original")}{" "}
-                              <code className="break-all">{redaction.value}</code>
-                            </p>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {dryRunResult.redacted_body !== undefined ? (
-                    <div className="grid gap-1.5">
-                      <span className="text-sm font-medium">{t("safety.redactedBody")}</span>
-                      <pre className="overflow-x-auto rounded-lg bg-foreground p-3 font-mono text-xs font-normal whitespace-pre-wrap text-background">{prettyJSON(dryRunResult.redacted_body)}</pre>
-                    </div>
-                  ) : null}
+                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3" data-tab-scroller data-testid="dry-run-output-scroll">
+                  {dryRunError ? <FormMessage tone="error">{dryRunError}</FormMessage> : null}
+                  {dryRunBusy ? (
+                    <EmptyState className="flex-1 border-0" title={t("safety.running")} description={t("safety.runningHint")} />
+                  ) : dryRunResult ? (
+                    <PrivacyDryRunResult
+                      result={dryRunResult}
+                      summary={summarizeDryRunFindings(dryRunResult)}
+                      sample={dryRunSample}
+                      onLocate={locateDryRunSpan}
+                    />
+                  ) : (
+                    <EmptyState
+                      className="flex-1 border-0"
+                      title={t(dryRunSampleOverLimit ? "safety.sampleTooLongTitle" : !policy.enabled ? "safety.testOffTitle" : "safety.notYetRun")}
+                      description={t(dryRunSampleOverLimit ? "safety.sampleTooLongHint" : !policy.enabled ? "safety.dryRunOffHint" : policy.detector === "local_model" && !selectedModelReady ? "safety.needReadyModelHint" : "safety.testEmptyHint")}
+                    />
+                  )}
                 </div>
-              ) : (
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {t("safety.notYetRun")}
-                </p>
-              )}
-            </div>
-            </div>
+              </Panel>
+            </SplitWorkspace>
           </TabsContent>
 
           <TabsContent
@@ -3320,7 +3321,7 @@ export function SafetyPolicy({
                               <p>{sourceLabel} · {licenseLabel} · {languageLabel}</p>
                               <p className="break-all">{installation.repo_id}</p>
                             </div>
-                            {installation.status === "downloading" ? (
+                            {installation.status === "downloading" || installation.status === "paused" ? (
                               <div className="grid gap-1.5">
                                 <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
                                   <span>
@@ -3394,40 +3395,21 @@ export function SafetyPolicy({
                                 {selected ? t("safety.currentModel") : t("safety.usedByPolicy")}
                               </Button>
                             ) : null}
-                            {installation.status === "error" &&
-                            installation.source !== "local" ? (
+                            {installation.source !== "local" && installation.status !== "ready" ? (
                               <Button
                                 disabled={operationBusy !== null}
-                                onClick={() => {
-                                  const retryVariant: PrivacyModelVariant = {
-                                    id: installation.variant_id,
-                                    name: installation.variant_name,
-                                    quantization: installation.quantization,
-                                    bytes_total: installation.bytes_total,
-                                    estimated_ram_bytes:
-                                      installation.estimated_ram_bytes,
-                                    recommended: false,
-                                    supported: true,
-                                    unsupported_reason: null,
-                                  };
-                                  void startInstallation(
-                                    installation.id,
-                                    installation.name,
-                                    retryVariant,
-                                    {
-                                      repo_id: installation.repo_id,
-                                      revision: installation.revision,
-                                      variant_id: installation.variant_id,
-                                      label_mapping:
-                                        installation.label_mapping,
-                                    },
-                                  );
-                                }}
+                                onClick={() => void changeDownloadState(installation)}
                                 size="sm"
                                 type="button"
                                 variant="outline"
                               >
-                                {t("safety.retry")}
+                                {operationBusy === installation.id
+                                  ? t("common.processing")
+                                  : installation.status === "downloading"
+                                    ? t("safety.pauseDownload")
+                                    : installation.status === "paused"
+                                      ? t("safety.resumeDownload")
+                                      : t("safety.retry")}
                               </Button>
                             ) : null}
                             <Button

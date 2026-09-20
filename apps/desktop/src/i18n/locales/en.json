@@ -63,6 +63,7 @@
     "reload": "Reload"
   },
   "core": {
+    "portFallback": "Port {{port}} is occupied. The gateway is using {{address}} for this run. Update your client API address, or free the saved port and restart the gateway.",
     "phase": {
       "ready": "Ready",
       "spawning": "Starting",
@@ -100,8 +101,13 @@
     "desktopOnly": "This action is only available in the AstrLink desktop app."
   },
   "settings": {
+    "theme": "Appearance",
+    "themeOptions": {
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    },
     "title": "Settings",
-    "description": "Window and gateway preferences apply immediately. The inference port and inspection concurrency must be saved separately.",
     "failed": "Settings action failed.",
     "loadFailed": "Unable to load settings",
     "loading": "Reading desktop and system settings…",
@@ -119,7 +125,10 @@
     "autostart": "Start AstrLink when you sign in",
     "trayHint": "The tray menu always includes “Show AstrLink” and “Quit”.",
     "runtimeKicker": "Local runtime",
-    "gatewayTitle": "Gateway start and recovery",
+    "gatewayTitle": "Gateway and network",
+    "useSystemProxy": "Use system proxy",
+    "systemProxyHint": "Restart the gateway to apply.",
+    "notifyProxySaved": "Saved. Restart the gateway to apply.",
     "coreAutoStart": "Start the gateway when AstrLink opens",
     "coreAutoRecover": "Recover automatically if the gateway exits unexpectedly",
     "currentStatus": "Current status: {{phase}}",
@@ -158,24 +167,66 @@
   },
   "agentDebug": {
     "title": "Agent tools",
-    "description": "Install a read-only skill and MCP so Cursor, Claude Code, and Codex can inspect AstrLink request records. The control token is never written into those configs.",
-    "panelTitle": "One-click debug skill and MCP",
-    "failed": "Agent tools action failed.",
-    "restartHint": "The desktop gateway must be running. Open a new agent session after installing. Do not Authenticate or sign in to the local astrlink MCP — it is stdio, not OAuth. Metadata debugging works immediately; request bodies stay off until you enable capture in Request records.",
-    "install": "Install skill and MCP",
+    "description": "Let your agent inspect AstrLink records to diagnose failed requests, routing, and privacy blocks.",
+    "panelTitle": "Tool setup",
+    "failed": "Could not complete the action. Please try again.",
+    "install": "Install tools",
+    "repair": "Complete setup",
+    "reinstall": "Reinstall",
     "installing": "Installing…",
-    "remove": "Remove",
-    "removing": "Removing…",
-    "installTitle": "Install AstrLink agent debugging?",
-    "installBody": "AstrLink will write a user-level skill and merge a local read-only MCP server named astrlink. Detected tools only. Existing MCP servers are kept.",
-    "removeTitle": "Remove AstrLink agent debugging?",
-    "removeBody": "This removes the managed skill, the astrlink MCP entry, and the copied astrlink-mcp binary. Other MCP servers stay.",
-    "notifyInstalled": "Skill and MCP installed. Open a new agent session to load them.",
-    "notifyRemoved": "AstrLink agent debugging was removed.",
+    "remove": "Uninstall",
+    "removing": "Uninstalling…",
+    "installTitle": "Install agent debugging tools",
+    "installBody": "Install the AstrLink debug skill and read-only MCP for detected tools. Setup applies to your user account and preserves other MCP servers. Open a new session after installing.",
+    "removeTitle": "Uninstall agent debugging tools?",
+    "removeBody": "Remove the AstrLink-managed debug skill, MCP configuration, and local binary from all tools. Other MCP servers are kept.",
+    "notifyInstalled": "Installation complete. Open a new agent session to get started.",
+    "notifyRemoved": "Agent debugging tools uninstalled.",
     "notDetected": "Not detected",
     "detected": "Detected",
     "installed": "Installed",
-    "partial": "Partially installed",
+    "notInstalled": "Not installed",
+    "unavailable": "Unavailable",
+    "refresh": "Check again",
+    "configuredCount": "{{count}} / {{total}} tools configured",
+    "statusHint": "Check local tools and installation status",
+    "toolColumn": "Tool",
+    "readOnly": "Read-only access",
+    "permissionsTitle": "Access permissions",
+    "permissionsBody": "Agents can read AstrLink request records and execution traces. They cannot change gateway settings. The control token is never written to tool configuration.",
+    "installScopeShort": "Includes skill + MCP",
+    "installScopeTitle": "What gets installed",
+    "installScopeBody": "The skill provides debugging guidance; MCP lets agents read local records. Setup covers all detected tools. Reinstalling restores missing files.",
+    "noTools": "No supported tools detected. Install and launch Cursor, Claude Code, or Codex once, then check again.",
+    "missingRuntime": "The local MCP binary is missing. Complete setup before using it.",
+    "promptTitle": "Try asking your agent",
+    "copyPrompt": "Copy example",
+    "prompt": "Use astrlink-debug to inspect the most recent failed request. Explain the failure, the model and route used, and suggest how to fix it.",
+    "promptHint": "Include a request ID to investigate a specific call.",
+    "startTitle": "After setup, get started in three steps",
+    "steps": {
+      "gateway": {
+        "title": "Keep the gateway running",
+        "body": "Your agent reads records through the local gateway. Check that the status at the bottom left is Ready."
+      },
+      "session": {
+        "title": "Open a new agent session",
+        "body": "Start a new session in a configured tool to load the skill and MCP."
+      },
+      "ask": {
+        "title": "Describe the problem",
+        "body": "Paste the example or ask your own question. Your agent will inspect the records and explain what happened."
+      }
+    },
+    "help": {
+      "installTitle": "Tool missing or setup incomplete?",
+      "installBody": "Launch the tool once, then choose Check again. If the skill or MCP is missing, choose Complete setup. Open a new session when installation finishes.",
+      "loginTitle": "Does MCP need a sign-in?",
+      "loginBody": "No. AstrLink MCP runs locally, so you do not need to select Authenticate or sign in. If it cannot connect, check that the gateway is ready and open a new session.",
+      "bodyTitle": "Why are request bodies missing?",
+      "bodyBody": "By default, only request metadata and execution traces are recorded. To inspect request and response bodies, enable body capture in Request records, then send the request again."
+    },
+    "pathsTitle": "View installation locations",
     "tools": {
       "cursor": "Cursor",
       "claude": "Claude Code",
@@ -190,6 +241,17 @@
   "overview": {
     "title": "Overview",
     "description": "See usage, mix, and local access.",
+    "welcomeTitle": "Welcome to AstrLink",
+    "welcomePreview": "Browser preview. Your local workspace is not connected.",
+    "welcomeDisconnected": "The local gateway is not connected yet.",
+    "welcomeLoading": "Reading your workspace…",
+    "welcomeEmpty": "Your workspace is ready. No API services are connected yet.",
+    "welcomeBrowseServices": "View API services",
+    "welcomeCreateToken": "Create access token",
+    "welcomeNotConnected": "Not connected",
+    "welcomeNotRead": "Not loaded",
+    "welcomeNoServices": "Not configured",
+    "welcomeNoTokens": "Not created",
     "desktopVersion": "Desktop version",
     "gatewayVersion": "Gateway version",
     "pending": "Pending",
@@ -289,7 +351,9 @@
     "codeExchangeFailed": "Authorization code could not be verified. Sign in again.",
     "searchServices": "Search services",
     "searchServicesPlaceholder": "Search name, type, or address…",
-    "noSearchResults": "Try another name, service type, or API address.",
+    "noSearchResults": "Try another service name, type, API address, or model name.",
+    "filterModel": "Filter services by model name",
+    "filterModelPlaceholder": "Filter by model name…",
     "basicInformation": "Basic information",
     "basicInformationHint": "Choose a service type and a recognizable connection name.",
     "accountAuthorization": "Account authorization",
@@ -467,7 +531,7 @@
     "reorder": "Reorder service",
     "reorderKeys": "Drag to reorder; use Arrow Up / Down when focused",
     "orderSaving": "Saving service order…",
-    "orderFiltered": "Clear search and select All to reorder services.",
+    "orderFiltered": "Drag to change matching services’ global priority; other services keep their positions.",
     "orderHint": "Top services take priority. Drag a handle to reorder; disabled services keep their position."
   },
   "models": {
@@ -617,7 +681,7 @@
     "extraPeriod": "{{name}} · period",
     "limitReached": "Usage limit reached",
     "resetAvailable": "Resets left ×{{count}}",
-    "usedPercent": "{{percent}}% used"
+    "remainingPercent": "{{percent}}% remaining"
   },
   "privacy": {
     "name": "Privacy protection",
@@ -647,6 +711,58 @@
     "noHit": "No hits"
   },
   "safety": {
+    "clearSample": "Clear",
+    "testShortcut": "⌘ / Ctrl + Enter to run detection",
+    "testCounts": "{{hits}} accepted, {{ignored}} ignored",
+    "testRegex": "Regex detection",
+    "testModel": "Local model detection",
+    "testFindingDetails": "Matches and ignored text",
+    "testIgnored": "Ignored",
+    "locateOriginal": "Locate in input",
+    "testReplaceWith": "Replace with",
+    "testSpanUnavailable": "The original span could not be located. Expand request details to inspect its position.",
+    "testKeepOriginal": "Keep the original; excluded from this action.",
+    "testOutputText": "Text after processing",
+    "testTechnicalDetails": "Request details and positions (JSON)",
+    "testByteRange": "Bytes {{start}}–{{end}}",
+    "testNoMatches": "The current detector found no matches. The text is unchanged. Check the detector, rules and enabled types, or try another example.",
+    "testReason": {
+      "regex": "Matches a regex rule with this type enabled; model confidence thresholds do not apply.",
+      "confident": "Confidence {{confidence}}% meets the {{threshold}}% threshold. Accepted as a match.",
+      "low_confidence": "Confidence {{confidence}}% is below the {{threshold}}% threshold, so this match is ignored.",
+      "kind_disabled": "This information type is disabled, so the match is ignored.",
+      "allowlisted": "Matches the allowlist, so the match is ignored.",
+      "placeholder": "Already a placeholder; no further replacement is needed.",
+      "unrepresentable": "No usable replacement can be generated, so the match is ignored."
+    },
+    "testAction": {
+      "allow": "The current policy allows the request and keeps the original.",
+      "warn": "The current policy warns and continues with the original.",
+      "block": "The current policy blocks the entire request.",
+      "redact": "The current policy redacts this text and continues."
+    },
+    "backToInput": "Edit input",
+    "loadSample": "Choose an example",
+    "customInput": "Custom text",
+    "testHelp": "About local testing and examples",
+    "inputPlaceholder": "Type or paste text to test…",
+    "protocolSettings": "Format",
+    "startTest": "Run test",
+    "runningHint": "Applying your current privacy settings. Please wait.",
+    "blockedPreview": "Your policy would block this request before it reaches the upstream service.",
+    "requestPreview": "Request content",
+    "detectionDetails": "View matches and ignored findings",
+    "sampleTooLongTitle": "Text exceeds the limit",
+    "testOffTitle": "Privacy protection is off",
+    "testEmptyHint": "Enter text or choose an example, then run the test to see the result.",
+    "allowlistHelp": "How allowlist matching works",
+    "detectionAndRestore": "Detection & restoration",
+    "redactionRules": "Redaction rules",
+    "allowlistEntries": "Allowlist entries",
+    "searchAllowlist": "Search type or value",
+    "clearAllowlistSearch": "Clear allowlist search",
+    "noAllowlistMatches": "No matching entries",
+    "tryAnotherAllowlistSearch": "Try another keyword or clear the search to see all entries.",
     "enabledTypes": "{{count}} / {{total}} enabled",
     "ruleCoverage": "Coverage & limitations",
     "advancedDetection": "Model confidence threshold",
@@ -666,7 +782,7 @@
     "restore": "Restore placeholders in the response",
     "restoreHint": "Only applies when the request action is “Redact and continue”",
     "workspace": "Privacy workspace",
-    "dryRunResult": "Dry-run result",
+    "dryRunResult": "Results",
     "localModels": "Local models",
     "chooseInstalled": "Choose from installed models",
     "builtinRules": "Built-in rules",
@@ -714,6 +830,11 @@
     "localProbed": "Local model check finished. Confirm the version, label mapping, and resource use.",
     "localProbeFailed": "Unable to check the local model path.",
     "progressFailed": "Unable to refresh model download progress.",
+    "paused": "Paused",
+    "pauseDownload": "Pause download",
+    "resumeDownload": "Resume download",
+    "pauseFailed": "Failed to pause download.",
+    "resumeFailed": "Failed to resume download.",
     "downloading": "Downloading",
     "ready": "Ready",
     "unavailableStatus": "Unavailable",
@@ -765,8 +886,8 @@
     "dryRunProtocol": "Dry-run protocol",
     "dryRunSample": "Dry-run sample",
     "customSample": "Custom sample: you can keep editing the text below.",
-    "sampleText": "Dry-run sample text",
-    "running": "Running…",
+    "sampleText": "Text to test",
+    "running": "Testing…",
     "run": "Dry run",
     "modelView": "Model view",
     "official": "Official",
@@ -872,27 +993,27 @@
     "restoreScope": "Restore scope",
     "restoreToolsDetail": "Tools run on this machine. If this is off, the agent will use stand-ins for requests or file writes",
     "injectNoticeHint": "Injected only when this request actually emits a {{style}}; the notice contains no mappings",
-    "dryRunHint": "Preview the current policy with sample text. Nothing is sent upstream",
-    "backToPolicy": "Back to policy",
-    "protocol": "Protocol",
-    "protocolHint": "Controls how the sample is wrapped into a request body",
-    "sampleTextShort": "Sample text",
-    "sampleCount": "{{count}} fictional test cases",
+    "dryRunHint": "Test with your current privacy settings on this machine. Nothing is sent upstream.",
+    "backToPolicy": "Back to detection",
+    "protocol": "Simulated request format",
+    "protocolHint": "Choose the interface your client uses. The request structure determines which fields are inspected.",
+    "sampleTextShort": "Input text",
+    "sampleCount": "{{count}} everyday scenarios with synthetic data. You can replace it with your own text.",
     "sampleBytes": "{{used}} / {{max}} bytes (256 KiB)",
     "sampleTooLongHint": "The sample is too long (limit 256 KiB). Shorten it and try again",
     "dryRunOffHint": "Privacy protection is off. Turn it on before running a dry run",
     "needReadyModelHint": "Choose a ready local model first",
-    "previewCurrent": "Preview uses the current Policy settings",
-    "localPreviewOnly": "Local preview only",
+    "previewCurrent": "Preview uses the current privacy settings",
+    "localPreviewOnly": "Local test only",
     "decision": "Decision",
     "hitKinds": "Hit kinds",
-    "passedJudgment": "Passed (the policy will run)",
+    "passedJudgment": "Active matches",
     "position": "Location",
-    "suppressed": "Suppressed (the policy will not run)",
-    "placeholderCompare": "Placeholder mapping (local preview only)",
+    "suppressed": "Ignored findings",
+    "placeholderCompare": "Replacement mapping",
     "original": "Original",
-    "redactedBody": "Redacted request body",
-    "notYetRun": "No dry run yet. Results are a local preview only and are not sent upstream.",
+    "redactedBody": "Redacted request",
+    "notYetRun": "Ready to test",
     "localPrivacyModels": "Local privacy models",
     "modelsStayLocal": "Models are verified and run on this machine. Request bodies are not sent to the model source.",
     "readyCount": "{{count}} ready",
@@ -921,40 +1042,40 @@
     "labelCount": "{{count}} base labels",
     "sample": {
       "mixed-contact": {
-        "label": "Mixed contact details",
-        "description": "Email, an international phone number, and a test card. Good for a quick multi-kind check."
+        "label": "Support ticket",
+        "description": "Contact details mixed with an order issue, to inspect detection while preserving ordinary business content."
       },
       "account": {
-        "label": "Account and IBAN",
-        "description": "A contextual account number and a standard test IBAN."
+        "label": "Expense reimbursement",
+        "description": "An English reimbursement email containing a beneficiary, account number, IBAN, payment card and email."
       },
       "network": {
-        "label": "IP and link",
-        "description": "Documentation IPv4 and an .example link. No real network target."
+        "label": "Service incident log",
+        "description": "Timeout logs with internal IPs, an upstream URL and a callback URL alongside status codes and timings."
       },
       "secret": {
-        "label": "Test secrets",
-        "description": "Clearly fictional API key and password assignment forms."
+        "label": "App configuration",
+        "description": "YAML pasted for connection troubleshooting, with an API key, database password and webhook secret."
       },
       "zh-profile": {
-        "label": "Chinese profile",
-        "description": "Chinese name, address, date, and email. Better for checking the local model."
+        "label": "Employee onboarding",
+        "description": "Registration details with a name, birthday, address and emergency contact; names and addresses require a local model."
       },
       "en-profile": {
-        "label": "English profile",
-        "description": "English name, address, and date of birth. Better for checking the local model."
+        "label": "Hotel booking",
+        "description": "English booking notes with a guest name, date of birth, home address and contact details."
       },
       "mixed-language": {
-        "label": "Mixed Chinese and English",
-        "description": "Name, date, phone, email, and a link in one paragraph."
+        "label": "Bilingual client meeting",
+        "description": "Chinese and English dialogue with multiple contacts, email addresses and a business link."
       },
       "clean": {
-        "label": "No sensitive data",
-        "description": "Normal text with no PII, used to check false positives."
+        "label": "Product release notes",
+        "description": "Complete release copy without personal data or credentials, for checking false positives."
       },
       "numeric-boundary": {
-        "label": "Numeric boundary cases",
-        "description": "An invalid card, an invalid IP, and a plain order number, used to check numeric false positives."
+        "label": "Batch performance log",
+        "description": "Order identifiers, versions, timings, row counts and amounts, for inspecting numeric false positives."
       }
     }
   },
@@ -1619,5 +1740,22 @@
     "orderTitle": "Default recovery order and attempt limit",
     "orderHint": "API service order determines priority. Choose one attempt per service or retry before switching. The total limit includes the first request.",
     "saveFailed": "Could not save the default policy. Please try again."
+  },
+  "pricing": {
+    "title": "Cost details",
+    "description": "Valued at official API prices",
+    "cycleAmount": "This cycle",
+    "monthAmount": "This month",
+    "incomplete": "Partly unpriced",
+    "month": "Monthly",
+    "primary": "Quota cycle",
+    "secondary": "Longer quota cycle",
+    "period": "Period",
+    "empty": "No calls yet",
+    "officialAmount": "API-equivalent cost",
+    "partial": "Recorded calls only",
+    "unpricedCount": "{{count}} unpriced",
+    "pendingCount": "{{count}} in progress",
+    "unavailable": "Cost unavailable"
   }
 }

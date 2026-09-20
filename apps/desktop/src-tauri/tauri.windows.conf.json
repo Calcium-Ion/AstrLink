@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer/windows-hooks.nsh"
+      }
+    },
+    "resources": {
+      "binaries/DirectML.dll": "DirectML.dll"
+    }
+  }
+}

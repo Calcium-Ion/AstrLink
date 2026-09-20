@@ -391,6 +391,97 @@ describe("ServiceManager", () => {
     expect(container.querySelector('[data-testid="service-card"]')?.textContent).toContain("new-api");
   });
 
+  it.each([true, false])("reorders services in the enabled=%s status filter without moving hidden services", async (enabled) => {
+    const services = Array.from({ length: 5 }, (_, index): Service => ({
+      ...gatewayService,
+      id: `service_${index}`,
+      name: `Gateway ${index}`,
+      enabled: index % 2 === 1 ? enabled : !enabled,
+    }));
+    bridgeMocks.getServiceOrder.mockResolvedValueOnce({
+      service_ids: services.map((service) => service.id), etag,
+    });
+    bridgeMocks.updateServiceOrder.mockImplementationOnce(async (service_ids) => ({ service_ids, etag }));
+    await act(async () => root.render(
+      <ServiceManager catalogError={null} catalogStatus="ready" isReady
+        services={services} protocols={[]} view={{ kind: "list" }}
+        onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
+        onServiceSaved={() => {}} onViewChange={() => {}} />,
+    ));
+    const statusFilter = [...container.querySelectorAll<HTMLButtonElement>('button[role="radio"]')]
+      .find((button) => button.textContent?.startsWith(enabled ? "已启用" : "已停用"))!;
+    await act(async () => statusFilter.click());
+    const handle = container.querySelector<HTMLButtonElement>('[data-ordered-item="service_3"] button')!;
+    expect(handle.disabled).toBe(false);
+    await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })));
+    expect(bridgeMocks.updateServiceOrder).toHaveBeenCalledExactlyOnceWith(
+      ["service_0", "service_3", "service_2", "service_1", "service_4"], etag,
+    );
+    expect([...container.querySelectorAll('[data-testid="service-card"]')].map((row) => row.getAttribute("aria-label")))
+      .toEqual(["Gateway 3", "Gateway 1"]);
+    const all = [...container.querySelectorAll<HTMLButtonElement>('button[role="radio"]')]
+      .find((button) => button.textContent?.startsWith("全部"))!;
+    await act(async () => all.click());
+    expect([...container.querySelectorAll('[data-testid="service-card"]')].map((row) => row.getAttribute("aria-label")))
+      .toEqual(["Gateway 0", "Gateway 3", "Gateway 2", "Gateway 1", "Gateway 4"]);
+  });
+
+  it("combines model, status and service search filters, saves their order and clears all filters", async () => {
+    const services: Service[] = [
+      { ...gatewayService, id: "service_other_model", name: "GPT-5 name only", models: ["claude-sonnet-4-5"] },
+      { ...gatewayService, id: "service_first", name: "First gateway" },
+      { ...gatewayService, id: "service_disabled", enabled: false },
+      { ...gatewayService, id: "service_second", name: "Second gateway", models: ["gpt-5.4", "claude-sonnet-4-5"] },
+      { ...codexService, name: "GPT-5 unconfigured" },
+    ];
+    bridgeMocks.getServiceOrder.mockResolvedValueOnce({
+      service_ids: services.map((service) => service.id), etag,
+    });
+    bridgeMocks.updateServiceOrder.mockImplementationOnce(async (service_ids) => ({ service_ids, etag }));
+    await act(async () => root.render(
+      <ServiceManager catalogError={null} catalogStatus="ready" isReady
+        services={services} protocols={[]} view={{ kind: "list" }}
+        onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
+        onServiceSaved={() => {}} onViewChange={() => {}} />,
+    ));
+    const modelSearch = container.querySelector<HTMLInputElement>('input[aria-label="按模型名筛选服务"]')!;
+    const serviceSearch = container.querySelector<HTMLInputElement>('input[aria-label="搜索服务"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(modelSearch, "  GPT-5  ");
+      modelSearch.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect([...container.querySelectorAll("[data-ordered-item]")].map((row) => row.getAttribute("data-ordered-item")))
+      .toEqual(["service_first", "service_disabled", "service_second"]);
+    const enabled = [...container.querySelectorAll<HTMLButtonElement>('button[role="radio"]')]
+      .find((button) => button.textContent?.startsWith("已启用"))!;
+    await act(async () => enabled.click());
+    await act(async () => {
+      setter.call(serviceSearch, "gateway.example");
+      serviceSearch.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(2);
+    const handle = container.querySelector<HTMLButtonElement>('[data-ordered-item="service_second"] button')!;
+    expect(handle.disabled).toBe(false);
+    await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })));
+    expect(bridgeMocks.updateServiceOrder).toHaveBeenCalledExactlyOnceWith(
+      ["service_other_model", "service_second", "service_disabled", "service_first", codexService.id], etag,
+    );
+    await act(async () => {
+      setter.call(modelSearch, "no-such-model");
+      modelSearch.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(0);
+    const clear = [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "清除筛选")!;
+    await act(async () => clear.click());
+    expect(modelSearch.value).toBe("");
+    expect(serviceSearch.value).toBe("");
+    expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(5);
+    expect([...container.querySelectorAll("[data-ordered-item]")].map((row) => row.getAttribute("data-ordered-item")))
+      .toEqual(["service_other_model", "service_second", "service_disabled", "service_first", codexService.id]);
+  });
+
   it("shows rolling quota and reset on a connected Codex row", async () => {
     const connected: Service = {
       ...codexService,
@@ -459,12 +550,12 @@ describe("ServiceManager", () => {
     );
     expect(container.textContent).toContain("5 小时");
     const rollingQuota = container.querySelector('[role="progressbar"][aria-label="5 小时"]');
-    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("34");
-    expect(rollingQuota?.getAttribute("aria-valuetext")).toBe("已用 34%");
+    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("66");
+    expect(rollingQuota?.getAttribute("aria-valuetext")).toBe("剩余 66%");
     expect(container.textContent).toContain("7 天");
     const weeklyQuota = container.querySelector('[role="progressbar"][aria-label="7 天"]');
-    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("12");
-    expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("已用 12%");
+    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("88");
+    expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("剩余 88%");
     expect(container.textContent).toMatch(/重置/);
     expect(container.textContent).toContain("重置 ×2");
     expect(container.textContent).toContain("附加额度");

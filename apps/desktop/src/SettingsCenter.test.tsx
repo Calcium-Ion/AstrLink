@@ -25,10 +25,12 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 import { applyLocale } from "./i18n";
 import type { AppSnapshot } from "./core-model";
 import { SettingsCenter } from "./SettingsCenter";
+import { applyTheme } from "./theme";
 
 const snapshot = {
   phase: "ready",
   ready: { inference_url: "http://127.0.0.1:8317" },
+  inference_port_fallback: null,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
   last_error: null,
@@ -40,9 +42,11 @@ const settings = {
     autostart: false,
     core_auto_start: true,
     core_auto_recover: true,
+    use_system_proxy: true,
     inference_port: 9000,
     max_concurrent_inspections: 16,
     response_start_timeout_seconds: 0,
+    theme: "system" as const,
     locale: "zh-CN" as const,
   },
   load_warning: null,
@@ -55,6 +59,7 @@ describe("SettingsCenter", () => {
   let root: Root;
 
   beforeEach(() => {
+    applyTheme("system");
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -68,6 +73,7 @@ describe("SettingsCenter", () => {
   });
 
   afterEach(async () => {
+    applyTheme("system");
     await applyLocale("zh-CN");
     await act(async () => root.unmount());
     container.remove();
@@ -126,6 +132,21 @@ describe("SettingsCenter", () => {
       "入口设置已保存。重启网关后生效。",
     );
     expect(onDirtyChange).toHaveBeenCalledWith(true);
+  });
+
+  it("explains a fallback without claiming the saved port is a pending edit", async () => {
+    await act(async () => root.render(
+      <SettingsCenter
+        snapshot={{ ...snapshot, inference_port_fallback: { requested_port: 9000, active_port: 8317 } }}
+        onCoreSnapshot={vi.fn()}
+        onDirtyChange={vi.fn()}
+      />,
+    ));
+    expect(container.textContent).toContain("端口 9000 已被占用");
+    expect(container.textContent).toContain("http://127.0.0.1:8317");
+    expect(container.textContent).toContain("请同步修改客户端 API 地址");
+    expect(container.textContent).not.toContain("入口修改尚未生效");
+    expect(bridge.updatePreferences).not.toHaveBeenCalled();
   });
 
   it("applies desktop and core preferences immediately", async () => {
@@ -199,6 +220,60 @@ describe("SettingsCenter", () => {
     );
     expect(container.textContent).toContain("Inference entry");
     await applyLocale("zh-CN");
+  });
+
+  it("saves and applies the theme without saving pending entry edits or restarting", async () => {
+    bridge.restartCore.mockReset();
+    bridge.updatePreferences.mockImplementation(async (values) => ({ ...settings, values }));
+    await act(async () => root.render(
+      <SettingsCenter snapshot={snapshot} onCoreSnapshot={vi.fn()} onDirtyChange={vi.fn()} />,
+    ));
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "9123");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="暗色"]')!.click());
+    expect(bridge.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({ theme: "dark", inference_port: 9000 }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(input.value).toBe("9123");
+    expect(bridge.restartCore).not.toHaveBeenCalled();
+  });
+
+  it("retains the active theme and selection if saving fails", async () => {
+    applyTheme("dark");
+    bridge.getPreferences.mockResolvedValue({ ...settings, values: { ...settings.values, theme: "dark" } });
+    bridge.updatePreferences.mockRejectedValue(new Error("无法保存外观设置"));
+    await act(async () => root.render(
+      <SettingsCenter snapshot={snapshot} onCoreSnapshot={vi.fn()} onDirtyChange={vi.fn()} />,
+    ));
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="浅色"]')!.click());
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(container.querySelector('[role="radio"][aria-label="暗色"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).toContain("无法保存外观设置");
+  });
+
+  it("persists the system proxy switch without interrupting the running gateway", async () => {
+    bridge.restartCore.mockReset();
+    bridge.updatePreferences.mockImplementation(async (values) => ({ ...settings, values }));
+    await act(async () => root.render(
+      <SettingsCenter snapshot={snapshot} onCoreSnapshot={vi.fn()} onDirtyChange={vi.fn()} />,
+    ));
+    const label = [...container.querySelectorAll("label")].find((node) => node.textContent?.startsWith("使用系统代理"));
+    const toggle = container.querySelector<HTMLButtonElement>(`[id="${label?.htmlFor}"]`);
+    if (!toggle) throw new Error("missing system proxy toggle");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await act(async () => toggle.click());
+    expect(bridge.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({ use_system_proxy: false }));
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(bridge.restartCore).not.toHaveBeenCalled();
+    expect(notifyMocks.success).toHaveBeenCalledWith("已保存，重启网关后生效。");
+
+    bridge.updatePreferences.mockRejectedValueOnce(new Error("write failed"));
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).toContain("write failed");
   });
 
   it("saves a higher inspection concurrency for the next gateway start", async () => {

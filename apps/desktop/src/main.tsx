@@ -1,6 +1,8 @@
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 // Self-hosted: the desktop app has no guaranteed network at launch.
 // Latin and digits render in Plex; CJK falls back to the system face.
@@ -19,6 +21,8 @@ import { TrajectoryInspectorWindow } from "./TrajectoryInspectorWindow";
 import { isTrajectoryInspectorWindow } from "./trajectory-inspector-window";
 import { WindowChrome } from "./WindowChrome";
 import { getDesktopPlatform } from "./window-chrome";
+import { applyTheme, initializeTheme } from "./theme";
+import { isThemePreference } from "./theme-model";
 import "./styles/globals.css";
 
 const root = document.getElementById("root");
@@ -30,8 +34,25 @@ if (!root) {
 const desktopPlatform = getDesktopPlatform();
 document.documentElement.dataset.desktopPlatform = desktopPlatform;
 
-void getPreferences()
-  .then((settings) => applyLocale(settings.values.locale))
+initializeTheme();
+
+async function loadPreferences(): Promise<void> {
+  let themeUpdated = false;
+  if (isTauri()) {
+    // Register before reading preferences so an inspector cannot miss a change.
+    await listen("theme-preference-changed", ({ payload }) => {
+      if (isThemePreference(payload)) {
+        themeUpdated = true;
+        applyTheme(payload);
+      }
+    }).catch((error) => console.error("Unable to observe AstrLink theme", error));
+  }
+  const settings = await getPreferences();
+  if (!themeUpdated) applyTheme(settings.values.theme);
+  await applyLocale(settings.values.locale);
+}
+
+void loadPreferences()
   .catch(() => {
     // Browser preview has no preferences IPC.
   });

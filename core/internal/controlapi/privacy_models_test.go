@@ -86,6 +86,24 @@ func (registry *fakePrivacyModelRegistry) Install(
 	return installation, nil
 }
 
+func (registry *fakePrivacyModelRegistry) PauseInstallation(_ context.Context, id contract.PrivacyModelID) (contract.PrivacyModelInstallation, error) {
+	installation, err := registry.GetInstallation(id)
+	if err == nil {
+		installation.Status = contract.PrivacyModelStatusPaused
+		registry.installations[id] = installation
+	}
+	return installation, err
+}
+
+func (registry *fakePrivacyModelRegistry) ResumeInstallation(_ context.Context, id contract.PrivacyModelID) (contract.PrivacyModelInstallation, error) {
+	installation, err := registry.GetInstallation(id)
+	if err == nil {
+		installation.Status = contract.PrivacyModelStatusDownloading
+		registry.installations[id] = installation
+	}
+	return installation, err
+}
+
 func (registry *fakePrivacyModelRegistry) DeleteInstallation(
 	_ context.Context,
 	id contract.PrivacyModelID,
@@ -439,4 +457,46 @@ func contains(value, fragment string) bool {
 		}
 	}
 	return false
+}
+
+func TestPrivacyModelDownloadActions(t *testing.T) {
+	_, handler, registry := newPolicyHandler(t)
+	var id contract.PrivacyModelID
+	for candidate, installation := range registry.installations {
+		id = candidate
+		installation.Status = contract.PrivacyModelStatusDownloading
+		installation.InstalledAt = nil
+		registry.installations[id] = installation
+		break
+	}
+	for _, action := range []string{"pause", "resume"} {
+		path := PrivacyModelsPath + "/" + string(id) + "/" + action
+		response := policyRequest(t, handler, http.MethodPost, path, "", "", "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", action, response.Code, response.Body.String())
+		}
+		var installation contract.PrivacyModelInstallation
+		decode(t, response, &installation)
+		expected := contract.PrivacyModelStatusPaused
+		if action == "resume" {
+			expected = contract.PrivacyModelStatusDownloading
+		}
+		if installation.Status != expected {
+			t.Fatalf("%s: %s", action, installation.Status)
+		}
+		response = policyRequest(t, handler, http.MethodGet, path, "", "", "")
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("GET %s: %d", action, response.Code)
+		}
+		response = policyRequest(t, handler, http.MethodPost, path, "application/json", `{}`, "")
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: %d", action, response.Code)
+		}
+	}
+	for _, suffix := range []string{"/nested/pause", "/pause/resume", "/resume/extra"} {
+		response := policyRequest(t, handler, http.MethodPost, PrivacyModelsPath+"/"+string(id)+suffix, "", "", "")
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s: %d", suffix, response.Code)
+		}
+	}
 }

@@ -63,6 +63,7 @@
     "reload": "重新加载"
   },
   "core": {
+    "portFallback": "端口 {{port}} 已被占用，网关本次使用 {{address}}。请同步修改客户端 API 地址，或释放已保存的端口后重启网关。",
     "phase": {
       "ready": "已就绪",
       "spawning": "启动中",
@@ -100,8 +101,13 @@
     "desktopOnly": "该操作仅可在 AstrLink 桌面应用中使用。"
   },
   "settings": {
+    "theme": "外观",
+    "themeOptions": {
+      "system": "跟随系统",
+      "light": "浅色",
+      "dark": "暗色"
+    },
     "title": "设置",
-    "description": "窗口与网关偏好会立即生效；推理端口和检查并发需单独保存。",
     "failed": "设置操作失败。",
     "loadFailed": "无法加载设置",
     "loading": "正在读取桌面与系统设置…",
@@ -119,7 +125,10 @@
     "autostart": "登录系统后自动启动 AstrLink",
     "trayHint": "系统托盘始终提供“显示 AstrLink”和“退出”。",
     "runtimeKicker": "本地运行时",
-    "gatewayTitle": "网关启动与恢复",
+    "gatewayTitle": "网关与网络",
+    "useSystemProxy": "使用系统代理",
+    "systemProxyHint": "重启网关后生效。",
+    "notifyProxySaved": "已保存，重启网关后生效。",
     "coreAutoStart": "AstrLink 启动时自动启动网关",
     "coreAutoRecover": "网关异常退出后自动恢复",
     "currentStatus": "当前状态：{{phase}}",
@@ -158,24 +167,66 @@
   },
   "agentDebug": {
     "title": "Agent 工具",
-    "description": "为 Cursor、Claude Code、Codex 安装只读 Skill 和 MCP，让它们自行查看 AstrLink 请求记录。控制面令牌不会写入这些配置。",
-    "panelTitle": "一键安装调试 Skill 与 MCP",
-    "failed": "Agent 工具操作失败。",
-    "restartHint": "桌面网关需要在运行中。安装后请新开一个 agent 会话。不要对本地 astrlink MCP 点 Authenticate / 登录，它是本机 stdio，不是 OAuth。元数据调试立即可用；请求/响应正文仍默认关闭，需在请求记录里手动开启捕获。",
-    "install": "安装 Skill 与 MCP",
+    "description": "让 Agent 查看 AstrLink 请求记录，帮你排查调用失败、路由和隐私拦截问题。",
+    "panelTitle": "工具接入",
+    "failed": "操作未完成，请重试。",
+    "install": "安装工具",
+    "repair": "补全安装",
+    "reinstall": "重新安装",
     "installing": "正在安装…",
     "remove": "卸载",
     "removing": "正在卸载…",
-    "installTitle": "安装 AstrLink Agent 调试？",
-    "installBody": "将写入用户级 Skill，并合并名为 astrlink 的本机只读 MCP。仅安装已检测到的工具，保留你已有的其他 MCP。",
-    "removeTitle": "卸载 AstrLink Agent 调试？",
-    "removeBody": "将删除托管的 Skill、astrlink MCP 条目和复制的 astrlink-mcp。其他 MCP 不受影响。",
-    "notifyInstalled": "已安装 Skill 与 MCP。请新开 agent 会话后再用。",
-    "notifyRemoved": "已移除 AstrLink Agent 调试。",
+    "installTitle": "安装 Agent 调试工具",
+    "installBody": "为已检测到的工具安装 AstrLink 调试 Skill 和只读 MCP。配置对当前用户生效，保留已有的其他 MCP 服务。安装后需新开会话。",
+    "removeTitle": "卸载 Agent 调试工具？",
+    "removeBody": "将从所有工具中移除 AstrLink 管理的调试 Skill、MCP 配置和本地程序。其他 MCP 服务不受影响。",
+    "notifyInstalled": "安装完成。新开一个 Agent 会话即可使用。",
+    "notifyRemoved": "已卸载 Agent 调试工具。",
     "notDetected": "未检测到",
     "detected": "已检测到",
     "installed": "已安装",
-    "partial": "部分安装",
+    "notInstalled": "未安装",
+    "unavailable": "未获取",
+    "refresh": "重新检测",
+    "configuredCount": "已配置 {{count}} / {{total}} 个工具",
+    "statusHint": "检测本机工具与安装状态",
+    "toolColumn": "工具",
+    "readOnly": "只读访问",
+    "permissionsTitle": "访问权限说明",
+    "permissionsBody": "Agent 可读取 AstrLink 的请求记录和执行轨迹，不能修改网关配置。控制面令牌不会写入工具配置。",
+    "installScopeShort": "安装 Skill 与 MCP",
+    "installScopeTitle": "安装内容与范围",
+    "installScopeBody": "Skill 提供排查方法，MCP 让 Agent 读取本机记录。统一安装到已检测到的工具；重新安装可补全缺失文件。",
+    "noTools": "暂未检测到支持的工具。请先安装并启动一次 Cursor、Claude Code 或 Codex，再重新检测。",
+    "missingRuntime": "MCP 本地程序缺失，请补全安装后再使用。",
+    "promptTitle": "试着这样问",
+    "copyPrompt": "复制示例",
+    "prompt": "使用 astrlink-debug，检查最近一次失败的请求。说明失败原因、实际使用的模型和路由，并给出处理建议。",
+    "promptHint": "也可以附上请求 ID，定位某一次调用。",
+    "startTitle": "安装后，三步开始排查",
+    "steps": {
+      "gateway": {
+        "title": "保持网关运行",
+        "body": "Agent 通过本机网关读取记录。确认左下角网关状态为“已就绪”。"
+      },
+      "session": {
+        "title": "新开一个 Agent 会话",
+        "body": "在已安装的工具中新建会话，加载 Skill 和 MCP。"
+      },
+      "ask": {
+        "title": "描述遇到的问题",
+        "body": "粘贴示例或直接提问，Agent 会查阅记录并分析原因。"
+      }
+    },
+    "help": {
+      "installTitle": "未检测到或安装不完整？",
+      "installBody": "先启动一次对应工具，再点“重新检测”。若 Skill 或 MCP 显示未安装，点“补全安装”；安装完成后新开会话。",
+      "loginTitle": "MCP 需要登录吗？",
+      "loginBody": "不需要。AstrLink MCP 在本机运行，无需点击 Authenticate 或登录。若无法连接，请确认网关已就绪并新开会话。",
+      "bodyTitle": "为什么看不到请求正文？",
+      "bodyBody": "默认只记录请求信息与执行轨迹，不捕获请求和响应正文。需要分析正文时，请到“请求记录”手动开启正文捕获，再重新发起请求。"
+    },
+    "pathsTitle": "查看将写入的位置",
     "tools": {
       "cursor": "Cursor",
       "claude": "Claude Code",
@@ -190,6 +241,17 @@
   "overview": {
     "title": "概览",
     "description": "查看用量、构成与本地接入。",
+    "welcomeTitle": "欢迎使用 AstrLink",
+    "welcomePreview": "当前为浏览器预览，尚未连接本机工作区。",
+    "welcomeDisconnected": "本地网关尚未连接。",
+    "welcomeLoading": "正在读取工作区…",
+    "welcomeEmpty": "工作区已就绪，尚未接入 API 服务。",
+    "welcomeBrowseServices": "查看 API 服务",
+    "welcomeCreateToken": "创建访问令牌",
+    "welcomeNotConnected": "未连接",
+    "welcomeNotRead": "尚未读取",
+    "welcomeNoServices": "尚未配置",
+    "welcomeNoTokens": "尚未创建",
     "desktopVersion": "桌面版本",
     "gatewayVersion": "网关版本",
     "pending": "待定",
@@ -289,7 +351,9 @@
     "codeExchangeFailed": "授权码验证失败，请重新授权。",
     "searchServices": "搜索服务",
     "searchServicesPlaceholder": "搜索名称、类型或地址…",
-    "noSearchResults": "试试其他名称、服务类型或 API 地址。",
+    "noSearchResults": "试试其他服务名称、类型、API 地址或模型名。",
+    "filterModel": "按模型名筛选服务",
+    "filterModelPlaceholder": "按模型名筛选…",
     "basicInformation": "基本信息",
     "basicInformationHint": "选择服务类型，并为连接设置一个易辨认的名称。",
     "accountAuthorization": "账户授权",
@@ -467,7 +531,7 @@
     "reorder": "调整供应商顺序",
     "reorderKeys": "拖拽排序；聚焦后按 ↑ / ↓ 移动",
     "orderSaving": "正在保存供应商顺序…",
-    "orderFiltered": "清除搜索并切换到「全部」后可调整优先级。",
+    "orderFiltered": "拖动手柄调整匹配服务的全局优先级，其他服务保留原位置。",
     "orderHint": "越靠上越优先。拖动左侧手柄排序，停用服务保留位置。"
   },
   "models": {
@@ -617,7 +681,7 @@
     "extraPeriod": "{{name}} · 周期",
     "limitReached": "额度已用尽",
     "resetAvailable": "可重置 ×{{count}}",
-    "usedPercent": "已用 {{percent}}%"
+    "remainingPercent": "剩余 {{percent}}%"
   },
   "privacy": {
     "name": "隐私保护",
@@ -647,6 +711,58 @@
     "noHit": "未命中"
   },
   "safety": {
+    "clearSample": "清空",
+    "testShortcut": "⌘ / Ctrl + Enter 开始检测",
+    "testCounts": "有效命中 {{hits}} 处，已忽略 {{ignored}} 处",
+    "testRegex": "正则规则检测",
+    "testModel": "本地模型检测",
+    "testFindingDetails": "命中与忽略明细",
+    "testIgnored": "已忽略",
+    "locateOriginal": "定位原文",
+    "testReplaceWith": "替换为",
+    "testSpanUnavailable": "无法定位这段原文，可展开请求详情查看位置。",
+    "testKeepOriginal": "保留原文，不参与本次处理。",
+    "testOutputText": "处理后文本",
+    "testTechnicalDetails": "请求详情与位置（JSON）",
+    "testByteRange": "字节 {{start}}–{{end}}",
+    "testNoMatches": "当前检测器未找到匹配项，文本保持原样。可检查检测方式、规则和已启用类型，或换一个示例再试。",
+    "testReason": {
+      "regex": "匹配正则规则，且该类型已启用；不使用模型置信度门槛。",
+      "confident": "置信度 {{confidence}}%，达到 {{threshold}}% 门槛，计入有效命中。",
+      "low_confidence": "置信度 {{confidence}}%，低于 {{threshold}}% 门槛，因此忽略。",
+      "kind_disabled": "该信息类型已关闭，因此忽略。",
+      "allowlisted": "匹配免脱敏名单，因此忽略。",
+      "placeholder": "识别为已有占位符，无需重复替换。",
+      "unrepresentable": "此内容无法生成可用的替换值，因此忽略。"
+    },
+    "testAction": {
+      "allow": "当前策略允许请求，保留原文。",
+      "warn": "当前策略发出警告，并保留原文继续。",
+      "block": "当前策略阻止整条请求。",
+      "redact": "当前策略对这段内容脱敏后继续。"
+    },
+    "backToInput": "返回输入",
+    "loadSample": "选择示例",
+    "customInput": "自定义文本",
+    "testHelp": "关于本地检测与示例",
+    "inputPlaceholder": "输入或粘贴需要检测的文本…",
+    "protocolSettings": "请求格式",
+    "startTest": "开始检测",
+    "runningHint": "正在应用当前隐私配置，请稍候。",
+    "blockedPreview": "当前策略会阻止这条请求，不会发送到上游。",
+    "requestPreview": "请求内容",
+    "detectionDetails": "查看命中与忽略原因",
+    "sampleTooLongTitle": "文本超过限制",
+    "testOffTitle": "隐私保护尚未开启",
+    "testEmptyHint": "输入文本或选择示例，点击「开始检测」查看处理结果。",
+    "allowlistHelp": "免脱敏名单的匹配方式",
+    "detectionAndRestore": "检测与还原",
+    "redactionRules": "脱敏规则",
+    "allowlistEntries": "名单条目",
+    "searchAllowlist": "搜索类型或内容",
+    "clearAllowlistSearch": "清除名单搜索",
+    "noAllowlistMatches": "没有匹配的名单条目",
+    "tryAnotherAllowlistSearch": "试试其他关键词，或清除搜索查看全部条目。",
     "enabledTypes": "已启用 {{count}} / {{total}}",
     "ruleCoverage": "规则覆盖与限制",
     "advancedDetection": "模型置信度设置",
@@ -666,7 +782,7 @@
     "restore": "响应还原占位符",
     "restoreHint": "仅在请求动作为「脱敏后继续」时生效",
     "workspace": "隐私保护工作区",
-    "dryRunResult": "试运行结果",
+    "dryRunResult": "检测结果",
     "localModels": "本地模型",
     "chooseInstalled": "请从已安装模型中选择",
     "builtinRules": "内置规则",
@@ -714,6 +830,11 @@
     "localProbed": "本地模型检查完成，请确认版本、标签映射与资源占用。",
     "localProbeFailed": "无法检查本地模型路径。",
     "progressFailed": "无法刷新模型下载进度。",
+    "paused": "已暂停",
+    "pauseDownload": "暂停下载",
+    "resumeDownload": "继续下载",
+    "pauseFailed": "暂停下载失败。",
+    "resumeFailed": "继续下载失败。",
     "downloading": "下载中",
     "ready": "已就绪",
     "unavailableStatus": "不可用",
@@ -765,8 +886,8 @@
     "dryRunProtocol": "试运行协议",
     "dryRunSample": "试运行样例",
     "customSample": "自定义样例：可以继续编辑下方文本。",
-    "sampleText": "试运行样例文本",
-    "running": "试运行中…",
+    "sampleText": "待检测文本",
+    "running": "检测中…",
     "run": "试运行",
     "modelView": "模型视图",
     "official": "官方",
@@ -872,27 +993,27 @@
     "restoreScope": "还原范围",
     "restoreToolsDetail": "工具在本机执行；关闭后 Agent 会拿着假值去请求或写入文件",
     "injectNoticeHint": "仅在本次实际产出{{style}}时注入，说明不含任何映射",
-    "dryRunHint": "用样例文本预览当前策略效果，不会转发上游",
-    "backToPolicy": "返回策略",
-    "protocol": "协议",
-    "protocolHint": "决定样例如何包装成可检请求体",
-    "sampleTextShort": "样例文本",
-    "sampleCount": "{{count}} 组虚构测试用例",
+    "dryRunHint": "使用当前隐私配置在本机检测，不会发送到上游。",
+    "backToPolicy": "返回检测设置",
+    "protocol": "模拟请求格式",
+    "protocolHint": "选择客户端使用的接口格式，检测范围会随请求结构变化。",
+    "sampleTextShort": "待检测文本",
+    "sampleCount": "{{count}} 种日常场景，使用合成数据，可替换为自己的文本。",
     "sampleBytes": "{{used}} / {{max}} 字节（256 KiB）",
     "sampleTooLongHint": "样例过长（上限 256 KiB），请缩短后再试",
     "dryRunOffHint": "隐私保护未开启，请先开启后再试运行",
     "needReadyModelHint": "需要先选择已就绪的本地模型",
-    "previewCurrent": "使用「策略」中的当前配置预览",
-    "localPreviewOnly": "仅本地预览",
+    "previewCurrent": "使用当前隐私保护配置预览",
+    "localPreviewOnly": "仅本地检测",
     "decision": "决策",
     "hitKinds": "命中类别",
-    "passedJudgment": "通过判定（会执行策略）",
+    "passedJudgment": "有效命中",
     "position": "位置",
-    "suppressed": "已抑制（不执行策略）",
-    "placeholderCompare": "占位符对照（仅本地预览）",
+    "suppressed": "已忽略的内容",
+    "placeholderCompare": "替换对照",
     "original": "原文",
-    "redactedBody": "脱敏后的请求体",
-    "notYetRun": "尚未试运行。结果仅用于本地预览，不会转发上游。",
+    "redactedBody": "脱敏后的请求",
+    "notYetRun": "等待检测",
     "localPrivacyModels": "本地隐私模型",
     "modelsStayLocal": "模型在本机校验并运行；请求正文不会发送到模型来源。",
     "readyCount": "{{count}} 个就绪",
@@ -921,40 +1042,40 @@
     "labelCount": "{{count}} 个基础标签",
     "sample": {
       "mixed-contact": {
-        "label": "综合联系方式",
-        "description": "邮箱、国际电话和测试银行卡，适合快速检查多类别命中。"
+        "label": "售后工单",
+        "description": "客户联系方式与订单问题混排，检查联系信息识别和正常业务内容的保留。"
       },
       "account": {
-        "label": "账号与 IBAN",
-        "description": "上下文账号和标准测试 IBAN，用于检查账号类识别。"
+        "label": "报销付款邮件",
+        "description": "从英文报销邮件中识别收款人、银行账号、IBAN、付款卡号和邮箱。"
       },
       "network": {
-        "label": "IP 与链接",
-        "description": "保留用途 IPv4 和 .example 链接，不包含真实网络目标。"
+        "label": "服务故障日志",
+        "description": "从超时日志中识别内网 IP、上游地址和回调链接，保留状态码与耗时。"
       },
       "secret": {
-        "label": "测试密钥",
-        "description": "明确标记为虚构的 API Key 和密码赋值格式。"
+        "label": "应用配置排错",
+        "description": "粘贴 YAML 配置排查连接问题，检查 API 密钥、数据库密码和 Webhook 密钥。"
       },
       "zh-profile": {
-        "label": "中文个人资料",
-        "description": "中文姓名、地址、日期和邮箱，更适合验证本地模型。"
+        "label": "员工入职资料",
+        "description": "从登记资料中识别姓名、生日、住址与紧急联系人；姓名和地址需本地模型。"
       },
       "en-profile": {
-        "label": "英文个人资料",
-        "description": "英文姓名、地址和出生日期，更适合验证本地模型。"
+        "label": "英文酒店预订",
+        "description": "从英文预订邮件素材中识别旅客姓名、生日、住址与联系方式。"
       },
       "mixed-language": {
-        "label": "中英混合多实体",
-        "description": "姓名、日期、电话、邮箱和链接混合在同一段文本中。"
+        "label": "中英客户会议",
+        "description": "多位联系人、中英对话、邮箱和业务链接混排，检查跨语言实体识别。"
       },
       "clean": {
-        "label": "无敏感信息",
-        "description": "不包含 PII 的正常文本，用于检查误报。"
+        "label": "产品发布说明",
+        "description": "完整的产品更新文案，不含个人信息或凭据，用于观察误报。"
       },
       "numeric-boundary": {
-        "label": "数字边界反例",
-        "description": "无效卡号、无效 IP 和普通订单号，用于检查数字误报。"
+        "label": "批处理性能日志",
+        "description": "订单流水号、版本号、耗时、行数和金额混排，观察普通数字是否被误判。"
       }
     }
   },
@@ -1619,5 +1740,22 @@
     "orderTitle": "默认恢复顺序与总次数",
     "orderHint": "供应商优先级由 API 服务列表顺序决定；此处设置每家尝试一次，或先在原服务重试再切换。总次数包括首次请求。",
     "saveFailed": "无法保存默认策略，请重试。"
+  },
+  "pricing": {
+    "title": "费用明细",
+    "description": "按官方 API 价格折算",
+    "cycleAmount": "本周期",
+    "monthAmount": "本月",
+    "incomplete": "部分待计价",
+    "month": "月度",
+    "primary": "额度周期",
+    "secondary": "长期额度周期",
+    "period": "统计周期",
+    "empty": "暂无调用",
+    "officialAmount": "折算金额",
+    "partial": "仅含已记录调用",
+    "unpricedCount": "{{count}} 次待计价",
+    "pendingCount": "{{count}} 次进行中",
+    "unavailable": "金额暂不可用"
   }
 }

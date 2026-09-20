@@ -34,11 +34,13 @@ const bridgeMocks = vi.hoisted(() => ({
   getRequestAuditContent: vi.fn(),
   installPrivacyModel: vi.fn(),
   listAccessTokens: vi.fn(),
+  listAccessTokenUsage: vi.fn().mockResolvedValue({ items: [] }),
   listServices: vi.fn(),
   listRoutes: vi.fn(),
   listPrivacyModelInstallations: vi.fn(),
   listPrivacyPolicies: vi.fn(),
   listRequestRecords: vi.fn(),
+  getUsageSummary: vi.fn(),
   listRequestSessions: vi.fn(),
   getRequestSession: vi.fn(),
   probePrivacyModel: vi.fn(),
@@ -113,6 +115,7 @@ const readySnapshot: AppSnapshot = {
     },
   },
   last_error: null,
+  inference_port_fallback: null,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
 };
@@ -305,6 +308,11 @@ describe("App workspace navigation", () => {
       items: [],
       next_cursor: null,
     });
+    bridgeMocks.getUsageSummary.mockImplementation(async (window) => ({
+      window,
+      totals: { requests: 0, failed_requests: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 },
+      by_day: [], by_hour: [], by_service: [], by_model: [], scanned_records: 0, capped: false,
+    }));
     bridgeMocks.listRequestSessions.mockResolvedValue({
       items: [],
       next_cursor: null,
@@ -518,10 +526,12 @@ describe("App workspace navigation", () => {
         autostart: false,
         core_auto_start: true,
         core_auto_recover: true,
+    use_system_proxy: true,
         inference_port: 8317,
         max_concurrent_inspections: 16,
         response_start_timeout_seconds: 0,
         locale: "zh-CN",
+        theme: "system",
       },
       load_warning: null,
       autostart_actual: false,
@@ -540,7 +550,7 @@ describe("App workspace navigation", () => {
     expect(container.textContent).toContain("推理入口");
     expect(container.textContent).toContain("检查并发");
     expect(container.textContent).toContain("响应头等待");
-    expect(container.textContent).not.toContain("一键安装调试 Skill 与 MCP");
+    expect(container.textContent).not.toContain("工具接入");
   });
 
   it("opens the agent tools page from the system nav", async () => {
@@ -556,7 +566,7 @@ describe("App workspace navigation", () => {
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("Agent 工具");
     expect(workspaceHeading().textContent).toBe("Agent 工具");
-    expect(container.textContent).toContain("一键安装调试 Skill 与 MCP");
+    expect(container.textContent).toContain("工具接入");
     expect(container.textContent).toContain("Cursor");
     expect(container.textContent).toContain("Claude Code");
     expect(container.textContent).toContain("Codex");
@@ -570,10 +580,12 @@ describe("App workspace navigation", () => {
         autostart: false,
         core_auto_start: true,
         core_auto_recover: true,
+    use_system_proxy: true,
         inference_port: 8317,
         max_concurrent_inspections: 16,
         response_start_timeout_seconds: 0,
         locale: "zh-CN",
+        theme: "system",
       },
       load_warning: null,
       autostart_actual: false,
@@ -603,7 +615,7 @@ describe("App workspace navigation", () => {
   it("opens default routing policy without retired routing tabs", async () => {
     await renderApp();
     const serviceCalls = bridgeMocks.listServices.mock.calls.length;
-    const requestCalls = bridgeMocks.listRequestRecords.mock.calls.length;
+    const requestCalls = bridgeMocks.getUsageSummary.mock.calls.length;
 
     await act(async () => {
       button("路由").click();
@@ -626,14 +638,16 @@ describe("App workspace navigation", () => {
     expect(container.textContent).not.toContain("mmBERT");
     expect(bridgeMocks.listRoutes).not.toHaveBeenCalled();
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
-    expect(bridgeMocks.listRequestRecords).toHaveBeenCalledTimes(requestCalls);
+    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(requestCalls);
   });
 
   it("summarizes usage over the default seven-day window", async () => {
     await renderApp();
 
-    const query = bridgeMocks.listRequestRecords.mock.calls[0]?.[0];
-    expect(query).toMatchObject({ limit: 200 });
+    const query = bridgeMocks.getUsageSummary.mock.calls[0]?.[0];
+    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.listRequestRecords).not.toHaveBeenCalled();
+    expect(query).toMatchObject({ preset: "7d" });
     const from = new Date(query.from as string);
     const to = new Date(query.to as string);
     expect(from.getHours()).toBe(0);

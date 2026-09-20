@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ type authorizationAttempt struct {
 
 // Manager owns subscription lifecycle and isolates each provider's OAuth client.
 type Manager struct {
+	usageObserver           func(context.Context, contract.SubscriptionAccount, contract.SubscriptionUsage) error
+	resetObserver           func(context.Context, contract.SubscriptionAccount) error
 	mu                      sync.Mutex
 	accounts                AccountStore
 	credentials             accountauth.AccountCredentialStore
@@ -369,6 +372,11 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 	if err := usage.Validate(); err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
 	}
+	if manager.usageObserver != nil {
+		if err := manager.usageObserver(ctx, account, usage); err != nil {
+			log.Printf("subscription usage persistence: %v", err)
+		}
+	}
 	manager.mu.Lock()
 	manager.usageCache[id] = usageCacheEntry{usage: usage, until: now.Add(usageCacheTTL)}
 	manager.mu.Unlock()
@@ -395,6 +403,11 @@ func (manager *Manager) ConsumeReset(ctx context.Context, id contract.ServiceID)
 	if result.Outcome == contract.UsageResetOutcomeReset ||
 		result.Outcome == contract.UsageResetOutcomeAlreadyRedeemed {
 		manager.clearUsageCache(id)
+		if manager.resetObserver != nil && result.Outcome == contract.UsageResetOutcomeReset {
+			if e := manager.resetObserver(ctx, account); e != nil {
+				log.Printf("subscription reset persistence: %v", e)
+			}
+		}
 	}
 	if err != nil {
 		return result, err
@@ -764,4 +777,44 @@ func maskAccountHint(accountID string) string {
 		return accountID[:1] + "***"
 	}
 	return accountID[:4] + "***" + accountID[len(accountID)-2:]
+}
+
+// SetUsageObservers is configured before the manager starts serving requests.
+func (manager *Manager) SetUsageObservers(usage func(context.Context, contract.SubscriptionAccount, contract.SubscriptionUsage) error, reset func(context.Context, contract.SubscriptionAccount) error) {
+	manager.usageObserver, manager.resetObserver = usage, reset
+}
+
+// RunUsageMonitor collects quota windows even when the service page is closed.
+// Per-account failures back off to avoid repeatedly hitting an unavailable API.
+func (manager *Manager) RunUsageMonitor(ctx context.Context) {
+	next := map[contract.ServiceID]time.Time{}
+	failures := map[contract.ServiceID]int{}
+	timer := time.NewTicker(time.Minute)
+	defer timer.Stop()
+	for {
+		accounts, err := manager.List(ctx)
+		if err == nil {
+			for _, account := range accounts {
+				if account.Status != contract.SubscriptionStatusConnected || time.Now().Before(next[account.ID]) {
+					continue
+				}
+				child, cancel := context.WithTimeout(ctx, 20*time.Second)
+				_, err := manager.Usage(child, account.ID)
+				cancel()
+				delay := 5 * time.Minute
+				if err != nil {
+					failures[account.ID]++
+					delay *= time.Duration(1 << min(failures[account.ID], 4))
+				} else {
+					failures[account.ID] = 0
+				}
+				next[account.ID] = time.Now().Add(delay)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+	}
 }

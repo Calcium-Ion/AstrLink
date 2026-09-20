@@ -36,6 +36,25 @@ pub enum CloseBehavior {
     Quit,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemePreference {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub fn native_theme(self) -> Option<tauri::Theme> {
+        match self {
+            Self::System => None,
+            Self::Light => Some(tauri::Theme::Light),
+            Self::Dark => Some(tauri::Theme::Dark),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Preferences {
@@ -43,12 +62,14 @@ pub struct Preferences {
     pub autostart: bool,
     pub core_auto_start: bool,
     pub core_auto_recover: bool,
+    pub use_system_proxy: bool,
     pub inference_port: u16,
     #[serde(default = "default_max_concurrent_inspections")]
     pub max_concurrent_inspections: u16,
     #[serde(default = "default_response_start_timeout_seconds")]
     pub response_start_timeout_seconds: u32,
     pub locale: Locale,
+    pub theme: ThemePreference,
 }
 
 impl Default for Preferences {
@@ -58,10 +79,12 @@ impl Default for Preferences {
             autostart: false,
             core_auto_start: true,
             core_auto_recover: true,
+            use_system_proxy: true,
             inference_port: DEFAULT_INFERENCE_PORT,
             max_concurrent_inspections: DEFAULT_MAX_CONCURRENT_INSPECTIONS,
             response_start_timeout_seconds: DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
             locale: Locale::En,
+            theme: ThemePreference::System,
         }
     }
 }
@@ -312,6 +335,8 @@ mod tests {
         let snapshot = store.snapshot();
         assert_eq!(snapshot.values, Preferences::default());
         assert_eq!(snapshot.values.locale, Locale::En);
+        assert_eq!(snapshot.values.theme, ThemePreference::System);
+        assert!(snapshot.values.use_system_proxy);
         assert_eq!(snapshot.load_warning, None);
     }
 
@@ -326,6 +351,8 @@ mod tests {
         .unwrap();
         let snapshot = PreferencesStore::load(&directory).snapshot();
         assert_eq!(snapshot.values.locale, Locale::En);
+        assert_eq!(snapshot.values.theme, ThemePreference::System);
+        assert!(snapshot.values.use_system_proxy);
         assert_eq!(
             snapshot.values.max_concurrent_inspections,
             DEFAULT_MAX_CONCURRENT_INSPECTIONS
@@ -363,6 +390,8 @@ mod tests {
         let store = PreferencesStore::load(&directory);
         let values = Preferences {
             inference_port: 9123,
+            use_system_proxy: false,
+            theme: ThemePreference::Dark,
             ..Preferences::default()
         };
         store.replace(values.clone()).unwrap();
@@ -380,6 +409,29 @@ mod tests {
             .unwrap_err()
             .contains("between 0 and 86400"));
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn theme_preferences_are_strict_and_round_trip() {
+        for (name, theme) in [
+            ("system", ThemePreference::System),
+            ("light", ThemePreference::Light),
+            ("dark", ThemePreference::Dark),
+        ] {
+            let values = Preferences {
+                theme,
+                ..Preferences::default()
+            };
+            let json = serde_json::to_value(&values).unwrap();
+            assert_eq!(json["theme"], name);
+            assert_eq!(serde_json::from_value::<Preferences>(json).unwrap(), values);
+        }
+        assert!(serde_json::from_str::<Preferences>(r#"{"theme":"auto"}"#).is_err());
+        assert!(ThemePreference::System.native_theme().is_none());
+        assert_eq!(
+            ThemePreference::Dark.native_theme(),
+            Some(tauri::Theme::Dark)
+        );
     }
 
     #[test]

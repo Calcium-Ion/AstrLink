@@ -4,6 +4,7 @@ import { ChoiceCard } from "@/components/ChoiceCard";
 import { DataRow } from "@/components/DataRow";
 import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
+import { InferencePortNotice } from "@/components/InferencePortNotice";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { SectionKicker } from "@/components/SectionKicker";
 import { StatusDot } from "@/components/StatusDot";
@@ -32,6 +33,8 @@ import {
 } from "./preferences-model";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
+import { applyTheme } from "./theme";
+import { THEME_PREFERENCES, type ThemePreference } from "./theme-model";
 
 type InstantPatch = Omit<
   Preferences,
@@ -70,7 +73,7 @@ function SettingsToggle({
   return (
     <DataRow className={cn(disabled && "opacity-60")}>
       <Label
-        className="min-w-0 flex-1 cursor-pointer text-sm font-normal"
+        className="block min-w-0 flex-1 cursor-pointer text-sm font-normal"
         htmlFor={id}
       >
         {label}
@@ -96,7 +99,7 @@ function SettingsPanelHeader({
   kicker,
   title,
 }: {
-  hint: string;
+  hint?: string;
   kicker: string;
   title: string;
 }) {
@@ -106,7 +109,7 @@ function SettingsPanelHeader({
       <strong className="mt-1 block text-sm font-semibold tracking-tight">
         {title}
       </strong>
-      <p className="mt-1 text-xs text-text-secondary">{hint}</p>
+      {hint ? <p className="mt-1 text-xs text-text-secondary">{hint}</p> : null}
     </PanelHeader>
   );
 }
@@ -195,6 +198,10 @@ export function SettingsCenter({
     try {
       const next = await updatePreferences(values);
       setSettings(next);
+      if (patch.theme !== undefined) applyTheme(next.values.theme);
+      if (patch.use_system_proxy !== undefined) {
+        notify.success(i18n.t("settings.notifyProxySaved"));
+      }
       if (patch.locale && patch.locale !== previous.values.locale) {
         await applyLocale(patch.locale);
       }
@@ -321,14 +328,15 @@ export function SettingsCenter({
         ? t("settings.recoveryAttempted", { attempt: snapshot.recovery_attempt })
         : null;
   const portNeedsRestart =
-    active !== null && active !== settings.values.inference_port;
+    active !== null &&
+    active !== settings.values.inference_port &&
+    snapshot?.inference_port_fallback?.requested_port !== settings.values.inference_port;
 
   return (
     <section className="grid gap-4 pb-2">
-      <PageHeader
-        title={t("settings.title")}
-        description={t("settings.description")}
-      />
+      <PageHeader title={t("settings.title")} />
+
+      <InferencePortNotice snapshot={snapshot} />
 
       {settings.load_warning ? (
         <FormMessage tone="warning">{settings.load_warning}</FormMessage>
@@ -351,6 +359,29 @@ export function SettingsCenter({
             kicker={t("settings.windowKicker")}
             title={t("settings.desktopBehavior")}
           />
+
+          <div className="grid gap-2 border-b px-4 py-3">
+            <span className="text-xs font-medium text-text-secondary">
+              {t("settings.theme")}
+            </span>
+            <RadioGroup
+              className="grid grid-cols-3 gap-2 max-[560px]:grid-cols-1"
+              aria-label={t("settings.theme")}
+              disabled={prefsBusy}
+              onValueChange={(value) => void applyInstant({ theme: value as ThemePreference })}
+              value={prefs.theme}
+            >
+              {THEME_PREFERENCES.map((theme) => (
+                <ChoiceCard
+                  key={theme}
+                  disabled={prefsBusy}
+                  label={t(`settings.themeOptions.${theme}`)}
+                  selected={prefs.theme === theme}
+                  value={theme}
+                />
+              ))}
+            </RadioGroup>
+          </div>
 
           <div className="grid gap-2 border-b px-4 py-3">
             <span className="text-xs font-medium text-text-secondary">
@@ -430,7 +461,6 @@ export function SettingsCenter({
 
         <Panel className="min-w-0">
           <SettingsPanelHeader
-            hint={t("settings.instantHint")}
             kicker={t("settings.runtimeKicker")}
             title={t("settings.gatewayTitle")}
           />
@@ -448,6 +478,14 @@ export function SettingsCenter({
             onChange={(core_auto_recover) =>
               void applyInstant({ core_auto_recover })
             }
+          />
+
+          <SettingsToggle
+            checked={prefs.use_system_proxy}
+            disabled={busy !== null}
+            label={t("settings.useSystemProxy")}
+            hint={t("settings.systemProxyHint")}
+            onChange={(use_system_proxy) => void applyInstant({ use_system_proxy })}
           />
 
           <div className="border-b px-4 py-3">

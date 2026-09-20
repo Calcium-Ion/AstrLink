@@ -9,11 +9,13 @@ import {
   X,
 } from "@/components/icons";
 import { Toaster as Sonner, type ToasterProps } from "sonner"
+import { useResolvedTheme } from "@/theme";
 
 const Toaster = ({ ...props }: ToasterProps) => {
+  const theme = useResolvedTheme();
   return (
     <Sonner
-      theme="light"
+      theme={theme}
       className="toaster group"
       icons={{
         close: <X className="size-3" />,

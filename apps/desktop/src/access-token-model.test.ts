@@ -4,6 +4,7 @@ import {
   parseAccessTokenCreateResult,
   parseAccessTokenPage,
   parseAccessTokenRevealResult,
+  parseAccessTokenUsageResponse,
 } from "./access-token-model";
 
 const token = {
@@ -16,6 +17,23 @@ const token = {
 const accessToken = `astr_${"A".repeat(43)}`;
 
 describe("access-token IPC contract", () => {
+  it("parses compact usage and rejects invalid counts or duplicate tokens", () => {
+    const usage = { token_id: token.id, today_tokens: 12, total_tokens: 1500 };
+    expect(parseAccessTokenUsageResponse({ items: [usage] })).toEqual({ items: [usage] });
+    expect(parseAccessTokenUsageResponse({ items: [] })).toEqual({ items: [] });
+    for (const item of [
+      { ...usage, today_tokens: -1 },
+      { ...usage, total_tokens: 1.5 },
+      { ...usage, total_tokens: "1500" },
+      { ...usage, total_tokens: Number.MAX_SAFE_INTEGER + 1 },
+      { ...usage, total_tokens: 11 },
+      { ...usage, token_id: "bad/id" },
+      { ...usage, access_token: accessToken },
+    ]) {
+      expect(() => parseAccessTokenUsageResponse({ items: [item] })).toThrow("Invalid access-token IPC response");
+    }
+    expect(() => parseAccessTokenUsageResponse({ items: [usage, usage] })).toThrow("duplicate token ID");
+  });
   it("strictly parses list, create, and reveal responses", () => {
     expect(
       parseAccessTokenPage({ items: [token], next_cursor: null }),

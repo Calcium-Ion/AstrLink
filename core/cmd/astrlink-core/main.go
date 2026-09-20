@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,7 +25,9 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/ingress"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/parentwatch"
+	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/privacymodel"
 	"github.com/QuantumNous/astrlink/core/internal/privacyworker"
@@ -40,9 +44,11 @@ func main() {
 	privacyWorkerPath := ""
 	classifierWorkerPath := ""
 	controlTokenStdin := false
+	outboundProxy := "environment"
 	maxConcurrentInspections := ingress.DefaultMaxConcurrentInspections
 	responseStartTimeoutSeconds := ingress.DefaultResponseStartTimeoutSeconds
 	flag.StringVar(&config.InferenceListen, "inference-listen", config.InferenceListen, "loopback inference listen address")
+	flag.BoolVar(&config.InferencePortFallback, "inference-port-fallback", false, "use an ephemeral loopback port when the inference port is occupied")
 	flag.StringVar(&config.ControlListen, "control-listen", config.ControlListen, "loopback control listen address")
 	flag.IntVar(&parentPID, "parent-pid", 0, "optional desktop parent PID to watch on Unix")
 	flag.StringVar(&dataDirectory, "data-dir", "", "optional persistent application data directory")
@@ -51,6 +57,7 @@ func main() {
 	flag.BoolVar(&controlTokenStdin, "control-token-stdin", false, "read the per-start control token from stdin")
 	flag.IntVar(&maxConcurrentInspections, "max-concurrent-inspections", maxConcurrentInspections, "maximum requests that may parse and classify at once")
 	flag.IntVar(&responseStartTimeoutSeconds, "response-start-timeout-seconds", responseStartTimeoutSeconds, "seconds to wait for upstream response headers before failing over; 0 waits indefinitely")
+	flag.StringVar(&outboundProxy, "outbound-proxy", outboundProxy, "outbound proxy mode: environment, system, or direct")
 	flag.CommandLine.SetOutput(os.Stderr)
 	flag.Parse()
 
@@ -63,6 +70,17 @@ func main() {
 		logger.Printf("%v", err)
 		os.Exit(2)
 	}
+	proxy, err := networkproxy.New(outboundProxy)
+	if err != nil {
+		logger.Printf("%v", err)
+		os.Exit(2)
+	}
+	// Configure once, before any clients or transport clones are created.
+	// OAuth, subscriptions, discovery, downloads and inference share this policy.
+	outboundTransport := http.DefaultTransport.(*http.Transport).Clone()
+	outboundTransport.Proxy = proxy
+	http.DefaultTransport = outboundTransport
+
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	ctx, stopParentWatch, err := parentwatch.NotifyContext(signalCtx, parentPID, time.Second)
@@ -158,6 +176,29 @@ func main() {
 			logger.Printf("configure subscription manager: %v", err)
 			os.Exit(1)
 		}
+		pricingManager := pricing.NewManager(store, nil)
+		subscriptionManager.SetUsageObservers(
+			func(ctx context.Context, account contract.SubscriptionAccount, usage contract.SubscriptionUsage) error {
+				current, err := store.GetService(ctx, account.ID)
+				if err != nil {
+					return err
+				}
+				if current.Service.Subscription == nil || current.Service.Subscription.ProviderAccountID != account.ProviderAccountID {
+					return nil
+				}
+				return store.ObserveSubscriptionUsage(ctx, current.Service, usage)
+			},
+			func(ctx context.Context, account contract.SubscriptionAccount) error {
+				current, err := store.GetService(ctx, account.ID)
+				if err != nil {
+					return err
+				}
+				if current.Service.Subscription == nil || current.Service.Subscription.ProviderAccountID != account.ProviderAccountID {
+					return nil
+				}
+				return store.ObserveSubscriptionReset(ctx, current.Service)
+			},
+		)
 		resolver, err := endpoint.NewStoreResolver(store)
 		if err != nil {
 			_ = store.Close()
@@ -167,7 +208,8 @@ func main() {
 		resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
 		resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
 		handler, err := controlapi.NewWithDependencies(config.Version, controlapi.Dependencies{
-			ServiceStore:       store,
+			ServiceStore: store,
+			PricingStore: store, PricingManager: pricingManager,
 			RecoveryResolver:   resolver,
 			RouteStore:         store,
 			AccessTokenManager: accessTokenManager,
@@ -195,40 +237,46 @@ func main() {
 			_, err := store.SweepExpiredAuditData(ctx)
 			return err
 		}
-		inferenceHandler, err := ingress.NewProduction(ingress.Dependencies{
-			Resolver:   resolver,
-			Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager),
-			AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
-				func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
-					return accessTokenManager.Authenticate(ctx, raw)
-				},
-			),
-			PrivacyFilter: privacyFilter,
-			PolicyWarningReporter: ingress.PolicyWarningReporterFunc(
-				func(protocol contract.ProtocolID, endpointID contract.ServiceID, summary string) {
-					logger.Printf(
-						"privacy policy warning: protocol=%s service_id=%s findings=%s",
-						protocol,
-						endpointID,
-						summary,
-					)
-				},
-			),
-			RequestRecords:           store,
-			AuditSettings:            store,
-			AuditBlobs:               store,
-			RecordLogger:             logger.Printf,
-			AllowedHost:              config.InferenceListen,
-			ConversionEngine:         conversionEngine,
-			MaxConcurrentInspections: maxConcurrentInspections,
-			ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
-		})
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure production inference gate: %v", err)
-			os.Exit(1)
+		dependencies.NewInferenceHandler = func(address string) (http.Handler, error) {
+			return ingress.NewProduction(ingress.Dependencies{
+				Resolver:   resolver,
+				Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager),
+				AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
+					func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
+						return accessTokenManager.Authenticate(ctx, raw)
+					},
+				),
+				PrivacyFilter: privacyFilter,
+				PolicyWarningReporter: ingress.PolicyWarningReporterFunc(
+					func(protocol contract.ProtocolID, endpointID contract.ServiceID, summary string) {
+						logger.Printf(
+							"privacy policy warning: protocol=%s service_id=%s findings=%s",
+							protocol,
+							endpointID,
+							summary,
+						)
+					},
+				),
+				RequestRecords:           store,
+				AuditSettings:            store,
+				AuditBlobs:               store,
+				RecordLogger:             logger.Printf,
+				AllowedHost:              address,
+				ConversionEngine:         conversionEngine,
+				MaxConcurrentInspections: maxConcurrentInspections,
+				ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
+			})
 		}
-		dependencies.InferenceHandler = inferenceHandler
+		monitorCtx, stopMonitors := context.WithCancel(ctx)
+		var monitors sync.WaitGroup
+		monitors.Add(2)
+		go func() { defer monitors.Done(); pricingManager.Run(monitorCtx, logger.Printf) }()
+		go func() { defer monitors.Done(); subscriptionManager.RunUsageMonitor(monitorCtx) }()
+		closeStore = func() error {
+			stopMonitors()
+			monitors.Wait()
+			return store.Close()
+		}
 	}
 	if closeStore != nil {
 		defer closeStore()

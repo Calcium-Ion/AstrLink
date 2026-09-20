@@ -25,20 +25,36 @@ func readRecoveryPath(ctx context.Context, q pathQuery, id contract.RecoveryPath
 	if err != nil {
 		return contract.RecoveryPathRecord{}, err
 	}
+	return decodeRecoveryPath(id, document)
+}
+
+func decodeRecoveryPath(id contract.RecoveryPathID, document string) (contract.RecoveryPathRecord, error) {
 	var path contract.RecoveryPath
-	if err = json.Unmarshal([]byte(document), &path); err != nil {
+	if err := json.Unmarshal([]byte(document), &path); err != nil {
 		return contract.RecoveryPathRecord{}, fmt.Errorf("%w: recovery path", storage.ErrInvalidRecord)
 	}
 	if path.ID != id {
 		return contract.RecoveryPathRecord{}, storage.ErrInvalidRecord
 	}
-	if err = path.Validate(); err != nil {
+	if err := path.Validate(); err != nil {
 		return contract.RecoveryPathRecord{}, fmt.Errorf("%w: %v", storage.ErrInvalidRecord, err)
 	}
 	return contract.RecoveryPathRecord{Path: path, ETag: entityTag([]byte(document)), References: []contract.RecoveryPathReference{}}, nil
 }
 func pathReferences(ctx context.Context, q pathQuery, id contract.RecoveryPathID) ([]contract.RecoveryPathReference, error) {
-	refs := []contract.RecoveryPathReference{}
+	byPath, err := allPathReferences(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	refs := byPath[id]
+	if refs == nil {
+		refs = []contract.RecoveryPathReference{}
+	}
+	return refs, nil
+}
+
+func allPathReferences(ctx context.Context, q pathQuery) (map[contract.RecoveryPathID][]contract.RecoveryPathReference, error) {
+	refs := make(map[contract.RecoveryPathID][]contract.RecoveryPathReference)
 	rows, err := q.QueryContext(ctx, `SELECT document_json FROM routes ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -54,16 +70,14 @@ func pathReferences(ctx context.Context, q pathQuery, id contract.RecoveryPathID
 			rows.Close()
 			return nil, err
 		}
-		add := func(category string) {
-			refs = append(refs, contract.RecoveryPathReference{RouteID: route.ID, Name: route.Name, Protocol: route.Match.Protocol, CategoryID: category, Override: route.FailurePolicy != nil || route.Failover != nil})
-		}
-		if route.RecoveryPathID == id {
-			add("")
-		}
-		for _, category := range route.Categories {
-			if category.RecoveryPathID == id {
-				add(category.CategoryID)
+		add := func(id contract.RecoveryPathID, category string) {
+			if id != "" {
+				refs[id] = append(refs[id], contract.RecoveryPathReference{RouteID: route.ID, Name: route.Name, Protocol: route.Match.Protocol, CategoryID: category, Override: route.FailurePolicy != nil || route.Failover != nil})
 			}
+		}
+		add(route.RecoveryPathID, "")
+		for _, category := range route.Categories {
+			add(category.RecoveryPathID, category.CategoryID)
 		}
 	}
 	err = rows.Err()
@@ -80,38 +94,48 @@ func pathReferences(ctx context.Context, q pathQuery, id contract.RecoveryPathID
 		return nil, err
 	}
 	for protocol, pathID := range settings.DefaultRecoveryPaths {
-		if pathID == id {
-			refs = append(refs, contract.RecoveryPathReference{Name: "没有匹配模型规则时", Protocol: protocol})
+		if pathID != "" {
+			refs[pathID] = append(refs[pathID], contract.RecoveryPathReference{Name: "没有匹配模型规则时", Protocol: protocol})
 		}
 	}
 	return refs, nil
 }
 func (store *Store) ListRecoveryPaths(ctx context.Context) ([]contract.RecoveryPathRecord, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT id FROM recovery_paths ORDER BY id`)
+	rows, err := store.db.QueryContext(ctx, `SELECT id, document_json FROM recovery_paths ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
-	ids := []contract.RecoveryPathID{}
+	records := []contract.RecoveryPathRecord{}
 	for rows.Next() {
 		var id contract.RecoveryPathID
-		if err = rows.Scan(&id); err != nil {
+		var document string
+		if err = rows.Scan(&id, &document); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		ids = append(ids, id)
+		record, err := decodeRecoveryPath(id, document)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		records = append(records, record)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	records := make([]contract.RecoveryPathRecord, 0, len(ids))
-	for _, id := range ids {
-		record, err := store.GetRecoveryPath(ctx, id)
-		if err != nil {
-			return nil, err
+	if len(records) == 0 {
+		return records, nil
+	}
+	byPath, err := allPathReferences(ctx, store.db)
+	if err != nil {
+		return nil, err
+	}
+	for i := range records {
+		if refs := byPath[records[i].Path.ID]; refs != nil {
+			records[i].References = refs
 		}
-		records = append(records, record)
 	}
 	return records, nil
 }

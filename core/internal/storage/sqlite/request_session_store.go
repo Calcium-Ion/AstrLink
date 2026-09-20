@@ -87,21 +87,20 @@ WHERE c.kind = ? AND c.value IN (` + placeholders + `)`)
 	query.WriteString(scopeClause.String())
 	args = append(args, scopeArgs...)
 	if kind == contract.SessionCursorExplicit {
-		query.WriteString(`
+		// Separate indexed lookups avoid an OR that makes SQLite scan all roots.
+		for priority, column := range []string{"output_response_id", "previous_response_id"} {
+			query.WriteString(`
 UNION ALL
 SELECT r.session_id, r.turn_index, r.turn_user_messages, r.turn_user_fingerprint,
-       CASE WHEN r.output_response_id IN (` + placeholders + `) THEN r.output_response_id ELSE r.previous_response_id END AS value,
-       CASE WHEN r.output_response_id IN (` + placeholders + `) THEN 0 ELSE 1 END AS priority,
-       r.started_at, r.id
+       r.` + column + ` AS value, ? AS priority, r.started_at, r.id
 FROM request_records r
-WHERE (r.output_response_id IN (` + placeholders + `) OR r.previous_response_id IN (` + placeholders + `))
+WHERE r.` + column + ` IN (` + placeholders + `)
   AND r.parent_request_id IS NULL AND r.session_id IS NOT NULL`)
-		args = append(args, valueArgs...)
-		args = append(args, valueArgs...)
-		args = append(args, valueArgs...)
-		args = append(args, valueArgs...)
-		query.WriteString(scopeClause.String())
-		args = append(args, scopeArgs...)
+			args = append(args, priority)
+			args = append(args, valueArgs...)
+			query.WriteString(scopeClause.String())
+			args = append(args, scopeArgs...)
+		}
 	}
 	query.WriteString(`
 ) ORDER BY priority ASC, started_at DESC, id DESC LIMIT 1`)
@@ -222,6 +221,7 @@ GROUP BY sid`)
 	args = append(args, limit+1)
 
 	started := time.Now()
+	defer logSlowRequestList("request sessions list slow", started)
 	rows, err := store.db.QueryContext(ctx, query.String(), args...)
 	if err != nil {
 		logRequestListFailure("request sessions list failed", err)
@@ -245,7 +245,9 @@ GROUP BY sid`)
 		logRequestListFailure("request sessions list failed", err)
 		return storagecontract.RequestSessionPage{}, fmt.Errorf("iterate request sessions: %w", err)
 	}
-	logSlowRequestList("request sessions list slow", started)
+	if err := rows.Close(); err != nil {
+		return storagecontract.RequestSessionPage{}, err
+	}
 
 	page := storagecontract.RequestSessionPage{Items: make([]contract.RequestSession, 0, limit)}
 	if len(matched) > limit {
@@ -260,8 +262,12 @@ GROUP BY sid`)
 		}
 		page.NextCursor = encodeRequestRecordCursor(lastStarted, contract.RequestID(last.id))
 	}
+	turnsBySession, err := store.loadSessionSummaries(ctx, matched)
+	if err != nil {
+		return storagecontract.RequestSessionPage{}, err
+	}
 	for _, item := range matched {
-		session, err := store.loadSessionSummary(ctx, item)
+		session, err := sessionFromTurns(turnsBySession[item.id])
 		if err != nil {
 			logRequestListFailure("request sessions list failed", err)
 			return storagecontract.RequestSessionPage{}, err
@@ -326,22 +332,54 @@ func logSlowRequestList(op string, started time.Time) {
 	log.Printf("%s: %s", op, elapsed.Round(time.Millisecond))
 }
 
-func (store *Store) loadSessionSummary(ctx context.Context, item sessionAggregate) (contract.RequestSession, error) {
-	turns, err := store.listSessionTurns(ctx, item.id)
+// Reuse the record decoder to validate summary fields, while omitting large
+// detail-only JSON and cursor lookups. The full projection is used on expansion.
+const requestSessionSummaryColumns = `
+    id, NULL, attempt_index, started_at, completed_at, status, input_protocol,
+    requested_model, reasoning_effort, streaming, NULL, service_id, local_access_token_id, NULL,
+    http_status, NULL, NULL, NULL, '{}', NULL,
+    session_id, NULL, NULL, input_preview, NULL, created_at,
+    turn_index, NULL, NULL, NULL, NULL,
+    (SELECT COUNT(*) FROM request_records children
+     WHERE children.parent_request_id = request_records.id), NULL`
+
+func (store *Store) loadSessionSummaries(ctx context.Context, items []sessionAggregate) (map[string][]contract.RequestRecord, error) {
+	result := make(map[string][]contract.RequestRecord, len(items))
+	if len(items) == 0 {
+		return result, nil
+	}
+	args := make([]any, len(items))
+	for i, item := range items {
+		args[i] = item.id
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(items)), ",")
+	rows, err := store.db.QueryContext(ctx, `SELECT`+requestSessionSummaryColumns+`
+FROM request_records
+WHERE parent_request_id IS NULL AND COALESCE(session_id, id) IN (`+placeholders+`)
+ORDER BY started_at ASC, id ASC`, args...)
 	if err != nil {
-		return contract.RequestSession{}, err
+		return nil, fmt.Errorf("list session summaries: %w", err)
 	}
-	if len(turns) == 0 {
-		return contract.RequestSession{}, fmt.Errorf("%w: session %q", storagecontract.ErrNotFound, item.id)
+	defer rows.Close()
+	for rows.Next() {
+		record, err := scanRequestRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		id := string(record.ID)
+		if record.SessionID != nil {
+			id = string(*record.SessionID)
+		}
+		result[id] = append(result[id], record)
 	}
-	return sessionFromTurns(turns)
+	return result, rows.Err()
 }
 
 func (store *Store) listSessionTurns(ctx context.Context, sessionOrRequestID string) ([]contract.RequestRecord, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT`+requestRecordSelectColumns+`
 FROM request_records
-WHERE parent_request_id IS NULL AND (session_id = ? OR (session_id IS NULL AND id = ?))
-ORDER BY started_at ASC, id ASC`, sessionOrRequestID, sessionOrRequestID)
+WHERE parent_request_id IS NULL AND COALESCE(session_id, id) = ?
+ORDER BY started_at ASC, id ASC`, sessionOrRequestID)
 	if err != nil {
 		return nil, fmt.Errorf("list session turns: %w", err)
 	}

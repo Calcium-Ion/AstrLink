@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 import {
   getCoreStatus,
   listAccessTokens,
-  listRequestRecords,
+  getUsageSummary,
   listServices,
   restartCore,
 } from "./bridge";
@@ -53,9 +53,7 @@ import { AgentDebugSettings } from "./AgentDebugSettings";
 import { SettingsCenter } from "./SettingsCenter";
 import { ServiceManager, type ServiceManagerView } from "./ServiceManager";
 import type { Service } from "./service-model";
-import type { RequestRecord } from "./request-record-model";
 import {
-  aggregateUsage,
   DEFAULT_USAGE_RANGE_PRESET,
   resolveUsageWindow,
   type UsageRangePreset,
@@ -101,10 +99,6 @@ const blockedUsage: UsageState = {
   summary: null,
   error: null,
 };
-
-const USAGE_PAGE_LIMIT = 200;
-/** 4000 records covers a 30-day window at AstrLink's local traffic volume. */
-const USAGE_MAX_PAGES = 20;
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -376,26 +370,11 @@ export default function App() {
     }));
     try {
       const usageWindow = resolveUsageWindow(usagePreset, new Date());
-      const accumulated: RequestRecord[] = [];
-      let cursor: string | undefined;
-      let nextCursor: string | null = null;
-      for (let pageIndex = 0; pageIndex < USAGE_MAX_PAGES; pageIndex += 1) {
-        const page = await listRequestRecords({
-          from: usageWindow.from,
-          to: usageWindow.to,
-          limit: USAGE_PAGE_LIMIT,
-          ...(cursor ? { cursor } : {}),
-        });
-        if (usageGeneration.current !== generation) return;
-        accumulated.push(...page.items);
-        nextCursor = page.next_cursor;
-        if (!nextCursor) break;
-        cursor = nextCursor;
-      }
+      const summary = await getUsageSummary(usageWindow);
       if (usageGeneration.current !== generation) return;
       setUsage({
         status: "ready",
-        summary: aggregateUsage(accumulated, usageWindow, nextCursor !== null),
+        summary,
         error: null,
       });
     } catch (error) {
@@ -618,7 +597,7 @@ export default function App() {
             // centred, so a single row of data never spans the whole window.
             "@container/workspace-surface mx-auto h-full min-h-0 w-full max-w-[1080px] min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
             page.kind !== "overview" && "flex flex-col",
-            ["list", "create", "edit", "tokens", "records", "safety", "routing"].includes(
+            ["list", "create", "edit", "tokens", "records", "safety", "routing", "agentTools"].includes(
               page.kind,
             )
               ? "overflow-hidden"
@@ -653,6 +632,7 @@ export default function App() {
             <AccessTokenManager
               catalog={tokenCatalog}
               coreSessionKey={coreSessionKey}
+              inferenceURL={snapshot?.ready?.inference_url ?? ""}
               isReady={isReady}
               onRefresh={() => void refreshAccessTokens()}
               onTokenCreated={handleTokenCreated}

@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -33,6 +34,24 @@ func TestRetiredRoutesAndPathsRemainReadableButInactive(t *testing.T) {
 	settings.DefaultRecoveryPaths = map[contract.ProtocolID]contract.RecoveryPathID{path.Protocol: path.ID}
 	if err := store.UpdateRoutingSettings(ctx, settings); err != nil {
 		t.Fatal(err)
+	}
+	unused := path
+	unused.ID, unused.Name = "path_unused", "Unused"
+	if _, err := store.CreateRecoveryPath(ctx, unused); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := store.ListRecoveryPaths(ctx)
+	if err != nil || len(paths) != 2 {
+		t.Fatalf("paths=%+v err=%v", paths, err)
+	}
+	for _, listed := range paths {
+		individual, err := store.GetRecoveryPath(ctx, listed.Path.ID)
+		if err != nil || !reflect.DeepEqual(listed, individual) {
+			t.Fatalf("listed=%+v individual=%+v err=%v", listed, individual, err)
+		}
+	}
+	if len(paths[0].References) != 2 || paths[1].References == nil || len(paths[1].References) != 0 {
+		t.Fatalf("references=%+v", paths)
 	}
 	resolver, _ := endpoint.NewStoreResolver(store)
 	result, err := resolver.ResolveCandidates(ctx, endpoint.ResolveRequest{Protocol: path.Protocol, Model: "public"})

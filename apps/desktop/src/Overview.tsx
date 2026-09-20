@@ -1,12 +1,23 @@
+import { BillingOverview } from "./BillingOverview";
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, Check, Copy, Plus, RefreshCw } from "@/components/icons";
+import {
+  ArrowRight,
+  Bot,
+  Check,
+  Copy,
+  Key,
+  Plus,
+  RefreshCw,
+  Server,
+} from "@/components/icons";
 
 import { CompactCount } from "@/components/CompactCount";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
 import { ExternalLink } from "@/components/ExternalLink";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
+import { InferencePortNotice } from "@/components/InferencePortNotice";
 import { LoadingState } from "@/components/LoadingState";
 import { Metric, MetricGroup, MetricValuePair } from "@/components/Metric";
 import { ModelBrandIcon } from "@/components/ModelBrandIcon";
@@ -31,6 +42,7 @@ import type { BarShapeProps, TooltipContentProps } from "recharts";
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
 import { formatCompactNumber, formatExactNumber } from "./format-compact-number";
+import astrlinkLogo from "./assets/astrlink-logo.svg";
 import { i18n } from "./i18n";
 import { PageHeader } from "./PageHeader";
 import { placeFloatingCard } from "./place-floating-card";
@@ -115,10 +127,23 @@ export function Overview({
     catalog.status === "blocked" && catalog.items.length === 0;
   const tokensUnknown =
     tokenCatalog.status === "blocked" && tokenCatalog.items.length === 0;
+  const summary = usage.summary;
+  // A disconnected catalog is unknown, not empty. Use the same compact surface
+  // with connection-specific content, and keep any retained activity visible.
+  const emptyWorkspace =
+    catalog.items.length === 0 &&
+    tokenCatalog.items.length === 0 &&
+    catalog.status !== "error" &&
+    tokenCatalog.status !== "error" &&
+    usage.status !== "error" &&
+    !summary?.scanned_records &&
+    !summary?.totals.requests &&
+    !summary?.totals.total_tokens &&
+    !summary?.by_service.length &&
+    !summary?.by_model.length;
   const inferenceURL = snapshot?.ready?.inference_url ?? "";
   const apiAddressLabel = t("overview.apiAddress");
   const apiCopied = copyFeedback === t("copy.copiedNamed", { label: apiAddressLabel });
-  const summary = usage.summary;
   // A retained summary survives a failed refresh so the panel does not flash
   // empty, but its numbers must not be presented as current.
   const totals =
@@ -153,14 +178,14 @@ export function Overview({
   ];
 
   return (
-    <div className="grid min-w-0 gap-4">
+    <div className={cn("min-w-0 gap-4", emptyWorkspace ? "flex min-h-full flex-col" : "grid")}>
       <PageHeader
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
             <StatusBadge tone={statusTone}>
               {isReady ? t("overview.gatewayHealthy") : statusLabel}
             </StatusBadge>
-            {isNativeApp && !isReady ? (
+            {isNativeApp && !isReady && !emptyWorkspace ? (
               <Button
                 variant="outline"
                 disabled={isRestarting || snapshot?.phase === "stopping"}
@@ -175,313 +200,339 @@ export function Overview({
         className="mb-0 items-center border-0 pb-1"
         description={t("overview.description")}
         title={t("overview.title")}
+        variant={emptyWorkspace ? "compact" : "plain"}
       />
 
-      <Panel
-        aria-labelledby="access-heading"
-        className={cn(
-          !isReady && statusTone === "negative" && "border-destructive/25",
-        )}
-      >
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-2.5">
-          <div className="flex min-w-0 items-center gap-2">
-            <div
-              className={cn(
-                "flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1",
-                apiCopied && "text-success-foreground",
-              )}
-            >
-              <span
-                className="shrink-0 text-xs text-muted-foreground"
-                id="access-heading"
-              >
-                {apiAddressLabel}
-              </span>
-              <code className="min-w-0 truncate font-mono text-xs font-medium tracking-tight" title={inferenceURL}>
-                {inferenceURL || t("overview.waitingReady")}
-              </code>
-            </div>
-            <Button
-              aria-label={t("overview.copyApiAddress")}
-              disabled={!inferenceURL}
-              onClick={() => onCopy(inferenceURL, apiAddressLabel)}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              {apiCopied ? (
-                <Check aria-hidden="true" />
-              ) : (
-                <Copy aria-hidden="true" />
-              )}
-            </Button>
-          </div>
+      <InferencePortNotice snapshot={snapshot} />
 
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="flex min-w-0 items-baseline gap-1.5">
-              <strong className="text-xs font-medium tabular-nums">
-                {tokensUnknown ? "—" : tokenCatalog.items.length}
-              </strong>
-              <span className="text-xs text-text-secondary">
-                {tokensUnknown
-                  ? t("overview.tokenPendingHint")
-                  : tokenCatalog.items.length
-                    ? t("overview.tokenCountHint")
-                    : t("overview.noTokens")}
-              </span>
-            </div>
-            {tokenCatalog.stale ? (
-              <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
-                {t("overview.waitingRefresh")}
-              </Badge>
-            ) : null}
-            <Button
-              disabled={!isReady && tokenCatalog.items.length === 0}
-              onClick={onManageTokens}
-              size="sm"
-              type="button"
-              variant={
-                !tokensUnknown && tokenCatalog.items.length === 0
-                  ? "default"
-                  : "ghost"
-              }
-            >
-              {t("overview.manageTokens")}
-            </Button>
-          </div>
-        </div>
-        {copyError ? (
-          <p className="border-t px-4 py-2 text-xs text-danger-foreground" role="alert">
-            {copyError}
-          </p>
-        ) : copyFeedback ? (
-          <p className="border-t px-4 py-2 text-xs text-success-foreground" role="status">
-            {copyFeedback}
-          </p>
-        ) : null}
-      </Panel>
-
-      <Panel
-        aria-busy={usage.status === "loading"}
-        aria-labelledby="usage-heading"
-      >
-        <PanelHeader
-          className="items-center max-[560px]:flex-wrap"
-          actions={
-            <>
-              <UsageRangeTabs
-                onChange={onUsagePresetChange}
-                preset={usagePreset}
-              />
-              <Button
-                disabled={!isReady || usage.status === "loading"}
-                onClick={onRefreshUsage}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-                aria-label={t("common.refresh")}
-              >
-                <RefreshCw
-                  aria-hidden="true"
-                  className={cn(
-                    "motion-reduce:animate-none",
-                    usage.status === "loading" && "animate-spin motion-reduce:animate-none",
-                  )}
-                />
-                <span className="sr-only">{t("common.refresh")}</span>
-              </Button>
-            </>
-          }
-        >
-          <h2
-            className="text-sm font-semibold"
-            id="usage-heading"
+      {emptyWorkspace ? (
+        <OverviewWelcome
+          catalog={catalog}
+          isNativeApp={isNativeApp}
+          isReady={isReady}
+          isRestarting={isRestarting}
+          onAddService={onAddService}
+          onManageServices={onManageServices}
+          onManageTokens={onManageTokens}
+          onRestart={onRestart}
+          snapshot={snapshot}
+          tokenCatalog={tokenCatalog}
+        />
+      ) : (
+        <>
+          <Panel
+            aria-labelledby="access-heading"
+            className={cn(
+              !isReady && statusTone === "negative" && "border-destructive/25",
+            )}
           >
-            {t("overview.usageSummary")}
-          </h2>
-        </PanelHeader>
-
-        {summary?.capped && usage.status !== "loading" ? (
-          <div className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2">
-            <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
-              {t("overview.recentCapped", {
-                count: formatExactNumber(summary.scanned_records),
-              })}
-            </Badge>
-          </div>
-        ) : null}
-
-        {usage.status === "loading" && !summary ? (
-          <UsagePanelSkeleton />
-        ) : (
-          <div className="relative">
-            <MetricGroup className={USAGE_METRIC_GRID}>
-              <UsageMetric
-                label={t("overview.requests")}
-                metric={compactMetric(totals?.requests, usage.status)}
-              />
-              <UsageMetric label={t("overview.totalTokens")}>
-                <CompactCount
-                  value={usageCountValue(totals?.total_tokens, usage.status)}
-                />
-              </UsageMetric>
-              <UsageMetric label={t("overview.inputOutput")}>
-                <MetricValuePair
-                  first={<CompactCount value={usageCountValue(totals?.input_tokens, usage.status)} />}
-                  second={<CompactCount value={usageCountValue(totals?.output_tokens, usage.status)} />}
-                />
-              </UsageMetric>
-              <UsageMetric
-                label={t("overview.cacheHits")}
-                metric={{ text: cacheHitMetric(totals, usage.status), title: null }}
-              />
-            </MetricGroup>
-
-            <UsageDayChart
-              grain={usagePreset === "1d" ? "hour" : "day"}
-              points={
-                usagePreset === "1d"
-                  ? (summary?.by_hour ?? [])
-                  : (summary?.by_day ?? [])
-              }
-              status={usage.status}
-            />
-
-            {usage.status === "loading" ? (
-              <div
-                className="absolute inset-0 z-10 flex items-center justify-center bg-card/70"
-                data-slot="usage-loading"
-              >
-                <LoadingState
-                  className="rounded-md border bg-card px-3 py-1.5 text-xs"
-                  label={t("overview.aggregating")}
-                />
-              </div>
-            ) : null}
-          </div>
-        )}
-
-        {usage.status === "error" && usage.error ? (
-          <p className="border-t px-4 py-2.5 text-xs text-danger-foreground" role="alert">
-            {usage.error}
-          </p>
-        ) : null}
-        <div className="border-t px-4 py-2.5">
-          <HelpDisclosure title={t("overview.usageDetails")}>
-            <p>{t(usagePreset === "1d" ? "overview.hourlyUsageNote" : "overview.usageNote")}</p>
-            <p>{t("overview.estimatedCost")} — · {t("overview.costComingSoon")}</p>
-          </HelpDisclosure>
-        </div>
-      </Panel>
-
-      <div className="grid min-w-0 grid-cols-1 items-start gap-4 @min-[640px]/workspace-surface:grid-cols-2">
-        <Panel aria-labelledby="usage-by-service-heading">
-          <PanelHeader
-            className="min-h-14 flex-wrap items-center"
-            actions={
-              <>
-                <div className="flex items-baseline gap-2 pr-1">
-                  <OverviewCount
-                    label={t("overview.configured")}
-                    unknown={catalogUnknown}
-                    value={catalog.items.length}
-                  />
-                  <OverviewCount
-                    label={t("overview.enabled")}
-                    unknown={catalogUnknown}
-                    value={enabledCount}
-                  />
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <div
+                  className={cn(
+                    "flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1",
+                    apiCopied && "text-success-foreground",
+                  )}
+                >
+                  <span
+                    className="shrink-0 text-xs text-muted-foreground"
+                    id="access-heading"
+                  >
+                    {apiAddressLabel}
+                  </span>
+                  <code className="min-w-0 truncate font-mono text-xs font-medium tracking-tight" title={inferenceURL}>
+                    {inferenceURL || t("overview.waitingReady")}
+                  </code>
                 </div>
-                {catalogUnknown ? (
-                  <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
-                    {t("overview.waitingGateway")}
-                  </Badge>
-                ) : catalog.stale ? (
+                <Button
+                  aria-label={t("overview.copyApiAddress")}
+                  disabled={!inferenceURL}
+                  onClick={() => onCopy(inferenceURL, apiAddressLabel)}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  {apiCopied ? (
+                    <Check aria-hidden="true" />
+                  ) : (
+                    <Copy aria-hidden="true" />
+                  )}
+                </Button>
+              </div>
+
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div className="flex min-w-0 items-baseline gap-1.5">
+                  <strong className="text-xs font-medium tabular-nums">
+                    {tokensUnknown ? "—" : tokenCatalog.items.length}
+                  </strong>
+                  <span className="text-xs text-text-secondary">
+                    {tokensUnknown
+                      ? t("overview.tokenPendingHint")
+                      : tokenCatalog.items.length
+                        ? t("overview.tokenCountHint")
+                        : t("overview.noTokens")}
+                  </span>
+                </div>
+                {tokenCatalog.stale ? (
                   <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
                     {t("overview.waitingRefresh")}
                   </Badge>
-                ) : catalog.items.length > 0 ? (
-                  <Button
-                    disabled={!isReady}
-                    onClick={onAddService}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <Plus aria-hidden="true" />
-                    {t("overview.add")}
-                  </Button>
                 ) : null}
-              </>
-            }
+                <Button
+                  disabled={!isReady && tokenCatalog.items.length === 0}
+                  onClick={onManageTokens}
+                  size="sm"
+                  type="button"
+                  variant={
+                    !tokensUnknown && tokenCatalog.items.length === 0
+                      ? "default"
+                      : "ghost"
+                  }
+                >
+                  {t("overview.manageTokens")}
+                </Button>
+              </div>
+            </div>
+            {copyError ? (
+              <p className="border-t px-4 py-2 text-xs text-danger-foreground" role="alert">
+                {copyError}
+              </p>
+            ) : copyFeedback ? (
+              <p className="border-t px-4 py-2 text-xs text-success-foreground" role="status">
+                {copyFeedback}
+              </p>
+            ) : null}
+          </Panel>
+
+          <Panel
+            aria-busy={usage.status === "loading"}
+            aria-labelledby="usage-heading"
           >
-            <h2
-              className="text-sm font-semibold"
-              id="usage-by-service-heading"
+            <PanelHeader
+              className="items-center max-[560px]:flex-wrap"
+              actions={
+                <>
+                  <UsageRangeTabs
+                    onChange={onUsagePresetChange}
+                    preset={usagePreset}
+                  />
+                  <Button
+                    disabled={!isReady || usage.status === "loading"}
+                    onClick={onRefreshUsage}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                    aria-label={t("common.refresh")}
+                  >
+                    <RefreshCw
+                      aria-hidden="true"
+                      className={cn(
+                        "motion-reduce:animate-none",
+                        usage.status === "loading" && "animate-spin motion-reduce:animate-none",
+                      )}
+                    />
+                    <span className="sr-only">{t("common.refresh")}</span>
+                  </Button>
+                </>
+              }
             >
-              {t("overview.byService")}
-            </h2>
-          </PanelHeader>
+              <h2
+                className="text-sm font-semibold"
+                id="usage-heading"
+              >
+                {t("overview.usageSummary")}
+              </h2>
+            </PanelHeader>
 
-          {/* Keep the list viewport stable when a range changes its row count. */}
-          <div className="h-56 overflow-y-auto overscroll-contain">
-            <ServiceUsageBody
-              catalog={catalog}
-              catalogUnknown={catalogUnknown}
-              isReady={isReady}
-              onAddService={onAddService}
-              onOpenService={onOpenService}
-              onRefreshServices={onRefreshServices}
-              rows={serviceRows}
-              showBar={usage.status === "ready" && serviceRows.some((row) => row.total_tokens > 0)}
-              status={usage.status}
-            />
+            <BillingOverview from={summary?.window.from} to={summary?.window.to} ready={isReady} revision={summary} />
+            {summary?.capped && usage.status !== "loading" ? (
+              <div className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2">
+                <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
+                  {t("overview.recentCapped", {
+                    count: formatExactNumber(summary.scanned_records),
+                  })}
+                </Badge>
+              </div>
+            ) : null}
+
+            {usage.status === "loading" && !summary ? (
+              <UsagePanelSkeleton />
+            ) : (
+              <div className="relative">
+                <MetricGroup className={USAGE_METRIC_GRID}>
+                  <UsageMetric
+                    label={t("overview.requests")}
+                    metric={compactMetric(totals?.requests, usage.status)}
+                  />
+                  <UsageMetric label={t("overview.totalTokens")}>
+                    <CompactCount
+                      value={usageCountValue(totals?.total_tokens, usage.status)}
+                    />
+                  </UsageMetric>
+                  <UsageMetric label={t("overview.inputOutput")}>
+                    <MetricValuePair
+                      first={<CompactCount value={usageCountValue(totals?.input_tokens, usage.status)} />}
+                      second={<CompactCount value={usageCountValue(totals?.output_tokens, usage.status)} />}
+                    />
+                  </UsageMetric>
+                  <UsageMetric
+                    label={t("overview.cacheHits")}
+                    metric={{ text: cacheHitMetric(totals, usage.status), title: null }}
+                  />
+                </MetricGroup>
+
+                <UsageDayChart
+                  grain={usagePreset === "1d" ? "hour" : "day"}
+                  points={
+                    usagePreset === "1d"
+                      ? (summary?.by_hour ?? [])
+                      : (summary?.by_day ?? [])
+                  }
+                  status={usage.status}
+                />
+
+                {usage.status === "loading" ? (
+                  <div
+                    className="absolute inset-0 z-10 flex items-center justify-center bg-card/70"
+                    data-slot="usage-loading"
+                  >
+                    <LoadingState
+                      className="rounded-md border bg-card px-3 py-1.5 text-xs"
+                      label={t("overview.aggregating")}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {usage.status === "error" && usage.error ? (
+              <p className="border-t px-4 py-2.5 text-xs text-danger-foreground" role="alert">
+                {usage.error}
+              </p>
+            ) : null}
+            <div className="border-t px-4 py-2.5">
+              <HelpDisclosure title={t("overview.usageDetails")}>
+                <p>{t(usagePreset === "1d" ? "overview.hourlyUsageNote" : "overview.usageNote")}</p>
+                <p>{t("overview.estimatedCost")} — · {t("overview.costComingSoon")}</p>
+              </HelpDisclosure>
+            </div>
+          </Panel>
+
+          <div className="grid min-w-0 grid-cols-1 items-start gap-4 @min-[640px]/workspace-surface:grid-cols-2">
+            <Panel aria-labelledby="usage-by-service-heading">
+              <PanelHeader
+                className="min-h-14 flex-wrap items-center"
+                actions={
+                  <>
+                    <div className="flex items-baseline gap-2 pr-1">
+                      <OverviewCount
+                        label={t("overview.configured")}
+                        unknown={catalogUnknown}
+                        value={catalog.items.length}
+                      />
+                      <OverviewCount
+                        label={t("overview.enabled")}
+                        unknown={catalogUnknown}
+                        value={enabledCount}
+                      />
+                    </div>
+                    {catalogUnknown ? (
+                      <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
+                        {t("overview.waitingGateway")}
+                      </Badge>
+                    ) : catalog.stale ? (
+                      <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
+                        {t("overview.waitingRefresh")}
+                      </Badge>
+                    ) : catalog.items.length > 0 ? (
+                      <Button
+                        disabled={!isReady}
+                        onClick={onAddService}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        <Plus aria-hidden="true" />
+                        {t("overview.add")}
+                      </Button>
+                    ) : null}
+                  </>
+                }
+              >
+                <h2
+                  className="text-sm font-semibold"
+                  id="usage-by-service-heading"
+                >
+                  {t("overview.byService")}
+                </h2>
+              </PanelHeader>
+
+              {/* Keep the list viewport stable when a range changes its row count. */}
+              <div className="h-56 overflow-y-auto overscroll-contain">
+                <ServiceUsageBody
+                  catalog={catalog}
+                  catalogUnknown={catalogUnknown}
+                  isReady={isReady}
+                  onAddService={onAddService}
+                  onOpenService={onOpenService}
+                  onRefreshServices={onRefreshServices}
+                  rows={serviceRows}
+                  showBar={usage.status === "ready" && serviceRows.some((row) => row.total_tokens > 0)}
+                  status={usage.status}
+                />
+              </div>
+
+              <Button
+                className="h-auto w-full justify-between rounded-none border-t px-4 py-2.5 text-xs font-medium text-text-secondary no-underline hover:bg-muted hover:text-foreground hover:no-underline"
+                onClick={onManageServices}
+                type="button"
+                variant="link"
+              >
+                {t("overview.manageAllServices")}
+                <ArrowRight className="size-4" />
+              </Button>
+            </Panel>
+
+            <Panel aria-labelledby="usage-by-model-heading">
+              <PanelHeader
+                className="min-h-14 items-center"
+                actions={
+                  <span className="text-micro text-muted-foreground">{t("overview.rankedByTokens")}</span>
+                }
+              >
+                <h2
+                  className="text-sm font-semibold"
+                  id="usage-by-model-heading"
+                >
+                  {t("overview.byModel")}
+                </h2>
+              </PanelHeader>
+              <div className="h-56 overflow-y-auto overscroll-contain">
+                <ModelUsageBody
+                  rows={modelRows}
+                  showBar={usage.status === "ready" && modelRows.some((row) => row.total_tokens > 0)}
+                  status={usage.status}
+                />
+              </div>
+              <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">
+                {usage.status === "ready"
+                  ? t("overview.modelCount", { count: modelRows.length })
+                  : usage.status === "loading"
+                    ? t("overview.aggregatingModels")
+                    : t(usage.status === "blocked" ? "overview.waitingGateway" : "overview.waitingRefresh")}
+              </p>
+            </Panel>
           </div>
+        </>
+      )}
 
-          <Button
-            className="h-auto w-full justify-between rounded-none border-t px-4 py-2.5 text-xs font-medium text-text-secondary no-underline hover:bg-muted hover:text-foreground hover:no-underline"
-            onClick={onManageServices}
-            type="button"
-            variant="link"
-          >
-            {t("overview.manageAllServices")}
-            <ArrowRight className="size-4" />
-          </Button>
-        </Panel>
-
-        <Panel aria-labelledby="usage-by-model-heading">
-          <PanelHeader
-            className="min-h-14 items-center"
-            actions={
-              <span className="text-micro text-muted-foreground">{t("overview.rankedByTokens")}</span>
-            }
-          >
-            <h2
-              className="text-sm font-semibold"
-              id="usage-by-model-heading"
-            >
-              {t("overview.byModel")}
-            </h2>
-          </PanelHeader>
-          <div className="h-56 overflow-y-auto overscroll-contain">
-            <ModelUsageBody
-              rows={modelRows}
-              showBar={usage.status === "ready" && modelRows.some((row) => row.total_tokens > 0)}
-              status={usage.status}
-            />
-          </div>
-          <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">
-            {usage.status === "ready"
-              ? t("overview.modelCount", { count: modelRows.length })
-              : usage.status === "loading"
-                ? t("overview.aggregatingModels")
-                : t(usage.status === "blocked" ? "overview.waitingGateway" : "overview.waitingRefresh")}
-          </p>
-        </Panel>
-      </div>
-
-      <div className="px-1 pb-1">
-        <HelpDisclosure title={t("overview.systemDetails")}>
+      <section aria-labelledby="system-details-heading" className="min-w-0 px-1 pb-1">
+        <PanelHeader className="border-0 p-0">
+          <h2 className="text-xs text-muted-foreground" id="system-details-heading">
+            {t("overview.systemDetails")}
+          </h2>
+        </PanelHeader>
+        <div className="mt-3 grid min-w-0 gap-3 text-xs leading-relaxed text-muted-foreground">
           <dl className="grid grid-cols-3 gap-x-6 gap-y-4 max-[720px]:grid-cols-2">
             {systemDetails.map(([term, detail]) => (
               <div className="min-w-0" key={term}>
@@ -515,9 +566,135 @@ export function Overview({
               )}
             </div>
           </div>
-        </HelpDisclosure>
-      </div>
+        </div>
+      </section>
     </div>
+  );
+}
+
+function OverviewWelcome({
+  catalog,
+  isNativeApp,
+  isReady,
+  isRestarting,
+  onAddService,
+  onManageServices,
+  onManageTokens,
+  onRestart,
+  snapshot,
+  tokenCatalog,
+}: {
+  catalog: ServiceCatalog;
+  isNativeApp: boolean;
+  isReady: boolean;
+  isRestarting: boolean;
+  onAddService: () => void;
+  onManageServices: () => void;
+  onManageTokens: () => void;
+  onRestart: () => void;
+  snapshot: AppSnapshot | null;
+  tokenCatalog: AccessTokenCatalog;
+}) {
+  const t = i18n.t.bind(i18n);
+  const loading = !snapshot || (isReady && (catalog.status !== "ready" || tokenCatalog.status !== "ready"));
+  const gatewayTone = snapshot ? phaseTone(snapshot.phase) : "pending";
+  const gatewayLabel = snapshot ? phaseLabel(snapshot.phase) : t("core.phase.connecting");
+  const description = loading
+    ? t("overview.welcomeLoading")
+    : !isNativeApp
+      ? t("overview.welcomePreview")
+      : !isReady
+        ? t("overview.welcomeDisconnected")
+        : t("overview.welcomeEmpty");
+
+  return (
+    <section
+      aria-labelledby="welcome-heading"
+      className="flex min-w-0 flex-1 flex-col"
+      data-slot="overview-welcome"
+    >
+      <EmptyState
+        className="min-h-72 flex-1"
+        description={description}
+        illustration={
+          <div aria-hidden="true" className="flex w-64 max-w-full items-center justify-center gap-3">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">
+              <Bot className="size-5" />
+            </span>
+            <span className="min-w-2 flex-1 border-t border-dashed border-input" />
+            <img alt="" className="size-16 shrink-0" height={64} src={astrlinkLogo} width={64} />
+            <span className="min-w-2 flex-1 border-t border-dashed border-input" />
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">
+              <Server className="size-5" />
+            </span>
+          </div>
+        }
+        title={t("overview.welcomeTitle")}
+        titleId="welcome-heading"
+        variant="page"
+        action={
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {loading ? (
+              <LoadingState label={t("overview.loadingServices")} />
+            ) : !isNativeApp ? (
+              <Button onClick={onManageServices} type="button" variant="outline">
+                <Server aria-hidden="true" />
+                {t("overview.welcomeBrowseServices")}
+                <ArrowRight aria-hidden="true" />
+              </Button>
+            ) : !isReady ? (
+              <Button disabled={isRestarting || snapshot?.phase === "stopping"} onClick={onRestart} type="button">
+                <RefreshCw aria-hidden="true" className={cn(isRestarting && "animate-spin motion-reduce:animate-none")} />
+                {t(isRestarting ? "overview.restarting" : "overview.restartGateway")}
+              </Button>
+            ) : (
+              <>
+                <Button onClick={onAddService} type="button">
+                  <Plus aria-hidden="true" />
+                  {t("overview.addService")}
+                </Button>
+                <Button onClick={onManageTokens} type="button" variant="ghost">
+                  <Key aria-hidden="true" />
+                  {t("overview.welcomeCreateToken")}
+                </Button>
+              </>
+            )}
+          </div>
+        }
+      />
+      {isNativeApp && !isReady && snapshot?.last_error ? (
+        <p className="mb-4 max-h-24 overflow-y-auto break-words text-xs text-danger-foreground" role="alert">
+          {snapshot.last_error}
+        </p>
+      ) : null}
+      <dl className="grid min-w-0 border-y @min-[520px]/workspace-surface:grid-cols-3">
+        {[
+          {
+            icon: <StatusDot tone={isNativeApp ? gatewayTone : "neutral"} />,
+            label: t("nav.gateway"),
+            value: isNativeApp ? gatewayLabel : t("overview.welcomeNotConnected"),
+          },
+          {
+            icon: <Server aria-hidden="true" className="size-4" />,
+            label: t("nav.services"),
+            value: t(catalog.status === "ready" ? "overview.welcomeNoServices" : "overview.welcomeNotRead"),
+          },
+          {
+            icon: <Key aria-hidden="true" className="size-4" />,
+            label: t("nav.tokens"),
+            value: t(tokenCatalog.status === "ready" ? "overview.welcomeNoTokens" : "overview.welcomeNotRead"),
+          },
+        ].map(({ icon, label, value }) => (
+          <div className="flex min-w-0 items-center gap-3 px-3 py-4 max-[520px]:py-3" key={label}>
+            <span className="flex size-8 shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
+            <div className="min-w-0">
+              <dt className="text-xs font-medium">{label}</dt>
+              <dd className="mt-0.5 text-xs text-muted-foreground">{value}</dd>
+            </div>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 

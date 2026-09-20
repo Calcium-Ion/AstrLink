@@ -3,6 +3,8 @@ import { parseRoutingSettings, type RoutingSettings } from "./failure-policy-mod
 import { invoke as invokeCommand } from "@tauri-apps/api/core";
 
 import { i18n } from "./i18n";
+import { parseUsageSummary } from "./usage-summary-model";
+import type { UsageSummary, UsageWindow } from "./usage-range";
 
 import {
   browserSnapshot,
@@ -25,9 +27,11 @@ import {
   parseAccessTokenCreateResult,
   parseAccessTokenPage,
   parseAccessTokenRevealResult,
+  parseAccessTokenUsageResponse,
   type AccessTokenCreateResult,
   type AccessTokenPage,
   type AccessTokenRevealResult,
+  type AccessTokenUsageResponse,
 } from "./access-token-model";
 import {
   parsePrivacyDryRunResult,
@@ -467,6 +471,23 @@ export async function listAccessTokens(): Promise<AccessTokenPage> {
   return parseAccessTokenPage(await invoke<unknown>("list_access_tokens"));
 }
 
+export async function listAccessTokenUsage(todayFrom: string): Promise<AccessTokenUsageResponse> {
+  requireNativeBridge();
+  return parseAccessTokenUsageResponse(
+    await invoke<unknown>("list_access_token_usage", { todayFrom }),
+  );
+}
+
+export async function getUsageSummary(window: UsageWindow): Promise<UsageSummary> {
+  requireNativeBridge();
+  return parseUsageSummary(await invoke<unknown>("get_usage_summary", {
+    from: window.from,
+    to: window.to,
+    timeZone: window.time_zone || "UTC",
+    bucket: window.preset === "1d" ? "hour" : "day",
+  }), window);
+}
+
 export async function createAccessToken(
   name: string,
 ): Promise<AccessTokenCreateResult> {
@@ -582,6 +603,30 @@ export async function getPrivacyModelInstallation(
   const validated = validatePrivacyModelInstallationID(installationId);
   return parsePrivacyModelInstallation(
     await invoke<unknown>("get_privacy_model_installation", {
+      installationId: validated,
+    }),
+  );
+}
+
+export async function pausePrivacyModelInstallation(
+  installationId: string,
+): Promise<PrivacyModelInstallation> {
+  requireNativeBridge();
+  const validated = validatePrivacyModelInstallationID(installationId);
+  return parsePrivacyModelInstallation(
+    await invoke<unknown>("pause_privacy_model_installation", {
+      installationId: validated,
+    }),
+  );
+}
+
+export async function resumePrivacyModelInstallation(
+  installationId: string,
+): Promise<PrivacyModelInstallation> {
+  requireNativeBridge();
+  const validated = validatePrivacyModelInstallationID(installationId);
+  return parsePrivacyModelInstallation(
+    await invoke<unknown>("resume_privacy_model_installation", {
       installationId: validated,
     }),
   );

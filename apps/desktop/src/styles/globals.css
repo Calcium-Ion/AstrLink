@@ -3,10 +3,11 @@
 
 /*
  * UI brand ink is a flat pure blue, independent of the logo's indigo /
- * periwinkle / pink tide. Paper surfaces stay white or cool gray. No
+ * periwinkle / pink tide. Surfaces use neutral blue-gray tones. No
  * gradients anywhere in the UI.
  */
 :root {
+  color-scheme: light;
   /* White paper: separation comes from hairlines, never from fills */
   --background: #ffffff;
   --foreground: #1a2a3d;
@@ -63,10 +64,65 @@
 
   /* Details */
   --text-secondary: #45566d;
+  --overlay: rgb(26 42 61 / 20%);
   --shadow-card: none;
   --shadow-overlay: 0 1px 3px rgb(26 42 61 / 10%), 0 10px 30px rgb(26 42 61 / 8%);
   --radius: 0.5rem;
   --window-chrome-height: 0px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #111827;
+  --foreground: #e5edf7;
+  --card: #151e2e;
+  --card-foreground: #e5edf7;
+  --popover: #1b2638;
+  --popover-foreground: #e5edf7;
+  --secondary: #202c3e;
+  --secondary-foreground: #e5edf7;
+  --muted: #202c3e;
+  --muted-foreground: #a0aec2;
+  --border: #303d52;
+  --input: #485870;
+  --ring: #7cb5ff;
+
+  --primary: #8abbff;
+  --primary-foreground: #10233e;
+  --primary-hover: #afd0ff;
+  --accent: #223a59;
+  --accent-foreground: #b4d5ff;
+  --tide: #7cb5ff;
+  --tide-wash: #203550;
+
+  --destructive: #f27589;
+  --destructive-foreground: #301018;
+  --danger-foreground: #ffacbb;
+  --danger-wash: #3c222e;
+  --success: #5ad5a0;
+  --success-foreground: #83e4b7;
+  --success-wash: #17382f;
+  --warning: #edba5a;
+  --warning-foreground: #f5d18d;
+  --warning-wash: #3c311e;
+  --blocked: #da91b9;
+  --blocked-foreground: #edb5d2;
+  --blocked-wash: #38283c;
+  --violet: #89b4ff;
+  --violet-foreground: #b1cdff;
+  --violet-wash: #233451;
+
+  --sidebar: #111827;
+  --sidebar-foreground: #e5edf7;
+  --sidebar-primary: #8abbff;
+  --sidebar-primary-foreground: #10233e;
+  --sidebar-accent: #223a59;
+  --sidebar-accent-foreground: #b4d5ff;
+  --sidebar-border: #303d52;
+  --sidebar-ring: #7cb5ff;
+  --text-secondary: #bdcadd;
+  --overlay: rgb(0 0 0 / 60%);
+  --shadow-overlay: 0 1px 3px rgb(0 0 0 / 30%), 0 10px 30px rgb(0 0 0 / 25%);
 }
 
 @keyframes streaming-restore-demo-plain {
@@ -233,6 +289,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-text-secondary: var(--text-secondary);
+  --color-overlay: var(--overlay);
 }
 
 @layer base {
@@ -248,10 +305,6 @@
     margin: 0;
     overflow: hidden;
     overscroll-behavior: none;
-  }
-
-  html {
-    color-scheme: light;
   }
 
   body {

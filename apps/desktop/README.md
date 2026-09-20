@@ -48,6 +48,49 @@ Privacy-model download messages contain only the model ID, catalog asset path,
 attempt number, and a sanitized reason such as `dns`, `http_503`, `body_read`,
 or `sha256`.
 
+## Packaged model runtime dependencies
+
+`bun run desktop:build` stages the native dependencies before packaging. Model
+weights are still downloaded or imported separately.
+
+- **Windows x64:** the supported installer is NSIS (`.exe`). It embeds Microsoft's
+  official Visual C++ 2015–2022 x64 Redistributable, currently 14.44.35211.0
+  (about 24.4 MiB), as well as `DirectML.dll`. The preinstall hook checks the
+  machine's x64 runtime version, skips an equal/newer version, and installs a
+  missing/older version without downloading it on the user's machine. Windows
+  may request administrator approval for this shared prerequisite. Installation
+  failure stops AstrLink setup; a required reboot is reported without forcing
+  one. Uninstalling AstrLink leaves the shared runtime installed. WebView2 keeps
+  Tauri's separate bootstrapper behavior and can still require network access.
+- **macOS arm64/x64:** ONNX Runtime is bundled in `Contents/Frameworks`. Its C++
+  runtime, CoreML, Metal, and other Apple frameworks come with the OS; no separate
+  runtime installer is needed. The app requires macOS 13.4 or newer.
+- **Linux x64:** CI ships a `.deb` with ONNX Runtime under the application resource
+  directory. It declares `libc6 >= 2.36`, `libstdc++6 >= 12`, and `libgcc-s1`, in
+  addition to Tauri's GTK/WebKit/tray dependencies. Use Debian 12 or a compatible
+  newer distribution and install via `apt install ./AstrLink_*.deb` so the package
+  manager resolves dependencies. glibc is supplied by the distribution, not copied
+  into the app. This package is not a portable binary for arbitrary Linux systems.
+
+The Windows redistributable is pinned by immutable Microsoft download URL, size,
+and SHA-256 in `scripts/windows-vc-runtime.json`; Windows builds also check its
+Microsoft Authenticode signature. Update the pin and version together when moving
+to a newer MSVC toolchain. Redistribution follows [Microsoft's Visual C++ runtime
+terms](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files).
+Generated installers and native libraries must not be committed.
+
+## Model download recovery
+
+In Safety policy → Models → Installed, **Pause download** keeps completed files
+and the current partial file; **Resume download** continues the same pinned
+revision. Retrying a failed download also reuses retained bytes. After a Core
+restart, interrupted remote downloads appear as paused and can be resumed.
+Cancel/Delete removes both the installation record and retained files.
+
+Core validates HTTP `Content-Range`, file lengths, and available SHA-256 hashes
+before publication. A server that ignores `Range` restarts only that asset.
+Local model imports retain their existing import/cancel behavior.
+
 ## Sidecar handshake
 
 The Core binds inference to the saved `127.0.0.1:<port>` (`8317` by default)
@@ -61,8 +104,12 @@ validates that signal, only accepts loopback endpoint URLs, then reads:
 
 Version fields are checked across all three handshake documents before the UI
 reports Core as ready. The settings page shows the saved and active inference
-ports separately because a saved change takes effect only after restart. A port
-that cannot be bound produces an explicit startup error.
+ports separately because a saved change takes effect only after restart. When the saved port is occupied, Core atomically binds an ephemeral loopback
+port instead. Overview and Settings display a warning with the actual API
+address so clients can be updated. The saved port is preserved and tried again
+on the next start. Host validation uses the bound address. Other bind failures
+remain explicit startup errors, and the desktop stays available for Settings
+and manual retry.
 
 Core can start automatically with the desktop or be started, stopped, and
 restarted manually. Unexpected exits use bounded exponential recovery delays of
@@ -82,6 +129,27 @@ directory. Missing files use safe defaults. Malformed, invalid, and unreadable
 files are reported in Settings while safe defaults are used; failed writes do
 not mutate the in-memory saved state. Updates use a same-directory temporary
 file, file sync, atomic rename, and directory sync on Unix.
+
+Settings → Desktop behavior → **Appearance** offers **System**, **Light**, and
+**Dark**. System is the default for new and existing installations and follows
+OS appearance changes while the app is open. Changes save immediately and apply
+to all windows, including trajectory inspectors, without restarting the gateway.
+The native preference is authoritative; a local browser cache applies the theme
+before the frontend paints on subsequent launches.
+
+Settings → Gateway and network includes **Use system proxy**, enabled by
+default (including older preference files). The switch saves immediately;
+start or restart the gateway to apply it. Restart also refreshes a changed OS
+proxy configuration. macOS reads `scutil --proxy`; Windows uses
+`WinHttpGetIEProxyConfigForCurrentUser`; Linux uses `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`
+and `NO_PROXY` (or their lowercase forms). Manual HTTP/HTTPS proxies, SOCKS5
+fallbacks, and domain/IP bypass rules are supported. PAC/WPAD is not supported:
+external requests report an error instead of silently connecting directly.
+Disabled means direct even when proxy environment variables exist. This covers
+OAuth, subscription usage/models, upstream inference and model downloads.
+Loopback control/worker traffic and the restricted media-fetch transport remain
+direct; TLS certificate verification remains enabled. The core CLI retains its
+environment behavior unless `--outbound-proxy=system` or `direct` is supplied.
 
 The tray provides **显示 AstrLink** and **退出**. Closing the main window either
 hides it to the tray or exits according to the saved preference; explicit tray

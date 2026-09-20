@@ -457,10 +457,20 @@ func (session *recordSession) attemptUsage() *contract.Usage {
 	}
 	if session.upstreamScanner != nil {
 		if usage := session.upstreamScanner.Usage(); usage != nil {
-			return usage
+			copy := *usage
+			copy.ThinkingEnabled = session.classified.ThinkingEnabled
+			copy.BillingIncomplete = session.upstreamScanner.streaming && !session.upstreamScanner.complete
+			return &copy
 		}
 	}
-	return session.scanner.Usage()
+	usage := session.scanner.Usage()
+	if usage != nil {
+		copy := *usage
+		copy.ThinkingEnabled = session.classified.ThinkingEnabled
+		copy.BillingIncomplete = session.scanner.streaming && !session.scanner.complete
+		return &copy
+	}
+	return nil
 }
 
 func (session *recordSession) responseCaptureEnabled() bool {

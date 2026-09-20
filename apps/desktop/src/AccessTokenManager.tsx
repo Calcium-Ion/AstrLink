@@ -17,6 +17,7 @@ import {
 
 import { CompactCount } from "@/components/CompactCount";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CopyableValue } from "@/components/CopyableValue";
 import { FormMessage } from "@/components/FormMessage";
 import { DataField, DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
@@ -37,15 +38,14 @@ import { Input } from "@/components/ui/input";
 import {
   createAccessToken,
   deleteAccessToken,
-  listRequestRecords,
+  listAccessTokenUsage,
   revealAccessToken,
 } from "./bridge";
 import type { AccessTokenSummary } from "./access-token-model";
-import type { RequestRecord } from "./request-record-model";
 import { i18n } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
-import { aggregateUsageRecords, startOfTodayIso } from "./usage-range";
+import { startOfTodayIso } from "./usage-range";
 
 export type AccessTokenCatalogStatus =
   | "blocked"
@@ -70,9 +70,6 @@ type TokenUsageStats = {
   lifetime: TokenUsageSlice | null;
 };
 
-const USAGE_PAGE_LIMIT = 200;
-const USAGE_MAX_PAGES = 5;
-
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -96,34 +93,10 @@ function tokenCountPlaceholder(
   return status === "loading" && slice === null ? "…" : "—";
 }
 
-async function loadTokenUsageSlice(
-  tokenId: string,
-  from: string | undefined,
-): Promise<TokenUsageSlice> {
-  const accumulated: RequestRecord[] = [];
-  let cursor: string | undefined;
-  let nextCursor: string | null = null;
-  for (let pageIndex = 0; pageIndex < USAGE_MAX_PAGES; pageIndex += 1) {
-    const page = await listRequestRecords({
-      local_access_token_id: tokenId,
-      limit: USAGE_PAGE_LIMIT,
-      ...(from ? { from } : {}),
-      ...(cursor ? { cursor } : {}),
-    });
-    accumulated.push(...page.items);
-    nextCursor = page.next_cursor;
-    if (!nextCursor) break;
-    cursor = nextCursor;
-  }
-  const aggregate = aggregateUsageRecords(accumulated);
-  return {
-    total_tokens: aggregate.totals.total_tokens,
-  };
-}
-
 export function AccessTokenManager({
   catalog,
   coreSessionKey,
+  inferenceURL,
   isReady,
   onRefresh,
   onTokenCreated,
@@ -131,6 +104,7 @@ export function AccessTokenManager({
 }: {
   catalog: AccessTokenCatalog;
   coreSessionKey: string | null;
+  inferenceURL: string;
   isReady: boolean;
   onRefresh: () => void;
   onTokenCreated: (token: AccessTokenSummary) => void;
@@ -196,34 +170,41 @@ export function AccessTokenManager({
       return next;
     });
 
-    const todayFrom = startOfTodayIso(new Date());
-    for (const tokenId of tokenIds) {
+    try {
+      const response = await listAccessTokenUsage(startOfTodayIso(new Date()));
       if (usageGeneration.current !== generation) return;
-      try {
-        const today = await loadTokenUsageSlice(tokenId, todayFrom);
-        if (usageGeneration.current !== generation) return;
-        const lifetime = await loadTokenUsageSlice(tokenId, undefined);
-        if (usageGeneration.current !== generation) return;
-        setUsageByToken((current) => ({
-          ...current,
-          [tokenId]: { status: "ready", today, lifetime },
-        }));
-      } catch {
-        if (usageGeneration.current !== generation) return;
-        setUsageByToken((current) => ({
-          ...current,
-          [tokenId]: {
+      const totals = new Map(response.items.map((item) => [item.token_id, item]));
+      const next: Record<string, TokenUsageStats> = {};
+      for (const tokenId of tokenIds) {
+        const usage = totals.get(tokenId);
+        next[tokenId] = {
+          status: "ready",
+          today: { total_tokens: usage?.today_tokens ?? 0 },
+          lifetime: { total_tokens: usage?.total_tokens ?? 0 },
+        };
+      }
+      setUsageByToken(next);
+    } catch {
+      if (usageGeneration.current !== generation) return;
+      setUsageByToken((current) => {
+        const next: Record<string, TokenUsageStats> = {};
+        for (const tokenId of tokenIds) {
+          next[tokenId] = {
             status: "error",
             today: current[tokenId]?.today ?? null,
             lifetime: current[tokenId]?.lifetime ?? null,
-          },
-        }));
-      }
+          };
+        }
+        return next;
+      });
     }
   }, [catalog.items, catalog.status, isReady]);
 
   useEffect(() => {
     void refreshTokenUsage();
+    return () => {
+      usageGeneration.current += 1;
+    };
   }, [refreshTokenUsage, coreSessionKey]);
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -351,6 +332,7 @@ export function AccessTokenManager({
       aria-labelledby="token-manager-heading"
     >
       <PageHeader
+        variant="compact"
         className="@max-[560px]:flex-wrap @max-[560px]:items-start @max-[560px]:gap-3"
         actions={
           <>
@@ -391,6 +373,17 @@ export function AccessTokenManager({
         titleId="token-manager-heading"
       />
 
+      <Panel className="mb-3 shrink-0">
+        <DataRow>
+          <CopyableValue
+            label={t("overview.apiAddress")}
+            value={inferenceURL}
+            placeholder={t("overview.waitingReady")}
+            copyLabel={t("overview.copyApiAddress")}
+          />
+        </DataRow>
+      </Panel>
+
       {(!isReady || catalog.status === "blocked") && (
         <FormMessage className="mb-3" tone="notice">
           {catalog.items.length ? t("tokens.stale") : t("tokens.blocked")}
@@ -420,6 +413,7 @@ export function AccessTokenManager({
           searchLabel={t("tokens.search")}
           placeholder={t("tokens.searchPlaceholder")}
           clearLabel={t("common.clearSearch")}
+          help={{ label: t("tokens.title"), content: t("tokens.description") }}
         />
       </div>
       <div

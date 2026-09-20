@@ -225,6 +225,13 @@ jobs:
           mkdir -p "$bundle_scan_dir"
           for archive in src-tauri/target/release/bundle/deb/*.deb; do
             dpkg-deb -x "$archive" "$bundle_scan_dir"
+            dependencies="$(dpkg-deb --field "$archive" Depends)"
+            for dependency in 'libc6 (>= 2.36)' 'libstdc++6 (>= 12)' 'libgcc-s1'; do
+              if [[ "$dependencies" != *"$dependency"* ]]; then
+                echo "Missing model runtime package dependency: $dependency" >&2
+                exit 1
+              fi
+            done
           done
           bun ../../scripts/check-no-production-models.mjs --packaged "$bundle_scan_dir"
 
@@ -258,6 +265,20 @@ jobs:
           fi
 
           for executable in "$worker" "$classifier" "$core" "$desktop" "${runtimes[0]}"; do
+            if ldd "$executable" 2>&1 | grep -F 'not found'; then
+              echo "$executable has unresolved shared libraries." >&2
+              exit 1
+            fi
+            maximum_glibcxx="$(
+              readelf --version-info "$executable" |
+                sed -n 's/.*Name: GLIBCXX_\([0-9][0-9.]*\).*/\1/p' |
+                sort -V |
+                tail -n 1
+            )"
+            if [[ -n "$maximum_glibcxx" && "$(printf '%s\n' "$maximum_glibcxx" "3.4.30" | sort -V | tail -n 1)" != "3.4.30" ]]; then
+              echo "$executable requires GLIBCXX_$maximum_glibcxx, newer than Debian 12's libstdc++6." >&2
+              exit 1
+            fi
             maximum_glibc="$(
               readelf --version-info "$executable" |
                 sed -n 's/.*Name: GLIBC_\([0-9][0-9.]*\).*/\1/p' |
@@ -295,6 +316,18 @@ jobs:
             $innerIndex += 1
           }
           bun ../../scripts/check-no-production-models.mjs --packaged $bundleScanDir
+          $vcRuntime = Get-Content "scripts/windows-vc-runtime.json" -Raw | ConvertFrom-Json
+          $redists = @(Get-ChildItem $bundleScanDir -Recurse -Filter "vc_redist.x64.exe")
+          if ($redists.Count -ne 1) {
+            throw "Expected one embedded offline Visual C++ x64 installer, found $($redists.Count)"
+          }
+          if ((Get-FileHash $redists[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $vcRuntime.sha256) {
+            throw "Packaged Visual C++ runtime does not match the pinned payload"
+          }
+          $directML = @(Get-ChildItem $bundleScanDir -Recurse -Filter "DirectML.dll")
+          if ($directML.Count -ne 1) {
+            throw "Expected one packaged DirectML.dll, found $($directML.Count)"
+          }
       - name: Archive macOS app with executable modes
         if: runner.os == 'macOS'
         run: tar -czf astrlink-desktop-${{ runner.arch }}.tar.gz -C src-tauri/target/release/bundle/macos AstrLink.app

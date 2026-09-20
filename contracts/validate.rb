@@ -366,6 +366,8 @@ end
 end
 %w[
   GET\ /control/v1/access-tokens
+  GET\ /control/v1/access-token-usage
+  GET\ /control/v1/usage-summary
   POST\ /control/v1/access-tokens
   GET\ /control/v1/access-tokens/{token_id}/secret
   DELETE\ /control/v1/access-tokens/{token_id}

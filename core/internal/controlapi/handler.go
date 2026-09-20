@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -41,6 +42,8 @@ const (
 )
 
 type Dependencies struct {
+	PricingStore       PricingStore
+	PricingManager     *pricing.Manager
 	RecoveryResolver   *endpoint.StoreResolver
 	ServiceStore       storage.ServiceStore
 	RouteStore         storage.RouteStore
@@ -78,11 +81,15 @@ type PrivacyModelRegistry interface {
 	ListInstallations() []contract.PrivacyModelInstallation
 	GetInstallation(contract.PrivacyModelID) (contract.PrivacyModelInstallation, error)
 	Install(context.Context, contract.PrivacyModelInstallRequest) (contract.PrivacyModelInstallation, error)
+	PauseInstallation(context.Context, contract.PrivacyModelID) (contract.PrivacyModelInstallation, error)
+	ResumeInstallation(context.Context, contract.PrivacyModelID) (contract.PrivacyModelInstallation, error)
 	DeleteInstallation(context.Context, contract.PrivacyModelID) error
 	ReadyInstallation(contract.PrivacyModelID) (contract.ReadyPrivacyModelInstallation, bool)
 }
 
 type Handler struct {
+	pricingStore      PricingStore
+	pricingManager    *pricing.Manager
 	recoveryPaths     storage.RecoveryPathStore
 	recoveryResolver  *endpoint.StoreResolver
 	routingSettings   storage.RoutingSettingsStore
@@ -138,6 +145,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	recoveryPaths, _ := dependencies.ServiceStore.(storage.RecoveryPathStore)
 	routingSettings, _ := dependencies.ServiceStore.(storage.RoutingSettingsStore)
 	handler := &Handler{
+		pricingStore: dependencies.PricingStore, pricingManager: dependencies.PricingManager,
 		routingSettings: routingSettings,
 		recoveryPaths:   recoveryPaths, recoveryResolver: dependencies.RecoveryResolver,
 		version:         version,
@@ -163,6 +171,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		shutdown:        dependencies.Shutdown,
 		mux:             http.NewServeMux(),
 	}
+	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource))
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, contract.HealthResponse{Status: "ok"})

@@ -170,7 +170,11 @@ func (handler *Handler) privacyModelItem(
 		return
 	}
 	rawID := strings.TrimPrefix(request.URL.Path, PrivacyModelsPath+"/")
-	if rawID == "" || strings.Contains(rawID, "/") {
+	action := ""
+	if strings.HasSuffix(rawID, "/pause") || strings.HasSuffix(rawID, "/resume") {
+		rawID, action, _ = strings.Cut(rawID, "/")
+	}
+	if rawID == "" || strings.Contains(rawID, "/") || (action != "" && action != "pause" && action != "resume") {
 		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
@@ -182,6 +186,30 @@ func (handler *Handler) privacyModelItem(
 	id := contract.PrivacyModelID(decodedID)
 	if err := id.Validate(); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_privacy_model_id", "privacy model id is invalid")
+		return
+	}
+	if action != "" {
+		if request.Method != http.MethodPost {
+			writer.Header().Set("Allow", http.MethodPost)
+			writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
+			return
+		}
+		if request.ContentLength != 0 {
+			writeError(writer, http.StatusBadRequest, "invalid_request", "download actions do not accept a request body")
+			return
+		}
+		var installation contract.PrivacyModelInstallation
+		var err error
+		if action == "pause" {
+			installation, err = handler.privacyModels.PauseInstallation(request.Context(), id)
+		} else {
+			installation, err = handler.privacyModels.ResumeInstallation(request.Context(), id)
+		}
+		if err != nil {
+			handler.writePrivacyModelRegistryError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusOK, installation)
 		return
 	}
 	switch request.Method {

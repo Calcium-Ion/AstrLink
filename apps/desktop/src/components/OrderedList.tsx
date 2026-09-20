@@ -255,7 +255,6 @@ export function OrderedList<T extends { id: string }>({
         "relative isolate min-w-0 list-none p-0",
         !compact && "grid gap-2",
         dragging && "select-none cursor-grabbing",
-        dragging && compact && "max-w-2xl",
       )}
       style={{ overflowAnchor: "none", ...dragLayout }}
       onPointerMove={(event) => {
@@ -290,7 +289,8 @@ export function OrderedList<T extends { id: string }>({
         />
       )}
       {displayed.map((item, index) => {
-        const position = preview ? index + 1 : positionOf?.(item) ?? index + 1;
+        // Preview rows occupy the original slots, including gaps in filtered lists.
+        const position = positionOf?.(items[index] ?? item) ?? index + 1;
         const controls = (
           <div className={cn("flex items-center gap-1", !compact && "gap-2")}>
             <Button

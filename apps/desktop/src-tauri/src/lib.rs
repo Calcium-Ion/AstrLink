@@ -15,14 +15,16 @@ use std::sync::{
 };
 
 use i18n::Locale;
-use preferences::{CloseBehavior, Preferences, PreferencesSnapshot, PreferencesStore};
+use preferences::{
+    CloseBehavior, Preferences, PreferencesSnapshot, PreferencesStore, ThemePreference,
+};
 use serde::{Deserialize, Serialize};
 use sidecar::{
     CoreManager, CoreSnapshot, PolicyRecordResponse, RouteRecordResponse, ServiceRecordResponse,
 };
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt;
@@ -56,10 +58,12 @@ struct PreferencesInput {
     autostart: bool,
     core_auto_start: bool,
     core_auto_recover: bool,
+    use_system_proxy: bool,
     inference_port: u16,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
     locale: Locale,
+    theme: ThemePreference,
 }
 
 impl From<PreferencesInput> for Preferences {
@@ -69,10 +73,12 @@ impl From<PreferencesInput> for Preferences {
             autostart: input.autostart,
             core_auto_start: input.core_auto_start,
             core_auto_recover: input.core_auto_recover,
+            use_system_proxy: input.use_system_proxy,
             inference_port: input.inference_port,
             max_concurrent_inspections: input.max_concurrent_inspections,
             response_start_timeout_seconds: input.response_start_timeout_seconds,
             locale: input.locale,
+            theme: input.theme,
         }
     }
 }
@@ -275,13 +281,37 @@ fn update_preferences(
         values.inference_port,
         values.max_concurrent_inspections,
         values.response_start_timeout_seconds,
+        values.use_system_proxy,
         values.core_auto_recover,
         locale,
     );
     if let Err(error) = rebuild_tray_menu(&app, locale) {
         eprintln!("unable to rebuild AstrLink tray menu: {error}");
     }
+    apply_native_theme(&app, values.theme);
+    if let Err(error) = app.emit("theme-preference-changed", values.theme) {
+        eprintln!("unable to broadcast AstrLink theme: {error}");
+    }
     Ok(settings_snapshot(&app, store.inner()))
+}
+
+fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
+    match theme {
+        tauri::Theme::Dark => tauri::window::Color(17, 24, 39, 255),
+        _ => tauri::window::Color(255, 255, 255, 255),
+    }
+}
+
+fn apply_native_theme(app: &tauri::AppHandle, preference: ThemePreference) {
+    app.set_theme(preference.native_theme());
+    for window in app.webview_windows().values() {
+        let theme = preference.native_theme().or_else(|| window.theme().ok());
+        if let Some(theme) = theme {
+            if let Err(error) = window.set_background_color(Some(theme_background(theme))) {
+                eprintln!("unable to update AstrLink window background: {error}");
+            }
+        }
+    }
 }
 
 fn tray_menu(app: &tauri::AppHandle, locale: Locale) -> tauri::Result<Menu<tauri::Wry>> {
@@ -640,12 +670,22 @@ fn inspector_window_title(locale: Locale, pinned: bool) -> String {
 }
 
 fn build_inspector_window(app: &tauri::AppHandle, label: &str, cascade: u32) -> Result<(), String> {
-    let locale = app
+    let preferences = app
         .try_state::<Arc<PreferencesStore>>()
-        .map(|store| store.snapshot().values.locale)
+        .map(|store| store.snapshot().values)
         .unwrap_or_default();
+    let locale = preferences.locale;
+    let theme = preferences
+        .theme
+        .native_theme()
+        .or_else(|| {
+            app.get_webview_window("main")
+                .and_then(|window| window.theme().ok())
+        })
+        .unwrap_or(tauri::Theme::Light);
     let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
         .title(inspector_window_title(locale, false))
+        .background_color(theme_background(theme))
         .inner_size(TRAJECTORY_INSPECTOR_WIDTH, TRAJECTORY_INSPECTOR_HEIGHT)
         .min_inner_size(
             TRAJECTORY_INSPECTOR_MIN_WIDTH,
@@ -733,6 +773,18 @@ async fn delete_service(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<(), String> {
     manager.delete_service(&service_id, &etag).await
+}
+
+#[tauri::command]
+async fn pricing(
+    operation: String,
+    service_id: Option<String>,
+    input: Option<serde_json::Value>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .pricing(&operation, service_id.as_deref(), input)
+        .await
 }
 
 #[tauri::command]
@@ -1006,6 +1058,27 @@ async fn list_access_tokens(
 }
 
 #[tauri::command]
+async fn get_usage_summary(
+    from: String,
+    to: String,
+    time_zone: String,
+    bucket: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .get_usage_summary(&from, &to, &time_zone, &bucket)
+        .await
+}
+
+#[tauri::command]
+async fn list_access_token_usage(
+    today_from: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.list_access_token_usage(&today_from).await
+}
+
+#[tauri::command]
 async fn create_access_token(
     name: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -1123,6 +1196,26 @@ async fn get_privacy_model_installation(
 }
 
 #[tauri::command]
+async fn pause_privacy_model_installation(
+    installation_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .pause_privacy_model_installation(&installation_id)
+        .await
+}
+
+#[tauri::command]
+async fn resume_privacy_model_installation(
+    installation_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .resume_privacy_model_installation(&installation_id)
+        .await
+}
+
+#[tauri::command]
 async fn delete_privacy_model_installation(
     installation_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -1174,6 +1267,7 @@ pub fn run() {
             update_service,
             delete_service,
             get_service_usage,
+            pricing,
             reset_service_usage,
             probe_service_models,
             probe_draft_service_models,
@@ -1204,6 +1298,8 @@ pub fn run() {
             get_audit_settings,
             update_audit_settings,
             list_access_tokens,
+            list_access_token_usage,
+            get_usage_summary,
             create_access_token,
             reveal_access_token,
             delete_access_token,
@@ -1219,6 +1315,8 @@ pub fn run() {
             install_privacy_model,
             get_privacy_model_installation,
             delete_privacy_model_installation,
+            pause_privacy_model_installation,
+            resume_privacy_model_installation,
             agent_debug_status,
             install_agent_debug,
             uninstall_agent_debug,
@@ -1229,22 +1327,24 @@ pub fn run() {
             close_trajectory_inspectors
         ])
         .setup(move |app| {
-            if let Some(window) = app.get_webview_window("main") {
-                if let Err(error) = startup_window::fit_to_monitor(&window) {
-                    eprintln!("failed to size AstrLink for the current display: {error}");
-                }
-                window.show()?;
-            }
             let config_directory = app
                 .path()
                 .app_config_dir()
                 .map_err(|error| format!("unable to resolve AstrLink config directory: {error}"))?;
             let preferences = Arc::new(PreferencesStore::load(&config_directory));
             let values = preferences.snapshot().values;
+            apply_native_theme(app.handle(), values.theme);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = startup_window::fit_to_monitor(&window) {
+                    eprintln!("failed to size AstrLink for the current display: {error}");
+                }
+                window.show()?;
+            }
             setup_manager.configure(
                 values.inference_port,
                 values.max_concurrent_inspections,
                 values.response_start_timeout_seconds,
+                values.use_system_proxy,
                 values.core_auto_recover,
                 values.locale,
             );
@@ -1285,7 +1385,16 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(|tray, event| {
-                    if matches!(event, tauri::tray::TrayIconEvent::Click { .. }) {
+                    // Right-click belongs to the native tray menu. Focusing the
+                    // main window here dismisses that menu on Windows.
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
                         show_main_window(tray.app_handle());
                     }
                 })
@@ -1333,6 +1442,18 @@ pub fn run() {
         .expect("failed to build AstrLink desktop app");
 
     app.run(|app_handle, event| {
+        if let RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::ThemeChanged(theme),
+            ..
+        } = &event
+        {
+            if let Some(window) = app_handle.get_webview_window(label) {
+                if let Err(error) = window.set_background_color(Some(theme_background(*theme))) {
+                    eprintln!("unable to follow AstrLink window theme: {error}");
+                }
+            }
+        }
         if let RunEvent::WindowEvent {
             label,
             event: WindowEvent::Destroyed,
@@ -1402,6 +1523,7 @@ mod tests {
                 version: None,
                 capabilities: None,
                 last_error: None,
+                inference_port_fallback: None,
                 recovery_attempt: 0,
                 recovery_scheduled_in_ms: None,
             },

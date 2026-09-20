@@ -14,6 +14,8 @@ const bridgeMocks = vi.hoisted(() => ({
   getPrivacyRegexBuiltinRules: vi.fn(),
   installPrivacyModel: vi.fn(),
   listPrivacyModelInstallations: vi.fn(),
+  pausePrivacyModelInstallation: vi.fn(),
+  resumePrivacyModelInstallation: vi.fn(),
   probeLocalPrivacyModel: vi.fn(),
   probePrivacyModel: vi.fn(),
   updatePrivacyPolicy: vi.fn(),
@@ -193,10 +195,20 @@ async function openModels(): Promise<void> {
   });
 }
 
+async function openPolicySection(label: string): Promise<void> {
+  const tab = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+    .find((candidate) => candidate.textContent?.trim().startsWith(label));
+  if (!tab) throw new Error(`Missing policy section: ${label}`);
+  await act(async () => {
+    tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    await Promise.resolve();
+  });
+}
+
 async function openDryRun(): Promise<void> {
   await act(async () => {
     document
-      .querySelector<HTMLButtonElement>('[role="tab"][aria-label="试运行结果"]')
+      .querySelector<HTMLButtonElement>('[role="tab"][aria-label="试运行"]')
       ?.click();
     await Promise.resolve();
   });
@@ -421,6 +433,47 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain("社区目录");
     expect(container.textContent).toContain(catalogModel.license);
     expect(button("用于策略")).toBeTruthy();
+  });
+
+  it("pauses without losing progress, ignores a stale poll, and resumes polling", async () => {
+    vi.useFakeTimers();
+    const stalePoll = deferred<PrivacyModelInstallation>();
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({ items: [installation()] });
+    bridgeMocks.getPrivacyModelInstallation.mockReturnValueOnce(stalePoll.promise);
+    bridgeMocks.pausePrivacyModelInstallation.mockResolvedValueOnce(installation({ status: "paused" }));
+    bridgeMocks.resumePrivacyModelInstallation.mockResolvedValueOnce(installation());
+    await renderPolicy();
+    await openModels();
+    await act(async () => button("已安装 1").click());
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    await act(async () => button("暂停下载").click());
+    expect(bridgeMocks.pausePrivacyModelInstallation).toHaveBeenCalledWith(catalogInstallationID);
+    expect(container.textContent).toContain("已暂停");
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("25");
+    await act(async () => stalePoll.resolve(installation({ bytes_downloaded: 90_000_000 })));
+    expect(button("继续下载")).toBeTruthy();
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("25");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1800); });
+    expect(bridgeMocks.getPrivacyModelInstallation).toHaveBeenCalledTimes(1);
+    bridgeMocks.getPrivacyModelInstallation.mockResolvedValueOnce(readyInstallation());
+    await act(async () => button("继续下载").click());
+    expect(bridgeMocks.resumePrivacyModelInstallation).toHaveBeenCalledWith(catalogInstallationID);
+    expect(button("暂停下载")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(container.textContent).toContain("已就绪");
+    expect(bridgeMocks.cancelPrivacyModelInstallation).not.toHaveBeenCalled();
+  });
+
+  it("keeps a paused installation and reports a failed resume", async () => {
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({ items: [installation({ status: "paused" })] });
+    bridgeMocks.resumePrivacyModelInstallation.mockRejectedValueOnce(new Error("网络暂不可用"));
+    await renderPolicy();
+    await openModels();
+    await act(async () => button("已安装 1").click());
+    await act(async () => button("继续下载").click());
+    expect(container.textContent).toContain("网络暂不可用");
+    expect(container.textContent).toContain("已暂停");
+    expect(button("继续下载").disabled).toBe(false);
   });
 
   it("does not restore a cancelled installation from an older poll", async () => {
@@ -929,6 +982,7 @@ describe("SafetyPolicy", () => {
     bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
     bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(policyRecord());
     await renderPolicy();
+    await openPolicySection("脱敏规则");
 
     const toggle = container.querySelector<HTMLButtonElement>(
       '[role="switch"][aria-label="脱敏URL"]',
@@ -952,13 +1006,15 @@ describe("SafetyPolicy", () => {
   it("locks the placeholder style of kinds where the shape is a safety property", async () => {
     bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
     await renderPolicy();
+    await openPolicySection("脱敏规则");
 
     const locked = container.querySelector<HTMLButtonElement>(
       '[aria-label="常见密钥 占位符形态"]',
     );
     expect(locked?.getAttribute("data-disabled")).not.toBeNull();
     expect(locked?.textContent).toContain("标记占位符");
-    expect(container.textContent).toContain("诱导模型真的拿去调用 API");
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="了解两种占位符"]')?.click());
+    expect(document.body.textContent).toContain("诱导模型真的拿去调用 API");
 
     const configurable = container.querySelector<HTMLButtonElement>(
       '[aria-label="邮箱 占位符形态"]',
@@ -971,6 +1027,7 @@ describe("SafetyPolicy", () => {
     bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
     bridgeMocks.updatePrivacyPolicy.mockResolvedValueOnce(policyRecord());
     await renderPolicy();
+    await openPolicySection("脱敏规则");
 
     await act(async () => {
       button("添加名单").click();
@@ -993,6 +1050,61 @@ describe("SafetyPolicy", () => {
         { type: "domain_suffix", value: "internal.example" },
       ],
     });
+  });
+
+  it("edits and removes the original allowlist entry while search is active", async () => {
+    let current = policyRecord({ allowlist_rules: [
+      { type: "domain_suffix", value: "github.com" },
+      { type: "cidr", value: "10.0.0.0/8" },
+      { type: "domain_suffix", value: "internal.example" },
+    ] });
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(current);
+    bridgeMocks.updatePrivacyPolicy.mockImplementation(async (_etag, patch) => {
+      current = { ...current, policy: { ...current.policy, ...patch } };
+      return current;
+    });
+    await renderPolicy();
+    await openPolicySection("脱敏规则");
+    await setInput('input[type="search"]', "  INTERNAL  ");
+    expect(container.querySelector('input[aria-label="名单 1 值"]')).toBeNull();
+
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="名单 3 值"]')!;
+    await act(async () => input.focus());
+    await setInput('input[aria-label="名单 3 值"]', "internal.updated.example");
+    await act(async () => input.blur());
+    await flush();
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenLastCalledWith(etag, {
+      allowlist_rules: [
+        { type: "domain_suffix", value: "github.com" },
+        { type: "cidr", value: "10.0.0.0/8" },
+        { type: "domain_suffix", value: "internal.updated.example" },
+      ],
+    });
+
+    await act(async () => button("移除").click());
+    await flush();
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenLastCalledWith(etag, {
+      allowlist_rules: [
+        { type: "domain_suffix", value: "github.com" },
+        { type: "cidr", value: "10.0.0.0/8" },
+      ],
+    });
+    expect(container.textContent).toContain("没有匹配的名单条目");
+  });
+
+  it("clears a search when adding a rule and keeps the pending row across section switches", async () => {
+    await renderPolicy();
+    await openPolicySection("脱敏规则");
+    await setInput('input[type="search"]', "no-match");
+    expect(container.textContent).toContain("没有匹配的名单条目");
+    await act(async () => button("添加名单").click());
+    expect(container.querySelector<HTMLInputElement>('input[type="search"]')?.value).toBe("");
+    await chooseOption('[aria-label="名单 2 类型"]', "IP 段");
+    await openPolicySection("检测与还原");
+    await openPolicySection("脱敏规则");
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="名单 2 值"]')?.value).toBe("");
+    expect(container.querySelector('[aria-label="名单 2 类型"]')?.textContent).toContain("IP 段");
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
   });
 
   it("ties tool argument restore to response restore", async () => {
@@ -1228,14 +1340,14 @@ describe("SafetyPolicy", () => {
     await openDryRun();
 
     await act(async () => {
-      actionButton("试运行").click();
+      actionButton("开始检测").click();
       await Promise.resolve();
     });
     await flush();
 
     expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenCalledWith({
       protocol: "openai.chat",
-      sample_text: expect.stringContaining("alice@example.com"),
+      sample_text: expect.stringContaining("chen.yu@outlook.com"),
       policy: {
         enabled: true,
         detector: "local_model",
@@ -1246,19 +1358,68 @@ describe("SafetyPolicy", () => {
     });
     expect(container.textContent).toContain("脱敏后继续");
     expect(container.textContent).toContain("邮箱 × 1");
-    expect(container.textContent).toContain("0.91 ≥ 0.60");
-    expect(container.textContent).toContain("已抑制（不执行策略）");
-    expect(container.textContent).toContain("0.42 < 0.60");
-    expect(container.textContent).toContain("占位符对照（仅本地预览）");
+    expect(container.textContent).toContain("置信度 91%，达到 60% 门槛");
+    expect(container.textContent).toContain("已忽略 1 处");
+    expect(container.textContent).toContain("置信度 42%，低于 60% 门槛");
+    expect(container.textContent).toContain("替换为");
     expect(container.textContent).toContain("<PRIVATE_EMAIL_7f3a91c04d28be56>");
     expect(container.textContent).toContain("alice@example.com");
-    expect(container.textContent).toContain("脱敏后的请求体");
+    expect(container.textContent).toContain("脱敏后的请求");
     expect(
       document
-        .querySelector('[role="tab"][aria-label="试运行结果"]')
+        .querySelector('[role="tab"][aria-label="试运行"]')
         ?.getAttribute("data-state"),
     ).toBe("active");
-    expect(button("返回策略")).toBeTruthy();
+    await openPolicySection("检测与还原");
+    expect(button("检测与还原").getAttribute("data-state")).toBe("active");
+  });
+
+  it("locates UTF-8 matches in the exact input and supports repeated keyboard tests", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord({ enabled: true }));
+    const text = "  中文😀：alice@example.com，再次 alice@example.com  ";
+    const value = "alice@example.com";
+    const start = text.lastIndexOf(value);
+    bridgeMocks.dryRunPrivacyPolicy.mockResolvedValue({
+      decision: "warn", findings_summary: "email=1",
+      findings: [{ kind: "email", path: "/messages/0/content", confidence: 1,
+        start: new TextEncoder().encode(text.slice(0, start)).length,
+        end: new TextEncoder().encode(text.slice(0, start + value.length)).length }],
+      suppressed_findings: [], inspected_body: JSON.stringify({ messages: [{ content: text }] }),
+    });
+    await renderPolicy();
+    await openDryRun();
+    const input = container.querySelector<HTMLTextAreaElement>("#privacy-dry-run-sample")!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    for (const modifier of ["metaKey", "ctrlKey"]) {
+      const target = modifier === "metaKey" ? input : document.activeElement!;
+      await act(async () => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", [modifier]: true, bubbles: true })));
+      await flush();
+      expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenLastCalledWith(expect.objectContaining({ sample_text: text }));
+    }
+    const row = container.querySelector('[data-testid="dry-run-finding"]')!;
+    expect(row.querySelector("mark")?.textContent).toBe(value);
+    expect(row.textContent).toContain("匹配正则规则");
+    expect(row.textContent).toContain("发出警告");
+    await act(async () => button("定位原文").click());
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(start);
+    expect(input.selectionEnd).toBe(start + value.length);
+    const details = container.querySelector('[data-testid="safety-dry-run-result"] details')!;
+    expect(details.hasAttribute("open")).toBe(false);
+    await act(async () => button("清空").click());
+    expect(input.value).toBe("");
+    expect(actionButton("开始检测").disabled).toBe(true);
+    expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
+    await chooseOption('[aria-label="选择示例"]', "售后工单");
+    expect(input.value).toContain("chen.yu@outlook.com");
+    await chooseOption('[aria-label="选择示例"]', "报销付款邮件");
+    expect(input.value).toContain("IBAN");
+    await chooseOption('[aria-label="选择示例"]', "售后工单");
+    expect(input.value).toContain("chen.yu@outlook.com");
   });
 
   it("offers diverse dry-run presets and clears stale results when switching", async () => {
@@ -1271,46 +1432,29 @@ describe("SafetyPolicy", () => {
       findings: [],
       suppressed_findings: [],
       redactions: [],
-      redacted_body: null,
       inspected_body:
         '{"messages":[{"content":"故障信息","role":"user"}]}',
     });
     await renderPolicy();
     await openDryRun();
 
-    for (const label of [
-      "综合联系方式",
-      "账号与 IBAN",
-      "IP 与链接",
-      "测试密钥",
-      "中文个人资料",
-      "英文个人资料",
-      "中英混合多实体",
-      "无敏感信息",
-      "数字边界反例",
-    ]) {
-      expect(button(label)).toBeTruthy();
-    }
-    expect(container.textContent).toContain("9 组虚构测试用例");
-
-    await act(async () => button("IP 与链接").click());
+    await chooseOption('[aria-label="选择示例"]', "服务故障日志");
     const sample = container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="试运行样例文本"]',
+      'textarea[aria-label="待检测文本"]',
     );
-    expect(sample?.value).toContain("192.0.2.10");
-    expect(sample?.value).toContain("https://private.example/");
-    expect(button("IP 与链接").getAttribute("aria-pressed")).toBe("true");
-    expect(container.textContent).toContain("不包含真实网络目标");
+    expect(sample?.value).toContain("10.24.8.16");
+    expect(sample?.value).toContain("https://hooks.example.com/");
+    expect(container.querySelector('[aria-label="选择示例"]')?.textContent).toContain("服务故障日志");
 
     await act(async () => {
-      actionButton("试运行").click();
+      actionButton("开始检测").click();
       await Promise.resolve();
     });
     await flush();
 
     expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenCalledWith({
       protocol: "openai.chat",
-      sample_text: expect.stringContaining("192.0.2.10"),
+      sample_text: expect.stringContaining("10.24.8.16"),
       policy: {
         enabled: true,
         detector: "regex",
@@ -1321,10 +1465,35 @@ describe("SafetyPolicy", () => {
     });
     expect(container.querySelector('[data-testid="safety-dry-run-result"]')).not.toBeNull();
 
-    await act(async () => button("无敏感信息").click());
-    expect(sample?.value).toContain("公开产品说明");
+    await chooseOption('[aria-label="选择示例"]', "产品发布说明");
+    expect(sample?.value).toContain("本次更新支持将多份文档合并导出");
     expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
-    expect(button("无敏感信息").getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector('[aria-label="选择示例"]')?.textContent).toContain("产品发布说明");
+  });
+
+  it("applies a request format chosen from the compact settings and clears stale results", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord({ enabled: true }));
+    bridgeMocks.dryRunPrivacyPolicy.mockResolvedValue({
+      decision: "allow", findings_summary: "", findings: [], suppressed_findings: [],
+      inspected_body: '{"messages":[]}',
+    });
+    await renderPolicy();
+    await openDryRun();
+    await act(async () => actionButton("开始检测").click());
+    await flush();
+    expect(container.querySelector('[data-testid="safety-dry-run-result"]')).not.toBeNull();
+
+    await act(async () => button("请求格式").click());
+    await chooseOption('[aria-label="试运行协议"]', "Anthropic Messages");
+    expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
+    await act(async () => button("请求格式").click());
+    await act(async () => actionButton("开始检测").click());
+    await flush();
+    expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenLastCalledWith(expect.objectContaining({
+      protocol: "anthropic.messages",
+      sample_text: expect.stringContaining("chen.yu@outlook.com"),
+    }));
+    expect(container.querySelector('[data-testid="safety-dry-run-result"]')).not.toBeNull();
   });
 
   it("prompts that privacy protection is disabled instead of showing no findings", async () => {
@@ -1336,7 +1505,7 @@ describe("SafetyPolicy", () => {
     );
 
     await act(async () => {
-      actionButton("试运行").click();
+      actionButton("开始检测").click();
       await Promise.resolve();
     });
     await flush();
@@ -1348,7 +1517,7 @@ describe("SafetyPolicy", () => {
     expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
     expect(
       document
-        .querySelector('[role="tab"][aria-label="试运行结果"]')
+        .querySelector('[role="tab"][aria-label="试运行"]')
         ?.getAttribute("data-state"),
     ).toBe("active");
   });

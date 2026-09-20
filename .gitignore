@@ -34,6 +34,10 @@ apps/desktop/src-tauri/binaries/astrlink-privacy-worker-*
 apps/desktop/src-tauri/binaries/astrlink-classifier-worker-*
 apps/desktop/src-tauri/binaries/libonnxruntime.*.dylib
 apps/desktop/src-tauri/binaries/libonnxruntime.so.*
+apps/desktop/src-tauri/binaries/DirectML.dll
+apps/desktop/src-tauri/binaries/vc_redist.x64.exe
+apps/desktop/src-tauri/binaries/vc_redist.x64.nsh
+apps/desktop/src-tauri/binaries/vc_redist.x64.exe.*.download
 apps/desktop/src-tauri/binaries/onnxruntime-*-LICENSE.txt
 apps/desktop/src-tauri/binaries/onnxruntime-*-ThirdPartyNotices.txt
 apps/privacy-worker/target/

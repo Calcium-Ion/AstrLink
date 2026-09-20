@@ -97,6 +97,7 @@ export interface PrivacyRegexBuiltinRules {
 }
 export type PrivacyModelInstallationPhase =
   | "downloading"
+  | "paused"
   | "ready"
   | "error";
 export type PrivacyModelInstallationError =
@@ -362,6 +363,7 @@ const dryRunProtocols = new Set<PrivacyDryRunProtocol>([
 ]);
 const installationPhases = new Set<PrivacyModelInstallationPhase>([
   "downloading",
+  "paused",
   "ready",
   "error",
 ]);
@@ -1498,7 +1500,7 @@ export function parsePrivacyModelInstallation(
         downloaded !== total ||
         error !== null ||
         installedAt === null)) ||
-    (status === "downloading" && (error !== null || installedAt !== null)) ||
+    ((status === "downloading" || status === "paused") && (error !== null || installedAt !== null)) ||
     (status === "error" && (error === null || installedAt !== null))
   ) {
     invalid(path, "installation lifecycle fields are inconsistent");

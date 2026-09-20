@@ -4,8 +4,10 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { HelpPopover } from "@/components/HelpPopover";
+import { cn } from "@/lib/utils";
 
-/** Shared title, result count, and search for management lists. */
+/** Keep list identity, search, help, and actions together in one compact toolbar. */
 export function ListToolbar({
   title,
   count,
@@ -15,6 +17,8 @@ export function ListToolbar({
   placeholder,
   clearLabel,
   filters,
+  actions,
+  help,
 }: {
   title: string;
   count: string | number;
@@ -24,18 +28,33 @@ export function ListToolbar({
   placeholder: string;
   clearLabel: string;
   filters?: ReactNode;
+  actions?: ReactNode;
+  help?: { label: string; content: ReactNode };
 }) {
   return (
-    <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3">
+    <div className={cn(
+      "min-w-0 shrink-0 items-center",
+      actions
+        ? "grid grid-cols-[minmax(0,1fr)_auto] gap-2 @[480px]:grid-cols-[auto_minmax(0,1fr)_auto]"
+        : "flex flex-wrap justify-between gap-3",
+    )}>
       {filters ?? (
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2">
           <h2 className="text-sm font-semibold">{title}</h2>
           <Badge className="tabular-nums" variant="secondary">
             {count}
           </Badge>
+          {help ? (
+            <HelpPopover label={help.label}>{help.content}</HelpPopover>
+          ) : null}
         </div>
       )}
-      <div className="relative min-w-0 flex-1 basis-48 @[560px]:max-w-72">
+      <div className={cn(
+        "relative min-w-0",
+        actions
+          ? "col-span-2 col-start-1 row-start-2 @[480px]:col-span-1 @[480px]:col-start-2 @[480px]:row-start-1"
+          : "flex-1 basis-48 @[560px]:max-w-72",
+      )}>
         <Search
           aria-hidden="true"
           className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -61,6 +80,11 @@ export function ListToolbar({
           </Button>
         ) : null}
       </div>
+      {actions ? (
+        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-2 @[480px]:col-start-3">
+          {actions}
+        </div>
+      ) : null}
     </div>
   );
 }

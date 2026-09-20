@@ -28,6 +28,8 @@ type requestRecordPageResponse struct {
 }
 
 func (handler *Handler) registerRequestRecordRoutes() {
+	handler.mux.HandleFunc(UsageSummaryPath, handler.authenticated(handler.getUsageSummary))
+	handler.mux.HandleFunc(AccessTokenUsagePath, handler.authenticated(handler.listAccessTokenUsage))
 	handler.mux.HandleFunc(RequestsPurgePath, handler.authenticated(handler.purgeRequestRecords))
 	handler.mux.HandleFunc(RequestSessionsPath, handler.authenticated(handler.requestSessionCollection))
 	handler.mux.HandleFunc(RequestSessionsPath+"/", handler.authenticated(handler.requestSessionItem))

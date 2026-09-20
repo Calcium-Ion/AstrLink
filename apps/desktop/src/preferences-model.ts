@@ -1,4 +1,5 @@
 import { isLocale, type Locale } from "./i18n/locale";
+import { isThemePreference, type ThemePreference } from "./theme-model";
 
 export type CloseBehavior = "hide_to_tray" | "quit";
 
@@ -13,10 +14,12 @@ export interface Preferences {
   autostart: boolean;
   core_auto_start: boolean;
   core_auto_recover: boolean;
+  use_system_proxy: boolean;
   inference_port: number;
   max_concurrent_inspections: number;
   response_start_timeout_seconds: number;
   locale: Locale;
+  theme: ThemePreference;
 }
 
 export interface SettingsSnapshot {
@@ -70,10 +73,12 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "autostart",
       "core_auto_start",
       "core_auto_recover",
+      "use_system_proxy",
       "inference_port",
       "max_concurrent_inspections",
       "response_start_timeout_seconds",
       "locale",
+      "theme",
     ],
     "$.values",
   );
@@ -83,7 +88,10 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   if (!isLocale(values.locale)) {
     invalid("$.values.locale", "unknown locale");
   }
-  for (const field of ["autostart", "core_auto_start", "core_auto_recover"] as const) {
+  if (!isThemePreference(values.theme)) {
+    invalid("$.values.theme", "unknown theme preference");
+  }
+  for (const field of ["autostart", "core_auto_start", "core_auto_recover", "use_system_proxy"] as const) {
     if (typeof values[field] !== "boolean") invalid(`$.values.${field}`, "expected boolean");
   }
   if (

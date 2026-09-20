@@ -68,6 +68,11 @@ export interface CapabilitiesResponse {
   conversion_engine: ConversionEngineCapability;
 }
 
+export interface InferencePortFallback {
+  requested_port: number;
+  active_port: number;
+}
+
 export interface CoreSnapshot {
   phase: CorePhase;
   pid: number | null;
@@ -76,6 +81,7 @@ export interface CoreSnapshot {
   version: VersionResponse | null;
   capabilities: CapabilitiesResponse | null;
   last_error: string | null;
+  inference_port_fallback: InferencePortFallback | null;
   recovery_attempt: number;
   recovery_scheduled_in_ms: number | null;
 }
@@ -417,6 +423,21 @@ function parseLastError(value: unknown, path: string): string | null {
   return value;
 }
 
+function parsePortFallback(value: unknown, path: string): InferencePortFallback {
+  const fallback = objectAt(value, path);
+  exactKeys(fallback, ["requested_port", "active_port"], path);
+  const portAt = (value: unknown, key: string): number => {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
+      return invalid(`${path}.${key}`, "expected a port from 1 through 65535");
+    }
+    return value;
+  };
+  const requested_port = portAt(fallback.requested_port, "requested_port");
+  const active_port = portAt(fallback.active_port, "active_port");
+  if (requested_port === active_port) invalid(path, "fallback ports must differ");
+  return { requested_port, active_port };
+}
+
 export function parseAppSnapshot(value: unknown): AppSnapshot {
   const path = "$";
   const snapshot = objectAt(value, path);
@@ -428,6 +449,7 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
       "pid",
       "ready",
       "last_error",
+      "inference_port_fallback",
       "health",
       "version",
       "capabilities",
@@ -446,6 +468,7 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
     pid: parsePID(snapshot.pid, "$.pid"),
     ready: nullable(snapshot.ready, "$.ready", parseReady),
     last_error: parseLastError(snapshot.last_error, "$.last_error"),
+    inference_port_fallback: nullable(snapshot.inference_port_fallback, "$.inference_port_fallback", parsePortFallback),
     health: nullable(snapshot.health, "$.health", parseHealth),
     version: nullable(snapshot.version, "$.version", parseVersion),
     capabilities: nullable(snapshot.capabilities, "$.capabilities", parseCapabilities),
@@ -469,6 +492,10 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
             ),
   };
 
+  if (parsed.inference_port_fallback &&
+    parsed.ready?.inference_url !== `http://127.0.0.1:${parsed.inference_port_fallback.active_port}`) {
+    invalid("$.inference_port_fallback", "must match the active inference URL");
+  }
   if (parsed.ready && parsed.version && parsed.ready.core_version !== parsed.version.core_version) {
     invalid("$.version.core_version", "does not match the ready announcement");
   }
@@ -490,6 +517,7 @@ export const browserSnapshot = (): AppSnapshot => ({
   version: null,
   capabilities: null,
   last_error: "The native bridge is unavailable. Open this UI with Tauri.",
+  inference_port_fallback: null,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
 });
@@ -507,6 +535,7 @@ export function failedSnapshot(
     version: null,
     capabilities: null,
     last_error: message,
+    inference_port_fallback: null,
     recovery_attempt: current?.recovery_attempt ?? 0,
     recovery_scheduled_in_ms: null,
   };

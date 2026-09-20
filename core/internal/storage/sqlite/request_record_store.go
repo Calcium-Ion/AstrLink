@@ -69,6 +69,9 @@ func (store *Store) InsertRequestRecord(ctx context.Context, record contract.Req
 	if err = replaceRequestRecordCursors(ctx, transaction, record); err != nil {
 		return err
 	}
+	if err = recordBilling(ctx, transaction, record, false); err != nil {
+		return err
+	}
 	if err = transaction.Commit(); err != nil {
 		return fmt.Errorf("commit request insert: %w", err)
 	}
@@ -140,6 +143,11 @@ WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 			return err
 		}
 	}
+	if applied > 0 {
+		if err = recordBilling(ctx, transaction, record, false); err != nil {
+			return err
+		}
+	}
 	if err = transaction.Commit(); err != nil {
 		return fmt.Errorf("commit request upsert: %w", err)
 	}
@@ -178,10 +186,16 @@ func (store *Store) RecoverPendingRequestRecords(ctx context.Context) (int, erro
 	if err != nil {
 		return 0, fmt.Errorf("encode interrupted request error: %w", err)
 	}
-	result, err := store.db.ExecContext(ctx, `UPDATE request_records
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.ExecContext(ctx, `UPDATE request_records
 SET status = 'failed',
     completed_at = ?,
     latency_ms = NULL,
+    usage_json = CASE WHEN usage_json IS NOT NULL AND usage_json <> 'null' THEN json_set(usage_json, '$.billing_incomplete', json('true')) ELSE usage_json END,
     error_json = ?
 WHERE status = 'pending'`, completedAt, string(errorJSON))
 	if err != nil {
@@ -190,6 +204,14 @@ WHERE status = 'pending'`, completedAt, string(errorJSON))
 	updated, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("read pending request recovery result: %w", err)
+	}
+	if _, err = transaction.ExecContext(ctx, `UPDATE billing_ledger SET terminal=1,reason='incomplete_usage',
+usage_json=CASE WHEN usage_json IS NOT NULL AND usage_json<>'null' THEN json_set(usage_json,'$.billing_incomplete',json('true')) ELSE usage_json END
+WHERE terminal=0`); err != nil {
+		return 0, fmt.Errorf("recover pending billing entries: %w", err)
+	}
+	if err = transaction.Commit(); err != nil {
+		return 0, err
 	}
 	return int(updated), nil
 }

@@ -23,6 +23,14 @@ type RequestRecordPage struct {
 	NextCursor string
 }
 
+// AccessTokenUsage counts successful root requests in retained history only.
+// Retry children must not be counted again alongside their root.
+type AccessTokenUsage struct {
+	TokenID     contract.AccessTokenID `json:"token_id"`
+	TodayTokens int64                  `json:"today_tokens"`
+	TotalTokens int64                  `json:"total_tokens"`
+}
+
 // RequestRecordStore persists always-on inference metadata records (ADR 0007).
 // Implementations must validate every row on read so corrupt history fails closed.
 type RequestSessionListOptions struct {
@@ -71,6 +79,8 @@ type RequestRecordStore interface {
 	InsertRequestRecord(context.Context, contract.RequestRecord) error
 	UpsertRequestRecord(context.Context, contract.RequestRecord) error
 	ListRequestRecords(context.Context, RequestRecordListOptions) (RequestRecordPage, error)
+	ListAccessTokenUsage(context.Context, time.Time) ([]AccessTokenUsage, error)
+	GetUsageSummary(context.Context, UsageSummaryOptions) (UsageSummary, error)
 	ListRequestRecordChildren(context.Context, contract.RequestID) ([]contract.RequestRecord, error)
 	GetRequestRecord(context.Context, contract.RequestID) (contract.RequestRecord, error)
 	DeleteRequestRecord(context.Context, contract.RequestID) error

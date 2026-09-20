@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { stageWindowsVcRuntime } from "./stage-windows-vc-runtime.mjs";
 
 const onnxRuntimeVersion = "1.23.2";
 const macOSRuntimeLibraryName = `libonnxruntime.${onnxRuntimeVersion}.dylib`;
@@ -331,6 +332,7 @@ function sha256(bytes) {
 }
 
 await stageOnnxRuntimeNotices();
+await stageWindowsVcRuntime({ target, binariesDirectory });
 
 execFileSync(
   "go",
@@ -436,3 +438,23 @@ if (!target.includes("windows")) {
 console.log(
   `Staged astrlink-classifier-worker for Tauri: ${classifierWorkerOutput}`,
 );
+
+if (target.includes("windows")) {
+  const runtimeName = "DirectML.dll";
+  const runtimeSource = path.join(workerDirectory, "target", "release", runtimeName);
+  const classifierRuntime = path.join(
+    classifierWorkerDirectory,
+    "target",
+    "release",
+    runtimeName,
+  );
+  if (
+    !existsSync(runtimeSource) ||
+    !existsSync(classifierRuntime) ||
+    sha256(readFileSync(runtimeSource)) !== sha256(readFileSync(classifierRuntime))
+  ) {
+    throw new Error("Windows workers require the same bundled DirectML.dll.");
+  }
+  copyFileSync(runtimeSource, path.join(binariesDirectory, runtimeName));
+  console.log(`Staged Windows ONNX Runtime dependency: ${runtimeName}`);
+}

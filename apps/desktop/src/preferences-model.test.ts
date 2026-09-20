@@ -8,9 +8,11 @@ const valid = {
     autostart: false,
     core_auto_start: true,
     core_auto_recover: true,
+    use_system_proxy: true,
     inference_port: 8317,
     max_concurrent_inspections: 16,
     response_start_timeout_seconds: 0,
+    theme: "system" as const,
     locale: "zh-CN",
   },
   load_warning: null,
@@ -23,7 +25,20 @@ describe("preferences IPC contract", () => {
     expect(parseSettingsSnapshot(valid)).toEqual(valid);
   });
 
+  it("accepts supported themes and rejects missing or invalid preferences", () => {
+    for (const theme of ["system", "light", "dark"]) {
+      expect(parseSettingsSnapshot({ ...valid, values: { ...valid.values, theme } }).values.theme).toBe(theme);
+    }
+    for (const theme of [undefined, null, "auto", true]) {
+      expect(() => parseSettingsSnapshot({ ...valid, values: { ...valid.values, theme } })).toThrow("$.values.theme");
+    }
+  });
+
   it("rejects unknown fields and unsafe ports", () => {
+    expect(() => parseSettingsSnapshot({
+      ...valid,
+      values: { ...valid.values, use_system_proxy: "true" },
+    })).toThrow("$.values.use_system_proxy");
     expect(() => parseSettingsSnapshot({ ...valid, surprise: true })).toThrow(
       "$.surprise",
     );

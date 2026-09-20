@@ -14,15 +14,12 @@ describe("desktop application shell", () => {
     expect(markup).toContain("路由");
     expect(markup).toContain("Agent 工具");
     expect(markup).toContain("设置");
-    expect(markup).toContain("API 地址");
-    expect(markup).toContain("用量概览");
-    expect(markup).toContain("按日 Token");
-    expect(markup).toContain("预估费用");
+    expect(markup).toContain("overview-welcome");
+    expect(markup).toContain("正在读取工作区");
+    expect(markup).not.toContain("用量概览");
     expect(markup).toContain("请求记录");
-    expect(markup).toContain("按服务");
-    expect(markup).toContain("按模型");
     expect(markup).toContain("系统详情");
-    expect(markup).toContain("网关就绪后显示已配置服务");
+    expect(markup).not.toContain("当前为浏览器预览");
 
     expect(markup).not.toContain("统一 API 网关");
     expect(markup).not.toContain("运行在你的桌面");

@@ -1,3 +1,4 @@
+import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
 import { OrderedList } from "./components/OrderedList";
 import { useRoutingDefaults } from "./use-routing-defaults";
@@ -554,6 +555,7 @@ export function ServiceManager({
     [protocols],
   );
   const [query, setQuery] = useState("");
+  const [modelQuery, setModelQuery] = useState("");
   const [serviceFilter, setServiceFilter] = useState<ServiceFilter>("all");
   const [draft, setDraft] = useState<Draft>(() =>
     draftForKind("codex_subscription", protocols),
@@ -584,6 +586,7 @@ export function ServiceManager({
     >
   >({});
   const [usageEpoch, setUsageEpoch] = useState(0);
+  const [billingService, setBillingService] = useState<string | null>(null);
   const copyFeedback = useCopyFeedback();
   const loadGeneration = useRef(0);
   const usageGeneration = useRef(0);
@@ -1244,11 +1247,16 @@ export function ServiceManager({
 
   if (view.kind === "list") {
     const search = query.trim().toLocaleLowerCase();
+    const modelSearch = modelQuery.trim().toLocaleLowerCase();
+    const filtered = !!search || !!modelSearch || serviceFilter !== "all";
     const enabledCount = services.filter((service) => service.enabled).length;
     const visibleServices = serviceOrder.ordered.filter(
       (service) =>
         (serviceFilter === "all" ||
           service.enabled === (serviceFilter === "enabled")) &&
+        (!modelSearch || service.models.some((model) =>
+          model.toLocaleLowerCase().includes(modelSearch),
+        )) &&
         [
           service.name,
           serviceKindLabel(service.kind),
@@ -1266,6 +1274,13 @@ export function ServiceManager({
         className="@container flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
         aria-labelledby="service-heading"
       >
+        {billingService !== null ? (
+          <PricingWorkspace
+            services={services}
+            initialServiceId={billingService}
+            onClose={() => setBillingService(null)}
+          />
+        ) : null}
         <PageHeader
           className="mb-4 items-center border-b-0 pb-1 @max-[560px]:flex-wrap @max-[560px]:items-start @max-[560px]:gap-3"
           actions={
@@ -1324,7 +1339,7 @@ export function ServiceManager({
           <ListToolbar
             title={t("services.listLabel")}
             count={
-              search
+              filtered
                 ? `${visibleServices.length} / ${services.length}`
                 : services.length
             }
@@ -1333,6 +1348,16 @@ export function ServiceManager({
             searchLabel={t("services.searchServices")}
             placeholder={t("services.searchServicesPlaceholder")}
             clearLabel={t("common.clearSearch")}
+            actions={
+              <Input
+                aria-label={t("services.filterModel")}
+                className="h-8 w-48"
+                onChange={(event) => setModelQuery(event.currentTarget.value)}
+                placeholder={t("services.filterModelPlaceholder")}
+                type="search"
+                value={modelQuery}
+              />
+            }
             filters={
               <SegmentedControl<ServiceFilter>
                 label={t("services.filterStatus")}
@@ -1360,7 +1385,7 @@ export function ServiceManager({
           />
         </div>
         <p className="mb-3 shrink-0 text-xs text-muted-foreground" aria-live="polite">
-          {serviceOrder.saving ? t("services.orderSaving") : search || serviceFilter !== "all" ? t("services.orderFiltered") : t("services.orderHint")}
+          {serviceOrder.saving ? t("services.orderSaving") : filtered ? t("services.orderFiltered") : t("services.orderHint")}
           {routingDefaults.loaded && !routingDefaults.allow_unmatched_failover ? ` ${t("failure.globalOffHint")}` : ""}
         </p>
         {serviceOrder.error ? <FormMessage className="mb-3" tone="error">{serviceOrder.error}<Button type="button" variant="ghost" onClick={serviceOrder.reload}>{t("common.retry")}</Button></FormMessage> : null}
@@ -1414,6 +1439,7 @@ export function ServiceManager({
                         size="sm"
                         onClick={() => {
                           setQuery("");
+                          setModelQuery("");
                           setServiceFilter("all");
                         }}
                         type="button"
@@ -1424,7 +1450,7 @@ export function ServiceManager({
                   />
                 ) : null}
                 <OrderedList items={visibleServices} label={t("services.orderLabel")} compact
-                  disabled={!isReady || busy || serviceOrder.saving || !serviceOrder.complete || !!search || serviceFilter !== "all"}
+                  disabled={!isReady || busy || serviceOrder.saving || !serviceOrder.complete}
                   positionOf={service => serviceOrder.ordered.findIndex(item => item.id === service.id) + 1}
                   onChange={items => void serviceOrder.save(items)}>
                 {(service, _index, controls, sorting) => {
@@ -1508,27 +1534,36 @@ export function ServiceManager({
                         </>
                       }
                       usage={
-                        subscription?.status === "connected" ? (
-                          <SubscriptionUsageMeter
-                            error={usageByService[service.id]?.error}
-                            now={new Date()}
-                            onReset={() =>
-                              setConfirmAction({
-                                kind: "reset-usage",
-                                service,
-                                availableCount:
-                                  usageByService[service.id]?.usage
-                                    ?.rate_limit_reset_credits
-                                    ?.available_count ?? 0,
-                              })
-                            }
-                            resetting={actionID === service.id}
-                            status={
-                              usageByService[service.id]?.status ?? "loading"
-                            }
-                            usage={usageByService[service.id]?.usage}
+                        <div className="grid gap-1">
+                          {subscription?.status === "connected" ? (
+                            <SubscriptionUsageMeter
+                              error={usageByService[service.id]?.error}
+                              now={new Date()}
+                              onReset={() =>
+                                setConfirmAction({
+                                  kind: "reset-usage",
+                                  service,
+                                  availableCount:
+                                    usageByService[service.id]?.usage
+                                      ?.rate_limit_reset_credits
+                                      ?.available_count ?? 0,
+                                })
+                              }
+                              resetting={actionID === service.id}
+                              status={
+                                usageByService[service.id]?.status ?? "loading"
+                              }
+                              usage={usageByService[service.id]?.usage}
+                            />
+                          ) : null}
+                          <ServiceBillingMeter
+                            serviceId={service.id}
+                            ready={isReady}
+                            epoch={usageEpoch}
+                            observedAt={usageByService[service.id]?.usage?.fetched_at}
+                            onOpen={() => setBillingService(service.id)}
                           />
-                        ) : null
+                        </div>
                       }
                       status={
                         <>

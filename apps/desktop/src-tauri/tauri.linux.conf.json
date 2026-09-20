@@ -1,6 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
+    "linux": {
+      "deb": {
+        "depends": ["libc6 (>= 2.36)", "libstdc++6 (>= 12)", "libgcc-s1"]
+      }
+    },
     "resources": {
       "binaries/libonnxruntime.so.1.23.2": "onnxruntime/libonnxruntime.so.1.23.2"
     }

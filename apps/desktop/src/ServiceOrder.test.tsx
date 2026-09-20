@@ -25,10 +25,11 @@ function Harness({ filtered = false }: { filtered?: boolean }) {
   return (
     <>
       <OrderedList
-        items={order.ordered}
+        items={order.ordered.filter((item) => !filtered || item.id !== "service_b")}
         label="order"
         compact
-        disabled={filtered || !order.complete || order.saving}
+        disabled={!order.complete || order.saving}
+        positionOf={(item) => order.ordered.findIndex((service) => service.id === item.id) + 1}
         onChange={(items) => void order.save(items)}
       >
         {(item, _index, controls) => (
@@ -86,8 +87,9 @@ function measureRows(compactHeight = 100) {
 }
 async function dragToFirst() {
   const list = measureRows();
+  const startY = handle("service_c").getBoundingClientRect().top + 10;
   await act(async () => handle("service_c").dispatchEvent(new PointerEvent("pointerdown", {
-    bubbles: true, button: 0, pointerId: 1, clientX: 20, clientY: 220,
+    bubbles: true, button: 0, pointerId: 1, clientX: 20, clientY: startY,
   })));
   await act(async () => list.dispatchEvent(new PointerEvent("pointermove", {
     bubbles: true, pointerId: 1, clientX: 20, clientY: 10,
@@ -144,7 +146,7 @@ it("rolls back a failed save and refreshes after conflict", async () => {
   expect(refresh).toHaveBeenCalledOnce();
 });
 
-it("commits drag/drop and preserves priority while filtering disables reordering", async () => {
+it("commits drag/drop and keeps reordering available after filtering", async () => {
   await act(async () => root.render(<Harness />));
   const list = await dragToFirst();
   expect(ids()).toEqual(["service_c", "service_a", "service_b"]);
@@ -166,8 +168,58 @@ it("commits drag/drop and preserves priority while filtering disables reordering
     '"initial"',
   );
   await act(async () => root.render(<Harness filtered />));
-  expect(handle("service_c").disabled).toBe(true);
+  expect(handle("service_c").disabled).toBe(false);
+  expect(ids()).toEqual(["service_c", "service_a"]);
+});
+
+it("merges filtered drag/drop into global slots and preserves hidden services", async () => {
+  await act(async () => root.render(<Harness filtered />));
+  expect(ids()).toEqual(["service_a", "service_c"]);
+  expect(handle("service_c").getAttribute("aria-label")).toMatch(/3$/);
+  const list = await dragToFirst();
+  expect(ids()).toEqual(["service_c", "service_a"]);
+  expect(handle("service_c").getAttribute("aria-label")).toMatch(/1$/);
+  expect(handle("service_a").getAttribute("aria-label")).toMatch(/3$/);
+  expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
+  await act(async () => list.dispatchEvent(new PointerEvent("pointerup", {
+    bubbles: true, pointerId: 1,
+  })));
+  expect(bridge.updateServiceOrder).toHaveBeenCalledExactlyOnceWith(
+    ["service_c", "service_b", "service_a"],
+    '"initial"',
+  );
+  await act(async () => root.render(<Harness />));
+  expect(ids()).toEqual(["service_c", "service_b", "service_a"]);
+});
+
+it("restores the full order when a filtered save conflicts", async () => {
+  bridge.updateServiceOrder.mockRejectedValueOnce(Error("412 order changed"));
+  bridge.getServiceOrder.mockResolvedValueOnce(initial).mockResolvedValueOnce({
+    service_ids: ["service_b", "service_a", "service_c"],
+    etag: '"fresh"',
+  });
+  await act(async () => root.render(<Harness filtered />));
+  await act(async () => handle("service_a").dispatchEvent(
+    new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+  ));
+  expect(bridge.updateServiceOrder).toHaveBeenCalledWith(
+    ["service_c", "service_b", "service_a"], '"initial"',
+  );
+  expect(ids()).toEqual(["service_a", "service_c"]);
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(container.textContent).toContain("412 order changed");
+  await act(async () => root.render(<Harness />));
+  expect(ids()).toEqual(["service_b", "service_a", "service_c"]);
+});
+
+it("cancels an active drag when the filter changes without saving a stale subset", async () => {
+  await act(async () => root.render(<Harness />));
+  await dragToFirst();
   expect(ids()).toEqual(["service_c", "service_a", "service_b"]);
+  await act(async () => root.render(<Harness filtered />));
+  expect(ids()).toEqual(["service_a", "service_c"]);
+  expect(container.querySelector("[data-drop-slot]")).toBeNull();
+  expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
 });
 
 it.each(["Escape", "pointercancel"])("restores the preview without saving when cancelled by %s", async (reason) => {

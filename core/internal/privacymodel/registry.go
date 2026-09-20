@@ -145,10 +145,10 @@ func NewRegistry(
 			return nil, ErrFilesystem
 		}
 	}
-	if err := registry.removeAbandonedStaging(); err != nil {
+	if err := registry.loadPersisted(); err != nil {
 		return nil, err
 	}
-	if err := registry.loadPersisted(); err != nil {
+	if err := registry.removeAbandonedStaging(); err != nil {
 		return nil, err
 	}
 	if err := registry.migrateLegacyOpenAI(); err != nil {
@@ -244,14 +244,27 @@ func (registry *Registry) Install(
 		registry.mu.Unlock()
 		return contract.PrivacyModelInstallation{}, ErrFilesystem
 	}
+	if plan.localSource == "" {
+		progress, err := registry.prepareResume(plan)
+		if err != nil {
+			registry.mu.Unlock()
+			return contract.PrivacyModelInstallation{}, err
+		}
+		plan.installation.BytesDownloaded = progress
+	}
 	operationContext, cancel := context.WithCancel(registry.lifetime)
 	operation := &registryOperation{cancel: cancel, done: make(chan struct{})}
+	previous, hadPrevious := registry.installations[id]
 	registry.operations[id] = operation
 	registry.installations[id] = cloneInstallation(plan.installation)
 	delete(registry.bindings, id)
 	if err := registry.persistLocked(context.Background(), plan.installation); err != nil {
 		delete(registry.operations, id)
-		delete(registry.installations, id)
+		if hadPrevious {
+			registry.installations[id] = previous
+		} else {
+			delete(registry.installations, id)
+		}
 		cancel()
 		registry.mu.Unlock()
 		return contract.PrivacyModelInstallation{}, err
@@ -940,6 +953,9 @@ func (registry *Registry) download(
 		)
 	}
 	fail := func(stage string, cause error) {
+		if ctx.Err() != nil {
+			cause = ctx.Err()
+		}
 		if stage != "asset" && registry.logf != nil {
 			registry.logf(
 				"privacy model download failed: model_id=%s stage=%s reason=%s",
@@ -952,22 +968,20 @@ func (registry *Registry) download(
 	}
 	defer func() {
 		registry.mu.Lock()
+		operation.cancel()
 		delete(registry.operations, id)
 		close(operation.done)
 		registry.mu.Unlock()
 	}()
-	temporary, err := os.MkdirTemp(
-		registry.stagingDir,
-		".privacy-model-download-"+string(id)+"-",
-	)
-	if err != nil {
-		fail("staging", err)
-		return
-	}
-	defer os.RemoveAll(temporary)
-	if err := os.Chmod(temporary, 0o700); err != nil {
-		fail("staging", err)
-		return
+	temporary := registry.resumeDirectory(id)
+	if plan.localSource != "" {
+		var err error
+		temporary, err = os.MkdirTemp(registry.stagingDir, ".privacy-model-download-"+string(id)+"-")
+		if err != nil {
+			fail("staging", err)
+			return
+		}
+		defer os.RemoveAll(temporary)
 	}
 	verifiedAssets := make([]Asset, 0, len(plan.assets))
 	for index, asset := range plan.assets {
@@ -1046,6 +1060,12 @@ func (registry *Registry) download(
 	if os.Rename(temporary, finalDirectory) != nil {
 		fail("publish", ErrFilesystem)
 		return
+	}
+	if plan.localSource == "" {
+		if err := os.Remove(filepath.Join(finalDirectory, resumePlanName)); err != nil || syncDirectory(finalDirectory) != nil {
+			fail("publish", ErrFilesystem)
+			return
+		}
 	}
 	if syncDirectory(registry.installationsDir) != nil {
 		fail("publish", ErrFilesystem)
@@ -1128,133 +1148,6 @@ func (registry *Registry) downloadAssetWithPosition(
 		}
 	}
 	return Asset{}, ErrRemoteMetadata
-}
-
-func (registry *Registry) downloadAssetOnce(
-	ctx context.Context,
-	id contract.PrivacyModelID,
-	temporary string,
-	installation contract.PrivacyModelInstallation,
-	asset Asset,
-) (_ Asset, resultErr error) {
-	if !safeAssetPath(asset.Path) || asset.Size <= 0 {
-		return Asset{}, errModelIncompatible
-	}
-	destination := filepath.Join(temporary, filepath.FromSlash(asset.Path))
-	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-		return Asset{}, ErrFilesystem
-	}
-	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return Asset{}, ErrFilesystem
-	}
-	closeWithError := func() {
-		_ = file.Close()
-		_ = os.Remove(destination)
-	}
-	endpoint := registry.probe.endpoint(
-		installation.RepoID, "resolve", installation.Revision, asset.Path,
-	)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		closeWithError()
-		return Asset{}, ErrFilesystem
-	}
-	response, err := registry.httpClient.Do(request)
-	if err != nil {
-		closeWithError()
-		if ctx.Err() != nil {
-			return Asset{}, ctx.Err()
-		}
-		return Asset{}, &assetDownloadFailure{
-			reason:    networkFailureReason(err),
-			retryable: true,
-			cause:     ErrRemoteMetadata,
-		}
-	}
-	if response.StatusCode != http.StatusOK ||
-		response.ContentLength > asset.Size {
-		_ = response.Body.Close()
-		closeWithError()
-		if response.StatusCode != http.StatusOK {
-			return Asset{}, &assetDownloadFailure{
-				reason:    fmt.Sprintf("http_%d", response.StatusCode),
-				retryable: retryableHTTPStatus(response.StatusCode),
-				cause:     ErrRemoteMetadata,
-			}
-		}
-		return Asset{}, &assetDownloadFailure{
-			reason:    "content_length",
-			retryable: true,
-			cause:     ErrRemoteMetadata,
-		}
-	}
-	if response.ContentLength >= 0 && response.ContentLength != asset.Size {
-		_ = response.Body.Close()
-		closeWithError()
-		return Asset{}, &assetDownloadFailure{
-			reason:    "content_length",
-			retryable: true,
-			cause:     ErrRemoteMetadata,
-		}
-	}
-	hasher := sha256.New()
-	var reported int64
-	written, copyErr := copyRegistryAsset(
-		ctx,
-		io.LimitReader(response.Body, asset.Size+1),
-		io.MultiWriter(file, hasher),
-		func(delta int64) {
-			remaining := asset.Size - reported
-			if remaining <= 0 {
-				return
-			}
-			if delta > remaining {
-				delta = remaining
-			}
-			reported += delta
-			registry.addProgress(id, delta)
-		},
-	)
-	defer func() {
-		if resultErr != nil && reported > 0 {
-			registry.addProgress(id, -reported)
-		}
-	}()
-	bodyCloseErr := response.Body.Close()
-	syncErr := file.Sync()
-	fileCloseErr := file.Close()
-	digest := hex.EncodeToString(hasher.Sum(nil))
-	if copyErr != nil || bodyCloseErr != nil || written != asset.Size {
-		_ = os.Remove(destination)
-		if ctx.Err() != nil {
-			return Asset{}, ctx.Err()
-		}
-		if errors.Is(copyErr, io.ErrShortWrite) {
-			return Asset{}, &assetDownloadFailure{
-				reason: "filesystem", cause: ErrFilesystem,
-			}
-		}
-		return Asset{}, &assetDownloadFailure{
-			reason:    "body_read",
-			retryable: true,
-			cause:     ErrRemoteMetadata,
-		}
-	}
-	if syncErr != nil || fileCloseErr != nil {
-		_ = os.Remove(destination)
-		return Asset{}, &assetDownloadFailure{
-			reason: "filesystem", cause: ErrFilesystem,
-		}
-	}
-	if asset.SHA256 != "" && digest != asset.SHA256 {
-		_ = os.Remove(destination)
-		return Asset{}, &assetDownloadFailure{
-			reason: "sha256", cause: errAssetIntegrity,
-		}
-	}
-	asset.SHA256 = digest
-	return asset, nil
 }
 
 func retryableHTTPStatus(status int) bool {
@@ -1436,6 +1329,10 @@ func (registry *Registry) finishDownloadError(
 	message := registryErrorCode(cause)
 	installation.Status = contract.PrivacyModelStatusError
 	installation.Error = &message
+	if errors.Is(cause, context.Canceled) && installation.Source != contract.PrivacyModelSourceLocal {
+		installation.Status = contract.PrivacyModelStatusPaused
+		installation.Error = nil
+	}
 	installation.InstalledAt = nil
 	registry.installations[id] = installation
 	delete(registry.bindings, id)
@@ -1491,7 +1388,14 @@ func (registry *Registry) loadPersisted() error {
 			message := registryDownloadError
 			installation.Status = contract.PrivacyModelStatusError
 			installation.Error = &message
+			if installation.Source != contract.PrivacyModelSourceLocal {
+				installation.Status = contract.PrivacyModelStatusPaused
+				installation.Error = nil
+			}
 			record.Manifest = nil
+		}
+		if installation.Status != contract.PrivacyModelStatusReady && installation.Source != contract.PrivacyModelSourceLocal {
+			installation.BytesDownloaded = registry.resumeProgress(installation)
 		}
 		registry.installations[installation.ID] = cloneInstallation(installation)
 		record.Installation = installation
@@ -1716,6 +1620,10 @@ func (registry *Registry) removeAbandonedStaging() error {
 	now := time.Now()
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), ".privacy-model-download-model_") {
+			continue
+		}
+		id := contract.PrivacyModelID(strings.TrimSuffix(strings.TrimPrefix(entry.Name(), ".privacy-model-download-"), "-resume"))
+		if _, exists := registry.installations[id]; exists && entry.Name() == filepath.Base(registry.resumeDirectory(id)) {
 			continue
 		}
 		candidate := filepath.Join(registry.stagingDir, entry.Name())

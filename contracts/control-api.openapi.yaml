@@ -44,6 +44,13 @@ security:
 x-astrlink-implementation:
   milestone: M3-unified-service-slice
   implemented_operations:
+    - GET /control/v1/pricing/status
+    - GET /control/v1/pricing/catalog
+    - POST /control/v1/pricing/sync
+    - GET /control/v1/pricing/summary
+    - GET /control/v1/pricing/services/{service_id}
+    - PUT /control/v1/pricing/services/{service_id}
+    - POST /control/v1/pricing/services/{service_id}/backfill
     - GET /control/v1/health
     - GET /control/v1/version
     - GET /control/v1/capabilities
@@ -62,6 +69,8 @@ x-astrlink-implementation:
     - GET /control/v1/services/{service_id}/usage
     - POST /control/v1/services/{service_id}/usage/reset
     - GET /control/v1/access-tokens
+    - GET /control/v1/access-token-usage
+    - GET /control/v1/usage-summary
     - POST /control/v1/access-tokens
     - GET /control/v1/access-tokens/{token_id}/secret
     - DELETE /control/v1/access-tokens/{token_id}
@@ -116,6 +125,140 @@ tags:
   - name: Requests
     description: Request metadata and explicitly enabled encrypted audit content.
 paths:
+  /control/v1/pricing/status:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getPricingStatus
+      summary: Read official price synchronization status.
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingStatus" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Service not found. }
+        "502": { description: Price synchronization failed; last valid catalog retained. }
+  /control/v1/pricing/catalog:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getPriceCatalog
+      summary: Read canonical first-party API prices.
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceCatalog" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Service not found. }
+        "502": { description: Price synchronization failed; last valid catalog retained. }
+  /control/v1/pricing/sync:
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: syncOfficialPrices
+      summary: Synchronize the official API price catalog.
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingStatus" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Service not found. }
+        "502": { description: Price synchronization failed; last valid catalog retained. }
+  /control/v1/pricing/summary:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getBillingSummary
+      summary: Aggregate retained call amounts in a half-open time range.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BillingSummary" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Service not found. }
+        "502": { description: Price synchronization failed; last valid catalog retained. }
+  /control/v1/pricing/services/{service_id}:
+    get:
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: getServiceBilling
+      summary: Read account-scoped official quota windows and monthly amounts.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 96 }
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceBilling" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Service not found. }
+        "502": { description: Price synchronization failed; last valid catalog retained. }
+    put:
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: configureServicePricing
+      summary: Configure official provider mappings and a monthly reference budget.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 96 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PricingConfig" }
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PricingConfig" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Service not found. }
+        "502": { description: Price synchronization failed; last valid catalog retained. }
+  /control/v1/pricing/services/{service_id}/backfill:
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Services]
+      operationId: backfillServicePricing
+      summary: Value unpriced historical calls using current official prices.
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 96 }
+      responses:
+        "200":
+          description: Local reference pricing result, denominated in USD.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BillingBackfill" }
+        "400": { description: Invalid input. }
+        "401": { description: Local control authentication required. }
+        "404": { description: Service not found. }
+        "502": { description: Price synchronization failed; last valid catalog retained. }
   /control/v1/health:
     get:
       x-astrlink-implementation-status: implemented
@@ -757,6 +900,85 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
+  /control/v1/usage-summary:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Requests]
+      operationId: getUsageSummary
+      summary: Summarize all retained root requests in a calendar window.
+      description: >-
+        Returns successful request counts and tokens, failed request counts,
+        and sparse calendar, service and model buckets in one response.
+        Retry children, pending, blocked and cancelled requests are excluded.
+        Legacy succeeded requests with HTTP errors count as failed. Service and
+        model buckets contain successful requests only. No pagination cap applies.
+        Calendar buckets use the supplied IANA zone, including DST transitions.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Inclusive whole-second RFC3339 timestamp.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          description: Exclusive whole-second RFC3339 timestamp, at most 32 days after from.
+          schema: { type: string, format: date-time }
+        - name: time_zone
+          in: query
+          required: true
+          schema: { type: string, examples: [Asia/Tokyo] }
+        - name: bucket
+          in: query
+          required: true
+          description: Day buckets are always included; hour also includes local-hour buckets.
+          schema: { type: string, enum: [day, hour] }
+      responses:
+        "200":
+          description: Complete statistics for the retained window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+  /control/v1/access-token-usage:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Access Tokens]
+      operationId: listAccessTokenUsage
+      summary: Aggregate today and retained-history token counts for all local tokens.
+      description: >-
+        Counts successful root requests, excluding retry children and HTTP errors.
+        Returns all attributed tokens with successful records, including deleted tokens;
+        missing tokens have zero usage. Purging request history reduces these totals.
+        Results are not paginated and contain no request details or token secrets.
+      parameters:
+        - name: today_from
+          in: query
+          required: true
+          description: The caller's local midnight as an RFC3339 timestamp with whole-second precision; inclusive.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Both totals for each attributed token in one snapshot.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenUsageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /control/v1/access-tokens:
     x-astrlink-implementation-status: implemented
     get:
@@ -1271,7 +1493,7 @@ paths:
       summary: List persistent model-and-variant installations and current progress.
       responses:
         "200":
-          description: Installed, downloading, or failed model variants.
+          description: Installed, downloading, paused, or failed model variants.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -1360,6 +1582,74 @@ paths:
           $ref: "#/components/responses/Conflict"
         "500":
           $ref: "#/components/responses/InternalServerError"
+  /control/v1/privacy-models/{installation_id}/pause:
+    parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/PrivacyModelInstallationId"
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: pausePrivacyModelInstallation
+      summary: Pause a model download and retain its downloaded files.
+      responses:
+        "200":
+          description: Current installation status; a completed download remains ready.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelInstallation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+  /control/v1/privacy-models/{installation_id}/resume:
+    parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/PrivacyModelInstallationId"
+    post:
+      x-astrlink-implementation-status: implemented
+      tags: [Privacy Model]
+      operationId: resumePrivacyModelInstallation
+      summary: Resume a paused or failed model download from retained files.
+      responses:
+        "200":
+          description: Current installation status; a completed download remains ready.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyModelInstallation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "502":
+          $ref: "#/components/responses/BadGateway"
   /control/v1/auto-classifier/local/probe:
     post:
       x-astrlink-implementation-status: implemented
@@ -2186,6 +2476,112 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    PricingStatus:
+      type: object
+      required: [source, version, updated_at, checked_at, error, models, warnings]
+      properties:
+        source: { type: string }
+        version: { type: string }
+        updated_at: { type: [string, "null"], format: date-time }
+        checked_at: { type: [string, "null"], format: date-time }
+        error: { type: string }
+        models: { type: integer, minimum: 0 }
+        warnings: { type: array, items: { type: string } }
+      additionalProperties: false
+    OfficialPrice:
+      type: object
+      required: [provider, model, name, expression]
+      properties:
+        provider: { type: string, description: Canonical first-party supplier ID; plan and regional catalogs are excluded. }
+        model: { type: string }
+        name: { type: string }
+        expression: { type: string, description: Restricted tiered expression with USD per million token coefficients. }
+      additionalProperties: false
+    PriceCatalog:
+      type: object
+      required: [version, generated_at, activated_at, etag, prices, warnings]
+      properties:
+        version: { type: string }
+        generated_at: { type: string, format: date-time }
+        activated_at: { type: string, format: date-time }
+        etag: { type: string }
+        prices: { type: array, items: { $ref: "#/components/schemas/OfficialPrice" } }
+        warnings: { type: array, items: { type: string } }
+      additionalProperties: false
+    PricingConfig:
+      type: object
+      required: [provider, bindings, monthly_budget_usd, billing_day, time_zone]
+      properties:
+        provider: { type: string, description: Canonical first-party supplier ID; plan and regional catalogs are excluded. }
+        bindings:
+          type: object
+          additionalProperties:
+            type: object
+            required: [provider, model]
+            properties:
+              provider: { type: string, description: Canonical first-party supplier ID; plan and regional catalogs are excluded. }
+              model: { type: string, minLength: 1, maxLength: 256 }
+            additionalProperties: false
+        monthly_budget_usd: { type: string, description: Decimal USD reference budget; empty disables the budget. }
+        billing_day: { type: integer, minimum: 1, maximum: 31 }
+        time_zone: { type: string, description: IANA calendar billing time zone. }
+      additionalProperties: false
+    BillingAmounts:
+      type: object
+      required: [amount_usd, priced, unpriced, pending, revalued, requests]
+      properties:
+        amount_usd: { type: string, pattern: '^[0-9]+\.[0-9]{9}$' }
+        priced: { type: integer, minimum: 0 }
+        unpriced: { type: integer, minimum: 0 }
+        pending: { type: integer, minimum: 0 }
+        revalued: { type: integer, minimum: 0 }
+        requests: { type: integer, minimum: 0, description: Distinct logical root requests; attempts are deduplicated separately. }
+    BillingSummary:
+      allOf:
+        - { $ref: "#/components/schemas/BillingAmounts" }
+        - type: object
+          required: [from, to, by_model]
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+            by_model:
+              type: array
+              items:
+                allOf:
+                  - { $ref: "#/components/schemas/BillingAmounts" }
+                  - type: object
+                    required: [model, provider]
+                    properties:
+                      model: { type: string }
+                      provider: { type: string }
+    BillingPeriod:
+      type: object
+      required: [id, kind, start, end, observed_at, used_percent, budget_usd, remaining_usd, coverage, summary]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        observed_at: { type: [string, "null"], format: date-time }
+        used_percent: { type: [number, "null"], minimum: 0 }
+        budget_usd: { type: string }
+        remaining_usd: { type: string, description: May be negative on overrun; provisional while calls are unpriced or pending. }
+        coverage: { type: string, enum: [partial, observed, recorded] }
+        summary: { $ref: "#/components/schemas/BillingSummary" }
+      additionalProperties: false
+    ServiceBilling:
+      type: object
+      required: [config, periods]
+      properties:
+        config: { $ref: "#/components/schemas/PricingConfig" }
+        periods: { type: array, items: { $ref: "#/components/schemas/BillingPeriod" } }
+      additionalProperties: false
+    BillingBackfill:
+      type: object
+      required: [processed]
+      properties:
+        processed: { type: integer, minimum: 0 }
+      additionalProperties: false
     ReadyEvent:
       type: object
       required:
@@ -2224,6 +2620,85 @@ components:
           type: string
           enum: [ok, starting]
       additionalProperties: false
+    UsageTotals:
+      type: object
+      required: [requests, failed_requests, input_tokens, output_tokens, total_tokens, cache_read_tokens, cache_write_tokens]
+      properties:
+        requests: { type: integer, minimum: 0 }
+        failed_requests: { type: integer, minimum: 0 }
+        input_tokens: { type: integer, minimum: 0 }
+        output_tokens: { type: integer, minimum: 0 }
+        total_tokens: { type: integer, minimum: 0 }
+        cache_read_tokens: { type: integer, minimum: 0 }
+        cache_write_tokens: { type: integer, minimum: 0 }
+    UsageDayBucket:
+      allOf:
+        - $ref: "#/components/schemas/UsageTotals"
+        - type: object
+          required: [date]
+          properties:
+            date: { type: string, format: date }
+      unevaluatedProperties: false
+    UsageHourBucket:
+      allOf:
+        - $ref: "#/components/schemas/UsageTotals"
+        - type: object
+          required: [date, hour]
+          properties:
+            date: { type: string, format: date }
+            hour: { type: integer, minimum: 0, maximum: 23 }
+      unevaluatedProperties: false
+    UsageGroup:
+      allOf:
+        - $ref: "#/components/schemas/UsageTotals"
+        - type: object
+          required: [id]
+          properties:
+            id: { type: [string, "null"] }
+      unevaluatedProperties: false
+    UsageSummary:
+      type: object
+      additionalProperties: false
+      required: [totals, by_day, by_hour, by_service, by_model, scanned_records]
+      properties:
+        totals:
+          $ref: "#/components/schemas/UsageTotals"
+          unevaluatedProperties: false
+        by_day:
+          type: array
+          items: { $ref: "#/components/schemas/UsageDayBucket" }
+        by_hour:
+          type: array
+          items: { $ref: "#/components/schemas/UsageHourBucket" }
+        by_service:
+          type: array
+          items: { $ref: "#/components/schemas/UsageGroup" }
+        by_model:
+          type: array
+          items: { $ref: "#/components/schemas/UsageGroup" }
+        scanned_records: { type: integer, minimum: 0 }
+    AccessTokenUsageResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [token_id, today_tokens, total_tokens]
+            properties:
+              token_id:
+                $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+              today_tokens:
+                type: integer
+                format: int64
+                minimum: 0
+              total_tokens:
+                type: integer
+                format: int64
+                minimum: 0
     AccessToken:
       type: object
       required: [id, name, hint, created_at]
@@ -4018,7 +4493,7 @@ components:
           $ref: "#/components/schemas/PrivacyModelAdapter"
         status:
           type: string
-          enum: [downloading, ready, error]
+          enum: [downloading, paused, ready, error]
         bytes_downloaded:
           type: integer
           minimum: 0
@@ -4664,6 +5139,11 @@ components:
         cache_write_tokens:
           type: integer
           minimum: 0
+        cache_write_1h_tokens: { type: integer, minimum: 0 }
+        input_audio_tokens: { type: integer, minimum: 0 }
+        output_audio_tokens: { type: integer, minimum: 0 }
+        thinking_enabled: { type: boolean }
+        billing_incomplete: { type: boolean, description: The upstream stream ended before final usage was observed. }
       additionalProperties: false
     ErrorSummary:
       type: object

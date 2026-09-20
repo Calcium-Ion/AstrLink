@@ -4,6 +4,7 @@ import {
   act,
   cloneElement,
   isValidElement,
+  type ComponentProps,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -29,7 +30,7 @@ vi.mock("recharts", async (importOriginal) => {
 });
 
 import type { AccessTokenCatalog } from "./AccessTokenManager";
-import type { AppSnapshot } from "./core-model";
+import { browserSnapshot, type AppSnapshot } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
 import type { Service } from "./service-model";
 import {
@@ -81,6 +82,7 @@ const readySnapshot: AppSnapshot = {
     },
   },
   last_error: null,
+  inference_port_fallback: null,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
 };
@@ -172,16 +174,14 @@ describe("Overview", () => {
   });
 
   async function renderOverview(
-    overrides: {
-      catalog?: ServiceCatalog;
-      usage?: UsageState;
-      usagePreset?: UsageRangePreset;
-      onOpenService?: (serviceId: string) => void;
-      onUsagePresetChange?: (preset: UsageRangePreset) => void;
-    } = {},
+    overrides: Partial<ComponentProps<typeof Overview>> = {},
   ): Promise<{
     onOpenService: ReturnType<typeof vi.fn>;
     onUsagePresetChange: ReturnType<typeof vi.fn>;
+    onAddService: ReturnType<typeof vi.fn>;
+    onManageServices: ReturnType<typeof vi.fn>;
+    onManageTokens: ReturnType<typeof vi.fn>;
+    onRestart: ReturnType<typeof vi.fn>;
   }> {
     const onOpenService = overrides.onOpenService
       ? vi.fn(overrides.onOpenService)
@@ -189,26 +189,30 @@ describe("Overview", () => {
     const onUsagePresetChange = overrides.onUsagePresetChange
       ? vi.fn(overrides.onUsagePresetChange)
       : vi.fn();
+    const onAddService = vi.fn();
+    const onManageServices = vi.fn();
+    const onManageTokens = vi.fn();
+    const onRestart = vi.fn();
     await act(async () => {
       root.render(
         <Overview
           catalog={overrides.catalog ?? readyCatalog}
           copyError={null}
           copyFeedback={null}
-          isNativeApp
-          isReady
-          isRestarting={false}
-          onAddService={() => undefined}
+          isNativeApp={overrides.isNativeApp ?? true}
+          isReady={overrides.isReady ?? true}
+          isRestarting={overrides.isRestarting ?? false}
+          onAddService={onAddService}
           onCopy={() => undefined}
-          onManageServices={() => undefined}
-          onManageTokens={() => undefined}
+          onManageServices={onManageServices}
+          onManageTokens={onManageTokens}
           onOpenService={onOpenService}
           onRefreshServices={() => undefined}
           onRefreshUsage={() => undefined}
-          onRestart={() => undefined}
+          onRestart={onRestart}
           onUsagePresetChange={onUsagePresetChange}
-          snapshot={readySnapshot}
-          tokenCatalog={readyTokens}
+          snapshot={overrides.snapshot === undefined ? readySnapshot : overrides.snapshot}
+          tokenCatalog={overrides.tokenCatalog ?? readyTokens}
           usage={
             overrides.usage ?? {
               status: "ready",
@@ -220,8 +224,96 @@ describe("Overview", () => {
         />,
       );
     });
-    return { onOpenService, onUsagePresetChange };
+    return { onOpenService, onUsagePresetChange, onAddService, onManageServices, onManageTokens, onRestart };
   }
+
+  const emptyCatalog: ServiceCatalog = { status: "ready", items: [], error: null, stale: false };
+  const emptyTokens: AccessTokenCatalog = { status: "ready", items: [], error: null, stale: false };
+
+  it("offers working setup actions for a confirmed empty workspace", async () => {
+    const { onAddService, onManageTokens } = await renderOverview({ catalog: emptyCatalog, tokenCatalog: emptyTokens });
+    expect(container.querySelector("[data-slot='overview-welcome']")).toBeTruthy();
+    expect(container.querySelector("#usage-heading")).toBeNull();
+    expect(container.textContent).toContain("工作区已就绪");
+    await act(async () => {
+      button("添加服务").click();
+      button("创建访问令牌").click();
+    });
+    expect(onAddService).toHaveBeenCalledOnce();
+    expect(onManageTokens).toHaveBeenCalledOnce();
+  });
+
+  it("keeps browser preview distinct from gateway startup and offers navigation", async () => {
+    const { onManageServices } = await renderOverview({
+      catalog: { ...emptyCatalog, status: "blocked" },
+      tokenCatalog: { ...emptyTokens, status: "blocked" },
+      snapshot: browserSnapshot(),
+      isReady: false,
+      isNativeApp: false,
+      usage: { status: "blocked", summary: null, error: null },
+    });
+    expect(container.textContent).toContain("当前为浏览器预览");
+    expect(container.textContent).not.toContain("尚未配置");
+    expect(container.textContent).not.toContain("创建访问令牌");
+    expect(container.textContent).not.toContain("重启网关");
+    await act(async () => button("查看 API 服务").click());
+    expect(onManageServices).toHaveBeenCalledOnce();
+  });
+
+  it("waits for catalogs before claiming a workspace is empty", async () => {
+    await renderOverview({
+      catalog: { ...emptyCatalog, status: "loading" },
+      tokenCatalog: { ...emptyTokens, status: "loading" },
+    });
+    expect(container.textContent).toContain("正在读取工作区");
+    expect(container.textContent).not.toContain("工作区已就绪");
+    expect(container.textContent).not.toContain("添加服务");
+    expect(container.querySelector("[data-slot='loading-state']")).toBeTruthy();
+  });
+
+  it("shows gateway failure and preserves the restart action", async () => {
+    const { onRestart } = await renderOverview({
+      catalog: { ...emptyCatalog, status: "blocked" },
+      tokenCatalog: { ...emptyTokens, status: "blocked" },
+      snapshot: { ...readySnapshot, phase: "error", ready: null, last_error: "连接失败" },
+      isReady: false,
+    });
+    expect(container.querySelector("[role='alert']")?.textContent).toBe("连接失败");
+    expect(container.textContent).not.toContain("创建访问令牌");
+    await act(async () => button("重启网关").click());
+    expect(onRestart).toHaveBeenCalledOnce();
+    await renderOverview({
+      catalog: { ...emptyCatalog, status: "blocked" },
+      tokenCatalog: { ...emptyTokens, status: "blocked" },
+      snapshot: { ...readySnapshot, phase: "stopping", ready: null },
+      isReady: false,
+      isRestarting: true,
+    });
+    expect(button("重启中…").disabled).toBe(true);
+  });
+
+  it("keeps historical usage visible after services and tokens are removed", async () => {
+    await renderOverview({
+      catalog: emptyCatalog,
+      tokenCatalog: emptyTokens,
+      usage: { status: "ready", summary: readySummary({ totals: { ...emptyUsageTotals(), requests: 12 } }), error: null },
+    });
+    expect(container.querySelector("[data-slot='overview-welcome']")).toBeNull();
+    expect(container.querySelector("#usage-heading")).toBeTruthy();
+    expect(container.querySelector("[data-slot='metric-group']")?.textContent).toContain("12");
+  });
+
+  it("keeps catalog and usage errors out of the welcome state", async () => {
+    await renderOverview({
+      catalog: { ...emptyCatalog, status: "error", error: "目录读取失败" },
+      tokenCatalog: emptyTokens,
+      usage: { status: "error", summary: null, error: "用量读取失败" },
+    });
+    expect(container.querySelector("[data-slot='overview-welcome']")).toBeNull();
+    expect(container.textContent).toContain("目录读取失败");
+    expect(container.textContent).toContain("用量读取失败");
+    expect(button("重试").disabled).toBe(false);
+  });
 
   it("shows range usage and keeps cost in the statistics disclosure", async () => {
     await renderOverview({

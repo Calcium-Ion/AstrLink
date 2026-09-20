@@ -89,6 +89,7 @@ describe("core status presentation", () => {
         },
       },
       last_error: null,
+      inference_port_fallback: null,
       recovery_attempt: 0,
       recovery_scheduled_in_ms: null,
     } as AppSnapshot;
@@ -102,6 +103,7 @@ describe("core status presentation", () => {
       version: null,
       capabilities: null,
       last_error: "bridge failed",
+      inference_port_fallback: null,
       recovery_attempt: 0,
       recovery_scheduled_in_ms: null,
     });

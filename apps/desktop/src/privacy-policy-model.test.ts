@@ -482,6 +482,10 @@ describe("privacy-policy IPC contract", () => {
       bytes_downloaded: 0,
       bytes_total: 0,
     } as const;
+    const paused = { ...downloading, status: "paused" };
+    expect(parsePrivacyModelInstallation(paused)).toEqual(paused);
+    expect(() => parsePrivacyModelInstallation({ ...paused, error: "download_failed" })).toThrow();
+    expect(() => parsePrivacyModelInstallation({ ...paused, installed_at: "2026-09-19T00:00:00Z" })).toThrow();
     expect(parsePrivacyModelInstallation(preparing)).toEqual(preparing);
     expect(() =>
       parsePrivacyModelInstallation({

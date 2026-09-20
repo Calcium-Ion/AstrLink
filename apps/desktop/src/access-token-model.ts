@@ -10,6 +10,16 @@ export interface AccessTokenPage {
   next_cursor: null;
 }
 
+export interface AccessTokenUsage {
+  token_id: string;
+  today_tokens: number;
+  total_tokens: number;
+}
+
+export interface AccessTokenUsageResponse {
+  items: AccessTokenUsage[];
+}
+
 export interface AccessTokenCreateResult {
   token: AccessTokenSummary;
   access_token: string;
@@ -111,6 +121,34 @@ export function parseAccessTokenPage(value: unknown): AccessTokenPage {
       parseAccessToken(token, `$.items[${index}]`),
     ),
     next_cursor: null,
+  };
+}
+
+export function parseAccessTokenUsageResponse(value: unknown): AccessTokenUsageResponse {
+  const result = objectAt(value, "$");
+  exactKeys(result, ["items"], "$");
+  if (!Array.isArray(result.items)) invalid("$.items", "expected an array");
+  const seen = new Set<string>();
+  return {
+    items: result.items.map((value, index) => {
+      const path = `$.items[${index}]`;
+      const item = objectAt(value, path);
+      exactKeys(item, ["token_id", "today_tokens", "total_tokens"], path);
+      const tokenID = stringAt(item.token_id, `${path}.token_id`, 3, 96);
+      if (!resourceIDPattern.test(tokenID) || seen.has(tokenID)) {
+        invalid(`${path}.token_id`, "invalid or duplicate token ID");
+      }
+      seen.add(tokenID);
+      for (const key of ["today_tokens", "total_tokens"] as const) {
+        if (!Number.isSafeInteger(item[key]) || (item[key] as number) < 0) {
+          invalid(`${path}.${key}`, "expected a non-negative safe integer");
+        }
+      }
+      const today = item.today_tokens as number;
+      const total = item.total_tokens as number;
+      if (today > total) invalid(path, "today tokens exceed total tokens");
+      return { token_id: tokenID, today_tokens: today, total_tokens: total };
+    }),
   };
 }
 
