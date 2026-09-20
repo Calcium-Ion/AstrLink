@@ -168,14 +168,17 @@ function dryRunSampleDescription(id: string): string {
   return i18n.t(`safety.sample.${id}.description`);
 }
 
+// Contact examples must use reserved fictional phone ranges and example.com.
+// NANP 555-0100–0199 and UK 07700 900000–900999 are reserved for fictional use;
+// never substitute random plausible mobile numbers or public mailbox domains.
 const dryRunSamplePresets: ReadonlyArray<DryRunSamplePreset> = [
   {
     id: "mixed-contact",
     text: `请帮我整理这条售后工单，并拟一封回复邮件。
 
 客户：陈宇
-联系邮箱：chen.yu@outlook.com
-联系电话：+86 138 7426 5903
+联系邮箱：chen.yu@example.com
+联系电话：+1 202 555 0101
 订单号：SO-20260918-0472
 客户反馈：上周收到的显示器右下角有亮点，重启和更换线缆后仍然存在。请先通过邮件确认换货流程，工作日 18 点后可以电话联系。`,
   },
@@ -190,7 +193,7 @@ Bank: NatWest
 Account number: 31926819
 IBAN: GB29NWBK60161331926819
 Card used for the booking: 5200 8282 8282 8210
-Please email the remittance advice to olivia.bennett@outlook.com once the transfer is complete.
+Please email the remittance advice to olivia.bennett@example.com once the transfer is complete.
 Thanks,
 Olivia`,
   },
@@ -228,12 +231,12 @@ webhook:
 
 姓名：周雨桐
 出生日期：1993 年 7 月 16 日
-手机：+86 136 8247 5902
-邮箱：yutong.zhou@outlook.com
+手机：+1 202 555 0102
+邮箱：yutong.zhou@example.com
 现住址：杭州市西湖区文三路 268 号 3 幢 602 室
 入职日期：2026 年 10 月 12 日
 紧急联系人：周建国（父亲）
-紧急联系电话：+86 139 2764 8305
+紧急联系电话：+1 202 555 0103
 岗位：产品设计师，入职当天需要领取电脑和门禁卡。`,
   },
   {
@@ -243,7 +246,7 @@ webhook:
 Guest: Emily Carter
 Date of birth: 12 March 1988
 Home address: 27 Willow Lane, Bristol BS8 2JQ, United Kingdom
-Email: emily.carter@outlook.com
+Email: emily.carter@example.com
 Mobile: +44 7700 900742
 Booking reference: HTL-928471
 Arrival: 18 October 2026, around 10:30 a.m.
@@ -255,8 +258,8 @@ The guest would prefer a quiet room away from the lift.`,
     text: `把下面的客户会议记录整理成一封英文跟进邮件，保留报价和交付时间的要求。
 
 9 月 19 日，陈宇与 Sophie Martin 讨论了下一批设备的采购安排。
-Sophie: Please send the revised quote to sophie.martin@outlook.com and cc daniel.ross@gmail.com. We need delivery before October 15.
-陈宇：先按 120 台出报价，运费单独列出来。交付时间如果有变化，直接打我手机 +86 138 7426 5903。
+Sophie: Please send the revised quote to sophie.martin@example.com and cc daniel.ross@example.com. We need delivery before October 15.
+陈宇：先按 120 台出报价，运费单独列出来。交付时间如果有变化，直接打我手机 +1 202 555 0101。
 跟进链接：https://crm.example.com/deals/D-928471
 待办：周三前确认库存，再由 Sophie 审核采购单。`,
   },

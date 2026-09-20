@@ -1347,7 +1347,7 @@ describe("SafetyPolicy", () => {
 
     expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenCalledWith({
       protocol: "openai.chat",
-      sample_text: expect.stringContaining("chen.yu@outlook.com"),
+      sample_text: expect.stringContaining("chen.yu@example.com"),
       policy: {
         enabled: true,
         detector: "local_model",
@@ -1415,11 +1415,11 @@ describe("SafetyPolicy", () => {
     expect(actionButton("开始检测").disabled).toBe(true);
     expect(container.querySelector('[data-testid="safety-dry-run-result"]')).toBeNull();
     await chooseOption('[aria-label="选择示例"]', "售后工单");
-    expect(input.value).toContain("chen.yu@outlook.com");
+    expect(input.value).toContain("chen.yu@example.com");
     await chooseOption('[aria-label="选择示例"]', "报销付款邮件");
     expect(input.value).toContain("IBAN");
     await chooseOption('[aria-label="选择示例"]', "售后工单");
-    expect(input.value).toContain("chen.yu@outlook.com");
+    expect(input.value).toContain("chen.yu@example.com");
   });
 
   it("offers diverse dry-run presets and clears stale results when switching", async () => {
@@ -1491,7 +1491,7 @@ describe("SafetyPolicy", () => {
     await flush();
     expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenLastCalledWith(expect.objectContaining({
       protocol: "anthropic.messages",
-      sample_text: expect.stringContaining("chen.yu@outlook.com"),
+      sample_text: expect.stringContaining("chen.yu@example.com"),
     }));
     expect(container.querySelector('[data-testid="safety-dry-run-result"]')).not.toBeNull();
   });
