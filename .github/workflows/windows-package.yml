@@ -1,0 +1,193 @@
+name: Windows package
+
+on:
+  push:
+    branches: [main, 'codex/windows-build-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ASTRLINK_CI_NO_REMOTE_MODELS: "1"
+  ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
+
+jobs:
+  # Checks run alongside compilation. Only publish exposes a checked installer.
+  checks:
+    name: Windows frontend and Core checks
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.BUN_INSTALL_CACHE_DIR }}
+          key: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/bun.lock') }}
+          restore-keys: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.mod
+            core/go.sum
+            convo/go.mod
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Check frontend types and tests
+        run: |
+          bun run branding:sync
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check model artifact policy
+        run: bun ../../scripts/check-no-production-models.mjs
+      - name: Test Core startup and providers
+        working-directory: core
+        run: go test ./cmd/astrlink-core ./internal/coreapp ./internal/parentwatch ./internal/ingress ./internal/servicemodel ./internal/pricing ./internal/controlapi
+
+  package:
+    name: Build and verify Windows x64 installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.mod
+            core/go.sum
+            convo/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.BUN_INSTALL_CACHE_DIR }}
+          key: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/bun.lock') }}
+          restore-keys: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compute native cache keys
+        id: keys
+        shell: pwsh
+        env:
+          DEPENDENCY_HASH: ${{ hashFiles('apps/desktop/src-tauri/Cargo.*', 'apps/privacy-worker/Cargo.*', 'apps/classifier-worker/Cargo.*', '.cargo/**', 'apps/**/.cargo/**') }}
+          SOURCE_HASH: ${{ hashFiles('apps/desktop/src-tauri/**/*.rs', 'apps/desktop/src-tauri/Cargo.*', 'apps/privacy-worker/**/*.rs', 'apps/privacy-worker/Cargo.*', 'apps/classifier-worker/**/*.rs', 'apps/classifier-worker/Cargo.*', '.cargo/**', 'apps/**/.cargo/**') }}
+          WORKER_HASH: ${{ hashFiles('apps/privacy-worker/**/*.rs', 'apps/privacy-worker/Cargo.*', 'apps/classifier-worker/**/*.rs', 'apps/classifier-worker/Cargo.*', 'apps/desktop/scripts/build-sidecar.mjs', '.cargo/**') }}
+        run: |
+          $rust = rustc -vV
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $identity = ($rust -join "`n") + "`n$env:ImageOS`n$env:ImageVersion"
+          $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity))).ToLowerInvariant()
+          "rust-prefix=windows-rust-v3-$hash-$env:DEPENDENCY_HASH-" >> $env:GITHUB_OUTPUT
+          "rust-key=windows-rust-v3-$hash-$env:DEPENDENCY_HASH-$env:SOURCE_HASH" >> $env:GITHUB_OUTPUT
+          "workers=windows-workers-v2-$hash-$env:WORKER_HASH" >> $env:GITHUB_OUTPUT
+      - name: Restore successful Rust build cache
+        id: rust-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+            apps/privacy-worker/target
+            apps/classifier-worker/target
+          # Each successful run may refresh the immutable cache. Failed runs never save.
+          key: ${{ steps.keys.outputs.rust-key }}
+          restore-keys: ${{ steps.keys.outputs.rust-prefix }}
+      - name: Restore unchanged worker executables
+        id: workers
+        uses: actions/cache/restore@v4
+        with:
+          # No prefix fallback: skipping compilation requires identical sources and tools.
+          key: ${{ steps.keys.outputs.workers }}
+          path: |
+            apps/privacy-worker/target/release/astrlink-privacy-worker.exe
+            apps/privacy-worker/target/release/DirectML.dll
+            apps/classifier-worker/target/release/astrlink-classifier-worker.exe
+            apps/classifier-worker/target/release/DirectML.dll
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Stage Core and worker sidecars
+        # Match the nested Windows PowerShell Authenticode check's module environment.
+        shell: powershell
+        env:
+          ASTRLINK_REUSE_WINDOWS_WORKERS: ${{ steps.workers.outputs.cache-hit == 'true' && '1' || '0' }}
+        run: bun run sidecar:build
+      - name: Build x64 NSIS installer
+        run: bun run tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Inspect, install and smoke test installer
+        env:
+          ASTRLINK_CI_NO_REMOTE_MODELS: "0"
+        run: ./scripts/verify-windows-package.ps1
+      - name: Save verified worker executables
+        if: steps.workers.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.keys.outputs.workers }}
+          path: |
+            apps/privacy-worker/target/release/astrlink-privacy-worker.exe
+            apps/privacy-worker/target/release/DirectML.dll
+            apps/classifier-worker/target/release/astrlink-classifier-worker.exe
+            apps/classifier-worker/target/release/DirectML.dll
+      - name: Save successful Rust build cache
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.keys.outputs.rust-key }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target
+            apps/privacy-worker/target
+            apps/classifier-worker/target
+      - name: Upload candidate installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-candidate-${{ github.sha }}
+          path: apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*
+          if-no-files-found: error
+          retention-days: 3
+      - name: Upload startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Windows-smoke-diagnostics
+          path: ${{ runner.temp }}/astrlink-smoke/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    name: Publish checked installer
+    needs: [checks, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-candidate-${{ github.sha }}
+          path: installer
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AstrLink-Windows-x86_64
+          path: installer/*
+          if-no-files-found: error
+          retention-days: 14

@@ -74,6 +74,24 @@ if (!target) {
 }
 
 const executableSuffix = target.includes("windows") ? ".exe" : "";
+const reuseWindowsWorkers = process.env.ASTRLINK_REUSE_WINDOWS_WORKERS === "1";
+if (reuseWindowsWorkers && target !== "x86_64-pc-windows-msvc") {
+  throw new Error("Prebuilt worker reuse is only supported for Windows x64.");
+}
+if (reuseWindowsWorkers) {
+  // CI enables this only after an exact source/toolchain cache hit.
+  for (const [directory, executable] of [
+    [workerDirectory, "astrlink-privacy-worker.exe"],
+    [classifierWorkerDirectory, "astrlink-classifier-worker.exe"],
+  ]) {
+    for (const name of [executable, "DirectML.dll"]) {
+      const cached = path.join(directory, "target", "release", name);
+      if (!existsSync(cached) || !statSync(cached).isFile() || statSync(cached).size === 0) {
+        throw new Error(`Incomplete Windows worker cache: ${cached}`);
+      }
+    }
+  }
+}
 const binariesDirectory = path.join(desktopDirectory, "src-tauri", "binaries");
 const output = path.join(
   binariesDirectory,
@@ -361,7 +379,7 @@ console.log(`Staged astrlink-mcp for Tauri: ${mcpOutput}`);
 const macOSRuntime = await stageMacOSRuntime();
 const linuxRuntime = await stageLinuxRuntime();
 
-execFileSync(
+if (!reuseWindowsWorkers) execFileSync(
   "cargo",
   [
     "build",
@@ -409,7 +427,7 @@ if (!target.includes("windows")) {
 
 console.log(`Staged astrlink-privacy-worker for Tauri: ${workerOutput}`);
 
-execFileSync(
+if (!reuseWindowsWorkers) execFileSync(
   "cargo",
   [
     "build",
