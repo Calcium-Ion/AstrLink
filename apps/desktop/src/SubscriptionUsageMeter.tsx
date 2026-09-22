@@ -1,19 +1,11 @@
-import { useId, useState, type ReactNode } from "react";
-import { ChevronDown, RotateCcw } from "@/components/icons";
+import { RotateCcw } from "@/components/icons";
 import { useT } from "./i18n";
 
 import { Button } from "@/components/ui/button";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { UsageMeter } from "@/components/UsageMeter";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
 
 import {
-  extraLimitsSummary,
   formatResetCountdown,
   usageWindowTone,
   usageBarPercent,
@@ -41,8 +33,6 @@ export function SubscriptionUsageMeter({
   usage?: SubscriptionUsage;
 }) {
   const t = useT();
-  const [extrasOpen, setExtrasOpen] = useState(false);
-  const extrasHeadingID = useId();
   if (status === "loading" && !usage) {
     return (
       <div
@@ -82,71 +72,38 @@ export function SubscriptionUsageMeter({
 
   const extras = usage.additional_rate_limits ?? [];
   const resetCount = usage.rate_limit_reset_credits?.available_count ?? 0;
-  const extrasAction =
-    extras.length > 0 ? (
-      <Popover open={extrasOpen} onOpenChange={setExtrasOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            className="-mr-1 h-5 gap-0.5 px-1 py-0 text-micro font-normal text-muted-foreground"
-            data-testid="subscription-usage-extras"
-            type="button"
-            variant="ghost"
-          >
-            {extraLimitsSummary(extras)}
-            <ChevronDown
-              aria-hidden="true"
-              className={cn(
-                "size-3 transition-transform",
-                extrasOpen && "rotate-180",
-              )}
-            />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent aria-labelledby={extrasHeadingID}>
-          <h3 className="mb-3 text-xs font-semibold" id={extrasHeadingID}>
-            {extraLimitsSummary(extras)}
-          </h3>
-          <div className="grid gap-4">
-            {extras.map((extra) => (
-              <div
-                className="grid min-w-0 gap-2 border-t pt-3 first:border-0 first:pt-0"
-                key={extra.limit_name}
-              >
-                <AdditionalLimitRows extra={extra} now={now} />
-              </div>
-            ))}
-          </div>
-        </PopoverContent>
-      </Popover>
-    ) : null;
   return (
     <div className="grid min-w-0 gap-2" data-testid="subscription-usage">
       {usage.primary || usage.secondary ? (
         <div className="grid gap-2.5">
           <UsageWindowRow
-            action={!usage.secondary ? extrasAction : undefined}
             limitReached={usage.limit_reached}
             now={now}
             window={usage.primary}
             isSecondary={false}
           />
           <UsageWindowRow
-            action={extrasAction}
             limitReached={usage.limit_reached}
             now={now}
             window={usage.secondary}
             isSecondary
           />
         </div>
+      ) : usage.limit_reached ? (
+        <p className="text-micro text-destructive">
+          {t("usage.limitReached")}
+        </p>
       ) : null}
-      {!usage.primary && !usage.secondary ? (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {usage.limit_reached ? (
-            <p className="text-micro text-destructive">
-              {t("usage.limitReached")}
-            </p>
-          ) : null}
-          {extrasAction}
+      {extras.length > 0 ? (
+        <div className="grid gap-2.5" data-testid="subscription-usage-extras">
+          {extras.map((extra) => (
+            <div
+              className="grid min-w-0 gap-2 border-t pt-2"
+              key={extra.limit_name}
+            >
+              <AdditionalLimitRows extra={extra} now={now} />
+            </div>
+          ))}
         </div>
       ) : null}
       {resetCount > 0 && onReset ? (
@@ -183,7 +140,7 @@ function AdditionalLimitRows({
 }) {
   return (
     <>
-      <p className="text-xs font-medium break-words [overflow-wrap:anywhere]">
+      <p className="text-micro font-medium text-muted-foreground break-words [overflow-wrap:anywhere]">
         {extra.limit_name}
       </p>
       <UsageWindowRow now={now} window={extra.primary} isSecondary={false} />
@@ -193,13 +150,11 @@ function AdditionalLimitRows({
 }
 
 function UsageWindowRow({
-  action,
   isSecondary,
   limitReached,
   now,
   window,
 }: {
-  action?: ReactNode;
   isSecondary: boolean;
   limitReached?: boolean;
   now: Date;
@@ -214,7 +169,6 @@ function UsageWindowRow({
   return (
     <div data-tone={tone}>
       <UsageMeter
-        action={action}
         caption={reset}
         label={label}
         valueLabel={t("usage.remainingPercent", {

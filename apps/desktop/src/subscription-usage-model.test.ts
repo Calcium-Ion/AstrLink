@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  extraLimitsSummary,
   formatResetCountdown,
   formatSubscriptionUsageError,
   parseSubscriptionUsage,
@@ -111,11 +110,6 @@ describe("subscription usage contract", () => {
     ).toBe("subscription_usage_failed: codex usage unavailable: status 403");
     expect(formatSubscriptionUsageError("网关尚未就绪。")).toBe("网关尚未就绪。");
     expect(formatSubscriptionUsageError({})).toBe("无法读取额度");
-  });
-
-  it("collapses extra limits to a label without a window duration", () => {
-    expect(extraLimitsSummary(snapshot.additional_rate_limits)).toBe("附加额度");
-    expect(extraLimitsSummary([])).toBe("");
   });
 
   it("parses an official consume outcome", () => {

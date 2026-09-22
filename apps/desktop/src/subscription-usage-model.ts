@@ -418,10 +418,6 @@ function rawErrorText(error: unknown): string {
   return "";
 }
 
-export function extraLimitsSummary(extras: AdditionalRateLimit[]): string {
-  return extras.length > 0 ? i18n.t("usage.extra") : "";
-}
-
 export function resetOutcomeMessage(outcome: UsageResetOutcome): string {
   switch (outcome) {
     case "reset":
