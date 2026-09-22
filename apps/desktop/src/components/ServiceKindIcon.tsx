@@ -23,6 +23,8 @@ function kindMark(kind: ServiceKind, size: number): ReactNode {
       return <Codex.Color size={size} />;
     case "claude_subscription":
       return <Claude.Color size={size} />;
+    case "grok_subscription":
+      return <Grok size={size} />;
     case "opencode_go":
     case "opencode_zen":
       return <OpenCode size={size} />;

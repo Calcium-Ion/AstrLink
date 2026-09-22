@@ -47,11 +47,25 @@ export interface ServiceCapability {
 
 export type ModelDiscoveryProtocol = "openai.models" | "google.models";
 
-export type SubscriptionServiceKind = "codex_subscription" | "claude_subscription";
+export type SubscriptionServiceKind =
+  | "codex_subscription"
+  | "claude_subscription"
+  | "grok_subscription";
 export type ServiceKind = SubscriptionServiceKind | HTTPServiceKind;
 
+/** Provider owning each subscription kind; mirrors contract.ServiceKind.SubscriptionProvider. */
+export const subscriptionKindProviders: Record<SubscriptionServiceKind, SubscriptionProvider> = {
+  codex_subscription: "openai_codex",
+  claude_subscription: "claude_code",
+  grok_subscription: "xai_grok",
+};
+
+export const subscriptionKinds = Object.keys(
+  subscriptionKindProviders,
+) as readonly SubscriptionServiceKind[];
+
 export function isSubscriptionKind(kind: unknown): kind is SubscriptionServiceKind {
-  return kind === "codex_subscription" || kind === "claude_subscription";
+  return typeof kind === "string" && Object.hasOwn(subscriptionKindProviders, kind);
 }
 
 export interface HTTPServiceConnection {
@@ -372,7 +386,11 @@ function parseSubscriptionConnection(
     ],
     path,
   );
-  if (subscription.provider !== "openai_codex" && subscription.provider !== "claude_code") {
+  if (
+    subscription.provider !== "openai_codex" &&
+    subscription.provider !== "claude_code" &&
+    subscription.provider !== "xai_grok"
+  ) {
     invalid(`${path}.provider`, "unknown subscription provider");
   }
   if (
@@ -468,7 +486,7 @@ export function parseService(value: unknown, path = "$"): Service {
       invalid(path, "subscription service requires only subscription");
     }
     const subscription = parseSubscriptionConnection(service.subscription, `${path}.subscription`);
-    if (subscription.provider !== (service.kind === "claude_subscription" ? "claude_code" : "openai_codex")) {
+    if (subscription.provider !== subscriptionKindProviders[service.kind]) {
       invalid(`${path}.subscription.provider`, "provider does not match service kind");
     }
     return {

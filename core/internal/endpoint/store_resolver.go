@@ -462,6 +462,9 @@ func baseURLForService(service contract.Service, subscriptionBaseURL string) str
 	if service.Kind == contract.ServiceKindClaudeSubscription {
 		return accountauth.DefaultClaudeAPIBaseURL
 	}
+	if service.Kind == contract.ServiceKindGrokSubscription {
+		return accountauth.DefaultGrokAPIBaseURL
+	}
 	if service.Kind.IsSubscription() {
 		return subscriptionBaseURL
 	}

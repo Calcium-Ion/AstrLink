@@ -150,6 +150,11 @@ func (prober *Prober) probeSubscription(
 		accountauth.ApplyClaudeAPIHeaders(headers, tokens)
 		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, true)
 	}
+	if account.Provider == contract.SubscriptionProviderXAIGrok {
+		headers := make(http.Header)
+		accountauth.ApplyGrokAPIHeaders(headers, tokens, prober.subscriptions.GrokClientVersion())
+		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, false)
+	}
 	models, err := prober.subscriptions.Provider().ListModels(probeContext, tokens)
 	if err != nil {
 		if errors.Is(probeContext.Err(), context.DeadlineExceeded) {

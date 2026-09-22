@@ -71,6 +71,44 @@ describe("service model", () => {
     );
   });
 
+  it("parses Grok subscription services and binds them to the xai_grok provider", () => {
+    const grok = parseService({
+      id: "service_grok_personal",
+      name: "Grok",
+      kind: "grok_subscription",
+      enabled: true,
+      models: ["grok-4.5"],
+      capabilities: [
+        { protocol: "openai.responses", mode: "native", streaming: true },
+        { protocol: "openai.chat", mode: "native", streaming: true },
+        { protocol: "openai.models", mode: "native", streaming: false },
+      ],
+      subscription: {
+        provider: "xai_grok",
+        status: "connected",
+        account_hint: "user***42",
+        credential_ref: "keyring://astrlink/subscription/service_grok_personal",
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    expect(grok.kind).toBe("grok_subscription");
+    expect(grok.subscription?.provider).toBe("xai_grok");
+    expect(() =>
+      parseService({
+        id: "service_grok_personal",
+        name: "Grok",
+        kind: "grok_subscription",
+        enabled: true,
+        models: [],
+        capabilities: [],
+        subscription: { provider: "openai_codex", status: "disconnected" },
+        created_at: createdAt,
+        updated_at: createdAt,
+      }),
+    ).toThrow(/provider does not match service kind/);
+  });
+
   it("rejects a leftover disabled_models field", () => {
     expect(() =>
       parseService({

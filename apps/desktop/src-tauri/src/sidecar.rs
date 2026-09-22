@@ -4102,7 +4102,7 @@ fn validate_resource_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-const SUBSCRIPTION_PROVIDERS: &[&str] = &["openai_codex", "claude_code"];
+const SUBSCRIPTION_PROVIDERS: &[&str] = &["openai_codex", "claude_code", "xai_grok"];
 const AUTHORIZATION_SESSION_STATUSES: &[&str] =
     &["pending", "completed", "cancelled", "expired", "failed"];
 const AUTHORIZATION_FLOWS: &[&str] = &["browser", "device_code", "authorization_code"];
@@ -4294,6 +4294,9 @@ fn parse_authorization_session_value(
     validate_authorization_flow(flow)?;
 
     if (provider == "claude_code") != (flow == "authorization_code") {
+        return Err("authorization flow is unsupported by provider".to_string());
+    }
+    if provider == "xai_grok" && flow != "device_code" {
         return Err("authorization flow is unsupported by provider".to_string());
     }
     let service_id = object
@@ -5111,6 +5114,15 @@ mod tests {
         });
         let parsed = parse_authorization_session_value(&device).expect("device session");
         assert_eq!(parsed["device_code"]["user_code"], "ABCD-EFGH");
+
+        let mut grok = device.clone();
+        grok["provider"] = serde_json::json!("xai_grok");
+        grok["device_code"]["verification_url"] =
+            serde_json::json!("https://accounts.x.ai/oauth2/device?user_code=ABCD-EFGH");
+        assert!(parse_authorization_session_value(&grok).is_ok());
+        let mut grok_browser = browser.clone();
+        grok_browser["provider"] = serde_json::json!("xai_grok");
+        assert!(parse_authorization_session_value(&grok_browser).is_err());
 
         device["authorization_url"] = serde_json::json!("https://auth.openai.com/oauth/authorize");
         assert!(parse_authorization_session_value(&device).is_err());

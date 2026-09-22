@@ -63,7 +63,7 @@ type Config struct {
 
 func DefaultConfig(kind contract.ServiceKind) Config {
 	provider := map[contract.ServiceKind]string{"openai": "openai", "anthropic": "anthropic", "gemini": "google",
-		"codex_subscription": "openai", "claude_subscription": "anthropic", "kimi_coding": "moonshotai", "glm_coding": "zai", "minimax_coding": "minimax",
+		"codex_subscription": "openai", "claude_subscription": "anthropic", "grok_subscription": "xai", "kimi_coding": "moonshotai", "glm_coding": "zai", "minimax_coding": "minimax",
 		"deepseek": "deepseek", "qwen": "alibaba", "moonshot": "moonshotai", "glm": "zai", "minimax": "minimax", "xai": "xai"}[kind]
 	return Config{Provider: provider, Bindings: map[string]Binding{}, BillingDay: 1, TimeZone: "UTC"}
 }

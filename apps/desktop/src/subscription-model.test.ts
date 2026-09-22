@@ -62,6 +62,35 @@ describe("subscription IPC contract", () => {
     expect(session.session.id).toBe("authorization_01");
   });
 
+  it("accepts Grok Device Code sessions and rejects other Grok flows", () => {
+    const grok = {
+      id: "authorization_grok",
+      provider: "xai_grok",
+      status: "pending",
+      flow: "device_code",
+      service_id: "service_grok_01",
+      device_code: {
+        verification_url: "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE",
+        user_code: "GROK-CODE",
+      },
+      expires_at: "2026-07-28T08:15:00Z",
+      created_at: timestamps.created_at,
+      updated_at: timestamps.updated_at,
+    };
+    expect(parseAuthorizationSession(grok).provider).toBe("xai_grok");
+    expect(() =>
+      parseAuthorizationSession({
+        ...grok,
+        flow: "browser",
+        device_code: undefined,
+        authorization_url: "https://auth.x.ai/oauth2/authorize",
+      }),
+    ).toThrow(/unsupported by provider/);
+    expect(() =>
+      parseAuthorizationSession({ ...grok, flow: "authorization_code" }),
+    ).toThrow(/unsupported by provider/);
+  });
+
   it("parses Device Code sessions and rejects mixed or terminal instructions", () => {
     const pending = {
       id: "authorization_02",

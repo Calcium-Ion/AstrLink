@@ -1,4 +1,4 @@
-export type SubscriptionProvider = "openai_codex" | "claude_code";
+export type SubscriptionProvider = "openai_codex" | "claude_code" | "xai_grok";
 
 export type SubscriptionStatus =
   | "disconnected"
@@ -54,7 +54,21 @@ const rfc3339Pattern =
 const credentialLeakPattern =
   /(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:access_token|refresh_token|id_token|device_auth_id|code_verifier|authorization_code)["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i;
 
-const providers = new Set<SubscriptionProvider>(["openai_codex", "claude_code"]);
+const providers = new Set<SubscriptionProvider>(["openai_codex", "claude_code", "xai_grok"]);
+
+/** Login transports each provider accepts; mirrors contract.AuthorizationFlow.SupportedBy. */
+export const providerAuthorizationFlows: Record<SubscriptionProvider, readonly AuthorizationFlow[]> = {
+  openai_codex: ["browser", "device_code"],
+  claude_code: ["authorization_code"],
+  xai_grok: ["device_code"],
+};
+
+export function flowSupportedByProvider(
+  provider: SubscriptionProvider,
+  flow: AuthorizationFlow,
+): boolean {
+  return providerAuthorizationFlows[provider].includes(flow);
+}
 const authorizationSessionStatuses = new Set<AuthorizationSessionStatus>([
   "pending",
   "completed",
@@ -220,7 +234,7 @@ export function parseAuthorizationSession(value: unknown): AuthorizationSession 
     invalid("$.flow", "unknown authorization flow");
   }
   const flow = session.flow as AuthorizationFlow;
-  if ((session.provider === "claude_code") !== (flow === "authorization_code")) {
+  if (!flowSupportedByProvider(session.provider as SubscriptionProvider, flow)) {
     invalid("$.flow", "authorization flow is unsupported by provider");
   }
 

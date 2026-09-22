@@ -12,7 +12,7 @@ AstrLink 是一款开源桌面应用。在界面中添加服务、选择模型�
 
 ## 可以用它做什么
 
-- **集中管理服务**：连接 Codex、Claude 订阅、New API 网关、主流厂商 API 和 Coding Plan，管理多个账号与密钥。
+- **集中管理服务**：连接 Codex、Claude、Grok 订阅、New API 网关、主流厂商 API 和 Coding Plan，管理多个账号与密钥。
 - **统一客户端入口**：提供 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 接口；根据服务能力配置协议转换。
 - **选择模型与路由**：使用模型别名、服务优先级和失败重试；也可以安装本地分类模型，为自动路由选择目标模型。
 - **保护请求中的敏感信息**：通过本地规则或本地隐私模型识别敏感内容，选择提醒、拦截或脱敏，并配置响应中的占位符还原。
@@ -43,7 +43,7 @@ AstrLink 是一款开源桌面应用。在界面中添加服务、选择模型�
 
 | 你已有的服务 | 接入方式 |
 | --- | --- |
-| Codex、Claude 订阅 | 选择对应订阅类型，按界面提示完成账号授权 |
+| Codex、Claude、Grok 订阅 | 选择对应订阅类型，按界面提示完成账号授权；Grok 使用 Device Code 登录 |
 | New API 或其他兼容网关 | 填写服务地址和该服务的 API Key |
 | OpenAI、Anthropic、Gemini、DeepSeek、千问、Kimi、GLM、MiniMax、豆包、xAI | 在按量付费 API 中选择厂商，再填写开放平台密钥 |
 | OpenCode Go、Kimi Coding、GLM Coding Plan、MiniMax Coding Plan | 选择对应 Coding Plan，使用订阅专用凭据 |
