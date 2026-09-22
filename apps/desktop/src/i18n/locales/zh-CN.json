@@ -294,7 +294,9 @@
     "range": {
       "1d": "近 24 小时",
       "7d": "近 7 天",
-      "30d": "近 30 天"
+      "30d": "近 30 天",
+      "90d": "近 90 天",
+      "1y": "近一年"
     },
     "rangeLabel": "用量区间",
     "dailyTokens": "按日 Token",
@@ -348,7 +350,19 @@
     "aggregatingModels": "正在统计模型用量…",
     "noSuccessfulRequests": "所选区间没有成功请求",
     "modelUsageHint": "成功调用后会按模型汇总 Token。",
-    "requestTimes": "{{value}} 次"
+    "requestTimes": "{{value}} 次",
+    "viewLabel": "用量展示方式",
+    "heatmap": "热力图",
+    "chart": "图表",
+    "activity": "请求活动",
+    "heatmapNote": "热力图颜色越深，用量越高。可切换 Token 或请求数（包含失败请求）；长区间按周排列，悬停、点击或使用方向键查看明细。数据仅覆盖保留的请求记录。",
+    "activeDays": "{{count}} / {{total}} 天有活动",
+    "heatmapMetric": "热力图统计指标",
+    "heatmapLabel": "请求活动热力图",
+    "heatmapHint": "悬停或点击方格，查看每日用量",
+    "less": "少",
+    "more": "多",
+    "noTokensInRange": "该区间未记录 Token，可切换查看请求数。"
   },
   "services": {
     "claudeOauth": "Claude Code 授权",

@@ -80,8 +80,8 @@ function localRecord(
 }
 
 describe("usage range windows", () => {
-  it("defaults to seven local days ending today", () => {
-    expect(DEFAULT_USAGE_RANGE_PRESET).toBe("7d");
+  it("defaults to a year and resolves seven local days ending today", () => {
+    expect(DEFAULT_USAGE_RANGE_PRESET).toBe("1y");
     expect(usageRangeDays("1d")).toBe(1);
     expect(usageRangeDays("7d")).toBe(7);
     expect(usageRangeDays("30d")).toBe(30);
@@ -134,7 +134,9 @@ describe("usage range windows", () => {
       ),
     ).toMatchObject({ requests: 1, total_tokens: 2 });
     expect(
-      summary.by_hour.some((bucket) => bucket.hour === 0 && bucket.requests > 0),
+      summary.by_hour.some(
+        (bucket) => bucket.hour === 0 && bucket.requests > 0,
+      ),
     ).toBe(false);
   });
 
@@ -151,9 +153,22 @@ describe("usage range windows", () => {
     ]);
   });
 
+  it("pads quarter and yearly windows across leap days", () => {
+    const now = new Date(2024, 2, 1, 12);
+    const quarter = usageWindowDayKeys(resolveUsageWindow("90d", now));
+    const year = usageWindowDayKeys(resolveUsageWindow("1y", now));
+    expect(quarter).toHaveLength(90);
+    expect(year).toHaveLength(365);
+    expect(year[0]).toBe("2023-03-03");
+    expect(year.at(-1)).toBe("2024-03-01");
+    expect(year).toContain("2024-02-29");
+  });
+
   it("recognizes only supported presets", () => {
     expect(isUsageRangePreset("7d")).toBe(true);
-    expect(isUsageRangePreset("90d")).toBe(false);
+    expect(isUsageRangePreset("90d")).toBe(true);
+    expect(isUsageRangePreset("1y")).toBe(true);
+    expect(isUsageRangePreset("2y")).toBe(false);
     expect(isUsageRangePreset(null)).toBe(false);
   });
 
@@ -423,9 +438,9 @@ describe("usage aggregation", () => {
       requests: 1,
       total_tokens: 5,
     });
-    expect(summary.by_hour.filter((bucket) => bucket.requests > 0)).toHaveLength(
-      1,
-    );
+    expect(
+      summary.by_hour.filter((bucket) => bucket.requests > 0),
+    ).toHaveLength(1);
     expect(summary.totals.total_tokens).toBe(13);
   });
 
@@ -616,7 +631,9 @@ describe("usage presentation helpers", () => {
       ],
     );
 
-    expect(rows.map((row) => [row.name, row.total_tokens, row.in_catalog])).toEqual([
+    expect(
+      rows.map((row) => [row.name, row.total_tokens, row.in_catalog]),
+    ).toEqual([
       ["Alpha", 14, true],
       [UNKNOWN_SERVICE_LABEL(), 4, false],
       [UNATTRIBUTED_SERVICE_LABEL(), 2, false],

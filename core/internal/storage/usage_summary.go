@@ -13,8 +13,8 @@ type UsageSummaryOptions struct {
 
 func (options UsageSummaryOptions) Validate() (*time.Location, error) {
 	if options.From.IsZero() || options.To.IsZero() || !options.To.After(options.From) ||
-		options.To.Sub(options.From) > 32*24*time.Hour || options.From.Nanosecond() != 0 || options.To.Nanosecond() != 0 {
-		return nil, fmt.Errorf("%w: usage range must be whole seconds and span at most 32 days", ErrInvalidArgument)
+		options.To.Sub(options.From) > 366*24*time.Hour || options.From.Nanosecond() != 0 || options.To.Nanosecond() != 0 {
+		return nil, fmt.Errorf("%w: usage range must be whole seconds and span at most 366 days", ErrInvalidArgument)
 	}
 	if options.Bucket != "day" && options.Bucket != "hour" {
 		return nil, fmt.Errorf("%w: bucket must be day or hour", ErrInvalidArgument)

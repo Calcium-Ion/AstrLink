@@ -925,7 +925,7 @@ paths:
         - name: to
           in: query
           required: true
-          description: Exclusive whole-second RFC3339 timestamp, at most 32 days after from.
+          description: Exclusive whole-second RFC3339 timestamp, at most 366 days after from.
           schema: { type: string, format: date-time }
         - name: time_zone
           in: query

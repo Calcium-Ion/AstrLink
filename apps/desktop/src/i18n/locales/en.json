@@ -294,7 +294,9 @@
     "range": {
       "1d": "Last 24 hours",
       "7d": "7 days",
-      "30d": "30 days"
+      "30d": "30 days",
+      "90d": "90 days",
+      "1y": "1 year"
     },
     "rangeLabel": "Usage range",
     "dailyTokens": "Tokens by day",
@@ -348,7 +350,19 @@
     "aggregatingModels": "Calculating model usage…",
     "noSuccessfulRequests": "No successful requests in this range",
     "modelUsageHint": "Successful calls are summarized by model tokens.",
-    "requestTimes": "{{value}} times"
+    "requestTimes": "{{value}} times",
+    "viewLabel": "Usage view",
+    "heatmap": "Heatmap",
+    "chart": "Chart",
+    "activity": "Request activity",
+    "heatmapNote": "Darker cells indicate higher usage. Choose tokens or requests (including failures). Longer ranges are arranged by week. Hover, click or use arrow keys for details. Only retained request records are included.",
+    "activeDays": "Active on {{count}} of {{total}} days",
+    "heatmapMetric": "Heatmap metric",
+    "heatmapLabel": "Request activity heatmap",
+    "heatmapHint": "Hover or select a day to explore usage",
+    "less": "Less",
+    "more": "More",
+    "noTokensInRange": "No tokens recorded. Switch to requests to see activity."
   },
   "services": {
     "claudeOauth": "Claude Code authorization",

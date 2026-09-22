@@ -29,12 +29,21 @@ func TestUsageSummaryAPI(t *testing.T) {
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &summary) != nil || summary.ByDay == nil || summary.ByModel == nil {
 		t.Fatalf("empty status=%d body=%s", response.Code, response.Body.String())
 	}
+	for _, valid := range []string{
+		"?from=2025-09-20T00:00:00Z&to=2026-09-20T00:00:00Z&time_zone=UTC&bucket=day",
+		"?from=2026-06-22T00:00:00Z&to=2026-09-20T00:00:00Z&time_zone=Asia%2FShanghai&bucket=day",
+	} {
+		response := accessTokenRequest(t, handler, http.MethodGet, UsageSummaryPath+valid, "", "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("long range=%s status=%d body=%s", valid, response.Code, response.Body.String())
+		}
+	}
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, UsageSummaryPath+query, nil))
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized=%d", unauthorized.Code)
 	}
-	for _, bad := range []string{"", query + "&limit=1", query + "&bucket=day", "?from=%ZZ", "?from=2026-09-19T00:00:00.001Z&to=2026-09-20T00:00:00Z&time_zone=UTC&bucket=day", "?from=2026-09-19T00:00:00Z&to=2026-09-18T00:00:00Z&time_zone=UTC&bucket=day", "?from=2026-01-01T00:00:00Z&to=2026-09-20T00:00:00Z&time_zone=UTC&bucket=day", "?from=2026-09-19T00:00:00Z&to=2026-09-20T00:00:00Z&time_zone=Missing&bucket=day"} {
+	for _, bad := range []string{"", query + "&limit=1", query + "&bucket=day", "?from=%ZZ", "?from=2026-09-19T00:00:00.001Z&to=2026-09-20T00:00:00Z&time_zone=UTC&bucket=day", "?from=2026-09-19T00:00:00Z&to=2026-09-18T00:00:00Z&time_zone=UTC&bucket=day", "?from=2025-01-01T00:00:00Z&to=2026-09-20T00:00:00Z&time_zone=UTC&bucket=day", "?from=2026-09-19T00:00:00Z&to=2026-09-20T00:00:00Z&time_zone=Missing&bucket=day"} {
 		response := accessTokenRequest(t, handler, http.MethodGet, UsageSummaryPath+bad, "", "")
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("query=%s status=%d", bad, response.Code)

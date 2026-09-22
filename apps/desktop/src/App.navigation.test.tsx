@@ -392,7 +392,7 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("概览");
     expect(container.textContent).toContain("API 地址");
     expect(container.textContent).toContain("用量概览");
-    expect(container.textContent).toContain("按日 Token");
+    expect(container.querySelector("[data-slot='activity-heatmap']")).not.toBeNull();
     expect(container.textContent).toContain("按服务");
     expect(container.textContent).toContain("按模型");
     expect(container.textContent).toContain("Primary gateway");
@@ -643,20 +643,20 @@ describe("App workspace navigation", () => {
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(requestCalls);
   });
 
-  it("summarizes usage over the default seven-day window", async () => {
+  it("summarizes usage over the default yearly window", async () => {
     await renderApp();
 
     const query = bridgeMocks.getUsageSummary.mock.calls[0]?.[0];
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
     expect(bridgeMocks.listRequestRecords).not.toHaveBeenCalled();
-    expect(query).toMatchObject({ preset: "7d" });
+    expect(query).toMatchObject({ preset: "1y" });
     const from = new Date(query.from as string);
     const to = new Date(query.to as string);
     expect(from.getHours()).toBe(0);
     expect(from.getMinutes()).toBe(0);
     expect(to.getHours()).toBe(0);
-    // Seven inclusive local days: today plus the six before it.
-    expect(Math.round((to.getTime() - from.getTime()) / 86_400_000)).toBe(7);
+    // 365 inclusive local days, ending today.
+    expect(Math.round((to.getTime() - from.getTime()) / 86_400_000)).toBe(365);
 
     const today = new Date();
     expect(to.getDate()).toBe(

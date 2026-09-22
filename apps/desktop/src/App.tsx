@@ -596,8 +596,8 @@ export default function App() {
             // One measure for every page: content stops at 1080px and stays
             // centred, so a single row of data never spans the whole window.
             "@container/workspace-surface mx-auto h-full min-h-0 w-full max-w-[1080px] min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
-            page.kind !== "overview" && "flex flex-col",
-            ["list", "create", "edit", "tokens", "records", "safety", "routing", "agentTools"].includes(
+            "flex flex-col",
+            ["overview", "list", "create", "edit", "tokens", "records", "safety", "routing", "agentTools"].includes(
               page.kind,
             )
               ? "overflow-hidden"
