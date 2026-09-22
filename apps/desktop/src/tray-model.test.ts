@@ -35,8 +35,8 @@ export const readyTrayState = {
       {
         name: "Codex",
         windows: [
-          { limit_window_seconds: 18_000, secondary: false, used_percent: 62, reset_at: "2026-09-22T12:13:00Z" },
-          { limit_window_seconds: 604_800, secondary: true, used_percent: 18, reset_at: null },
+          { label: null, limit_window_seconds: 18_000, secondary: false, used_percent: 62, reset_at: "2026-09-22T12:13:00Z" },
+          { label: null, limit_window_seconds: 604_800, secondary: true, used_percent: 18, reset_at: null },
         ],
       },
     ],

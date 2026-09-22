@@ -721,6 +721,9 @@ func (handler *Handler) getServiceUsage(writer http.ResponseWriter, request *htt
 		handler.writeStoreError(writer, err)
 		return
 	}
+	// ?refresh=1 is an operator asking for the provider's current numbers,
+	// not the 30s snapshot; scheduled readers never send it.
+	refresh := request.URL.Query().Get("refresh") == "1"
 	var usage contract.SubscriptionUsage
 	switch {
 	case record.Service.Kind.IsSubscription():
@@ -728,8 +731,14 @@ func (handler *Handler) getServiceUsage(writer http.ResponseWriter, request *htt
 			writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
 			return
 		}
+		if refresh {
+			handler.subscriptions.ForgetUsage(id)
+		}
 		usage, err = handler.subscriptions.Usage(request.Context(), id)
 	case handler.codingPlans != nil && codingplan.Supports(record.Service.Kind):
+		if refresh {
+			handler.codingPlans.ForgetUsage(id)
+		}
 		usage, err = handler.codingPlans.Usage(request.Context(), record.Service)
 	default:
 		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription usage")

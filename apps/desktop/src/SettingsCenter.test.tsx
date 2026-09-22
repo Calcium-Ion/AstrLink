@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({
   getPreferences: vi.fn(),
   getTrayState: vi.fn(),
+  trayAction: vi.fn(),
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
   restartCore: vi.fn(),

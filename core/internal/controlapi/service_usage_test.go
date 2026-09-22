@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,6 +76,56 @@ func TestGetServiceUsageReturnsSanitizedSnapshot(t *testing.T) {
 		if strings.Contains(body, leaked) {
 			t.Fatalf("usage leaked %q: %s", leaked, body)
 		}
+	}
+}
+
+func TestGetServiceUsageRefreshBypassesTheSnapshotCache(t *testing.T) {
+	var hits int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/backend-api/wham/usage" {
+			http.NotFound(writer, request)
+			return
+		}
+		n := atomic.AddInt32(&hits, 1)
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"plan_type": "plus",
+			"rate_limit": map[string]any{
+				"allowed":        true,
+				"primary_window": map[string]any{"used_percent": 10 * n, "limit_window_seconds": 18000},
+			},
+		})
+	}))
+	t.Cleanup(upstream.Close)
+
+	store, credentials, handler := newUsageHandler(t, upstream, "service_codex_refresh")
+	service := createServiceForTest(t, handler, `{"name":"Codex refresh","kind":"codex_subscription"}`)
+	connectSubscriptionForTest(t, store, credentials, service.ID)
+	path := ServicesPath + "/" + string(service.ID) + "/usage"
+
+	read := func(query string) float64 {
+		response := serviceRequestForTest(t, handler, http.MethodGet, path+query, "", "", "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+		var usage contract.SubscriptionUsage
+		decode(t, response, &usage)
+		if usage.Primary == nil {
+			t.Fatalf("usage = %#v", usage)
+		}
+		return usage.Primary.UsedPercent
+	}
+
+	// Scheduled readers get the 30s snapshot: one upstream call serves both.
+	if first, second := read(""), read(""); first != 10 || second != 10 || atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("cached reads = %v, %v with %d upstream hits", first, second, hits)
+	}
+	// An operator refresh must show the provider's current numbers.
+	if fresh := read("?refresh=1"); fresh != 20 || atomic.LoadInt32(&hits) != 2 {
+		t.Fatalf("refresh read = %v with %d upstream hits", fresh, hits)
+	}
+	// And it re-primes the snapshot for the readers that follow.
+	if again := read(""); again != 20 || atomic.LoadInt32(&hits) != 2 {
+		t.Fatalf("post-refresh read = %v with %d upstream hits", again, hits)
 	}
 }
 

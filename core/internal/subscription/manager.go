@@ -394,6 +394,14 @@ func (manager *Manager) AccessToken(ctx context.Context, id contract.Subscriptio
 	return manager.tokensFor(account.Provider).AccessToken(ctx, id)
 }
 
+// ForgetUsage drops the cached quota snapshot so the next Usage call goes to
+// the provider. Used for operator-initiated refreshes.
+func (manager *Manager) ForgetUsage(id contract.ServiceID) {
+	manager.mu.Lock()
+	delete(manager.usageCache, id)
+	manager.mu.Unlock()
+}
+
 func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsage, error) {
 	ctx, proxyErr := manager.ProxyContext(ctx, id)
 	if proxyErr != nil {

@@ -18,6 +18,7 @@ const bridgeMocks = vi.hoisted(() => ({
   getCoreStatus: vi.fn(),
   getPreferences: vi.fn(),
   getTrayState: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
+  trayAction: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
   getRoutingSettings: vi.fn(),
   getServiceOrder: vi
     .fn()
