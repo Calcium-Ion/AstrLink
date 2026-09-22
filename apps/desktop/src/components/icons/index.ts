@@ -18,6 +18,8 @@ export { CircleCheck } from "./circle-check";
 export { CircleHelp } from "./circle-help";
 export { Connect } from "./connect";
 export { Copy } from "./copy";
+export { Eye } from "./eye";
+export { EyeOff } from "./eye-off";
 export { Flask } from "./flask";
 export { GripVertical } from "./grip-vertical";
 export { Home } from "./home";

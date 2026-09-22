@@ -1880,7 +1880,7 @@ export function ServiceManager({
                   } finally { setActionID(null); }
                 }}>
                   <Field htmlFor="claude-authorization-code" label={t("services.authorizationCode")}>
-                    <Input id="claude-authorization-code" type="password" autoComplete="off" spellCheck={false}
+                    <Input id="claude-authorization-code" aria-label={t("services.authorizationCode")} type="password" autoComplete="off" spellCheck={false}
                       placeholder="code#state" value={authorizationCode} maxLength={8192}
                       onChange={(event) => setAuthorizationCode(event.target.value)} />
                   </Field>
@@ -2408,6 +2408,13 @@ export function ServiceManager({
                 >
                   <Input
                     autoComplete="new-password"
+                    aria-label={
+                      editingKind
+                        ? canKeepCredential
+                          ? t("services.apiKeyKeep")
+                          : t("services.apiKeyRequired")
+                        : "API Key"
+                    }
                     maxLength={16_384}
                     placeholder={
                       canKeepCredential

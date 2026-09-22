@@ -1,5 +1,7 @@
 {
   "common": {
+    "showSecret": "显示明文",
+    "hideSecret": "隐藏明文",
     "clearSearch": "清除搜索",
     "noSearchResults": "没有匹配的结果",
     "cancel": "取消",

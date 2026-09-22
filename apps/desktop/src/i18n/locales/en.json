@@ -1,5 +1,7 @@
 {
   "common": {
+    "showSecret": "Show secret",
+    "hideSecret": "Hide secret",
     "clearSearch": "Clear search",
     "noSearchResults": "No matching results",
     "cancel": "Cancel",
