@@ -40,9 +40,7 @@ export function PageHeader({
     <header
       className={cn(
         "flex min-w-0 shrink-0 justify-between",
-        compact
-          ? "mb-3 items-center gap-3 border-b py-2"
-          : "items-end gap-6",
+        compact ? "mb-3 items-center gap-3 border-b py-2" : "items-end gap-6",
         !compact && variant === "card"
           ? "border-b bg-card px-4 pt-4 pb-3"
           : !compact

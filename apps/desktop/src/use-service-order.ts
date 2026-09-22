@@ -60,13 +60,15 @@ export function useServiceOrder(
       items.length < 2 ||
       selected.size !== items.length ||
       items.some((item) => !positions.has(item.id))
-    ) return;
+    )
+      return;
     // A filtered list only replaces its own slots in the global priority order.
     let index = 0;
     const service_ids = record.service_ids.map((id) =>
       selected.has(id) ? items[index++].id : id,
     );
-    if (service_ids.every((id, index) => id === record.service_ids[index])) return;
+    if (service_ids.every((id, index) => id === record.service_ids[index]))
+      return;
     const original = record;
     const current = generation.current;
     locked.current = true;
@@ -74,10 +76,7 @@ export function useServiceOrder(
     setError(null);
     setRecord({ ...record, service_ids });
     try {
-      const saved = await updateServiceOrder(
-        service_ids,
-        record.etag,
-      );
+      const saved = await updateServiceOrder(service_ids, record.etag);
       if (current === generation.current) setRecord(saved);
     } catch (cause) {
       if (current === generation.current) {

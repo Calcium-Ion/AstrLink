@@ -77,5 +77,7 @@ export function copyButtonLabel(
   copiedLabel = i18n.t("common.copied"),
 ): string {
   if (feedback.activeKey !== key) return idleLabel;
-  return feedback.state === "failed" ? i18n.t("common.copyFailed") : copiedLabel;
+  return feedback.state === "failed"
+    ? i18n.t("common.copyFailed")
+    : copiedLabel;
 }

@@ -21,7 +21,9 @@ describe("RoutingModelsPreview", () => {
     expect(container.textContent).not.toContain("mmBERT");
     expect(container.textContent).not.toContain("jhu-clsp");
     expect(container.textContent).not.toContain("ONNX");
-    expect(container.querySelector('[data-testid="routing-classifier-card"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="routing-classifier-card"]'),
+    ).toBeNull();
     expect(container.querySelector("form")).toBeNull();
     expect(container.querySelector("a")).toBeNull();
     expect(container.textContent).toContain("未配置");
@@ -39,6 +41,8 @@ describe("RoutingModelsPreview", () => {
       expect(container.textContent).toContain(category);
     }
 
-    expect(container.querySelectorAll('[data-testid="routing-category"]')).toHaveLength(4);
+    expect(
+      container.querySelectorAll('[data-testid="routing-category"]'),
+    ).toHaveLength(4);
   });
 });

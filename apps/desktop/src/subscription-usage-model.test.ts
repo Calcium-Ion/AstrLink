@@ -74,9 +74,12 @@ describe("subscription usage contract", () => {
     ["openai_codex", "constructor", "constructor"],
     [undefined, "pro", "pro"],
     ["openai_codex", undefined, null],
-  ] as const)("formats %s / %s within its provider", (provider, planType, label) => {
-    expect(planTypeLabel(planType, provider)).toBe(label);
-  });
+  ] as const)(
+    "formats %s / %s within its provider",
+    (provider, planType, label) => {
+      expect(planTypeLabel(planType, provider)).toBe(label);
+    },
+  );
 
   it("rejects PII and unexpected fields", () => {
     expect(() =>
@@ -108,7 +111,9 @@ describe("subscription usage contract", () => {
         ),
       ),
     ).toBe("subscription_usage_failed: codex usage unavailable: status 403");
-    expect(formatSubscriptionUsageError("网关尚未就绪。")).toBe("网关尚未就绪。");
+    expect(formatSubscriptionUsageError("网关尚未就绪。")).toBe(
+      "网关尚未就绪。",
+    );
     expect(formatSubscriptionUsageError({})).toBe("无法读取额度");
   });
 

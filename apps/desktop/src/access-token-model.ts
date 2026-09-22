@@ -34,8 +34,7 @@ type JsonObject = Record<string, unknown>;
 const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
 const rfc3339Pattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
-const accessTokenPattern =
-  /^astr_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
+const accessTokenPattern = /^astr_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
 function invalid(path: string, message: string): never {
   throw new Error(`Invalid access-token IPC response at ${path}: ${message}`);
 }
@@ -77,10 +76,7 @@ function stringAt(
   return value;
 }
 
-function parseAccessToken(
-  value: unknown,
-  path: string,
-): AccessTokenSummary {
+function parseAccessToken(value: unknown, path: string): AccessTokenSummary {
   const token = objectAt(value, path);
   exactKeys(token, ["id", "name", "hint", "created_at"], path);
 
@@ -124,7 +120,9 @@ export function parseAccessTokenPage(value: unknown): AccessTokenPage {
   };
 }
 
-export function parseAccessTokenUsageResponse(value: unknown): AccessTokenUsageResponse {
+export function parseAccessTokenUsageResponse(
+  value: unknown,
+): AccessTokenUsageResponse {
   const result = objectAt(value, "$");
   exactKeys(result, ["items"], "$");
   if (!Array.isArray(result.items)) invalid("$.items", "expected an array");

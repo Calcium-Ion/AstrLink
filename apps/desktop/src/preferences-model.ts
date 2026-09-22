@@ -66,7 +66,11 @@ function nullableString(value: unknown, path: string): string | null {
 
 export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   const root = objectAt(value, "$");
-  exactKeys(root, ["values", "load_warning", "autostart_actual", "autostart_error"], "$");
+  exactKeys(
+    root,
+    ["values", "load_warning", "autostart_actual", "autostart_error"],
+    "$",
+  );
   const values = objectAt(root.values, "$.values");
   exactKeys(
     values,
@@ -85,7 +89,10 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     ],
     "$.values",
   );
-  if (values.close_behavior !== "hide_to_tray" && values.close_behavior !== "quit") {
+  if (
+    values.close_behavior !== "hide_to_tray" &&
+    values.close_behavior !== "quit"
+  ) {
     invalid("$.values.close_behavior", "unknown close behavior");
   }
   if (!isLocale(values.locale)) {
@@ -94,8 +101,14 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   if (!isThemePreference(values.theme)) {
     invalid("$.values.theme", "unknown theme preference");
   }
-  for (const field of ["autostart", "core_auto_start", "core_auto_recover", "use_system_proxy"] as const) {
-    if (typeof values[field] !== "boolean") invalid(`$.values.${field}`, "expected boolean");
+  for (const field of [
+    "autostart",
+    "core_auto_start",
+    "core_auto_recover",
+    "use_system_proxy",
+  ] as const) {
+    if (typeof values[field] !== "boolean")
+      invalid(`$.values.${field}`, "expected boolean");
   }
   if (
     typeof values.inference_port !== "number" ||
@@ -103,7 +116,10 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     values.inference_port < 1024 ||
     values.inference_port > 65535
   ) {
-    invalid("$.values.inference_port", "expected an integer from 1024 through 65535");
+    invalid(
+      "$.values.inference_port",
+      "expected an integer from 1024 through 65535",
+    );
   }
   if (
     typeof values.max_concurrent_inspections !== "number" ||
@@ -119,7 +135,8 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   if (
     typeof values.response_start_timeout_seconds !== "number" ||
     !Number.isInteger(values.response_start_timeout_seconds) ||
-    values.response_start_timeout_seconds < DEFAULT_RESPONSE_START_TIMEOUT_SECONDS ||
+    values.response_start_timeout_seconds <
+      DEFAULT_RESPONSE_START_TIMEOUT_SECONDS ||
     values.response_start_timeout_seconds > MAX_RESPONSE_START_TIMEOUT_SECONDS
   ) {
     invalid(
@@ -133,9 +150,15 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     values.max_request_body_mib < 0 ||
     values.max_request_body_mib > MAX_REQUEST_BODY_MIB
   ) {
-    invalid("$.values.max_request_body_mib", `expected an integer from 0 through ${MAX_REQUEST_BODY_MIB}`);
+    invalid(
+      "$.values.max_request_body_mib",
+      `expected an integer from 0 through ${MAX_REQUEST_BODY_MIB}`,
+    );
   }
-  if (root.autostart_actual !== null && typeof root.autostart_actual !== "boolean") {
+  if (
+    root.autostart_actual !== null &&
+    typeof root.autostart_actual !== "boolean"
+  ) {
     invalid("$.autostart_actual", "expected null or boolean");
   }
   return {

@@ -132,7 +132,8 @@ const child: RequestRecord = {
       started_at: "2026-09-16T12:00:01Z",
       ended_at: "2026-09-16T12:00:01Z",
       status: "failed",
-      summary: "upstream_unavailable · connect: connection refused 10.0.0.8:443",
+      summary:
+        "upstream_unavailable · connect: connection refused 10.0.0.8:443",
       attempt_index: 1,
     },
   ],

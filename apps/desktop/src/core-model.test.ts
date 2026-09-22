@@ -107,6 +107,8 @@ describe("core status presentation", () => {
       recovery_attempt: 0,
       recovery_scheduled_in_ms: null,
     });
-    expect(failedSnapshot(null, "first query failed").app_version).toBe("Unknown");
+    expect(failedSnapshot(null, "first query failed").app_version).toBe(
+      "Unknown",
+    );
   });
 });

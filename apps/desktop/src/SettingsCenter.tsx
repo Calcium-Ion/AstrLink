@@ -39,7 +39,10 @@ import { THEME_PREFERENCES, type ThemePreference } from "./theme-model";
 
 type InstantPatch = Omit<
   Preferences,
-  "inference_port" | "max_concurrent_inspections" | "response_start_timeout_seconds" | "max_request_body_mib"
+  | "inference_port"
+  | "max_concurrent_inspections"
+  | "response_start_timeout_seconds"
+  | "max_request_body_mib"
 >;
 
 function messageOf(error: unknown): string {
@@ -188,7 +191,8 @@ export function SettingsCenter({
     Number.isInteger(bodyLimitDraft) &&
     bodyLimitDraft >= 0 &&
     bodyLimitDraft <= MAX_REQUEST_BODY_MIB;
-  const entryDirty = portDirty || concurrencyDirty || timeoutDirty || bodyLimitDirty;
+  const entryDirty =
+    portDirty || concurrencyDirty || timeoutDirty || bodyLimitDirty;
   useEffect(() => {
     onDirtyChange(entryDirty);
     return () => onDirtyChange(false);
@@ -202,7 +206,8 @@ export function SettingsCenter({
       ...patch,
       inference_port: settings.values.inference_port,
       max_concurrent_inspections: settings.values.max_concurrent_inspections,
-      response_start_timeout_seconds: settings.values.response_start_timeout_seconds,
+      response_start_timeout_seconds:
+        settings.values.response_start_timeout_seconds,
       max_request_body_mib: settings.values.max_request_body_mib,
     };
     setBusy("prefs");
@@ -300,7 +305,9 @@ export function SettingsCenter({
       <section className="grid gap-4 pb-2">
         <PageHeader title={t("settings.title")} />
         <Panel className="grid gap-2.5 border-destructive/35 bg-danger-wash p-4 text-danger-foreground">
-          <strong className="text-sm font-semibold">{t("settings.loadFailed")}</strong>
+          <strong className="text-sm font-semibold">
+            {t("settings.loadFailed")}
+          </strong>
           <p className="text-xs">{loadingError}</p>
           <Button
             className="justify-self-start"
@@ -334,7 +341,9 @@ export function SettingsCenter({
   const phase = snapshot?.phase ?? "unavailable";
   const tone = phaseTone(phase);
   const canStart = ["stopped", "exited", "error"].includes(phase);
-  const canStop = !["stopped", "exited", "error", "unavailable"].includes(phase);
+  const canStop = !["stopped", "exited", "error", "unavailable"].includes(
+    phase,
+  );
   const recoveryHint =
     snapshot?.recovery_scheduled_in_ms !== null &&
     snapshot?.recovery_scheduled_in_ms !== undefined
@@ -343,12 +352,15 @@ export function SettingsCenter({
           seconds: Math.ceil(snapshot.recovery_scheduled_in_ms / 1000),
         })
       : snapshot?.recovery_attempt
-        ? t("settings.recoveryAttempted", { attempt: snapshot.recovery_attempt })
+        ? t("settings.recoveryAttempted", {
+            attempt: snapshot.recovery_attempt,
+          })
         : null;
   const portNeedsRestart =
     active !== null &&
     active !== settings.values.inference_port &&
-    snapshot?.inference_port_fallback?.requested_port !== settings.values.inference_port;
+    snapshot?.inference_port_fallback?.requested_port !==
+      settings.values.inference_port;
 
   return (
     <section className="grid gap-4 pb-2">
@@ -386,7 +398,9 @@ export function SettingsCenter({
               className="grid grid-cols-3 gap-2 max-[560px]:grid-cols-1"
               aria-label={t("settings.theme")}
               disabled={prefsBusy}
-              onValueChange={(value) => void applyInstant({ theme: value as ThemePreference })}
+              onValueChange={(value) =>
+                void applyInstant({ theme: value as ThemePreference })
+              }
               value={prefs.theme}
             >
               {THEME_PREFERENCES.map((theme) => (
@@ -487,7 +501,9 @@ export function SettingsCenter({
             checked={prefs.core_auto_start}
             disabled={prefsBusy}
             label={t("settings.coreAutoStart")}
-            onChange={(core_auto_start) => void applyInstant({ core_auto_start })}
+            onChange={(core_auto_start) =>
+              void applyInstant({ core_auto_start })
+            }
           />
           <SettingsToggle
             checked={prefs.core_auto_recover}
@@ -503,7 +519,9 @@ export function SettingsCenter({
             disabled={busy !== null}
             label={t("settings.useSystemProxy")}
             hint={t("settings.systemProxyHint")}
-            onChange={(use_system_proxy) => void applyInstant({ use_system_proxy })}
+            onChange={(use_system_proxy) =>
+              void applyInstant({ use_system_proxy })
+            }
           />
 
           <div className="border-b px-4 py-3">
@@ -556,7 +574,9 @@ export function SettingsCenter({
               onClick={() => void runCoreAction("restart")}
               type="button"
             >
-              {busy === "restart" ? t("settings.restarting") : t("settings.restart")}
+              {busy === "restart"
+                ? t("settings.restarting")
+                : t("settings.restart")}
             </Button>
           </div>
         </Panel>
@@ -653,7 +673,9 @@ export function SettingsCenter({
                 max={MAX_REQUEST_BODY_MIB}
                 min={0}
                 step={1}
-                onChange={(event) => setBodyLimitDraft(Number(event.target.value))}
+                onChange={(event) =>
+                  setBodyLimitDraft(Number(event.target.value))
+                }
                 type="number"
                 value={bodyLimitDraft}
               />
@@ -690,7 +712,9 @@ export function SettingsCenter({
               onClick={() => void savePort()}
               type="button"
             >
-              {busy === "port" ? t("settings.savingPort") : t("settings.savePort")}
+              {busy === "port"
+                ? t("settings.savingPort")
+                : t("settings.savePort")}
             </Button>
           </div>
         </Panel>

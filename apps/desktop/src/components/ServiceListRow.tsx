@@ -50,8 +50,15 @@ export function ServiceListRow({
 }) {
   if (sorting) {
     return (
-      <DataRow asChild className="grid h-13 grid-cols-[3.25rem_minmax(0,1fr)_auto] gap-4 px-3 py-0">
-        <article aria-label={name} data-testid="service-card" data-sorting="true">
+      <DataRow
+        asChild
+        className="grid h-13 grid-cols-[3.25rem_minmax(0,1fr)_auto] gap-4 px-3 py-0"
+      >
+        <article
+          aria-label={name}
+          data-testid="service-card"
+          data-sorting="true"
+        >
           <div>{order}</div>
           <div className="flex min-w-0 items-center gap-2.5">
             {sortIcon}

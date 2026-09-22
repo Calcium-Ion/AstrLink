@@ -9,12 +9,27 @@ const concepts = [
   ["02", "LOOP", "02-loop.svg"],
   ["03", "FOLD", "03-fold.svg"],
 ];
-const asImage = (source) => `data:image/svg+xml;base64,${Buffer.from(source).toString("base64")}`;
+const asImage = (source) =>
+  `data:image/svg+xml;base64,${Buffer.from(source).toString("base64")}`;
 const groups = concepts.map(([number, name, file], index) => {
   const data = asImage(readFileSync(join(dir, file)));
-  const defs = execFileSync("xmllint", ["--xpath", '/*[local-name()="svg"]/*[local-name()="defs"]', join(dir, file)], { encoding: "utf8" });
-  const mark = execFileSync("xmllint", ["--xpath", '/*[local-name()="svg"]/*[local-name()="g"]', join(dir, file)], { encoding: "utf8" });
-  const mono = asImage(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">${defs}<defs><filter id="mono-ink" x="0" y="0" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-color="#303740"/><feComposite in2="SourceGraphic" operator="in"/></filter></defs><g filter="url(#mono-ink)">${mark}</g></svg>`);
+  const defs = execFileSync(
+    "xmllint",
+    [
+      "--xpath",
+      '/*[local-name()="svg"]/*[local-name()="defs"]',
+      join(dir, file),
+    ],
+    { encoding: "utf8" },
+  );
+  const mark = execFileSync(
+    "xmllint",
+    ["--xpath", '/*[local-name()="svg"]/*[local-name()="g"]', join(dir, file)],
+    { encoding: "utf8" },
+  );
+  const mono = asImage(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">${defs}<defs><filter id="mono-ink" x="0" y="0" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-color="#303740"/><feComposite in2="SourceGraphic" operator="in"/></filter></defs><g filter="url(#mono-ink)">${mark}</g></svg>`,
+  );
   return `<g transform="translate(${28 + index * 360} 100)">
     <text x="20" y="30" font-size="17" font-weight="600" fill="#304074">${number} / ${name}</text>
     <image href="${data}" x="0" y="62" width="336" height="336"/>
@@ -27,7 +42,9 @@ const groups = concepts.map(([number, name, file], index) => {
     <text x="290" y="592" text-anchor="middle" font-size="11" fill="#78828B">32 PX</text>
   </g>`;
 });
-writeFileSync(join(dir, "comparison.svg"), `<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="756" viewBox="0 0 1120 756">
+writeFileSync(
+  join(dir, "comparison.svg"),
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="756" viewBox="0 0 1120 756">
   <title>AstrLink - A, Connection and Ribbon</title>
   <desc>Three A monograms with a connecting ribbon, presented in color, one ink and small sizes.</desc>
   <rect width="1120" height="756" fill="#FFFFFF"/>
@@ -37,5 +54,10 @@ writeFileSync(join(dir, "comparison.svg"), `<svg xmlns="http://www.w3.org/2000/s
     <line x1="48" y1="78" x2="1072" y2="78" stroke="#E3E7E9"/>
     ${groups.join("\n")}
   </g>
-</svg>\n`);
-execFileSync("rsvg-convert", ["-o", join(dir, "comparison.png"), join(dir, "comparison.svg")]);
+</svg>\n`,
+);
+execFileSync("rsvg-convert", [
+  "-o",
+  join(dir, "comparison.png"),
+  join(dir, "comparison.svg"),
+]);

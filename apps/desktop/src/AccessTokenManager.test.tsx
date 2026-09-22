@@ -56,9 +56,11 @@ function button(label: string, root: ParentNode = document): HTMLButtonElement {
 }
 
 function row(name: string): HTMLElement {
-  const match = [...document.querySelectorAll<HTMLElement>('[data-testid="access-token-row"]')].find(
-    (candidate) => candidate.textContent?.includes(name),
-  );
+  const match = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-testid="access-token-row"]',
+    ),
+  ].find((candidate) => candidate.textContent?.includes(name));
   if (!match) throw new Error(`Missing token row: ${name}`);
   return match;
 }
@@ -143,16 +145,16 @@ describe("AccessTokenManager", () => {
       button("复制", row(secondToken.name)).click();
       await Promise.resolve();
     });
-    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(secondSecret);
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(
+      secondSecret,
+    );
     expect(container.textContent).not.toContain(secondSecret);
     expect(button("已复制", row(secondToken.name))).toBeTruthy();
     expect(button("复制", row(firstToken.name))).toBeTruthy();
   });
 
   it("ignores a copy response from an old Core session", async () => {
-    let resolveReveal:
-      | ((value: { access_token: string }) => void)
-      | undefined;
+    let resolveReveal: ((value: { access_token: string }) => void) | undefined;
     bridgeMocks.revealAccessToken.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveReveal = resolve;
@@ -177,9 +179,7 @@ describe("AccessTokenManager", () => {
 
   it("cancels an in-flight copy before refreshing", async () => {
     const onRefresh = vi.fn();
-    let resolveReveal:
-      | ((value: { access_token: string }) => void)
-      | undefined;
+    let resolveReveal: ((value: { access_token: string }) => void) | undefined;
     bridgeMocks.revealAccessToken.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveReveal = resolve;
@@ -238,7 +238,9 @@ describe("AccessTokenManager", () => {
           onRefresh={() => undefined}
           onTokenCreated={(token) => setItems((current) => [token, ...current])}
           onTokenDeleted={(tokenId) =>
-            setItems((current) => current.filter((token) => token.id !== tokenId))
+            setItems((current) =>
+              current.filter((token) => token.id !== tokenId),
+            )
           }
         />
       );
@@ -255,7 +257,9 @@ describe("AccessTokenManager", () => {
       await Promise.resolve();
     });
     expect(container.textContent).not.toContain(firstSecret);
-    expect(container.querySelector('[data-testid="revealed-access-token"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="revealed-access-token"]'),
+    ).toBeNull();
 
     await act(async () => {
       button("删除", row(firstToken.name)).click();
@@ -295,7 +299,9 @@ describe("AccessTokenManager", () => {
           onRefresh={() => undefined}
           onTokenCreated={(token) => setItems((current) => [token, ...current])}
           onTokenDeleted={(tokenId) =>
-            setItems((current) => current.filter((token) => token.id !== tokenId))
+            setItems((current) =>
+              current.filter((token) => token.id !== tokenId),
+            )
           }
         />
       );
@@ -315,7 +321,9 @@ describe("AccessTokenManager", () => {
     expect(bridgeMocks.createAccessToken).toHaveBeenCalledWith("VS Code");
     expect(container.textContent).toContain(firstToken.name);
     expect(container.textContent).not.toContain(firstSecret);
-    expect(container.querySelector('[data-testid="revealed-access-token"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="revealed-access-token"]'),
+    ).toBeNull();
 
     await act(async () => {
       button("删除", row(firstToken.name)).click();
@@ -328,7 +336,9 @@ describe("AccessTokenManager", () => {
       await Promise.resolve();
     });
     expect(bridgeMocks.deleteAccessToken).toHaveBeenCalledWith(firstToken.id);
-    expect(container.querySelector('[data-testid="access-token-row"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="access-token-row"]'),
+    ).toBeNull();
   });
 
   it("loads all token totals in one call and fills unused tokens with zero", async () => {
@@ -348,7 +358,9 @@ describe("AccessTokenManager", () => {
     expect(row(secondToken.name).textContent).toContain("今日 Token0");
     expect(row(secondToken.name).textContent).toContain("累计 Token0");
     expect(bridgeMocks.listAccessTokenUsage).toHaveBeenCalledOnce();
-    const todayFrom = new Date(bridgeMocks.listAccessTokenUsage.mock.calls[0][0]);
+    const todayFrom = new Date(
+      bridgeMocks.listAccessTokenUsage.mock.calls[0][0],
+    );
     expect(todayFrom.getHours()).toBe(0);
     expect(todayFrom.getMinutes()).toBe(0);
     expect(todayFrom.getSeconds()).toBe(0);
@@ -356,12 +368,20 @@ describe("AccessTokenManager", () => {
 
   it("ignores usage from an old Core session", async () => {
     let finish: ((value: unknown) => void) | undefined;
-    bridgeMocks.listAccessTokenUsage.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    bridgeMocks.listAccessTokenUsage.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
     await renderManager(readyCatalog([firstToken]));
     expect(row(firstToken.name).textContent).toContain("今日 Token…");
     await renderManager(readyCatalog([firstToken]), "session-2");
     await act(async () => {
-      finish?.({ items: [{ token_id: firstToken.id, today_tokens: 999, total_tokens: 999 }] });
+      finish?.({
+        items: [
+          { token_id: firstToken.id, today_tokens: 999, total_tokens: 999 },
+        ],
+      });
     });
     expect(row(firstToken.name).textContent).toContain("累计 Token0");
     expect(row(firstToken.name).textContent).not.toContain("999");
@@ -372,7 +392,9 @@ describe("AccessTokenManager", () => {
       items: [{ token_id: firstToken.id, today_tokens: 30, total_tokens: 90 }],
     });
     await renderManager(readyCatalog([firstToken]));
-    bridgeMocks.listAccessTokenUsage.mockRejectedValueOnce(new Error("unavailable"));
+    bridgeMocks.listAccessTokenUsage.mockRejectedValueOnce(
+      new Error("unavailable"),
+    );
     await renderManager(readyCatalog([firstToken]));
     expect(row(firstToken.name).textContent).toContain("累计 Token90");
   });

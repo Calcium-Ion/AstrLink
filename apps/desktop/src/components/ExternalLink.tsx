@@ -19,7 +19,10 @@ export function ExternalLink({
   return (
     <Button
       asChild
-      className={cn("h-auto p-0 align-baseline font-normal text-primary has-[>svg]:px-0", className)}
+      className={cn(
+        "h-auto p-0 align-baseline font-normal text-primary has-[>svg]:px-0",
+        className,
+      )}
       variant="link"
     >
       <a

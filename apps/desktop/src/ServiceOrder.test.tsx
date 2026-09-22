@@ -25,11 +25,15 @@ function Harness({ filtered = false }: { filtered?: boolean }) {
   return (
     <>
       <OrderedList
-        items={order.ordered.filter((item) => !filtered || item.id !== "service_b")}
+        items={order.ordered.filter(
+          (item) => !filtered || item.id !== "service_b",
+        )}
         label="order"
         compact
         disabled={!order.complete || order.saving}
-        positionOf={(item) => order.ordered.findIndex((service) => service.id === item.id) + 1}
+        positionOf={(item) =>
+          order.ordered.findIndex((service) => service.id === item.id) + 1
+        }
         onChange={(items) => void order.save(items)}
       >
         {(item, _index, controls) => (
@@ -70,30 +74,58 @@ const handle = (id: string) =>
   container.querySelector<HTMLButtonElement>(`[data-id="${id}"] button`)!;
 function measureRows(compactHeight = 100) {
   const list = container.querySelector("ol")!;
-  const height = () => list.dataset.sorting === "true" ? compactHeight : 100;
+  const height = () => (list.dataset.sorting === "true" ? compactHeight : 100);
   list.setPointerCapture = vi.fn();
   list.hasPointerCapture = () => false;
-  vi.spyOn(list, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 400, 300));
+  vi.spyOn(list, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 400, 300),
+  );
   for (const row of list.querySelectorAll<HTMLElement>("[data-ordered-item]")) {
     Object.defineProperty(row, "offsetTop", {
       configurable: true,
-      get: () => [...list.querySelectorAll("[data-ordered-item]")].indexOf(row) * height() + (parseFloat(list.style.paddingTop) || 0),
+      get: () =>
+        [...list.querySelectorAll("[data-ordered-item]")].indexOf(row) *
+          height() +
+        (parseFloat(list.style.paddingTop) || 0),
     });
-    Object.defineProperty(row, "offsetHeight", { configurable: true, get: height });
-    vi.spyOn(row, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, row.offsetTop, 400, height()));
-    vi.spyOn(row.querySelector("button")!, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, row.offsetTop + 10, 28, 28));
+    Object.defineProperty(row, "offsetHeight", {
+      configurable: true,
+      get: height,
+    });
+    vi.spyOn(row, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, row.offsetTop, 400, height()),
+    );
+    vi.spyOn(
+      row.querySelector("button")!,
+      "getBoundingClientRect",
+    ).mockImplementation(() => new DOMRect(0, row.offsetTop + 10, 28, 28));
   }
   return list;
 }
 async function dragToFirst() {
   const list = measureRows();
   const startY = handle("service_c").getBoundingClientRect().top + 10;
-  await act(async () => handle("service_c").dispatchEvent(new PointerEvent("pointerdown", {
-    bubbles: true, button: 0, pointerId: 1, clientX: 20, clientY: startY,
-  })));
-  await act(async () => list.dispatchEvent(new PointerEvent("pointermove", {
-    bubbles: true, pointerId: 1, clientX: 20, clientY: 10,
-  })));
+  await act(async () =>
+    handle("service_c").dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerId: 1,
+        clientX: 20,
+        clientY: startY,
+      }),
+    ),
+  );
+  await act(async () =>
+    list.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        pointerId: 1,
+        clientX: 20,
+        clientY: 10,
+      }),
+    ),
+  );
   return list;
 }
 
@@ -150,8 +182,14 @@ it("commits drag/drop and keeps reordering available after filtering", async () 
   await act(async () => root.render(<Harness />));
   const list = await dragToFirst();
   expect(ids()).toEqual(["service_c", "service_a", "service_b"]);
-  expect(container.querySelector("[data-dragging]")?.getAttribute("data-ordered-item")).toBe("service_c");
-  expect(container.querySelector<HTMLElement>("[data-drop-slot]")?.style.top).toBe("0px");
+  expect(
+    container
+      .querySelector("[data-dragging]")
+      ?.getAttribute("data-ordered-item"),
+  ).toBe("service_c");
+  expect(
+    container.querySelector<HTMLElement>("[data-drop-slot]")?.style.top,
+  ).toBe("0px");
   expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
   await act(async () =>
     list.dispatchEvent(
@@ -181,9 +219,14 @@ it("merges filtered drag/drop into global slots and preserves hidden services", 
   expect(handle("service_c").getAttribute("aria-label")).toMatch(/1$/);
   expect(handle("service_a").getAttribute("aria-label")).toMatch(/3$/);
   expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
-  await act(async () => list.dispatchEvent(new PointerEvent("pointerup", {
-    bubbles: true, pointerId: 1,
-  })));
+  await act(async () =>
+    list.dispatchEvent(
+      new PointerEvent("pointerup", {
+        bubbles: true,
+        pointerId: 1,
+      }),
+    ),
+  );
   expect(bridge.updateServiceOrder).toHaveBeenCalledExactlyOnceWith(
     ["service_c", "service_b", "service_a"],
     '"initial"',
@@ -199,11 +242,14 @@ it("restores the full order when a filtered save conflicts", async () => {
     etag: '"fresh"',
   });
   await act(async () => root.render(<Harness filtered />));
-  await act(async () => handle("service_a").dispatchEvent(
-    new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
-  ));
+  await act(async () =>
+    handle("service_a").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+    ),
+  );
   expect(bridge.updateServiceOrder).toHaveBeenCalledWith(
-    ["service_c", "service_b", "service_a"], '"initial"',
+    ["service_c", "service_b", "service_a"],
+    '"initial"',
   );
   expect(ids()).toEqual(["service_a", "service_c"]);
   expect(refresh).toHaveBeenCalledOnce();
@@ -222,34 +268,62 @@ it("cancels an active drag when the filter changes without saving a stale subset
   expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
 });
 
-it.each(["Escape", "pointercancel"])("restores the preview without saving when cancelled by %s", async (reason) => {
-  await act(async () => root.render(<Harness />));
-  const list = await dragToFirst();
-  expect(ids()).toEqual(["service_c", "service_a", "service_b"]);
-  await act(async () => {
-    if (reason === "Escape") {
-      handle("service_c").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    } else {
-      list.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 }));
-    }
-  });
-  expect(ids()).toEqual(initial.service_ids);
-  expect(container.querySelector("[data-drop-slot]")).toBeNull();
-  expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
-});
+it.each(["Escape", "pointercancel"])(
+  "restores the preview without saving when cancelled by %s",
+  async (reason) => {
+    await act(async () => root.render(<Harness />));
+    const list = await dragToFirst();
+    expect(ids()).toEqual(["service_c", "service_a", "service_b"]);
+    await act(async () => {
+      if (reason === "Escape") {
+        handle("service_c").dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+      } else {
+        list.dispatchEvent(
+          new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 }),
+        );
+      }
+    });
+    expect(ids()).toEqual(initial.service_ids);
+    expect(container.querySelector("[data-drop-slot]")).toBeNull();
+    expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
+  },
+);
 
 it("anchors the grabbed supplier when rows become compact without changing priority", async () => {
   await act(async () => root.render(<Harness />));
   const list = measureRows(52);
-  await act(async () => handle("service_c").dispatchEvent(new PointerEvent("pointerdown", {
-    bubbles: true, button: 0, pointerId: 1, clientX: 20, clientY: 220,
-  })));
-  await act(async () => list.dispatchEvent(new PointerEvent("pointermove", {
-    bubbles: true, pointerId: 1, clientX: 20, clientY: 226,
-  })));
+  await act(async () =>
+    handle("service_c").dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerId: 1,
+        clientX: 20,
+        clientY: 220,
+      }),
+    ),
+  );
+  await act(async () =>
+    list.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        pointerId: 1,
+        clientX: 20,
+        clientY: 226,
+      }),
+    ),
+  );
   expect(ids()).toEqual(initial.service_ids);
-  expect(container.querySelector<HTMLElement>("[data-drop-slot]")?.style.top).toBe("200px");
-  await act(async () => list.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })));
+  expect(
+    container.querySelector<HTMLElement>("[data-drop-slot]")?.style.top,
+  ).toBe("200px");
+  await act(async () =>
+    list.dispatchEvent(
+      new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }),
+    ),
+  );
   expect(bridge.updateServiceOrder).not.toHaveBeenCalled();
   expect(list.style.paddingTop).toBe("");
 });

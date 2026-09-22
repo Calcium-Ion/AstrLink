@@ -147,7 +147,13 @@ describe("RequestTrajectory in a window host", () => {
           onSelectRequest={() => {}}
           selectedRequestId={record.id}
           turns={turns}
-          services={{ [record.service_id!]: { id: record.service_id!, name: "Configured gateway", kind: "newapi" } }}
+          services={{
+            [record.service_id!]: {
+              id: record.service_id!,
+              name: "Configured gateway",
+              kind: "newapi",
+            },
+          }}
         />,
       );
     });
@@ -216,10 +222,16 @@ describe("RequestTrajectory in a window host", () => {
       ["定位首次调用", record.id],
       ["定位最新调用", latest.id],
     ]) {
-      const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      const button = container.querySelector<HTMLButtonElement>(
+        `button[aria-label="${label}"]`,
+      );
       expect(button).not.toBeNull();
       await act(async () => button!.click());
-      expect(container.querySelector('[data-testid="trajectory-row"][aria-current="true"]')?.getAttribute("data-request-id")).toBe(requestId);
+      expect(
+        container
+          .querySelector('[data-testid="trajectory-row"][aria-current="true"]')
+          ?.getAttribute("data-request-id"),
+      ).toBe(requestId);
       expect(invoked("show_trajectory_inspector")).toBe(false);
     }
   });
@@ -260,8 +272,15 @@ describe("RequestTrajectory in a window host", () => {
       "CLIENT",
       "UPSTREAM",
     ]);
-    expect(hostMocks.invoke.mock.calls.find(([command]) => command === "show_trajectory_inspector")?.[1].selection.service)
-      .toEqual({ id: record.service_id, name: "Configured gateway", kind: "newapi" });
+    expect(
+      hostMocks.invoke.mock.calls.find(
+        ([command]) => command === "show_trajectory_inspector",
+      )?.[1].selection.service,
+    ).toEqual({
+      id: record.service_id,
+      name: "Configured gateway",
+      kind: "newapi",
+    });
   });
 
   it("follows a poll that replaced the record without opening a window", async () => {

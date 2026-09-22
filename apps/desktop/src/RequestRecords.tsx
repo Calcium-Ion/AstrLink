@@ -1,12 +1,6 @@
 import { SessionChannelBindings } from "./SessionChannelBindings";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   Copy,
@@ -75,7 +69,7 @@ import {
   saveTextFile,
   updateAuditSettings,
 } from "./bridge";
-import { copyButtonLabel, useCopyFeedback, type CopyFeedback } from "./copy-feedback";
+import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
 import { i18n, useT } from "./i18n";
 import { useLiveClock } from "./live-clock";
 import { notify } from "./notify";
@@ -219,7 +213,7 @@ export function RequestRecords({
 }) {
   const t = i18n.t.bind(i18n);
   const servicesById = useMemo(
-    () => Object.fromEntries(services.map(service => [service.id, service])),
+    () => Object.fromEntries(services.map((service) => [service.id, service])),
     [services],
   );
   const [view, setView] = useState<RecordsView>("monitor");
@@ -285,7 +279,8 @@ export function RequestRecords({
     [live.items, live.queued],
   );
   const visibleItems = useMemo(
-    () => live.items.filter((session) => sessionMatchesFilters(session, filters)),
+    () =>
+      live.items.filter((session) => sessionMatchesFilters(session, filters)),
     [filters, live.items],
   );
   const queuedVisibleCount = useMemo(
@@ -340,7 +335,10 @@ export function RequestRecords({
         if (cancelled) return;
         setOverlaySessions((current) => {
           const previous = current[detail.id];
-          if (previous && sessionDetailKey(previous) === sessionDetailKey(detail)) {
+          if (
+            previous &&
+            sessionDetailKey(previous) === sessionDetailKey(detail)
+          ) {
             return current;
           }
           return { ...current, [detail.id]: detail };
@@ -376,8 +374,10 @@ export function RequestRecords({
     );
     allRecords.forEach((session) => protocols.add(session.input_protocol));
     return [...protocols]
-      .filter((protocol) =>
-        kind === "all" || isModelDiscoveryProtocol(protocol) === (kind === "discovery"),
+      .filter(
+        (protocol) =>
+          kind === "all" ||
+          isModelDiscoveryProtocol(protocol) === (kind === "discovery"),
       )
       .sort();
   }, [allRecords, services, kind]);
@@ -442,7 +442,11 @@ export function RequestRecords({
     })
       .then((page) => {
         if (listGenerationRef.current !== generation) return;
-        setLive({ items: page.items, queued: [], nextCursor: page.next_cursor });
+        setLive({
+          items: page.items,
+          queued: [],
+          nextCursor: page.next_cursor,
+        });
         setListStatus("ready");
       })
       .catch((requestError: unknown) => {
@@ -633,11 +637,12 @@ export function RequestRecords({
       })
       .catch((requestError: unknown) => {
         if (auditGenerationRef.current !== generation) return;
-        const message = messageOf(requestError, i18n.t("records.auditContentFailed"));
+        const message = messageOf(
+          requestError,
+          i18n.t("records.auditContentFailed"),
+        );
         setAuditError(
-          message.includes("409")
-            ? i18n.t("records.auditKeyBroken")
-            : message,
+          message.includes("409") ? i18n.t("records.auditKeyBroken") : message,
         );
       })
       .finally(() => {
@@ -810,7 +815,9 @@ export function RequestRecords({
       setSettings({ ...current });
       setSettingsDraft({ ...current });
     } catch (requestError: unknown) {
-      setSettingsError(messageOf(requestError, i18n.t("records.auditReadFailed")));
+      setSettingsError(
+        messageOf(requestError, i18n.t("records.auditReadFailed")),
+      );
     } finally {
       setSettingsBusy(false);
     }
@@ -833,7 +840,10 @@ export function RequestRecords({
         notify.success(successNotice);
       }
     } catch (requestError: unknown) {
-      const message = messageOf(requestError, i18n.t("records.auditSaveFailed"));
+      const message = messageOf(
+        requestError,
+        i18n.t("records.auditSaveFailed"),
+      );
       if (settingsOpen) {
         setSettingsError(message);
       } else {
@@ -939,7 +949,10 @@ export function RequestRecords({
                               size="sm"
                             />
                           ) : (
-                            <span aria-hidden className="inline-block h-5 w-9" />
+                            <span
+                              aria-hidden
+                              className="inline-block h-5 w-9"
+                            />
                           )}
                         </Label>
                         <Button
@@ -983,7 +996,9 @@ export function RequestRecords({
                     <ListFilter aria-hidden="true" />
                     {t("records.discovery")}
                   </TabsTrigger>
-                  <TabsTrigger className="flex-none" value="all">{t("common.all")}</TabsTrigger>
+                  <TabsTrigger className="flex-none" value="all">
+                    {t("common.all")}
+                  </TabsTrigger>
                 </TabsList>
                 {error ? (
                   <FormMessage className="mt-2.5 shrink-0" tone="error">
@@ -991,7 +1006,10 @@ export function RequestRecords({
                   </FormMessage>
                 ) : null}
                 {syncWarning ? (
-                  <FormMessage className="mt-2.5 flex shrink-0 items-center gap-2" tone="warning">
+                  <FormMessage
+                    className="mt-2.5 flex shrink-0 items-center gap-2"
+                    tone="warning"
+                  >
                     <StatusDot tone="pending" />
                     {syncWarning}
                   </FormMessage>
@@ -1011,7 +1029,9 @@ export function RequestRecords({
                   </span>
                   <div className="grid min-w-0 flex-1 basis-72 grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.2fr)] gap-2 @[760px]:max-w-xl">
                     <FilterSelect
-                      ariaLabel={t("records.filter", { label: t("records.status") })}
+                      ariaLabel={t("records.filter", {
+                        label: t("records.status"),
+                      })}
                       className="w-full"
                       label={t("records.status")}
                       onChange={(status) =>
@@ -1030,7 +1050,9 @@ export function RequestRecords({
                       value={filters.status}
                     />
                     <FilterSelect
-                      ariaLabel={t("records.filter", { label: t("records.provider") })}
+                      ariaLabel={t("records.filter", {
+                        label: t("records.provider"),
+                      })}
                       className="w-full"
                       label={t("records.provider")}
                       onChange={(serviceId) =>
@@ -1046,7 +1068,9 @@ export function RequestRecords({
                       value={filters.serviceId}
                     />
                     <FilterSelect
-                      ariaLabel={t("records.filter", { label: t("records.protocol") })}
+                      ariaLabel={t("records.filter", {
+                        label: t("records.protocol"),
+                      })}
                       className="w-full"
                       label={t("records.protocol")}
                       onChange={(protocol) =>
@@ -1119,12 +1143,19 @@ export function RequestRecords({
                 <EmptyState
                   className="my-4 min-h-64"
                   title={t(
-                    kind === "discovery" ? "records.emptyDiscovery"
-                      : kind === "inference" ? "records.emptyInference" : "records.empty",
+                    kind === "discovery"
+                      ? "records.emptyDiscovery"
+                      : kind === "inference"
+                        ? "records.emptyInference"
+                        : "records.empty",
                   )}
                   action={
                     filters.status || filters.serviceId || filters.protocol ? (
-                      <Button variant="outline" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setFilters(EMPTY_FILTERS)}
+                      >
                         {t("records.clearFilters")}
                       </Button>
                     ) : undefined
@@ -1171,7 +1202,9 @@ export function RequestRecords({
             onSelectTurn={setSelectedTurnId}
             record={selected}
             serviceName={serviceLabel(selected.service_id, services)}
-            serviceNames={Object.fromEntries(services.map(service => [service.id, service.name]))}
+            serviceNames={Object.fromEntries(
+              services.map((service) => [service.id, service.name]),
+            )}
             services={servicesById}
             session={selectedSession}
             turns={selectedTurns}
@@ -1300,17 +1333,29 @@ function SessionPerformance({ session }: { session: RequestSession }) {
         size="compact"
         label={t("records.toolDuration")}
         title={t("records.toolDurationHint")}
-        value={session.tool_duration_ms == null ? "—" : `≈ ${formatDuration(session.tool_duration_ms)}`}
+        value={
+          session.tool_duration_ms == null
+            ? "—"
+            : `≈ ${formatDuration(session.tool_duration_ms)}`
+        }
       />
       <SummaryMetric
         size="compact"
         label={t("records.averageTTFT")}
-        value={session.average_ttft_ms == null ? "—" : formatDuration(session.average_ttft_ms)}
+        value={
+          session.average_ttft_ms == null
+            ? "—"
+            : formatDuration(session.average_ttft_ms)
+        }
       />
       <SummaryMetric
         size="compact"
         label={t("records.outputSpeed")}
-        value={session.output_tokens_per_second == null ? "—" : `${session.output_tokens_per_second.toFixed(1)} tok/s`}
+        value={
+          session.output_tokens_per_second == null
+            ? "—"
+            : `${session.output_tokens_per_second.toFixed(1)} tok/s`
+        }
       />
     </MetricGroup>
   );
@@ -1402,13 +1447,21 @@ function DiscoveryRow({
       >
         <StatusBadge
           className="col-start-1 row-start-1"
-          tone={session.status === "cancelled" ? "neutral" : statusTone(session.status)}
+          tone={
+            session.status === "cancelled"
+              ? "neutral"
+              : statusTone(session.status)
+          }
         >
           {statusLabel(session.status)}
         </StatusBadge>
         <span className="col-start-2 row-start-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="text-xs font-medium">{t("records.fetchModels")}</span>
-          {service.id ? <RequestServiceLabel className="text-xs" service={service} /> : null}
+          <span className="text-xs font-medium">
+            {t("records.fetchModels")}
+          </span>
+          {service.id ? (
+            <RequestServiceLabel className="text-xs" service={service} />
+          ) : null}
           <code className="truncate text-micro text-muted-foreground">
             GET {protocolEntryPath(session.input_protocol)}
           </code>
@@ -1462,7 +1515,11 @@ function SessionRow({
       >
         <StatusBadge
           className="col-start-1 row-start-1 @[680px]:row-span-2 @[680px]:row-start-1"
-          tone={session.status === "cancelled" ? "neutral" : statusTone(session.status)}
+          tone={
+            session.status === "cancelled"
+              ? "neutral"
+              : statusTone(session.status)
+          }
         >
           {statusLabel(session.status)}
         </StatusBadge>
@@ -1487,7 +1544,9 @@ function SessionRow({
           </code>
           <RequestServiceLabel
             className="col-start-1 row-start-1 font-medium text-foreground @[680px]:col-start-2"
-            label={session.call_count > 1 ? t("records.latestProvider") : undefined}
+            label={
+              session.call_count > 1 ? t("records.latestProvider") : undefined
+            }
             labelClassName="sr-only @[880px]:not-sr-only @[880px]:w-24"
             service={service}
           />
@@ -1559,7 +1618,7 @@ function RecordDetail({
     Record<string, RequestRecord[]>
   >({});
   const rootId = record.parent_request_id ?? record.id;
-  const rootRecord = turns.find(turn => turn.id === rootId) ?? record;
+  const rootRecord = turns.find((turn) => turn.id === rootId) ?? record;
   const recoveryRecords = [...(childrenByRoot[rootId] ?? []), rootRecord];
   const isChild = record.parent_request_id !== null;
   const requestPart = auditContent?.request_body ?? null;
@@ -1662,7 +1721,11 @@ function RecordDetail({
         back={{ label: t("records.live"), onClick: onBack }}
         className="mb-0 flex-wrap gap-x-4 gap-y-2"
         titleGroupClassName="flex-1 basis-64"
-        title={isModelDiscoveryProtocol(session.input_protocol) ? t("records.fetchModels") : session.title}
+        title={
+          isModelDiscoveryProtocol(session.input_protocol)
+            ? t("records.fetchModels")
+            : session.title
+        }
         titleId="request-detail-heading"
         titleSuffix={
           <StatusBadge
@@ -1689,7 +1752,13 @@ function RecordDetail({
             <IconButton
               className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
               disabled={deleting || record.status === "pending"}
-              label={record.status === "pending" ? t("records.deletePending") : deleting ? t("records.deleting") : t("common.delete")}
+              label={
+                record.status === "pending"
+                  ? t("records.deletePending")
+                  : deleting
+                    ? t("records.deleting")
+                    : t("common.delete")
+              }
               onClick={onDelete}
               type="button"
             >
@@ -1723,7 +1792,9 @@ function RecordDetail({
                   "bundle",
                   t("records.copyAll"),
                   bundleSize !== null
-                    ? t("records.copiedBytes", { size: formatBytes(bundleSize) })
+                    ? t("records.copiedBytes", {
+                        size: formatBytes(bundleSize),
+                      })
                     : t("common.copied"),
                 )}
               </Button>
@@ -1741,7 +1812,11 @@ function RecordDetail({
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => copyBundle(false)}>
                     <Copy aria-hidden="true" />
-                    {copyButtonLabel(copyFeedback, "bundle-meta", t("records.copyMetaHttp"))}
+                    {copyButtonLabel(
+                      copyFeedback,
+                      "bundle-meta",
+                      t("records.copyMetaHttp"),
+                    )}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={() => exportBundle("markdown")}>
@@ -1776,7 +1851,14 @@ function RecordDetail({
             >
               {t("records.tabContent")}
             </TabsTrigger>
-            {!isModelDiscoveryProtocol(session.input_protocol) && <TabsTrigger value="binding" onClick={() => setDetailTab("binding")}>{t("binding.tab")}</TabsTrigger>}
+            {!isModelDiscoveryProtocol(session.input_protocol) && (
+              <TabsTrigger
+                value="binding"
+                onClick={() => setDetailTab("binding")}
+              >
+                {t("binding.tab")}
+              </TabsTrigger>
+            )}
             <TabsTrigger onClick={() => setDetailTab("audit")} value="audit">
               {t("records.tabAudit")}
             </TabsTrigger>
@@ -1785,30 +1867,51 @@ function RecordDetail({
             <div className="flex min-w-0 max-w-64 items-center gap-1.5">
               <dt className="sr-only">{t("records.provider")}</dt>
               <dd className="min-w-0 text-foreground">
-                <RequestServiceLabel service={requestServiceIdentity(record, services)} />
+                <RequestServiceLabel
+                  service={requestServiceIdentity(record, services)}
+                />
               </dd>
             </div>
-            {isModelDiscoveryProtocol(session.input_protocol) && <div className="flex items-center gap-1.5">
-              <dt>{t("records.duration")}</dt>
-              <dd className="font-medium tabular-nums text-foreground">
-                <SessionDuration session={session} />
-              </dd>
-            </div>}
+            {isModelDiscoveryProtocol(session.input_protocol) && (
+              <div className="flex items-center gap-1.5">
+                <dt>{t("records.duration")}</dt>
+                <dd className="font-medium tabular-nums text-foreground">
+                  <SessionDuration session={session} />
+                </dd>
+              </div>
+            )}
             <div className="flex items-center gap-1.5">
               <dt>{t("records.turns")}</dt>
-              <dd className="font-medium tabular-nums text-foreground">{session.turn_count}</dd>
+              <dd className="font-medium tabular-nums text-foreground">
+                {session.turn_count}
+              </dd>
             </div>
             <div className="flex items-center gap-1.5">
               <dt>{t("records.calls")}</dt>
-              <dd className="font-medium tabular-nums text-foreground">{session.call_count}</dd>
+              <dd className="font-medium tabular-nums text-foreground">
+                {session.call_count}
+              </dd>
             </div>
           </dl>
         </div>
 
-        {!isModelDiscoveryProtocol(session.input_protocol) && <SessionPerformance session={session} />}
+        {!isModelDiscoveryProtocol(session.input_protocol) && (
+          <SessionPerformance session={session} />
+        )}
 
-        <TabsContent className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" value="binding">
-          <SessionChannelBindings key={session.id} sessionId={session.id} serviceNames={serviceNames} onSelectRequest={(id) => { onSelectTurn(id); setDetailTab("trajectory"); }} />
+        <TabsContent
+          className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          value="binding"
+        >
+          <SessionChannelBindings
+            key={session.id}
+            sessionId={session.id}
+            serviceNames={serviceNames}
+            onSelectRequest={(id) => {
+              onSelectTurn(id);
+              setDetailTab("trajectory");
+            }}
+          />
         </TabsContent>
 
         <TabsContent
@@ -1850,10 +1953,18 @@ function RecordDetail({
                 })}
                 code
               />
-              <DetailField label={t("records.protocol")} value={record.input_protocol} code />
+              <DetailField
+                label={t("records.protocol")}
+                value={record.input_protocol}
+                code
+              />
               <DetailField
                 label={t("records.transport")}
-                value={record.streaming ? t("records.streaming") : t("records.notStreaming")}
+                value={
+                  record.streaming
+                    ? t("records.streaming")
+                    : t("records.notStreaming")
+                }
               />
               <DetailField
                 label={t("records.service")}
@@ -1928,7 +2039,11 @@ function RecordDetail({
               <dl className="grid grid-cols-4 @max-[720px]:grid-cols-2 [&>div]:border-l [&>div]:px-3 [&>div:first-child]:border-l-0 [&>div:first-child]:pl-0">
                 <Metric
                   label={t("records.status")}
-                  value={record.privacy_restore.enabled ? t("records.on") : t("records.off")}
+                  value={
+                    record.privacy_restore.enabled
+                      ? t("records.on")
+                      : t("records.off")
+                  }
                 />
                 <Metric
                   label={t("records.mappings")}
@@ -1950,16 +2065,34 @@ function RecordDetail({
             )}
           </DetailSection>
 
-          {record.recovery || recoveryRecords.length > 1 ? <DetailSection title={t("failure.details")}><RecoveryChain records={recoveryRecords} serviceNames={serviceNames} /><RecoveryDetails value={record.recovery} /></DetailSection> : null}
+          {record.recovery || recoveryRecords.length > 1 ? (
+            <DetailSection title={t("failure.details")}>
+              <RecoveryChain
+                records={recoveryRecords}
+                serviceNames={serviceNames}
+              />
+              <RecoveryDetails value={record.recovery} />
+            </DetailSection>
+          ) : null}
 
           {record.error ? (
             <DetailSection tone="error" title={t("records.error")}>
               <dl className="grid grid-cols-3 gap-3 @max-[720px]:grid-cols-2">
-                <DetailField label={t("records.category")} value={record.error.category} code />
-                <DetailField label={t("records.code")} value={record.error.code} code />
+                <DetailField
+                  label={t("records.category")}
+                  value={record.error.category}
+                  code
+                />
+                <DetailField
+                  label={t("records.code")}
+                  value={record.error.code}
+                  code
+                />
                 <DetailField
                   label={t("records.retryable")}
-                  value={record.error.retryable ? t("common.yes") : t("common.no")}
+                  value={
+                    record.error.retryable ? t("common.yes") : t("common.no")
+                  }
                 />
                 <DetailField
                   className="col-span-full"
@@ -1989,7 +2122,11 @@ function RecordDetail({
                 label={t("records.retryChildren")}
                 value={String(record.child_count)}
               />
-              <DetailField label={t("records.route")} value={record.route_id ?? "—"} code />
+              <DetailField
+                label={t("records.route")}
+                value={record.route_id ?? "—"}
+                code
+              />
               <DetailField
                 label={t("records.service")}
                 value={serviceName ?? record.service_id ?? "—"}
@@ -2063,7 +2200,9 @@ function RecordDetail({
               />
             </>
           ) : (
-            <p className="text-xs text-muted-foreground">{t("records.noDecrypted")}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("records.noDecrypted")}
+            </p>
           )}
         </TabsContent>
 
@@ -2103,11 +2242,7 @@ function RecordDetail({
           </div>
           <div className="flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
             <span>{t("records.decryptMemoryOnly")}</span>
-            <Button
-              onClick={onClearDecrypted}
-              type="button"
-              variant="outline"
-            >
+            <Button onClick={onClearDecrypted} type="button" variant="outline">
               {t("records.clearDecrypted")}
             </Button>
           </div>
@@ -2153,7 +2288,13 @@ function DetailField({
   return (
     <div className={cn("min-w-0", className)}>
       <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-      <dd className="mt-1 overflow-hidden text-xs text-text-secondary text-ellipsis whitespace-nowrap">{code && typeof value === "string" && value !== "—" ? <code className="text-xs">{value}</code> : value}</dd>
+      <dd className="mt-1 overflow-hidden text-xs text-text-secondary text-ellipsis whitespace-nowrap">
+        {code && typeof value === "string" && value !== "—" ? (
+          <code className="text-xs">{value}</code>
+        ) : (
+          value
+        )}
+      </dd>
     </div>
   );
 }
@@ -2173,7 +2314,11 @@ function Metric({
       <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
       <dd className="mt-1 text-base font-semibold tabular-nums">
         {value}
-        {live ? <small className="ml-1 text-micro font-medium text-warning-foreground">{t("records.liveBadge")}</small> : null}
+        {live ? (
+          <small className="ml-1 text-micro font-medium text-warning-foreground">
+            {t("records.liveBadge")}
+          </small>
+        ) : null}
       </dd>
     </div>
   );
@@ -2195,12 +2340,20 @@ function AuditSummaryCard({
     <article className="rounded-md border bg-muted p-3">
       <header className="mb-2 flex items-center justify-between gap-2">
         <strong className="text-sm font-medium">{label}</strong>
-        <span className={cn("text-micro text-muted-foreground", captured && "text-success-foreground")}>
+        <span
+          className={cn(
+            "text-micro text-muted-foreground",
+            captured && "text-success-foreground",
+          )}
+        >
           {captured ? t("records.captured") : t("records.notCaptured")}
         </span>
       </header>
       <dl className="grid grid-cols-3 gap-2">
-        <DetailField label={t("records.type")} value={part?.media_type ?? "—"} />
+        <DetailField
+          label={t("records.type")}
+          value={part?.media_type ?? "—"}
+        />
         <DetailField
           label={t("records.size")}
           value={part ? formatBytes(part.captured_bytes) : "—"}
@@ -2219,7 +2372,10 @@ function RecordSkeleton() {
   return (
     <div aria-label={t("records.loading")} className="grid gap-2 p-3">
       {Array.from({ length: 6 }, (_, index) => (
-        <div className="grid animate-pulse gap-2 rounded-md border p-3" key={index}>
+        <div
+          className="grid animate-pulse gap-2 rounded-md border p-3"
+          key={index}
+        >
           <span className="h-3 w-2/3 rounded bg-muted" />
           <span className="h-2 w-1/2 rounded bg-muted" />
         </div>
@@ -2304,11 +2460,7 @@ function SettingsDialog({
         >
           {t("common.close")}
         </Button>
-        <Button
-          disabled={busy || !draft}
-          onClick={onSave}
-          type="button"
-        >
+        <Button disabled={busy || !draft} onClick={onSave} type="button">
           {busy ? t("common.saving") : t("common.save")}
         </Button>
       </DialogFooter>
@@ -2367,11 +2519,7 @@ function PurgeDialog({
         >
           {t("common.cancel")}
         </Button>
-        <Button
-          disabled={busy}
-          onClick={onSubmit}
-          type="button"
-        >
+        <Button disabled={busy} onClick={onSubmit} type="button">
           {busy ? t("records.purging") : t("records.runPurge")}
         </Button>
       </DialogFooter>

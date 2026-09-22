@@ -45,17 +45,18 @@ async function loadPreferences(): Promise<void> {
         themeUpdated = true;
         applyTheme(payload);
       }
-    }).catch((error) => console.error("Unable to observe AstrLink theme", error));
+    }).catch((error) =>
+      console.error("Unable to observe AstrLink theme", error),
+    );
   }
   const settings = await getPreferences();
   if (!themeUpdated) applyTheme(settings.values.theme);
   await applyLocale(settings.values.locale);
 }
 
-void loadPreferences()
-  .catch(() => {
-    // Browser preview has no preferences IPC.
-  });
+void loadPreferences().catch(() => {
+  // Browser preview has no preferences IPC.
+});
 
 function LocaleGate({ children }: { children: ReactNode }) {
   useT();

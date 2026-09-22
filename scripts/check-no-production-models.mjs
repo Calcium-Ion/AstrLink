@@ -5,19 +5,16 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const arguments_ = process.argv.slice(2);
 const packaged = arguments_.includes("--packaged");
-const requestedRoots = arguments_.filter((argument) => argument !== "--packaged");
+const requestedRoots = arguments_.filter(
+  (argument) => argument !== "--packaged",
+);
 const scanRoots =
   requestedRoots.length === 0
     ? [root]
     : requestedRoots.map((path) =>
         isAbsolute(path) ? path : resolve(process.cwd(), path),
       );
-const ignoredDirectories = new Set([
-  ".git",
-  "dist",
-  "node_modules",
-  "target",
-]);
+const ignoredDirectories = new Set([".git", "dist", "node_modules", "target"]);
 const modelPatterns = [
   /(?:^|\/)pytorch_model[^/]*\.bin$/i,
   /(?:^|\/)tf_model[^/]*\.h5$/i,

@@ -40,7 +40,9 @@ export function Metric({
         "flex min-w-0 flex-col bg-card",
         size === "compact"
           ? "flex-row flex-wrap items-center justify-between gap-x-2 gap-y-0.5 px-3 py-1.5 @max-[800px]/workspace-surface:flex-col @max-[800px]/workspace-surface:items-start"
-          : size === "sm" ? "gap-1 px-3 py-2.5" : "gap-2 px-4 py-4",
+          : size === "sm"
+            ? "gap-1 px-3 py-2.5"
+            : "gap-2 px-4 py-4",
       )}
     >
       <dt className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -54,7 +56,11 @@ export function Metric({
       <dd
         className={cn(
           "min-w-0 font-semibold tracking-tight tabular-nums",
-          size === "compact" ? "text-sm leading-5" : size === "sm" ? "text-lg leading-6" : "text-xl leading-7",
+          size === "compact"
+            ? "text-sm leading-5"
+            : size === "sm"
+              ? "text-lg leading-6"
+              : "text-xl leading-7",
           emphasis ? "text-primary" : "text-foreground",
         )}
         title={title}

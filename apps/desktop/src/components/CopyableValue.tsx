@@ -56,7 +56,11 @@ export function CopyableValue({
       variant="ghost"
     >
       {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-      {variant === "block" ? (copied ? i18n.t("common.copied") : copyLabel) : null}
+      {variant === "block"
+        ? copied
+          ? i18n.t("common.copied")
+          : copyLabel
+        : null}
     </Button>
   );
 
@@ -78,7 +82,10 @@ export function CopyableValue({
     <div className="flex min-w-0 items-center gap-2">
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
-        <code className="min-w-0 select-text break-all font-mono text-xs font-medium tracking-tight" title={value || undefined}>
+        <code
+          className="min-w-0 select-text break-all font-mono text-xs font-medium tracking-tight"
+          title={value || undefined}
+        >
           {value || placeholder}
         </code>
       </div>

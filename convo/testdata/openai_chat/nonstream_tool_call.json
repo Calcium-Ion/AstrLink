@@ -10,12 +10,27 @@
         "role": "assistant",
         "content": null,
         "tool_calls": [
-          {"id": "call_0", "type": "function", "function": {"name": "grep", "arguments": "{\"pattern\":\"TODO\"}"}},
-          {"id": "call_5e6d7c8b9a0f1e2d3c4b", "type": "function", "function": {"name": "ls", "arguments": "{}"}}
+          {
+            "id": "call_0",
+            "type": "function",
+            "function": {
+              "name": "grep",
+              "arguments": "{\"pattern\":\"TODO\"}"
+            }
+          },
+          {
+            "id": "call_5e6d7c8b9a0f1e2d3c4b",
+            "type": "function",
+            "function": { "name": "ls", "arguments": "{}" }
+          }
         ]
       },
       "finish_reason": "tool_calls"
     }
   ],
-  "usage": {"prompt_tokens": 210, "completion_tokens": 31, "total_tokens": 241}
+  "usage": {
+    "prompt_tokens": 210,
+    "completion_tokens": 31,
+    "total_tokens": 241
+  }
 }

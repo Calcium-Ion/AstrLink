@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  decodeModelEditorValue,
-  encodeModelEditorValue,
-} from "./model-editor";
+import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 
 describe("model editor escaping", () => {
   it.each([

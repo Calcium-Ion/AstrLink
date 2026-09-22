@@ -145,7 +145,9 @@ export function sessionRuntimeMs(
 ): number {
   return session.active_request_starts.reduce((duration, startedAt) => {
     const started = Date.parse(startedAt);
-    return duration + (Number.isFinite(started) ? Math.max(0, nowMs - started) : 0);
+    return (
+      duration + (Number.isFinite(started) ? Math.max(0, nowMs - started) : 0)
+    );
   }, session.duration_ms);
 }
 

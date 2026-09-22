@@ -67,9 +67,7 @@ describe("service model", () => {
       "newapi",
     ]);
     expect(page.items[0].subscription?.status).toBe("connected");
-    expect(page.items[1].http?.base_url).toBe(
-      "https://gateway.example/v1",
-    );
+    expect(page.items[1].http?.base_url).toBe("https://gateway.example/v1");
   });
 
   it("parses Grok subscription services and binds them to the xai_grok provider", () => {
@@ -250,7 +248,10 @@ describe("service model", () => {
 
 describe("hasPlanUsage", () => {
   it("covers connected subscriptions and API-key coding plans with a quota route", () => {
-    const http = { base_url: "https://api.kimi.com/coding", auth: { scheme: "bearer" as const } };
+    const http = {
+      base_url: "https://api.kimi.com/coding",
+      auth: { scheme: "bearer" as const },
+    };
     expect(hasPlanUsage({ kind: "kimi_coding", http })).toBe(true);
     expect(hasPlanUsage({ kind: "glm_coding", http })).toBe(true);
     expect(hasPlanUsage({ kind: "minimax_coding", http })).toBe(true);
@@ -258,7 +259,17 @@ describe("hasPlanUsage", () => {
     expect(hasPlanUsage({ kind: "opencode_zen", http })).toBe(false);
     expect(hasPlanUsage({ kind: "newapi", http })).toBe(false);
     expect(hasPlanUsage({ kind: "kimi_coding" })).toBe(false);
-    expect(hasPlanUsage({ kind: "claude_subscription", subscription: { status: "connected" } })).toBe(true);
-    expect(hasPlanUsage({ kind: "codex_subscription", subscription: { status: "disconnected" } })).toBe(false);
+    expect(
+      hasPlanUsage({
+        kind: "claude_subscription",
+        subscription: { status: "connected" },
+      }),
+    ).toBe(true);
+    expect(
+      hasPlanUsage({
+        kind: "codex_subscription",
+        subscription: { status: "disconnected" },
+      }),
+    ).toBe(false);
   });
 });

@@ -1,6 +1,12 @@
 export type FailureAction =
-  "stop" | "retry" | "failover" | "retry_and_failover";
-export type FailoverStrategy = "retry_first" | "failover_first" | "failover_only";
+  | "stop"
+  | "retry"
+  | "failover"
+  | "retry_and_failover";
+export type FailoverStrategy =
+  | "retry_first"
+  | "failover_first"
+  | "failover_only";
 
 export interface FailurePolicy {
   max_retries: number;
@@ -21,17 +27,24 @@ export interface FailoverPolicy {
   max_attempts: number;
 }
 
-export interface ChannelStickiness { enabled: boolean; ttl_seconds: number; }
+export interface ChannelStickiness {
+  enabled: boolean;
+  ttl_seconds: number;
+}
 
-export const identitySettingKeys = ["codex_identity_enforcement", "claude_identity_enforcement", "grok_identity_enforcement"] as const;
-export type IdentitySettingKey = typeof identitySettingKeys[number];
+export const identitySettingKeys = [
+  "codex_identity_enforcement",
+  "claude_identity_enforcement",
+  "grok_identity_enforcement",
+] as const;
+export type IdentitySettingKey = (typeof identitySettingKeys)[number];
 
 export interface RoutingSettings {
   codex_identity_enforcement?: boolean;
   claude_identity_enforcement?: boolean;
   grok_identity_enforcement?: boolean;
   channel_stickiness?: ChannelStickiness;
- default_recovery_paths?: Record<string,string>;
+  default_recovery_paths?: Record<string, string>;
   default_failure_policy: FailurePolicy;
   allow_unmatched_failover: boolean;
   strategy: FailoverStrategy;
@@ -122,7 +135,12 @@ export function parseFailurePolicy(
       "response_timeout",
       "http_status",
     ],
-    ["response_start_timeout_seconds", "thinking_signature_recovery", "openai_reasoning_recovery", "openai_function_output_recovery"],
+    [
+      "response_start_timeout_seconds",
+      "thinking_signature_recovery",
+      "openai_reasoning_recovery",
+      "openai_function_output_recovery",
+    ],
     path,
   );
   const initial = integer(
@@ -131,7 +149,11 @@ export function parseFailurePolicy(
     60000,
     `${path}.initial_delay_ms`,
   );
-  for (const key of ["thinking_signature_recovery", "openai_reasoning_recovery", "openai_function_output_recovery"]) {
+  for (const key of [
+    "thinking_signature_recovery",
+    "openai_reasoning_recovery",
+    "openai_function_output_recovery",
+  ]) {
     if (Object.hasOwn(policy, key) && typeof policy[key] !== "boolean")
       throw new Error(`${path}.${key}: expected a boolean`);
   }
@@ -147,13 +169,22 @@ export function parseFailurePolicy(
   return {
     max_retries: integer(policy.max_retries, 0, 5, `${path}.max_retries`),
     ...(Object.hasOwn(policy, "thinking_signature_recovery")
-      ? { thinking_signature_recovery: policy.thinking_signature_recovery as boolean }
+      ? {
+          thinking_signature_recovery:
+            policy.thinking_signature_recovery as boolean,
+        }
       : {}),
     ...(Object.hasOwn(policy, "openai_reasoning_recovery")
-      ? { openai_reasoning_recovery: policy.openai_reasoning_recovery as boolean }
+      ? {
+          openai_reasoning_recovery:
+            policy.openai_reasoning_recovery as boolean,
+        }
       : {}),
     ...(Object.hasOwn(policy, "openai_function_output_recovery")
-      ? { openai_function_output_recovery: policy.openai_function_output_recovery as boolean }
+      ? {
+          openai_function_output_recovery:
+            policy.openai_function_output_recovery as boolean,
+        }
       : {}),
     initial_delay_ms: initial,
     max_delay_ms: integer(
@@ -189,7 +220,9 @@ export function parseFailoverPolicy(
   keys(policy, ["enabled", "strategy", "max_attempts"], [], path);
   if (
     typeof policy.enabled !== "boolean" ||
-    (policy.strategy !== "retry_first" && policy.strategy !== "failover_first" && policy.strategy !== "failover_only")
+    (policy.strategy !== "retry_first" &&
+      policy.strategy !== "failover_first" &&
+      policy.strategy !== "failover_only")
   )
     throw new Error(`${path}: invalid switch or strategy`);
   return {
@@ -226,17 +259,42 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
   if (settings.channel_stickiness !== undefined) {
     const value = object(settings.channel_stickiness, "channel_stickiness");
     keys(value, ["enabled", "ttl_seconds"], [], "channel_stickiness");
-    if (typeof value.enabled !== "boolean" || !Number.isInteger(value.ttl_seconds) || (value.ttl_seconds as number) < 60 || (value.ttl_seconds as number) > 86400) throw Error("invalid channel stickiness");
-    stickiness = { enabled: value.enabled, ttl_seconds: value.ttl_seconds as number };
+    if (
+      typeof value.enabled !== "boolean" ||
+      !Number.isInteger(value.ttl_seconds) ||
+      (value.ttl_seconds as number) < 60 ||
+      (value.ttl_seconds as number) > 86400
+    )
+      throw Error("invalid channel stickiness");
+    stickiness = {
+      enabled: value.enabled,
+      ttl_seconds: value.ttl_seconds as number,
+    };
   }
-  const defaults = settings.default_recovery_paths===undefined?undefined:object(settings.default_recovery_paths,"default_recovery_paths");
- if(defaults)for(const [protocol,id] of Object.entries(defaults)){if(!/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(protocol)||typeof id!=="string"||!/^[a-z][a-z0-9_-]{2,95}$/.test(id))throw Error("invalid default recovery path")}
- return {
-    codex_identity_enforcement: (settings.codex_identity_enforcement as boolean | undefined) ?? true,
-    claude_identity_enforcement: (settings.claude_identity_enforcement as boolean | undefined) ?? true,
-    grok_identity_enforcement: (settings.grok_identity_enforcement as boolean | undefined) ?? true,
- ...(stickiness ? { channel_stickiness: stickiness } : {}),
- ...(defaults ? {default_recovery_paths:defaults as Record<string,string>}:{}),
+  const defaults =
+    settings.default_recovery_paths === undefined
+      ? undefined
+      : object(settings.default_recovery_paths, "default_recovery_paths");
+  if (defaults)
+    for (const [protocol, id] of Object.entries(defaults)) {
+      if (
+        !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(protocol) ||
+        typeof id !== "string" ||
+        !/^[a-z][a-z0-9_-]{2,95}$/.test(id)
+      )
+        throw Error("invalid default recovery path");
+    }
+  return {
+    codex_identity_enforcement:
+      (settings.codex_identity_enforcement as boolean | undefined) ?? true,
+    claude_identity_enforcement:
+      (settings.claude_identity_enforcement as boolean | undefined) ?? true,
+    grok_identity_enforcement:
+      (settings.grok_identity_enforcement as boolean | undefined) ?? true,
+    ...(stickiness ? { channel_stickiness: stickiness } : {}),
+    ...(defaults
+      ? { default_recovery_paths: defaults as Record<string, string> }
+      : {}),
     default_failure_policy: parseFailurePolicy(settings.default_failure_policy),
     allow_unmatched_failover: parsed.enabled,
     strategy: parsed.strategy,

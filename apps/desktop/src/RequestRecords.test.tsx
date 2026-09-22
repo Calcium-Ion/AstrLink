@@ -135,8 +135,17 @@ function sessionFromRecord(
     started_at: record.started_at,
     last_started_at: record.started_at,
     completed_at: record.completed_at,
-    duration_ms: record.latency_ms ?? (record.completed_at ? Date.parse(record.completed_at) - Date.parse(record.started_at) : 0),
-    active_request_starts: record.status === "pending" && record.latency_ms === null && !record.completed_at ? [record.started_at] : [],
+    duration_ms:
+      record.latency_ms ??
+      (record.completed_at
+        ? Date.parse(record.completed_at) - Date.parse(record.started_at)
+        : 0),
+    active_request_starts:
+      record.status === "pending" &&
+      record.latency_ms === null &&
+      !record.completed_at
+        ? [record.started_at]
+        : [],
     turn_count: 1,
     call_count: 1 + record.child_count,
     status: displayRequestStatus(record.status, record.http_status),
@@ -204,9 +213,9 @@ async function chooseOption(label: string, option: string): Promise<void> {
     );
     await Promise.resolve();
   });
-  const item = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-    (candidate) => candidate.textContent?.trim() === option,
-  );
+  const item = [
+    ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+  ].find((candidate) => candidate.textContent?.trim() === option);
   if (!item) throw new Error(`Missing select option: ${option}`);
   await act(async () => {
     item.click();
@@ -236,13 +245,15 @@ describe("RequestRecords", () => {
       items: [secondRecord, firstRecord],
       next_cursor: "cursor-1",
     });
-    bridgeMocks.getRequestSession.mockImplementation(async (sessionId: string) => {
-      const record = [firstRecord, secondRecord].find(
-        (item) => (item.session_id ?? item.id) === sessionId,
-      );
-      if (!record) throw new Error(`missing session ${sessionId}`);
-      return sessionDetail(record);
-    });
+    bridgeMocks.getRequestSession.mockImplementation(
+      async (sessionId: string) => {
+        const record = [firstRecord, secondRecord].find(
+          (item) => (item.session_id ?? item.id) === sessionId,
+        );
+        if (!record) throw new Error(`missing session ${sessionId}`);
+        return sessionDetail(record);
+      },
+    );
     bridgeMocks.getAuditSettings.mockResolvedValue({
       request_body_enabled: false,
       response_content_enabled: false,
@@ -324,11 +335,7 @@ describe("RequestRecords", () => {
   const renderRecords = async (session = "session-1", services = [service]) => {
     await act(async () => {
       reactRoot.render(
-        <RequestRecords
-          coreSessionKey={session}
-          services={services}
-          isReady
-        />,
+        <RequestRecords coreSessionKey={session} services={services} isReady />,
       );
       await Promise.resolve();
     });
@@ -346,7 +353,9 @@ describe("RequestRecords", () => {
       next_cursor: null,
     });
     await renderRecords();
-    const rows = container.querySelectorAll('[data-testid="request-session-row"]');
+    const rows = container.querySelectorAll(
+      '[data-testid="request-session-row"]',
+    );
     const badge = rows[0]?.querySelector('[aria-label="思考强度: high"]');
     expect(badge?.textContent).toBe("high");
     expect(badge?.parentElement?.textContent).toContain("gpt-4.1");
@@ -357,9 +366,13 @@ describe("RequestRecords", () => {
     await renderRecords();
 
     expect(container.querySelector("h1")?.textContent).toBe("请求记录");
-    expect(container.querySelectorAll('[data-slot="page-header"]')).toHaveLength(1);
+    expect(
+      container.querySelectorAll('[data-slot="page-header"]'),
+    ).toHaveLength(1);
     expect(container.querySelector("table")).toBeNull();
-    expect(container.querySelectorAll('[data-testid="request-session-row"]')).toHaveLength(2);
+    expect(
+      container.querySelectorAll('[data-testid="request-session-row"]'),
+    ).toHaveLength(2);
     expect(container.textContent).toContain("gpt-4.1");
     expect(container.textContent).toContain("/v1/responses");
     expect(container.textContent).toContain("Primary gateway");
@@ -367,7 +380,9 @@ describe("RequestRecords", () => {
     expect(container.textContent).not.toContain("次调用");
     expect(container.textContent).toContain("120 ms");
     expect(container.textContent).not.toMatch(/\d{3,}m /);
-    const provider = container.querySelector(`[aria-label="${i18n.t("records.provider")}: Primary gateway"]`);
+    const provider = container.querySelector(
+      `[aria-label="${i18n.t("records.provider")}: Primary gateway"]`,
+    );
     expect(provider?.querySelector('[aria-label="New API"]')).not.toBeNull();
     expect(provider?.getAttribute("title")).toContain(service.id);
   });
@@ -375,15 +390,29 @@ describe("RequestRecords", () => {
   it("distinguishes pending selection, an unrouted result and a removed provider", async () => {
     bridgeMocks.listRequestSessions.mockResolvedValue({
       items: [
-        sessionFromRecord(firstRecord, { id: "pending", service_id: null, status: "pending" }),
-        sessionFromRecord(firstRecord, { id: "blocked", service_id: null, status: "blocked" }),
-        sessionFromRecord(firstRecord, { id: "removed", service_id: "service_removed" }),
+        sessionFromRecord(firstRecord, {
+          id: "pending",
+          service_id: null,
+          status: "pending",
+        }),
+        sessionFromRecord(firstRecord, {
+          id: "blocked",
+          service_id: null,
+          status: "blocked",
+        }),
+        sessionFromRecord(firstRecord, {
+          id: "removed",
+          service_id: "service_removed",
+        }),
       ],
       next_cursor: null,
     });
     await renderRecords();
-    const labels = [...container.querySelectorAll('[data-testid="request-session-row"] [data-testid="request-service-label"]')]
-      .map(node => node.textContent);
+    const labels = [
+      ...container.querySelectorAll(
+        '[data-testid="request-session-row"] [data-testid="request-service-label"]',
+      ),
+    ].map((node) => node.textContent);
     expect(labels).toEqual([
       `${i18n.t("records.provider")}${i18n.t("records.selectingService")}`,
       `${i18n.t("records.provider")}${i18n.t("records.noService")}`,
@@ -411,21 +440,37 @@ describe("RequestRecords", () => {
       average_ttft_ms: 2200,
       output_tokens_per_second: 131.25,
     });
-    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [summary], next_cursor: null });
-    bridgeMocks.getRequestSession.mockResolvedValue({ ...summary, turns: [firstRecord, last] });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [summary],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValue({
+      ...summary,
+      turns: [firstRecord, last],
+    });
     await renderRecords();
-    const row = container.querySelector<HTMLButtonElement>('[data-testid="request-session-row"]')!;
+    const row = container.querySelector<HTMLButtonElement>(
+      '[data-testid="request-session-row"]',
+    )!;
     expect(row.textContent).toContain("2 轮 · 3 次调用 · 3.6 s");
-    await act(async () => { row.click(); });
+    await act(async () => {
+      row.click();
+    });
     await act(async () => await Promise.resolve());
-    const duration = () => [...container.querySelectorAll("dt")]
-      .find(node => node.textContent === i18n.t("records.modelDuration"))?.nextElementSibling?.textContent;
+    const duration = () =>
+      [...container.querySelectorAll("dt")].find(
+        (node) => node.textContent === i18n.t("records.modelDuration"),
+      )?.nextElementSibling?.textContent;
     expect(duration()).toBe("3.6 s");
-    const stats = container.querySelector('[data-testid="session-performance"]')!;
+    const stats = container.querySelector(
+      '[data-testid="session-performance"]',
+    )!;
     expect(stats.textContent).toContain("≈ 19.8 s");
     expect(stats.textContent).toContain("2.2 s");
     expect(stats.textContent).toContain("131.3 tok/s");
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
     expect(duration()).toBe("3.6 s");
   });
 
@@ -439,17 +484,34 @@ describe("RequestRecords", () => {
       duration_ms: 12_000,
       active_request_starts: ["2026-07-28T12:00:00Z"],
     });
-    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [summary], next_cursor: null });
-    await renderRecords();
-    const runtime = () => container.querySelector('[data-testid="request-session-row"]')?.textContent;
-    expect(runtime()).toContain("22.0 s");
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(runtime()).toContain("23.0 s");
     bridgeMocks.listRequestSessions.mockResolvedValue({
-      items: [{ ...summary, status: "succeeded", completed_at: "2026-07-28T12:00:11Z", duration_ms: 23_000, active_request_starts: [] }],
+      items: [summary],
       next_cursor: null,
     });
-    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await renderRecords();
+    const runtime = () =>
+      container.querySelector('[data-testid="request-session-row"]')
+        ?.textContent;
+    expect(runtime()).toContain("22.0 s");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(runtime()).toContain("23.0 s");
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        {
+          ...summary,
+          status: "succeeded",
+          completed_at: "2026-07-28T12:00:11Z",
+          duration_ms: 23_000,
+          active_request_starts: [],
+        },
+      ],
+      next_cursor: null,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
     expect(runtime()).toContain("23.0 s");
   });
 
@@ -489,9 +551,16 @@ describe("RequestRecords", () => {
       next_cursor: null,
     });
 
-    await renderRecords("session-1", [service, { ...service, id: "service_backup", name: "Backup gateway" }]);
+    await renderRecords("session-1", [
+      service,
+      { ...service, id: "service_backup", name: "Backup gateway" },
+    ]);
     expect(container.textContent).toContain("1 轮 · 3 次调用");
-    expect(container.querySelector(`[aria-label="${i18n.t("records.latestProvider")}: Primary gateway"]`)).not.toBeNull();
+    expect(
+      container.querySelector(
+        `[aria-label="${i18n.t("records.latestProvider")}: Primary gateway"]`,
+      ),
+    ).not.toBeNull();
     await act(async () => {
       (
         container.querySelector(
@@ -509,10 +578,18 @@ describe("RequestRecords", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("重试"));
     expect(container.textContent).toContain("子请求 1");
     expect(container.textContent).toContain("子请求 2");
-    expect(container.querySelectorAll('[data-testid="trajectory-row"]').length).toBeGreaterThan(0);
-    const retryProvider = container.querySelector(`[data-testid="trajectory-row"][data-chip="RETRY"][data-request-id="${children[0].id}"] [data-testid="request-service-label"]`);
+    expect(
+      container.querySelectorAll('[data-testid="trajectory-row"]').length,
+    ).toBeGreaterThan(0);
+    const retryProvider = container.querySelector(
+      `[data-testid="trajectory-row"][data-chip="RETRY"][data-request-id="${children[0].id}"] [data-testid="request-service-label"]`,
+    );
     expect(retryProvider?.textContent).toContain("Backup gateway");
-    expect(container.querySelector('[data-testid="trajectory-row"][data-chip="UPSTREAM"] [data-testid="request-service-label"]')?.textContent).toContain("Primary gateway");
+    expect(
+      container.querySelector(
+        '[data-testid="trajectory-row"][data-chip="UPSTREAM"] [data-testid="request-service-label"]',
+      )?.textContent,
+    ).toContain("Primary gateway");
 
     bridgeMocks.getRequestAuditContent.mockClear();
     await act(async () => {
@@ -527,7 +604,11 @@ describe("RequestRecords", () => {
     expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledWith(
       children[0].id,
     );
-    expect(container.querySelector('[data-testid="trajectory-inspector"] [data-testid="request-service-label"]')?.textContent).toContain("Backup gateway");
+    expect(
+      container.querySelector(
+        '[data-testid="trajectory-inspector"] [data-testid="request-service-label"]',
+      )?.textContent,
+    ).toContain("Backup gateway");
   });
 
   it("copies skill diagnostic metadata without captured bodies", async () => {
@@ -629,7 +710,9 @@ describe("RequestRecords", () => {
     });
     await act(async () => await Promise.resolve());
     await act(async () => await Promise.resolve());
-    expect(container.querySelector('[data-testid="trajectory-row"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="trajectory-row"]'),
+    ).not.toBeNull();
 
     bridgeMocks.getRequestSession.mockClear();
     bridgeMocks.listRequestRecordChildren.mockClear();
@@ -656,7 +739,9 @@ describe("RequestRecords", () => {
       session_id: sessionId,
       turn_index: index + 1,
       started_at: new Date(firstStartedAt + index * 4000).toISOString(),
-      completed_at: new Date(firstStartedAt + index * 4000 + 2000).toISOString(),
+      completed_at: new Date(
+        firstStartedAt + index * 4000 + 2000,
+      ).toISOString(),
     }));
     const summary = sessionFromRecord(turns[0]!, {
       id: sessionId,
@@ -692,7 +777,9 @@ describe("RequestRecords", () => {
     await act(async () => await Promise.resolve());
     await act(async () => await Promise.resolve());
 
-    const mounted = container.querySelectorAll('[data-testid="trajectory-row"]');
+    const mounted = container.querySelectorAll(
+      '[data-testid="trajectory-row"]',
+    );
     // 90 turns × (1 header + 6 phases) is 630 rows; a 600px viewport of 32px
     // rows plus overscan is well under a hundred.
     expect(mounted.length).toBeGreaterThan(10);
@@ -735,7 +822,9 @@ describe("RequestRecords", () => {
       session_id: sessionId,
       turn_index: index + 1,
       started_at: new Date(firstStartedAt + index * 4000).toISOString(),
-      completed_at: new Date(firstStartedAt + index * 4000 + 2000).toISOString(),
+      completed_at: new Date(
+        firstStartedAt + index * 4000 + 2000,
+      ).toISOString(),
     }));
     const last = turns[turns.length - 1]!;
     const first = turns[0]!;
@@ -854,7 +943,9 @@ describe("RequestRecords", () => {
     await act(async () => await Promise.resolve());
     await act(async () => await Promise.resolve());
 
-    const gaps = [...container.querySelectorAll('[data-testid="trajectory-gap"]')];
+    const gaps = [
+      ...container.querySelectorAll('[data-testid="trajectory-gap"]'),
+    ];
     expect(gaps).toHaveLength(1);
     expect(gaps[0]?.getAttribute("title")).toContain("5m 00s");
 
@@ -863,9 +954,9 @@ describe("RequestRecords", () => {
         '[data-testid="trajectory-call"]',
       ),
     ];
-    expect(new Set(calls.map((node) => node.getAttribute("data-request-id")))).toEqual(
-      new Set([turn1.id, turn2.id]),
-    );
+    expect(
+      new Set(calls.map((node) => node.getAttribute("data-request-id"))),
+    ).toEqual(new Set([turn1.id, turn2.id]));
 
     // Minimum widths scale with duration against the session's own knee, which
     // is the median of the 2 s and 20 s call here, so the strip stays
@@ -887,13 +978,19 @@ describe("RequestRecords", () => {
     expect(header?.textContent).toContain("网关");
     expect(header?.textContent).toContain("上游");
     expect(
-      container.querySelector('[data-testid="trajectory-phase"][data-chip="CLIENT"]'),
+      container.querySelector(
+        '[data-testid="trajectory-phase"][data-chip="CLIENT"]',
+      ),
     ).not.toBeNull();
     expect(
-      container.querySelector('[data-testid="trajectory-phase"][data-chip="POLICY"]'),
+      container.querySelector(
+        '[data-testid="trajectory-phase"][data-chip="POLICY"]',
+      ),
     ).not.toBeNull();
     expect(
-      container.querySelector('[data-testid="trajectory-phase"][data-chip="UPSTREAM"]'),
+      container.querySelector(
+        '[data-testid="trajectory-phase"][data-chip="UPSTREAM"]',
+      ),
     ).not.toBeNull();
 
     const labels = [
@@ -917,11 +1014,9 @@ describe("RequestRecords", () => {
     );
     expect(policyRow?.getAttribute("data-selected")).toBe("true");
     expect(
-      [
-        ...container.querySelectorAll(
-          '[data-testid="inspector-tab"]',
-        ),
-      ].map((tab) => tab.getAttribute("data-chip")),
+      [...container.querySelectorAll('[data-testid="inspector-tab"]')].map(
+        (tab) => tab.getAttribute("data-chip"),
+      ),
     ).toEqual(["CLIENT", "POLICY", "ROUTE", "UPSTREAM", "RESTORE", "RESULT"]);
     expect(
       container
@@ -1032,7 +1127,9 @@ describe("RequestRecords", () => {
     const list = container.querySelector('[data-testid="trajectory-list"]');
     expect(list?.className).toContain("overflow-y-auto");
     const failed = [
-      ...container.querySelectorAll('[data-testid="trajectory-row"][data-tone="failed"]'),
+      ...container.querySelectorAll(
+        '[data-testid="trajectory-row"][data-tone="failed"]',
+      ),
     ];
     expect(failed.length).toBe(2);
     expect(failed.some((row) => row.textContent?.includes("结果"))).toBe(true);
@@ -1200,7 +1297,9 @@ describe("RequestRecords", () => {
     expect(blockedRow?.textContent).toContain("已拦截");
     expect(blockedRow?.querySelector('[data-tone="blocked"]')).not.toBeNull();
     expect(blockedRow?.querySelector('[data-tone="pending"]')).toBeNull();
-    expect(interruptedRow?.querySelector('[data-tone="pending"]')).not.toBeNull();
+    expect(
+      interruptedRow?.querySelector('[data-tone="pending"]'),
+    ).not.toBeNull();
     expect(interruptedRow?.querySelector('[data-tone="blocked"]')).toBeNull();
   });
 
@@ -1242,9 +1341,9 @@ describe("RequestRecords", () => {
     expect(after?.getAttribute("data-focus-chip")).toBe("POLICY");
     expect(after?.getAttribute("data-request-id")).toBe(firstRecord.id);
     expect(
-      [
-        ...after!.querySelectorAll('[data-testid="inspector-tab"]'),
-      ].map((tab) => tab.getAttribute("data-chip")),
+      [...after!.querySelectorAll('[data-testid="inspector-tab"]')].map((tab) =>
+        tab.getAttribute("data-chip"),
+      ),
     ).toEqual(["CLIENT", "POLICY", "ROUTE", "UPSTREAM", "RESTORE", "RESULT"]);
     expect(
       after
@@ -1252,14 +1351,18 @@ describe("RequestRecords", () => {
         ?.getAttribute("aria-selected"),
     ).toBe("true");
     expect(
-      after?.querySelector('[data-testid="inspector-section"]')?.getAttribute("data-chip"),
+      after
+        ?.querySelector('[data-testid="inspector-section"]')
+        ?.getAttribute("data-chip"),
     ).toBe("POLICY");
     expect(after?.textContent).toContain("命中");
     expect(after?.textContent).toContain("邮箱 ×2");
     expect(after?.textContent).toContain("电话 ×1");
     expect(after?.textContent).not.toContain("客户端响应");
     expect(after?.textContent).not.toContain("上游响应");
-    expect(after?.querySelector('[data-testid="redacted-request-details"]')).toBeNull();
+    expect(
+      after?.querySelector('[data-testid="redacted-request-details"]'),
+    ).toBeNull();
     expect(list.scrollTop).toBe(48);
 
     await act(async () => {
@@ -1395,12 +1498,12 @@ describe("RequestRecords", () => {
     expect(mark?.textContent).toBe("<PRIVATE_EMAIL_aaaaaaaaaaaaaaaa>");
     expect(mark?.textContent).not.toContain("alice@");
 
+    const emailHit = inspector?.querySelector<HTMLButtonElement>(
+      '[data-testid="privacy-hits"] button[data-kind="email"]',
+    );
+    if (!emailHit) throw new Error("Missing email privacy hit");
     await act(async () => {
-      (
-        inspector?.querySelector(
-          '[data-testid="privacy-hits"] button[data-kind="email"]',
-        ) as HTMLButtonElement
-      ).click();
+      emailHit.click();
     });
     expect(details?.open).toBe(true);
   });
@@ -1459,7 +1562,9 @@ describe("RequestRecords", () => {
     const hits = restore?.querySelector('[data-testid="privacy-hits"]');
     expect(hits?.textContent).toContain("邮箱 ×1");
     expect(hits?.textContent).toContain("电话 ×1");
-    expect(hits?.textContent).toContain("redacted-a1b2c3d4e5f6@private.invalid");
+    expect(hits?.textContent).toContain(
+      "redacted-a1b2c3d4e5f6@private.invalid",
+    );
   });
 
   it("shows 未命中 when a POLICY row has no recorded hit kinds", async () => {
@@ -1670,10 +1775,12 @@ describe("RequestRecords", () => {
       items: [sessionFromRecord(pending)],
       next_cursor: null,
     });
-    bridgeMocks.getRequestSession.mockImplementation(async (sessionId: string) => {
-      if (sessionId === pending.id) return sessionDetail(latestTurn);
-      throw new Error(`missing session ${sessionId}`);
-    });
+    bridgeMocks.getRequestSession.mockImplementation(
+      async (sessionId: string) => {
+        if (sessionId === pending.id) return sessionDetail(latestTurn);
+        throw new Error(`missing session ${sessionId}`);
+      },
+    );
     bridgeMocks.getRequestAuditContent.mockResolvedValue({
       request_id: pending.id,
       http_meta: null,
@@ -1773,47 +1880,105 @@ describe("RequestRecords", () => {
   it("defaults to model calls and separates compact discovery rows with their own pagination and polling", async () => {
     vi.useFakeTimers();
     const discovery = sessionFromRecord(firstRecord, {
-      id: "req_discovery", title: "未命名会话", input_protocol: "openai.models",
-      requested_model: null, service_id: null,
+      id: "req_discovery",
+      title: "未命名会话",
+      input_protocol: "openai.models",
+      requested_model: null,
+      service_id: null,
     });
-    const failedDiscovery = { ...discovery, id: "req_discovery_failed", input_protocol: "google.models", status: "failed" as const };
+    const failedDiscovery = {
+      ...discovery,
+      id: "req_discovery_failed",
+      input_protocol: "google.models",
+      status: "failed" as const,
+    };
     bridgeMocks.listRequestSessions.mockImplementation(async (query) => ({
-      items: query.kind === "inference" ? [sessionFromRecord(firstRecord)]
-        : query.kind === "discovery" ? [discovery, failedDiscovery]
-        : [sessionFromRecord(firstRecord), discovery, failedDiscovery],
+      items:
+        query.kind === "inference"
+          ? [sessionFromRecord(firstRecord)]
+          : query.kind === "discovery"
+            ? [discovery, failedDiscovery]
+            : [sessionFromRecord(firstRecord), discovery, failedDiscovery],
       next_cursor: query.cursor ? null : `${query.kind ?? "all"}-cursor`,
     }));
-    bridgeMocks.getRequestSession.mockResolvedValue({ ...discovery, turns: [{ ...firstRecord, id: discovery.id, input_protocol: "openai.models" }] });
+    bridgeMocks.getRequestSession.mockResolvedValue({
+      ...discovery,
+      turns: [
+        { ...firstRecord, id: discovery.id, input_protocol: "openai.models" },
+      ],
+    });
     await renderRecords();
-    expect(bridgeMocks.listRequestSessions).toHaveBeenCalledWith({ limit: 50, kind: "inference" });
-    expect(container.querySelectorAll('[data-testid="request-session-row"]')).toHaveLength(1);
+    expect(bridgeMocks.listRequestSessions).toHaveBeenCalledWith({
+      limit: 50,
+      kind: "inference",
+    });
+    expect(
+      container.querySelectorAll('[data-testid="request-session-row"]'),
+    ).toHaveLength(1);
     await act(async () => exactButton("模型获取").focus());
-    const rows = container.querySelectorAll('[data-testid="request-session-row"]');
+    const rows = container.querySelectorAll(
+      '[data-testid="request-session-row"]',
+    );
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain("获取模型列表");
     expect(rows[0].textContent).toContain("GET /v1/models");
-    expect(rows[0].textContent).not.toMatch(/未命名会话|未指定模型|正在选择服务|轮/);
+    expect(rows[0].textContent).not.toMatch(
+      /未命名会话|未指定模型|正在选择服务|轮/,
+    );
     expect(rows[1].textContent).toContain("失败");
-    await act(async () => { exactButton("加载更早记录").click(); });
-    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({ limit: 50, kind: "discovery", cursor: "discovery-cursor" });
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({ limit: 50, kind: "discovery" });
-    await act(async () => { (rows[0] as HTMLButtonElement).click(); });
+    await act(async () => {
+      exactButton("加载更早记录").click();
+    });
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "discovery",
+      cursor: "discovery-cursor",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "discovery",
+    });
+    await act(async () => {
+      (rows[0] as HTMLButtonElement).click();
+    });
     expect(bridgeMocks.getRequestSession).toHaveBeenCalledWith(discovery.id);
-    await act(async () => { exactButton("实时监控").click(); });
+    await act(async () => {
+      exactButton("实时监控").click();
+    });
     await act(async () => exactButton("全部").focus());
-    expect(container.querySelectorAll('[data-testid="request-session-row"]')).toHaveLength(3);
-    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({ limit: 50, kind: undefined });
+    expect(
+      container.querySelectorAll('[data-testid="request-session-row"]'),
+    ).toHaveLength(3);
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: undefined,
+    });
   });
 
   it("discards a previous kind's in-flight page after switching views", async () => {
-    const pendingPage = deferred<{ items: RequestSession[]; next_cursor: string | null }>();
+    const pendingPage = deferred<{
+      items: RequestSession[];
+      next_cursor: string | null;
+    }>();
     bridgeMocks.listRequestSessions.mockReturnValueOnce(pendingPage.promise);
     await renderRecords();
-    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [], next_cursor: null });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
     await act(async () => exactButton("模型获取").focus());
-    await act(async () => pendingPage.resolve({ items: [sessionFromRecord(firstRecord)], next_cursor: "old-cursor" }));
-    expect(container.querySelectorAll('[data-testid="request-session-row"]')).toHaveLength(0);
+    await act(async () =>
+      pendingPage.resolve({
+        items: [sessionFromRecord(firstRecord)],
+        next_cursor: "old-cursor",
+      }),
+    );
+    expect(
+      container.querySelectorAll('[data-testid="request-session-row"]'),
+    ).toHaveLength(0);
     expect(container.textContent).toContain("没有匹配的模型获取请求");
     expect(container.textContent).not.toContain("加载更早记录");
   });
@@ -1837,7 +2002,9 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("/v1/responses");
     expect(container.textContent).toContain("轮次");
     expect(container.textContent).toContain("客户端");
-    expect(container.textContent).not.toContain("POST /v1/responses?stream=true");
+    expect(container.textContent).not.toContain(
+      "POST /v1/responses?stream=true",
+    );
 
     await act(async () => {
       exactButton("内容").click();
@@ -1924,17 +2091,33 @@ describe("RequestRecords", () => {
   it("closes the copy menu with Escape while keeping the detail open", async () => {
     await renderRecords();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>(`[data-session-id="${firstRecord.id}"]`)!.click();
+      container
+        .querySelector<HTMLButtonElement>(
+          `[data-session-id="${firstRecord.id}"]`,
+        )!
+        .click();
     });
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="复制与导出选项"]')!.dispatchEvent(
-        new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }),
-      );
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="复制与导出选项"]',
+        )!
+        .dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            button: 0,
+            pointerType: "mouse",
+          }),
+        );
     });
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
     await act(async () => {
       document.querySelector('[role="menu"]')!.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
       );
     });
     expect(document.querySelector('[role="menu"]')).toBeNull();
@@ -1969,9 +2152,9 @@ describe("RequestRecords", () => {
       await Promise.resolve();
     });
 
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (candidate) => candidate.textContent?.trim() === "导出为 TXT 文件",
-    );
+    const item = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].find((candidate) => candidate.textContent?.trim() === "导出为 TXT 文件");
     if (!item) throw new Error("Missing export menu item");
     await act(async () => {
       item.click();
@@ -2021,9 +2204,9 @@ describe("RequestRecords", () => {
       await Promise.resolve();
     });
 
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (candidate) => candidate.textContent?.trim() === "导出为 TXT 文件",
-    );
+    const item = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ].find((candidate) => candidate.textContent?.trim() === "导出为 TXT 文件");
     if (!item) throw new Error("Missing export menu item");
     await act(async () => {
       item.click();
@@ -2044,7 +2227,9 @@ describe("RequestRecords", () => {
       });
     await renderRecords();
     await chooseOption("状态筛选", "成功");
-    const scroller = container.querySelector('[data-testid="request-records-scroll"]');
+    const scroller = container.querySelector(
+      '[data-testid="request-records-scroll"]',
+    );
     if (!(scroller instanceof HTMLDivElement)) {
       throw new Error("Missing monitor scroller");
     }
@@ -2060,7 +2245,9 @@ describe("RequestRecords", () => {
     });
     await act(async () => buttonContaining("实时监控").click());
 
-    expect(document.querySelector('[aria-label="状态筛选"]')?.textContent).toContain("成功");
+    expect(
+      document.querySelector('[aria-label="状态筛选"]')?.textContent,
+    ).toContain("成功");
     expect(scroller.scrollTop).toBe(180);
     expect(document.activeElement?.getAttribute("data-session-id")).toBe(
       firstRecord.id,
@@ -2122,9 +2309,9 @@ describe("RequestRecords", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     await act(async () => toggle.click());
 
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
-      "确认开启正文捕获",
-    );
+    expect(
+      document.querySelector('[role="alertdialog"]')?.textContent,
+    ).toContain("确认开启正文捕获");
     await act(async () => {
       exactButton("确认开启").click();
       await Promise.resolve();
@@ -2188,9 +2375,9 @@ describe("RequestRecords", () => {
 
     await act(async () => exactButton("清理…").click());
     await act(async () => exactButton("执行清理").click());
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
-      "确定清空全部",
-    );
+    expect(
+      document.querySelector('[role="alertdialog"]')?.textContent,
+    ).toContain("确定清空全部");
     await act(async () => {
       exactButton("确定清理").click();
       await Promise.resolve();
@@ -2236,11 +2423,13 @@ describe("RequestRecords", () => {
       items: [sessionFromRecord(pending)],
       next_cursor: null,
     });
-    bridgeMocks.getRequestSession.mockImplementation(async (sessionId: string) => {
-      if (sessionId === pending.id) return sessionDetail(latestTurn);
-      if (sessionId === newer.id) return sessionDetail(newer);
-      throw new Error(`missing session ${sessionId}`);
-    });
+    bridgeMocks.getRequestSession.mockImplementation(
+      async (sessionId: string) => {
+        if (sessionId === pending.id) return sessionDetail(latestTurn);
+        if (sessionId === newer.id) return sessionDetail(newer);
+        throw new Error(`missing session ${sessionId}`);
+      },
+    );
     await renderRecords();
     await act(async () => {
       (
@@ -2263,11 +2452,11 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("成功");
 
     await act(async () => buttonContaining("实时监控").click());
-    expect(buttonContaining("1 条新记录").textContent).toContain(
-      "1 条新记录",
-    );
+    expect(buttonContaining("1 条新记录").textContent).toContain("1 条新记录");
     await act(async () => buttonContaining("1 条新记录").click());
-    const rows = [...container.querySelectorAll('[data-testid="request-session-row"]')];
+    const rows = [
+      ...container.querySelectorAll('[data-testid="request-session-row"]'),
+    ];
     expect(rows[0].textContent).toContain("gpt-new");
   });
 
@@ -2278,7 +2467,9 @@ describe("RequestRecords", () => {
       next_cursor: null,
     });
     await renderRecords();
-    const scroller = container.querySelector('[data-testid="request-records-scroll"]');
+    const scroller = container.querySelector(
+      '[data-testid="request-records-scroll"]',
+    );
     if (!(scroller instanceof HTMLDivElement)) {
       throw new Error("Missing monitor scroller");
     }

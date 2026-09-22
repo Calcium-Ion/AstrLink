@@ -11,7 +11,15 @@ export function RecoveryDetails({ value }: { value?: RequestRecovery }) {
   if (!value) return null;
   return (
     <dl className="grid gap-2 text-xs">
- {value.path_name?<div><dt className="text-muted-foreground">{t("paths.title")}</dt><dd>{value.path_name}</dd><dd className="break-all text-muted-foreground">{value.path_version} · {value.step_id}</dd></div>:null}
+      {value.path_name ? (
+        <div>
+          <dt className="text-muted-foreground">{t("paths.title")}</dt>
+          <dd>{value.path_name}</dd>
+          <dd className="break-all text-muted-foreground">
+            {value.path_version} · {value.step_id}
+          </dd>
+        </div>
+      ) : null}
       {value.upstream_model ? (
         <div>
           <dt className="text-muted-foreground">
@@ -47,7 +55,7 @@ export function RecoveryDetails({ value }: { value?: RequestRecovery }) {
                       ? t("failure.openaiReasoningRepair")
                       : value.reason === "openai_function_output_repair"
                         ? t("failure.openaiFunctionOutputRepair")
-                    : value.reason}
+                        : value.reason}
           </dd>
         </div>
       ) : null}

@@ -66,11 +66,20 @@
   --text-secondary: #45566d;
   --overlay: rgb(26 42 61 / 20%);
   --shadow-card: none;
-  --shadow-overlay: 0 1px 3px rgb(26 42 61 / 10%), 0 10px 30px rgb(26 42 61 / 8%);
+  --shadow-overlay:
+    0 1px 3px rgb(26 42 61 / 10%), 0 10px 30px rgb(26 42 61 / 8%);
   --radius: 0.5rem;
   --window-chrome-height: 0px;
-  --scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  --scrollbar-thumb: color-mix(
+    in srgb,
+    var(--muted-foreground) 45%,
+    transparent
+  );
+  --scrollbar-thumb-hover: color-mix(
+    in srgb,
+    var(--muted-foreground) 70%,
+    transparent
+  );
 }
 
 :root[data-theme="dark"] {
@@ -128,66 +137,182 @@
 }
 
 @keyframes streaming-restore-demo-plain {
-  0%, 2% { left: 17%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
-  6% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  18% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  22% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
-  26%, 100% { left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  0%,
+  2% {
+    left: 17%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  6% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  18% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  22% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+  26%,
+  100% {
+    left: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
 }
 
 @keyframes streaming-restore-demo-redacted {
-  0%, 22% { left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
-  26% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
-  30% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  42% { left: 83%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  46%, 100% { left: 83%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  0%,
+  22% {
+    left: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  26% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+  30% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  42% {
+    left: 83%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  46%,
+  100% {
+    left: 83%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
 }
 
 @keyframes streaming-restore-demo-chunk-a {
-  0%, 46% { left: 83%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
-  50% { left: 83%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  62% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  68%, 100% { left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
+  0%,
+  46% {
+    left: 83%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  50% {
+    left: 83%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  62% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  68%,
+  100% {
+    left: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
 }
 
 @keyframes streaming-restore-demo-chunk-b {
-  0%, 54% { left: 83%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
-  58% { left: 83%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  68% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  74%, 100% { left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
+  0%,
+  54% {
+    left: 83%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  58% {
+    left: 83%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  68% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  74%,
+  100% {
+    left: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
 }
 
 @keyframes streaming-restore-demo-restored {
-  0%, 70% { left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
-  74% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
-  78% { left: 50%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  90% { left: 17%; opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  95%, 100% { left: 17%; opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  0%,
+  70% {
+    left: 50%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  74% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+  78% {
+    left: 50%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  90% {
+    left: 17%;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  95%,
+  100% {
+    left: 17%;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
 }
 
 @keyframes streaming-restore-demo-shield {
-  0%, 18%, 30%, 62%, 78%, 100% {
+  0%,
+  18%,
+  30%,
+  62%,
+  78%,
+  100% {
     opacity: 0;
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent);
   }
-  22%, 26% {
+  22%,
+  26% {
     opacity: 1;
     box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 18%, transparent);
   }
-  66%, 72% {
+  66%,
+  72% {
     opacity: 1;
     box-shadow: 0 0 0 6px color-mix(in srgb, var(--success) 18%, transparent);
   }
 }
 
 @keyframes streaming-restore-demo-dots-ltr {
-  from { background-position: 0 0; }
-  to { background-position: 14px 0; }
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 14px 0;
+  }
 }
 
 @keyframes streaming-restore-demo-dots-rtl {
-  from { background-position: 0 0; }
-  to { background-position: -14px 0; }
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -14px 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -210,10 +335,11 @@
 }
 
 @theme inline {
-  --font-sans: "IBM Plex Sans Variable", "PingFang SC", "Hiragino Sans GB",
+  --font-sans:
+    "IBM Plex Sans Variable", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
-    monospace;
+  --font-mono:
+    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* Six steps, nothing in between. Anything smaller than micro is unreadable. */
   --text-micro: 0.6875rem;

@@ -4,10 +4,17 @@
   "role": "assistant",
   "model": "claude-sonnet-4-5-20250929",
   "content": [
-    {"type": "thinking", "thinking": "用户想了解 goroutine。", "signature": "EqQBCkYIBBgCIkDq"},
-    {"type": "text", "text": "Goroutine 是 Go 运行时调度的轻量级线程，用 go 关键字即可并发执行函数，成本远低于操作系统线程。"}
+    {
+      "type": "thinking",
+      "thinking": "用户想了解 goroutine。",
+      "signature": "EqQBCkYIBBgCIkDq"
+    },
+    {
+      "type": "text",
+      "text": "Goroutine 是 Go 运行时调度的轻量级线程，用 go 关键字即可并发执行函数，成本远低于操作系统线程。"
+    }
   ],
   "stop_reason": "end_turn",
   "stop_sequence": null,
-  "usage": {"input_tokens": 24, "output_tokens": 61}
+  "usage": { "input_tokens": 24, "output_tokens": 61 }
 }

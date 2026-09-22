@@ -75,9 +75,14 @@ function ControlIcon({
   control: WindowControl;
   maximized: boolean;
 }): ReactNode {
-  const Icon = control === "minimize" ? Minimize
-    : control === "close" ? X
-      : maximized ? SquareStack : Maximize;
+  const Icon =
+    control === "minimize"
+      ? Minimize
+      : control === "close"
+        ? X
+        : maximized
+          ? SquareStack
+          : Maximize;
   return <Icon className="size-4" strokeWidth={1.6} />;
 }
 
@@ -181,14 +186,11 @@ export function WindowChrome({
     };
   }, [platform, windowState.fullscreen]);
 
-  const runWindowAction = useCallback(
-    (action: () => Promise<unknown>) => {
-      void action().catch((error: unknown) => {
-        console.error("AstrLink window action failed", error);
-      });
-    },
-    [],
-  );
+  const runWindowAction = useCallback((action: () => Promise<unknown>) => {
+    void action().catch((error: unknown) => {
+      console.error("AstrLink window action failed", error);
+    });
+  }, []);
 
   const activateControl = useCallback(
     (control: WindowControl) => {
@@ -208,10 +210,7 @@ export function WindowChrome({
   );
 
   const beginResize = useCallback(
-    (
-      direction: ResizeDirection,
-      event: ReactMouseEvent<HTMLDivElement>,
-    ) => {
+    (direction: ResizeDirection, event: ReactMouseEvent<HTMLDivElement>) => {
       if (!appWindow || event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
@@ -303,9 +302,7 @@ export function WindowChrome({
         />
         {renderControls(layout.end, "end")}
       </header>
-      {platform !== "macos" &&
-      !windowState.maximized &&
-      !windowState.fullscreen
+      {platform !== "macos" && !windowState.maximized && !windowState.fullscreen
         ? resizeDirections.map((direction) => (
             <div
               aria-hidden="true"

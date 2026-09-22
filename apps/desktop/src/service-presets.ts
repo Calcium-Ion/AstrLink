@@ -7,10 +7,25 @@ import type {
 
 export type HTTPServicePresetID = HTTPServiceKind;
 
-export const codingPlanPresetIDs: HTTPServicePresetID[] = ["opencode_go", "kimi_coding", "glm_coding", "minimax_coding"];
+export const codingPlanPresetIDs: HTTPServicePresetID[] = [
+  "opencode_go",
+  "kimi_coding",
+  "glm_coding",
+  "minimax_coding",
+];
 
 export const payAsYouGoPresetIDs: HTTPServicePresetID[] = [
-  "opencode_zen", "openai", "anthropic", "gemini", "deepseek", "qwen", "moonshot", "glm", "minimax", "doubao", "xai",
+  "opencode_zen",
+  "openai",
+  "anthropic",
+  "gemini",
+  "deepseek",
+  "qwen",
+  "moonshot",
+  "glm",
+  "minimax",
+  "doubao",
+  "xai",
 ];
 
 export interface ProtocolDescriptor {
@@ -188,31 +203,81 @@ const profileDefinitions: Readonly<
   >
 > = {
   opencode_go: {
-    id: "opencode_go", label: "OpenCode Go", description: "", defaultName: "OpenCode Go",
-    kind: "opencode_go", baseURL: "https://opencode.ai/zen/go/v1", baseURLPlaceholder: "https://opencode.ai/zen/go/v1",
-    authScheme: "bearer", headerName: "", capabilityIDs: ["openai.responses", "openai.chat", "anthropic.messages", "openai.models"], advancedOnStart: false,
+    id: "opencode_go",
+    label: "OpenCode Go",
+    description: "",
+    defaultName: "OpenCode Go",
+    kind: "opencode_go",
+    baseURL: "https://opencode.ai/zen/go/v1",
+    baseURLPlaceholder: "https://opencode.ai/zen/go/v1",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: [
+      "openai.responses",
+      "openai.chat",
+      "anthropic.messages",
+      "openai.models",
+    ],
+    advancedOnStart: false,
   },
   opencode_zen: {
-    id: "opencode_zen", label: "OpenCode Zen", description: "", defaultName: "OpenCode Zen",
-    kind: "opencode_zen", baseURL: "https://opencode.ai/zen/v1", baseURLPlaceholder: "https://opencode.ai/zen/v1",
-    authScheme: "bearer", headerName: "", capabilityIDs: ["openai.responses", "openai.chat", "anthropic.messages", "openai.models"], advancedOnStart: false,
+    id: "opencode_zen",
+    label: "OpenCode Zen",
+    description: "",
+    defaultName: "OpenCode Zen",
+    kind: "opencode_zen",
+    baseURL: "https://opencode.ai/zen/v1",
+    baseURLPlaceholder: "https://opencode.ai/zen/v1",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: [
+      "openai.responses",
+      "openai.chat",
+      "anthropic.messages",
+      "openai.models",
+    ],
+    advancedOnStart: false,
   },
   kimi_coding: {
-    id: "kimi_coding", label: "Kimi Coding", description: "", defaultName: "Kimi Coding",
-    kind: "kimi_coding", baseURL: "https://api.kimi.ai/coding", baseURLPlaceholder: "https://api.kimi.ai/coding",
-    authScheme: "anthropic_api_key", headerName: "", capabilityIDs: ["anthropic.messages", "openai.models"], advancedOnStart: false,
+    id: "kimi_coding",
+    label: "Kimi Coding",
+    description: "",
+    defaultName: "Kimi Coding",
+    kind: "kimi_coding",
+    baseURL: "https://api.kimi.ai/coding",
+    baseURLPlaceholder: "https://api.kimi.ai/coding",
+    authScheme: "anthropic_api_key",
+    headerName: "",
+    capabilityIDs: ["anthropic.messages", "openai.models"],
+    advancedOnStart: false,
     models: ["kimi-for-coding"],
   },
   glm_coding: {
-    id: "glm_coding", label: "GLM Coding Plan", description: "", defaultName: "GLM Coding Plan",
-    kind: "glm_coding", baseURL: "https://open.bigmodel.cn/api/anthropic", baseURLPlaceholder: "https://open.bigmodel.cn/api/anthropic",
-    authScheme: "bearer", headerName: "", capabilityIDs: ["anthropic.messages"], advancedOnStart: false,
+    id: "glm_coding",
+    label: "GLM Coding Plan",
+    description: "",
+    defaultName: "GLM Coding Plan",
+    kind: "glm_coding",
+    baseURL: "https://open.bigmodel.cn/api/anthropic",
+    baseURLPlaceholder: "https://open.bigmodel.cn/api/anthropic",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: ["anthropic.messages"],
+    advancedOnStart: false,
     models: ["glm-5.3", "glm-5.3-flash"],
   },
   minimax_coding: {
-    id: "minimax_coding", label: "MiniMax Coding Plan", description: "", defaultName: "MiniMax Coding Plan",
-    kind: "minimax_coding", baseURL: "https://api.minimax.cn/anthropic", baseURLPlaceholder: "https://api.minimax.cn/anthropic",
-    authScheme: "bearer", headerName: "", capabilityIDs: ["anthropic.messages"], advancedOnStart: false,
+    id: "minimax_coding",
+    label: "MiniMax Coding Plan",
+    description: "",
+    defaultName: "MiniMax Coding Plan",
+    kind: "minimax_coding",
+    baseURL: "https://api.minimax.cn/anthropic",
+    baseURLPlaceholder: "https://api.minimax.cn/anthropic",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: ["anthropic.messages"],
+    advancedOnStart: false,
     models: ["MiniMax-M3"],
   },
   newapi: {
@@ -232,7 +297,8 @@ const profileDefinitions: Readonly<
   openai_compatible: {
     id: "openai_compatible",
     label: "OpenAI 兼容（Chat / Completions）",
-    description: "适用于提供标准 OpenAI Chat、Completions 与 Models 接口的 API 提供商。",
+    description:
+      "适用于提供标准 OpenAI Chat、Completions 与 Models 接口的 API 提供商。",
     defaultName: "OpenAI 兼容 API 提供商",
     kind: "openai_compatible",
     baseURL: "",
@@ -289,51 +355,123 @@ const profileDefinitions: Readonly<
     advancedOnStart: false,
   },
   deepseek: {
-    id: "deepseek", label: "DeepSeek", description: "", defaultName: "DeepSeek API",
-    kind: "deepseek", baseURL: "https://api.deepseek.com/v1", baseURLPlaceholder: "https://api.deepseek.com/v1",
-    authScheme: "bearer", headerName: "",
-    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat", "openai.models"], advancedOnStart: false,
+    id: "deepseek",
+    label: "DeepSeek",
+    description: "",
+    defaultName: "DeepSeek API",
+    kind: "deepseek",
+    baseURL: "https://api.deepseek.com/v1",
+    baseURLPlaceholder: "https://api.deepseek.com/v1",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: [
+      "openai.responses",
+      "anthropic.messages",
+      "openai.chat",
+      "openai.models",
+    ],
+    advancedOnStart: false,
   },
   qwen: {
-    id: "qwen", label: "通义千问（百炼）", description: "", defaultName: "通义千问（百炼） API",
-    kind: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", baseURLPlaceholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    authScheme: "bearer", headerName: "",
-    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat"], advancedOnStart: false,
+    id: "qwen",
+    label: "通义千问（百炼）",
+    description: "",
+    defaultName: "通义千问（百炼） API",
+    kind: "qwen",
+    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    baseURLPlaceholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat"],
+    advancedOnStart: false,
   },
   moonshot: {
-    id: "moonshot", label: "Kimi（Moonshot）", description: "", defaultName: "Kimi（Moonshot） API",
-    kind: "moonshot", baseURL: "https://api.moonshot.cn/v1", baseURLPlaceholder: "https://api.moonshot.cn/v1",
-    authScheme: "bearer", headerName: "",
-    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat", "openai.models"], advancedOnStart: false,
+    id: "moonshot",
+    label: "Kimi（Moonshot）",
+    description: "",
+    defaultName: "Kimi（Moonshot） API",
+    kind: "moonshot",
+    baseURL: "https://api.moonshot.cn/v1",
+    baseURLPlaceholder: "https://api.moonshot.cn/v1",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: [
+      "openai.responses",
+      "anthropic.messages",
+      "openai.chat",
+      "openai.models",
+    ],
+    advancedOnStart: false,
   },
   glm: {
-    id: "glm", label: "智谱 GLM", description: "", defaultName: "智谱 GLM API",
-    kind: "glm", baseURL: "https://open.bigmodel.cn/api/paas/v4", baseURLPlaceholder: "https://open.bigmodel.cn/api/paas/v4",
-    authScheme: "bearer", headerName: "",
-    capabilityIDs: ["anthropic.messages", "openai.chat"], advancedOnStart: false,
+    id: "glm",
+    label: "智谱 GLM",
+    description: "",
+    defaultName: "智谱 GLM API",
+    kind: "glm",
+    baseURL: "https://open.bigmodel.cn/api/paas/v4",
+    baseURLPlaceholder: "https://open.bigmodel.cn/api/paas/v4",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: ["anthropic.messages", "openai.chat"],
+    advancedOnStart: false,
   },
   minimax: {
-    id: "minimax", label: "MiniMax", description: "", defaultName: "MiniMax API",
-    kind: "minimax", baseURL: "https://api.minimax.cn/v1", baseURLPlaceholder: "https://api.minimax.cn/v1",
-    authScheme: "bearer", headerName: "",
-    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat", "openai.models"], advancedOnStart: false,
+    id: "minimax",
+    label: "MiniMax",
+    description: "",
+    defaultName: "MiniMax API",
+    kind: "minimax",
+    baseURL: "https://api.minimax.cn/v1",
+    baseURLPlaceholder: "https://api.minimax.cn/v1",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: [
+      "openai.responses",
+      "anthropic.messages",
+      "openai.chat",
+      "openai.models",
+    ],
+    advancedOnStart: false,
   },
   doubao: {
-    id: "doubao", label: "豆包（火山方舟）", description: "", defaultName: "豆包（火山方舟） API",
-    kind: "doubao", baseURL: "https://ark.cn-beijing.volces.com/api/v3", baseURLPlaceholder: "https://ark.cn-beijing.volces.com/api/v3",
-    authScheme: "bearer", headerName: "",
-    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat"], advancedOnStart: false,
+    id: "doubao",
+    label: "豆包（火山方舟）",
+    description: "",
+    defaultName: "豆包（火山方舟） API",
+    kind: "doubao",
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+    baseURLPlaceholder: "https://ark.cn-beijing.volces.com/api/v3",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat"],
+    advancedOnStart: false,
   },
   xai: {
-    id: "xai", label: "xAI（Grok）", description: "", defaultName: "xAI（Grok） API",
-    kind: "xai", baseURL: "https://api.x.ai/v1", baseURLPlaceholder: "https://api.x.ai/v1",
-    authScheme: "bearer", headerName: "",
-    capabilityIDs: ["openai.responses", "openai.responses.compact", "anthropic.messages", "openai.chat", "openai.completions", "openai.models"], advancedOnStart: false,
+    id: "xai",
+    label: "xAI（Grok）",
+    description: "",
+    defaultName: "xAI（Grok） API",
+    kind: "xai",
+    baseURL: "https://api.x.ai/v1",
+    baseURLPlaceholder: "https://api.x.ai/v1",
+    authScheme: "bearer",
+    headerName: "",
+    capabilityIDs: [
+      "openai.responses",
+      "openai.responses.compact",
+      "anthropic.messages",
+      "openai.chat",
+      "openai.completions",
+      "openai.models",
+    ],
+    advancedOnStart: false,
   },
   custom: {
     id: "custom",
     label: "自定义",
-    description: "仅在 API 提供商不符合上述类型时使用；需要在高级配置中声明能力。",
+    description:
+      "仅在 API 提供商不符合上述类型时使用；需要在高级配置中声明能力。",
     defaultName: "自定义 API 提供商",
     kind: "custom",
     baseURL: "",
@@ -379,7 +517,11 @@ export function httpServicePreset(
       ? { convert_to: definition.convertTo[protocol] }
       : {}),
   }));
-  const { capabilityIDs: _ids, convertTo: _conversions, ...preset } = definition;
+  const {
+    capabilityIDs: _ids,
+    convertTo: _conversions,
+    ...preset
+  } = definition;
   return localizeHttpPreset({
     ...preset,
     capabilities,
@@ -395,13 +537,21 @@ function localizeHttpPreset(preset: HTTPServicePreset): HTTPServicePreset {
     case "minimax":
     case "doubao":
     case "xai":
-      return { ...preset, label: i18n.t(`kind.${preset.id}`), defaultName: i18n.t(`kind.${preset.id}`), description: i18n.t(`presets.${preset.id}Description`) };
+      return {
+        ...preset,
+        label: i18n.t(`kind.${preset.id}`),
+        defaultName: i18n.t(`kind.${preset.id}`),
+        description: i18n.t(`presets.${preset.id}Description`),
+      };
     case "opencode_go":
     case "opencode_zen":
     case "kimi_coding":
     case "glm_coding":
     case "minimax_coding":
-      return { ...preset, description: i18n.t(`presets.${preset.id}Description`) };
+      return {
+        ...preset,
+        description: i18n.t(`presets.${preset.id}Description`),
+      };
     case "newapi":
       return {
         ...preset,
@@ -442,9 +592,7 @@ function localizeHttpPreset(preset: HTTPServicePreset): HTTPServicePreset {
   }
 }
 
-export function httpServicePresetLabel(
-  profileID: HTTPServicePresetID,
-): string {
+export function httpServicePresetLabel(profileID: HTTPServicePresetID): string {
   return httpServicePreset(profileID).label;
 }
 

@@ -5,7 +5,11 @@ import { createAnimatedIcon } from "./create-animated-icon";
 
 export const Flask = createAnimatedIcon("flask", (controls) => (
   // Upstream uses filled 512px artwork; fit it into the shared 24px viewport.
-  <g transform="translate(2 2) scale(0.0390625)" fill="currentColor" stroke="none">
+  <g
+    transform="translate(2 2) scale(0.0390625)"
+    fill="currentColor"
+    stroke="none"
+  >
     <motion.g
       animate={controls}
       variants={{

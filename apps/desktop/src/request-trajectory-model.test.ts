@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { emptyTrajectoryFields, type RequestRecord } from "./request-record-model";
+import {
+  emptyTrajectoryFields,
+  type RequestRecord,
+} from "./request-record-model";
 import {
   clientDisconnect,
   clientDisconnectNote,
@@ -167,9 +170,9 @@ describe("request trajectory model", () => {
       "RESTORE",
       "RESULT",
     ]);
-    expect(timelinePhases(timeline).some((phase) => phase.chip === "RETRY")).toBe(
-      false,
-    );
+    expect(
+      timelinePhases(timeline).some((phase) => phase.chip === "RETRY"),
+    ).toBe(false);
   });
 
   it("treats HTTP 403 as a failed tone even when the record succeeded", () => {
@@ -196,9 +199,7 @@ describe("request trajectory model", () => {
         },
       ],
     };
-    expect(
-      eventTone(forbidden, forbidden.events[0]!),
-    ).toBe("failed");
+    expect(eventTone(forbidden, forbidden.events[0]!)).toBe("failed");
     const rows = trajectoryRows([forbidden], {});
     expect(rows.map((row) => [row.chip, row.tone])).toEqual([
       ["UPSTREAM", "failed"],
@@ -253,7 +254,9 @@ describe("request trajectory model", () => {
     expect(eventTone(aborted, aborted.events[1]!)).toBe("ok");
     expect(eventTone(aborted, aborted.events[2]!)).toBe("cancelled");
     const rows = inspectorChainRows(aborted);
-    expect(rows.map((row) => [row.chip, row.lane, row.tone, row.result])).toEqual([
+    expect(
+      rows.map((row) => [row.chip, row.lane, row.tone, row.result]),
+    ).toEqual([
       ["CLIENT", "client", "ok", "成功"],
       ["UPSTREAM", "upstream", "ok", "HTTP 200"],
       ["RESULT", "client", "cancelled", "客户端断开"],
@@ -264,13 +267,13 @@ describe("request trajectory model", () => {
     const phases = timelinePhases(
       trajectoryTimeline(rows, Date.parse(aborted.completed_at ?? "")),
     );
-    expect(
-      phases.map((phase) => [phase.chip, phase.lane, phase.tone]),
-    ).toEqual([
-      ["CLIENT", "client", "ok"],
-      ["UPSTREAM", "upstream", "ok"],
-      ["RESULT", "client", "cancelled"],
-    ]);
+    expect(phases.map((phase) => [phase.chip, phase.lane, phase.tone])).toEqual(
+      [
+        ["CLIENT", "client", "ok"],
+        ["UPSTREAM", "upstream", "ok"],
+        ["RESULT", "client", "cancelled"],
+      ],
+    );
   });
 
   it("still treats a cancelled call with no upstream status as a client abort", () => {
@@ -300,7 +303,9 @@ describe("request trajectory model", () => {
       ],
     };
     expect(clientDisconnectNote(early)).toContain("上游响应到达前");
-    const result = inspectorChainRows(early).find((row) => row.chip === "RESULT");
+    const result = inspectorChainRows(early).find(
+      (row) => row.chip === "RESULT",
+    );
     expect(result?.tone).toBe("cancelled");
     expect(result?.result).toBe("客户端断开");
   });
@@ -337,7 +342,10 @@ describe("request trajectory model", () => {
       status: "pending",
       turn_index: 2,
       input_preview: "第二个文件是做什么的",
-      session_link: { kind: "fingerprint", value: "fp1_0123456789abcdef0123456789abcdef" },
+      session_link: {
+        kind: "fingerprint",
+        value: "fp1_0123456789abcdef0123456789abcdef",
+      },
       events: [accepted("req_loop_3", "gpt-4.1 · openai.chat")],
     };
     const legacy: RequestRecord = {
@@ -373,21 +381,30 @@ describe("request trajectory model", () => {
       endedAt: step2.completed_at,
       lane: "client",
     });
-    expect(headers[1]).toMatchObject({ status: "pending", tone: "pending", endedAt: null });
+    expect(headers[1]).toMatchObject({
+      status: "pending",
+      tone: "pending",
+      endedAt: null,
+    });
 
-    const timeline = trajectoryTimeline(rows, Date.parse("2026-08-16T10:00:30Z"));
+    const timeline = trajectoryTimeline(
+      rows,
+      Date.parse("2026-08-16T10:00:30Z"),
+    );
     expect(timelineCalls(timeline).map((call) => call.requestId)).toEqual([
       "req_loop_1",
       "req_loop_2",
       "req_loop_3",
       "req_loop_legacy",
     ]);
-    expect(timelinePhases(timeline).some((phase) => phase.chip === "TURN")).toBe(
-      false,
-    );
+    expect(
+      timelinePhases(timeline).some((phase) => phase.chip === "TURN"),
+    ).toBe(false);
 
     // A single call has nothing to group: no header, unchanged trajectory.
-    expect(trajectoryRows([step2], {}).map((row) => row.chip)).toEqual(["CLIENT"]);
+    expect(trajectoryRows([step2], {}).map((row) => row.chip)).toEqual([
+      "CLIENT",
+    ]);
   });
 
   it("emits one call per root record with sequential phases and skips child retries", () => {
@@ -397,7 +414,9 @@ describe("request trajectory model", () => {
       Date.parse(record.completed_at ?? ""),
     );
     expect(timelineCalls(timeline)).toHaveLength(1);
-    expect(timelinePhases(timeline).map((phase) => [phase.chip, phase.lane])).toEqual([
+    expect(
+      timelinePhases(timeline).map((phase) => [phase.chip, phase.lane]),
+    ).toEqual([
       ["CLIENT", "client"],
       ["POLICY", "gateway"],
       ["ROUTE", "gateway"],
@@ -494,7 +513,10 @@ describe("request trajectory model", () => {
       ],
     };
     const nowMs = Date.parse("2026-08-16T10:00:05Z");
-    const pendingTimeline = trajectoryTimeline(trajectoryRows([pending], {}), nowMs);
+    const pendingTimeline = trajectoryTimeline(
+      trajectoryRows([pending], {}),
+      nowMs,
+    );
     expect(pendingTimeline.durationMs).toBe(5000);
     expect(timelineCalls(pendingTimeline)[0]).toMatchObject({
       durationMs: 5000,
@@ -543,12 +565,14 @@ describe("request trajectory model", () => {
       Date.parse(turnB.completed_at ?? ""),
     );
     const calls = timelineCalls(timeline);
-    expect(calls.map((call) => [
-      call.requestId,
-      call.turnIndex,
-      call.turnFirst,
-      call.turnRowId,
-    ])).toEqual([
+    expect(
+      calls.map((call) => [
+        call.requestId,
+        call.turnIndex,
+        call.turnFirst,
+        call.turnRowId,
+      ]),
+    ).toEqual([
       ["req_turn_a1", 1, true, "req_turn_a1:turn"],
       ["req_turn_a2", 1, false, "req_turn_a1:turn"],
       ["req_turn_b", 2, true, "req_turn_b:turn"],
@@ -606,13 +630,12 @@ describe("request trajectory model", () => {
     };
 
     const rows = trajectoryRows([settled, running], {});
-    const base = trajectoryTimeline(
-      rows,
-      Date.parse("2026-08-16T10:00:07Z"),
-    );
+    const base = trajectoryTimeline(rows, Date.parse("2026-08-16T10:00:07Z"));
     expect(base.open).toBe(true);
     expect(base.durationMs).toBe(7000);
-    expect(timelineCalls(base).map((call) => [call.durationMs, call.open])).toEqual([
+    expect(
+      timelineCalls(base).map((call) => [call.durationMs, call.open]),
+    ).toEqual([
       [2000, false],
       [2000, true],
     ]);
@@ -634,8 +657,7 @@ describe("request trajectory model", () => {
     expect(later.kneeMs).toBe(base.kneeMs);
     expect(later.durationMs).toBe(12_000);
     expect(timelineCalls(later).map((call) => call.durationMs)).toEqual([
-      2000,
-      7000,
+      2000, 7000,
     ]);
     expect(
       timelinePhases(later).map((phase) => [phase.chip, phase.durationMs]),
@@ -731,9 +753,9 @@ describe("request trajectory model", () => {
       60_000,
     );
 
-    expect(
-      trajectoryTimeline(trajectoryRows([record], {}), nowMs).kneeMs,
-    ).toBe(TIMELINE_KNEE_MS);
+    expect(trajectoryTimeline(trajectoryRows([record], {}), nowMs).kneeMs).toBe(
+      TIMELINE_KNEE_MS,
+    );
     expect(trajectoryTimeline([], nowMs).kneeMs).toBe(TIMELINE_KNEE_MS);
   });
 
@@ -812,7 +834,9 @@ describe("request trajectory model", () => {
   });
 
   it("keeps both scroll endpoints reachable with unequal viewports and call widths", () => {
-    const rows = ["a", "a", "a", "b", "b", "c", "c"].map(requestId => ({ requestId }));
+    const rows = ["a", "a", "a", "b", "b", "c", "c"].map((requestId) => ({
+      requestId,
+    }));
     const columns = [
       { requestId: "a", offset: 0, width: 800 },
       { requestId: "b", offset: 810, width: 100 },
@@ -824,7 +848,9 @@ describe("request trajectory model", () => {
     for (const top of [0, 140, 400, 600, 900, 1100, 1390, 1400]) {
       const left = timelineScrollForList(rows, columns, top, 1400, 200);
       expect(left).toBeGreaterThan(previous);
-      expect(listScrollForTimeline(rows, columns, left, 200, 1400)).toBeCloseTo(top);
+      expect(listScrollForTimeline(rows, columns, left, 200, 1400)).toBeCloseTo(
+        top,
+      );
       previous = left;
     }
     expect(timelineScrollForList(rows, columns, 0, 1400, 200)).toBe(0);
@@ -885,7 +911,9 @@ describe("request trajectory model", () => {
         Date.parse("2026-08-16T10:00:07Z"),
       ),
     );
-    expect(phases.map((phase) => [phase.chip, phase.startMs, phase.durationMs])).toEqual([
+    expect(
+      phases.map((phase) => [phase.chip, phase.startMs, phase.durationMs]),
+    ).toEqual([
       ["CLIENT", 0, 20],
       ["UPSTREAM", 20, 6980],
     ]);

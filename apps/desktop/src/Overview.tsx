@@ -1329,7 +1329,8 @@ function DayTooltip({
     null,
   );
   const bucket = payload[0]?.payload as
-    (UsageDayBucket & { hour?: number }) | undefined;
+    | (UsageDayBucket & { hour?: number })
+    | undefined;
   const origin = originRef.current?.getBoundingClientRect();
   const anchorX = (origin?.left ?? 0) + (coordinate?.x ?? 0);
   const anchorY = (origin?.top ?? 0) + (coordinate?.y ?? 0);

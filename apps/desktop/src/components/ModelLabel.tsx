@@ -18,7 +18,12 @@ export function ModelLabel({
   const t = useT();
   const label = model ?? fallback;
   return (
-    <span className={cn("inline-flex min-w-0 max-w-full items-center gap-1.5", className)}>
+    <span
+      className={cn(
+        "inline-flex min-w-0 max-w-full items-center gap-1.5",
+        className,
+      )}
+    >
       <ModelBrandIcon model={model} />
       <span className="min-w-0 truncate" title={label}>
         {label}

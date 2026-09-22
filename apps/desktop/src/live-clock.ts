@@ -22,10 +22,7 @@ export function useLiveClock(
   useEffect(() => {
     if (!active) return;
     setNowMs(Date.now());
-    const timer = window.setInterval(
-      () => setNowMs(Date.now()),
-      intervalMs,
-    );
+    const timer = window.setInterval(() => setNowMs(Date.now()), intervalMs);
     return () => window.clearInterval(timer);
   }, [active, intervalMs]);
 

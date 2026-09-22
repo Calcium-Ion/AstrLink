@@ -71,7 +71,11 @@ function booleanAt(value: unknown, path: string): boolean {
 
 function parseTool(value: unknown, path: string): AgentToolStatus {
   const root = objectAt(value, path);
-  exactKeys(root, ["id", "detected", "skill_installed", "mcp_installed", "preview_paths"], path);
+  exactKeys(
+    root,
+    ["id", "detected", "skill_installed", "mcp_installed", "preview_paths"],
+    path,
+  );
   if (!TOOL_IDS.includes(root.id as AgentToolId)) {
     invalid(`${path}.id`, "unknown tool");
   }
@@ -86,7 +90,9 @@ function parseTool(value: unknown, path: string): AgentToolStatus {
 
 function parsePaths(value: unknown, path: string): string[] {
   if (!Array.isArray(value)) invalid(path, "expected an array");
-  return value.map((item, index) => boundedString(item, `${path}[${index}]`, 8192));
+  return value.map((item, index) =>
+    boundedString(item, `${path}[${index}]`, 8192),
+  );
 }
 
 export function parseAgentInstallStatus(value: unknown): AgentInstallStatus {
@@ -101,7 +107,9 @@ export function parseAgentInstallStatus(value: unknown): AgentInstallStatus {
     canonical_skill: booleanAt(root.canonical_skill, "$.canonical_skill"),
     mcp_binary: booleanAt(root.mcp_binary, "$.mcp_binary"),
     mcp_command: nullableString(root.mcp_command, "$.mcp_command"),
-    tools: root.tools.map((tool, index) => parseTool(tool, `$.tools[${index}]`)),
+    tools: root.tools.map((tool, index) =>
+      parseTool(tool, `$.tools[${index}]`),
+    ),
     shared_paths: parsePaths(root.shared_paths, "$.shared_paths"),
   };
 }
@@ -142,6 +150,8 @@ export function parseAgentInstallReceipt(value: unknown): AgentInstallReceipt {
   };
 }
 
-export function toolLabelKey(id: AgentToolId): "cursor" | "claude" | "codex" | "grok" {
+export function toolLabelKey(
+  id: AgentToolId,
+): "cursor" | "claude" | "codex" | "grok" {
   return id;
 }

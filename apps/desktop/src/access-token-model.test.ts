@@ -19,7 +19,9 @@ const accessToken = `astr_${"A".repeat(43)}`;
 describe("access-token IPC contract", () => {
   it("parses compact usage and rejects invalid counts or duplicate tokens", () => {
     const usage = { token_id: token.id, today_tokens: 12, total_tokens: 1500 };
-    expect(parseAccessTokenUsageResponse({ items: [usage] })).toEqual({ items: [usage] });
+    expect(parseAccessTokenUsageResponse({ items: [usage] })).toEqual({
+      items: [usage],
+    });
     expect(parseAccessTokenUsageResponse({ items: [] })).toEqual({ items: [] });
     for (const item of [
       { ...usage, today_tokens: -1 },
@@ -30,23 +32,27 @@ describe("access-token IPC contract", () => {
       { ...usage, token_id: "bad/id" },
       { ...usage, access_token: accessToken },
     ]) {
-      expect(() => parseAccessTokenUsageResponse({ items: [item] })).toThrow("Invalid access-token IPC response");
+      expect(() => parseAccessTokenUsageResponse({ items: [item] })).toThrow(
+        "Invalid access-token IPC response",
+      );
     }
-    expect(() => parseAccessTokenUsageResponse({ items: [usage, usage] })).toThrow("duplicate token ID");
+    expect(() =>
+      parseAccessTokenUsageResponse({ items: [usage, usage] }),
+    ).toThrow("duplicate token ID");
   });
   it("strictly parses list, create, and reveal responses", () => {
-    expect(
-      parseAccessTokenPage({ items: [token], next_cursor: null }),
-    ).toEqual({ items: [token], next_cursor: null });
+    expect(parseAccessTokenPage({ items: [token], next_cursor: null })).toEqual(
+      { items: [token], next_cursor: null },
+    );
     expect(
       parseAccessTokenCreateResult({
         token,
         access_token: accessToken,
       }),
     ).toEqual({ token, access_token: accessToken });
-    expect(
-      parseAccessTokenRevealResult({ access_token: accessToken }),
-    ).toEqual({ access_token: accessToken });
+    expect(parseAccessTokenRevealResult({ access_token: accessToken })).toEqual(
+      { access_token: accessToken },
+    );
   });
 
   it.each([

@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type HTMLAttributes,
+  type ReactNode,
+} from "react";
 import { Slot } from "radix-ui";
 
 import { cn } from "@/lib/utils";
@@ -28,7 +34,8 @@ export function ScrollWorkspace({
     const content = contentRef.current;
     if (!content) return;
     // Measure native/overlay scrollbars instead of assuming a platform width.
-    const syncGutter = () => setGutter(content.offsetWidth - content.clientWidth);
+    const syncGutter = () =>
+      setGutter(content.offsetWidth - content.clientWidth);
     syncGutter();
     const observer = new ResizeObserver(syncGutter);
     observer.observe(content);
@@ -37,7 +44,10 @@ export function ScrollWorkspace({
 
   return (
     <div
-      className={cn("flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden", className)}
+      className={cn(
+        "flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden",
+        className,
+      )}
       data-slot="scroll-workspace"
       {...props}
     >
@@ -49,7 +59,10 @@ export function ScrollWorkspace({
         {header}
       </div>
       <Content
-        className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]", contentClassName)}
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]",
+          contentClassName,
+        )}
         data-slot={contentSlot}
         ref={contentRef}
       >

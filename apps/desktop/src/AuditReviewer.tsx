@@ -16,10 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { buildHeadersText } from "./audit-bundle";
 import { i18n } from "./i18n";
 import { copyButtonLabel, type CopyFeedback } from "./copy-feedback";
-import type {
-  AuditContentPart,
-  AuditHTTPMeta,
-} from "./request-record-model";
+import type { AuditContentPart, AuditHTTPMeta } from "./request-record-model";
 import { splitPrivacyHighlights } from "./request-trajectory-model";
 import {
   parseSSEIncremental,
@@ -84,13 +81,19 @@ export function HTTPMetaSection({
           <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-xs leading-6 text-text-secondary">
             {meta.method} {meta.url} {meta.http_version}
           </code>
-          <HeaderList headers={meta.request_headers} title={t("audit.requestHeaders")} />
+          <HeaderList
+            headers={meta.request_headers}
+            title={t("audit.requestHeaders")}
+          />
           <code className="[overflow-wrap:anywhere] block rounded-lg bg-muted px-2.5 py-2 text-xs leading-6 text-text-secondary">
             {meta.response_status !== null
               ? `HTTP ${meta.response_status}`
               : t("audit.noStatus")}
           </code>
-          <HeaderList headers={meta.response_headers} title={t("audit.responseHeaders")} />
+          <HeaderList
+            headers={meta.response_headers}
+            title={t("audit.responseHeaders")}
+          />
         </div>
       )}
     </DetailBlock>
@@ -108,20 +111,28 @@ function HeaderList({
   if (headers.length === 0) {
     return (
       <div>
-        <h4 className="mb-1.5 text-xs font-medium text-text-secondary">{title}</h4>
-        <p className="text-xs leading-6 text-muted-foreground">{t("audit.none")}</p>
+        <h4 className="mb-1.5 text-xs font-medium text-text-secondary">
+          {title}
+        </h4>
+        <p className="text-xs leading-6 text-muted-foreground">
+          {t("audit.none")}
+        </p>
       </div>
     );
   }
   return (
     <div>
-      <h4 className="mb-1.5 text-xs font-medium text-text-secondary">{title}</h4>
+      <h4 className="mb-1.5 text-xs font-medium text-text-secondary">
+        {title}
+      </h4>
       <ul className="grid list-none gap-1 p-0 font-mono text-xs leading-6 text-text-secondary">
         {headers.map((header, index) => (
           <li key={`${header.name}:${index}`}>
             <span className="font-medium text-foreground">{header.name}:</span>{" "}
             <span
-              className={header.redacted ? "text-warning-foreground" : undefined}
+              className={
+                header.redacted ? "text-warning-foreground" : undefined
+              }
               data-redacted={header.redacted || undefined}
             >
               {header.value}
@@ -208,7 +219,14 @@ function AuditPartView({
       <div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span>{part.media_type}</span>
         <span>{formatBytes(part.captured_bytes)}</span>
-        {part.truncated ? <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">{t("audit.truncatedBadge")}</Badge> : null}
+        {part.truncated ? (
+          <Badge
+            className="bg-warning-wash text-warning-foreground"
+            variant="secondary"
+          >
+            {t("audit.truncatedBadge")}
+          </Badge>
+        ) : null}
       </div>
       {isStream ? (
         <StreamInspector part={part} protocol={protocol} />
@@ -277,7 +295,10 @@ function StreamInspector({
 
   const t = i18n.t.bind(i18n);
   return (
-    <Tabs value={mode} onValueChange={(value) => setMode(value as StreamViewMode)}>
+    <Tabs
+      value={mode}
+      onValueChange={(value) => setMode(value as StreamViewMode)}
+    >
       <div className="mb-2.5 flex items-center justify-between gap-3 max-[720px]:items-stretch max-[720px]:flex-col">
         <TabsList aria-label={t("audit.streamView")}>
           <ModeTab
@@ -323,10 +344,7 @@ function ModeTab({
   value: string;
 }) {
   return (
-    <TabsTrigger
-      aria-selected={active}
-      value={value}
-    >
+    <TabsTrigger aria-selected={active} value={value}>
       {label}
     </TabsTrigger>
   );
@@ -350,18 +368,30 @@ function ParseStatus({
     );
   }
   if (state === "error") {
-    return <Badge className="bg-danger-wash text-danger-foreground" variant="secondary">{t("audit.parseFailed")}</Badge>;
+    return (
+      <Badge
+        className="bg-danger-wash text-danger-foreground"
+        variant="secondary"
+      >
+        {t("audit.parseFailed")}
+      </Badge>
+    );
   }
   if (state === "cancelled") {
     return <Badge variant="secondary">{t("audit.parseCancelled")}</Badge>;
   }
   if (summary.invalidJsonCount > 0 || summary.incompleteLastEvent) {
     return (
-      <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">
+      <Badge
+        className="bg-warning-wash text-warning-foreground"
+        variant="secondary"
+      >
         {summary.invalidJsonCount > 0
           ? t("audit.invalidJson", { count: summary.invalidJsonCount })
           : ""}
-        {summary.invalidJsonCount > 0 && summary.incompleteLastEvent ? " · " : ""}
+        {summary.invalidJsonCount > 0 && summary.incompleteLastEvent
+          ? " · "
+          : ""}
         {summary.incompleteLastEvent ? t("audit.incompleteTail") : ""}
       </Badge>
     );
@@ -416,16 +446,19 @@ function EventsView({
             onValueChange={(value) => setType(value === "__all__" ? "" : value)}
             value={type}
           >
-            <SelectTrigger id="audit-event-type" className="min-w-36 max-[720px]:w-full">
+            <SelectTrigger
+              id="audit-event-type"
+              className="min-w-36 max-[720px]:w-full"
+            >
               <SelectValue placeholder={t("audit.allTypes")} />
             </SelectTrigger>
             <SelectContent>
-            <SelectItem value="__all__">{t("audit.allTypes")}</SelectItem>
-            {types.map((eventType) => (
-              <SelectItem key={eventType} value={eventType}>
-                {eventType}
-              </SelectItem>
-            ))}
+              <SelectItem value="__all__">{t("audit.allTypes")}</SelectItem>
+              {types.map((eventType) => (
+                <SelectItem key={eventType} value={eventType}>
+                  {eventType}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -460,13 +493,28 @@ function EventsView({
 function EventCard({ event }: { event: SSEEvent }) {
   const t = i18n.t.bind(i18n);
   return (
-    <details className="group overflow-hidden rounded-md border bg-card" data-testid="audit-event">
+    <details
+      className="group overflow-hidden rounded-md border bg-card"
+      data-testid="audit-event"
+    >
       <summary className="grid cursor-pointer list-none grid-cols-[44px_minmax(0,1fr)_auto_auto] items-center gap-2 px-2.5 py-2 text-xs [&::-webkit-details-marker]:hidden max-[720px]:grid-cols-[36px_minmax(0,1fr)_auto]">
         <span className="text-muted-foreground">#{event.index}</span>
-        <strong className="overflow-hidden text-xs text-ellipsis whitespace-nowrap">{event.type}</strong>
-        {event.invalidJson ? <em className="text-warning-foreground not-italic max-[720px]:hidden">{t("audit.invalidJsonBadge")}</em> : null}
-        {event.incomplete ? <em className="text-warning-foreground not-italic max-[720px]:hidden">{t("audit.incompleteEvent")}</em> : null}
-        <small className="text-muted-foreground">{t("audit.charCount", { count: event.data.length.toLocaleString() })}</small>
+        <strong className="overflow-hidden text-xs text-ellipsis whitespace-nowrap">
+          {event.type}
+        </strong>
+        {event.invalidJson ? (
+          <em className="text-warning-foreground not-italic max-[720px]:hidden">
+            {t("audit.invalidJsonBadge")}
+          </em>
+        ) : null}
+        {event.incomplete ? (
+          <em className="text-warning-foreground not-italic max-[720px]:hidden">
+            {t("audit.incompleteEvent")}
+          </em>
+        ) : null}
+        <small className="text-muted-foreground">
+          {t("audit.charCount", { count: event.data.length.toLocaleString() })}
+        </small>
       </summary>
       <pre className="max-h-[440px] overflow-auto border-t bg-muted p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
         {event.json === null
@@ -496,14 +544,24 @@ function DocumentInspector({ part }: { part: AuditContentPart }) {
 
   const t = i18n.t.bind(i18n);
   return (
-    <Tabs value={mode} onValueChange={(value) => setMode(value as DocumentViewMode)}>
+    <Tabs
+      value={mode}
+      onValueChange={(value) => setMode(value as DocumentViewMode)}
+    >
       <div className="mb-2.5 flex items-center justify-between gap-3">
         <TabsList aria-label={t("audit.contentView")}>
-          <TabsTrigger disabled={formatted === null} value="formatted">{t("audit.formatted")}</TabsTrigger>
+          <TabsTrigger disabled={formatted === null} value="formatted">
+            {t("audit.formatted")}
+          </TabsTrigger>
           <TabsTrigger value="raw">{t("audit.original")}</TabsTrigger>
         </TabsList>
         {formatted === null && canFormat ? (
-          <Badge className="bg-warning-wash text-warning-foreground" variant="secondary">{t("audit.invalidJsonBadge")}</Badge>
+          <Badge
+            className="bg-warning-wash text-warning-foreground"
+            variant="secondary"
+          >
+            {t("audit.invalidJsonBadge")}
+          </Badge>
         ) : null}
       </div>
       <TabsContent value="formatted">
@@ -519,10 +577,17 @@ function DocumentInspector({ part }: { part: AuditContentPart }) {
 }
 
 function RawSegmentView({ content }: { content: string }) {
-  const totalSegments = Math.max(1, Math.ceil(content.length / RAW_SEGMENT_SIZE));
+  const totalSegments = Math.max(
+    1,
+    Math.ceil(content.length / RAW_SEGMENT_SIZE),
+  );
   const [visibleSegments, setVisibleSegments] = useState(1);
   const segments = [];
-  for (let index = 0; index < Math.min(totalSegments, visibleSegments); index += 1) {
+  for (
+    let index = 0;
+    index < Math.min(totalSegments, visibleSegments);
+    index += 1
+  ) {
     const start = index * RAW_SEGMENT_SIZE;
     segments.push({
       index,
@@ -544,7 +609,11 @@ function RawSegmentView({ content }: { content: string }) {
         {totalSegments > 1 ? <span>{t("audit.segmentHint")}</span> : null}
       </div>
       {segments.map((segment) => (
-        <section className="mt-2 overflow-hidden rounded-lg border" data-testid="audit-raw-segment" key={segment.index}>
+        <section
+          className="mt-2 overflow-hidden rounded-lg border"
+          data-testid="audit-raw-segment"
+          key={segment.index}
+        >
           {totalSegments > 1 ? (
             <header className="border-b bg-muted px-3 py-2 text-xs text-muted-foreground">
               {t("audit.segmentHeader", {

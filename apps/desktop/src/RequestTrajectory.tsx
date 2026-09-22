@@ -10,7 +10,12 @@ import {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
-import { ArrowDown, ArrowUp, ChevronRight, MessageSquare } from "@/components/icons";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronRight,
+  MessageSquare,
+} from "@/components/icons";
 import { IconButton } from "@/components/IconButton";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { StatusDot } from "@/components/StatusDot";
@@ -68,7 +73,8 @@ const TIMELINE_CLOCK_INTERVAL_MS = 500;
 const LIST_VIRTUALIZE_MIN_ROWS = 80;
 const LIST_ROW_ESTIMATE_PX = 32;
 const LIST_OVERSCAN_ROWS = 12;
-const ROW_COLUMNS = "grid grid-cols-[4.5rem_minmax(0,1fr)_5rem_1rem] gap-2 @min-[560px]/trajectory:grid-cols-[4.5rem_minmax(0,1fr)_6rem_4rem_1rem] @min-[760px]/trajectory:grid-cols-[4.5rem_4.5rem_minmax(0,1fr)_6rem_4rem_1rem]";
+const ROW_COLUMNS =
+  "grid grid-cols-[4.5rem_minmax(0,1fr)_5rem_1rem] gap-2 @min-[560px]/trajectory:grid-cols-[4.5rem_minmax(0,1fr)_6rem_4rem_1rem] @min-[760px]/trajectory:grid-cols-[4.5rem_4.5rem_minmax(0,1fr)_6rem_4rem_1rem]";
 
 /**
  * How long a programmatic scroll owns one direction. Writing scrollTop/Left
@@ -114,21 +120,27 @@ export function RequestTrajectory({
 }) {
   const t = useT();
   const serviceByRequest = useMemo(
-    () => Object.fromEntries(
-      [...turns, ...Object.values(childrenByRoot).flat()].map(record => [
-        record.id, requestServiceIdentity(record, services),
-      ]),
-    ),
+    () =>
+      Object.fromEntries(
+        [...turns, ...Object.values(childrenByRoot).flat()].map((record) => [
+          record.id,
+          requestServiceIdentity(record, services),
+        ]),
+      ),
     [turns, childrenByRoot, services],
   );
   const rows = useMemo(
-    () => trajectoryRows(turns, childrenByRoot).map(row => {
-      const service = serviceByRequest[row.requestId];
-      // Keep the original event metadata; translate only its service ID for display.
-      return row.chip === "ROUTE" && service?.id
-        ? { ...row, summary: row.summary.replace(service.id, () => service.name) }
-        : row;
-    }),
+    () =>
+      trajectoryRows(turns, childrenByRoot).map((row) => {
+        const service = serviceByRequest[row.requestId];
+        // Keep the original event metadata; translate only its service ID for display.
+        return row.chip === "ROUTE" && service?.id
+          ? {
+              ...row,
+              summary: row.summary.replace(service.id, () => service.name),
+            }
+          : row;
+      }),
     [childrenByRoot, turns, serviceByRequest],
   );
   // Resolving a row id by scanning `rows` costs nothing once, and used to cost
@@ -157,9 +169,9 @@ export function RequestTrajectory({
   const sessionKey = turns[0]?.session_id ?? turns[0]?.id ?? "";
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(true);
-  const [highlightedRequestId, setHighlightedRequestId] = useState<string | null>(
-    null,
-  );
+  const [highlightedRequestId, setHighlightedRequestId] = useState<
+    string | null
+  >(null);
   const [revealNonce, setRevealNonce] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -218,7 +230,11 @@ export function RequestTrajectory({
       // selected before the click, because this update is still pending.
       const record = findRecord(turns, childrenByRoot, row.requestId);
       if (record) {
-        inspectorWindow.show({ row, record, service: serviceByRequest[record.id] });
+        inspectorWindow.show({
+          row,
+          record,
+          service: serviceByRequest[record.id],
+        });
       }
     },
     [childrenByRoot, inspectorWindow, onSelectRequest, turns, serviceByRequest],
@@ -296,10 +312,7 @@ export function RequestTrajectory({
   };
 
   const scheduleSync = (from: "list" | "strip") => {
-    if (
-      from === "list" &&
-      Date.now() < suppressStripFromListUntilRef.current
-    ) {
+    if (from === "list" && Date.now() < suppressStripFromListUntilRef.current) {
       return;
     }
     if (
@@ -425,12 +438,23 @@ export function RequestTrajectory({
         suppressListFromStripUntilRef={suppressListFromStripUntilRef}
         timeline={timeline}
       />
-      <div className={cn(ROW_COLUMNS, "h-7 shrink-0 items-center border-b bg-muted/40 px-2 text-micro text-muted-foreground")}>
+      <div
+        className={cn(
+          ROW_COLUMNS,
+          "h-7 shrink-0 items-center border-b bg-muted/40 px-2 text-micro text-muted-foreground",
+        )}
+      >
         <span>{t("trajectory.phase")}</span>
-        <span className="hidden @min-[760px]/trajectory:block">{t("trajectory.time")}</span>
+        <span className="hidden @min-[760px]/trajectory:block">
+          {t("trajectory.time")}
+        </span>
         <span className="flex min-w-0 items-center gap-2">
           <span>{t("trajectory.eventList")}</span>
-          <span className="hidden tabular-nums @min-[560px]/trajectory:inline">{t("trajectory.eventCount", { count: rows.filter((row) => row.chip !== "TURN").length })}</span>
+          <span className="hidden tabular-nums @min-[560px]/trajectory:inline">
+            {t("trajectory.eventCount", {
+              count: rows.filter((row) => row.chip !== "TURN").length,
+            })}
+          </span>
           <span className="ml-auto flex items-center gap-0.5">
             <IconButton
               size="icon-xs"
@@ -465,7 +489,9 @@ export function RequestTrajectory({
           </span>
         </span>
         <span className="text-right">{t("trajectory.result")}</span>
-        <span className="hidden text-right @min-[560px]/trajectory:block">{t("records.duration")}</span>
+        <span className="hidden text-right @min-[560px]/trajectory:block">
+          {t("records.duration")}
+        </span>
         <span />
       </div>
       <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -627,7 +653,12 @@ function TrajectoryTimelineView({
     if (shifted) {
       suppressListFromStripUntilRef.current = Date.now() + REVEAL_SUPPRESS_MS;
     }
-  }, [followSelectionRef, scrollerRef, selectedRow?.id, suppressListFromStripUntilRef]);
+  }, [
+    followSelectionRef,
+    scrollerRef,
+    selectedRow?.id,
+    suppressListFromStripUntilRef,
+  ]);
 
   return (
     <div
@@ -751,7 +782,7 @@ const TimelineRulerItem = memo(function TimelineRulerItem({
   const turnFirst = item.kind === "call" && item.call.turnFirst;
   const turnRow =
     turnFirst && item.call.turnRowId
-      ? rowById.get(item.call.turnRowId) ?? null
+      ? (rowById.get(item.call.turnRowId) ?? null)
       : null;
   return (
     <div
@@ -801,7 +832,9 @@ const TimelineGap = memo(function TimelineGap({
       style={style}
       title={
         tagged
-          ? i18n.t("trajectory.gap", { duration: formatDuration(item.durationMs) })
+          ? i18n.t("trajectory.gap", {
+              duration: formatDuration(item.durationMs),
+            })
           : undefined
       }
     >
@@ -978,9 +1011,12 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
   const t = useT();
   const started = new Date(row.startedAt);
   const ended = row.endedAt === null ? NaN : Date.parse(row.endedAt);
-  const duration = Number.isFinite(ended) && Number.isFinite(started.getTime())
-    ? formatDuration(Math.max(0, ended - started.getTime()))
-    : row.tone === "pending" ? t("status.pending") : "\u2014";
+  const duration =
+    Number.isFinite(ended) && Number.isFinite(started.getTime())
+      ? formatDuration(Math.max(0, ended - started.getTime()))
+      : row.tone === "pending"
+        ? t("status.pending")
+        : "\u2014";
   const time = Number.isFinite(started.getTime())
     ? started.toLocaleTimeString(i18n.language, { hour12: false })
     : "\u2014";
@@ -1008,9 +1044,11 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
           row.chip === "TURN" && "border-border bg-muted/70 font-medium",
           row.tone === "failed" && "bg-danger-wash/60 hover:bg-danger-wash",
           row.tone === "blocked" && "bg-blocked-wash/60 hover:bg-blocked-wash",
-          row.tone === "cancelled" && "bg-warning-wash/50 hover:bg-warning-wash",
+          row.tone === "cancelled" &&
+            "bg-warning-wash/50 hover:bg-warning-wash",
           (selected || highlighted) && "bg-accent hover:bg-accent",
-          selected && "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary",
+          selected &&
+            "before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary",
         )}
         data-chip={row.chip}
         data-highlighted={highlighted ? "true" : undefined}
@@ -1029,16 +1067,29 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
             {t("trajectory.chips.TURN")}
           </span>
         ) : (
-          <Badge className={cn("h-5 max-w-full", chipToneClass(row.chip, row.tone, "subtle"))} variant="secondary">
+          <Badge
+            className={cn(
+              "h-5 max-w-full",
+              chipToneClass(row.chip, row.tone, "subtle"),
+            )}
+            variant="secondary"
+          >
             {t(`trajectory.chips.${row.chip}`)}
           </Badge>
         )}
-        <time className="hidden font-mono text-micro text-muted-foreground @min-[760px]/trajectory:block" dateTime={row.startedAt} title={row.startedAt}>
+        <time
+          className="hidden font-mono text-micro text-muted-foreground @min-[760px]/trajectory:block"
+          dateTime={row.startedAt}
+          title={row.startedAt}
+        >
           {time}
         </time>
         <span className="flex min-w-0 items-center gap-2" title={row.summary}>
           {service && (row.chip === "UPSTREAM" || row.chip === "RETRY") ? (
-            <RequestServiceLabel className="max-w-[65%] shrink-0 font-medium" service={service} />
+            <RequestServiceLabel
+              className="max-w-[65%] shrink-0 font-medium"
+              service={service}
+            />
           ) : null}
           <span className="truncate">{row.summary}</span>
         </span>
@@ -1051,13 +1102,34 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
           )}
           title={row.result}
         >
-          {row.chip !== "TURN" ? <StatusDot tone={row.tone === "ok" ? "positive" : row.tone === "failed" ? "negative" : row.tone === "cancelled" ? "neutral" : row.tone} /> : null}
+          {row.chip !== "TURN" ? (
+            <StatusDot
+              tone={
+                row.tone === "ok"
+                  ? "positive"
+                  : row.tone === "failed"
+                    ? "negative"
+                    : row.tone === "cancelled"
+                      ? "neutral"
+                      : row.tone
+              }
+            />
+          ) : null}
           <span className="truncate">{row.result}</span>
         </span>
-        <span className="hidden truncate text-right font-mono text-micro tabular-nums text-muted-foreground @min-[560px]/trajectory:block" title={duration}>
+        <span
+          className="hidden truncate text-right font-mono text-micro tabular-nums text-muted-foreground @min-[560px]/trajectory:block"
+          title={duration}
+        >
           {duration}
         </span>
-        <ChevronRight aria-hidden="true" className={cn("size-3 text-muted-foreground/40 group-hover:text-foreground", selected && "text-primary")} />
+        <ChevronRight
+          aria-hidden="true"
+          className={cn(
+            "size-3 text-muted-foreground/40 group-hover:text-foreground",
+            selected && "text-primary",
+          )}
+        />
       </Button>
     </li>
   );

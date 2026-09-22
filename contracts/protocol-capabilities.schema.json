@@ -50,9 +50,7 @@
       "minLength": 1,
       "maxLength": 64,
       "pattern": "^[0-9A-Za-z][0-9A-Za-z._+-]*$",
-      "examples": [
-        "v1"
-      ]
+      "examples": ["v1"]
     },
     "ProtocolId": {
       "type": "string",
@@ -82,19 +80,11 @@
     },
     "ProtocolPhase": {
       "type": "string",
-      "enum": [
-        "alpha",
-        "post_alpha"
-      ]
+      "enum": ["alpha", "post_alpha"]
     },
     "ProtocolSummary": {
       "type": "object",
-      "required": [
-        "id",
-        "phase",
-        "primary",
-        "streaming"
-      ],
+      "required": ["id", "phase", "primary", "streaming"],
       "properties": {
         "id": {
           "$ref": "#/$defs/ProtocolId"
@@ -114,20 +104,12 @@
     },
     "PlanType": {
       "type": "string",
-      "enum": [
-        "native",
-        "delegated",
-        "relaykit"
-      ],
+      "enum": ["native", "delegated", "relaykit"],
       "description": "native preserves the protocol, delegated lets a capable gateway perform conversion, and relaykit performs explicit local conversion."
     },
     "PlanTypeCapability": {
       "type": "object",
-      "required": [
-        "id",
-        "available_in_alpha",
-        "uses_local_conversion"
-      ],
+      "required": ["id", "available_in_alpha", "uses_local_conversion"],
       "properties": {
         "id": {
           "$ref": "#/$defs/PlanType"
@@ -148,9 +130,7 @@
                 "const": "native"
               }
             },
-            "required": [
-              "id"
-            ]
+            "required": ["id"]
           },
           "then": {
             "properties": {
@@ -170,9 +150,7 @@
                 "const": "delegated"
               }
             },
-            "required": [
-              "id"
-            ]
+            "required": ["id"]
           },
           "then": {
             "properties": {
@@ -192,9 +170,7 @@
                 "const": "relaykit"
               }
             },
-            "required": [
-              "id"
-            ]
+            "required": ["id"]
           },
           "then": {
             "properties": {
@@ -211,20 +187,11 @@
     },
     "ConversionQuality": {
       "type": "string",
-      "enum": [
-        "good",
-        "fair",
-        "discouraged"
-      ]
+      "enum": ["good", "fair", "discouraged"]
     },
     "ConversionEdge": {
       "type": "object",
-      "required": [
-        "from",
-        "to",
-        "quality",
-        "streaming"
-      ],
+      "required": ["from", "to", "quality", "streaming"],
       "properties": {
         "from": {
           "$ref": "#/$defs/ProtocolId"
@@ -243,27 +210,17 @@
     },
     "ConversionEngineCapability": {
       "type": "object",
-      "required": [
-        "name",
-        "version",
-        "available",
-        "edges"
-      ],
+      "required": ["name", "version", "available", "edges"],
       "properties": {
         "name": {
           "type": "string",
           "minLength": 1,
           "maxLength": 64,
           "pattern": "^[a-z][a-z0-9_-]*$",
-          "examples": [
-            "relaykit"
-          ]
+          "examples": ["relaykit"]
         },
         "version": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "minLength": 1,
           "maxLength": 128,
           "description": "Pinned RelayKit version, or null when the engine is unavailable."
@@ -289,9 +246,7 @@
                 "const": false
               }
             },
-            "required": [
-              "available"
-            ]
+            "required": ["available"]
           },
           "then": {
             "properties": {
@@ -311,9 +266,7 @@
                 "const": true
               }
             },
-            "required": [
-              "available"
-            ]
+            "required": ["available"]
           },
           "then": {
             "properties": {
@@ -372,9 +325,7 @@
     },
     "ServiceAuth": {
       "type": "object",
-      "required": [
-        "scheme"
-      ],
+      "required": ["scheme"],
       "properties": {
         "scheme": {
           "$ref": "#/$defs/AuthScheme"
@@ -399,14 +350,10 @@
                 "const": "custom_header"
               }
             },
-            "required": [
-              "scheme"
-            ]
+            "required": ["scheme"]
           },
           "then": {
-            "required": [
-              "header_name"
-            ]
+            "required": ["header_name"]
           },
           "else": {
             "properties": {
@@ -419,21 +366,14 @@
     },
     "ServiceCapability": {
       "type": "object",
-      "required": [
-        "protocol",
-        "mode",
-        "streaming"
-      ],
+      "required": ["protocol", "mode", "streaming"],
       "properties": {
         "protocol": {
           "$ref": "#/$defs/ProtocolId"
         },
         "mode": {
           "type": "string",
-          "enum": [
-            "native",
-            "delegated"
-          ],
+          "enum": ["native", "delegated"],
           "description": "Legacy passthrough label. native and delegated both forward ingress bytes unchanged; new writes use native. Local conversion is convert_to."
         },
         "streaming": {
@@ -449,9 +389,7 @@
       "allOf": [
         {
           "if": {
-            "required": [
-              "protocol"
-            ],
+            "required": ["protocol"],
             "properties": {
               "protocol": {
                 "enum": [
@@ -523,14 +461,10 @@
                 "const": "relaykit"
               }
             },
-            "required": [
-              "plan_type"
-            ]
+            "required": ["plan_type"]
           },
           "then": {
-            "required": [
-              "conversion_quality"
-            ],
+            "required": ["conversion_quality"],
             "properties": {
               "conversion_path": {
                 "minItems": 1
@@ -613,10 +547,7 @@
       "minLength": 3,
       "maxLength": 96,
       "pattern": "^[a-z][a-z0-9_-]*$",
-      "examples": [
-        "service_01",
-        "route_default"
-      ]
+      "examples": ["service_01", "route_default"]
     },
     "Extensions": {
       "type": "object",
@@ -750,85 +681,85 @@
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "openai.responses"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "openai.responses" },
+        "phase": { "const": "alpha" }
       }
     },
     "ProtocolIdConstraintOpenaiResponsesCompact": {
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "openai.responses.compact"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "openai.responses.compact" },
+        "phase": { "const": "alpha" }
       }
     },
     "ProtocolIdConstraintAnthropicMessages": {
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "anthropic.messages"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "anthropic.messages" },
+        "phase": { "const": "alpha" }
       }
     },
     "ProtocolIdConstraintGoogleGenerateContent": {
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "google.generate_content"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "google.generate_content" },
+        "phase": { "const": "alpha" }
       }
     },
     "ProtocolIdConstraintOpenaiChat": {
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "openai.chat"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "openai.chat" },
+        "phase": { "const": "alpha" }
       }
     },
     "ProtocolIdConstraintOpenaiCompletions": {
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "openai.completions"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "openai.completions" },
+        "phase": { "const": "alpha" }
       }
     },
     "ProtocolIdConstraintOpenaiModels": {
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "openai.models"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "openai.models" },
+        "phase": { "const": "alpha" }
       }
     },
     "ProtocolIdConstraintGoogleModels": {
       "type": "object",
       "required": ["id", "phase"],
       "properties": {
-        "id": {"const": "google.models"},
-        "phase": {"const": "alpha"}
+        "id": { "const": "google.models" },
+        "phase": { "const": "alpha" }
       }
     },
     "PlanTypeNative": {
       "type": "object",
       "required": ["id"],
       "properties": {
-        "id": {"const": "native"}
+        "id": { "const": "native" }
       }
     },
     "PlanTypeDelegated": {
       "type": "object",
       "required": ["id"],
       "properties": {
-        "id": {"const": "delegated"}
+        "id": { "const": "delegated" }
       }
     },
     "PlanTypeRelayKit": {
       "type": "object",
       "required": ["id"],
       "properties": {
-        "id": {"const": "relaykit"}
+        "id": { "const": "relaykit" }
       }
     }
   }

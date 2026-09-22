@@ -4,30 +4,60 @@
   "metadata": {
     "user_id": "user_9f8e7d6c5b4a_account_11111111-2222-3333-4444-555555555555_session_66666666-7777-8888-9999-000000000000"
   },
-  "system": [{"type": "text", "text": "You are Claude Code.", "cache_control": {"type": "ephemeral"}}],
+  "system": [
+    {
+      "type": "text",
+      "text": "You are Claude Code.",
+      "cache_control": { "type": "ephemeral" }
+    }
+  ],
   "messages": [
     {
       "role": "user",
       "content": [
-        {"type": "text", "text": "<system-reminder>\nToday is 2026-09-03. The user is in Asia/Shanghai.\n</system-reminder>"},
-        {"type": "text", "text": "修复 main.go 的编译错误"}
+        {
+          "type": "text",
+          "text": "<system-reminder>\nToday is 2026-09-03. The user is in Asia/Shanghai.\n</system-reminder>"
+        },
+        { "type": "text", "text": "修复 main.go 的编译错误" }
       ]
     },
     {
       "role": "assistant",
       "content": [
-        {"type": "text", "text": "我先看看 main.go 的内容。"},
-        {"type": "tool_use", "id": "toolu_01XyZabc123DEF456ghi789JK", "name": "Read", "input": {"file_path": "main.go"}}
+        { "type": "text", "text": "我先看看 main.go 的内容。" },
+        {
+          "type": "tool_use",
+          "id": "toolu_01XyZabc123DEF456ghi789JK",
+          "name": "Read",
+          "input": { "file_path": "main.go" }
+        }
       ]
     },
     {
       "role": "user",
       "content": [
-        {"type": "tool_result", "tool_use_id": "toolu_01XyZabc123DEF456ghi789JK", "content": "package main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"},
-        {"type": "text", "text": "<system-reminder>\nThe file was read successfully.\n</system-reminder>"}
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01XyZabc123DEF456ghi789JK",
+          "content": "package main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
+        },
+        {
+          "type": "text",
+          "text": "<system-reminder>\nThe file was read successfully.\n</system-reminder>"
+        }
       ]
     }
   ],
-  "tools": [{"name": "Read", "description": "Read a file", "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}}}],
+  "tools": [
+    {
+      "name": "Read",
+      "description": "Read a file",
+      "input_schema": {
+        "type": "object",
+        "properties": { "file_path": { "type": "string" } }
+      }
+    }
+  ],
   "stream": true
 }

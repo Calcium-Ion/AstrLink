@@ -38,7 +38,9 @@ export function FilterSelect({
         title={options.find((option) => option.value === value)?.label}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 font-normal text-muted-foreground">{label}</span>
+          <span className="shrink-0 font-normal text-muted-foreground">
+            {label}
+          </span>
           <span className="min-w-0 truncate">
             <SelectValue />
           </span>
@@ -46,7 +48,10 @@ export function FilterSelect({
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (
-          <SelectItem key={option.value || "__all__"} value={option.value || "__all__"}>
+          <SelectItem
+            key={option.value || "__all__"}
+            value={option.value || "__all__"}
+          >
             {option.label}
           </SelectItem>
         ))}

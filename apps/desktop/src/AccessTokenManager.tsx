@@ -117,8 +117,9 @@ export function AccessTokenManager({
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [deletingID, setDeletingID] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] =
-    useState<AccessTokenSummary | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AccessTokenSummary | null>(
+    null,
+  );
   const [copyingID, setCopyingID] = useState<string | null>(null);
   const [copiedID, setCopiedID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -174,7 +175,9 @@ export function AccessTokenManager({
     try {
       const response = await listAccessTokenUsage(startOfTodayIso(new Date()));
       if (usageGeneration.current !== generation) return;
-      const totals = new Map(response.items.map((item) => [item.token_id, item]));
+      const totals = new Map(
+        response.items.map((item) => [item.token_id, item]),
+      );
       const next: Record<string, TokenUsageStats> = {};
       for (const tokenId of tokenIds) {
         const usage = totals.get(tokenId);
@@ -572,7 +575,10 @@ export function AccessTokenManager({
                         type="button"
                       >
                         {isCopying ? (
-                          <LoaderCircle animateOnHover={false} className="animate-spin motion-reduce:animate-none" />
+                          <LoaderCircle
+                            animateOnHover={false}
+                            className="animate-spin motion-reduce:animate-none"
+                          />
                         ) : isCopied ? (
                           <Check />
                         ) : (

@@ -258,7 +258,9 @@ export function RecoverySummary({
           value.enabled
             ? value.strategy === "retry_first"
               ? "failure.retryFirstSummary"
-              : value.strategy === "failover_only" ? "failure.failoverOnlySummary" : "failure.failoverFirstSummary"
+              : value.strategy === "failover_only"
+                ? "failure.failoverOnlySummary"
+                : "failure.failoverFirstSummary"
             : "failure.noFailoverSummary",
           { count: value.max_attempts },
         )}

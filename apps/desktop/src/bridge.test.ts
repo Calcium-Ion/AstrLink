@@ -98,25 +98,48 @@ function validSnapshot(): Record<string, unknown> {
 describe("desktop bridge contract", () => {
   it("requests one aggregate for the complete usage window", async () => {
     const window = resolveUsageWindow("1d", new Date(2026, 8, 19, 12));
-    invokeMock.mockResolvedValueOnce({ totals: emptyUsageTotals(), by_day: [], by_hour: [], by_service: [], by_model: [], scanned_records: 0 });
+    invokeMock.mockResolvedValueOnce({
+      totals: emptyUsageTotals(),
+      by_day: [],
+      by_hour: [],
+      by_service: [],
+      by_model: [],
+      scanned_records: 0,
+    });
     const result = await getUsageSummary(window);
     expect(invokeMock).toHaveBeenCalledWith("get_usage_summary", {
-      from: window.from, to: window.to, timeZone: window.time_zone, bucket: "hour",
+      from: window.from,
+      to: window.to,
+      timeZone: window.time_zone,
+      bucket: "hour",
     });
     expect(result.by_hour).toHaveLength(24);
     expect(result.capped).toBe(false);
   });
   it("roundtrips ordered service IDs and rejects malformed order responses", async () => {
-    const record = { service_ids: ["service_b", "service_a"], etag: '"sha256:abc"' };
+    const record = {
+      service_ids: ["service_b", "service_a"],
+      etag: '"sha256:abc"',
+    };
     invokeMock.mockResolvedValueOnce(record);
     await expect(getServiceOrder()).resolves.toEqual(record);
     expect(invokeMock).toHaveBeenLastCalledWith("get_service_order");
     invokeMock.mockResolvedValueOnce(record);
-    await expect(updateServiceOrder(record.service_ids, record.etag)).resolves.toEqual(record);
-    expect(invokeMock).toHaveBeenLastCalledWith("update_service_order", { serviceIds: record.service_ids, etag: record.etag });
-    invokeMock.mockResolvedValueOnce({ ...record, service_ids: ["service_a", "service_a"] });
+    await expect(
+      updateServiceOrder(record.service_ids, record.etag),
+    ).resolves.toEqual(record);
+    expect(invokeMock).toHaveBeenLastCalledWith("update_service_order", {
+      serviceIds: record.service_ids,
+      etag: record.etag,
+    });
+    invokeMock.mockResolvedValueOnce({
+      ...record,
+      service_ids: ["service_a", "service_a"],
+    });
     await expect(getServiceOrder()).rejects.toThrow("Invalid service order");
-    await expect(updateServiceOrder(["bad/path"], record.etag)).rejects.toThrow("Invalid service order");
+    await expect(updateServiceOrder(["bad/path"], record.etag)).rejects.toThrow(
+      "Invalid service order",
+    );
   });
   beforeEach(() => {
     invokeMock.mockReset();
@@ -132,44 +155,55 @@ describe("desktop bridge contract", () => {
   it.each([
     ["core_status", getCoreStatus],
     ["get_preferences", getPreferences],
-  ] as const)("times out a stuck %s and ignores its late reply", async (command, read) => {
-    vi.useFakeTimers();
-    let resolveNative!: (value: unknown) => void;
-    invokeMock.mockReturnValueOnce(new Promise((resolve) => { resolveNative = resolve; }));
-    const result = read();
-    const settled = vi.fn();
-    void result.then(settled, settled);
-    const failure = expect(result).rejects.toThrow("桌面程序长时间未响应");
+  ] as const)(
+    "times out a stuck %s and ignores its late reply",
+    async (command, read) => {
+      vi.useFakeTimers();
+      let resolveNative!: (value: unknown) => void;
+      invokeMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveNative = resolve;
+        }),
+      );
+      const result = read();
+      const settled = vi.fn();
+      void result.then(settled, settled);
+      const failure = expect(result).rejects.toThrow("桌面程序长时间未响应");
 
-    await vi.advanceTimersByTimeAsync(9_999);
-    expect(settled).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    await failure;
-    expect(invokeMock).toHaveBeenCalledWith(command);
-    expect(settled).toHaveBeenCalledTimes(1);
-    expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await failure;
+      expect(invokeMock).toHaveBeenCalledWith(command);
+      expect(settled).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
 
-    resolveNative(validSnapshot());
-    await vi.advanceTimersByTimeAsync(0);
-    expect(settled).toHaveBeenCalledTimes(1);
-    await expect(result).rejects.toThrow("桌面程序长时间未响应");
-  });
+      resolveNative(validSnapshot());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toHaveBeenCalledTimes(1);
+      await expect(result).rejects.toThrow("桌面程序长时间未响应");
+    },
+  );
 
   it.each([
     ["core_status", getCoreStatus],
     ["get_preferences", getPreferences],
-  ] as const)("preserves native %s errors and clears its deadline", async (_command, read) => {
-    vi.useFakeTimers();
-    invokeMock.mockRejectedValueOnce("native read failed");
+  ] as const)(
+    "preserves native %s errors and clears its deadline",
+    async (_command, read) => {
+      vi.useFakeTimers();
+      invokeMock.mockRejectedValueOnce("native read failed");
 
-    await expect(read()).rejects.toThrow("native read failed");
-    expect(vi.getTimerCount()).toBe(0);
-  });
+      await expect(read()).rejects.toThrow("native read failed");
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it("can read a fresh status after an earlier read timed out", async () => {
     vi.useFakeTimers();
     invokeMock.mockReturnValueOnce(new Promise(() => {}));
-    const failure = expect(getCoreStatus()).rejects.toThrow("桌面程序长时间未响应");
+    const failure =
+      expect(getCoreStatus()).rejects.toThrow("桌面程序长时间未响应");
     await vi.advanceTimersByTimeAsync(10_000);
     await failure;
 
@@ -181,7 +215,11 @@ describe("desktop bridge contract", () => {
   it("does not apply local read deadlines to gateway restarts", async () => {
     vi.useFakeTimers();
     let resolveNative!: (value: unknown) => void;
-    invokeMock.mockReturnValueOnce(new Promise((resolve) => { resolveNative = resolve; }));
+    invokeMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveNative = resolve;
+      }),
+    );
     const result = restartCore();
 
     await vi.advanceTimersByTimeAsync(15_000);
@@ -191,12 +229,18 @@ describe("desktop bridge contract", () => {
 
   it("forwards session kind and cursor through the native bridge", async () => {
     invokeMock.mockResolvedValue({ items: [], next_cursor: null });
-    await listRequestSessions({ kind: "discovery", limit: 50, cursor: "older" });
+    await listRequestSessions({
+      kind: "discovery",
+      limit: 50,
+      cursor: "older",
+    });
     expect(invokeMock).toHaveBeenCalledWith("list_request_sessions", {
       query: { kind: "discovery", limit: 50, cursor: "older" },
     });
     await listRequestSessions();
-    expect(invokeMock).toHaveBeenLastCalledWith("list_request_sessions", { query: {} });
+    expect(invokeMock).toHaveBeenLastCalledWith("list_request_sessions", {
+      query: {},
+    });
   });
 
   it("returns the browser fallback only after native bridge detection", async () => {
@@ -208,26 +252,34 @@ describe("desktop bridge contract", () => {
       pid: null,
     });
     expect(invokeMock).not.toHaveBeenCalled();
-    await expect(restartCore()).rejects.toThrow("网关重启仅在 AstrLink 桌面应用中可用。");
+    await expect(restartCore()).rejects.toThrow(
+      "网关重启仅在 AstrLink 桌面应用中可用。",
+    );
   });
 
   it.each([
     ["core_status", getCoreStatus],
     ["restart_core", restartCore],
-  ] as const)("parses the frozen fixture returned by %s", async (command, callBridge) => {
-    const wireSnapshot = validSnapshot();
-    invokeMock.mockResolvedValueOnce(wireSnapshot);
+  ] as const)(
+    "parses the frozen fixture returned by %s",
+    async (command, callBridge) => {
+      const wireSnapshot = validSnapshot();
+      invokeMock.mockResolvedValueOnce(wireSnapshot);
 
-    const parsed = await callBridge();
+      const parsed = await callBridge();
 
-    expect(invokeMock).toHaveBeenCalledWith(command);
-    expect(parsed).toEqual(wireSnapshot);
-    expect(parsed.capabilities?.protocols).toHaveLength(8);
-  });
+      expect(invokeMock).toHaveBeenCalledWith(command);
+      expect(parsed).toEqual(wireSnapshot);
+      expect(parsed.capabilities?.protocols).toHaveLength(8);
+    },
+  );
 
   it("keeps fallback metadata tied to the advertised inference address", async () => {
     const snapshot = validSnapshot();
-    snapshot.inference_port_fallback = { requested_port: 9000, active_port: 8317 };
+    snapshot.inference_port_fallback = {
+      requested_port: 9000,
+      active_port: 8317,
+    };
     invokeMock.mockResolvedValueOnce(snapshot);
     await expect(getCoreStatus()).resolves.toMatchObject({
       inference_port_fallback: { requested_port: 9000, active_port: 8317 },
@@ -237,7 +289,10 @@ describe("desktop bridge contract", () => {
       { requested_port: 8317, active_port: 8317 },
       { requested_port: 0, active_port: 8317 },
     ]) {
-      invokeMock.mockResolvedValueOnce({ ...snapshot, inference_port_fallback: fallback });
+      invokeMock.mockResolvedValueOnce({
+        ...snapshot,
+        inference_port_fallback: fallback,
+      });
       await expect(getCoreStatus()).rejects.toThrow("inference_port_fallback");
     }
   });
@@ -255,13 +310,25 @@ describe("desktop bridge contract", () => {
     (wireSnapshot.ready as any).control_url = "http://127.0.0.1:49152\n";
     invokeMock.mockResolvedValueOnce(wireSnapshot);
 
-    await expect(getCoreStatus()).rejects.toThrow("canonical IPv4 loopback URL");
+    await expect(getCoreStatus()).rejects.toThrow(
+      "canonical IPv4 loopback URL",
+    );
   });
 
   it.each([
-    ["ready control version", (snapshot: any) => (snapshot.ready.control_api_version = "v2")],
-    ["version contract version", (snapshot: any) => (snapshot.version.protocol_contract_version = "v2")],
-    ["capability contract version", (snapshot: any) => (snapshot.capabilities.protocol_contract_version = "v2")],
+    [
+      "ready control version",
+      (snapshot: any) => (snapshot.ready.control_api_version = "v2"),
+    ],
+    [
+      "version contract version",
+      (snapshot: any) => (snapshot.version.protocol_contract_version = "v2"),
+    ],
+    [
+      "capability contract version",
+      (snapshot: any) =>
+        (snapshot.capabilities.protocol_contract_version = "v2"),
+    ],
   ])("rejects a mismatched %s", async (_name, mutate) => {
     const wireSnapshot = validSnapshot();
     mutate(wireSnapshot);
@@ -274,7 +341,9 @@ describe("desktop bridge contract", () => {
     const invalid = validSnapshot();
     (invalid.capabilities as any).protocols.shift();
     invokeMock.mockResolvedValueOnce(invalid);
-    await expect(getCoreStatus()).rejects.toThrow("expected at least 8 entries");
+    await expect(getCoreStatus()).rejects.toThrow(
+      "expected at least 8 entries",
+    );
 
     const extended = validSnapshot();
     (extended.capabilities as any).protocols.push({
@@ -295,12 +364,14 @@ describe("desktop bridge contract", () => {
   it.each([
     [
       "RelayKit available without version",
-      (snapshot: any) => (snapshot.capabilities.conversion_engine.available = true),
+      (snapshot: any) =>
+        (snapshot.capabilities.conversion_engine.available = true),
       "non-empty string when available",
     ],
     [
       "RelayKit version while unavailable",
-      (snapshot: any) => (snapshot.capabilities.conversion_engine.version = "0.1.0"),
+      (snapshot: any) =>
+        (snapshot.capabilities.conversion_engine.version = "0.1.0"),
       "must be null when unavailable",
     ],
     [
@@ -310,16 +381,20 @@ describe("desktop bridge contract", () => {
     ],
     [
       "native conversion",
-      (snapshot: any) => (snapshot.capabilities.plan_types[0].uses_local_conversion = true),
+      (snapshot: any) =>
+        (snapshot.capabilities.plan_types[0].uses_local_conversion = true),
       "Alpha",
     ],
-  ])("rejects invalid capability semantics: %s", async (_name, mutate, detail) => {
-    const wireSnapshot = validSnapshot();
-    mutate(wireSnapshot);
-    invokeMock.mockResolvedValueOnce(wireSnapshot);
+  ])(
+    "rejects invalid capability semantics: %s",
+    async (_name, mutate, detail) => {
+      const wireSnapshot = validSnapshot();
+      mutate(wireSnapshot);
+      invokeMock.mockResolvedValueOnce(wireSnapshot);
 
-    await expect(getCoreStatus()).rejects.toThrow(detail);
-  });
+      await expect(getCoreStatus()).rejects.toThrow(detail);
+    },
+  );
 
   it("accepts an available RelayKit conversion engine descriptor", async () => {
     const wireSnapshot = validSnapshot();
@@ -433,9 +508,13 @@ describe("desktop bridge contract", () => {
     });
     expect(invokeMock).toHaveBeenLastCalledWith("list_access_tokens");
 
-    const usage = { items: [{ token_id: token.id, today_tokens: 10, total_tokens: 100 }] };
+    const usage = {
+      items: [{ token_id: token.id, today_tokens: 10, total_tokens: 100 }],
+    };
     invokeMock.mockResolvedValueOnce(usage);
-    await expect(listAccessTokenUsage("2026-09-19T00:00:00.000Z")).resolves.toEqual(usage);
+    await expect(
+      listAccessTokenUsage("2026-09-19T00:00:00.000Z"),
+    ).resolves.toEqual(usage);
     expect(invokeMock).toHaveBeenLastCalledWith("list_access_token_usage", {
       todayFrom: "2026-09-19T00:00:00.000Z",
     });
@@ -640,12 +719,13 @@ describe("desktop bridge contract", () => {
     };
     invokeMock.mockResolvedValueOnce(localProbe);
     await expect(
-      probeLocalPrivacyModel({ path: "  /Volumes/models/privacy/model_int8.onnx  " }),
+      probeLocalPrivacyModel({
+        path: "  /Volumes/models/privacy/model_int8.onnx  ",
+      }),
     ).resolves.toEqual(localProbe);
-    expect(invokeMock).toHaveBeenLastCalledWith(
-      "probe_local_privacy_model",
-      { input: { path: "/Volumes/models/privacy/model_int8.onnx" } },
-    );
+    expect(invokeMock).toHaveBeenLastCalledWith("probe_local_privacy_model", {
+      input: { path: "/Volumes/models/privacy/model_int8.onnx" },
+    });
     const callsBeforeInvalidLocalProbe = invokeMock.mock.calls.length;
     await expect(
       probeLocalPrivacyModel({ path: "smb://host/share/privacy/model.onnx" }),
@@ -675,21 +755,33 @@ describe("desktop bridge contract", () => {
     });
 
     invokeMock.mockResolvedValueOnce(installation);
-    await expect(
-      getPrivacyModelInstallation(installation.id),
-    ).resolves.toEqual(installation);
+    await expect(getPrivacyModelInstallation(installation.id)).resolves.toEqual(
+      installation,
+    );
     expect(invokeMock).toHaveBeenLastCalledWith(
       "get_privacy_model_installation",
       { installationId: installation.id },
     );
 
     invokeMock.mockResolvedValueOnce({ ...installation, status: "paused" });
-    await expect(pausePrivacyModelInstallation(installation.id)).resolves.toMatchObject({ status: "paused" });
-    expect(invokeMock).toHaveBeenLastCalledWith("pause_privacy_model_installation", { installationId: installation.id });
+    await expect(
+      pausePrivacyModelInstallation(installation.id),
+    ).resolves.toMatchObject({ status: "paused" });
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "pause_privacy_model_installation",
+      { installationId: installation.id },
+    );
     invokeMock.mockResolvedValueOnce(installation);
-    await expect(resumePrivacyModelInstallation(installation.id)).resolves.toEqual(installation);
-    expect(invokeMock).toHaveBeenLastCalledWith("resume_privacy_model_installation", { installationId: installation.id });
-    await expect(resumePrivacyModelInstallation("../invalid")).rejects.toThrow();
+    await expect(
+      resumePrivacyModelInstallation(installation.id),
+    ).resolves.toEqual(installation);
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "resume_privacy_model_installation",
+      { installationId: installation.id },
+    );
+    await expect(
+      resumePrivacyModelInstallation("../invalid"),
+    ).rejects.toThrow();
     invokeMock.mockResolvedValueOnce(undefined);
     await cancelPrivacyModelInstallation(installation.id);
     expect(invokeMock).toHaveBeenLastCalledWith(
@@ -776,14 +868,17 @@ describe("desktop bridge contract", () => {
     invokeMock.mockResolvedValueOnce(session);
     await expect(getServiceAuthorization(service.id)).resolves.toEqual(session);
 
-    const { authorization_url: _authorizationURL, ...terminalSession } = session;
+    const { authorization_url: _authorizationURL, ...terminalSession } =
+      session;
     invokeMock.mockResolvedValueOnce({
       ...terminalSession,
       status: "cancelled",
     });
-    await expect(cancelServiceAuthorization(service.id)).resolves.toMatchObject({
-      status: "cancelled",
-    });
+    await expect(cancelServiceAuthorization(service.id)).resolves.toMatchObject(
+      {
+        status: "cancelled",
+      },
+    );
 
     invokeMock.mockResolvedValueOnce({
       service,
@@ -851,10 +946,9 @@ describe("desktop bridge contract", () => {
     await expect(probeDraftServiceModels(draftProbe)).resolves.toMatchObject({
       model_ids: ["gpt-5"],
     });
-    expect(invokeMock).toHaveBeenLastCalledWith(
-      "probe_draft_service_models",
-      { input: draftProbe },
-    );
+    expect(invokeMock).toHaveBeenLastCalledWith("probe_draft_service_models", {
+      input: draftProbe,
+    });
 
     invokeMock.mockResolvedValueOnce(undefined);
     await deleteService(service.id, etag);
@@ -881,7 +975,10 @@ describe("desktop bridge contract", () => {
           detected: true,
           skill_installed: false,
           mcp_installed: false,
-          preview_paths: ["/tmp/.cursor/skills/astrlink-debug", "/tmp/.cursor/mcp.json"],
+          preview_paths: [
+            "/tmp/.cursor/skills/astrlink-debug",
+            "/tmp/.cursor/mcp.json",
+          ],
         },
       ],
       shared_paths: ["/tmp/astrlink-mcp"],
@@ -900,7 +997,9 @@ describe("desktop bridge contract", () => {
     };
     invokeMock.mockResolvedValueOnce(receipt);
     await expect(installAgentDebug(["grok"])).resolves.toEqual(receipt);
-    expect(invokeMock).toHaveBeenLastCalledWith("install_agent_debug", { toolIds: ["grok"] });
+    expect(invokeMock).toHaveBeenLastCalledWith("install_agent_debug", {
+      toolIds: ["grok"],
+    });
 
     invokeMock.mockResolvedValueOnce(undefined);
     await uninstallAgentDebug();
@@ -910,9 +1009,9 @@ describe("desktop bridge contract", () => {
   it("saves text through the native dialog command", async () => {
     invokeMock.mockResolvedValueOnce("/Users/me/Downloads/astrlink-req_1.md");
 
-    await expect(
-      saveTextFile("astrlink-req_1.md", "# bundle"),
-    ).resolves.toBe("/Users/me/Downloads/astrlink-req_1.md");
+    await expect(saveTextFile("astrlink-req_1.md", "# bundle")).resolves.toBe(
+      "/Users/me/Downloads/astrlink-req_1.md",
+    );
     expect(invokeMock).toHaveBeenCalledWith("save_text_file", {
       defaultFilename: "astrlink-req_1.md",
       contents: "# bundle",
@@ -934,17 +1033,32 @@ describe("desktop bridge contract", () => {
   });
 });
 
-
 describe("provider test bridge", () => {
   it("passes the selected provider and validates its result", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    const input = { protocol: "openai.chat" as const, model: "test-model", stream: false };
-    const result = { ...input, service_id: "service_test", ok: true, status_code: 200, duration_ms: 100, output: "OK" };
+    const input = {
+      protocol: "openai.chat" as const,
+      model: "test-model",
+      stream: false,
+    };
+    const result = {
+      ...input,
+      service_id: "service_test",
+      ok: true,
+      status_code: 200,
+      duration_ms: 100,
+      output: "OK",
+    };
     invokeMock.mockResolvedValueOnce(result);
     expect(await testService("service_test", input)).toEqual(result);
-    expect(invokeMock).toHaveBeenLastCalledWith("test_service", { serviceId: "service_test", input });
+    expect(invokeMock).toHaveBeenLastCalledWith("test_service", {
+      serviceId: "service_test",
+      input,
+    });
     invokeMock.mockResolvedValueOnce({ ...result, duration_ms: -1 });
-    await expect(testService("service_test", input)).rejects.toThrow("Invalid provider test result");
+    await expect(testService("service_test", input)).rejects.toThrow(
+      "Invalid provider test result",
+    );
     vi.unstubAllGlobals();
   });
 });

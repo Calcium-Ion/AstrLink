@@ -118,14 +118,14 @@ describe("privacy-policy IPC contract", () => {
     const custom = {
       ...policy,
       regex_source: "custom",
-      custom_regex_rules: [
-        { kind: "email", pattern: `(?i)alice@[a-z.]+` },
-      ],
+      custom_regex_rules: [{ kind: "email", pattern: `(?i)alice@[a-z.]+` }],
     } as const;
-    expect(parsePrivacyPolicyRecord({
-      policy: custom,
-      etag: `"sha256:${"a".repeat(64)}"`,
-    }).policy.custom_regex_rules).toEqual(custom.custom_regex_rules);
+    expect(
+      parsePrivacyPolicyRecord({
+        policy: custom,
+        etag: `"sha256:${"a".repeat(64)}"`,
+      }).policy.custom_regex_rules,
+    ).toEqual(custom.custom_regex_rules);
 
     expect(() =>
       parsePrivacyPolicyPage({
@@ -309,7 +309,9 @@ describe("privacy-policy IPC contract", () => {
         protocol: "openai.chat",
         sample_text: "hello",
         policy: {
-          kind_rules: [{ kind: "common_secret", enabled: true, style: "natural" }],
+          kind_rules: [
+            { kind: "common_secret", enabled: true, style: "natural" },
+          ],
         },
       }),
     ).toThrow("token placeholder style");
@@ -474,9 +476,9 @@ describe("privacy-policy IPC contract", () => {
       bytes_downloaded: 45,
       installed_at: null,
     } as const;
-    expect(
-      parsePrivacyModelInstallationList({ items: [downloading] }),
-    ).toEqual({ items: [downloading] });
+    expect(parsePrivacyModelInstallationList({ items: [downloading] })).toEqual(
+      { items: [downloading] },
+    );
     const preparing = {
       ...downloading,
       bytes_downloaded: 0,
@@ -484,8 +486,15 @@ describe("privacy-policy IPC contract", () => {
     } as const;
     const paused = { ...downloading, status: "paused" };
     expect(parsePrivacyModelInstallation(paused)).toEqual(paused);
-    expect(() => parsePrivacyModelInstallation({ ...paused, error: "download_failed" })).toThrow();
-    expect(() => parsePrivacyModelInstallation({ ...paused, installed_at: "2026-09-19T00:00:00Z" })).toThrow();
+    expect(() =>
+      parsePrivacyModelInstallation({ ...paused, error: "download_failed" }),
+    ).toThrow();
+    expect(() =>
+      parsePrivacyModelInstallation({
+        ...paused,
+        installed_at: "2026-09-19T00:00:00Z",
+      }),
+    ).toThrow();
     expect(parsePrivacyModelInstallation(preparing)).toEqual(preparing);
     expect(() =>
       parsePrivacyModelInstallation({

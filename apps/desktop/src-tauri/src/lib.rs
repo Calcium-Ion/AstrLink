@@ -1,4 +1,3 @@
-mod service_proxy;
 mod agent_install;
 mod control_session;
 #[cfg(debug_assertions)]
@@ -9,6 +8,7 @@ mod i18n;
 mod macos_app;
 mod preferences;
 mod recovery_path;
+mod service_proxy;
 mod sidecar;
 mod startup_window;
 

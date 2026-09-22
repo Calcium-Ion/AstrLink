@@ -1496,7 +1496,9 @@ impl CoreManager {
         &self,
         input: serde_json::Value,
     ) -> Result<ServiceRecordResponse, String> {
-        if let Some(proxy) = input.get("proxy") { crate::service_proxy::validate_proxy(proxy, None, true)?; }
+        if let Some(proxy) = input.get("proxy") {
+            crate::service_proxy::validate_proxy(proxy, None, true)?;
+        }
         if let Some(policy) = input.get("failure_policy").filter(|value| !value.is_null()) {
             validate_failure_policy(policy)?;
         }
@@ -1514,7 +1516,9 @@ impl CoreManager {
     ) -> Result<ServiceRecordResponse, String> {
         validate_resource_id(service_id)?;
         validate_etag(etag)?;
-        if let Some(proxy) = patch.get("proxy") { crate::service_proxy::validate_proxy(proxy, None, true)?; }
+        if let Some(proxy) = patch.get("proxy") {
+            crate::service_proxy::validate_proxy(proxy, None, true)?;
+        }
         if let Some(policy) = patch.get("failure_policy").filter(|value| !value.is_null()) {
             validate_failure_policy(policy)?;
         }
@@ -1660,7 +1664,9 @@ impl CoreManager {
         &self,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        if let Some(proxy) = input.get("proxy") { crate::service_proxy::validate_proxy(proxy, None, true)?; }
+        if let Some(proxy) = input.get("proxy") {
+            crate::service_proxy::validate_proxy(proxy, None, true)?;
+        }
         let (_, body) = self
             .authenticated_control(Method::POST, SERVICE_MODEL_PROBES_PATH, Some(input), None)
             .await?;
@@ -2418,7 +2424,13 @@ fn service_record(etag: Option<String>, body: &[u8]) -> Result<ServiceRecordResp
     validate_etag(&etag)?;
     let service: serde_json::Value = serde_json::from_slice(body)
         .map_err(|error| format!("service response returned invalid JSON: {error}"))?;
-    if let Some(proxy) = service.get("proxy") { crate::service_proxy::validate_proxy(proxy, service.get("id").and_then(serde_json::Value::as_str), false)?; }
+    if let Some(proxy) = service.get("proxy") {
+        crate::service_proxy::validate_proxy(
+            proxy,
+            service.get("id").and_then(serde_json::Value::as_str),
+            false,
+        )?;
+    }
     if let Some(policy) = service.get("failure_policy") {
         validate_failure_policy(policy)?;
     }

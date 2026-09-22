@@ -69,7 +69,9 @@ describe("AuditReviewer sections", () => {
     // Raw is the default view; nothing is parsed yet.
     expect(container.querySelector('[data-testid="audit-raw"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="audit-event"]')).toBeNull();
-    const rawText = container.querySelector('[data-testid="audit-raw"] pre')?.textContent ?? "";
+    const rawText =
+      container.querySelector('[data-testid="audit-raw"] pre')?.textContent ??
+      "";
     expect(rawText.startsWith("event: response.output_text.delta")).toBe(true);
 
     const eventsTab = [...container.querySelectorAll("button")].find(
@@ -87,16 +89,19 @@ describe("AuditReviewer sections", () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      if (container.querySelectorAll('[data-testid="audit-event"]').length > 0) break;
+      if (container.querySelectorAll('[data-testid="audit-event"]').length > 0)
+        break;
     }
-    expect(container.querySelectorAll('[data-testid="audit-event"]')).toHaveLength(300);
+    expect(
+      container.querySelectorAll('[data-testid="audit-event"]'),
+    ).toHaveLength(300);
     const loadMore = [...container.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("再显示 160 个事件"),
     );
     await act(async () => (loadMore as HTMLButtonElement).click());
-    expect(container.querySelectorAll('[data-testid="audit-event"]')).toHaveLength(
-      eventCount,
-    );
+    expect(
+      container.querySelectorAll('[data-testid="audit-event"]'),
+    ).toHaveLength(eventCount);
   });
 
   it("highlights privacy placeholders without marking originals", async () => {
@@ -127,15 +132,19 @@ describe("AuditReviewer sections", () => {
       await Promise.resolve();
     });
 
-    const marks = [...container.querySelectorAll('[data-testid="privacy-mark"]')];
+    const marks = [
+      ...container.querySelectorAll('[data-testid="privacy-mark"]'),
+    ];
     expect(marks).toHaveLength(1);
     expect(marks[0]?.textContent).toBe("<PRIVATE_EMAIL_aaaaaaaaaaaaaaaa>");
     expect(marks[0]?.getAttribute("data-kind")).toBe("email");
-    expect(marks[0]?.closest("pre")?.textContent).toContain("alice@example.com");
+    expect(marks[0]?.closest("pre")?.textContent).toContain(
+      "alice@example.com",
+    );
     expect(marks[0]?.textContent).not.toContain("alice@");
 
-    const copyButton = [...container.querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("复制"),
+    const copyButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.includes("复制"),
     );
     expect(copyButton).toBeDefined();
     await act(async () => {
@@ -166,12 +175,16 @@ describe("AuditReviewer sections", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelectorAll('[data-testid="audit-raw-segment"]')).toHaveLength(1);
+    expect(
+      container.querySelectorAll('[data-testid="audit-raw-segment"]'),
+    ).toHaveLength(1);
     const loadNext = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "加载下一段",
     );
     await act(async () => (loadNext as HTMLButtonElement).click());
-    expect(container.querySelectorAll('[data-testid="audit-raw-segment"]')).toHaveLength(2);
+    expect(
+      container.querySelectorAll('[data-testid="audit-raw-segment"]'),
+    ).toHaveLength(2);
   });
 
   it("renders redacted headers distinctly and reports missing capture", async () => {
@@ -180,7 +193,11 @@ describe("AuditReviewer sections", () => {
       url: "/v1/responses?stream=true",
       http_version: "HTTP/1.1",
       request_headers: [
-        { name: "authorization", value: "Bearer <redacted:51 chars>", redacted: true },
+        {
+          name: "authorization",
+          value: "Bearer <redacted:51 chars>",
+          redacted: true,
+        },
         { name: "content-type", value: "application/json", redacted: false },
       ],
       response_status: 200,
@@ -189,9 +206,7 @@ describe("AuditReviewer sections", () => {
       ],
     };
     await act(async () => {
-      root.render(
-        <HTTPMetaSection copyFeedback={noopFeedback} meta={meta} />,
-      );
+      root.render(<HTTPMetaSection copyFeedback={noopFeedback} meta={meta} />);
       await Promise.resolve();
     });
 

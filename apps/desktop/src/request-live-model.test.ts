@@ -121,9 +121,9 @@ describe("request live merge model", () => {
       liveDurationMs(pending, Date.parse("2026-07-25T10:00:01.500Z")),
     ).toBe(1500);
     expect(formatDuration(1500)).toBe("1.5 s");
-    expect(
-      liveDurationMs({ ...pending, latency_ms: 220 }, Date.now()),
-    ).toBe(220);
+    expect(liveDurationMs({ ...pending, latency_ms: 220 }, Date.now())).toBe(
+      220,
+    );
   });
 
   it("formats durations with stable second-range decimals", () => {
@@ -141,8 +141,12 @@ describe("request live merge model", () => {
 
   it("keeps finished call runtime fixed even days after the session started", () => {
     const session = { duration_ms: 12_000, active_request_starts: [] };
-    expect(sessionRuntimeMs(session, Date.parse("2026-08-17T04:46:00Z"))).toBe(12_000);
-    expect(sessionRuntimeMs(session, Date.parse("2026-08-20T04:46:00Z"))).toBe(12_000);
+    expect(sessionRuntimeMs(session, Date.parse("2026-08-17T04:46:00Z"))).toBe(
+      12_000,
+    );
+    expect(sessionRuntimeMs(session, Date.parse("2026-08-20T04:46:00Z"))).toBe(
+      12_000,
+    );
   });
 
   it("adds only currently running calls to the recorded runtime", () => {
@@ -153,13 +157,23 @@ describe("request live merge model", () => {
     const now = Date.parse("2026-08-17T04:46:00Z");
     expect(sessionRuntimeMs(session, now)).toBe(27_000);
     expect(sessionRuntimeMs(session, now + 1000)).toBe(29_000);
-    expect(sessionRuntimeMs({ duration_ms: 29_000, active_request_starts: [] }, now + 86_400_000)).toBe(29_000);
+    expect(
+      sessionRuntimeMs(
+        { duration_ms: 29_000, active_request_starts: [] },
+        now + 86_400_000,
+      ),
+    ).toBe(29_000);
   });
 
   it("does not subtract runtime when an active start is ahead of the local clock", () => {
-    expect(sessionRuntimeMs({
-      duration_ms: 120,
-      active_request_starts: ["2026-08-17T04:46:01Z"],
-    }, Date.parse("2026-08-17T04:46:00Z"))).toBe(120);
+    expect(
+      sessionRuntimeMs(
+        {
+          duration_ms: 120,
+          active_request_starts: ["2026-08-17T04:46:01Z"],
+        },
+        Date.parse("2026-08-17T04:46:00Z"),
+      ),
+    ).toBe(120);
   });
 });

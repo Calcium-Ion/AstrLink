@@ -210,8 +210,12 @@ describe("TrajectoryInspectorWindow", () => {
 
     await render();
 
-    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe("UPSTREAM");
-    expect(inspector(container)?.getAttribute("data-request-id")).toBe(record.id);
+    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe(
+      "UPSTREAM",
+    );
+    expect(inspector(container)?.getAttribute("data-request-id")).toBe(
+      record.id,
+    );
     expect(inspector(container)?.getAttribute("data-pinned")).toBe("true");
     expect(pinButton(container).getAttribute("aria-pressed")).toBe("true");
   });
@@ -224,8 +228,12 @@ describe("TrajectoryInspectorWindow", () => {
     });
     await flush();
 
-    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe("UPSTREAM");
-    expect(inspector(container)?.getAttribute("data-request-id")).toBe(record.id);
+    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe(
+      "UPSTREAM",
+    );
+    expect(inspector(container)?.getAttribute("data-request-id")).toBe(
+      record.id,
+    );
     expect(
       [
         ...inspector(container)!.querySelectorAll(
@@ -277,7 +285,9 @@ describe("TrajectoryInspectorWindow", () => {
 
     // The host stops routing here, and a stray push is refused anyway, so the
     // two sides cannot disagree about what a pinned window shows.
-    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe("UPSTREAM");
+    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe(
+      "UPSTREAM",
+    );
 
     await clickPin();
 
@@ -291,7 +301,9 @@ describe("TrajectoryInspectorWindow", () => {
     });
     await flush();
 
-    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe("CLIENT");
+    expect(inspector(container)?.getAttribute("data-focus-chip")).toBe(
+      "CLIENT",
+    );
   });
 
   it("puts the pin back when the host refuses to float the window", async () => {
@@ -359,8 +371,9 @@ describe("TrajectoryInspectorWindow", () => {
     await flush();
     expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(1);
     expect(
-      inspector(container)?.querySelector('[data-testid="inspector-missing-body"]')
-        ?.textContent,
+      inspector(container)?.querySelector(
+        '[data-testid="inspector-missing-body"]',
+      )?.textContent,
     ).toContain("进行中");
 
     bridgeMocks.getRequestAuditContent.mockResolvedValue({

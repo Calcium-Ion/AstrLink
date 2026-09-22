@@ -7,7 +7,12 @@ import { useRoutingDefaults } from "./use-routing-defaults";
 import { FailoverEditor, RecoverySummary } from "./components/FailoverEditor";
 import { BackupTargetsEditor } from "./components/BackupTargetsEditor";
 import type { RoutePlanType } from "./route-model";
-import { parseFailurePolicy, parseFailoverPolicy, type FailurePolicy, type FailoverPolicy } from "./failure-policy-model";
+import {
+  parseFailurePolicy,
+  parseFailoverPolicy,
+  type FailurePolicy,
+  type FailoverPolicy,
+} from "./failure-policy-model";
 import { useEffect, useMemo, useState } from "react";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -86,7 +91,7 @@ export const autoCategories = [
 ] as const;
 
 interface CategoryDraft {
- recoveryPathId?:string;
+  recoveryPathId?: string;
   id: string;
   serviceId: string;
   planType: RoutePlanType;
@@ -134,7 +139,9 @@ function compatibleServices(
   return services.filter(
     (service) =>
       service.models.length > 0 &&
-      service.capabilities.some((capability) => capability.protocol === protocol),
+      service.capabilities.some(
+        (capability) => capability.protocol === protocol,
+      ),
   );
 }
 
@@ -169,14 +176,23 @@ function draftFromRoute(
   return {
     protocol,
     enabled: route?.enabled ?? true,
-    failurePolicy: route?.failure_policy, failover: route?.failover,
-    name: route?.name ?? i18n.t("auto.banner", { protocol: protocolLabel(protocol) }),
+    failurePolicy: route?.failure_policy,
+    failover: route?.failover,
+    name:
+      route?.name ??
+      i18n.t("auto.banner", { protocol: protocolLabel(protocol) }),
     categories: autoCategories.map((category) => {
       const found = route?.categories?.find(
         (item) => item.category_id === category.id,
       );
-      if(found?.recovery_path_id)return {...emptyCategory(category.id,services,protocol),recoveryPathId:found.recovery_path_id};
-      const [primary, ...extra] = [...(found?.targets ?? [])].sort((a, b) => a.priority - b.priority);
+      if (found?.recovery_path_id)
+        return {
+          ...emptyCategory(category.id, services, protocol),
+          recoveryPathId: found.recovery_path_id,
+        };
+      const [primary, ...extra] = [...(found?.targets ?? [])].sort(
+        (a, b) => a.priority - b.priority,
+      );
       if (!primary) {
         return emptyCategory(category.id, services, protocol);
       }
@@ -196,7 +212,10 @@ function draftSignature(draft: AutoDraft): string {
   return JSON.stringify(draft);
 }
 
-function autoRouteForProtocol(routes: Route[], protocol: string): Route | undefined {
+function autoRouteForProtocol(
+  routes: Route[],
+  protocol: string,
+): Route | undefined {
   return routes.find(
     (route) => isAutoRoute(route) && route.match.protocol === protocol,
   );
@@ -204,37 +223,88 @@ function autoRouteForProtocol(routes: Route[], protocol: string): Route | undefi
 
 function filledCategories(draft: AutoDraft): CategoryDraft[] {
   return draft.categories.filter(
-    (category) => category.recoveryPathId || (category.serviceId && category.upstreamModel.trim()),
+    (category) =>
+      category.recoveryPathId ||
+      (category.serviceId && category.upstreamModel.trim()),
   );
 }
 
 function validateAutoDraft(
   draft: AutoDraft,
   services: RoutableService[],
- paths:RecoveryPathRecord[],
+  paths: RecoveryPathRecord[],
 ): string | null {
-  try { if (draft.failurePolicy) parseFailurePolicy(draft.failurePolicy); if (draft.failover) parseFailoverPolicy(draft.failover); } catch { return i18n.t("failure.invalid"); }
+  try {
+    if (draft.failurePolicy) parseFailurePolicy(draft.failurePolicy);
+    if (draft.failover) parseFailoverPolicy(draft.failover);
+  } catch {
+    return i18n.t("failure.invalid");
+  }
   const filled = filledCategories(draft);
   if (filled.length < 2) {
     return i18n.t("auto.needTwo");
   }
-  const models = new Set(filled.flatMap(category=>category.recoveryPathId?pathNodes(paths.find(record=>record.path.id===category.recoveryPathId)?.path??{id:"missing",name:"",protocol:draft.protocol,mode:"steps",steps:[]}).map(node=>node.upstream_model??""):[category.upstreamModel.trim()]));
+  const models = new Set(
+    filled.flatMap((category) =>
+      category.recoveryPathId
+        ? pathNodes(
+            paths.find((record) => record.path.id === category.recoveryPathId)
+              ?.path ?? {
+              id: "missing",
+              name: "",
+              protocol: draft.protocol,
+              mode: "steps",
+              steps: [],
+            },
+          ).map((node) => node.upstream_model ?? "")
+        : [category.upstreamModel.trim()],
+    ),
+  );
   if (models.size < 2) {
     return i18n.t("auto.needDistinct");
   }
   for (const category of filled) {
- if(category.recoveryPathId){const record=paths.find(record=>record.path.id===category.recoveryPathId);if(!record||record.path.protocol!==draft.protocol||pathNodes(record.path).some(node=>!node.upstream_model))return i18n.t("paths.invalidCategory");continue}
+    if (category.recoveryPathId) {
+      const record = paths.find(
+        (record) => record.path.id === category.recoveryPathId,
+      );
+      if (
+        !record ||
+        record.path.protocol !== draft.protocol ||
+        pathNodes(record.path).some((node) => !node.upstream_model)
+      )
+        return i18n.t("paths.invalidCategory");
+      continue;
+    }
     const meta = autoCategories.find((item) => item.id === category.id);
     const label = meta ? i18n.t(meta.labelKey) : category.id;
     const service = services.find((item) => item.id === category.serviceId);
     if (!service) {
       return i18n.t("auto.missingService", { category: label });
     }
-    const seen = new Set([`${category.serviceId}:${category.planType}:${category.upstreamProtocol ?? draft.protocol}:${category.upstreamModel.trim()}`]);
+    const seen = new Set([
+      `${category.serviceId}:${category.planType}:${category.upstreamProtocol ?? draft.protocol}:${category.upstreamModel.trim()}`,
+    ]);
     for (const target of category.extraTargets) {
-      const backup = services.find(service => service.id === target.service_id);
+      const backup = services.find(
+        (service) => service.id === target.service_id,
+      );
       const key = `${target.service_id}:${target.plan_type}:${target.upstream_protocol}:${target.upstream_model}`;
-      if (!backup || !target.upstream_model || !backup.models.includes(target.upstream_model) || !modesFor(backup, target.plan_type === "relaykit" ? target.upstream_protocol : draft.protocol).includes(target.plan_type === "relaykit" ? "native" : target.plan_type) || seen.has(key)) return i18n.t("failure.invalid");
+      if (
+        !backup ||
+        !target.upstream_model ||
+        !backup.models.includes(target.upstream_model) ||
+        !modesFor(
+          backup,
+          target.plan_type === "relaykit"
+            ? target.upstream_protocol
+            : draft.protocol,
+        ).includes(
+          target.plan_type === "relaykit" ? "native" : target.plan_type,
+        ) ||
+        seen.has(key)
+      )
+        return i18n.t("failure.invalid");
       seen.add(key);
     }
     const model = category.upstreamModel.trim();
@@ -244,7 +314,16 @@ function validateAutoDraft(
     if (!service.models.includes(model)) {
       return i18n.t("auto.modelNotListed", { category: label });
     }
-    if (!modesFor(service, category.planType === "relaykit" ? (category.upstreamProtocol ?? draft.protocol) : draft.protocol).includes(category.planType === "relaykit" ? "native" : category.planType)) {
+    if (
+      !modesFor(
+        service,
+        category.planType === "relaykit"
+          ? (category.upstreamProtocol ?? draft.protocol)
+          : draft.protocol,
+      ).includes(
+        category.planType === "relaykit" ? "native" : category.planType,
+      )
+    ) {
       return i18n.t("auto.protocolUnsupported", { category: label });
     }
   }
@@ -253,24 +332,36 @@ function validateAutoDraft(
 
 function categoriesFromDraft(draft: AutoDraft): RouteCategory[] {
   return filledCategories(draft).map((category) => {
- if(category.recoveryPathId)return {category_id:category.id,recovery_path_id:category.recoveryPathId};
+    if (category.recoveryPathId)
+      return {
+        category_id: category.id,
+        recovery_path_id: category.recoveryPathId,
+      };
     const primary: RouteTarget = {
       service_id: category.serviceId,
       plan_type: category.planType,
-      upstream_protocol: category.planType === "relaykit" ? (category.upstreamProtocol ?? draft.protocol) : draft.protocol,
+      upstream_protocol:
+        category.planType === "relaykit"
+          ? (category.upstreamProtocol ?? draft.protocol)
+          : draft.protocol,
       priority: 0,
       upstream_model: category.upstreamModel.trim(),
     };
     return {
       category_id: category.id,
-      targets: [primary, ...category.extraTargets].map((target, index) => ({ ...target, priority: index * 10 })),
+      targets: [primary, ...category.extraTargets].map((target, index) => ({
+        ...target,
+        priority: index * 10,
+      })),
     };
   });
 }
 
 function createInputFromAutoDraft(draft: AutoDraft): RouteCreateInput {
   return {
-    name: draft.name.trim() || i18n.t("auto.banner", { protocol: protocolLabel(draft.protocol) }),
+    name:
+      draft.name.trim() ||
+      i18n.t("auto.banner", { protocol: protocolLabel(draft.protocol) }),
     enabled: draft.enabled,
     priority: 0,
     match: { protocol: draft.protocol, model: AUTO_MODEL_ID },
@@ -296,19 +387,31 @@ export function AutoRoutingShowcase({
   onDirtyChange,
 }: AutoRoutingShowcaseProps = {}) {
   const routingDefaults = useRoutingDefaults(isReady);
- const pathCatalog=useRecoveryPaths(isReady);
-  const inheritedFailover = { enabled: true, strategy: routingDefaults.strategy, max_attempts: routingDefaults.max_attempts };
+  const pathCatalog = useRecoveryPaths(isReady);
+  const inheritedFailover = {
+    enabled: true,
+    strategy: routingDefaults.strategy,
+    max_attempts: routingDefaults.max_attempts,
+  };
   const t = i18n.t.bind(i18n);
   const live = services !== undefined;
   const catalog = services ?? noServices;
   const initialProtocol = protocolIDs[0] ?? "openai.responses";
   const [protocol, setProtocol] = useState(initialProtocol);
   const [draft, setDraft] = useState<AutoDraft>(() =>
-    draftFromRoute(autoRouteForProtocol(routes, initialProtocol), initialProtocol, catalog),
+    draftFromRoute(
+      autoRouteForProtocol(routes, initialProtocol),
+      initialProtocol,
+      catalog,
+    ),
   );
   const [baseline, setBaseline] = useState(() =>
     draftSignature(
-      draftFromRoute(autoRouteForProtocol(routes, initialProtocol), initialProtocol, catalog),
+      draftFromRoute(
+        autoRouteForProtocol(routes, initialProtocol),
+        initialProtocol,
+        catalog,
+      ),
     ),
   );
   const [saving, setSaving] = useState(false);
@@ -319,7 +422,10 @@ export function AutoRoutingShowcase({
   const persisted = autoRouteForProtocol(routes, protocol);
   const persistedKey = routes
     .filter(isAutoRoute)
-    .map((route) => `${route.id}:${route.enabled}:${JSON.stringify(route.categories)}`)
+    .map(
+      (route) =>
+        `${route.id}:${route.enabled}:${JSON.stringify(route.categories)}`,
+    )
     .join("|");
   const protocolKey = protocolIDs.join("|");
 
@@ -342,7 +448,16 @@ export function AutoRoutingShowcase({
     setDraft(next);
     setBaseline(draftSignature(next));
     setError(null);
-  }, [live, dirty, persistedKey, protocolKey, protocol, protocolIDs, routes, catalog]);
+  }, [
+    live,
+    dirty,
+    persistedKey,
+    protocolKey,
+    protocol,
+    protocolIDs,
+    routes,
+    catalog,
+  ]);
 
   const applyProtocol = (
     nextProtocol: string,
@@ -369,7 +484,10 @@ export function AutoRoutingShowcase({
     applyProtocol(nextProtocol, routes, catalog);
   };
 
-  const updateCategory = (id: string, update: (current: CategoryDraft) => CategoryDraft) => {
+  const updateCategory = (
+    id: string,
+    update: (current: CategoryDraft) => CategoryDraft,
+  ) => {
     setDraft((current) => ({
       ...current,
       categories: current.categories.map((category) =>
@@ -389,20 +507,17 @@ export function AutoRoutingShowcase({
     setError(null);
     try {
       const record = persisted
-        ? await updateRoute(
-            persisted.id,
-            (await getRoute(persisted.id)).etag,
-            {
-              name: input.name,
-              enabled: input.enabled,
-              priority: input.priority,
-              match: input.match,
-              selection: input.selection,
-              targets: null,
-              categories: input.categories,
-              failure_policy: input.failure_policy ?? null, failover: input.failover ?? null,
-            },
-          )
+        ? await updateRoute(persisted.id, (await getRoute(persisted.id)).etag, {
+            name: input.name,
+            enabled: input.enabled,
+            priority: input.priority,
+            match: input.match,
+            selection: input.selection,
+            targets: null,
+            categories: input.categories,
+            failure_policy: input.failure_policy ?? null,
+            failover: input.failover ?? null,
+          })
         : await createRoute(input);
       setBaseline(draftSignature(draft));
       onRouteSaved?.(record.route);
@@ -415,7 +530,14 @@ export function AutoRoutingShowcase({
   };
 
   const servicesForProtocol = useMemo(
-    () => catalog.filter(service => compatibleServices([service], protocol).length || draft.categories.some(category => category.serviceId === service.id)),
+    () =>
+      catalog.filter(
+        (service) =>
+          compatibleServices([service], protocol).length ||
+          draft.categories.some(
+            (category) => category.serviceId === service.id,
+          ),
+      ),
     [catalog, protocol, draft.categories],
   );
 
@@ -431,15 +553,28 @@ export function AutoRoutingShowcase({
         </p>
       </Panel>
 
-      <ol aria-label={t("auto.flow")} className="mt-3 grid list-none grid-cols-3 gap-2 p-0 max-[720px]:grid-cols-1">
+      <ol
+        aria-label={t("auto.flow")}
+        className="mt-3 grid list-none grid-cols-3 gap-2 p-0 max-[720px]:grid-cols-1"
+      >
         {routingSteps.map((step, index) => (
-          <li className="flex min-w-0 items-center gap-2.5 rounded-md border bg-card p-3" key={step.id}>
-            <span aria-hidden="true" className="grid size-6 shrink-0 place-items-center rounded-sm border bg-muted text-micro font-medium tabular-nums">
+          <li
+            className="flex min-w-0 items-center gap-2.5 rounded-md border bg-card p-3"
+            key={step.id}
+          >
+            <span
+              aria-hidden="true"
+              className="grid size-6 shrink-0 place-items-center rounded-sm border bg-muted text-micro font-medium tabular-nums"
+            >
               {String(index + 1).padStart(2, "0")}
             </span>
             <div className="flex min-w-0 flex-col gap-0.5">
-              <strong className="text-sm font-medium">{t(step.labelKey)}</strong>
-              <small className="truncate text-xs text-muted-foreground">{t(step.detailKey)}</small>
+              <strong className="text-sm font-medium">
+                {t(step.labelKey)}
+              </strong>
+              <small className="truncate text-xs text-muted-foreground">
+                {t(step.detailKey)}
+              </small>
             </div>
           </li>
         ))}
@@ -459,8 +594,14 @@ export function AutoRoutingShowcase({
           {live ? (
             <div className="flex flex-wrap items-center gap-2">
               {protocolIDs.length > 1 ? (
-                <Field className="min-w-[220px]" label={t("auto.entryProtocol")}>
-                  <Select onValueChange={requestProtocolChange} value={protocol}>
+                <Field
+                  className="min-w-[220px]"
+                  label={t("auto.entryProtocol")}
+                >
+                  <Select
+                    onValueChange={requestProtocolChange}
+                    value={protocol}
+                  >
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
@@ -486,7 +627,9 @@ export function AutoRoutingShowcase({
               </Label>
             </div>
           ) : (
-            <small className="text-xs text-muted-foreground">taxonomy astrlink-text-v1</small>
+            <small className="text-xs text-muted-foreground">
+              taxonomy astrlink-text-v1
+            </small>
           )}
         </div>
 
@@ -503,11 +646,19 @@ export function AutoRoutingShowcase({
         ) : (
           <div className="grid grid-cols-2 gap-2 max-[720px]:grid-cols-1">
             {autoCategories.map((category) => {
-              const current = draft.categories.find((item) => item.id === category.id);
-              const service = catalog.find((item) => item.id === current?.serviceId);
+              const current = draft.categories.find(
+                (item) => item.id === category.id,
+              );
+              const service = catalog.find(
+                (item) => item.id === current?.serviceId,
+              );
               const categoryLabel = t(category.labelKey);
               return (
-                <Panel className="min-w-0 p-3" data-testid="routing-category" key={category.id}>
+                <Panel
+                  className="min-w-0 p-3"
+                  data-testid="routing-category"
+                  key={category.id}
+                >
                   <code className="block truncate font-mono text-micro text-accent-foreground">
                     {category.id}
                   </code>
@@ -517,74 +668,200 @@ export function AutoRoutingShowcase({
                   </p>
                   {live && current ? (
                     <div className="mt-3 grid gap-2">
- <RecoveryPathPicker value={current.recoveryPathId} protocol={protocol} services={catalog} ready={isReady} auto hasOverride={!!draft.failurePolicy||!!draft.failover} onChange={recoveryPathId=>{updateCategory(category.id,item=>({...item,recoveryPathId}));pathCatalog.reload()}} onSaveLegacy={()=>{const selected=categoriesFromDraft(draft).find(item=>item.category_id===category.id);if(!selected?.targets)return;void createRecoveryPath({name:`${categoryLabel} · ${protocolLabel(protocol)}`,protocol,mode:"automatic",targets:selected.targets.map(target=>({id:newPathNodeID(),service_id:target.service_id,upstream_model:target.upstream_model,upstream_protocol:target.upstream_protocol,plan_type:target.plan_type})),...(draft.failurePolicy?{failure_policy:draft.failurePolicy}:{}),...(draft.failover?{strategy:draft.failover.strategy,max_attempts:draft.failover.max_attempts}:{})}).then(record=>{updateCategory(category.id,item=>({...item,recoveryPathId:record.path.id}));pathCatalog.reload();setError(t("paths.unbound"))}).catch(error=>setError(String(error)))}}/>
- {!current.recoveryPathId?<>
-                      <Field label={t("auto.serviceFor", { category: categoryLabel })}>
-                        <Select
-                          onValueChange={(serviceId) => {
-                            const nextService = catalog.find((item) => item.id === serviceId);
-                            const nextModes = modesFor(nextService, protocol);
-                            updateCategory(category.id, (item) => ({
-                              ...item,
-                              serviceId,
-                              upstreamProtocol: protocol,
-                              planType: nextModes.includes(item.planType)
-                                ? item.planType
-                                : (nextModes[0] ?? "native"),
-                            }));
-                          }}
-                          value={current.serviceId}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder={t("auto.chooseService")} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {servicesForProtocol.map((candidate) => (
-                              <SelectItem key={candidate.id} value={candidate.id}>
-                                {candidate.name}
-                                {candidate.enabled ? "" : t("auto.disabledSuffix")}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </Field>
-                      <Field label={t("auto.modelFor", { category: categoryLabel })}>
-                        <Input
-                          list={`auto-models-${category.id}`}
-                          maxLength={256}
-                          onChange={(event) =>
-                            updateCategory(category.id, (item) => ({
-                              ...item,
-                              upstreamModel: event.target.value,
-                            }))
-                          }
-                          placeholder={t("auto.chooseModel")}
-                          value={current.upstreamModel}
-                        />
-                        <InputDatalist
-                          id={`auto-models-${category.id}`}
-                          options={service?.models ?? []}
-                        />
-                      </Field>
-                      {current.upstreamModel ? (
-                        <p className="flex min-w-0 items-center gap-1 truncate text-micro text-muted-foreground">
-                          <ModelBrandIcon model={current.upstreamModel} />
-                          <span className="truncate">{current.upstreamModel}</span>
-                        </p>
+                      <RecoveryPathPicker
+                        value={current.recoveryPathId}
+                        protocol={protocol}
+                        services={catalog}
+                        ready={isReady}
+                        auto
+                        hasOverride={!!draft.failurePolicy || !!draft.failover}
+                        onChange={(recoveryPathId) => {
+                          updateCategory(category.id, (item) => ({
+                            ...item,
+                            recoveryPathId,
+                          }));
+                          pathCatalog.reload();
+                        }}
+                        onSaveLegacy={() => {
+                          const selected = categoriesFromDraft(draft).find(
+                            (item) => item.category_id === category.id,
+                          );
+                          if (!selected?.targets) return;
+                          void createRecoveryPath({
+                            name: `${categoryLabel} · ${protocolLabel(protocol)}`,
+                            protocol,
+                            mode: "automatic",
+                            targets: selected.targets.map((target) => ({
+                              id: newPathNodeID(),
+                              service_id: target.service_id,
+                              upstream_model: target.upstream_model,
+                              upstream_protocol: target.upstream_protocol,
+                              plan_type: target.plan_type,
+                            })),
+                            ...(draft.failurePolicy
+                              ? { failure_policy: draft.failurePolicy }
+                              : {}),
+                            ...(draft.failover
+                              ? {
+                                  strategy: draft.failover.strategy,
+                                  max_attempts: draft.failover.max_attempts,
+                                }
+                              : {}),
+                          })
+                            .then((record) => {
+                              updateCategory(category.id, (item) => ({
+                                ...item,
+                                recoveryPathId: record.path.id,
+                              }));
+                              pathCatalog.reload();
+                              setError(t("paths.unbound"));
+                            })
+                            .catch((error) => setError(String(error)));
+                        }}
+                      />
+                      {!current.recoveryPathId ? (
+                        <>
+                          <Field
+                            label={t("auto.serviceFor", {
+                              category: categoryLabel,
+                            })}
+                          >
+                            <Select
+                              onValueChange={(serviceId) => {
+                                const nextService = catalog.find(
+                                  (item) => item.id === serviceId,
+                                );
+                                const nextModes = modesFor(
+                                  nextService,
+                                  protocol,
+                                );
+                                updateCategory(category.id, (item) => ({
+                                  ...item,
+                                  serviceId,
+                                  upstreamProtocol: protocol,
+                                  planType: nextModes.includes(item.planType)
+                                    ? item.planType
+                                    : (nextModes[0] ?? "native"),
+                                }));
+                              }}
+                              value={current.serviceId}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue
+                                  placeholder={t("auto.chooseService")}
+                                />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {servicesForProtocol.map((candidate) => (
+                                  <SelectItem
+                                    key={candidate.id}
+                                    value={candidate.id}
+                                  >
+                                    {candidate.name}
+                                    {candidate.enabled
+                                      ? ""
+                                      : t("auto.disabledSuffix")}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                          <Field
+                            label={t("auto.modelFor", {
+                              category: categoryLabel,
+                            })}
+                          >
+                            <Input
+                              list={`auto-models-${category.id}`}
+                              maxLength={256}
+                              onChange={(event) =>
+                                updateCategory(category.id, (item) => ({
+                                  ...item,
+                                  upstreamModel: event.target.value,
+                                }))
+                              }
+                              placeholder={t("auto.chooseModel")}
+                              value={current.upstreamModel}
+                            />
+                            <InputDatalist
+                              id={`auto-models-${category.id}`}
+                              options={service?.models ?? []}
+                            />
+                          </Field>
+                          {current.upstreamModel ? (
+                            <p className="flex min-w-0 items-center gap-1 truncate text-micro text-muted-foreground">
+                              <ModelBrandIcon model={current.upstreamModel} />
+                              <span className="truncate">
+                                {current.upstreamModel}
+                              </span>
+                            </p>
+                          ) : null}
+                          <BackupTargetsEditor
+                            value={current.extraTargets}
+                            protocol={protocol}
+                            services={catalog}
+                            onChange={(extraTargets) =>
+                              updateCategory(category.id, (item) => ({
+                                ...item,
+                                extraTargets,
+                              }))
+                            }
+                            onPromote={(index) =>
+                              updateCategory(category.id, (item) => {
+                                const target = item.extraTargets[index];
+                                const previous: RouteTarget = {
+                                  service_id: item.serviceId,
+                                  upstream_model: item.upstreamModel,
+                                  plan_type: item.planType,
+                                  upstream_protocol:
+                                    item.upstreamProtocol ?? protocol,
+                                  priority: 0,
+                                };
+                                return {
+                                  ...item,
+                                  serviceId: target.service_id,
+                                  upstreamModel: target.upstream_model ?? "",
+                                  planType: target.plan_type,
+                                  upstreamProtocol: target.upstream_protocol,
+                                  extraTargets: [
+                                    previous,
+                                    ...item.extraTargets.filter(
+                                      (_, at) => at !== index,
+                                    ),
+                                  ].map((value, at) => ({
+                                    ...value,
+                                    priority: (at + 1) * 10,
+                                  })),
+                                };
+                              })
+                            }
+                          />
+                          {routingDefaults.loaded ? (
+                            <RecoverySummary
+                              value={draft.failover ?? inheritedFailover}
+                              override={draft.failurePolicy}
+                              inheritedFailurePolicy={
+                                routingDefaults.default_failure_policy
+                              }
+                              targets={[
+                                {
+                                  service_id: current.serviceId,
+                                  upstream_model: current.upstreamModel,
+                                },
+                                ...current.extraTargets,
+                              ].map((target) => {
+                                const service = catalog.find(
+                                  (item) => item.id === target.service_id,
+                                );
+                                return {
+                                  name: `${service?.name ?? target.service_id} / ${target.upstream_model ?? ""}`,
+                                  policy: service?.failure_policy,
+                                };
+                              })}
+                            />
+                          ) : null}
+                        </>
                       ) : null}
-                      <BackupTargetsEditor value={current.extraTargets} protocol={protocol} services={catalog}
-                        onChange={extraTargets => updateCategory(category.id, item => ({ ...item, extraTargets }))}
-                        onPromote={index => updateCategory(category.id, item => {
-                          const target = item.extraTargets[index];
-                          const previous: RouteTarget = { service_id: item.serviceId, upstream_model: item.upstreamModel, plan_type: item.planType, upstream_protocol: item.upstreamProtocol ?? protocol, priority: 0 };
-                          return { ...item, serviceId: target.service_id, upstreamModel: target.upstream_model ?? "", planType: target.plan_type, upstreamProtocol: target.upstream_protocol, extraTargets: [previous, ...item.extraTargets.filter((_, at) => at !== index)].map((value, at) => ({ ...value, priority: (at + 1) * 10 })) };
-                        })} />
-                      {routingDefaults.loaded ? <RecoverySummary value={draft.failover ?? inheritedFailover} override={draft.failurePolicy} inheritedFailurePolicy={routingDefaults.default_failure_policy}
-                        targets={[{ service_id: current.serviceId, upstream_model: current.upstreamModel }, ...current.extraTargets].map(target => {
-                          const service = catalog.find(item => item.id === target.service_id);
-                          return { name: `${service?.name ?? target.service_id} / ${target.upstream_model ?? ""}`, policy: service?.failure_policy };
-                        })} /> : null}
-                    </>:null}
                     </div>
                   ) : null}
                 </Panel>
@@ -593,13 +870,40 @@ export function AutoRoutingShowcase({
           </div>
         )}
 
-        {live ? <div className="mt-4"><FailoverEditor onReloadDefaults={routingDefaults.reload} defaultsLoaded={routingDefaults.loaded} onResetOrder={draft.failover ? () => setDraft(current => ({ ...current, failover: undefined })) : undefined} value={draft.failover ?? inheritedFailover} inheritedFailurePolicy={routingDefaults.default_failure_policy} override={draft.failurePolicy}
-          title={t("auto.failureTitle")}
-          scopeHint={t("auto.failureScope", { protocol: protocolLabel(protocol) })}
-          overrideLabel={t("auto.failureOverride")}
-          overrideHint={t("auto.failureOverrideHint", { protocol: protocolLabel(protocol) })}
-          onChange={failover => setDraft(current => ({ ...current, failover }))}
-          onOverrideChange={failurePolicy => setDraft(current => ({ ...current, failurePolicy }))} /></div> : null}
+        {live ? (
+          <div className="mt-4">
+            <FailoverEditor
+              onReloadDefaults={routingDefaults.reload}
+              defaultsLoaded={routingDefaults.loaded}
+              onResetOrder={
+                draft.failover
+                  ? () =>
+                      setDraft((current) => ({
+                        ...current,
+                        failover: undefined,
+                      }))
+                  : undefined
+              }
+              value={draft.failover ?? inheritedFailover}
+              inheritedFailurePolicy={routingDefaults.default_failure_policy}
+              override={draft.failurePolicy}
+              title={t("auto.failureTitle")}
+              scopeHint={t("auto.failureScope", {
+                protocol: protocolLabel(protocol),
+              })}
+              overrideLabel={t("auto.failureOverride")}
+              overrideHint={t("auto.failureOverrideHint", {
+                protocol: protocolLabel(protocol),
+              })}
+              onChange={(failover) =>
+                setDraft((current) => ({ ...current, failover }))
+              }
+              onOverrideChange={(failurePolicy) =>
+                setDraft((current) => ({ ...current, failurePolicy }))
+              }
+            />
+          </div>
+        ) : null}
         {live ? (
           <div className="mt-3 flex justify-end">
             <Button
@@ -607,7 +911,11 @@ export function AutoRoutingShowcase({
               onClick={() => void save()}
               type="button"
             >
-              {saving ? t("common.saving") : persisted ? t("auto.save") : t("auto.enable")}
+              {saving
+                ? t("common.saving")
+                : persisted
+                  ? t("auto.save")
+                  : t("auto.enable")}
             </Button>
           </div>
         ) : null}

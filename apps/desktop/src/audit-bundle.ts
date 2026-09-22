@@ -18,7 +18,9 @@ export interface RecordBundleOptions {
 
 export function bundleFilename(recordId: string, format: BundleFormat): string {
   const ext = format === "markdown" ? "md" : "txt";
-  const safe = recordId.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const safe = recordId
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return `astrlink-${safe || "record"}.${ext}`;
 }
 
@@ -46,9 +48,7 @@ export function fence(content: string, language = ""): string {
 }
 
 export function buildHeadersText(headers: AuditHeader[]): string {
-  return headers
-    .map((header) => `${header.name}: ${header.value}`)
-    .join("\n");
+  return headers.map((header) => `${header.name}: ${header.value}`).join("\n");
 }
 
 function formatBytes(bytes: number): string {
@@ -154,7 +154,9 @@ export function buildRecordBundle(
       i18n.t("audit.protocolLine", {
         protocol: record.input_protocol,
         model: record.requested_model ?? i18n.t("audit.unknownModel"),
-        streaming: record.streaming ? i18n.t("common.yes") : i18n.t("common.no"),
+        streaming: record.streaming
+          ? i18n.t("common.yes")
+          : i18n.t("common.no"),
       }),
       format,
     ),
@@ -173,7 +175,8 @@ export function buildRecordBundle(
       format,
     ),
   );
-  const service = options.serviceLabel ?? record.service_id ?? i18n.t("audit.unrouted");
+  const service =
+    options.serviceLabel ?? record.service_id ?? i18n.t("audit.unrouted");
   const route = record.route_id
     ? i18n.t("audit.routeLine", { id: record.route_id })
     : "";
@@ -182,7 +185,9 @@ export function buildRecordBundle(
     const cacheParts: string[] = [];
     if (record.usage.cache_read_tokens !== undefined) {
       cacheParts.push(
-        i18n.t("audit.cacheReadPart", { count: record.usage.cache_read_tokens }),
+        i18n.t("audit.cacheReadPart", {
+          count: record.usage.cache_read_tokens,
+        }),
       );
     }
     if (record.usage.cache_write_tokens !== undefined) {
@@ -239,13 +244,20 @@ export function buildRecordBundle(
         }),
         format,
       ),
-      bullet(i18n.t("audit.errorMessage", { message: record.error.message }), format),
+      bullet(
+        i18n.t("audit.errorMessage", { message: record.error.message }),
+        format,
+      ),
     );
   }
 
   if (!isChild) {
     lines.push(
-      ...httpSection(i18n.t("records.clientHttp"), content?.http_meta ?? null, format),
+      ...httpSection(
+        i18n.t("records.clientHttp"),
+        content?.http_meta ?? null,
+        format,
+      ),
     );
   }
   lines.push(
