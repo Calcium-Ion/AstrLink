@@ -17,6 +17,7 @@ const bridgeMocks = vi.hoisted(() => ({
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
   getPreferences: vi.fn(),
+  getTrayState: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
   getRoutingSettings: vi.fn(),
   getServiceOrder: vi.fn().mockResolvedValue({ service_ids: [], etag: '"order"' }),
   updateServiceOrder: vi.fn(),
@@ -68,6 +69,7 @@ vi.mock("./bridge", () => bridgeMocks);
 
 import App from "./App";
 import type { AppSnapshot } from "./core-model";
+import { defaultTrayPreferences } from "./preferences-model";
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
 
@@ -536,6 +538,7 @@ describe("App workspace navigation", () => {
     max_request_body_mib: 0,
         locale: "zh-CN",
         theme: "system",
+        tray: defaultTrayPreferences(),
       },
       load_warning: null,
       autostart_actual: false,
@@ -591,6 +594,7 @@ describe("App workspace navigation", () => {
     max_request_body_mib: 0,
         locale: "zh-CN",
         theme: "system",
+        tray: defaultTrayPreferences(),
       },
       load_warning: null,
       autostart_actual: false,

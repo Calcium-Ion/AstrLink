@@ -143,10 +143,18 @@ import {
   type SubscriptionUsage,
 } from "./subscription-usage-model";
 
+/** Tabs of the service editor; `models` is the per-provider model list. */
+export type ServiceEditorTab = "connection" | "models" | "protocols" | "failure";
+
 export type ServiceManagerView =
   | { kind: "list" }
   | { kind: "create" }
-  | { kind: "edit"; serviceId: string };
+  | {
+      kind: "edit";
+      serviceId: string;
+      /** Editor tab to land on; defaults to the connection tab. */
+      tab?: ServiceEditorTab;
+    };
 
 export type ServiceCatalogStatus = "blocked" | "loading" | "ready" | "error";
 
@@ -193,7 +201,7 @@ type AuthorizationDialog = {
   session: AuthorizationSession;
 };
 
-type EditorTab = "connection" | "models" | "protocols" | "failure";
+type EditorTab = ServiceEditorTab;
 type ServiceFilter = "all" | "enabled" | "disabled";
 
 function serviceTypeOptionLabel(kind: ServiceKind): string {
@@ -642,6 +650,7 @@ export function ServiceManager({
   protocolsRef.current = protocols;
   const viewKind = view.kind;
   const editingServiceID = view.kind === "edit" ? view.serviceId : null;
+  const requestedEditorTab = view.kind === "edit" ? (view.tab ?? "connection") : "connection";
   const connectedUsageIDs = useMemo(
     () =>
       services
@@ -706,7 +715,7 @@ export function ServiceManager({
     setModelEditor("");
     setModelPreview(null);
     setModelPreviewQuery("");
-    setEditorTab("connection");
+    setEditorTab(requestedEditorTab);
     if (view.kind === "list") {
       setEditing(null);
       setBaseline(null);
@@ -738,7 +747,7 @@ export function ServiceManager({
       .finally(() => {
         if (loadGeneration.current === generation) setLoadingRecord(false);
       });
-  }, [editingServiceID, t, viewKind]);
+  }, [editingServiceID, requestedEditorTab, t, viewKind]);
 
   const importCodexModelsAfterLogin = useCallback(
     async (service: Service) => {
@@ -1577,11 +1586,24 @@ export function ServiceManager({
                       }
                       inventory={
                         <>
-                          <span className="text-xs font-medium tabular-nums">
+                          <Button
+                            aria-label={t("services.openModels", { name: service.name })}
+                            className="block h-auto w-fit rounded-sm p-0 text-left text-xs font-medium tabular-nums"
+                            disabled={acting}
+                            onClick={() =>
+                              onViewChange({
+                                kind: "edit",
+                                serviceId: service.id,
+                                tab: "models",
+                              })
+                            }
+                            type="button"
+                            variant="link"
+                          >
                             {t("services.modelCount", {
                               count: service.models.length,
                             })}
-                          </span>
+                          </Button>
                           <span className="inline-flex items-center gap-1.5 text-micro text-muted-foreground tabular-nums">
                             {t("services.apiCount", {
                               count: service.capabilities.length,

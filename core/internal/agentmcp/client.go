@@ -15,6 +15,10 @@ import (
 
 const requestTimeout = 15 * time.Second
 
+// userAgent must keep the `astrlink-mcp` prefix the Control API classifies
+// agent-side observers by.
+const userAgent = "astrlink-mcp/1"
+
 // DialOptions selects how the MCP process reaches the local Control API.
 // Production Unix uses Socket. Tests may use ControlURL plus ControlToken.
 type DialOptions struct {
@@ -110,6 +114,9 @@ func (client *Client) get(ctx context.Context, path string, query url.Values) (j
 	if err != nil {
 		return nil, err
 	}
+	// Names the MCP bridge on the loopback fallback too, so the desktop can
+	// show "an agent is reading" regardless of transport.
+	request.Header.Set("User-Agent", userAgent)
 	if !client.socketAuth && client.token != "" {
 		request.Header.Set("Authorization", "Bearer "+client.token)
 	}

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridge = vi.hoisted(() => ({
   getPreferences: vi.fn(),
+  getTrayState: vi.fn(),
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
   restartCore: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 
 import { applyLocale } from "./i18n";
 import type { AppSnapshot } from "./core-model";
+import { defaultTrayPreferences } from "./preferences-model";
 import { SettingsCenter } from "./SettingsCenter";
 import { applyTheme } from "./theme";
 
@@ -49,6 +51,7 @@ const settings = {
     max_request_body_mib: 0,
     theme: "system" as const,
     locale: "zh-CN" as const,
+    tray: defaultTrayPreferences(),
   },
   load_warning: null,
   autostart_actual: false,
@@ -67,6 +70,7 @@ describe("SettingsCenter", () => {
     bridge.getRoutingSettings.mockReset().mockResolvedValue({ codex_identity_enforcement: true });
     bridge.updateRoutingSettings.mockReset();
     bridge.getPreferences.mockReset().mockResolvedValue(settings);
+    bridge.getTrayState.mockReset().mockRejectedValue(new Error("tray unavailable in tests"));
     bridge.updatePreferences.mockReset().mockResolvedValue(settings);
     notifyMocks.success.mockReset();
     notifyMocks.error.mockReset();

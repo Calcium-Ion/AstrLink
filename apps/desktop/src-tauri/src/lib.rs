@@ -10,6 +10,7 @@ mod preferences;
 mod recovery_path;
 mod sidecar;
 mod startup_window;
+mod tray;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -19,16 +20,13 @@ use std::sync::{
 use i18n::Locale;
 use preferences::{
     CloseBehavior, Preferences, PreferencesSnapshot, PreferencesStore, ThemePreference,
+    TrayPreferences,
 };
 use serde::{Deserialize, Serialize};
 use sidecar::{
     CoreManager, CoreSnapshot, PolicyRecordResponse, RouteRecordResponse, ServiceRecordResponse,
 };
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
-};
+use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 #[cfg(not(target_os = "macos"))]
@@ -69,6 +67,8 @@ struct PreferencesInput {
     max_request_body_mib: u32,
     locale: Locale,
     theme: ThemePreference,
+    #[serde(default)]
+    tray: TrayPreferences,
 }
 
 impl From<PreferencesInput> for Preferences {
@@ -85,6 +85,7 @@ impl From<PreferencesInput> for Preferences {
             max_request_body_mib: input.max_request_body_mib,
             locale: input.locale,
             theme: input.theme,
+            tray: input.tray,
         }
     }
 }
@@ -223,6 +224,7 @@ fn update_preferences(
     let values = Preferences::from(input);
     values.validate()?;
     let locale = values.locale;
+    let previous_tray = store.snapshot().values.tray;
     let autostart = app.autolaunch();
     let actual = autostart.is_enabled().map_err(|error| {
         i18n::t(
@@ -286,9 +288,12 @@ fn update_preferences(
         return Err(persist_error);
     }
     manager.configure(&values);
-    if let Err(error) = rebuild_tray_menu(&app, locale) {
-        eprintln!("unable to rebuild AstrLink tray menu: {error}");
+    // Locale, pages and menubar text re-render from stored state; a new usage
+    // line needs numbers the last digest did not collect.
+    if values.tray.usage != previous_tray.usage {
+        tray::request_usage_refresh(&app, true);
     }
+    tray::refresh(&app);
     apply_native_theme(&app, values.theme);
     if let Err(error) = app.emit("theme-preference-changed", values.theme) {
         eprintln!("unable to broadcast AstrLink theme: {error}");
@@ -306,6 +311,10 @@ fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
 fn apply_native_theme(app: &tauri::AppHandle, preference: ThemePreference) {
     app.set_theme(preference.native_theme());
     for window in app.webview_windows().values() {
+        // The tray popover paints its own panel on a transparent window.
+        if window.label() == tray::POPOVER_LABEL {
+            continue;
+        }
         let theme = preference.native_theme().or_else(|| window.theme().ok());
         if let Some(theme) = theme {
             if let Err(error) = window.set_background_color(Some(theme_background(theme))) {
@@ -315,46 +324,40 @@ fn apply_native_theme(app: &tauri::AppHandle, preference: ThemePreference) {
     }
 }
 
-fn tray_menu(app: &tauri::AppHandle, locale: Locale) -> tauri::Result<Menu<tauri::Wry>> {
-    let show = MenuItem::with_id(
-        app,
-        "show",
-        i18n::t(locale, "host.tray.show", &[]),
-        true,
-        None::<&str>,
-    )?;
-    let quit = MenuItem::with_id(
-        app,
-        "quit",
-        i18n::t(locale, "host.tray.quit", &[]),
-        true,
-        None::<&str>,
-    )?;
-    #[cfg(debug_assertions)]
-    let reload = MenuItem::with_id(
-        app,
-        "reload",
-        i18n::t(locale, "host.tray.reload", &[]),
-        true,
-        None::<&str>,
-    )?;
-    #[cfg(debug_assertions)]
-    let menu = Menu::with_items(app, &[&show, &reload, &quit])?;
-    #[cfg(not(debug_assertions))]
-    let menu = Menu::with_items(app, &[&show, &quit])?;
-    Ok(menu)
-}
-
-fn rebuild_tray_menu(app: &tauri::AppHandle, locale: Locale) -> Result<(), String> {
-    let menu = tray_menu(app, locale).map_err(|error| error.to_string())?;
-    if let Some(tray) = app.tray_by_id("main") {
-        tray.set_menu(Some(menu))
-            .map_err(|error| error.to_string())?;
+/// What the tray popover renders. Settings pass a draft of the tray
+/// preferences to preview the panel exactly as the tray would show it.
+#[tauri::command]
+fn tray_state(
+    app: tauri::AppHandle,
+    tray: Option<TrayPreferences>,
+) -> Result<tray::TrayStateSnapshot, String> {
+    if let Some(tray) = &tray {
+        tray.validate(
+            app.state::<Arc<PreferencesStore>>()
+                .snapshot()
+                .values
+                .locale,
+        )?;
     }
-    Ok(())
+    Ok(tray::state_snapshot(&app, tray))
 }
 
-fn show_main_window(app: &tauri::AppHandle) {
+#[tauri::command]
+fn tray_action(app: tauri::AppHandle, action: tray::TrayAction) -> Result<(), String> {
+    tray::perform(&app, action)
+}
+
+#[tauri::command]
+fn tray_popover_resize(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    tray::resize_popover(&app, height)
+}
+
+#[tauri::command]
+fn tray_popover_hide(app: tauri::AppHandle) {
+    tray::hide_popover(&app);
+}
+
+pub(crate) fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         // Restore the foreground app before showing/focusing its window.
         #[cfg(target_os = "macos")]
@@ -1359,7 +1362,6 @@ pub fn run() {
     let manager = Arc::new(CoreManager::new());
     let setup_manager = Arc::clone(&manager);
     let explicit_quit = Arc::new(AtomicBool::new(false));
-    let quit_state = Arc::clone(&explicit_quit);
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -1371,6 +1373,7 @@ pub fn run() {
         ))
         .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init());
     #[cfg(not(target_os = "macos"))]
     let builder = builder.plugin(tauri_plugin_notification::init());
@@ -1379,11 +1382,16 @@ pub fn run() {
         .manage(manager)
         .manage(explicit_quit)
         .manage(Mutex::new(InspectorRegistry::default()))
+        .manage(tray::TrayState::default())
         .invoke_handler(tauri::generate_handler![
             core_status,
             window_chrome_preferences,
             get_preferences,
             update_preferences,
+            tray_state,
+            tray_action,
+            tray_popover_resize,
+            tray_popover_hide,
             start_core,
             stop_core,
             restart_core,
@@ -1495,46 +1503,8 @@ pub fn run() {
             }
             app.manage(preferences);
 
-            let menu = tray_menu(app.handle(), values.locale)?;
-            #[cfg(target_os = "macos")]
-            let tray_icon = tauri::include_image!("icons/tray/36x36.png");
-            #[cfg(not(target_os = "macos"))]
-            let tray_icon = app
-                .default_window_icon()
-                .cloned()
-                .ok_or("AstrLink tray icon is unavailable")?;
-            TrayIconBuilder::with_id("main")
-                .icon(tray_icon)
-                .icon_as_template(cfg!(target_os = "macos"))
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_tray_icon_event(|tray, event| {
-                    // Right-click belongs to the native tray menu. Focusing the
-                    // main window here dismisses that menu on Windows.
-                    if matches!(
-                        event,
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        }
-                    ) {
-                        show_main_window(tray.app_handle());
-                    }
-                })
-                .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "show" => show_main_window(app),
-                    #[cfg(debug_assertions)]
-                    "reload" => {
-                        dev_reload::reload_windows(app);
-                    }
-                    "quit" => {
-                        quit_state.store(true, Ordering::SeqCst);
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .build(app)?;
+            tray::build(app.handle())?;
+            tray::start(app.handle());
 
             #[cfg(debug_assertions)]
             dev_reload::start(app.handle());
@@ -1572,10 +1542,23 @@ pub fn run() {
             ..
         } = &event
         {
-            if let Some(window) = app_handle.get_webview_window(label) {
-                if let Err(error) = window.set_background_color(Some(theme_background(*theme))) {
-                    eprintln!("unable to follow AstrLink window theme: {error}");
+            if label != tray::POPOVER_LABEL {
+                if let Some(window) = app_handle.get_webview_window(label) {
+                    if let Err(error) = window.set_background_color(Some(theme_background(*theme)))
+                    {
+                        eprintln!("unable to follow AstrLink window theme: {error}");
+                    }
                 }
+            }
+        }
+        if let RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::Focused(false),
+            ..
+        } = &event
+        {
+            if label == tray::POPOVER_LABEL {
+                tray::on_popover_blur(app_handle);
             }
         }
         if let RunEvent::WindowEvent {

@@ -10,6 +10,71 @@ export const MAX_REQUEST_BODY_MIB = 0xffffffff;
 export const DEFAULT_RESPONSE_START_TIMEOUT_SECONDS = 0;
 export const MAX_RESPONSE_START_TIMEOUT_SECONDS = 86400;
 
+/** Text shown next to the macOS status-item icon; tooltip elsewhere. */
+export const TRAY_MENUBAR_TEXTS = [
+  "none",
+  "requests",
+  "tokens",
+  "cost",
+  "subscription",
+  "alert_only",
+] as const;
+export type TrayMenubarText = (typeof TRAY_MENUBAR_TEXTS)[number];
+
+/** Quick-jump pages in navigation order. Overview and settings are fixed. */
+export const TRAY_PAGES = [
+  "records",
+  "services",
+  "tokens",
+  "safety",
+  "routing",
+  "agent_tools",
+] as const;
+export type TrayPage = (typeof TRAY_PAGES)[number];
+
+export const TRAY_USAGE_KEYS = [
+  "today",
+  "cost",
+  "subscription_windows",
+  "top_model",
+  "compare_yesterday",
+  "cache_hit",
+  "top_client",
+  "last_request",
+  "month_total",
+] as const;
+export type TrayUsageKey = (typeof TRAY_USAGE_KEYS)[number];
+export type TrayUsagePreferences = Record<TrayUsageKey, boolean>;
+
+export interface TrayPreferences {
+  menubar_text: TrayMenubarText;
+  copy_address: boolean;
+  gateway_controls: boolean;
+  usage: TrayUsagePreferences;
+  pages: TrayPage[];
+}
+
+/** Mirrors `TrayPreferences::default()` in `src-tauri/src/preferences.rs`. */
+export function defaultTrayPreferences(): TrayPreferences {
+  return {
+    menubar_text: "none",
+    copy_address: true,
+    gateway_controls: true,
+    usage: {
+      today: true,
+      cost: true,
+      subscription_windows: true,
+      top_model: true,
+      compare_yesterday: false,
+      cache_hit: false,
+      top_client: false,
+      last_request: false,
+      month_total: false,
+    },
+    pages: ["records", "services", "tokens"],
+  };
+}
+
 export interface Preferences {
   close_behavior: CloseBehavior;
   autostart: boolean;
@@ -22,6 +87,7 @@ export interface Preferences {
   max_request_body_mib: number;
   locale: Locale;
   theme: ThemePreference;
+  tray: TrayPreferences;
 }
 
 export interface SettingsSnapshot {
@@ -64,6 +130,39 @@ function nullableString(value: unknown, path: string): string | null {
   return value;
 }
 
+export function isTrayPage(value: unknown): value is TrayPage {
+  return typeof value === "string" && (TRAY_PAGES as readonly string[]).includes(value);
+}
+
+export function parseTrayPreferences(value: unknown, path: string): TrayPreferences {
+  const tray = objectAt(value, path);
+  exactKeys(tray, ["menubar_text", "copy_address", "gateway_controls", "usage", "pages"], path);
+  if (
+    typeof tray.menubar_text !== "string" ||
+    !(TRAY_MENUBAR_TEXTS as readonly string[]).includes(tray.menubar_text)
+  ) {
+    invalid(`${path}.menubar_text`, "unknown menubar text");
+  }
+  for (const field of ["copy_address", "gateway_controls"] as const) {
+    if (typeof tray[field] !== "boolean") invalid(`${path}.${field}`, "expected boolean");
+  }
+  const usage = objectAt(tray.usage, `${path}.usage`);
+  exactKeys(usage, TRAY_USAGE_KEYS, `${path}.usage`);
+  for (const key of TRAY_USAGE_KEYS) {
+    if (typeof usage[key] !== "boolean") invalid(`${path}.usage.${key}`, "expected boolean");
+  }
+  if (!Array.isArray(tray.pages) || tray.pages.length > TRAY_PAGES.length) {
+    invalid(`${path}.pages`, "expected a bounded array");
+  }
+  const seen = new Set<string>();
+  for (const [index, page] of (tray.pages as unknown[]).entries()) {
+    if (!isTrayPage(page)) invalid(`${path}.pages[${index}]`, "unknown tray page");
+    if (seen.has(page)) invalid(`${path}.pages[${index}]`, "duplicate tray page");
+    seen.add(page);
+  }
+  return tray as unknown as TrayPreferences;
+}
+
 export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   const root = objectAt(value, "$");
   exactKeys(root, ["values", "load_warning", "autostart_actual", "autostart_error"], "$");
@@ -82,9 +181,11 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "max_request_body_mib",
       "locale",
       "theme",
+      "tray",
     ],
     "$.values",
   );
+  parseTrayPreferences(values.tray, "$.values.tray");
   if (values.close_behavior !== "hide_to_tray" && values.close_behavior !== "quit") {
     invalid("$.values.close_behavior", "unknown close behavior");
   }

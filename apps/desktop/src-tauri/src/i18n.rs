@@ -69,10 +69,54 @@ mod tests {
             t(Locale::En, "host.sidecar.notReady", &[]),
             "The gateway is not ready yet."
         );
-        assert_eq!(t(Locale::En, "host.tray.show", &[]), "Show AstrLink");
-        assert_eq!(t(Locale::ZhCN, "host.tray.show", &[]), "显示 AstrLink");
-        assert_eq!(t(Locale::En, "host.tray.quit", &[]), "Quit");
-        assert_eq!(t(Locale::ZhCN, "host.tray.quit", &[]), "退出");
+        assert_eq!(
+            t(
+                Locale::En,
+                "host.tray.status.ready",
+                &[("address", "127.0.0.1:8317")]
+            ),
+            "Gateway running · 127.0.0.1:8317"
+        );
+        assert_eq!(
+            t(
+                Locale::ZhCN,
+                "host.tray.status.ready",
+                &[("address", "127.0.0.1:8317")]
+            ),
+            "网关运行中 · 127.0.0.1:8317"
+        );
+        // Every key the tray icon renders must exist in both catalogs; a
+        // missing one would surface as a raw key in the tooltip.
+        for key in [
+            "host.tray.show",
+            "host.tray.settings",
+            "host.tray.quit",
+            "host.tray.core.start",
+            "host.tray.core.stop",
+            "host.tray.core.restart",
+            "host.tray.copied",
+            "host.tray.tooltip",
+            "host.tray.status.ready",
+            "host.tray.status.fallback",
+            "host.tray.status.stopped",
+            "host.tray.status.starting",
+            "host.tray.status.stopping",
+            "host.tray.status.failed",
+            "host.tray.status.observed",
+            "host.tray.menubar.alert",
+            "host.tray.hiddenMenuBarTitle",
+            "host.tray.hiddenMenuBarBody",
+            "host.tray.hiddenTitle",
+            "host.tray.hiddenBody",
+            "host.preferences.trayPagesDuplicate",
+        ] {
+            for locale in [Locale::En, Locale::ZhCN] {
+                assert!(
+                    lookup(catalog(locale), key).is_some(),
+                    "{key} missing for {locale:?}"
+                );
+            }
+        }
     }
 
     #[test]

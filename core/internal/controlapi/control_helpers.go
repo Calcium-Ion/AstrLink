@@ -37,8 +37,16 @@ type serviceCapabilityInput struct {
 
 func (handler *Handler) authenticated(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		if LocalSocketAuthenticated(request) {
+		// Authenticated agent-side readers are recorded before dispatch so the
+		// desktop can show that records are being read while the call runs.
+		dispatch := func() {
+			if request.URL.Path != ObserversPath {
+				handler.observers.note(request)
+			}
 			next(writer, request)
+		}
+		if LocalSocketAuthenticated(request) {
+			dispatch()
 			return
 		}
 		const prefix = "Bearer "
@@ -58,7 +66,7 @@ func (handler *Handler) authenticated(next http.HandlerFunc) http.HandlerFunc {
 			)
 			return
 		}
-		next(writer, request)
+		dispatch()
 	}
 }
 

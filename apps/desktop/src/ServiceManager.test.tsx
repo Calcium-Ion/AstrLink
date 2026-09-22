@@ -1902,6 +1902,48 @@ describe("ServiceManager", () => {
     expect(document.body.textContent).not.toContain("1455 和 1457 均不可用");
   });
 
+  it("opens the provider's model list straight from the model count", async () => {
+    bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
+    const changed = vi.fn();
+    const props = {
+      catalogError: null,
+      catalogStatus: "ready" as const,
+      isReady: true,
+      onDirtyChange: () => {},
+      onRefresh: () => {},
+      onServiceRemoved: () => {},
+      onServiceSaved: () => {},
+      onViewChange: changed,
+      protocols: [],
+      services: [gatewayService],
+    };
+    await act(async () => {
+      root.render(<ServiceManager {...props} view={{ kind: "list" }} />);
+    });
+    const count = container.querySelector<HTMLButtonElement>(
+      `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
+    );
+    expect(count?.textContent).toBe(`${gatewayService.models.length} 个模型`);
+    await act(async () => {
+      count?.click();
+    });
+    expect(changed).toHaveBeenCalledWith({ kind: "edit", serviceId: gatewayService.id, tab: "models" });
+
+    // The host routes that view back in; the editor lands on the models tab.
+    await act(async () => {
+      root.render(
+        <ServiceManager {...props} view={{ kind: "edit", serviceId: gatewayService.id, tab: "models" }} />,
+      );
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector('[data-testid="service-editor-tab-models"]')?.getAttribute("data-state"),
+    ).toBe("active");
+    expect(
+      container.querySelector('[data-testid="service-editor-tab-connection"]')?.getAttribute("data-state"),
+    ).toBe("inactive");
+  });
+
   it("toggles a service from the list without opening the editor", async () => {
     const disabledService: Service = { ...gatewayService, enabled: false };
     bridgeMocks.getService.mockResolvedValue({

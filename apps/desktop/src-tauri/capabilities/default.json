@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
   "description": "Minimal capability for the AstrLink windows",
-  "windows": ["main", "trajectory-inspector-*"],
+  "windows": ["main", "trajectory-inspector-*", "tray-popover"],
   "permissions": [
     "core:default",
     "core:window:allow-close",

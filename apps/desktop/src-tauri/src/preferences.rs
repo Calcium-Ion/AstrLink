@@ -55,6 +55,117 @@ impl ThemePreference {
     }
 }
 
+/// What the macOS status item shows next to the tray icon. Other platforms
+/// have no title slot, so the same text goes into the tooltip instead.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrayMenubarText {
+    #[default]
+    None,
+    Requests,
+    Tokens,
+    Cost,
+    Subscription,
+    AlertOnly,
+}
+
+/// Pages the tray popover can jump to. Overview and settings are always
+/// reachable through the fixed "open" and "settings" actions, so they are not
+/// listed. The popover renders the enabled subset in this declaration order.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum TrayPage {
+    Records,
+    Services,
+    Tokens,
+    Safety,
+    Routing,
+    AgentTools,
+}
+
+/// Usage lines the tray menu can show. Every line is optional so the menu
+/// stays short by default; the operator enables the numbers they like.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct TrayUsagePreferences {
+    pub today: bool,
+    pub cost: bool,
+    pub subscription_windows: bool,
+    pub top_model: bool,
+    pub compare_yesterday: bool,
+    pub cache_hit: bool,
+    pub top_client: bool,
+    pub last_request: bool,
+    pub month_total: bool,
+}
+
+impl Default for TrayUsagePreferences {
+    fn default() -> Self {
+        Self {
+            today: true,
+            cost: true,
+            subscription_windows: true,
+            top_model: true,
+            compare_yesterday: false,
+            cache_hit: false,
+            top_client: false,
+            last_request: false,
+            month_total: false,
+        }
+    }
+}
+
+impl TrayUsagePreferences {
+    /// Whether any line needs a usage-summary call at all.
+    pub fn needs_usage_summary(&self) -> bool {
+        self.today || self.top_model || self.compare_yesterday || self.cache_hit
+    }
+
+    pub fn needs_anything(&self) -> bool {
+        self.needs_usage_summary()
+            || self.cost
+            || self.subscription_windows
+            || self.top_client
+            || self.last_request
+            || self.month_total
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct TrayPreferences {
+    pub menubar_text: TrayMenubarText,
+    pub copy_address: bool,
+    pub gateway_controls: bool,
+    pub usage: TrayUsagePreferences,
+    /// Quick-jump pages in fixed navigation order; an ordered subset of `TrayPage::ALL`.
+    pub pages: Vec<TrayPage>,
+}
+
+impl Default for TrayPreferences {
+    fn default() -> Self {
+        Self {
+            menubar_text: TrayMenubarText::None,
+            copy_address: true,
+            gateway_controls: true,
+            usage: TrayUsagePreferences::default(),
+            pages: vec![TrayPage::Records, TrayPage::Services, TrayPage::Tokens],
+        }
+    }
+}
+
+impl TrayPreferences {
+    pub fn validate(&self, locale: Locale) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        for page in &self.pages {
+            if !seen.insert(*page) {
+                return Err(i18n::t(locale, "host.preferences.trayPagesDuplicate", &[]));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Preferences {
@@ -72,6 +183,7 @@ pub struct Preferences {
     pub max_request_body_mib: u32,
     pub locale: Locale,
     pub theme: ThemePreference,
+    pub tray: TrayPreferences,
 }
 
 impl Default for Preferences {
@@ -88,6 +200,7 @@ impl Default for Preferences {
             max_request_body_mib: 0,
             locale: Locale::En,
             theme: ThemePreference::System,
+            tray: TrayPreferences::default(),
         }
     }
 }
@@ -97,6 +210,7 @@ impl Preferences {
         if self.inference_port < 1024 {
             return Err(i18n::t(self.locale, "host.preferences.portRange", &[]));
         }
+        self.tray.validate(self.locale)?;
         if !(MIN_MAX_CONCURRENT_INSPECTIONS..=MAX_MAX_CONCURRENT_INSPECTIONS)
             .contains(&self.max_concurrent_inspections)
         {
@@ -428,6 +542,66 @@ mod tests {
             .unwrap_err()
             .contains("between 0 and 86400"));
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn tray_preferences_default_and_reject_duplicate_pages() {
+        let directory = temporary_directory("tray-legacy");
+        fs::create_dir_all(&directory).unwrap();
+        // A preferences file written before the tray section existed.
+        fs::write(
+            directory.join(FILE_NAME),
+            br#"{"close_behavior":"hide_to_tray","inference_port":8317}"#,
+        )
+        .unwrap();
+        let snapshot = PreferencesStore::load(&directory).snapshot();
+        assert_eq!(snapshot.values.tray, TrayPreferences::default());
+        assert_eq!(snapshot.load_warning, None);
+        assert_eq!(
+            snapshot.values.tray.pages,
+            vec![TrayPage::Records, TrayPage::Services, TrayPage::Tokens]
+        );
+        let _ = fs::remove_dir_all(directory);
+
+        let mut duplicate = Preferences::default();
+        duplicate.tray.pages = vec![TrayPage::Records, TrayPage::Records];
+        assert!(duplicate.validate().is_err());
+
+        let json = serde_json::to_value(Preferences::default()).unwrap();
+        assert_eq!(json["tray"]["menubar_text"], "none");
+        assert_eq!(json["tray"]["pages"][0], "records");
+        assert_eq!(json["tray"]["usage"]["today"], true);
+        assert_eq!(json["tray"]["usage"]["compare_yesterday"], false);
+        assert!(serde_json::from_str::<TrayPreferences>(r#"{"unknown":1}"#).is_err());
+        // The wire names are what the frontend stores (`TRAY_PAGES`) and sends back.
+        let names: Vec<String> = [
+            TrayPage::Records,
+            TrayPage::Services,
+            TrayPage::Tokens,
+            TrayPage::Safety,
+            TrayPage::Routing,
+            TrayPage::AgentTools,
+        ]
+        .iter()
+        .map(|page| {
+            serde_json::to_value(page)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+        assert_eq!(
+            names,
+            [
+                "records",
+                "services",
+                "tokens",
+                "safety",
+                "routing",
+                "agent_tools"
+            ]
+        );
     }
 
     #[test]

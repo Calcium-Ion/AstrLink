@@ -13,10 +13,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Menu, SlidersHorizontal } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
 import {
   getPreferences,
+  getTrayState,
   restartCore,
   startCore,
   stopCore,
@@ -29,13 +32,34 @@ import {
   MAX_REQUEST_BODY_MIB,
   MAX_RESPONSE_START_TIMEOUT_SECONDS,
   MIN_MAX_CONCURRENT_INSPECTIONS,
+  TRAY_MENUBAR_TEXTS,
+  TRAY_PAGES,
+  TRAY_USAGE_KEYS,
   type Preferences,
   type SettingsSnapshot,
+  type TrayMenubarText,
+  type TrayPage,
+  type TrayPreferences,
 } from "./preferences-model";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import { applyTheme } from "./theme";
 import { THEME_PREFERENCES, type ThemePreference } from "./theme-model";
+import type { TrayState } from "./tray-model";
+import { TrayPopoverPanel } from "./TrayPopover";
+
+const TRAY_PREVIEW_REFRESH_MS = 30_000;
+
+type SettingsTab = "general" | "tray";
+
+const pageLabelKeys: Record<TrayPage, string> = {
+  records: "nav.records",
+  services: "nav.services",
+  tokens: "nav.tokens",
+  safety: "nav.safety",
+  routing: "nav.routing",
+  agent_tools: "nav.agentTools",
+};
 
 type InstantPatch = Omit<
   Preferences,
@@ -135,6 +159,34 @@ export function SettingsCenter({
   const [busy, setBusy] = useState<
     "prefs" | "port" | "start" | "stop" | "restart" | null
   >(null);
+  const [tab, setTab] = useState<SettingsTab>("general");
+  const [trayState, setTrayState] = useState<TrayState | null>(null);
+  const [trayStateError, setTrayStateError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
+
+  // The preview is the real panel over real data; refresh it on a slow tick.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      Promise.resolve()
+        .then(() => getTrayState())
+        .then((next) => {
+          if (cancelled) return;
+          setTrayState(next);
+          setTrayStateError(null);
+          setNow(new Date());
+        })
+        .catch((error) => {
+          if (!cancelled) setTrayStateError(messageOf(error));
+        });
+    };
+    load();
+    const timer = window.setInterval(load, TRAY_PREVIEW_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -331,6 +383,15 @@ export function SettingsCenter({
 
   const prefs = settings.values;
   const prefsBusy = busy === "prefs";
+  const applyTray = (patch: Partial<TrayPreferences>) =>
+    void applyInstant({ tray: { ...prefs.tray, ...patch } });
+  const togglePage = (page: TrayPage, enabled: boolean) => {
+    const selected = new Set(prefs.tray.pages);
+    if (enabled) selected.add(page);
+    else selected.delete(page);
+    // Keep navigation order regardless of the order pages were toggled in.
+    applyTray({ pages: TRAY_PAGES.filter((candidate) => selected.has(candidate)) });
+  };
   const phase = snapshot?.phase ?? "unavailable";
   const tone = phaseTone(phase);
   const canStart = ["stopped", "exited", "error"].includes(phase);
@@ -351,7 +412,7 @@ export function SettingsCenter({
     snapshot?.inference_port_fallback?.requested_port !== settings.values.inference_port;
 
   return (
-    <section className="grid gap-4 pb-2">
+    <section className="flex h-full min-h-0 min-w-0 flex-col gap-4">
       <PageHeader title={t("settings.title")} />
 
       <InferencePortNotice snapshot={snapshot} />
@@ -370,7 +431,28 @@ export function SettingsCenter({
         <FormMessage tone="error">{actionError}</FormMessage>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 max-[920px]:grid-cols-1">
+      <Tabs
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+        onValueChange={(value) => setTab(value as SettingsTab)}
+        value={tab}
+      >
+        <TabsList aria-label={t("settings.tabsLabel")} className="shrink-0">
+          <TabsTrigger value="general">
+            <SlidersHorizontal aria-hidden="true" />
+            {t("settings.tabs.general")}
+          </TabsTrigger>
+          <TabsTrigger value="tray">
+            <Menu aria-hidden="true" />
+            {t("settings.tabs.tray")}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+          data-tab-scroller
+          value="general"
+        >
+      <div className="grid grid-cols-2 gap-3 pb-2 pr-1 max-[920px]:grid-cols-1">
         <Panel className="min-w-0">
           <SettingsPanelHeader
             hint={t("settings.instantHint")}
@@ -695,6 +777,138 @@ export function SettingsCenter({
           </div>
         </Panel>
       </div>
+        </TabsContent>
+
+        <TabsContent
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+          data-tab-scroller
+          value="tray"
+        >
+          <div className="grid grid-cols-[minmax(0,1fr)_396px] items-start gap-3 pb-2 pr-1 max-[920px]:grid-cols-1">
+            <div className="grid min-w-0 gap-3">
+              <Panel className="min-w-0">
+                <SettingsPanelHeader
+                  hint={t("settings.trayMenubarTextHint")}
+                  kicker={t("settings.trayKicker")}
+                  title={t("settings.trayMenubarText")}
+                />
+                <div className="px-4 py-3">
+                  <RadioGroup
+                    aria-label={t("settings.trayMenubarText")}
+                    className={cn(
+                      "grid grid-cols-3 gap-2 max-[560px]:grid-cols-2",
+                      prefsBusy && "pointer-events-none opacity-60",
+                    )}
+                    disabled={prefsBusy}
+                    onValueChange={(value) =>
+                      applyTray({ menubar_text: value as TrayMenubarText })
+                    }
+                    value={prefs.tray.menubar_text}
+                  >
+                    {TRAY_MENUBAR_TEXTS.map((option) => (
+                      <ChoiceCard
+                        key={option}
+                        disabled={prefsBusy}
+                        label={t(`settings.trayMenubarOptions.${option}`)}
+                        selected={prefs.tray.menubar_text === option}
+                        value={option}
+                      />
+                    ))}
+                  </RadioGroup>
+                </div>
+              </Panel>
+
+              <Panel className="min-w-0">
+                <SettingsPanelHeader
+                  kicker={t("settings.trayKicker")}
+                  title={t("settings.trayUsageSection")}
+                />
+                {TRAY_USAGE_KEYS.map((key) => (
+                  <SettingsToggle
+                    key={key}
+                    checked={prefs.tray.usage[key]}
+                    disabled={prefsBusy}
+                    hint={t(`settings.trayUsage.${key}Hint`)}
+                    label={t(`settings.trayUsage.${key}`)}
+                    onChange={(checked) =>
+                      applyTray({ usage: { ...prefs.tray.usage, [key]: checked } })
+                    }
+                  />
+                ))}
+              </Panel>
+
+              <Panel className="min-w-0">
+                <SettingsPanelHeader
+                  kicker={t("settings.trayKicker")}
+                  title={t("settings.trayActionsSection")}
+                />
+                <SettingsToggle
+                  checked={prefs.tray.copy_address}
+                  disabled={prefsBusy}
+                  label={t("settings.trayCopyAddress")}
+                  onChange={(copy_address) => applyTray({ copy_address })}
+                />
+                <SettingsToggle
+                  checked={prefs.tray.gateway_controls}
+                  disabled={prefsBusy}
+                  label={t("settings.trayGatewayControls")}
+                  onChange={(gateway_controls) => applyTray({ gateway_controls })}
+                />
+                <div className="grid gap-2 px-4 py-3">
+                  <span className="text-xs font-medium text-text-secondary">
+                    {t("settings.trayPagesSection")}
+                  </span>
+                  <div
+                    aria-label={t("settings.trayPagesSection")}
+                    className="flex flex-wrap gap-1.5"
+                    role="group"
+                  >
+                    {TRAY_PAGES.map((page) => {
+                      const selected = prefs.tray.pages.includes(page);
+                      return (
+                        <Button
+                          key={page}
+                          aria-pressed={selected}
+                          disabled={prefsBusy}
+                          onClick={() => togglePage(page, !selected)}
+                          size="sm"
+                          type="button"
+                          variant={selected ? "secondary" : "outline"}
+                        >
+                          {t(pageLabelKeys[page])}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">{t("settings.trayPagesHint")}</p>
+                </div>
+              </Panel>
+            </div>
+
+            <Panel className="sticky top-0 min-w-0 max-[920px]:static max-[920px]:order-first" tone="inset">
+              <SettingsPanelHeader
+                hint={t("settings.trayPanelHint")}
+                kicker={t("settings.trayKicker")}
+                title={t("settings.trayPreview")}
+              />
+              <div className="flex flex-col gap-2 p-4">
+                <div className="mx-auto w-full max-w-[340px]" data-slot="tray-preview">
+                  <TrayPopoverPanel
+                    now={now}
+                    onAction={() => {}}
+                    preview
+                    state={trayState}
+                    tray={prefs.tray}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {trayStateError ? t("settings.trayPreviewFailed") : t("settings.trayPreviewHint")}
+                </p>
+              </div>
+            </Panel>
+          </div>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }

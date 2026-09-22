@@ -226,7 +226,48 @@
     "quit": "退出 AstrLink",
     "quitHint": "结束全部进程",
     "autostart": "登录系统后自动启动 AstrLink",
-    "trayHint": "系统托盘始终提供“显示 AstrLink”和“退出”。",
+    "trayHint": "点击托盘图标（左键或右键）打开面板；打开窗口、启停网关和退出都在面板里。",
+    "trayKicker": "托盘面板",
+    "trayPanelHint": "点击托盘图标展开的面板。改动立即生效，预览即实际效果。",
+    "trayMenubarText": "菜单栏常驻文字",
+    "trayMenubarTextHint": "显示在菜单栏图标旁，不用点开就能看到。Windows 与 Linux 显示在图标提示中。",
+    "trayMenubarOptions": {
+      "none": "不显示",
+      "requests": "今日调用",
+      "tokens": "今日 tokens",
+      "cost": "今日费用",
+      "subscription": "订阅窗口",
+      "alert_only": "仅异常提示"
+    },
+    "trayUsageSection": "用量信息",
+    "trayUsage": {
+      "today": "今日概览",
+      "todayHint": "调用次数、tokens 与失败数",
+      "cost": "预估费用",
+      "costHint": "按官方 API 价格折算，不替代账单",
+      "subscription_windows": "订阅额度窗口",
+      "subscription_windowsHint": "Codex、Claude 等订阅的窗口用量与重置时间",
+      "top_model": "常用模型",
+      "top_modelHint": "今日 tokens 占比最高的模型",
+      "compare_yesterday": "对比昨天",
+      "compare_yesterdayHint": "今日 tokens 相对昨日的变化",
+      "cache_hit": "缓存命中率",
+      "cache_hitHint": "缓存读取占输入 tokens 的比例",
+      "top_client": "活跃客户端",
+      "top_clientHint": "今日用量最高的访问令牌",
+      "last_request": "上次请求",
+      "last_requestHint": "最近一次调用的模型与耗时",
+      "month_total": "本月累计",
+      "month_totalHint": "本月至今的 tokens 总量"
+    },
+    "trayActionsSection": "快捷操作",
+    "trayCopyAddress": "复制 API 地址",
+    "trayGatewayControls": "网关启停按钮",
+    "trayPagesSection": "快捷页面",
+    "trayPagesHint": "面板底部的页面入口。“打开 AstrLink”和“设置”始终可用。",
+    "trayPreview": "面板预览",
+    "trayPreviewHint": "使用当前真实数据渲染。",
+    "trayPreviewFailed": "无法读取托盘状态。",
     "runtimeKicker": "本地运行时",
     "gatewayTitle": "网关与网络",
     "useSystemProxy": "使用系统代理",
@@ -269,7 +310,12 @@
     "notifyStop": "网关已停止。",
     "notifyRestart": "网关正在使用已保存设置重启。",
     "notifyPortSavedRestart": "入口设置已保存。重启网关后生效。",
-    "notifyPortSaved": "入口设置已保存。"
+    "notifyPortSaved": "入口设置已保存。",
+    "tabsLabel": "设置分组",
+    "tabs": {
+      "general": "常规",
+      "tray": "托盘面板"
+    }
   },
   "agentDebug": {
     "title": "Agent 工具",
@@ -516,6 +562,7 @@
     "moreNamed": "更多 {{name}} 操作",
     "openaiAccount": "OpenAI 账户 {{hint}}",
     "modelCount": "{{count}} 个模型",
+    "openModels": "打开 {{name}} 的模型列表",
     "viewLogin": "查看登录",
     "signIn": "登录",
     "resignIn": "重新登录",
@@ -1680,15 +1727,90 @@
   "dialog": {
     "close": "关闭"
   },
+  "tray": {
+    "panelLabel": "AstrLink 托盘面板",
+    "open": "打开 AstrLink",
+    "settings": "设置",
+    "quit": "退出",
+    "copyAddress": "复制 API 地址",
+    "copied": "已复制",
+    "copyFailed": "复制失败",
+    "observed": "Agent 正在通过 MCP 读取",
+    "status": {
+      "ready": "网关运行中",
+      "stopped": "网关已停止",
+      "starting": "网关启动中…",
+      "stopping": "网关停止中…",
+      "failed": "网关异常退出",
+      "unavailable": "网关不可用",
+      "recovery": "正在自动恢复（第 {{attempt}} 次）",
+      "fallback": "端口 {{requested}} 被占用，已改用 {{active}}"
+    },
+    "core": {
+      "start": "启动网关",
+      "stop": "停止网关",
+      "restart": "重启网关"
+    },
+    "today": "今日",
+    "requests": "次调用",
+    "tokens": "tokens",
+    "cost": "预估费用",
+    "failedCount": "{{count}} 次失败",
+    "noCallsToday": "今天还没有调用",
+    "loading": "正在读取用量…",
+    "notReadyHint": "网关运行后这里会显示今日用量。",
+    "vsYesterday": "比昨天",
+    "up": "↑ {{percent}}%",
+    "down": "↓ {{percent}}%",
+    "flat": "持平",
+    "noYesterday": "昨天无调用",
+    "cacheHit": "缓存命中",
+    "topModel": "常用模型",
+    "topClient": "活跃客户端",
+    "lastRequest": "上次请求",
+    "lastFailed": "失败",
+    "month": "本月",
+    "subscriptions": "订阅额度",
+    "showMoreSubscriptions": "展开其余 {{count}} 条",
+    "showLessSubscriptions": "收起",
+    "hourlyChart": "今日各小时 tokens",
+    "hourlyPeak": "峰值 {{hour}}:00 · {{tokens}}",
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前",
+    "updatedAgo": "更新于{{ago}}",
+    "refresh": "刷新",
+    "version": "AstrLink {{version}}"
+  },
   "host": {
     "tray": {
-      "show": "显示 AstrLink",
-      "quit": "退出",
-      "reload": "重新加载界面",
+      "show": "打开 AstrLink",
+      "settings": "设置…",
+      "quit": "退出 AstrLink",
+      "copied": "已复制",
+      "tooltip": "AstrLink · {{status}}",
+      "status": {
+        "ready": "网关运行中 · {{address}}",
+        "fallback": "{{requested}} 被占用，已改用 {{active}}",
+        "stopped": "网关已停止",
+        "starting": "网关启动中…",
+        "stopping": "网关停止中…",
+        "failed": "网关异常退出",
+        "observed": "Agent 正在通过 MCP 读取"
+      },
+      "menubar": {
+        "alert": "!"
+      },
       "hiddenMenuBarTitle": "已进入顶部菜单栏",
-      "hiddenMenuBarBody": "AstrLink 仍在后台运行。点击顶部菜单栏中的图标可重新打开窗口。",
+      "hiddenMenuBarBody": "AstrLink 仍在后台运行。点击顶部菜单栏中的图标可查看用量与状态，并从面板重新打开窗口。",
       "hiddenTitle": "已隐藏到系统托盘",
-      "hiddenBody": "AstrLink 仍在后台运行。点击系统托盘中的图标可重新打开窗口。"
+      "hiddenBody": "AstrLink 仍在后台运行。点击系统托盘中的图标可查看用量与状态，并从面板重新打开窗口。",
+      "core": {
+        "start": "启动网关",
+        "stop": "停止网关",
+        "restart": "重启网关"
+      }
     },
     "window": {
       "trajectoryInspector": "AstrLink · 轨迹链路",
@@ -1706,6 +1828,7 @@
       "startupCheckFailed": "无法在启动时核对系统开机启动状态：{{error}}"
     },
     "preferences": {
+      "trayPagesDuplicate": "托盘快捷页面不能重复。",
       "portRange": "推理端口必须在 1024–65535 之间。",
       "concurrencyRange": "检查并发必须在 4–128 之间。",
       "responseStartTimeoutRange": "响应头等待必须在 0–86400 秒之间。",
