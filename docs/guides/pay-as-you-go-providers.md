@@ -7,7 +7,7 @@
 - **厂商开放平台 API**：通常按用量收费，使用开放平台生成的 API Key。
 - **Coding Plan**：使用编程订阅专用的密钥和地址，不一定能用开放平台密钥替代。
 - **OpenCode Zen / Go**：Zen 是按量付费服务，Go 是月费订阅，添加服务时分别选择。
-- **Codex / Claude 账号订阅**：在订阅类型中按提示完成授权，无需按下面的 API Key 方式填写。
+- **Codex / Claude / Grok 账号订阅**：在订阅类型中按提示完成授权，无需按下面的 API Key 方式填写。Grok 订阅（SuperGrok / Grok Build）通过 xAI Device Code 登录，请求经由 Grok CLI 代理，与下面的 xAI 开放平台 API Key 相互独立。
 
 ## 按量付费 API
 

@@ -9,7 +9,7 @@ AstrLink is the local API gateway. When a client request through `127.0.0.1` mis
 
 ## Use the MCP tools first
 
-The `astrlink` MCP server is a **local stdio** process (Cursor, Claude Code, Codex, or any other host). It is read-only. Prefer it over curling Control API or reading SQLite.
+The `astrlink` MCP server is a **local stdio** process (Cursor, Claude Code, Codex, Grok Build, or any other host). It is read-only. Prefer it over curling Control API or reading SQLite.
 
 It is **not** a remote OAuth server. Never call `mcp_auth`, never click Authenticate / Sign in / login for `astrlink`. Hosts sometimes expose that stub when the stdio handshake failed; authenticating cannot fix a local process.
 

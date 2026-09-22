@@ -469,8 +469,9 @@ paths:
       operationId: createService
       summary: Create one independently addressable API service.
       description: |
-        `codex_subscription` creates a disconnected service that is authorized
-        through its service-scoped OAuth operation. HTTP kinds such as `newapi`
+        `codex_subscription`, `claude_subscription` and `grok_subscription` create a
+        disconnected service that is authorized through its service-scoped OAuth
+        operation. HTTP kinds such as `newapi`
         carry an `http` connection and optional write-only credential.
       requestBody:
         required: true
@@ -835,12 +836,14 @@ paths:
     get:
       tags: [Services]
       operationId: getServiceUsage
-      summary: Read the live Codex subscription rolling-quota snapshot.
+      summary: Read the live subscription rolling-quota snapshot.
       description: |
         Fetches the official ChatGPT `/wham/usage` snapshot for a connected
-        `codex_subscription` service. The response is sanitized: email, user_id,
-        account_id, and credential material never appear. This lookup does not
-        consume quota and does not redeem reset credits.
+        `codex_subscription` service, Claude's `/api/oauth/usage` windows, or the
+        Grok CLI proxy `/v1/billing?format=credits` snapshot. The response is
+        sanitized: email, user_id, account_id, and credential material never
+        appear. This lookup does not consume quota and does not redeem reset
+        credits.
       responses:
         "200":
           description: Sanitized live usage snapshot.
@@ -3167,6 +3170,7 @@ components:
       enum:
         - codex_subscription
         - claude_subscription
+        - grok_subscription
         - opencode_go
         - opencode_zen
         - kimi_coding
@@ -3186,7 +3190,7 @@ components:
         - openai_compatible
         - custom
       description: >
-        Product-level service type. Codex and Claude subscriptions use OAuth.
+        Product-level service type. Codex, Claude and Grok subscriptions use OAuth.
         Coding plans and other HTTP services use provider-issued API keys.
     HTTPServiceConnection:
       type: object
@@ -3214,7 +3218,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [openai_codex, claude_code]
+          enum: [openai_codex, claude_code, xai_grok]
         status:
           type: string
           enum: [disconnected, authorizing, connected, needs_reauth, error]
@@ -3278,7 +3282,7 @@ components:
       oneOf:
         - properties:
             kind:
-              enum: [codex_subscription, claude_subscription]
+              enum: [codex_subscription, claude_subscription, grok_subscription]
           required: [subscription]
           not:
             required: [http]
@@ -3331,7 +3335,7 @@ components:
       oneOf:
         - properties:
             kind:
-              enum: [codex_subscription, claude_subscription]
+              enum: [codex_subscription, claude_subscription, grok_subscription]
           not:
             anyOf:
               - required: [http]
@@ -5529,7 +5533,7 @@ components:
     AuthorizationFlow:
       type: string
       enum: [browser, device_code, authorization_code]
-      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback.
+      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai).
     AuthorizationStartRequest:
       type: object
       required: [flow]
@@ -5557,7 +5561,7 @@ components:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         provider:
           type: string
-          enum: [openai_codex, claude_code]
+          enum: [openai_codex, claude_code, xai_grok]
         status:
           type: string
           enum: [pending, completed, cancelled, expired, failed]

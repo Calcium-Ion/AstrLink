@@ -22,6 +22,7 @@ type ServiceKind string
 const (
 	ServiceKindCodexSubscription  ServiceKind = "codex_subscription"
 	ServiceKindClaudeSubscription ServiceKind = "claude_subscription"
+	ServiceKindGrokSubscription   ServiceKind = "grok_subscription"
 	ServiceKindOpenCodeGo         ServiceKind = "opencode_go"
 	ServiceKindOpenCodeZen        ServiceKind = "opencode_zen"
 	ServiceKindKimiCoding         ServiceKind = "kimi_coding"
@@ -46,7 +47,7 @@ func (kind ServiceKind) Valid() bool {
 	switch kind {
 	case ServiceKindCodexSubscription, ServiceKindNewAPI, ServiceKindOpenAI,
 		ServiceKindAnthropic, ServiceKindGemini, ServiceKindOpenAICompatible,
-		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindOpenCodeGo,
+		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindGrokSubscription, ServiceKindOpenCodeGo,
 		ServiceKindOpenCodeZen, ServiceKindKimiCoding, ServiceKindGLMCoding, ServiceKindMiniMaxCoding,
 		ServiceKindDeepSeek, ServiceKindQwen, ServiceKindMoonshot, ServiceKindGLM, ServiceKindMiniMax, ServiceKindDoubao, ServiceKindXAI:
 		return true
@@ -56,17 +57,20 @@ func (kind ServiceKind) Valid() bool {
 }
 
 func (kind ServiceKind) IsSubscription() bool {
-	return kind == ServiceKindCodexSubscription || kind == ServiceKindClaudeSubscription
+	return kind == ServiceKindCodexSubscription || kind == ServiceKindClaudeSubscription || kind == ServiceKindGrokSubscription
 }
 
 func (kind ServiceKind) SubscriptionProvider() SubscriptionProvider {
-	if kind == ServiceKindClaudeSubscription {
+	switch kind {
+	case ServiceKindClaudeSubscription:
 		return SubscriptionProviderClaudeCode
-	}
-	if kind == ServiceKindCodexSubscription {
+	case ServiceKindGrokSubscription:
+		return SubscriptionProviderXAIGrok
+	case ServiceKindCodexSubscription:
 		return SubscriptionProviderOpenAICodex
+	default:
+		return ""
 	}
-	return ""
 }
 
 func (kind ServiceKind) IsHTTP() bool {

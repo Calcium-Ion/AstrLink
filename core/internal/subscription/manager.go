@@ -36,6 +36,9 @@ type Manager struct {
 	claudeSessions          *accountauth.SessionManager
 	claudeTokens            *accountauth.TokenSource
 	claudeConfig            accountauth.OAuthConfig
+	grokSessions            *accountauth.SessionManager
+	grokTokens              *accountauth.TokenSource
+	grokConfig              accountauth.OAuthConfig
 	provider                *CodexProvider
 	now                     func() time.Time
 	newID                   func() (contract.SubscriptionAccountID, error)
@@ -53,7 +56,12 @@ type usageCacheEntry struct {
 	until time.Time
 }
 
-func NewManager(accounts AccountStore, credentials accountauth.AccountCredentialStore, oauth accountauth.OAuthConfig, claudeOverrides ...accountauth.OAuthConfig) (*Manager, error) {
+// NewManager wires one OAuth client per provider. oauth configures Codex.
+// overrides customize the other providers: an override whose Provider is set
+// applies to that provider; unlabeled overrides apply positionally to Claude
+// Code and then xAI Grok. Unspecified providers use their public defaults
+// while sharing oauth's HTTP client and clock.
+func NewManager(accounts AccountStore, credentials accountauth.AccountCredentialStore, oauth accountauth.OAuthConfig, overrides ...accountauth.OAuthConfig) (*Manager, error) {
 	if accounts == nil {
 		return nil, fmt.Errorf("subscription account store is required")
 	}
@@ -77,41 +85,77 @@ func NewManager(accounts AccountStore, credentials accountauth.AccountCredential
 	tokenClient := accountauth.NewTokenClient(oauth)
 	manager.tokens = accountauth.NewTokenSource(credentials, tokenClient, oauth.RefreshSkew, now)
 	manager.tokens.SetHooks(manager.onTokenRotated, manager.onInvalidGrant)
-	claude := accountauth.OAuthConfig{HTTPClient: oauth.HTTPClient, Now: now}
-	if len(claudeOverrides) > 0 {
-		claude = claudeOverrides[0]
-	}
-	claude.Provider = contract.SubscriptionProviderClaudeCode
-	claude = claude.Normalize()
+	claude := providerOverride(overrides, contract.SubscriptionProviderClaudeCode, 0, oauth)
 	manager.claudeConfig = claude
 	manager.claudeSessions = accountauth.NewSessionManager(claude, credentials, manager.persistAuthorizedTokens)
 	manager.claudeTokens = accountauth.NewTokenSource(credentials, accountauth.NewTokenClient(claude), claude.RefreshSkew, now)
 	manager.claudeTokens.SetHooks(manager.onTokenRotated, manager.onInvalidGrant)
+	grok := providerOverride(overrides, contract.SubscriptionProviderXAIGrok, 1, oauth)
+	manager.grokConfig = grok
+	manager.grokSessions = accountauth.NewSessionManager(grok, credentials, manager.persistAuthorizedTokens)
+	manager.grokTokens = accountauth.NewTokenSource(credentials, accountauth.NewTokenClient(grok), grok.RefreshSkew, now)
+	manager.grokTokens.SetHooks(manager.onTokenRotated, manager.onInvalidGrant)
 	return manager, nil
 }
 
-func (manager *Manager) sessionsFor(provider contract.SubscriptionProvider) *accountauth.SessionManager {
-	if provider == contract.SubscriptionProviderClaudeCode {
-		return manager.claudeSessions
+func providerOverride(overrides []accountauth.OAuthConfig, provider contract.SubscriptionProvider, position int, base accountauth.OAuthConfig) accountauth.OAuthConfig {
+	config := accountauth.OAuthConfig{}
+	found := false
+	for _, override := range overrides {
+		if override.Provider == provider {
+			config, found = override, true
+			break
+		}
 	}
-	return manager.sessions
+	if !found && position < len(overrides) && overrides[position].Provider == "" {
+		config = overrides[position]
+	}
+	if config.HTTPClient == nil {
+		config.HTTPClient = base.HTTPClient
+	}
+	if config.Now == nil {
+		config.Now = base.Now
+	}
+	config.Provider = provider
+	return config.Normalize()
+}
+
+func (manager *Manager) sessionsFor(provider contract.SubscriptionProvider) *accountauth.SessionManager {
+	switch provider {
+	case contract.SubscriptionProviderClaudeCode:
+		return manager.claudeSessions
+	case contract.SubscriptionProviderXAIGrok:
+		return manager.grokSessions
+	default:
+		return manager.sessions
+	}
 }
 
 func (manager *Manager) tokensFor(provider contract.SubscriptionProvider) *accountauth.TokenSource {
-	if provider == contract.SubscriptionProviderClaudeCode {
+	switch provider {
+	case contract.SubscriptionProviderClaudeCode:
 		return manager.claudeTokens
+	case contract.SubscriptionProviderXAIGrok:
+		return manager.grokTokens
+	default:
+		return manager.tokens
 	}
-	return manager.tokens
+}
+
+func (manager *Manager) allSessions() []*accountauth.SessionManager {
+	return []*accountauth.SessionManager{manager.sessions, manager.claudeSessions, manager.grokSessions}
 }
 
 func (manager *Manager) invalidateTokens(id contract.ServiceID) {
 	manager.tokens.Invalidate(id)
 	manager.claudeTokens.Invalidate(id)
+	manager.grokTokens.Invalidate(id)
 }
 
 func (manager *Manager) activateTokens(id contract.ServiceID) {
 	manager.tokens.Activate(id)
 	manager.claudeTokens.Activate(id)
+	manager.grokTokens.Activate(id)
 }
 
 func (manager *Manager) AuthorizationBoundary() string {
@@ -184,9 +228,12 @@ func (manager *Manager) GetAuthorization(
 	ctx context.Context,
 	id contract.ServiceID,
 ) (contract.AuthorizationSession, bool) {
-	session, ok := manager.sessions.Get(id)
-	if !ok {
-		session, ok = manager.claudeSessions.Get(id)
+	var session contract.AuthorizationSession
+	ok := false
+	for _, sessions := range manager.allSessions() {
+		if session, ok = sessions.Get(id); ok {
+			break
+		}
 	}
 	if !ok {
 		manager.reconcileEndedAuthorization(ctx, id, &contract.SubscriptionError{
@@ -268,8 +315,9 @@ func (manager *Manager) Logout(ctx context.Context, id contract.SubscriptionAcco
 	}
 	defer manager.endLifecycleTransition(id)
 
-	manager.sessions.CancelAllForService(id)
-	manager.claudeSessions.CancelAllForService(id)
+	for _, sessions := range manager.allSessions() {
+		sessions.CancelAllForService(id)
+	}
 	manager.clearAuthorizationAttempt(id)
 	manager.invalidateTokens(id)
 	manager.clearUsageCache(id)
@@ -309,8 +357,9 @@ func (manager *Manager) CleanupCredentialsForDelete(ctx context.Context, id cont
 	}
 	defer manager.endLifecycleTransition(id)
 
-	manager.sessions.CancelAllForService(id)
-	manager.claudeSessions.CancelAllForService(id)
+	for _, sessions := range manager.allSessions() {
+		sessions.CancelAllForService(id)
+	}
 	manager.clearAuthorizationAttempt(id)
 	manager.invalidateTokens(id)
 	manager.clearUsageCache(id)
@@ -359,9 +408,12 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 		return contract.SubscriptionUsage{}, err
 	}
 	var usage contract.SubscriptionUsage
-	if account.Provider == contract.SubscriptionProviderClaudeCode {
+	switch account.Provider {
+	case contract.SubscriptionProviderClaudeCode:
 		usage, err = manager.claudeUsage(ctx, tokens)
-	} else {
+	case contract.SubscriptionProviderXAIGrok:
+		usage, err = manager.grokUsage(ctx, tokens)
+	default:
 		usage, err = manager.provider.Usage(ctx, tokens)
 	}
 	if err != nil {
@@ -430,10 +482,19 @@ func (manager *Manager) Provider() *CodexProvider { return manager.provider }
 func (manager *Manager) APIBaseURL() string { return manager.provider.APIBaseURL() }
 
 func (manager *Manager) APIBaseURLFor(provider contract.SubscriptionProvider) string {
-	if provider == contract.SubscriptionProviderClaudeCode {
+	switch provider {
+	case contract.SubscriptionProviderClaudeCode:
 		return manager.claudeConfig.APIBaseURL
+	case contract.SubscriptionProviderXAIGrok:
+		return manager.grokConfig.APIBaseURL
+	default:
+		return manager.APIBaseURL()
 	}
-	return manager.APIBaseURL()
+}
+
+// GrokClientVersion is the Grok CLI version reported on proxy requests.
+func (manager *Manager) GrokClientVersion() string {
+	return manager.grokConfig.ModelsClientVersion
 }
 
 func (manager *Manager) CompleteAuthorizationCode(ctx context.Context, id contract.ServiceID, sessionID contract.AuthorizationSessionID, code string) (contract.AuthorizationSession, error) {

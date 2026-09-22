@@ -35,6 +35,8 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 		auth                contract.AuthScheme
 	}{
 		{contract.ServiceKindClaudeSubscription, "claude-sonnet-4-5", "", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeBearer},
+		{contract.ServiceKindGrokSubscription, "grok-4.5", "", "/v1/responses", contract.ProtocolOpenAIResponses, contract.AuthSchemeBearer},
+		{contract.ServiceKindGrokSubscription, "grok-composer-2.5-fast", "", "/v1/chat/completions", contract.ProtocolOpenAIChat, contract.AuthSchemeBearer},
 		{contract.ServiceKindKimiCoding, "kimi-for-coding", "/coding", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeAnthropicAPIKey},
 		{contract.ServiceKindGLMCoding, "glm-5.3", "/api/anthropic", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeBearer},
 		{contract.ServiceKindMiniMaxCoding, "MiniMax-M3", "/anthropic", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeBearer},
@@ -88,6 +90,14 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 							if !strings.HasPrefix(request.UserAgent(), "claude-cli/") {
 								t.Error("missing Claude user agent")
 							}
+						}
+						if test.kind == contract.ServiceKindGrokSubscription {
+							if request.Header.Get("X-XAI-Token-Auth") != "xai-grok-cli" || request.Header.Get("X-Grok-Client-Version") == "" ||
+								!strings.HasPrefix(request.UserAgent(), "xai-grok-workspace/") {
+								t.Errorf("missing Grok CLI identity: %v", request.Header)
+							}
+						} else if request.Header.Get("X-XAI-Token-Auth") != "" {
+							t.Error("Grok CLI header reached another provider")
 						}
 						if test.kind == contract.ServiceKindOpenCodeGo || test.kind == contract.ServiceKindOpenCodeZen {
 							if request.Header.Get("X-Opencode-Session") != "client-session" || request.UserAgent() != "astrlink/0.1" {

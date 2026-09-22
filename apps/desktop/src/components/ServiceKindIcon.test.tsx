@@ -24,6 +24,7 @@ describe("ServiceKindIcon", () => {
   it.each([
     ["newapi", "New API"],
     ["codex_subscription", "Codex 订阅"],
+    ["grok_subscription", "Grok 订阅"],
     ["custom", "自定义 API"],
   ] as const)("renders a labeled icon for %s", async (kind, label) => {
     await act(async () => {

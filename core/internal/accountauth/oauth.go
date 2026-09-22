@@ -97,6 +97,9 @@ func (config OAuthConfig) normalized() OAuthConfig {
 	if config.Provider == contract.SubscriptionProviderClaudeCode {
 		config = normalizeClaudeConfig(config)
 	}
+	if config.Provider == contract.SubscriptionProviderXAIGrok {
+		config = normalizeGrokConfig(config)
+	}
 	if strings.TrimSpace(config.ClientID) == "" {
 		config.ClientID = DefaultCodexOAuthClientID
 	}
@@ -253,6 +256,9 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	}
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Accept", "application/json")
+	if client.config.Provider == contract.SubscriptionProviderXAIGrok {
+		applyGrokOAuthHeaders(request.Header, client.config.ModelsClientVersion)
+	}
 	response, err := client.config.HTTPClient.Do(request)
 	if err != nil {
 		return AccountTokens{}, err
@@ -262,6 +268,12 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	if err != nil {
 		return AccountTokens{}, err
 	}
+	return client.parseTokenResponse(body, response.StatusCode, values.Get("refresh_token"))
+}
+
+// parseTokenResponse maps a provider token response onto AccountTokens.
+// previousRefresh is reused when the provider does not rotate refresh tokens.
+func (client *TokenClient) parseTokenResponse(body []byte, status int, previousRefresh string) (AccountTokens, error) {
 	var parsed tokenResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return AccountTokens{}, fmt.Errorf("decode token response: %w", err)
@@ -269,8 +281,8 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	if parsed.Error == "invalid_grant" {
 		return AccountTokens{}, ErrInvalidGrant
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 || parsed.AccessToken == "" {
-		return AccountTokens{}, fmt.Errorf("%s: token endpoint returned status %d", ErrCodeCallbackFailed, response.StatusCode)
+	if status < 200 || status >= 300 || parsed.AccessToken == "" {
+		return AccountTokens{}, fmt.Errorf("%s: token endpoint returned status %d", ErrCodeCallbackFailed, status)
 	}
 	expiresIn := parsed.ExpiresIn
 	if expiresIn <= 0 {
@@ -278,14 +290,24 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	}
 	refresh := parsed.RefreshToken
 	if refresh == "" {
-		refresh = values.Get("refresh_token")
+		refresh = previousRefresh
 	}
 	if refresh == "" {
 		return AccountTokens{}, fmt.Errorf("token response missing refresh_token")
 	}
-	accountID := accountIDFromIDToken(parsed.IDToken)
-	if client.config.Provider == contract.SubscriptionProviderClaudeCode {
+	var accountID string
+	switch client.config.Provider {
+	case contract.SubscriptionProviderClaudeCode:
 		accountID = parsed.Account.UUID
+	case contract.SubscriptionProviderXAIGrok:
+		// The xAI id_token subject identifies the user; the access token carries
+		// the consented principal when the user picked a team or organization.
+		accountID = jwtStringClaim(parsed.IDToken, "sub")
+		if accountID == "" {
+			accountID = jwtStringClaim(parsed.AccessToken, "principal_id", "principalId", "sub")
+		}
+	default:
+		accountID = accountIDFromIDToken(parsed.IDToken)
 	}
 	return AccountTokens{
 		AccessToken:  parsed.AccessToken,
@@ -329,4 +351,28 @@ func accountIDFromIDToken(idToken string) string {
 
 func decodeJWTSegment(segment string) ([]byte, error) {
 	return decodeRawURLBase64(segment)
+}
+
+// jwtStringClaim returns the first non-empty string claim among keys from an
+// unverified JWT payload. Tokens arrive over direct HTTPS from the issuer and
+// are only used for display and de-duplication, never for authorization.
+func jwtStringClaim(token string, keys ...string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := decodeJWTSegment(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	for _, key := range keys {
+		if value, ok := claims[key].(string); ok && strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

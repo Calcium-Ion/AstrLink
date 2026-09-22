@@ -90,8 +90,14 @@ func (manager *SessionManager) Begin(
 	} else if flow == contract.AuthorizationFlowCode {
 		return contract.AuthorizationSession{}, fmt.Errorf("authorization_code flow is unavailable for this provider")
 	}
+	if manager.config.Provider == contract.SubscriptionProviderXAIGrok && flow != contract.AuthorizationFlowDeviceCode {
+		return contract.AuthorizationSession{}, fmt.Errorf("Grok requires device_code flow")
+	}
 	if err := manager.store.Available(ctx); err != nil {
 		return contract.AuthorizationSession{}, fmt.Errorf("%w", ErrCredentialStoreUnavailable)
+	}
+	if manager.config.Provider == contract.SubscriptionProviderXAIGrok {
+		return manager.beginGrokDeviceAuthorization(ctx, serviceID)
 	}
 
 	switch flow {

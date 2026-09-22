@@ -33,27 +33,53 @@ type SubscriptionProvider string
 const (
 	SubscriptionProviderOpenAICodex SubscriptionProvider = "openai_codex"
 	SubscriptionProviderClaudeCode  SubscriptionProvider = "claude_code"
+	// SubscriptionProviderXAIGrok is a SuperGrok / Grok Build subscription
+	// authorized through the public Grok CLI OAuth client (device code).
+	SubscriptionProviderXAIGrok SubscriptionProvider = "xai_grok"
 )
 
 func (provider SubscriptionProvider) Valid() bool {
-	return provider == SubscriptionProviderOpenAICodex || provider == SubscriptionProviderClaudeCode
+	switch provider {
+	case SubscriptionProviderOpenAICodex, SubscriptionProviderClaudeCode, SubscriptionProviderXAIGrok:
+		return true
+	default:
+		return false
+	}
 }
 
 func (provider SubscriptionProvider) ServiceKind() ServiceKind {
-	if provider == SubscriptionProviderClaudeCode {
+	switch provider {
+	case SubscriptionProviderClaudeCode:
 		return ServiceKindClaudeSubscription
+	case SubscriptionProviderXAIGrok:
+		return ServiceKindGrokSubscription
+	default:
+		return ServiceKindCodexSubscription
 	}
-	return ServiceKindCodexSubscription
 }
 
 func (provider SubscriptionProvider) Capabilities() []Capability {
-	if provider == SubscriptionProviderClaudeCode {
+	switch provider {
+	case SubscriptionProviderClaudeCode:
 		return []Capability{
 			{Protocol: ProtocolAnthropicMessages, Mode: CapabilityModeNative, Streaming: true},
 			{Protocol: ProtocolOpenAIModels, Mode: CapabilityModeNative},
 		}
+	case SubscriptionProviderXAIGrok:
+		return DefaultXAIGrokCapabilities()
+	default:
+		return DefaultOpenAICodexCapabilities()
 	}
-	return DefaultOpenAICodexCapabilities()
+}
+
+// DefaultXAIGrokCapabilities is the fixed native capability set for the Grok
+// CLI proxy (cli-chat-proxy.grok.com): Responses, Chat Completions and Models.
+func DefaultXAIGrokCapabilities() []Capability {
+	return []Capability{
+		{Protocol: ProtocolOpenAIResponses, Mode: CapabilityModeNative, Streaming: true},
+		{Protocol: ProtocolOpenAIChat, Mode: CapabilityModeNative, Streaming: true},
+		{Protocol: ProtocolOpenAIModels, Mode: CapabilityModeNative},
+	}
 }
 
 // SubscriptionStatus is the non-sensitive authorization lifecycle state.
@@ -259,10 +285,16 @@ func (flow AuthorizationFlow) Valid() bool {
 }
 
 func (flow AuthorizationFlow) SupportedBy(provider SubscriptionProvider) bool {
-	if provider == SubscriptionProviderClaudeCode {
+	switch provider {
+	case SubscriptionProviderClaudeCode:
 		return flow == AuthorizationFlowCode
+	case SubscriptionProviderXAIGrok:
+		return flow == AuthorizationFlowDeviceCode
+	case SubscriptionProviderOpenAICodex:
+		return flow == AuthorizationFlowBrowser || flow == AuthorizationFlowDeviceCode
+	default:
+		return false
 	}
-	return provider == SubscriptionProviderOpenAICodex && (flow == AuthorizationFlowBrowser || flow == AuthorizationFlowDeviceCode)
 }
 
 // AuthorizationDeviceCode contains the non-secret information a user needs to

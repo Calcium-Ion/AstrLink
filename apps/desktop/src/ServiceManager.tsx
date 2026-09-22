@@ -117,6 +117,7 @@ import {
   type ServiceKind,
   type ServicePatchInput,
   type ServiceRecord,
+  type SubscriptionServiceKind,
 } from "./service-model";
 import {
   SubscriptionUsageMeter,
@@ -125,6 +126,7 @@ import {
 import {
   type AuthorizationFlow,
   type AuthorizationSession,
+  type SubscriptionProvider,
 } from "./subscription-model";
 import {
   formatSubscriptionUsageError,
@@ -186,9 +188,46 @@ type EditorTab = "connection" | "models" | "protocols" | "failure";
 type ServiceFilter = "all" | "enabled" | "disabled";
 
 function serviceTypeOptionLabel(kind: ServiceKind): string {
-  return kind === "codex_subscription"
-    ? i18n.t("services.codexKind")
-    : serviceKindLabel(kind);
+  if (kind === "codex_subscription") return i18n.t("services.codexKind");
+  if (kind === "grok_subscription") return i18n.t("services.grokKind");
+  return serviceKindLabel(kind);
+}
+
+/** The only login transport a single-flow provider offers; null when the user must pick. */
+function defaultAuthorizationFlow(kind: ServiceKind): AuthorizationFlow | null {
+  if (kind === "claude_subscription") return "authorization_code";
+  if (kind === "grok_subscription") return "device_code";
+  return null;
+}
+
+function subscriptionDefaultName(kind: SubscriptionServiceKind): string {
+  if (kind === "claude_subscription") return "Claude Code";
+  if (kind === "grok_subscription") return i18n.t("services.grokName");
+  return i18n.t("services.codexName");
+}
+
+function subscriptionKindHint(kind: SubscriptionServiceKind): string {
+  if (kind === "claude_subscription") return i18n.t("services.claudeOauthHint");
+  if (kind === "grok_subscription") return i18n.t("services.grokHint");
+  return i18n.t("services.codexHint");
+}
+
+function subscriptionOauthLabel(kind: ServiceKind): string {
+  if (kind === "claude_subscription") return "Claude Code OAuth";
+  if (kind === "grok_subscription") return i18n.t("services.xaiGrokOauth");
+  return i18n.t("services.openaiCodexOauth");
+}
+
+function subscriptionAccountLabel(kind: ServiceKind, hint: string): string {
+  if (kind === "claude_subscription") return i18n.t("services.claudeAccount", { hint });
+  if (kind === "grok_subscription") return i18n.t("services.xaiAccount", { hint });
+  return i18n.t("services.openaiAccount", { hint });
+}
+
+function deviceCodeDescription(provider: SubscriptionProvider | undefined): string {
+  return provider === "xai_grok"
+    ? i18n.t("services.grokDeviceCodeDescription")
+    : i18n.t("services.deviceCodeDescription");
 }
 
 function mergeDiscoveredServiceModels(
@@ -242,7 +281,7 @@ function draftForKind(
   if (isSubscriptionKind(kind)) {
     return {
       kind,
-      name: kind === "claude_subscription" ? "Claude Code" : i18n.t("services.codexName"),
+      name: subscriptionDefaultName(kind),
       enabled: true,
       baseURL: "",
       authScheme: "none",
@@ -251,7 +290,7 @@ function draftForKind(
       removeCredential: false,
       models: [],
       capabilities: [],
-      authorizationFlow: kind === "claude_subscription" ? "authorization_code" : null,
+      authorizationFlow: defaultAuthorizationFlow(kind),
     };
   }
   const preset = httpServicePreset(
@@ -1512,10 +1551,8 @@ export function ServiceManager({
                             >
                               {service.http?.base_url ??
                                 (subscription?.account_hint
-                                  ? t("services.openaiAccount", {
-                                      hint: subscription.account_hint,
-                                    })
-                                  : service.kind === "claude_subscription" ? "Claude Code OAuth" : t("services.openaiCodexOauth"))}
+                                  ? subscriptionAccountLabel(service.kind, subscription.account_hint)
+                                  : subscriptionOauthLabel(service.kind))}
                             </span>
                           </div>
                         </div>
@@ -1646,7 +1683,7 @@ export function ServiceManager({
                                     disabled={acting}
                                     onSelect={() => {
                                       setLoginChoice(service);
-                                      setLoginChoiceFlow(service.kind === "claude_subscription" ? "authorization_code" : null);
+                                      setLoginChoiceFlow(defaultAuthorizationFlow(service.kind));
                                       setError(null);
                                     }}
                                   >
@@ -1747,7 +1784,11 @@ export function ServiceManager({
                 {t("services.loginNamed", { name: loginChoice?.name ?? "" })}
               </DialogTitle>
               <DialogDescription>
-                {t("services.chooseOauthHint")}
+                {loginChoice?.kind === "grok_subscription"
+                  ? t("services.grokDeviceCodeHint")
+                  : loginChoice?.kind === "claude_subscription"
+                    ? t("services.claudeOauthHint")
+                    : t("services.chooseOauthHint")}
               </DialogDescription>
             </DialogHeader>
             <RadioGroup
@@ -1761,6 +1802,9 @@ export function ServiceManager({
               {loginChoice?.kind === "claude_subscription" ? (
                 <ChoiceCard label={t("services.claudeOauth")} description={t("services.claudeOauthHint")}
                   selected={loginChoiceFlow === "authorization_code"} value="authorization_code" />
+              ) : loginChoice?.kind === "grok_subscription" ? (
+                <ChoiceCard label="Device Code" description={t("services.grokDeviceCodeHint")}
+                  selected={loginChoiceFlow === "device_code"} value="device_code" />
               ) : <>
               <ChoiceCard
                 description={t("services.browserOauthHint")}
@@ -1810,7 +1854,7 @@ export function ServiceManager({
               <DialogHeader>
                 <DialogTitle>{authorizationDialog.session.flow === "authorization_code" ? t("services.claudeOauth") : t("services.deviceCodeTitle")}</DialogTitle>
                 <DialogDescription>
-                  {authorizationDialog.session.flow === "authorization_code" ? t("services.claudeOauthHint") : t("services.deviceCodeDescription")}
+                  {authorizationDialog.session.flow === "authorization_code" ? t("services.claudeOauthHint") : deviceCodeDescription(authorizationDialog.session.provider)}
                 </DialogDescription>
               </DialogHeader>
               {authorizationDialog.requestedFlow === "browser" ? (
@@ -1851,7 +1895,9 @@ export function ServiceManager({
               authorizationDialog.session.device_code ? (
                 <>
                   <p className="text-sm leading-6 text-muted-foreground">
-                    {t("services.enterDeviceCode")}
+                    {authorizationDialog.session.provider === "xai_grok"
+                      ? t("services.grokEnterDeviceCode")
+                      : t("services.enterDeviceCode")}
                   </p>
                   <div className="flex items-center justify-between gap-3 rounded-md border border-primary/20 bg-accent p-3">
                     <code className="font-mono text-xl font-semibold tracking-[0.08em] text-accent-foreground select-all">
@@ -1876,7 +1922,9 @@ export function ServiceManager({
                     </Button>
                   </div>
                   <small className="mt-2 block text-xs text-muted-foreground">
-                    {t("services.deviceDisabledHint")}
+                    {authorizationDialog.session.provider === "xai_grok"
+                      ? t("services.grokDeviceHint")
+                      : t("services.deviceDisabledHint")}
                   </small>
                   <DialogFooter>
                     <Button
@@ -2099,7 +2147,7 @@ export function ServiceManager({
             label={t("services.serviceType")}
             hint={
               isSubscriptionKind(draft.kind)
-                ? t(draft.kind === "claude_subscription" ? "services.claudeOauthHint" : "services.codexHint")
+                ? subscriptionKindHint(draft.kind)
                 : selectedPreset?.description
             }
           >
@@ -2129,6 +2177,11 @@ export function ServiceManager({
                   <SelectItem value="claude_subscription" textValue={serviceTypeOptionLabel("claude_subscription")}>
                     <ServiceKindLabel kind="claude_subscription">
                       {serviceTypeOptionLabel("claude_subscription")}
+                    </ServiceKindLabel>
+                  </SelectItem>
+                  <SelectItem value="grok_subscription" textValue={serviceTypeOptionLabel("grok_subscription")}>
+                    <ServiceKindLabel kind="grok_subscription">
+                      {serviceTypeOptionLabel("grok_subscription")}
                     </ServiceKindLabel>
                   </SelectItem>
                   {codingPlanPresetIDs.map((kind) => (
@@ -2177,9 +2230,11 @@ export function ServiceManager({
               id="service-name"
               maxLength={128}
               placeholder={
-                isSubscriptionKind(draft.kind)
-                  ? t("services.namePlaceholderCodex")
-                  : t("services.namePlaceholderHttp")
+                draft.kind === "grok_subscription"
+                  ? t("services.namePlaceholderGrok")
+                  : isSubscriptionKind(draft.kind)
+                    ? t("services.namePlaceholderCodex")
+                    : t("services.namePlaceholderHttp")
               }
               required
               value={draft.name}
@@ -2241,6 +2296,9 @@ export function ServiceManager({
                     {draft.kind === "claude_subscription" ? (
                       <ChoiceCard label={t("services.claudeOauth")} description={t("services.claudeOauthHint")}
                         selected value="authorization_code" />
+                    ) : draft.kind === "grok_subscription" ? (
+                      <ChoiceCard label="Device Code" description={t("services.grokDeviceCodeHint")}
+                        selected value="device_code" />
                     ) : <>
                     <ChoiceCard
                       description={t("services.browserOauthCreateHint")}

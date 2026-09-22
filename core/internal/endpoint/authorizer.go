@@ -58,9 +58,12 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 			return nil, fmt.Errorf("load subscription credential: %w", err)
 		}
 		headers := make(http.Header)
-		if endpoint.Kind == contract.ServiceKindClaudeSubscription {
+		switch endpoint.Kind {
+		case contract.ServiceKindClaudeSubscription:
 			accountauth.ApplyClaudeAPIHeaders(headers, tokens)
-		} else {
+		case contract.ServiceKindGrokSubscription:
+			accountauth.ApplyGrokAPIHeaders(headers, tokens, "")
+		default:
 			accountauth.ApplyCodexAPIHeaders(headers, tokens, "", "")
 		}
 		return headers, nil

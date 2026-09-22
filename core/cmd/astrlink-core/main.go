@@ -343,9 +343,17 @@ func newSubscriptionManager(store *sqlite.Store) (*subscription.Manager, error) 
 	if apiBase := strings.TrimSpace(os.Getenv("ASTRLINK_CODEX_API_BASE_URL")); apiBase != "" {
 		oauth.APIBaseURL = apiBase
 	}
+	grok := accountauth.OAuthConfig{Provider: contract.SubscriptionProviderXAIGrok}
+	if issuer := strings.TrimSpace(os.Getenv("ASTRLINK_GROK_OAUTH_ISSUER")); issuer != "" {
+		grok.Issuer = issuer
+	}
+	if apiBase := strings.TrimSpace(os.Getenv("ASTRLINK_GROK_API_BASE_URL")); apiBase != "" {
+		grok.APIBaseURL = apiBase
+	}
 	return subscription.NewManager(
 		subscription.StorageAccountStore{Store: store},
 		accountauth.NewKeyringCredentialStore(),
 		oauth,
+		grok,
 	)
 }

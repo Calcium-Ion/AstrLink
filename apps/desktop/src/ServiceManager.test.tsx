@@ -278,6 +278,64 @@ describe("ServiceManager", () => {
     expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith("service_claude", "authorization_code");
   });
 
+  it("creates a Grok subscription that only offers Device Code", async () => {
+    const grok: Service = { ...codexService, id: "service_grok", name: "Grok 订阅", kind: "grok_subscription",
+      capabilities: [{ protocol: "openai.responses", mode: "native", streaming: true }, { protocol: "openai.chat", mode: "native", streaming: true }],
+      subscription: { provider: "xai_grok", status: "disconnected" } };
+    bridgeMocks.createService.mockResolvedValue({ service: grok, etag });
+    bridgeMocks.beginServiceAuthorization.mockResolvedValue({ kind: "session", session: {
+      id: "authorization_grok", provider: "xai_grok", status: "pending", flow: "device_code",
+      device_code: { verification_url: "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE", user_code: "GROK-CODE" },
+      service_id: grok.id, created_at: timestamp, updated_at: timestamp, expires_at: "2099-09-18T00:00:00Z",
+    }});
+    bridgeMocks.getServiceAuthorization.mockResolvedValue({
+      id: "authorization_grok", provider: "xai_grok", status: "pending", flow: "device_code",
+      device_code: { verification_url: "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE", user_code: "GROK-CODE" },
+      service_id: grok.id, created_at: timestamp, updated_at: timestamp, expires_at: "2099-09-18T00:00:00Z",
+    });
+    await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
+      onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
+      onViewChange={() => {}} protocols={[]} services={[]} view={{ kind: "create" }} />));
+    await chooseOption("服务类型", "Grok 订阅（xAI OAuth）");
+    expect(container.querySelector<HTMLInputElement>("#service-name")?.value).toBe("Grok 订阅");
+    expect(container.querySelector('[role="radio"][aria-label="Device Code"]')).not.toBeNull();
+    expect(container.querySelector('[role="radio"][aria-label="浏览器 OAuth"]')).toBeNull();
+    expect(container.textContent).toContain("Device Code 登录");
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(bridgeMocks.createService).toHaveBeenCalledWith({ name: "Grok 订阅", kind: "grok_subscription", enabled: true, models: [] });
+    expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith("service_grok", "device_code");
+  });
+
+  it("signs a Grok subscription in with a Device Code dialog that never mentions OpenAI", async () => {
+    const grok: Service = { ...codexService, id: "service_grok", name: "Grok 订阅", kind: "grok_subscription",
+      subscription: { provider: "xai_grok", status: "disconnected" } };
+    const session = {
+      id: "authorization_grok", provider: "xai_grok", status: "pending", flow: "device_code",
+      device_code: { verification_url: "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE", user_code: "GROK-CODE" },
+      service_id: grok.id, created_at: timestamp, updated_at: timestamp, expires_at: "2099-09-18T00:00:00Z",
+    };
+    bridgeMocks.beginServiceAuthorization.mockResolvedValue({ kind: "session", session });
+    bridgeMocks.getServiceAuthorization.mockResolvedValue(session);
+    await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
+      onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
+      onViewChange={() => {}} protocols={[]} services={[grok]} view={{ kind: "list" }} />));
+    expect(container.textContent).toContain("xAI Grok OAuth");
+    await openServiceOverflow("Grok 订阅");
+    await chooseMenuItem("登录");
+    const choice = document.querySelector('[role="dialog"]');
+    expect(choice?.querySelector('[role="radio"][aria-label="Device Code"]')).not.toBeNull();
+    expect(choice?.querySelector('[role="radio"][aria-label="浏览器 OAuth"]')).toBeNull();
+    expect(choice?.textContent).not.toContain("OpenAI");
+    const start = [...document.querySelectorAll("button")].find((button) => button.textContent === "开始登录");
+    expect(start?.hasAttribute("disabled")).toBe(false);
+    await act(async () => start!.click());
+    expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith("service_grok", "device_code");
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("GROK-CODE");
+    expect(dialog?.textContent).toContain("xAI 登录页面");
+    expect(dialog?.textContent).not.toContain("OpenAI");
+  });
+
   it("submits a Claude code only to its active service and clears the input", async () => {
     const claude: Service = { ...codexService, id: "service_claude", name: "Claude Code", kind: "claude_subscription",
       subscription: { provider: "claude_code", status: "disconnected" } };
