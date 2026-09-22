@@ -19,26 +19,41 @@ import (
 // credit bar: GET {proxy}/v1/billing?format=credits. Only the aggregate
 // percentage, the current period and the prepaid balance are kept.
 func (manager *Manager) grokUsage(ctx context.Context, tokens accountauth.AccountTokens) (contract.SubscriptionUsage, error) {
-	endpoint := strings.TrimRight(manager.grokConfig.APIBaseURL, "/") + "/v1/billing?format=credits"
+	baseURL := strings.TrimRight(manager.grokConfig.APIBaseURL, "/")
+	endpoint := baseURL + "/v1/billing?format=credits"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return contract.SubscriptionUsage{}, ErrUsageUnavailable
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	accountauth.ApplyGrokAPIHeaders(request.Header, tokens, manager.grokConfig.ModelsClientVersion)
 	request.Header.Set("Accept", "application/json")
 	response, err := manager.grokConfig.HTTPClient.Do(request)
 	if err != nil {
-		return contract.SubscriptionUsage{}, ErrUsageUnavailable
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return contract.SubscriptionUsage{}, ErrUsageUnavailable
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	if response.StatusCode != http.StatusOK {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: status %d", ErrUsageUnavailable, response.StatusCode)
 	}
-	return DecodeGrokUsage(body, manager.now().UTC())
+	usage, err := DecodeGrokUsage(body, manager.now().UTC())
+	if err != nil || usage.PlanType != "" {
+		return usage, err
+	}
+	var settings struct {
+		Display json.RawMessage `json:"subscription_tier_display"`
+		Tier    json.RawMessage `json:"subscription_tier"`
+	}
+	if readPlanMetadata(manager.grokConfig.HTTPClient, request, baseURL+"/v1/settings", &settings) {
+		usage.PlanType = decodePlanType(settings.Display)
+		if usage.PlanType == "" {
+			usage.PlanType = decodePlanType(settings.Tier)
+		}
+	}
+	return usage, nil
 }
 
 type grokCents struct {

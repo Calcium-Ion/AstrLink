@@ -40,8 +40,9 @@ const (
 )
 
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	channelBindingsMu chan struct{}
+	db                *sql.DB
+	now               func() time.Time
 }
 
 // Open creates or opens a file-backed database, applies restrictive defaults,
@@ -93,7 +94,7 @@ func initialize(ctx context.Context, database *sql.DB) (*Store, error) {
 	if err := runner.Up(ctx); err != nil {
 		return nil, fmt.Errorf("migrate sqlite database: %w", err)
 	}
-	store := &Store{db: database, now: time.Now}
+	store := &Store{db: database, now: time.Now, channelBindingsMu: make(chan struct{}, 1)}
 	manager, err := accesstoken.NewManager(store)
 	if err != nil {
 		return nil, fmt.Errorf("create access token manager: %w", err)

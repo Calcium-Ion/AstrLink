@@ -17,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/codingplan"
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
@@ -28,13 +29,14 @@ type ServiceModelProber interface {
 }
 
 type serviceCreateRequest struct {
-	FailurePolicy *contract.FailurePolicy `json:"failure_policy,omitempty"`
-	Name          string                  `json:"name"`
-	Kind          *contract.ServiceKind   `json:"kind"`
-	Enabled       json.RawMessage         `json:"enabled,omitempty"`
-	Models        json.RawMessage         `json:"models,omitempty"`
-	HTTP          json.RawMessage         `json:"http,omitempty"`
-	Capabilities  json.RawMessage         `json:"capabilities,omitempty"`
+	ResponsesWebSocketEnabled json.RawMessage         `json:"responses_websocket_enabled,omitempty"`
+	FailurePolicy             *contract.FailurePolicy `json:"failure_policy,omitempty"`
+	Name                      string                  `json:"name"`
+	Kind                      *contract.ServiceKind   `json:"kind"`
+	Enabled                   json.RawMessage         `json:"enabled,omitempty"`
+	Models                    json.RawMessage         `json:"models,omitempty"`
+	HTTP                      json.RawMessage         `json:"http,omitempty"`
+	Capabilities              json.RawMessage         `json:"capabilities,omitempty"`
 }
 
 type serviceHTTPInput struct {
@@ -123,6 +125,12 @@ func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Re
 				return
 			}
 			handler.probeServiceModels(writer, request, id)
+		case "test":
+			if request.Method != http.MethodPost {
+				writeMethodNotAllowed(writer, http.MethodPost)
+				return
+			}
+			handler.testService(writer, request, id)
 		case "probe-responses":
 			if request.Method != http.MethodPost {
 				writeMethodNotAllowed(writer, http.MethodPost)
@@ -202,6 +210,14 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 	service := contract.Service{
 		ID: id, Name: input.Name, Kind: *input.Kind, Enabled: enabled, FailurePolicy: input.FailurePolicy,
 		CreatedAt: now, UpdatedAt: now,
+	}
+	if input.ResponsesWebSocketEnabled != nil {
+		var enabled bool
+		if isJSONNull(input.ResponsesWebSocketEnabled) || strictUnmarshal(input.ResponsesWebSocketEnabled, &enabled) != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "responses_websocket_enabled must be a boolean")
+			return
+		}
+		service.ResponsesWebSocketEnabled = &enabled
 	}
 	models, err := decodeServiceModels(input.Models)
 	if err != nil {
@@ -687,20 +703,25 @@ func (handler *Handler) probeServiceResponses(writer http.ResponseWriter, reques
 }
 
 func (handler *Handler) getServiceUsage(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
-	if handler.subscriptions == nil {
-		writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
-		return
-	}
 	record, err := handler.serviceStore.GetService(request.Context(), id)
 	if err != nil {
 		handler.writeStoreError(writer, err)
 		return
 	}
-	if !record.Service.Kind.IsSubscription() {
+	var usage contract.SubscriptionUsage
+	switch {
+	case record.Service.Kind.IsSubscription():
+		if handler.subscriptions == nil {
+			writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
+			return
+		}
+		usage, err = handler.subscriptions.Usage(request.Context(), id)
+	case handler.codingPlans != nil && codingplan.Supports(record.Service.Kind):
+		usage, err = handler.codingPlans.Usage(request.Context(), record.Service)
+	default:
 		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription usage")
 		return
 	}
-	usage, err := handler.subscriptions.Usage(request.Context(), id)
 	if err != nil {
 		log.Printf("control: subscription usage %s failed: %s", id, sanitizeUsageError(err))
 		writeServiceUsageError(writer, err)
@@ -751,6 +772,10 @@ func writeServiceUsageError(writer http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, subscription.ErrNotConnected):
 		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
+	case errors.Is(err, codingplan.ErrUnsupported):
+		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription usage")
+	case errors.Is(err, codingplan.ErrCredentialUnavailable):
+		writeError(writer, http.StatusConflict, "service_credential_unavailable", "coding plan usage needs the service API key")
 	case errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err):
 		writeError(writer, http.StatusGatewayTimeout, "subscription_usage_timeout", "subscription usage lookup timed out")
 	default:
@@ -846,7 +871,7 @@ func applyServicePatch(
 	if len(patch) == 0 {
 		return service, credential, fmt.Errorf("patch is empty")
 	}
-	allowed := map[string]bool{"name": true, "enabled": true, "models": true, "failure_policy": true}
+	allowed := map[string]bool{"name": true, "enabled": true, "models": true, "failure_policy": true, "responses_websocket_enabled": true}
 	if service.Kind.IsHTTP() {
 		allowed["http"] = true
 		allowed["capabilities"] = true
@@ -873,6 +898,13 @@ func applyServicePatch(
 		if err := strictUnmarshal(raw, &service.Enabled); err != nil {
 			return service, credential, err
 		}
+	}
+	if raw, ok := patch["responses_websocket_enabled"]; ok {
+		var enabled bool
+		if err := strictUnmarshal(raw, &enabled); err != nil {
+			return service, credential, err
+		}
+		service.ResponsesWebSocketEnabled = &enabled
 	}
 	if raw, ok := patch["models"]; ok {
 		models, err := decodeServiceModels(raw)

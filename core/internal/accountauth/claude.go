@@ -16,6 +16,11 @@ const (
 	DefaultClaudeAuthorizeURL = "https://claude.com/cai/oauth/authorize"
 	DefaultClaudeTokenURL     = "https://platform.claude.com/v1/oauth/token"
 	DefaultClaudeRedirectURI  = "https://platform.claude.com/oauth/code/callback"
+	// DefaultClaudeUserAgent mirrors the Claude Code CLI. api.anthropic.com
+	// routes unknown agents (including Go's default) into a far stricter
+	// rate-limit bucket on the OAuth usage and models endpoints.
+	DefaultClaudeUserAgent = "claude-cli/2.1.258 (external, cli)"
+	ClaudeUserAgentPrefix  = "claude-cli/"
 )
 
 func normalizeClaudeConfig(config OAuthConfig) OAuthConfig {

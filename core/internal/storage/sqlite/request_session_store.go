@@ -274,6 +274,9 @@ GROUP BY sid`)
 		}
 		page.Items = append(page.Items, session)
 	}
+	if err := store.loadSessionRuntimes(ctx, page.Items); err != nil {
+		return storagecontract.RequestSessionPage{}, err
+	}
 	return page, nil
 }
 
@@ -307,7 +310,73 @@ func (store *Store) GetRequestSession(
 	if err != nil {
 		return contract.RequestSessionDetail{}, err
 	}
-	return contract.RequestSessionDetail{RequestSession: session, Turns: turns}, nil
+	sessions := []contract.RequestSession{session}
+	if err := store.loadSessionRuntimes(ctx, sessions); err != nil {
+		return contract.RequestSessionDetail{}, err
+	}
+	return contract.RequestSessionDetail{RequestSession: sessions[0], Turns: turns}, nil
+}
+
+// Sum actual call durations, including demoted retry attempts. Root records
+// contain only the final attempt's latency. Idle gaps between calls never count.
+// Keep open starts separate so clients can tick without changing idle snapshots.
+func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract.RequestSession) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	byID := make(map[string]*contract.RequestSession, len(sessions))
+	args := make([]any, len(sessions))
+	for i := range sessions {
+		session := &sessions[i]
+		session.DurationMs = 0
+		session.ActiveRequestStarts = make([]time.Time, 0)
+		byID[string(session.ID)] = session
+		args[i] = string(session.ID)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+	rows, err := store.db.QueryContext(ctx, `
+SELECT COALESCE(root.session_id, root.id), call.started_at, call.completed_at,
+       call.status, call.latency_ms, json_extract(call.error_json, '$.code')
+FROM request_records root
+JOIN request_records call ON call.id = root.id OR call.parent_request_id = root.id
+WHERE root.parent_request_id IS NULL AND COALESCE(root.session_id, root.id) IN (`+placeholders+`)
+ORDER BY call.started_at, call.id`, args...)
+	if err != nil {
+		return fmt.Errorf("load session runtimes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, startedAt, status string
+		var completedAt, errorCode sql.NullString
+		var latency sql.NullInt64
+		if err := rows.Scan(&id, &startedAt, &completedAt, &status, &latency, &errorCode); err != nil {
+			return fmt.Errorf("scan session runtime: %w", err)
+		}
+		session := byID[id]
+		if latency.Valid {
+			session.DurationMs += max(0, latency.Int64)
+			continue
+		}
+		started, err := time.Parse(time.RFC3339Nano, startedAt)
+		if err != nil {
+			return fmt.Errorf("parse session runtime start: %w", err)
+		}
+		if completedAt.Valid {
+			// Startup recovery timestamps say when the interruption was discovered,
+			// not when execution stopped. Unknown runtime must not include downtime.
+			if errorCode.String == "core_interrupted" {
+				continue
+			}
+			completed, err := time.Parse(time.RFC3339Nano, completedAt.String)
+			if err != nil {
+				return fmt.Errorf("parse session runtime completion: %w", err)
+			}
+			session.DurationMs += max(0, completed.Sub(started).Milliseconds())
+		} else if status == string(contract.RequestStatusPending) {
+			session.ActiveRequestStarts = append(session.ActiveRequestStarts, started)
+		}
+	}
+	return rows.Err()
 }
 
 type sessionAggregate struct {

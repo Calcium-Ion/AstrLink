@@ -139,17 +139,14 @@ export function liveDurationMs(record: RequestRecord, nowMs: number): number {
   return Math.max(0, completed - started);
 }
 
-export function sessionElapsedMs(
-  session: Pick<RequestSession, "started_at" | "completed_at">,
+export function sessionRuntimeMs(
+  session: Pick<RequestSession, "duration_ms" | "active_request_starts">,
   nowMs: number,
 ): number {
-  const start = Date.parse(session.started_at);
-  if (Number.isNaN(start)) return 0;
-  if (session.completed_at) {
-    const end = Date.parse(session.completed_at);
-    if (!Number.isNaN(end)) return Math.max(0, end - start);
-  }
-  return Math.max(0, nowMs - start);
+  return session.active_request_starts.reduce((duration, startedAt) => {
+    const started = Date.parse(startedAt);
+    return duration + (Number.isFinite(started) ? Math.max(0, nowMs - started) : 0);
+  }, session.duration_ms);
 }
 
 export function formatDuration(milliseconds: number): string {

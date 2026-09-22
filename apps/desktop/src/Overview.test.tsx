@@ -211,32 +211,58 @@ describe("Overview", () => {
           onRefreshUsage={() => undefined}
           onRestart={onRestart}
           onUsagePresetChange={onUsagePresetChange}
-          snapshot={overrides.snapshot === undefined ? readySnapshot : overrides.snapshot}
+          snapshot={
+            overrides.snapshot === undefined
+              ? readySnapshot
+              : overrides.snapshot
+          }
           tokenCatalog={overrides.tokenCatalog ?? readyTokens}
           usage={
             overrides.usage ?? {
               status: "ready",
-              summary: readySummary(),
+              summary: emptyUsageSummary(resolveUsageWindow("1y", now)),
               error: null,
             }
           }
-          usagePreset={overrides.usagePreset ?? "7d"}
+          usagePreset={overrides.usagePreset ?? "1y"}
         />,
       );
     });
-    return { onOpenService, onUsagePresetChange, onAddService, onManageServices, onManageTokens, onRestart };
+    return {
+      onOpenService,
+      onUsagePresetChange,
+      onAddService,
+      onManageServices,
+      onManageTokens,
+      onRestart,
+    };
   }
 
-  const emptyCatalog: ServiceCatalog = { status: "ready", items: [], error: null, stale: false };
-  const emptyTokens: AccessTokenCatalog = { status: "ready", items: [], error: null, stale: false };
+  const emptyCatalog: ServiceCatalog = {
+    status: "ready",
+    items: [],
+    error: null,
+    stale: false,
+  };
+  const emptyTokens: AccessTokenCatalog = {
+    status: "ready",
+    items: [],
+    error: null,
+    stale: false,
+  };
 
   it("offers working setup actions for a confirmed empty workspace", async () => {
-    const { onAddService, onManageTokens } = await renderOverview({ catalog: emptyCatalog, tokenCatalog: emptyTokens });
-    expect(container.querySelector("[data-slot='overview-welcome']")).toBeTruthy();
+    const { onAddService, onManageTokens } = await renderOverview({
+      catalog: emptyCatalog,
+      tokenCatalog: emptyTokens,
+    });
+    expect(
+      container.querySelector("[data-slot='overview-welcome']"),
+    ).toBeTruthy();
     expect(container.querySelector("#usage-heading")).toBeNull();
     expect(container.textContent).toContain("工作区已就绪");
     await act(async () => {
-      button("添加服务").click();
+      button("添加 API 提供商").click();
       button("创建访问令牌").click();
     });
     expect(onAddService).toHaveBeenCalledOnce();
@@ -256,7 +282,7 @@ describe("Overview", () => {
     expect(container.textContent).not.toContain("尚未配置");
     expect(container.textContent).not.toContain("创建访问令牌");
     expect(container.textContent).not.toContain("重启网关");
-    await act(async () => button("查看 API 服务").click());
+    await act(async () => button("查看 API 提供商").click());
     expect(onManageServices).toHaveBeenCalledOnce();
   });
 
@@ -267,7 +293,7 @@ describe("Overview", () => {
     });
     expect(container.textContent).toContain("正在读取工作区");
     expect(container.textContent).not.toContain("工作区已就绪");
-    expect(container.textContent).not.toContain("添加服务");
+    expect(container.textContent).not.toContain("添加 API 提供商");
     expect(container.querySelector("[data-slot='loading-state']")).toBeTruthy();
   });
 
@@ -275,10 +301,17 @@ describe("Overview", () => {
     const { onRestart } = await renderOverview({
       catalog: { ...emptyCatalog, status: "blocked" },
       tokenCatalog: { ...emptyTokens, status: "blocked" },
-      snapshot: { ...readySnapshot, phase: "error", ready: null, last_error: "连接失败" },
+      snapshot: {
+        ...readySnapshot,
+        phase: "error",
+        ready: null,
+        last_error: "连接失败",
+      },
       isReady: false,
     });
-    expect(container.querySelector("[role='alert']")?.textContent).toBe("连接失败");
+    expect(container.querySelector("[role='alert']")?.textContent).toBe(
+      "连接失败",
+    );
     expect(container.textContent).not.toContain("创建访问令牌");
     await act(async () => button("重启网关").click());
     expect(onRestart).toHaveBeenCalledOnce();
@@ -296,11 +329,21 @@ describe("Overview", () => {
     await renderOverview({
       catalog: emptyCatalog,
       tokenCatalog: emptyTokens,
-      usage: { status: "ready", summary: readySummary({ totals: { ...emptyUsageTotals(), requests: 12 } }), error: null },
+      usage: {
+        status: "ready",
+        summary: readySummary({
+          totals: { ...emptyUsageTotals(), requests: 12 },
+        }),
+        error: null,
+      },
     });
-    expect(container.querySelector("[data-slot='overview-welcome']")).toBeNull();
+    expect(
+      container.querySelector("[data-slot='overview-welcome']"),
+    ).toBeNull();
     expect(container.querySelector("#usage-heading")).toBeTruthy();
-    expect(container.querySelector("[data-slot='metric-group']")?.textContent).toContain("12");
+    expect(
+      container.querySelector("[data-slot='metric-group']")?.textContent,
+    ).toContain("12");
   });
 
   it("keeps catalog and usage errors out of the welcome state", async () => {
@@ -309,13 +352,15 @@ describe("Overview", () => {
       tokenCatalog: emptyTokens,
       usage: { status: "error", summary: null, error: "用量读取失败" },
     });
-    expect(container.querySelector("[data-slot='overview-welcome']")).toBeNull();
+    expect(
+      container.querySelector("[data-slot='overview-welcome']"),
+    ).toBeNull();
     expect(container.textContent).toContain("目录读取失败");
     expect(container.textContent).toContain("用量读取失败");
     expect(button("重试").disabled).toBe(false);
   });
 
-  it("shows range usage and keeps cost in the statistics disclosure", async () => {
+  it("shows range usage with compact metrics and billing", async () => {
     await renderOverview({
       usage: {
         status: "ready",
@@ -356,7 +401,6 @@ describe("Overview", () => {
       },
     });
 
-    expect(container.textContent).toContain("查看用量、构成与本地接入。");
     expect(container.textContent).toContain("用量");
     expect(container.textContent).toContain("请求数");
     expect(container.textContent).toContain("总 Token");
@@ -364,45 +408,199 @@ describe("Overview", () => {
     expect(container.textContent).toContain("缓存命中");
     expect(container.textContent).toContain("100 / 20");
     expect(container.textContent).toContain("40%");
-    expect(container.textContent).toContain("预估费用");
-    expect(container.textContent).toContain("金额估算稍后提供");
-    expect(container.textContent).toContain("按服务");
+    expect(
+      container.querySelector("[data-testid='billing-overview']"),
+    ).toBeTruthy();
+    expect(container.textContent).toContain("按 API 提供商");
     expect(container.textContent).toContain("按模型");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("gpt-4o");
     expect(container.textContent).toContain("未知模型");
     expect(container.textContent).not.toContain("上游服务");
     expect(container.textContent).not.toContain("连接 AstrLink");
-
-    const costRow = [...container.querySelectorAll("div")].find((node) =>
-      node.textContent?.includes("预估费用"),
-    );
-    expect(costRow?.textContent).toContain("—");
   });
 
-  it("defaults the range selector to seven days and reports switches", async () => {
+  it("defaults to a yearly heatmap and reports range switches", async () => {
     const { onUsagePresetChange } = await renderOverview();
+    expect(button("热力图").getAttribute("data-state")).toBe("on");
+    expect(
+      container.querySelectorAll("[data-slot='activity-cell']"),
+    ).toHaveLength(365);
 
-    const triggers = [
-      ...container.querySelectorAll("[data-slot='tabs-trigger']"),
-    ];
-    expect(triggers.map((trigger) => trigger.textContent)).toEqual([
-      "近 24 小时",
-      "近 7 天",
-      "近 30 天",
-    ]);
-    const active = triggers.find(
-      (trigger) => trigger.getAttribute("data-state") === "active",
-    );
-    expect(active?.textContent).toBe("近 7 天");
-
-    // Radix tabs commit on mousedown, which `click()` alone does not send.
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[role="combobox"][aria-label="用量区间"]',
+    )!;
+    expect(trigger.textContent).toBe("近一年");
     await act(async () => {
-      button("近 30 天").dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+      trigger.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
       );
     });
+    const options = [
+      ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ];
+    expect(options.map((option) => option.textContent)).toEqual([
+      "近 30 天",
+      "近 90 天",
+      "近一年",
+    ]);
+    await act(async () => {
+      options.find((option) => option.textContent === "近 30 天")!.click();
+    });
     expect(onUsagePresetChange).toHaveBeenCalledWith("30d");
+  });
+
+  it("switches between heatmap and chart without changing the selected range", async () => {
+    const summary = emptyUsageSummary(resolveUsageWindow("30d", now));
+    summary.by_day[0] = {
+      ...summary.by_day[0],
+      requests: 2,
+      total_tokens: 100,
+    };
+    summary.by_day[1] = { ...summary.by_day[1], failed_requests: 4 };
+    const { onUsagePresetChange } = await renderOverview({
+      usagePreset: "30d",
+      usage: { status: "ready", summary, error: null },
+    });
+    await act(async () => button("热力图").click());
+    const cells = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        "[data-slot='activity-cell']",
+      ),
+    ];
+    expect(cells).toHaveLength(30);
+    expect(cells[0].getAttribute("data-level")).toBe("4");
+    expect(cells[1].getAttribute("data-level")).toBe("0");
+    expect(cells[0].getAttribute("aria-label")).toContain("100 Token");
+    await act(async () => button("请求数").click());
+    expect(cells[1].getAttribute("data-level")).toBe("4");
+    expect(container.textContent).toContain("2 / 30 天有活动");
+    const footer = container.querySelector("[data-slot='activity-detail']")!;
+    const caption = footer.textContent;
+    await act(async () => cells[0].focus());
+    await act(async () => {
+      cells[0].dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      );
+    });
+    expect(document.activeElement).toBe(cells[1]);
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+      "4 次失败",
+    );
+    expect(footer.textContent).toBe(caption);
+    await act(async () => button("图表").click());
+    expect(
+      container.querySelector("[data-slot='activity-heatmap']"),
+    ).toBeNull();
+    expect(
+      container.querySelectorAll(
+        "[data-testid='usage-day'][data-series='input']",
+      ),
+    ).toHaveLength(30);
+    expect(onUsagePresetChange).not.toHaveBeenCalled();
+  });
+
+  it("aligns a full year by weekday and supports keyboard navigation across weeks", async () => {
+    const summary = emptyUsageSummary(resolveUsageWindow("1y", now));
+    await renderOverview({
+      usagePreset: "1y",
+      usage: { status: "ready", summary, error: null },
+    });
+    await act(async () => button("热力图").click());
+    const cells = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        "[data-slot='activity-cell']",
+      ),
+    ];
+    expect(cells).toHaveLength(365);
+    expect(cells[0].style.gridRow).toBe("6"); // Friday, 2025-09-05; weeks start Monday.
+    expect(cells[0].style.gridColumn).toBe("2");
+    expect(cells[3].style.gridRow).toBe("2");
+    expect(cells[3].style.gridColumn).toBe("3");
+    await act(async () => {
+      cells[0].focus();
+      cells[0].dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      );
+    });
+    expect(document.activeElement).toBe(cells[7]);
+    expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
+  });
+
+  it("wraps a narrow year into complete weeks without losing dates or keyboard navigation", async () => {
+    const summary = emptyUsageSummary(resolveUsageWindow("1y", now));
+    const measure = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 320, 160));
+    try {
+      await renderOverview({
+        usagePreset: "1y",
+        usage: { status: "ready", summary, error: null },
+      });
+      await act(async () => button("热力图").click());
+    } finally {
+      measure.mockRestore();
+    }
+    const bands = [
+      ...container.querySelectorAll("[data-slot='activity-calendar']"),
+    ];
+    expect(bands).toHaveLength(3);
+    const cells = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        "[data-slot='activity-cell']",
+      ),
+    ];
+    expect(cells.map((cell) => cell.dataset.date)).toEqual(
+      summary.by_day.map((day) => day.date),
+    );
+    const secondBandStart = bands[1].querySelector<HTMLButtonElement>(
+      "[data-slot='activity-cell']",
+    )!;
+    expect(secondBandStart.style.gridRow).toBe("2");
+    const previousWeek = cells[cells.indexOf(secondBandStart) - 7];
+    await act(async () => {
+      previousWeek.focus();
+      previousWeek.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      );
+    });
+    expect(document.activeElement).toBe(secondBandStart);
+    expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
+  });
+
+  it("switches hourly heatmaps to a yearly calendar and hides cells after failure", async () => {
+    const { onUsagePresetChange } = await renderOverview({
+      usagePreset: "1d",
+      usage: {
+        status: "ready",
+        summary: emptyUsageSummary(oneDayWindow),
+        error: null,
+      },
+    });
+    // A retained short chart range remains usable when returning to Overview.
+    expect(button("图表").getAttribute("data-state")).toBe("on");
+    expect(container.querySelector('[aria-label="用量区间"]')?.textContent).toBe("近 24 小时");
+    await act(async () => button("热力图").click());
+    expect(onUsagePresetChange).toHaveBeenCalledWith("1y");
+    await renderOverview({
+      usagePreset: "1y",
+      usage: {
+        status: "ready",
+        summary: emptyUsageSummary(resolveUsageWindow("1y", now)),
+        error: null,
+      },
+    });
+    expect(
+      container.querySelectorAll("[data-slot='activity-cell']"),
+    ).toHaveLength(365);
+    expect(container.textContent).toContain("所选区间暂无请求");
+    await renderOverview({
+      usage: { status: "error", summary: readySummary(), error: "加载失败" },
+    });
+    expect(
+      container.querySelectorAll("[data-slot='activity-cell']"),
+    ).toHaveLength(0);
+    expect(container.textContent).toContain("暂时无法加载用量趋势");
   });
 
   it("charts one bar group per day in the window", async () => {
@@ -413,6 +611,7 @@ describe("Overview", () => {
         error: null,
       },
     });
+    await act(async () => button("图表").click());
 
     const days = [
       ...container.querySelectorAll(
@@ -430,9 +629,9 @@ describe("Overview", () => {
       "2026-09-04",
     ]);
     // No traffic yet, so every bar sits on the baseline.
-    expect(
-      days.every((day) => Number(day.getAttribute("height")) === 0),
-    ).toBe(true);
+    expect(days.every((day) => Number(day.getAttribute("height")) === 0)).toBe(
+      true,
+    );
     expect(container.textContent).toContain("按日 Token");
     expect(container.textContent).toContain("输入");
     expect(container.textContent).toContain("输出");
@@ -450,6 +649,7 @@ describe("Overview", () => {
         error: null,
       },
     });
+    await act(async () => button("图表").click());
 
     const hours = [
       ...container.querySelectorAll(
@@ -470,7 +670,16 @@ describe("Overview", () => {
     ).toBe(true);
     expect(container.textContent).toContain("按小时 Token");
     expect(container.textContent).not.toContain("按日 Token");
-    expect(container.textContent).toContain("统计过去 24 小时内已记录的请求与 Token");
+    await act(async () =>
+      (
+        container.querySelector(
+          'button[aria-label="统计说明"]',
+        ) as HTMLButtonElement
+      ).click(),
+    );
+    expect(document.body.textContent).toContain(
+      "统计过去 24 小时内已记录的请求与 Token",
+    );
     expect(container.textContent).not.toContain("按本机日历日统计");
   });
 
@@ -511,6 +720,7 @@ describe("Overview", () => {
       },
     });
 
+    await act(async () => button("图表").click());
     const hour = container.querySelector(
       "[data-testid='usage-day'][data-series='input'][data-date='2026-09-04'][data-hour='9']",
     );
@@ -578,14 +788,15 @@ describe("Overview", () => {
       },
     });
 
+    await act(async () => button("图表").click());
     const segments = [
       ...container.querySelectorAll(
         "[data-testid='usage-day'][data-date='2026-09-04']",
       ),
     ];
-    expect(segments.map((segment) => segment.getAttribute("data-series"))).toEqual(
-      ["input", "output", "cache_write", "cache_read"],
-    );
+    expect(
+      segments.map((segment) => segment.getAttribute("data-series")),
+    ).toEqual(["input", "output", "cache_write", "cache_read"]);
     expect(segments.map((segment) => segment.getAttribute("fill"))).toEqual([
       "var(--primary)",
       "var(--violet)",
@@ -678,13 +889,9 @@ describe("Overview", () => {
     expect(container.textContent).toContain("105 次");
 
     // Grouped digits belong in the hover title, never in the rendered value.
-    const values = [
-      ...container.querySelectorAll("strong, span.tabular-nums"),
-    ];
+    const values = [...container.querySelectorAll("strong, span.tabular-nums")];
     expect(values.map((node) => node.textContent)).not.toContain("46,646,695");
-    const totalTokens = values.find(
-      (node) => node.textContent === "4664.67万",
-    );
+    const totalTokens = values.find((node) => node.textContent === "4664.67万");
     expect(totalTokens?.getAttribute("title")).toBe("46,646,695");
   });
 
@@ -720,7 +927,9 @@ describe("Overview", () => {
       usage: { status: "loading", summary: null, error: null },
     });
 
-    expect(container.querySelector("[data-slot='usage-skeleton']")).toBeTruthy();
+    expect(
+      container.querySelector("[data-slot='usage-skeleton']"),
+    ).toBeTruthy();
     expect(container.querySelector("[data-testid='usage-day']")).toBeNull();
     expect(container.querySelector("[data-slot='usage-loading']")).toBeNull();
   });
@@ -730,16 +939,26 @@ describe("Overview", () => {
       usage: {
         status: "error",
         summary: readySummary({
-          totals: { ...emptyUsageTotals(), requests: 747, total_tokens: 44_062_250 },
-          by_model: [group("gpt-5", { requests: 747, total_tokens: 44_062_250 })],
+          totals: {
+            ...emptyUsageTotals(),
+            requests: 747,
+            total_tokens: 44_062_250,
+          },
+          by_model: [
+            group("gpt-5", { requests: 747, total_tokens: 44_062_250 }),
+          ],
         }),
         error: "统计服务暂时不可用",
       },
     });
 
-    expect(container.querySelector("[role='alert']")?.textContent).toBe("统计服务暂时不可用");
+    expect(container.querySelector("[role='alert']")?.textContent).toBe(
+      "统计服务暂时不可用",
+    );
     expect(container.textContent).toContain("暂时无法加载用量趋势");
-    expect(container.querySelector("[data-slot='metric-group']")?.textContent).not.toContain("747");
+    expect(
+      container.querySelector("[data-slot='metric-group']")?.textContent,
+    ).not.toContain("747");
     expect(container.querySelector("[data-testid='usage-day']")).toBeNull();
     expect(container.textContent).not.toContain("所选区间暂无请求");
     expect(container.textContent).not.toContain("1 个模型");
@@ -767,8 +986,8 @@ describe("Overview", () => {
 
   it("opens a catalog service from the usage breakdown", async () => {
     const { onOpenService } = await renderOverview();
-    const serviceRow = [...document.querySelectorAll("button")].find((candidate) =>
-      candidate.textContent?.includes("Primary gateway"),
+    const serviceRow = [...document.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.includes("Primary gateway"),
     );
     if (!(serviceRow instanceof HTMLButtonElement)) {
       throw new Error("Missing service usage row");

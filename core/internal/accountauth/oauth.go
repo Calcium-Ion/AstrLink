@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 const (
@@ -20,9 +22,10 @@ const (
 	DefaultCodexAPIBaseURL    = "https://chatgpt.com/backend-api/codex"
 	DefaultCodexOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 	// DefaultCodexModelsClientVersion is the observed openai/codex ModelsClient
-	// query (public CLI 0.150.0). The backend may hide models below a
-	// catalog minimum; do not send a non-semver placeholder.
-	DefaultCodexModelsClientVersion = "0.150.0"
+	// query (public CLI 0.155.1). GPT-6 Astra support landed in CLI 0.154.0.
+	// The backend may hide models below a catalog minimum; keep this aligned
+	// with stable releases: https://learn.chatgpt.com/docs/changelog
+	DefaultCodexModelsClientVersion = "0.155.1"
 	DefaultAuthorizationTTL         = 10 * time.Minute
 	DefaultDeviceCodeTTL            = 15 * time.Minute
 	DefaultRefreshSkew              = 5 * time.Minute
@@ -157,6 +160,21 @@ func (config OAuthConfig) normalized() OAuthConfig {
 	return config
 }
 
+var codexUserAgentVersion = regexp.MustCompile(`^(?:codex_cli_rs|codex-cli)/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:\s|$)`)
+
+// CodexClientVersion uses the explicit backend version header when present.
+// Public Responses API clients such as Codex CLI send their version only in
+// User-Agent. Unrelated client versions must not replace the Codex fallback.
+func CodexClientVersion(header http.Header) string {
+	if version := strings.TrimSpace(header.Get("version")); version != "" {
+		return version
+	}
+	if match := codexUserAgentVersion.FindStringSubmatch(strings.TrimSpace(header.Get("User-Agent"))); match != nil {
+		return match[1]
+	}
+	return DefaultCodexModelsClientVersion
+}
+
 // ApplyCodexAPIHeaders writes the observed ChatGPT Codex backend request
 // headers. Official openai/codex clients always send originator plus a
 // Codex-style User-Agent; chatgpt.com otherwise treats Go's default
@@ -259,12 +277,13 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	if client.config.Provider == contract.SubscriptionProviderXAIGrok {
 		applyGrokOAuthHeaders(request.Header, client.config.ModelsClientVersion)
 	}
+	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := client.config.HTTPClient.Do(request)
 	if err != nil {
 		return AccountTokens{}, err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
 		return AccountTokens{}, err
 	}

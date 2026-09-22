@@ -445,3 +445,38 @@ func TestPayAsYouGoServicesPersistAsHTTP(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceResponsesWebSocketDefaultsAndPersistence(t *testing.T) {
+	store, handler := newServiceHandler(t, "service_ws_default", "service_ws_disabled", "service_ws_http")
+	codex := createServiceForTest(t, handler, `{"name":"Codex","kind":"codex_subscription"}`)
+	if !codex.ResponsesWebSocket() {
+		t.Fatal("Codex must default to WebSocket")
+	}
+	disabled := createServiceForTest(t, handler, `{"name":"Codex HTTP","kind":"codex_subscription","responses_websocket_enabled":false}`)
+	if disabled.ResponsesWebSocket() {
+		t.Fatal("explicit false lost")
+	}
+	api := createServiceForTest(t, handler, `{"name":"API","kind":"openai","http":{"base_url":"https://api.example/v1","auth":{"scheme":"none"}},"capabilities":[{"protocol":"openai.responses","mode":"native","streaming":true}]}`)
+	if api.ResponsesWebSocket() {
+		t.Fatal("HTTP provider should default off")
+	}
+	for _, service := range []contract.Service{codex, disabled, api} {
+		record, err := store.GetService(context.Background(), service.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		enabled := !service.ResponsesWebSocket()
+		response := serviceRequestForTest(t, handler, http.MethodPatch, ServicesPath+"/"+string(service.ID), "application/merge-patch+json", fmt.Sprintf(`{"responses_websocket_enabled":%t}`, enabled), record.ETag)
+		if response.Code != 200 {
+			t.Fatalf("patch %d %s", response.Code, response.Body.String())
+		}
+		saved, err := store.GetService(context.Background(), service.ID)
+		if err != nil || saved.Service.ResponsesWebSocket() != enabled {
+			t.Fatalf("persisted switch %v %v", saved, err)
+		}
+		response = serviceRequestForTest(t, handler, http.MethodPatch, ServicesPath+"/"+string(service.ID), "application/merge-patch+json", `{"responses_websocket_enabled":null}`, saved.ETag)
+		if response.Code != 422 {
+			t.Fatalf("accepted null: %d", response.Code)
+		}
+	}
+}

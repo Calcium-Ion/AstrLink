@@ -34,14 +34,14 @@ export function BillingOverview({
   }, [from, to, ready, revision]);
   return (
     <div
-      className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3"
+      className="flex flex-wrap items-baseline justify-between gap-2 border-t bg-muted/30 px-4 py-2"
       data-testid="billing-overview"
     >
       <span className="text-xs text-muted-foreground">
         {t("pricing.officialAmount")}
       </span>
       <div className="flex flex-wrap items-baseline gap-3">
-        <strong className="text-xl tabular-nums">
+        <strong className="text-sm tabular-nums">
           {billingAmount(summary ?? undefined)}
         </strong>
         {summary ? <BillingNote amounts={summary} /> : null}

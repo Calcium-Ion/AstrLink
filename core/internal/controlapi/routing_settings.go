@@ -45,6 +45,8 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 			case "default_recovery_paths":
 				writeError(writer, http.StatusGone, "routing_feature_retired", "default call paths are retired")
 				return
+			case "channel_stickiness":
+				destination = &settings.ChannelStickiness
 			case "default_failure_policy":
 				destination = &settings.DefaultFailurePolicy
 			case "allow_unmatched_failover":

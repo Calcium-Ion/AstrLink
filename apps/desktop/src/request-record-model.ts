@@ -161,6 +161,8 @@ export interface RequestSession {
   started_at: string;
   last_started_at: string;
   completed_at: string | null;
+  duration_ms: number;
+  active_request_starts: string[];
   turn_count: number;
   call_count: number;
   status: SessionStatus;
@@ -683,12 +685,25 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
   if (turnCount < 1 || callCount < 1) {
     invalid(path, "计数必须至少为 1");
   }
+  const durationMs = intAt(session.duration_ms, `${path}.duration_ms`);
+  if (durationMs < 0) invalid(`${path}.duration_ms`, "应为非负整数");
+  if (!Array.isArray(session.active_request_starts)) {
+    invalid(`${path}.active_request_starts`, "应为数组");
+  }
+  const activeRequestStarts = session.active_request_starts.map((value, index) => {
+    const itemPath = `${path}.active_request_starts[${index}]`;
+    const started = stringAt(value, itemPath);
+    if (!Number.isFinite(Date.parse(started))) invalid(itemPath, "时间戳无效");
+    return started;
+  });
   return {
     id: stringAt(session.id, `${path}.id`),
     title: stringAt(session.title, `${path}.title`),
     started_at: stringAt(session.started_at, `${path}.started_at`),
     last_started_at: stringAt(session.last_started_at, `${path}.last_started_at`),
     completed_at: nullableStringAt(session.completed_at, `${path}.completed_at`),
+    duration_ms: durationMs,
+    active_request_starts: activeRequestStarts,
     turn_count: turnCount,
     call_count: callCount,
     status: session.status as SessionStatus,

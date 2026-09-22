@@ -1,3 +1,4 @@
+import { SessionChannelBindings } from "./SessionChannelBindings";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
 import {
   useEffect,
@@ -24,6 +25,7 @@ import { FilterSelect } from "@/components/FilterSelect";
 import { FormMessage } from "@/components/FormMessage";
 import { IconButton } from "@/components/IconButton";
 import { ModelLabel } from "@/components/ModelLabel";
+import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
@@ -77,9 +79,15 @@ import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import type { RoutableService } from "./service-model";
 import {
+  requestServiceIdentity,
+  type RequestService,
+  type RequestServiceIdentity,
+  type RequestServiceMap,
+} from "./request-service-model";
+import {
   formatDuration,
   liveDurationMs,
-  sessionElapsedMs,
+  sessionRuntimeMs,
   type RecordFilters,
 } from "./request-live-model";
 import {
@@ -101,7 +109,6 @@ import {
   mergeLiveSessions,
   sessionMatchesFilters,
 } from "./session-live-model";
-import { formatSessionDuration } from "./request-trajectory-model";
 import { protocolEntryPath } from "./service-presets";
 
 const PAGE_LIMIT = 50;
@@ -124,7 +131,7 @@ const EMPTY_FILTERS: RecordFilters = {
 
 type RecordsView = "monitor" | "detail";
 type RecordsKind = RequestSessionKind | "all";
-type DetailTab = "trajectory" | "content" | "audit";
+type DetailTab = "trajectory" | "content" | "audit" | "binding";
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
   | { kind: "delete"; requestId: string }
@@ -157,6 +164,8 @@ function sessionSummaryKey(session: RequestSession): string {
     session.call_count,
     session.last_started_at,
     session.completed_at ?? "",
+    session.duration_ms,
+    ...session.active_request_starts,
   ].join("|");
 }
 
@@ -200,9 +209,13 @@ export function RequestRecords({
 }: {
   coreSessionKey: string | null;
   isReady: boolean;
-  services: RoutableService[];
+  services: (RoutableService & RequestService)[];
 }) {
   const t = i18n.t.bind(i18n);
+  const servicesById = useMemo(
+    () => Object.fromEntries(services.map(service => [service.id, service])),
+    [services],
+  );
   const [view, setView] = useState<RecordsView>("monitor");
   const [kind, setKind] = useState<RecordsKind>("inference");
   const [live, setLive] = useState<LiveState>({
@@ -1005,9 +1018,9 @@ export function RequestRecords({
                     value={filters.status}
                   />
                   <FilterSelect
-                    ariaLabel={t("records.filter", { label: t("records.service") })}
+                    ariaLabel={t("records.filter", { label: t("records.provider") })}
                     className="w-full"
-                    label={t("records.service")}
+                    label={t("records.provider")}
                     onChange={(serviceId) =>
                       setFilters((current) => ({ ...current, serviceId }))
                     }
@@ -1112,7 +1125,7 @@ export function RequestRecords({
               <SessionStream
                 onOpen={openDetail}
                 selectedId={selectedId}
-                services={services}
+                services={servicesById}
                 sessions={visibleItems}
               />
             )}
@@ -1149,6 +1162,7 @@ export function RequestRecords({
             record={selected}
             serviceName={serviceLabel(selected.service_id, services)}
             serviceNames={Object.fromEntries(services.map(service => [service.id, service.name]))}
+            services={servicesById}
             session={selectedSession}
             turns={selectedTurns}
           />
@@ -1241,32 +1255,9 @@ export function RequestRecords({
  * trajectory list and the timeline beside it are never in the repaint path of
  * a label counting up.
  */
-function SessionElapsed({ session }: { session: RequestSession }) {
-  const nowMs = useLiveClock(session.completed_at === null);
-  return <>{formatDuration(sessionElapsedMs(session, nowMs))}</>;
-}
-
-function SessionDuration({
-  session,
-  turns,
-}: {
-  session: RequestSession;
-  turns: RequestRecord[];
-}) {
-  const lastTurn = turns[turns.length - 1];
-  const nowMs = useLiveClock(
-    Boolean(lastTurn && lastTurn.latency_ms === null && !lastTurn.completed_at),
-  );
-  return (
-    <>
-      {formatSessionDuration(
-        session.started_at,
-        session.last_started_at,
-        turns,
-        nowMs,
-      )}
-    </>
-  );
+function SessionDuration({ session }: { session: RequestSession }) {
+  const nowMs = useLiveClock(session.active_request_starts.length > 0);
+  return <>{formatDuration(sessionRuntimeMs(session, nowMs))}</>;
 }
 
 function RecordLatency({ record }: { record: RequestRecord }) {
@@ -1283,7 +1274,7 @@ function SessionStream({
   onOpen,
 }: {
   sessions: RequestSession[];
-  services: RoutableService[];
+  services: RequestServiceMap;
   selectedId: string | null;
   onOpen: (sessionId: string) => void;
 }) {
@@ -1307,13 +1298,14 @@ function SessionStream({
                 onOpen={() => onOpen(session.id)}
                 selected={session.id === selectedId}
                 session={session}
+                service={requestServiceIdentity(session, services)}
               />
             ) : (
               <SessionRow
                 key={session.id}
                 onOpen={() => onOpen(session.id)}
                 selected={session.id === selectedId}
-                serviceName={serviceLabel(session.service_id, services)}
+                service={requestServiceIdentity(session, services)}
                 session={session}
               />
             ),
@@ -1326,15 +1318,17 @@ function SessionStream({
 
 function DiscoveryRow({
   session,
+  service,
   selected,
   onOpen,
 }: {
   session: RequestSession;
+  service: RequestServiceIdentity;
   selected: boolean;
   onOpen: () => void;
 }) {
   const t = useT();
-  const nowMs = useLiveClock(session.completed_at === null);
+  const nowMs = useLiveClock(session.active_request_starts.length > 0);
   const last = new Date(session.last_started_at);
   return (
     <DataRow
@@ -1358,12 +1352,13 @@ function DiscoveryRow({
         </StatusBadge>
         <span className="col-start-2 row-start-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-xs font-medium">{t("records.fetchModels")}</span>
+          {service.id ? <RequestServiceLabel className="text-xs" service={service} /> : null}
           <code className="truncate text-micro text-muted-foreground">
             GET {protocolEntryPath(session.input_protocol)}
           </code>
         </span>
         <span className="col-start-2 row-start-2 text-micro tabular-nums text-muted-foreground @[680px]:col-start-3 @[680px]:row-start-1 @[680px]:text-right">
-          {formatDuration(sessionElapsedMs(session, nowMs))}
+          {formatDuration(sessionRuntimeMs(session, nowMs))}
         </span>
         <time
           className="col-start-3 row-start-1 text-right text-micro tabular-nums text-muted-foreground @[680px]:col-start-4"
@@ -1381,22 +1376,20 @@ function DiscoveryRow({
 
 function SessionRow({
   session,
-  serviceName,
+  service,
   selected,
   onOpen,
 }: {
   session: RequestSession;
-  serviceName: string | null;
+  service: RequestServiceIdentity;
   selected: boolean;
   onOpen: () => void;
 }) {
   const t = i18n.t.bind(i18n);
   // The elapsed time is interpolated into a translated sentence, so the row is
-  // the smallest thing that can repaint it. Only a live conversation ticks.
-  const nowMs = useLiveClock(session.completed_at === null);
+  // the smallest thing that can repaint it. Only active requests tick.
+  const nowMs = useLiveClock(session.active_request_starts.length > 0);
   const last = new Date(session.last_started_at);
-  const resolvedServiceName =
-    serviceName ?? session.service_id ?? t("records.selectingService");
   return (
     <DataRow
       asChild
@@ -1418,20 +1411,44 @@ function SessionRow({
           {statusLabel(session.status)}
         </StatusBadge>
         <strong
-          className="col-start-2 row-start-1 min-w-0 truncate text-sm font-medium"
+          className="col-span-2 col-start-2 row-start-1 min-w-0 truncate text-sm font-medium @[680px]:col-span-1"
           title={session.title}
         >
           {session.title}
         </strong>
-        <span className="contents @[680px]:col-start-3 @[680px]:row-span-2 @[680px]:row-start-1 @[680px]:flex @[680px]:min-w-0 @[680px]:flex-col @[680px]:items-end @[680px]:gap-1">
-          <ModelLabel
-            className="col-start-2 row-start-2 text-xs text-text-secondary"
-            fallback={t("records.unspecifiedModel")}
-            model={session.requested_model}
-            reasoningEffort={session.reasoning_effort}
+        <ModelLabel
+          className="col-span-2 col-start-2 row-start-2 text-xs text-text-secondary @[680px]:col-span-1 @[680px]:col-start-3 @[680px]:row-start-1 @[680px]:justify-end"
+          fallback={t("records.unspecifiedModel")}
+          model={session.requested_model}
+          reasoningEffort={session.reasoning_effort}
+        />
+        <span className="col-span-2 col-start-2 row-start-3 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs leading-5 text-muted-foreground @[680px]:row-start-2 @[680px]:grid-cols-[7rem_minmax(0,1fr)_12rem_4.5rem]">
+          <code
+            className="col-start-1 row-start-2 min-w-0 truncate font-mono text-xs @[680px]:row-start-1"
+            title={protocolEntryPath(session.input_protocol)}
+          >
+            {protocolEntryPath(session.input_protocol)}
+          </code>
+          <RequestServiceLabel
+            className="col-start-1 row-start-1 font-medium text-foreground @[680px]:col-start-2"
+            label={session.call_count > 1 ? t("records.latestProvider") : undefined}
+            labelClassName="sr-only @[880px]:not-sr-only @[880px]:w-24"
+            service={service}
           />
+          <span className="col-start-2 row-start-1 whitespace-nowrap tabular-nums @[680px]:col-start-3">
+            {t(
+              session.turn_count === session.call_count
+                ? "records.sessionMetaTurns"
+                : "records.sessionMeta",
+              {
+                turns: session.turn_count,
+                calls: session.call_count,
+                duration: formatDuration(sessionRuntimeMs(session, nowMs)),
+              },
+            )}
+          </span>
           <time
-            className="col-start-3 row-start-1 shrink-0 text-micro tabular-nums text-muted-foreground"
+            className="col-start-2 row-start-2 text-right tabular-nums @[680px]:col-start-4 @[680px]:row-start-1"
             dateTime={session.last_started_at}
             title={formatDateTime(session.last_started_at)}
           >
@@ -1440,29 +1457,6 @@ function SessionRow({
               : last.toLocaleTimeString(dateTimeLocale(), { hour12: false })}
           </time>
         </span>
-        <span className="col-span-2 col-start-2 row-start-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-micro text-muted-foreground @[680px]:col-span-1 @[680px]:col-start-2 @[680px]:row-start-2">
-          <code
-            className="max-w-full truncate font-mono text-micro"
-            title={protocolEntryPath(session.input_protocol)}
-          >
-            {protocolEntryPath(session.input_protocol)}
-          </code>
-          <span className="max-w-32 truncate" title={resolvedServiceName}>
-            {resolvedServiceName}
-          </span>
-          <span className="tabular-nums">
-            {t(
-              session.turn_count === session.call_count
-                ? "records.sessionMetaTurns"
-                : "records.sessionMeta",
-              {
-                turns: session.turn_count,
-                calls: session.call_count,
-                duration: formatDuration(sessionElapsedMs(session, nowMs)),
-              },
-            )}
-          </span>
-        </span>
       </Button>
     </DataRow>
   );
@@ -1470,6 +1464,7 @@ function SessionRow({
 
 function RecordDetail({
   serviceNames,
+  services,
   record,
   session,
   turns,
@@ -1486,6 +1481,7 @@ function RecordDetail({
 }: {
   record: RequestRecord;
   serviceNames: Record<string, string>;
+  services: RequestServiceMap;
   session: RequestSession;
   turns: RequestRecord[];
   serviceName: string | null;
@@ -1640,7 +1636,7 @@ function RecordDetail({
             {statusLabel(session.status)}
             {session.status === "pending" ? (
               <span className="ml-1.5 tabular-nums">
-                <SessionElapsed session={session} />
+                <SessionDuration session={session} />
               </span>
             ) : null}
           </StatusBadge>
@@ -1740,23 +1736,22 @@ function RecordDetail({
             >
               {t("records.tabContent")}
             </TabsTrigger>
+            {!isModelDiscoveryProtocol(session.input_protocol) && <TabsTrigger value="binding" onClick={() => setDetailTab("binding")}>{t("binding.tab")}</TabsTrigger>}
             <TabsTrigger onClick={() => setDetailTab("audit")} value="audit">
               {t("records.tabAudit")}
             </TabsTrigger>
           </TabsList>
           <dl className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-micro text-muted-foreground">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <dt>{t("records.entry")}</dt>
-              <dd className="min-w-0 truncate font-mono text-foreground" title={protocolEntryPath(record.input_protocol, { streaming: record.streaming })}>
-                {protocolEntryPath(record.input_protocol, {
-                  streaming: record.streaming,
-                })}
+            <div className="flex min-w-0 max-w-64 items-center gap-1.5">
+              <dt className="sr-only">{t("records.provider")}</dt>
+              <dd className="min-w-0 text-foreground">
+                <RequestServiceLabel service={requestServiceIdentity(record, services)} />
               </dd>
             </div>
             <div className="flex items-center gap-1.5">
               <dt>{t("records.duration")}</dt>
               <dd className="font-medium tabular-nums text-foreground">
-                <SessionDuration session={session} turns={turns} />
+                <SessionDuration session={session} />
               </dd>
             </div>
             <div className="flex items-center gap-1.5">
@@ -1770,6 +1765,10 @@ function RecordDetail({
           </dl>
         </div>
 
+        <TabsContent className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" value="binding">
+          <SessionChannelBindings key={session.id} sessionId={session.id} serviceNames={serviceNames} onSelectRequest={(id) => { onSelectTurn(id); setDetailTab("trajectory"); }} />
+        </TabsContent>
+
         <TabsContent
           className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           value="trajectory"
@@ -1782,6 +1781,7 @@ function RecordDetail({
             copyFeedback={copyFeedback}
             onSelectRequest={onSelectTurn}
             selectedRequestId={record.id}
+            services={services}
             turns={turns}
           />
         </TabsContent>

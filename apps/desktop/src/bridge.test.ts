@@ -48,6 +48,7 @@ import {
   probeLocalPrivacyModel,
   probeDraftServiceModels,
   probeServiceModels,
+  testService,
   probePrivacyModel,
   revealAccessToken,
   restartCore,
@@ -929,5 +930,20 @@ describe("desktop bridge contract", () => {
       "astrlink-req_1.txt",
       "plain",
     );
+  });
+});
+
+
+describe("provider test bridge", () => {
+  it("passes the selected provider and validates its result", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const input = { protocol: "openai.chat" as const, model: "test-model", stream: false };
+    const result = { ...input, service_id: "service_test", ok: true, status_code: 200, duration_ms: 100, output: "OK" };
+    invokeMock.mockResolvedValueOnce(result);
+    expect(await testService("service_test", input)).toEqual(result);
+    expect(invokeMock).toHaveBeenLastCalledWith("test_service", { serviceId: "service_test", input });
+    invokeMock.mockResolvedValueOnce({ ...result, duration_ms: -1 });
+    await expect(testService("service_test", input)).rejects.toThrow("Invalid provider test result");
+    vi.unstubAllGlobals();
   });
 });

@@ -1,24 +1,16 @@
-import { DeepSeek, Doubao, Grok, Qwen, Anthropic, Claude, Codex, Gemini, Kimi, Minimax, NewAPI, OpenAI, OpenCode, Zhipu } from "@lobehub/icons";
+import { DeepSeek, Doubao, Grok, Qwen, Anthropic, Claude, Codex, Gemini, Kimi, Minimax, OpenAI, OpenCode, Zhipu } from "@lobehub/icons";
 import { Connect as Cable } from "@/components/icons";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
+import newapiLogo from "../assets/newapi-logo.svg";
 import { serviceKindLabel, type ServiceKind } from "../service-model";
-
-/** NewAPI.Color fills the viewBox edge-to-edge; other brand marks have padding. */
-const OPTICAL_SCALE: Partial<Record<ServiceKind, number>> = {
-  newapi: 0.75,
-};
-
-function markSize(kind: ServiceKind, size: number): number {
-  return Math.round(size * (OPTICAL_SCALE[kind] ?? 1));
-}
 
 function kindMark(kind: ServiceKind, size: number): ReactNode {
   switch (kind) {
     case "newapi":
-      return <NewAPI.Color size={size} />;
+      return <img src={newapiLogo} alt="" aria-hidden="true" width={size} height={size} />;
     case "codex_subscription":
       return <Codex.Color size={size} />;
     case "claude_subscription":
@@ -73,7 +65,7 @@ export function ServiceKindIcon({
       role="img"
       style={{ height: size, width: size }}
     >
-      {kindMark(kind, markSize(kind, size))}
+      {kindMark(kind, size)}
     </span>
   );
 }

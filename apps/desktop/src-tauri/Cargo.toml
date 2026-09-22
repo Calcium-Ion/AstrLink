@@ -1,6 +1,6 @@
 [package]
 name = "astrlink-desktop"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 description = "AstrLink desktop shell"
 authors = ["AstrLink contributors"]
 edition = "2021"

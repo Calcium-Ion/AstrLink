@@ -21,10 +21,12 @@ export function RouteManager({
       aria-labelledby="route-manager-title"
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <PageHeader title={t("nav.routing")} titleId="route-manager-title" />
-      <div className="min-h-0 flex-1 overflow-y-auto" data-tab-scroller>
-        <RoutingSettingsPanel ready={isReady} onDirtyChange={onDirtyChange} />
-      </div>
+      <PageHeader
+        variant="compact"
+        title={t("nav.routing")}
+        titleId="route-manager-title"
+      />
+      <RoutingSettingsPanel ready={isReady} onDirtyChange={onDirtyChange} />
     </section>
   );
 }

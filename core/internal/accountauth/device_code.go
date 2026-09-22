@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 type deviceAuthorization struct {
@@ -48,6 +48,7 @@ func (manager *SessionManager) requestDeviceAuthorization(
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := manager.config.HTTPClient.Do(request)
 	if err != nil {
 		return deviceAuthorization{}, fmt.Errorf("%w", ErrDeviceCodeRequestFailed)
@@ -59,7 +60,7 @@ func (manager *SessionManager) requestDeviceAuthorization(
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return deviceAuthorization{}, fmt.Errorf("%w", ErrDeviceCodeRequestFailed)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	raw, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
 		return deviceAuthorization{}, fmt.Errorf("%w", ErrDeviceCodeRequestFailed)
 	}
@@ -189,6 +190,7 @@ func (manager *SessionManager) pollDeviceAuthorizationOnce(
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := manager.config.HTTPClient.Do(request)
 	if err != nil {
 		return deviceTokenResponse{}, false, err
@@ -200,7 +202,7 @@ func (manager *SessionManager) pollDeviceAuthorizationOnce(
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return deviceTokenResponse{}, false, fmt.Errorf("device token endpoint returned status %d", response.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	raw, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
 		return deviceTokenResponse{}, false, err
 	}

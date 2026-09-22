@@ -3,9 +3,12 @@ module github.com/QuantumNous/astrlink/core
 go 1.25.1
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/QuantumNous/astrlink/convo v0.0.0
 	github.com/QuantumNous/new-api/relaykit v0.2.1
 	github.com/expr-lang/expr v1.17.6
+	github.com/tidwall/gjson v1.19.0
+	github.com/tidwall/sjson v1.2.5
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.46.0
@@ -26,10 +29,8 @@ require (
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/samber/lo v1.53.0 // indirect
-	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
-	github.com/tidwall/sjson v1.2.5 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/text v0.38.0 // indirect
 	modernc.org/libc v1.66.3 // indirect

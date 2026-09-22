@@ -23,16 +23,38 @@ export function Metric({
   label,
   value,
   title,
+  size = "default",
+  emphasis = false,
+  icon,
 }: {
   label: ReactNode;
   value: ReactNode;
   title?: string;
+  size?: "default" | "sm";
+  emphasis?: boolean;
+  icon?: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-2 bg-card px-4 py-4">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
+    <div
+      className={cn(
+        "flex min-w-0 flex-col bg-card",
+        size === "sm" ? "gap-1 px-3 py-2.5" : "gap-2 px-4 py-4",
+      )}
+    >
+      <dt className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        {label}
+        {icon ? (
+          <span aria-hidden="true" className="text-primary [&_svg]:size-4">
+            {icon}
+          </span>
+        ) : null}
+      </dt>
       <dd
-        className="min-w-0 text-xl leading-7 font-semibold tracking-tight text-foreground tabular-nums"
+        className={cn(
+          "min-w-0 font-semibold tracking-tight tabular-nums",
+          size === "sm" ? "text-lg leading-6" : "text-xl leading-7",
+          emphasis ? "text-primary" : "text-foreground",
+        )}
         title={title}
       >
         {value}

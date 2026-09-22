@@ -107,6 +107,39 @@ func TestUnlimitedLargeRequestWithPrivacyRedaction(t *testing.T) {
 	}
 }
 
+func TestRedactedRequestExceedingBodyLimitIsReportedAsTooLarge(t *testing.T) {
+	const prefix = `{"model":"test-model","input":"alice@example.com","padding":"`
+	// The original fits exactly; its longer privacy placeholder exceeds the limit.
+	body := prefix + strings.Repeat("x", (1<<20)-len(prefix)-2) + `"}`
+	filter := testPrivacyEngine(t, privacy.Policy{Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact}, nil)
+	records := &memoryRequestRecordStore{}
+	handler := NewWithDependencies(Dependencies{
+		MaxRequestBodyMiB: 1,
+		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
+		}),
+		PrivacyFilter:  filter,
+		RequestRecords: records,
+		Authorizer: authorizerFunc(func(context.Context, contract.Endpoint) (http.Header, error) {
+			t.Fatal("oversized redacted request must not load credentials")
+			return nil, nil
+		}),
+		Forwarder: forwarderFunc(func(http.ResponseWriter, *http.Request, transport.Target) error {
+			t.Fatal("oversized redacted request must not forward")
+			return nil
+		}),
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	envelope := assertInferenceError(t, response, http.StatusRequestEntityTooLarge, "request_too_large")
+	if envelope.Error.Retryable {
+		t.Fatal("oversized request must not be retried")
+	}
+	assertPrivacyErrorRecord(t, records, response.Code, contract.RequestStatusFailed, "gateway", "request_too_large", envelope.Error)
+}
+
 func TestUnlimitedLargeRequestReplayAndRecovery(t *testing.T) {
 	body := strings.Replace(signedThinkingRequest, `"hello"`, `"`+strings.Repeat("x", 8<<20)+`"`, 1)
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", io.NopCloser(strings.NewReader(body)))

@@ -154,17 +154,27 @@ func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
 // Service is the canonical configured API-service aggregate. Exactly one
 // variant payload is present, determined by Kind.
 type Service struct {
-	FailurePolicy *FailurePolicy          `json:"failure_policy,omitempty"`
-	ID            ServiceID               `json:"id"`
-	Name          string                  `json:"name"`
-	Kind          ServiceKind             `json:"kind"`
-	Enabled       bool                    `json:"enabled"`
-	Models        []string                `json:"models"`
-	Capabilities  []Capability            `json:"capabilities"`
-	HTTP          *HTTPConnection         `json:"http,omitempty"`
-	Subscription  *SubscriptionConnection `json:"subscription,omitempty"`
-	CreatedAt     time.Time               `json:"created_at,omitempty"`
-	UpdatedAt     time.Time               `json:"updated_at,omitempty"`
+	// Nil preserves the provider default for existing documents; explicit false is retained.
+	ResponsesWebSocketEnabled *bool                   `json:"responses_websocket_enabled,omitempty"`
+	FailurePolicy             *FailurePolicy          `json:"failure_policy,omitempty"`
+	ID                        ServiceID               `json:"id"`
+	Name                      string                  `json:"name"`
+	Kind                      ServiceKind             `json:"kind"`
+	Enabled                   bool                    `json:"enabled"`
+	Models                    []string                `json:"models"`
+	Capabilities              []Capability            `json:"capabilities"`
+	HTTP                      *HTTPConnection         `json:"http,omitempty"`
+	Subscription              *SubscriptionConnection `json:"subscription,omitempty"`
+	CreatedAt                 time.Time               `json:"created_at,omitempty"`
+	UpdatedAt                 time.Time               `json:"updated_at,omitempty"`
+}
+
+// ResponsesWebSocket reports the effective per-channel transport setting.
+func (service Service) ResponsesWebSocket() bool {
+	if service.ResponsesWebSocketEnabled != nil {
+		return *service.ResponsesWebSocketEnabled
+	}
+	return service.Kind == ServiceKindCodexSubscription
 }
 
 func (service Service) Validate() error {

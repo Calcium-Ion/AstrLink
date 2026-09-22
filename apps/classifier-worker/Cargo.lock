@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "astrlink-classifier-worker"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 dependencies = [
  "ort",
  "serde",

@@ -71,7 +71,7 @@ func DefaultMigrations() []Migration {
 				`INSERT OR IGNORE INTO policies (id, document_json, created_at, updated_at)
 VALUES (
     'policy_privacy_default',
-    '{"id":"policy_privacy_default","name":"隐私保护","enabled":false,"priority":0,"detector":"regex","min_confidence":0.6,"match":{},"request_action":"redact","response_action":"allow","response_restore":true}',
+    '{"id":"policy_privacy_default","name":"隐私保护","enabled":false,"priority":0,"detector":"regex","min_confidence":0.8,"match":{},"request_action":"redact","response_action":"allow","response_restore":true}',
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 )`,
@@ -582,7 +582,7 @@ SET document_json = json_remove(document_json, '$.disabled_models')`,
 			Name:    "routing_failure_policies",
 			Statements: []string{
 				`CREATE TABLE routing_settings (id INTEGER PRIMARY KEY CHECK(id = 1), document_json TEXT NOT NULL)`,
-				`INSERT INTO routing_settings VALUES (1, '{"default_failure_policy":{"max_retries":1,"initial_delay_ms":500,"max_delay_ms":5000,"network_error":"retry_and_failover","response_timeout":"retry_and_failover","http_status":{"408":"retry_and_failover","429":"retry_and_failover","500":"retry_and_failover","502":"retry_and_failover","503":"retry_and_failover","504":"retry_and_failover","529":"retry_and_failover","401":"failover","403":"failover"}},"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}')`,
+				`INSERT INTO routing_settings VALUES (1, '{"default_failure_policy":{"max_retries":1,"initial_delay_ms":500,"max_delay_ms":5000,"network_error":"retry_and_failover","response_timeout":"retry_and_failover","http_status":{"408":"retry_and_failover","429":"retry_and_failover","500":"retry_and_failover","502":"retry_and_failover","503":"retry_and_failover","504":"retry_and_failover","529":"retry_and_failover","401":"failover","403":"failover"}},"allow_unmatched_failover":true,"strategy":"retry_first","max_attempts":6}')`,
 				`ALTER TABLE request_records ADD COLUMN recovery_json TEXT`,
 				`CREATE TABLE response_affinities (
     principal TEXT NOT NULL, response_id TEXT NOT NULL, service_id TEXT NOT NULL,
@@ -619,6 +619,17 @@ SET document_json = json_remove(document_json, '$.disabled_models')`,
 			`CREATE TABLE billing_resets (service_id TEXT NOT NULL, account_key TEXT NOT NULL, reset_at TEXT NOT NULL, PRIMARY KEY(service_id, account_key, reset_at))`,
 			`CREATE TABLE billing_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 			`INSERT INTO billing_metadata VALUES ('recording_since', strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'))`,
+		}},
+		{Version: 30, Name: "session_channel_bindings", Statements: []string{
+			`CREATE TABLE channel_bindings (
+ session_id TEXT NOT NULL, principal TEXT NOT NULL, protocol TEXT NOT NULL, model TEXT NOT NULL,
+ service_id TEXT NOT NULL, source TEXT NOT NULL, request_id TEXT NOT NULL,
+ updated_at TEXT NOT NULL, expires_at TEXT NOT NULL, request_started_at TEXT NOT NULL,
+ PRIMARY KEY(session_id, principal, protocol, model))`,
+			`CREATE INDEX channel_bindings_expiry_idx ON channel_bindings(expires_at)`,
+			`CREATE TABLE channel_binding_releases (session_id TEXT PRIMARY KEY, released_at TEXT NOT NULL)`,
+			`CREATE TABLE channel_binding_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, document_json TEXT NOT NULL)`,
+			`CREATE INDEX channel_binding_events_session_idx ON channel_binding_events(session_id, id DESC)`,
 		}},
 	}
 }

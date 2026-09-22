@@ -3,12 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, MapPin as Pin, MapPinOff as PinOff } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
+import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { cn } from "@/lib/utils";
 
 import { AuditPartSection } from "./AuditReviewer";
 import type { CopyFeedback } from "./copy-feedback";
 import { i18n, useT } from "./i18n";
 import type { AuditContent, RequestRecord } from "./request-record-model";
+import { requestServiceIdentity, type RequestServiceIdentity } from "./request-service-model";
 import {
   clientDisconnectNote,
   extractPrivacyHits,
@@ -35,6 +37,7 @@ import { CHIP_BADGE_CLASS, chipToneClass } from "./trajectory-chip";
 export function TrajectoryInspector({
   row,
   record,
+  service = requestServiceIdentity(record),
   auditContent,
   auditLoading,
   auditError,
@@ -45,6 +48,7 @@ export function TrajectoryInspector({
 }: {
   row: TrajectoryRow;
   record: RequestRecord;
+  service?: RequestServiceIdentity;
   auditContent: AuditContent | null;
   auditLoading: boolean;
   auditError: string | null;
@@ -88,8 +92,9 @@ export function TrajectoryInspector({
       data-testid="trajectory-inspector"
     >
       <header className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <strong className="truncate text-xs font-medium">{title}</strong>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+          <RequestServiceLabel className="text-xs font-medium" service={service} />
+          <strong className="min-w-0 truncate text-xs font-medium" title={title}>{title}</strong>
           {outcome ? (
             <span className="shrink-0 font-mono text-micro text-muted-foreground">
               → {outcome}
@@ -170,6 +175,7 @@ export function TrajectoryInspector({
             copyFeedback={copyFeedback}
             omitCapturedBody={focusRow.chip === "RESTORE" && hideRestoreBody}
             record={record}
+            service={service}
             row={focusRow}
           />
         ) : null}
@@ -185,6 +191,7 @@ function tabChip(chip: TrajectoryChip): TrajectoryChip {
 function InspectorSection({
   row,
   record,
+  service,
   auditContent,
   auditLoading,
   copyFeedback,
@@ -192,6 +199,7 @@ function InspectorSection({
 }: {
   row: TrajectoryRow;
   record: RequestRecord;
+  service: RequestServiceIdentity;
   auditContent: AuditContent | null;
   auditLoading: boolean;
   copyFeedback: CopyFeedback;
@@ -243,7 +251,7 @@ function InspectorSection({
         ) : null}
       </header>
       {part === "route" ? (
-        <><RouteInspector record={record} row={row} /><RecoveryDetails value={record.recovery} /></>
+        <><RouteInspector record={record} row={row} service={service} /><RecoveryDetails value={record.recovery} /></>
       ) : (
         <BodyInspector
           auditContent={auditContent}
@@ -267,14 +275,16 @@ function formatCapturedBytes(bytes: number): string {
 function RouteInspector({
   record,
   row,
+  service,
 }: {
   record: RequestRecord;
   row: TrajectoryRow;
+  service: RequestServiceIdentity;
 }) {
   const t = i18n.t.bind(i18n);
   return (
     <dl className="grid gap-2 text-xs">
-      <InspectorField label={t("trajectory.summary")} value={row.summary} />
+      <InspectorField label={t("trajectory.summary")} value={service.id ? row.summary.replace(service.id, () => service.name) : row.summary} />
       <InspectorField
         code
         label={t("trajectory.entry")}
@@ -288,9 +298,10 @@ function RouteInspector({
         value={record.input_protocol}
       />
       <InspectorField
-        label={t("trajectory.service")}
-        value={record.service_id ?? "—"}
+        label={t("records.provider")}
+        value={service.name}
       />
+      {service.id ? <InspectorField code label={`${t("trajectory.service")} ID`} value={service.id} /> : null}
       <InspectorField
         label={t("trajectory.route")}
         value={record.route_id ?? "—"}

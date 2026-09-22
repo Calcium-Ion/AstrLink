@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"errors"
 	"io"
@@ -757,6 +758,84 @@ func TestModelDiscoveryBoundsConcurrentFanOut(t *testing.T) {
 	if response.Code != http.StatusOK ||
 		response.Body.String() != `{"object":"list","data":[],"first_id":null,"has_more":false,"last_id":null}` {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestModelDiscoveryCompressedHTTPResponses(t *testing.T) {
+	for _, test := range []struct {
+		name, path, encoding, body, wantError string
+		kind                                  contract.ServiceKind
+		protocol                              contract.ProtocolID
+	}{
+		{"codex gzip", "/v1/models", "gzip", `{"models":[{"slug":"visible","visibility":"list"}]}`, "", contract.ServiceKindCodexSubscription, contract.ProtocolOpenAIModels},
+		{"openai gzip", "/v1/models", "gzip", `{"data":[{"id":"visible"}]}`, "", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
+		{"openai deflate", "/v1/models", "deflate", `{"data":[{"id":"visible"}]}`, "", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
+		{"gemini gzip", "/v1beta/models", "gzip", `{"models":[{"name":"models/visible"}]}`, "", contract.ServiceKindGemini, contract.ProtocolGoogleModels},
+		{"expanded limit", "/v1/models", "gzip", strings.Repeat("x", maxResponseInspectionBytes+1), "exceeds limit", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
+		{"unsupported encoding", "/v1/models", "br", `{"data":[]}`, "unsupported HTTP content encoding", contract.ServiceKindOpenAI, contract.ProtocolOpenAIModels},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := gzipBytes(t, []byte(test.body))
+			if test.encoding == "deflate" {
+				var compressed bytes.Buffer
+				writer := zlib.NewWriter(&compressed)
+				_, _ = writer.Write([]byte(test.body))
+				_ = writer.Close()
+				body = compressed.Bytes()
+			}
+			upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if got := request.Header.Get("Accept-Encoding"); got != transport.SupportedResponseEncodings {
+					t.Errorf("upstream Accept-Encoding = %q", got)
+				}
+				writer.Header().Set("Content-Type", "application/json")
+				writer.Header().Set("Content-Encoding", test.encoding)
+				_, _ = writer.Write(body)
+			}))
+			defer upstream.Close()
+			service := contract.Service{
+				ID: "service_compressed_models", Name: "Compressed models", Kind: test.kind,
+				Enabled: true, Models: []string{"visible"},
+				Capabilities: []contract.Capability{{Protocol: test.protocol, Mode: contract.CapabilityModeNative}},
+				HTTP:         &contract.HTTPConnection{BaseURL: upstream.URL, Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeNone}},
+			}
+			if test.kind.IsSubscription() {
+				service.HTTP = nil
+				service.Capabilities = contract.DefaultOpenAICodexCapabilities()
+				service.Subscription = &contract.SubscriptionConnection{
+					Provider: contract.SubscriptionProviderOpenAICodex, Status: contract.SubscriptionStatusConnected,
+					CredentialRef: accountauth.CredentialRefFor(service.ID),
+				}
+			}
+			resolver := &healthTrackingCandidateResolver{candidateResolver: candidateResolver{candidates: []endpoint.Resolved{{
+				Service: service, BaseURL: upstream.URL,
+			}}}}
+			handler := NewWithDependencies(Dependencies{
+				Resolver: resolver,
+				Authorizer: authorizerFunc(func(context.Context, contract.Endpoint) (http.Header, error) {
+					return make(http.Header), nil
+				}),
+			})
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			request.Header.Set("Accept-Encoding", "gzip, br, zstd")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if request.Header.Get("Accept-Encoding") != "gzip, br, zstd" {
+				t.Fatal("incoming compression negotiation was mutated")
+			}
+			if test.wantError != "" {
+				envelope := assertInferenceError(t, response, http.StatusBadGateway, "upstream_unavailable")
+				if !strings.Contains(envelope.Error.Message, test.wantError) || len(resolver.failures) != 1 {
+					t.Fatalf("failure = %s, health failures = %v", response.Body.String(), resolver.failures)
+				}
+				return
+			}
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "visible") {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+			if response.Header().Get("Content-Encoding") != "" || len(resolver.failures) != 0 {
+				t.Fatalf("invalid decoded response headers or health: %#v, %v", response.Header(), resolver.failures)
+			}
+		})
 	}
 }
 

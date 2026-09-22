@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
@@ -291,7 +292,7 @@ func (handler *Handler) executeCandidates(
 		if authorizeErr == nil {
 			authorizationEndpoint.Auth = providerapi.Auth(candidate.Service.Kind, plan.UpstreamProtocol, authorizationEndpoint.Auth)
 			var headersErr error
-			headers, headersErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint)
+			headers, headersErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint, attemptRequest.Header)
 			authorizeErr = headersErr
 		}
 		if authorizeErr != nil {
@@ -347,8 +348,8 @@ func (handler *Handler) executeCandidates(
 			if headers == nil {
 				headers = make(http.Header)
 			}
-			if !strings.HasPrefix(attemptRequest.Header.Get("User-Agent"), "claude-cli/") {
-				headers.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
+			if !strings.HasPrefix(attemptRequest.Header.Get("User-Agent"), accountauth.ClaudeUserAgentPrefix) {
+				headers.Set("User-Agent", accountauth.DefaultClaudeUserAgent)
 			}
 			// Keep client feature flags while adding the subscription OAuth betas.
 			if beta := attemptRequest.Header.Get("Anthropic-Beta"); beta != "" {
@@ -481,10 +482,9 @@ func (handler *Handler) executeCandidates(
 				action := policy.ActionForStatus(response.StatusCode)
 				reason := "http_" + fmt.Sprint(response.StatusCode)
 				var repaired []byte
-				if schedule.policy.Strategy != contract.FailoverOnly && response.StatusCode == http.StatusBadRequest && !downstream.Committed() &&
+				if response.StatusCode == http.StatusBadRequest && !downstream.Committed() &&
 					(canRepairThinking || canRepairOpenAI) && repairedTargets[repairTarget] == nil &&
-					schedule.total < schedule.policy.MaxAttempts &&
-					(schedule.manual || schedule.counts[candidateIndex] <= policy.MaxRetries) {
+					schedule.total < schedule.policy.MaxAttempts {
 					data, complete := inspectRecoveryError(response)
 					if complete && canRepairThinking && isThinkingSignatureError(data) {
 						repaired = prepareReasoningRecovery(body, rectifyThinkingSignature)
@@ -507,9 +507,6 @@ func (handler *Handler) executeCandidates(
 							reason = repairReason
 						}
 					}
-					if repaired != nil {
-						action = contract.FailureRetry
-					}
 				}
 				retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
 				if response.StatusCode == http.StatusTooManyRequests {
@@ -517,10 +514,14 @@ func (handler *Handler) executeCandidates(
 						cooldown.RecordRateLimit(candidate, max(retryAfter, time.Duration(policy.InitialDelayMS)*time.Millisecond))
 					}
 				}
-				if schedule.recover(candidateIndex, action, retryAfter) {
-					if repaired != nil {
-						repairedTargets[repairTarget] = repaired
-					}
+				recovering := false
+				if repaired != nil && schedule.repair(candidateIndex) {
+					repairedTargets[repairTarget] = repaired
+					recovering = true
+				} else {
+					recovering = schedule.recover(candidateIndex, action, retryAfter)
+				}
+				if recovering {
 					// Keep only a small complete error for the rare case where every
 					// remaining candidate fails local preparation or health admission.
 					stopRead := time.AfterFunc(time.Second, func() { attemptContext.cancel(context.DeadlineExceeded) })
@@ -560,7 +561,12 @@ func (handler *Handler) executeCandidates(
 			}
 			return transport.WriteResponse(startWriter, response)
 		}
-		forwardErr := handler.forwarder.Forward(startWriter, attemptRequest, forwardTarget)
+		var forwardErr error
+		if turn := responsesWSTurnFromContext(request.Context()); turn != nil {
+			forwardErr = turn.forward(startWriter, attemptRequest, forwardTarget, candidate, upstreamModel)
+		} else {
+			forwardErr = handler.forwarder.Forward(startWriter, attemptRequest, forwardTarget)
+		}
 		// Compatibility forwarders may not expose ObserveOutbound. The built-in
 		// transport always calls it immediately before I/O.
 		var preparationError *transport.TargetError
@@ -632,6 +638,7 @@ func (handler *Handler) executeCandidates(
 				if session.status == contract.RequestStatusSucceeded {
 					session.noteRecoveryStop("succeeded")
 					handler.rememberResponseAffinity(request.Context(), session, candidate, plan)
+					handler.rememberChannelBinding(request.Context(), session, candidate)
 				}
 			}
 			return
@@ -647,6 +654,12 @@ func (handler *Handler) executeCandidates(
 		var responseErr *transport.ResponseError
 		bufferedResponseFailure := errors.As(forwardErr, &responseErr) &&
 			!downstream.Committed()
+		if turn := responsesWSTurnFromContext(request.Context()); turn != nil && turn.session.upstream.Connected() {
+			// A sent WebSocket turn cannot be replayed, even when restoration
+			// buffered all output or the response-start deadline expired.
+			preResponseFailure = false
+			bufferedResponseFailure = false
+		}
 		safeRetryFailure := preResponseFailure || bufferedResponseFailure
 		if safeRetryFailure {
 			health.Failure()

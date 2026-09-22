@@ -13,6 +13,8 @@ function session(
     started_at: "2026-07-25T10:00:00Z",
     last_started_at: "2026-07-25T10:00:00Z",
     completed_at: "2026-07-25T10:00:02Z",
+    duration_ms: 2000,
+    active_request_starts: [],
     turn_count: 1,
     call_count: 1,
     status: "succeeded",
@@ -25,6 +27,21 @@ function session(
 }
 
 describe("mergeLiveSessions", () => {
+  it("adopts runtime changes when an earlier concurrent call finishes", () => {
+    const before = session("sess_a", { active_request_starts: ["2026-07-25T09:59:00Z"] });
+    const after = session("sess_a", { duration_ms: 8000 });
+    const changed = mergeLiveSessions([before], [], [after], false);
+    expect(changed.items[0]).toBe(after);
+    const unchanged = mergeLiveSessions(changed.items, [], [{ ...after, active_request_starts: [] }], false);
+    expect(unchanged.items).toBe(changed.items);
+  });
+
+  it("adopts a new active attempt even when the active count is unchanged", () => {
+    const before = session("sess_a", { active_request_starts: ["2026-07-25T09:59:00Z"] });
+    const after = session("sess_a", { active_request_starts: ["2026-07-25T09:59:01Z"] });
+    expect(mergeLiveSessions([], [before], [after], true).queued[0]).toBe(after);
+  });
+
   it("updates the model badge when only reasoning effort changes or clears", () => {
     const before = session("sess_a", { reasoning_effort: "low" });
     const after = session("sess_a", { reasoning_effort: "high" });

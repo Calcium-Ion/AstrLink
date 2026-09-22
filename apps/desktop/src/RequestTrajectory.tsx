@@ -12,6 +12,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ArrowDown, ArrowUp, ChevronRight, MessageSquare } from "@/components/icons";
 import { IconButton } from "@/components/IconButton";
+import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,11 @@ import { i18n, useT } from "./i18n";
 import { useLiveClock } from "./live-clock";
 import { formatDuration } from "./request-live-model";
 import type { AuditContent, RequestRecord } from "./request-record-model";
+import {
+  requestServiceIdentity,
+  type RequestServiceIdentity,
+  type RequestServiceMap,
+} from "./request-service-model";
 import {
   extendPendingTimeline,
   listScrollForTimeline,
@@ -83,6 +89,7 @@ const REVEAL_SUPPRESS_MS = 250;
 const TIMELINE_KNEE_PX = 96;
 
 const timelineLanes: TrajectoryLane[] = ["client", "gateway", "upstream"];
+const NO_SERVICES: RequestServiceMap = {};
 
 export function RequestTrajectory({
   turns,
@@ -93,6 +100,7 @@ export function RequestTrajectory({
   auditLoading,
   auditError,
   copyFeedback,
+  services = NO_SERVICES,
 }: {
   turns: RequestRecord[];
   childrenByRoot: Record<string, RequestRecord[]>;
@@ -102,11 +110,26 @@ export function RequestTrajectory({
   auditLoading: boolean;
   auditError: string | null;
   copyFeedback: CopyFeedback;
+  services?: RequestServiceMap;
 }) {
   const t = useT();
+  const serviceByRequest = useMemo(
+    () => Object.fromEntries(
+      [...turns, ...Object.values(childrenByRoot).flat()].map(record => [
+        record.id, requestServiceIdentity(record, services),
+      ]),
+    ),
+    [turns, childrenByRoot, services],
+  );
   const rows = useMemo(
-    () => trajectoryRows(turns, childrenByRoot),
-    [childrenByRoot, turns],
+    () => trajectoryRows(turns, childrenByRoot).map(row => {
+      const service = serviceByRequest[row.requestId];
+      // Keep the original event metadata; translate only its service ID for display.
+      return row.chip === "ROUTE" && service?.id
+        ? { ...row, summary: row.summary.replace(service.id, () => service.name) }
+        : row;
+    }),
+    [childrenByRoot, turns, serviceByRequest],
   );
   // Resolving a row id by scanning `rows` costs nothing once, and used to cost
   // a full scan inside every phase mark of every lane: 1300 marks against 1400
@@ -167,9 +190,13 @@ export function RequestTrajectory({
   const selection = useMemo(
     () =>
       selectedRow && selectedRecord
-        ? { row: selectedRow, record: selectedRecord }
+        ? {
+            row: selectedRow,
+            record: selectedRecord,
+            service: serviceByRequest[selectedRecord.id],
+          }
         : null,
-    [selectedRecord, selectedRow],
+    [selectedRecord, selectedRow, serviceByRequest],
   );
   const inspectorWindow = useDetachedInspector(selection);
 
@@ -190,9 +217,11 @@ export function RequestTrajectory({
       // directly. Reading it back from state would send the row that was
       // selected before the click, because this update is still pending.
       const record = findRecord(turns, childrenByRoot, row.requestId);
-      if (record) inspectorWindow.show({ row, record });
+      if (record) {
+        inspectorWindow.show({ row, record, service: serviceByRequest[record.id] });
+      }
     },
-    [childrenByRoot, inspectorWindow, onSelectRequest, turns],
+    [childrenByRoot, inspectorWindow, onSelectRequest, turns, serviceByRequest],
   );
   const selectListRow = useCallback(
     (row: TrajectoryRow) => {
@@ -467,6 +496,7 @@ export function RequestTrajectory({
                     onSelect={selectListRow}
                     position={item.index}
                     row={rows[item.index]!}
+                    service={serviceByRequest[rows[item.index]!.requestId]}
                     selected={rows[item.index]!.id === selectedRow?.id}
                   />
                 ))
@@ -481,6 +511,7 @@ export function RequestTrajectory({
                     onSelect={selectListRow}
                     position={position}
                     row={row}
+                    service={serviceByRequest[row.requestId]}
                     selected={row.id === selectedRow?.id}
                   />
                 ))}
@@ -515,6 +546,7 @@ export function RequestTrajectory({
               onClose={() => setOverlayOpen(false)}
               record={selection.record}
               row={selection.row}
+              service={selection.service}
             />
           </aside>
         ) : null}
@@ -925,6 +957,7 @@ function findRecord(
  */
 const TrajectoryRowView = memo(function TrajectoryRowView({
   row,
+  service,
   selected,
   highlighted,
   position,
@@ -933,6 +966,7 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
   onSelect,
 }: {
   row: TrajectoryRow;
+  service?: RequestServiceIdentity;
   selected: boolean;
   highlighted: boolean;
   position: number;
@@ -1002,7 +1036,12 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
         <time className="hidden font-mono text-micro text-muted-foreground @min-[760px]/trajectory:block" dateTime={row.startedAt} title={row.startedAt}>
           {time}
         </time>
-        <span className="min-w-0 truncate" title={row.summary}>{row.summary}</span>
+        <span className="flex min-w-0 items-center gap-2" title={row.summary}>
+          {service && (row.chip === "UPSTREAM" || row.chip === "RETRY") ? (
+            <RequestServiceLabel className="max-w-[65%] shrink-0 font-medium" service={service} />
+          ) : null}
+          <span className="truncate">{row.summary}</span>
+        </span>
         <span
           className={cn(
             "flex min-w-0 items-center justify-end gap-1.5 text-micro text-muted-foreground",

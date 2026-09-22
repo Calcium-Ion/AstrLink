@@ -1,11 +1,14 @@
 package servicemodel
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -28,6 +32,49 @@ func probeResponse(body string) *http.Response {
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestProbeHTTPDecodesCompressedPagesWithinCumulativeLimit(t *testing.T) {
+	for _, oversized := range []bool{false, true} {
+		t.Run(fmt.Sprint("oversized=", oversized), func(t *testing.T) {
+			calls := 0
+			first := `{"data":[{"id":"first"}],"has_more":true,"last_id":"first"}`
+			second := `{"data":[{"id":"second"}],"has_more":false}`
+			if oversized {
+				second += strings.Repeat(" ", maxResponseBytes-len(first)-len(second)+1)
+			}
+			var compressed bytes.Buffer
+			writer := gzip.NewWriter(&compressed)
+			_, _ = writer.Write([]byte(second))
+			_ = writer.Close()
+			upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				calls++
+				if request.Header.Get("Accept-Encoding") != transport.SupportedResponseEncodings {
+					t.Errorf("Accept-Encoding = %q", request.Header.Get("Accept-Encoding"))
+				}
+				if calls == 1 {
+					_, _ = io.WriteString(writer, first)
+					return
+				}
+				writer.Header().Set("Content-Encoding", "gzip")
+				_, _ = writer.Write(compressed.Bytes())
+			}))
+			defer upstream.Close()
+			models, err := New(nil, nil, nil).ProbeHTTP(context.Background(), "service_test", contract.ServiceKindAnthropic,
+				contract.HTTPConnection{BaseURL: upstream.URL, Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeNone}},
+				nil, contract.ProtocolOpenAIModels)
+			if oversized {
+				if !errors.Is(err, ErrUpstream) || !errors.Is(err, transport.ErrResponseBodyTooLarge) {
+					t.Fatalf("oversized probe error = %v", err)
+				}
+			} else if err != nil || strings.Join(models, ",") != "first,second" {
+				t.Fatalf("models = %v, err = %v", models, err)
+			}
+			if calls != 2 {
+				t.Fatalf("pages fetched = %d", calls)
+			}
+		})
 	}
 }
 
@@ -195,7 +242,7 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	responseBody := `{"models":[{"slug":"gpt-z","visibility":"list"},{"slug":"gpt-a","visibility":"list"}]}`
+	responseBody := `{"models":[{"slug":"gpt-z","visibility":"list"},{"slug":"gpt-a","visibility":"list"},{"slug":"gpt-6-astra","visibility":"list","supported_in_api":false}]}`
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		wantURL := "https://codex.example/backend-api/codex/models?client_version=" +
 			accountauth.DefaultCodexModelsClientVersion
@@ -207,6 +254,7 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 			request.Header.Get("OAI-Product-Sku") != "codex" ||
 			request.Header.Get("originator") != "astrlink" ||
 			request.Header.Get("User-Agent") != "codex-cli/"+accountauth.DefaultCodexModelsClientVersion ||
+			request.Header.Get("version") != accountauth.DefaultCodexModelsClientVersion ||
 			request.Header.Get("Accept") != "application/json" {
 			t.Fatalf("headers = %#v", request.Header)
 		}
@@ -247,7 +295,7 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 	}
 	prober := New(store, manager, nil)
 	models, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels)
-	if err != nil || strings.Join(models, ",") != "gpt-a,gpt-z" {
+	if err != nil || strings.Join(models, ",") != "gpt-6-astra,gpt-a,gpt-z" {
 		t.Fatalf("models=%v err=%v", models, err)
 	}
 	responseBody = `{"models":[]}`

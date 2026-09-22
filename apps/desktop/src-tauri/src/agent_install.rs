@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -118,6 +118,7 @@ pub fn install(context: &InstallContext) -> Result<InstallReceipt, String> {
     copy_mcp_binary(&context.mcp_source, &mcp_dest)?;
     files.push(display_path(&mcp_dest)?);
 
+    migrate_legacy_codex_skill(&context.home)?;
     let canonical = write_canonical_skill(&context.home)?;
     files.push(display_path(&canonical)?);
 
@@ -128,6 +129,7 @@ pub fn install(context: &InstallContext) -> Result<InstallReceipt, String> {
         }
         files.extend(install_tool(&context.home, id, &mcp_command)?);
     }
+    deduplicate_paths(&mut files);
 
     let receipt = InstallReceipt {
         version: RECEIPT_VERSION,
@@ -151,7 +153,9 @@ pub fn uninstall(context: &InstallContext) -> Result<(), String> {
         uninstall_tool(&context.home, id)?;
     }
     let canonical = canonical_skill_dir(&context.home);
-    remove_path(&canonical)?;
+    if is_ours_skill(&canonical, &canonical) {
+        remove_path(&canonical)?;
+    }
     let mcp_dest = mcp_binary_dest(&context.home);
     remove_path(&mcp_dest)?;
     remove_path(&receipt_path(&context.home))?;
@@ -162,11 +166,15 @@ pub fn sync_installed_skills(home: &Path) -> Result<(), String> {
     if !receipt_path(home).is_file() {
         return Ok(());
     }
+    migrate_legacy_codex_skill(home)?;
     let canonical = canonical_skill_dir(home);
     if is_ours_skill(&canonical, &canonical) {
         write_skill_tree(&canonical, &canonical)?;
     }
     for id in AgentToolId::all() {
+        if id == AgentToolId::Codex {
+            continue;
+        }
         let dest = tool_skill_dir(home, id);
         if is_ours_skill(&dest, &canonical) {
             write_skill_tree(&dest, &canonical)?;
@@ -239,6 +247,75 @@ fn canonical_skill_dir(home: &Path) -> PathBuf {
     home.join(".agents").join("skills").join(BUNDLE_NAME)
 }
 
+fn legacy_codex_skill_dir(home: &Path) -> PathBuf {
+    home.join(".codex").join("skills").join(BUNDLE_NAME)
+}
+
+// Codex discovers the shared .agents directory itself. Older installers also
+// wrote a .codex copy, causing both descriptions to enter the prompt. Keep the
+// shared copy active and archive the owned duplicate outside skill search roots
+// so local edits and extra files remain recoverable.
+fn migrate_legacy_codex_skill(home: &Path) -> Result<(), String> {
+    let legacy = legacy_codex_skill_dir(home);
+    let canonical = canonical_skill_dir(home);
+    if !is_ours_skill(&legacy, &canonical) {
+        return Ok(());
+    }
+    let is_link = points_at_canonical(&legacy, &canonical);
+    if !is_link {
+        match canonical.symlink_metadata() {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir_all(canonical.parent().unwrap())
+                    .map_err(|error| format!("unable to create shared skill directory: {error}"))?;
+                return fs::rename(&legacy, &canonical)
+                    .map_err(|error| format!("unable to migrate {}: {error}", legacy.display()));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "unable to inspect {}: {error}",
+                    canonical.display()
+                ));
+            }
+            Ok(_) => {}
+        }
+    }
+    // Refuse a foreign shared directory and ensure a usable replacement exists
+    // before removing either a real duplicate or an old (possibly broken) link.
+    write_canonical_skill(home)?;
+    if is_link {
+        return remove_path(&legacy);
+    }
+
+    let backups = astrlink_home(home).join("agent-skill-backups");
+    fs::create_dir_all(&backups)
+        .map_err(|error| format!("unable to create {}: {error}", backups.display()))?;
+    let mut index = 0_u64;
+    loop {
+        let backup = backups.join(format!("codex-{}-{index}", unix_now()));
+        match fs::create_dir(&backup) {
+            Ok(()) => {
+                let dest = backup.join(BUNDLE_NAME);
+                fs::rename(&legacy, &dest).map_err(|error| {
+                    format!(
+                        "unable to archive {} to {}: {error}",
+                        legacy.display(),
+                        dest.display()
+                    )
+                })?;
+                eprintln!(
+                    "migrated duplicate AstrLink Codex skill to {}",
+                    dest.display()
+                );
+                return Ok(());
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => index += 1,
+            Err(error) => {
+                return Err(format!("unable to create {}: {error}", backup.display()));
+            }
+        }
+    }
+}
+
 fn receipt_path(home: &Path) -> PathBuf {
     astrlink_home(home).join("agent-installs.json")
 }
@@ -265,7 +342,7 @@ fn tool_skill_dir(home: &Path, id: AgentToolId) -> PathBuf {
     match id {
         AgentToolId::Cursor => home.join(".cursor").join("skills").join(BUNDLE_NAME),
         AgentToolId::Claude => home.join(".claude").join("skills").join(BUNDLE_NAME),
-        AgentToolId::Codex => home.join(".codex").join("skills").join(BUNDLE_NAME),
+        AgentToolId::Codex => canonical_skill_dir(home),
         AgentToolId::Grok => home.join(".grok").join("skills").join(BUNDLE_NAME),
     }
 }
@@ -339,8 +416,13 @@ fn preview_paths(home: &Path, tools: &[AgentToolStatus], mcp_dest: &Path) -> Vec
         paths.push(display_path(&tool_skill_dir(home, tool.id)).unwrap_or_default());
         paths.push(display_path(&tool_mcp_path(home, tool.id)).unwrap_or_default());
     }
-    paths.retain(|path| !path.is_empty());
+    deduplicate_paths(&mut paths);
     paths
+}
+
+fn deduplicate_paths(paths: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    paths.retain(|path| !path.is_empty() && seen.insert(path.clone()));
 }
 
 fn write_canonical_skill(home: &Path) -> Result<PathBuf, String> {
@@ -351,14 +433,21 @@ fn write_canonical_skill(home: &Path) -> Result<PathBuf, String> {
 
 fn install_tool(home: &Path, id: AgentToolId, mcp_command: &str) -> Result<Vec<String>, String> {
     let skill = tool_skill_dir(home, id);
-    write_skill_tree(&skill, &canonical_skill_dir(home))?;
+    if id != AgentToolId::Codex {
+        write_skill_tree(&skill, &canonical_skill_dir(home))?;
+    }
     let mcp_path = tool_mcp_path(home, id);
     merge_mcp_config(&mcp_path, id, mcp_command)?;
     Ok(vec![display_path(&skill)?, display_path(&mcp_path)?])
 }
 
 fn uninstall_tool(home: &Path, id: AgentToolId) -> Result<(), String> {
-    let skill = tool_skill_dir(home, id);
+    // The shared skill is removed once, after all tool-specific installations.
+    let skill = if id == AgentToolId::Codex {
+        legacy_codex_skill_dir(home)
+    } else {
+        tool_skill_dir(home, id)
+    };
     if is_ours_skill(&skill, &canonical_skill_dir(home)) {
         remove_path(&skill)?;
     }
@@ -483,7 +572,22 @@ fn points_at_canonical(path: &Path, canonical: &Path) -> bool {
     }
     match (fs::canonicalize(&resolved), fs::canonicalize(canonical)) {
         (Ok(left), Ok(right)) => left == right,
-        _ => false,
+        _ => {
+            // A relative link can still be ours when its final directory was
+            // deleted. Resolve the parents without requiring the leaf to exist.
+            if resolved.file_name() != canonical.file_name() {
+                return false;
+            }
+            match (resolved.parent(), canonical.parent()) {
+                (Some(left), Some(right)) => {
+                    match (fs::canonicalize(left), fs::canonicalize(right)) {
+                        (Ok(left), Ok(right)) => left == right,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        }
     }
 }
 
@@ -860,8 +964,32 @@ mod tests {
         assert_real_skill_copy(&tool_skill_dir(&home, AgentToolId::Claude));
         assert_real_skill_copy(&tool_skill_dir(&home, AgentToolId::Codex));
         assert_real_skill_copy(&tool_skill_dir(&home, AgentToolId::Grok));
+        assert!(!legacy_codex_skill_dir(&home).exists());
+        let shared_path = display_path(&canonical_skill_dir(&home)).unwrap();
+        assert_eq!(
+            receipt
+                .files
+                .iter()
+                .filter(|path| **path == shared_path)
+                .count(),
+            1
+        );
+        assert!(!receipt
+            .files
+            .contains(&display_path(&legacy_codex_skill_dir(&home)).unwrap()));
 
         let after = status(&context);
+        assert_eq!(
+            after
+                .preview_paths
+                .iter()
+                .filter(|path| **path == shared_path)
+                .count(),
+            1
+        );
+        assert!(!after
+            .preview_paths
+            .contains(&display_path(&legacy_codex_skill_dir(&home)).unwrap()));
         assert!(after.canonical_skill);
         assert!(after.mcp_binary);
         for tool in &after.tools {
@@ -899,6 +1027,209 @@ mod tests {
         assert!(grok_mcp.contains("[mcp_servers.keep]"));
         assert!(!grok_mcp.contains("astrlink"));
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn install_and_startup_archive_legacy_codex_copy_without_losing_edits() {
+        for reinstall in [false, true] {
+            let context = installed_codex_context("codex-migrate");
+            let home = &context.home;
+            let canonical = canonical_skill_dir(home);
+            let legacy = legacy_codex_skill_dir(home);
+            write_skill_tree(&legacy, &canonical).unwrap();
+            fs::write(canonical.join("SKILL.md"), "shared user edit").unwrap();
+            fs::write(legacy.join("SKILL.md"), "legacy user edit").unwrap();
+            fs::write(legacy.join("notes.txt"), "keep this extra file").unwrap();
+            let legacy_manifest = fs::read(managed_files_path(&legacy)).unwrap();
+
+            if reinstall {
+                install(&context).unwrap();
+            } else {
+                sync_installed_skills(home).unwrap();
+            }
+            assert!(!legacy.exists());
+            assert_eq!(
+                fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
+                "shared user edit"
+            );
+            let backups = codex_backups(home);
+            assert_eq!(backups.len(), 1);
+            let archived = backups[0].join(BUNDLE_NAME);
+            assert_eq!(
+                fs::read_to_string(archived.join("SKILL.md")).unwrap(),
+                "legacy user edit"
+            );
+            assert_eq!(
+                fs::read_to_string(archived.join("notes.txt")).unwrap(),
+                "keep this extra file"
+            );
+            assert_eq!(
+                fs::read(managed_files_path(&archived)).unwrap(),
+                legacy_manifest
+            );
+            assert!(
+                status(&context)
+                    .tools
+                    .iter()
+                    .find(|tool| tool.id == AgentToolId::Codex)
+                    .unwrap()
+                    .skill_installed
+            );
+
+            // Startup and a later reinstall must not recreate the duplicate.
+            sync_installed_skills(home).unwrap();
+            install(&context).unwrap();
+            assert!(!legacy.exists());
+            assert_eq!(codex_backups(home), backups);
+            uninstall(&context).unwrap();
+            assert!(!canonical.exists());
+            assert!(archived.join("notes.txt").is_file());
+            let _ = fs::remove_dir_all(home);
+        }
+    }
+
+    #[test]
+    fn startup_migration_requires_receipt() {
+        let home = unique_temp("codex-no-receipt");
+        let canonical = write_canonical_skill(&home).unwrap();
+        let legacy = legacy_codex_skill_dir(&home);
+        write_skill_tree(&legacy, &canonical).unwrap();
+        sync_installed_skills(&home).unwrap();
+        assert_real_skill_copy(&legacy);
+        assert!(codex_backups(&home).is_empty());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn startup_moves_lone_legacy_codex_copy_to_shared_directory() {
+        let context = installed_codex_context("codex-legacy-only");
+        let home = &context.home;
+        let canonical = canonical_skill_dir(home);
+        let legacy = legacy_codex_skill_dir(home);
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::rename(&canonical, &legacy).unwrap();
+        fs::write(legacy.join("SKILL.md"), "keep legacy customization").unwrap();
+        sync_installed_skills(home).unwrap();
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
+            "keep legacy customization"
+        );
+        assert!(codex_backups(home).is_empty());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_and_uninstall_preserve_foreign_codex_directory() {
+        let context = installed_codex_context("codex-foreign");
+        let home = &context.home;
+        let legacy = legacy_codex_skill_dir(home);
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("SKILL.md"), "not ours").unwrap();
+        sync_installed_skills(home).unwrap();
+        install(&context).unwrap();
+        uninstall(&context).unwrap();
+        assert_eq!(
+            fs::read_to_string(legacy.join("SKILL.md")).unwrap(),
+            "not ours"
+        );
+        assert!(codex_backups(home).is_empty());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_refuses_foreign_shared_directory_and_preserves_legacy_copy() {
+        let context = installed_codex_context("codex-foreign-shared");
+        let home = &context.home;
+        let canonical = canonical_skill_dir(home);
+        let legacy = legacy_codex_skill_dir(home);
+        write_skill_tree(&legacy, &canonical).unwrap();
+        fs::remove_file(managed_files_path(&canonical)).unwrap();
+        fs::write(canonical.join("SKILL.md"), "foreign shared skill").unwrap();
+        assert!(sync_installed_skills(home)
+            .unwrap_err()
+            .contains("refusing to overwrite"));
+        assert_real_skill_copy(&legacy);
+        assert!(codex_backups(home).is_empty());
+        uninstall(&context).unwrap();
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
+            "foreign shared skill"
+        );
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn uninstall_removes_legacy_codex_installation_before_startup_migration() {
+        let context = installed_codex_context("codex-uninstall-legacy");
+        let home = &context.home;
+        let canonical = canonical_skill_dir(home);
+        let legacy = legacy_codex_skill_dir(home);
+        write_skill_tree(&legacy, &canonical).unwrap();
+        uninstall(&context).unwrap();
+        assert!(!canonical.exists());
+        assert!(!legacy.exists());
+        assert!(
+            !status(&context)
+                .tools
+                .iter()
+                .find(|tool| tool.id == AgentToolId::Codex)
+                .unwrap()
+                .mcp_installed
+        );
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_removes_legacy_codex_links_and_repairs_missing_shared_skill() {
+        for relative in [false, true] {
+            for missing_shared in [false, true] {
+                let context = installed_codex_context("codex-link");
+                let home = &context.home;
+                let canonical = canonical_skill_dir(home);
+                let legacy = legacy_codex_skill_dir(home);
+                fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+                let target = if relative {
+                    PathBuf::from("../../.agents/skills/astrlink-debug")
+                } else {
+                    canonical.clone()
+                };
+                std::os::unix::fs::symlink(target, &legacy).unwrap();
+                if missing_shared {
+                    fs::remove_dir_all(&canonical).unwrap();
+                }
+                sync_installed_skills(home).unwrap();
+                assert!(legacy.symlink_metadata().is_err());
+                assert_real_skill_copy(&canonical);
+                assert!(codex_backups(home).is_empty());
+                let _ = fs::remove_dir_all(home);
+            }
+        }
+    }
+
+    fn installed_codex_context(name: &str) -> InstallContext {
+        let home = unique_temp(name);
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        let mcp_source = home.join("src-astrlink-mcp");
+        fs::write(&mcp_source, b"mcp").unwrap();
+        let context = InstallContext { home, mcp_source };
+        install(&context).unwrap();
+        context
+    }
+
+    fn codex_backups(home: &Path) -> Vec<PathBuf> {
+        let root = astrlink_home(home).join("agent-skill-backups");
+        if !root.exists() {
+            return vec![];
+        }
+        let mut backups = fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        backups.sort();
+        backups
     }
 
     #[test]

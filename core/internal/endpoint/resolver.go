@@ -49,9 +49,11 @@ func (err *CapabilityUnavailableError) Unwrap() error {
 }
 
 type ResolveRequest struct {
-	Protocol  contract.ProtocolID
-	Model     string
-	Streaming bool
+	// AllCandidates defers the failover limit until ingress applies session and transport constraints.
+	AllCandidates bool
+	Protocol      contract.ProtocolID
+	Model         string
+	Streaming     bool
 	// Continuation keeps eligible targets available for exact affinity binding.
 	// Ingress must bind the response ID before attempting any target.
 	Continuation bool

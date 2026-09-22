@@ -37,7 +37,7 @@ func TestServiceOrderPersistenceConflictsAndResolver(t *testing.T) {
 		}
 	}
 	settings, _ := store.GetRoutingSettings(ctx)
-	if settings.Strategy != contract.FailoverOnly || settings.AllowUnmatchedFailover {
+	if settings.Strategy != contract.FailoverOnly || !settings.AllowUnmatchedFailover {
 		t.Fatalf("defaults: %+v", settings)
 	}
 	settings.AllowUnmatchedFailover = true

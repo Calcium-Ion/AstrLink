@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
+	"github.com/QuantumNous/astrlink/core/internal/codingplan"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
@@ -33,6 +34,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/privacyworker"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
+	"github.com/QuantumNous/astrlink/core/internal/servicetest"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
@@ -232,7 +234,9 @@ func main() {
 			AuditKeys:          store,
 			AuditBlobs:         store,
 			Subscriptions:      subscriptionManager,
+			CodingPlans:        codingplan.New(store, nil),
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
+			ServiceTester:      servicetest.New(endpoint.NewServiceAuthorizer(store, subscriptionManager), nil, subscriptionManager.APIBaseURLFor),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -242,5 +243,92 @@ func TestInterruptedBillingBecomesUnpricedAndCannotBeBackfilledAsComplete(t *tes
 	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
 	if err != nil || summary.Unpriced != 1 || summary.Pending != 0 || summary.Priced != 0 {
 		t.Fatalf("%+v %v", summary, err)
+	}
+}
+
+func TestAudioPricingRepairPreservesSnapshotsAndUnknownUsage(t *testing.T) {
+	for _, newerCatalog := range []bool{false, true} {
+		t.Run(fmt.Sprintf("newer_catalog=%t", newerCatalog), func(t *testing.T) {
+			ctx := context.Background()
+			s := openTestStore(t, filepath.Join(t.TempDir(), "billing.db"))
+			defer s.Close()
+			service := pathTestService("service_audio_repair")
+			if _, err := s.CreateService(ctx, service, storage.CredentialMutation{}); err != nil {
+				t.Fatal(err)
+			}
+			config := pricing.DefaultConfig(service.Kind)
+			config.Provider = "google"
+			if err := s.SavePricingConfig(ctx, service.ID, config); err != nil {
+				t.Fatal(err)
+			}
+			start := time.Now().UTC().Add(-time.Minute)
+			catalog := pricing.Catalog{Version: "audio_v1", ActivatedAt: start.Add(-time.Hour), Prices: []pricing.Price{
+				{Provider: "google", Model: "gemini-3.7-flash", Expression: `tier("standard", p * 0.75 + cr * 0.075 + ai * 0.75 + c * 3.75)`},
+				{Provider: "google", Model: "different_audio_rate", Expression: `tier("standard", p + ai * 10)`},
+			}}
+			if err := s.SavePricingCatalog(ctx, catalog); err != nil {
+				t.Fatal(err)
+			}
+			// More than one page of genuinely unknown usage must not prevent the
+			// nine repairable historical entries later in the ledger being reached.
+			for i := 0; i < 112; i++ {
+				model := "gemini-3.7-flash"
+				if i < 101 {
+					model = "different_audio_rate"
+				}
+				cache := 400000
+				usage := &contract.Usage{InputTokens: 1000000, OutputTokens: 100000, TotalTokens: 1100000, CacheReadTokens: &cache}
+				if i == 109 {
+					audio := 200000
+					usage.InputAudioTokens = &audio
+				}
+				if i == 111 {
+					usage.BillingIncomplete = true
+				}
+				r := contract.RequestRecord{ID: contract.RequestID(fmt.Sprintf("request_audio_%03d", i)), AttemptIndex: 1, ServiceID: &service.ID, RequestedModel: &model, StartedAt: start, Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolGoogleGenerateContent, Audit: contract.NotCapturedAuditSummary(), Usage: usage}
+				if err := s.InsertRequestRecord(ctx, r); err != nil {
+					t.Fatal(err)
+				}
+				if i >= 101 && i < 110 {
+					// Recreate the pre-fix ledger state without inventing audio counts.
+					reason := "missing_audio_usage"
+					if i == 109 {
+						reason = "missing_audio_cache_partition"
+					}
+					if _, err := s.db.ExecContext(ctx, `UPDATE billing_ledger SET reason=?,amount_usd='0.000000000',tier='',account_key='historical_account' WHERE root_id=?`, reason, r.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := s.DeleteRequestRecord(ctx, "request_audio_101"); err != nil {
+				t.Fatal(err)
+			}
+			if newerCatalog {
+				catalog.Version = "audio_v2"
+				catalog.ActivatedAt = time.Now().UTC()
+				catalog.Prices[0].Expression = `tier("new", p * 100 + ai * 100 + c * 100)`
+				if err := s.SavePricingCatalog(ctx, catalog); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if n, err := s.PriceUnpriced(ctx); err != nil || n != 9 {
+				t.Fatalf("repair count=%d error=%v", n, err)
+			}
+			if n, err := s.PriceUnpriced(ctx); err != nil || n != 0 {
+				t.Fatalf("repeat repair count=%d error=%v", n, err)
+			}
+			summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
+			if err != nil || summary.AmountUSD != "8.550000000" || summary.Priced != 10 || summary.Unpriced != 102 || summary.Revalued != 9 {
+				t.Fatalf("summary=%+v error=%v", summary, err)
+			}
+			var version, account string
+			var audio any
+			if err := s.db.QueryRowContext(ctx, `SELECT price_version,account_key,json_extract(usage_json,'$.input_audio_tokens') FROM billing_ledger WHERE root_id='request_audio_101'`).Scan(&version, &account, &audio); err != nil {
+				t.Fatal(err)
+			}
+			if version != "audio_v1" || account != "historical_account" || audio != nil {
+				t.Fatalf("snapshot changed: version=%s account=%s audio=%v", version, account, audio)
+			}
+		})
 	}
 }

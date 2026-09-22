@@ -122,6 +122,22 @@ pub(crate) fn validate_routing_settings(
                     crate::recovery_path::id(id)?;
                 }
             }
+            "channel_stickiness" => {
+                let settings = value
+                    .as_object()
+                    .ok_or("invalid API provider reuse settings")?;
+                if settings.len() != 2
+                    || !settings
+                        .get("enabled")
+                        .is_some_and(serde_json::Value::is_boolean)
+                    || !settings
+                        .get("ttl_seconds")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_some_and(|ttl| (60..=86400).contains(&ttl))
+                {
+                    return Err("invalid API provider reuse settings".into());
+                }
+            }
             "default_failure_policy" => validate_failure_policy(value)?,
             "allow_unmatched_failover" if value.is_boolean() => {}
             "strategy" => validate_strategy(value)?,

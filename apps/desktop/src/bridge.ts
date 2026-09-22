@@ -1,3 +1,5 @@
+import { parseServiceTestResult, type ServiceTestInput, type ServiceTestResult } from "./service-test-model";
+import { parseChannelBindingAudit } from "./channel-binding-model";
 import { parseRecoveryPath, parseRecoveryPathRecord, parseRecoveryPathPage, parseRecoveryPreview, type RecoveryPathInput, type RecoveryPreviewInput } from "./recovery-path-model";
 import { parseRoutingSettings, type RoutingSettings } from "./failure-policy-model";
 import { invoke as invokeCommand } from "@tauri-apps/api/core";
@@ -274,6 +276,11 @@ export async function resetServiceUsage(
   );
 }
 
+export async function testService(serviceId: string, input: ServiceTestInput): Promise<ServiceTestResult> {
+  requireNativeBridge();
+  return parseServiceTestResult(await invoke<unknown>("test_service", { serviceId, input }));
+}
+
 export async function probeServiceModels(
   serviceId: string,
   protocol: ModelDiscoveryProtocol,
@@ -417,6 +424,16 @@ export async function getRequestSession(
   return parseRequestSessionDetail(
     await invoke<unknown>("get_request_session", { sessionId }),
   );
+}
+
+export async function getSessionChannelBindings(sessionId: string, before?: number) {
+  requireNativeBridge();
+  return parseChannelBindingAudit(await invoke<unknown>("get_session_channel_bindings", { sessionId, ...(before === undefined ? {} : { before }) }));
+}
+
+export async function releaseSessionChannelBindings(sessionId: string) {
+  requireNativeBridge();
+  return parseChannelBindingAudit(await invoke<unknown>("release_session_channel_bindings", { sessionId }));
 }
 
 export async function listRequestRecords(

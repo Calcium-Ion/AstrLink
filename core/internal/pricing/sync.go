@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 type CatalogStore interface {
@@ -56,6 +57,7 @@ func (m *Manager) get(ctx context.Context, path, etag string) ([]byte, string, b
 		return nil, "", false, err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
@@ -70,8 +72,8 @@ func (m *Manager) get(ctx context.Context, path, etag string) ([]byte, string, b
 	if resp.StatusCode != 200 {
 		return nil, "", false, fmt.Errorf("price source HTTP %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20+1))
-	if err != nil || len(body) > 8<<20 {
+	body, err := transport.ReadResponseBody(resp, 8<<20)
+	if err != nil {
 		return nil, "", false, fmt.Errorf("invalid price source response")
 	}
 	return body, resp.Header.Get("ETag"), false, nil
@@ -201,8 +203,8 @@ func (m *Manager) Run(ctx context.Context, logf func(string, ...any)) {
 				logf("price sync: %v", err)
 			}
 		}
-		// Calls recorded before their first price sync are filled automatically.
-		// Already valued entries retain their original price version.
+		// Fill missing prices and retry audio breakdowns after evaluator fixes,
+		// even when the catalog has not changed. Already valued entries stay fixed.
 		if pending, ok := m.store.(interface {
 			PriceUnpriced(context.Context) (int, error)
 		}); ok && ctx.Err() == nil {

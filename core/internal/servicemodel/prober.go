@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -212,6 +211,7 @@ func (prober *Prober) probeHTTPPages(
 		}
 		request.Header = headers.Clone()
 		request.Header.Set("Accept", "application/json")
+		request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 		response, requestErr := prober.client.Do(request)
 		if requestErr != nil {
 			if errors.Is(probeContext.Err(), context.DeadlineExceeded) {
@@ -224,16 +224,13 @@ func (prober *Prober) probeHTTPPages(
 			_ = response.Body.Close()
 			return nil, fmt.Errorf("%w: cumulative response exceeds limit", ErrUpstream)
 		}
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, int64(remaining+1)))
+		body, readErr := transport.ReadResponseBody(response, int64(remaining))
 		_ = response.Body.Close()
 		if readErr != nil {
 			if errors.Is(probeContext.Err(), context.DeadlineExceeded) {
 				return nil, context.DeadlineExceeded
 			}
-			return nil, fmt.Errorf("%w: read response", ErrUpstream)
-		}
-		if len(body) > remaining {
-			return nil, fmt.Errorf("%w: response exceeds limit", ErrUpstream)
+			return nil, fmt.Errorf("%w: read response: %w", ErrUpstream, readErr)
 		}
 		totalBytes += len(body)
 		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {

@@ -19,9 +19,11 @@ var (
 
 // Authorizer resolves an Endpoint's opaque credential reference for a single
 // request. Implementations return only the headers that must override inbound
-// client authentication; callers must not persist or log the returned values.
+// client authentication and supply backend identity. Client headers are
+// read-only and may be nil for gateway-initiated requests. Callers must not
+// persist or log the returned values.
 type Authorizer interface {
-	Headers(context.Context, contract.Endpoint) (http.Header, error)
+	Headers(context.Context, contract.Endpoint, http.Header) (http.Header, error)
 }
 
 type SecretAuthorizer struct {
@@ -45,9 +47,9 @@ func NewServiceAuthorizer(store secretstore.SecretStore, subscriptions Subscript
 	return &ServiceAuthorizer{http: NewSecretAuthorizer(store), subscriptions: subscriptions}
 }
 
-func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contract.Endpoint) (http.Header, error) {
+func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contract.Endpoint, clientHeaders http.Header) (http.Header, error) {
 	if endpoint.Kind.IsHTTP() {
-		return authorizer.http.Headers(ctx, endpoint)
+		return authorizer.http.Headers(ctx, endpoint, clientHeaders)
 	}
 	if endpoint.Kind.IsSubscription() {
 		if authorizer == nil || authorizer.subscriptions == nil {
@@ -64,14 +66,14 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 		case contract.ServiceKindGrokSubscription:
 			accountauth.ApplyGrokAPIHeaders(headers, tokens, "")
 		default:
-			accountauth.ApplyCodexAPIHeaders(headers, tokens, "", "")
+			accountauth.ApplyCodexAPIHeaders(headers, tokens, "", accountauth.CodexClientVersion(clientHeaders))
 		}
 		return headers, nil
 	}
 	return nil, fmt.Errorf("unsupported service kind %q", endpoint.Kind)
 }
 
-func (authorizer *SecretAuthorizer) Headers(ctx context.Context, endpoint contract.Endpoint) (http.Header, error) {
+func (authorizer *SecretAuthorizer) Headers(ctx context.Context, endpoint contract.Endpoint, _ http.Header) (http.Header, error) {
 	if err := endpoint.Auth.Validate(); err != nil {
 		return nil, fmt.Errorf("validate endpoint authentication: %w", err)
 	}

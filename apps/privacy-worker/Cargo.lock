@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "astrlink-privacy-worker"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 dependencies = [
  "ort",
  "regex",

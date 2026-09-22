@@ -69,6 +69,10 @@ func (handler *Handler) requestSessionCollection(writer http.ResponseWriter, req
 }
 
 func (handler *Handler) requestSessionItem(writer http.ResponseWriter, request *http.Request) {
+	if strings.HasSuffix(request.URL.Path, "/channel-bindings") {
+		handler.sessionChannelBinding(writer, request)
+		return
+	}
 	if request.Method != http.MethodGet {
 		writer.Header().Set("Allow", http.MethodGet)
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")

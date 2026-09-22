@@ -10,19 +10,21 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const maxJSONDepth = 128
 const maxExtractedSegments = 32_768
 
 type jsonDocument struct {
-	root          map[string]any
+	body          []byte
 	duplicateKeys bool
 }
 
 type extractedSegment struct {
 	Segment
-	set                    func(string)
+	writePath              string
 	validateStructuredJSON bool
 }
 
@@ -58,7 +60,8 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 		return jsonDocument{}, nil, ErrUnsafeInput
 	}
 
-	document := jsonDocument{root: root, duplicateKeys: duplicateKeys}
+	document := jsonDocument{body: body, duplicateKeys: duplicateKeys}
+	protected := continuationPaths(protocol, root)
 	extracted := make([]extractedSegment, 0)
 	overflow := false
 	for _, key := range roots {
@@ -66,10 +69,8 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 		if !exists || skipJSONChild(root, key, value, jsonContentContext) {
 			continue
 		}
-		key := key
-		walkJSONStrings(value, func(replacement any) {
-			root[key] = replacement
-		}, "/"+escapeJSONPointer(key), 1, jsonContentContext, &extracted, &overflow)
+		walkJSONStrings(value, "/"+escapeJSONPointer(key), sjsonObjectKey(key),
+			1, jsonContentContext, protected, &extracted, &overflow)
 	}
 	if overflow {
 		return jsonDocument{}, nil, ErrUnsafeInput
@@ -105,14 +106,18 @@ func protocolRoots(protocol contract.ProtocolID) ([]string, bool) {
 
 func walkJSONStrings(
 	value any,
-	set func(any),
 	path string,
+	writePath string,
 	depth int,
 	context jsonTraversalContext,
+	protected map[string]struct{},
 	extracted *[]extractedSegment,
 	overflow *bool,
 ) {
 	if *overflow || depth > maxJSONDepth {
+		return
+	}
+	if _, opaque := protected[path]; opaque {
 		return
 	}
 	switch typed := value.(type) {
@@ -122,10 +127,8 @@ func walkJSONStrings(
 			return
 		}
 		*extracted = append(*extracted, extractedSegment{
-			Segment: Segment{Path: path, Value: typed},
-			set: func(replacement string) {
-				set(replacement)
-			},
+			Segment:   Segment{Path: path, Value: typed},
+			writePath: writePath,
 			// Only re-validate after rewrite when the original string was
 			// already JSON. Tool transcripts often start with '{' (a truncated
 			// package.json, a shell dump plus stderr) without being JSON;
@@ -136,10 +139,8 @@ func walkJSONStrings(
 		})
 	case []any:
 		for index, child := range typed {
-			index := index
-			walkJSONStrings(child, func(replacement any) {
-				typed[index] = replacement
-			}, path+"/"+jsonIndex(index), depth+1, context, extracted, overflow)
+			walkJSONStrings(child, path+"/"+jsonIndex(index), writePath+"."+jsonIndex(index),
+				depth+1, context, protected, extracted, overflow)
 		}
 	case map[string]any:
 		keys := make([]string, 0, len(typed))
@@ -152,13 +153,51 @@ func walkJSONStrings(
 			if skipJSONChild(typed, key, child, context) {
 				continue
 			}
-			key := key
 			childContext := nextJSONTraversalContext(typed, key, context)
-			walkJSONStrings(child, func(replacement any) {
-				typed[key] = replacement
-			}, path+"/"+escapeJSONPointer(key), depth+1, childContext, extracted, overflow)
+			walkJSONStrings(child, path+"/"+escapeJSONPointer(key), writePath+"."+sjsonObjectKey(key),
+				depth+1, childContext, protected, extracted, overflow)
 		}
 	}
+}
+
+// SJSON paths are not JSON pointers. Force object keys (including numeric and
+// empty keys) and escape every path operator so tool payload keys stay literal.
+func sjsonObjectKey(key string) string {
+	return ":" + gjson.Escape(key)
+}
+
+// Only encode the value being changed. The parsed map is used for inspection,
+// never to serialize the request, preserving other fields and their key order.
+func (document *jsonDocument) setValue(path string, value any) error {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return err
+	}
+	return document.setRaw(path, bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}))
+}
+
+func (document *jsonDocument) setRaw(path string, value []byte) error {
+	// SJSON may strip outer whitespace when inserting a missing member. Keep
+	// that envelope ourselves, including for notice fields absent in the input.
+	start := len(document.body) - len(bytes.TrimLeft(document.body, " \t\r\n"))
+	end := len(bytes.TrimRight(document.body, " \t\r\n"))
+	if start >= end {
+		return ErrUnsafeRewrite
+	}
+	updated, err := sjson.SetRawBytes(document.body[start:end], path, value)
+	if err != nil {
+		return err
+	}
+	if start != 0 || end != len(document.body) {
+		wrapped := make([]byte, 0, start+len(updated)+len(document.body)-end)
+		wrapped = append(wrapped, document.body[:start]...)
+		wrapped = append(wrapped, updated...)
+		updated = append(wrapped, document.body[end:]...)
+	}
+	document.body = updated
+	return nil
 }
 
 func skipJSONChild(
@@ -455,22 +494,21 @@ func rewriteDocument(
 			!validStructuredJSON(redacted) {
 			return rewriteOutcome{}, ErrUnsafeRewrite
 		}
-		extracted[segmentIndex].set(redacted)
+		if err := document.setValue(extracted[segmentIndex].writePath, redacted); err != nil {
+			return rewriteOutcome{}, ErrUnsafeRewrite
+		}
 	}
 	// The note is only worth its tokens when an opaque marker actually reached
 	// the wire, so it is decided after allocation rather than from policy alone.
 	injected := false
 	if notice && anyTokenPlaceholder(redactions) {
-		injected = injectPlaceholderNotice(document, protocol)
-	}
-	var rewritten bytes.Buffer
-	encoder := json.NewEncoder(&rewritten)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(document.root); err != nil {
-		return rewriteOutcome{}, ErrUnsafeRewrite
+		injected, err = injectPlaceholderNotice(&document, protocol)
+		if err != nil {
+			return rewriteOutcome{}, ErrUnsafeRewrite
+		}
 	}
 	return rewriteOutcome{
-		Body:           bytes.TrimSuffix(rewritten.Bytes(), []byte{'\n'}),
+		Body:           document.body,
 		Redactions:     redactions,
 		NoticeInjected: injected,
 	}, nil

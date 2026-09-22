@@ -15,6 +15,9 @@ func TestRecoverySettingsRecordsAndAffinitySurviveReopen(t *testing.T) {
 	store := openTestStore(t, path)
 	ctx := context.Background()
 	settings := contract.DefaultRoutingSettings()
+	// Explicit opt-outs must survive storage and reopening despite the defaults.
+	settings.AllowUnmatchedFailover = false
+	settings.ChannelStickiness = &contract.ChannelStickiness{Enabled: false, TTLSeconds: 120}
 	settings.DefaultFailurePolicy.MaxRetries = 4
 	if err := store.UpdateRoutingSettings(ctx, settings); err != nil {
 		t.Fatal(err)
@@ -77,7 +80,7 @@ func TestRecoverySettingsRecordsAndAffinitySurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = store.GetRoutingSettings(ctx)
-	if err != nil || got.DefaultFailurePolicy.MaxRetries != 1 {
+	if err != nil || got.DefaultFailurePolicy.MaxRetries != 1 || got.AllowUnmatchedFailover || got.ChannelStickiness == nil || !got.ChannelStickiness.Enabled || got.ChannelStickiness.TTLSeconds != 3600 {
 		t.Fatalf("legacy settings %v %+v", err, got)
 	}
 }

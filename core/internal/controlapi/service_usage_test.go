@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/codingplan"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
@@ -228,6 +229,7 @@ func newUsageHandler(t *testing.T, upstream *httptest.Server, id contract.Servic
 		Dependencies{
 			ServiceStore:  store,
 			Subscriptions: manager,
+			CodingPlans:   codingplan.New(store, upstream.Client()),
 			ControlToken:  testControlToken,
 			NewServiceID:  func() (contract.ServiceID, error) { return id, nil },
 		},
@@ -266,5 +268,57 @@ func connectSubscriptionForTest(
 	record.Service.Subscription.TokenExpiresAt = &expires
 	if _, err := store.UpdateService(context.Background(), record.Service, storage.CredentialMutation{}, record.ETag); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGetServiceUsageReadsCodingPlanQuotaWithServiceKey(t *testing.T) {
+	var authorization string
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/coding/v1/usages" {
+			http.NotFound(writer, request)
+			return
+		}
+		authorization = request.Header.Get("Authorization")
+		_, _ = writer.Write([]byte(`{
+			"user": {"email": "owner@example.com"},
+			"limits": [{"detail": {"limit": 100, "remaining": 40, "resetTime": "2026-09-22T15:00:00Z"}}],
+			"usage": {"limit": 1000, "remaining": 900, "resetTime": "2026-09-25T00:00:00Z"}
+		}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	_, _, handler := newUsageHandler(t, upstream, "service_kimi_plan")
+	service := createServiceForTest(t, handler, `{
+		"name":"Kimi Coding","kind":"kimi_coding","models":["kimi-k2-thinking"],
+		"http":{"base_url":"`+upstream.URL+`/coding","auth":{"scheme":"anthropic_api_key"},"credential":{"secret":"kimi-plan-secret"}},
+		"capabilities":[{"protocol":"anthropic.messages","mode":"native","streaming":true}]
+	}`)
+
+	response := serviceRequestForTest(t, handler, http.MethodGet, ServicesPath+"/"+string(service.ID)+"/usage", "", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if authorization != "Bearer kimi-plan-secret" {
+		t.Fatalf("Kimi usage authorization = %q", authorization)
+	}
+	var usage contract.SubscriptionUsage
+	decode(t, response, &usage)
+	if usage.ServiceID != service.ID || usage.Primary == nil || usage.Primary.UsedPercent != 60 || usage.Secondary == nil || usage.Secondary.UsedPercent != 10 {
+		t.Fatalf("usage = %#v", usage)
+	}
+	if strings.Contains(response.Body.String(), "owner@example.com") || strings.Contains(response.Body.String(), "kimi-plan-secret") {
+		t.Fatalf("usage leaked account material: %s", response.Body.String())
+	}
+
+	// newUsageHandler pins one service ID per handler, so the keyless case gets its own.
+	_, _, keylessHandler := newUsageHandler(t, upstream, "service_glm_keyless")
+	keyless := createServiceForTest(t, keylessHandler, `{
+		"name":"GLM Coding","kind":"glm_coding",
+		"http":{"base_url":"`+upstream.URL+`/api/anthropic","auth":{"scheme":"none"}},
+		"capabilities":[{"protocol":"anthropic.messages","mode":"native","streaming":true}]
+	}`)
+	missingKey := serviceRequestForTest(t, keylessHandler, http.MethodGet, ServicesPath+"/"+string(keyless.ID)+"/usage", "", "", "")
+	if missingKey.Code != http.StatusConflict || !strings.Contains(missingKey.Body.String(), "service_credential_unavailable") {
+		t.Fatalf("keyless status=%d body=%s", missingKey.Code, missingKey.Body.String())
 	}
 }

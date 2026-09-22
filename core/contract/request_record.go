@@ -545,19 +545,21 @@ func (record RequestRecord) EffectiveStatus() RequestStatus {
 }
 
 type RequestSession struct {
-	ID                 SessionID      `json:"id"`
-	Title              string         `json:"title"`
-	StartedAt          time.Time      `json:"started_at"`
-	LastStartedAt      time.Time      `json:"last_started_at"`
-	CompletedAt        *time.Time     `json:"completed_at"`
-	TurnCount          int            `json:"turn_count"`
-	CallCount          int            `json:"call_count"`
-	Status             SessionStatus  `json:"status"`
-	RequestedModel     *string        `json:"requested_model"`
-	ReasoningEffort    *string        `json:"reasoning_effort"`
-	InputProtocol      ProtocolID     `json:"input_protocol"`
-	ServiceID          *ServiceID     `json:"service_id"`
-	LocalAccessTokenID *AccessTokenID `json:"local_access_token_id"`
+	ID                  SessionID      `json:"id"`
+	Title               string         `json:"title"`
+	StartedAt           time.Time      `json:"started_at"`
+	LastStartedAt       time.Time      `json:"last_started_at"`
+	CompletedAt         *time.Time     `json:"completed_at"`
+	DurationMs          int64          `json:"duration_ms"`
+	ActiveRequestStarts []time.Time    `json:"active_request_starts"`
+	TurnCount           int            `json:"turn_count"`
+	CallCount           int            `json:"call_count"`
+	Status              SessionStatus  `json:"status"`
+	RequestedModel      *string        `json:"requested_model"`
+	ReasoningEffort     *string        `json:"reasoning_effort"`
+	InputProtocol       ProtocolID     `json:"input_protocol"`
+	ServiceID           *ServiceID     `json:"service_id"`
+	LocalAccessTokenID  *AccessTokenID `json:"local_access_token_id"`
 }
 
 func (session RequestSession) Validate() error {
@@ -572,6 +574,14 @@ func (session RequestSession) Validate() error {
 	}
 	if session.TurnCount < 1 || session.CallCount < 1 {
 		return fmt.Errorf("session counts must be at least 1")
+	}
+	if session.DurationMs < 0 {
+		return fmt.Errorf("duration_ms must be non-negative")
+	}
+	for _, started := range session.ActiveRequestStarts {
+		if started.IsZero() {
+			return fmt.Errorf("active_request_starts must contain valid timestamps")
+		}
 	}
 	if !session.Status.Valid() {
 		return fmt.Errorf("unknown session status %q", session.Status)

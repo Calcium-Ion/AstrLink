@@ -6,7 +6,7 @@ import {
   liveDurationMs,
   mergeLivePage,
   recordMatchesFilters,
-  sessionElapsedMs,
+  sessionRuntimeMs,
 } from "./request-live-model";
 import {
   emptyTrajectoryFields,
@@ -139,25 +139,27 @@ describe("request live merge model", () => {
     expect(formatDuration(50_829_000)).toBe("14h 07m");
   });
 
-  it("freezes completed session elapsed time instead of tracking now", () => {
-    const nowMs = Date.parse("2026-08-17T04:46:00Z");
-    expect(
-      sessionElapsedMs(
-        {
-          started_at: "2026-08-16T14:41:00Z",
-          completed_at: "2026-08-16T14:41:12Z",
-        },
-        nowMs,
-      ),
-    ).toBe(12_000);
-    expect(
-      sessionElapsedMs(
-        {
-          started_at: "2026-08-16T14:41:00Z",
-          completed_at: null,
-        },
-        nowMs,
-      ),
-    ).toBe(50_700_000);
+  it("keeps finished call runtime fixed even days after the session started", () => {
+    const session = { duration_ms: 12_000, active_request_starts: [] };
+    expect(sessionRuntimeMs(session, Date.parse("2026-08-17T04:46:00Z"))).toBe(12_000);
+    expect(sessionRuntimeMs(session, Date.parse("2026-08-20T04:46:00Z"))).toBe(12_000);
+  });
+
+  it("adds only currently running calls to the recorded runtime", () => {
+    const session = {
+      duration_ms: 12_000,
+      active_request_starts: ["2026-08-17T04:45:50Z", "2026-08-17T04:45:55Z"],
+    };
+    const now = Date.parse("2026-08-17T04:46:00Z");
+    expect(sessionRuntimeMs(session, now)).toBe(27_000);
+    expect(sessionRuntimeMs(session, now + 1000)).toBe(29_000);
+    expect(sessionRuntimeMs({ duration_ms: 29_000, active_request_starts: [] }, now + 86_400_000)).toBe(29_000);
+  });
+
+  it("does not subtract runtime when an active start is ahead of the local clock", () => {
+    expect(sessionRuntimeMs({
+      duration_ms: 120,
+      active_request_starts: ["2026-08-17T04:46:01Z"],
+    }, Date.parse("2026-08-17T04:46:00Z"))).toBe(120);
   });
 });

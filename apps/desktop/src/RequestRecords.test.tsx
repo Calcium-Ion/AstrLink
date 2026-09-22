@@ -36,10 +36,13 @@ import {
   type RequestSession,
 } from "./request-record-model";
 import type { RoutableService } from "./service-model";
+import type { RequestService } from "./request-service-model";
+import { i18n } from "./i18n";
 
-const service: RoutableService = {
+const service: RoutableService & RequestService = {
   id: "service_01",
   name: "Primary gateway",
+  kind: "newapi",
   enabled: true,
   models: ["gpt-4.1"],
   capabilities: [
@@ -132,6 +135,8 @@ function sessionFromRecord(
     started_at: record.started_at,
     last_started_at: record.started_at,
     completed_at: record.completed_at,
+    duration_ms: record.latency_ms ?? (record.completed_at ? Date.parse(record.completed_at) - Date.parse(record.started_at) : 0),
+    active_request_starts: record.status === "pending" && record.latency_ms === null && !record.completed_at ? [record.started_at] : [],
     turn_count: 1,
     call_count: 1 + record.child_count,
     status: displayRequestStatus(record.status, record.http_status),
@@ -314,12 +319,12 @@ describe("RequestRecords", () => {
     container.remove();
   });
 
-  const renderRecords = async (session = "session-1") => {
+  const renderRecords = async (session = "session-1", services = [service]) => {
     await act(async () => {
       reactRoot.render(
         <RequestRecords
           coreSessionKey={session}
-          services={[service]}
+          services={services}
           isReady
         />,
       );
@@ -358,9 +363,85 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("1 轮");
     expect(container.textContent).not.toContain("次调用");
-    expect(container.textContent).toContain("1.0 s");
-    expect(container.textContent).toContain("2.0 s");
+    expect(container.textContent).toContain("120 ms");
     expect(container.textContent).not.toMatch(/\d{3,}m /);
+    const provider = container.querySelector(`[aria-label="${i18n.t("records.provider")}: Primary gateway"]`);
+    expect(provider?.querySelector('[aria-label="New API"]')).not.toBeNull();
+    expect(provider?.getAttribute("title")).toContain(service.id);
+  });
+
+  it("distinguishes pending selection, an unrouted result and a removed provider", async () => {
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, { id: "pending", service_id: null, status: "pending" }),
+        sessionFromRecord(firstRecord, { id: "blocked", service_id: null, status: "blocked" }),
+        sessionFromRecord(firstRecord, { id: "removed", service_id: "service_removed" }),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const labels = [...container.querySelectorAll('[data-testid="request-session-row"] [data-testid="request-service-label"]')]
+      .map(node => node.textContent);
+    expect(labels).toEqual([
+      `${i18n.t("records.provider")}${i18n.t("records.selectingService")}`,
+      `${i18n.t("records.provider")}${i18n.t("records.noService")}`,
+      `${i18n.t("records.provider")}service_removed`,
+    ]);
+  });
+
+  it("shows cumulative runtime in both the list and detail across a long idle gap", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:00Z"));
+    const last: RequestRecord = {
+      ...firstRecord,
+      id: "request_after_idle",
+      started_at: "2026-07-27T01:00:00Z",
+      completed_at: "2026-07-27T01:00:03Z",
+      latency_ms: 3000,
+    };
+    const summary = sessionFromRecord(firstRecord, {
+      last_started_at: last.started_at,
+      completed_at: last.completed_at,
+      turn_count: 2,
+      call_count: 3,
+      duration_ms: 3620,
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [summary], next_cursor: null });
+    bridgeMocks.getRequestSession.mockResolvedValue({ ...summary, turns: [firstRecord, last] });
+    await renderRecords();
+    const row = container.querySelector<HTMLButtonElement>('[data-testid="request-session-row"]')!;
+    expect(row.textContent).toContain("2 轮 · 3 次调用 · 3.6 s");
+    await act(async () => { row.click(); });
+    await act(async () => await Promise.resolve());
+    const duration = () => [...container.querySelectorAll("dt")]
+      .find(node => node.textContent === i18n.t("records.duration"))?.nextElementSibling?.textContent;
+    expect(duration()).toBe("3.6 s");
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(duration()).toBe("3.6 s");
+  });
+
+  it("ticks only the active call and stops after the completion poll", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
+    const summary = sessionFromRecord(firstRecord, {
+      completed_at: null,
+      status: "pending",
+      last_started_at: "2026-07-28T12:00:00Z",
+      duration_ms: 12_000,
+      active_request_starts: ["2026-07-28T12:00:00Z"],
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [summary], next_cursor: null });
+    await renderRecords();
+    const runtime = () => container.querySelector('[data-testid="request-session-row"]')?.textContent;
+    expect(runtime()).toContain("22.0 s");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(runtime()).toContain("23.0 s");
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [{ ...summary, status: "succeeded", completed_at: "2026-07-28T12:00:11Z", duration_ms: 23_000, active_request_starts: [] }],
+      next_cursor: null,
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(runtime()).toContain("23.0 s");
   });
 
   it("opens a session trajectory and shows retry children as RETRY rows", async () => {
@@ -376,6 +457,7 @@ describe("RequestRecords", () => {
         parent_request_id: root.id,
         attempt_index: 1,
         child_count: 0,
+        service_id: "service_backup",
       },
       {
         ...secondRecord,
@@ -398,8 +480,9 @@ describe("RequestRecords", () => {
       next_cursor: null,
     });
 
-    await renderRecords();
+    await renderRecords("session-1", [service, { ...service, id: "service_backup", name: "Backup gateway" }]);
     expect(container.textContent).toContain("1 轮 · 3 次调用");
+    expect(container.querySelector(`[aria-label="${i18n.t("records.latestProvider")}: Primary gateway"]`)).not.toBeNull();
     await act(async () => {
       (
         container.querySelector(
@@ -418,6 +501,9 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("子请求 1");
     expect(container.textContent).toContain("子请求 2");
     expect(container.querySelectorAll('[data-testid="trajectory-row"]').length).toBeGreaterThan(0);
+    const retryProvider = container.querySelector(`[data-testid="trajectory-row"][data-chip="RETRY"][data-request-id="${children[0].id}"] [data-testid="request-service-label"]`);
+    expect(retryProvider?.textContent).toContain("Backup gateway");
+    expect(container.querySelector('[data-testid="trajectory-row"][data-chip="UPSTREAM"] [data-testid="request-service-label"]')?.textContent).toContain("Primary gateway");
 
     bridgeMocks.getRequestAuditContent.mockClear();
     await act(async () => {
@@ -432,6 +518,7 @@ describe("RequestRecords", () => {
     expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledWith(
       children[0].id,
     );
+    expect(container.querySelector('[data-testid="trajectory-inspector"] [data-testid="request-service-label"]')?.textContent).toContain("Backup gateway");
   });
 
   it("copies skill diagnostic metadata without captured bodies", async () => {

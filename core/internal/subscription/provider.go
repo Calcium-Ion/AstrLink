@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 // CodexProvider calls the ChatGPT Codex backend using subscription tokens.
@@ -67,27 +67,23 @@ func (provider *CodexProvider) Usage(ctx context.Context, tokens accountauth.Acc
 		nil,
 	)
 	if err != nil {
-		return contract.SubscriptionUsage{}, err
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	applyCodexAuth(request, tokens, provider.originator, provider.ModelsClientVersion())
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
-		return contract.SubscriptionUsage{}, err
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
-		return contract.SubscriptionUsage{}, err
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		log.Printf("codex usage GET %s returned status %d", request.URL.String(), response.StatusCode)
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: status %d", ErrUsageUnavailable, response.StatusCode)
 	}
-	usage, err := DecodeCodexUsage(body)
-	if err != nil {
-		return contract.SubscriptionUsage{}, err
-	}
-	return usage, nil
+	return DecodeCodexUsage(body)
 }
 
 func (provider *CodexProvider) ConsumeReset(
@@ -101,7 +97,7 @@ func (provider *CodexProvider) ConsumeReset(
 	}
 	payload, err := json.Marshal(map[string]string{"redeem_request_id": redeemRequestID})
 	if err != nil {
-		return contract.SubscriptionUsageReset{}, err
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
 	request, err := http.NewRequestWithContext(
 		ctx,
@@ -110,19 +106,19 @@ func (provider *CodexProvider) ConsumeReset(
 		bytes.NewReader(payload),
 	)
 	if err != nil {
-		return contract.SubscriptionUsageReset{}, err
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
 	applyCodexAuth(request, tokens, provider.originator, provider.ModelsClientVersion())
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
-		return contract.SubscriptionUsageReset{}, err
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
-		return contract.SubscriptionUsageReset{}, err
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		log.Printf("codex usage reset POST %s returned status %d", request.URL.String(), response.StatusCode)
@@ -151,7 +147,7 @@ func (provider *CodexProvider) ListModels(ctx context.Context, tokens accountaut
 		return ModelList{}, err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	body, err := transport.ReadResponseBody(response, 4<<20)
 	if err != nil {
 		return ModelList{}, err
 	}
@@ -174,7 +170,7 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 		return nil, 0, nil, err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 16<<20))
+	body, err := transport.ReadResponseBody(response, 16<<20)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -184,6 +180,7 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 
 func applyCodexAuth(request *http.Request, tokens accountauth.AccountTokens, originator, clientVersion string) {
 	accountauth.ApplyCodexAPIHeaders(request.Header, tokens, originator, clientVersion)
+	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 }
 
 // ProbeNonStreamingResponse is a tiny helper used by control/tests to exercise

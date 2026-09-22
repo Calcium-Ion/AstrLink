@@ -3,6 +3,8 @@ package endpoint
 import (
 	"context"
 	"errors"
+	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -66,7 +68,7 @@ func TestSecretAuthorizerBuildsVendorAuthenticationHeaders(t *testing.T) {
 				CredentialRef: "local://endpoint/endpoint_01",
 			}
 
-			headers, err := authorizer.Headers(context.Background(), endpoint)
+			headers, err := authorizer.Headers(context.Background(), endpoint, nil)
 			if err != nil {
 				t.Fatalf("Headers: %v", err)
 			}
@@ -86,11 +88,11 @@ func TestSecretAuthorizerFailsClosedWithoutCredentialStore(t *testing.T) {
 	}
 	authorizer := NewSecretAuthorizer(nil)
 
-	if _, err := authorizer.Headers(context.Background(), endpoint); !errors.Is(err, ErrCredentialRequired) {
+	if _, err := authorizer.Headers(context.Background(), endpoint, nil); !errors.Is(err, ErrCredentialRequired) {
 		t.Fatalf("missing ref error = %v", err)
 	}
 	endpoint.CredentialRef = "local://endpoint/endpoint_01"
-	if _, err := authorizer.Headers(context.Background(), endpoint); !errors.Is(err, secretstore.ErrUnavailable) {
+	if _, err := authorizer.Headers(context.Background(), endpoint, nil); !errors.Is(err, secretstore.ErrUnavailable) {
 		t.Fatalf("missing store error = %v", err)
 	}
 }
@@ -98,7 +100,7 @@ func TestSecretAuthorizerFailsClosedWithoutCredentialStore(t *testing.T) {
 func TestSecretAuthorizerAllowsExplicitNoAuthentication(t *testing.T) {
 	headers, err := NewSecretAuthorizer(nil).Headers(context.Background(), contract.Endpoint{
 		Auth: contract.EndpointAuth{Scheme: contract.AuthSchemeNone},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +120,7 @@ func TestSecretAuthorizerRejectsUnsafeHeaderCredentials(t *testing.T) {
 		_, err := NewSecretAuthorizer(store).Headers(context.Background(), contract.Endpoint{
 			Auth:          contract.EndpointAuth{Scheme: contract.AuthSchemeBearer},
 			CredentialRef: "local://endpoint/endpoint_01",
-		})
+		}, nil)
 		if !errors.Is(err, ErrInvalidCredential) {
 			t.Fatalf("credential %q error = %v", secret, err)
 		}
@@ -131,7 +133,7 @@ func TestSecretAuthorizerPreservesStoreErrorsWithoutSecretMaterial(t *testing.T)
 	_, err := NewSecretAuthorizer(store).Headers(context.Background(), contract.Endpoint{
 		Auth:          contract.EndpointAuth{Scheme: contract.AuthSchemeGoogleAPIKey},
 		CredentialRef: "local://endpoint/endpoint_01",
-	})
+	}, nil)
 	if !errors.Is(err, storeErr) {
 		t.Fatalf("error = %v", err)
 	}
@@ -148,7 +150,7 @@ func TestServiceAuthorizerFailsClosedWithoutSubscriptionTokenSource(t *testing.T
 		"nil source":     NewServiceAuthorizer(nil, nil),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := authorizer.Headers(context.Background(), endpoint); !errors.Is(err, secretstore.ErrUnavailable) {
+			if _, err := authorizer.Headers(context.Background(), endpoint, nil); !errors.Is(err, secretstore.ErrUnavailable) {
 				t.Fatalf("Headers() error = %v, want credential source unavailable", err)
 			}
 		})
@@ -161,7 +163,7 @@ func TestServiceAuthorizerWrapsSubscriptionTokenErrors(t *testing.T) {
 	_, err := NewServiceAuthorizer(nil, source).Headers(context.Background(), contract.Endpoint{
 		ID:   "service_subscription",
 		Kind: contract.ServiceKindCodexSubscription,
-	})
+	}, nil)
 	if !errors.Is(err, tokenErr) {
 		t.Fatalf("Headers() error = %v, want wrapped token error", err)
 	}
@@ -179,7 +181,7 @@ func TestServiceAuthorizerBuildsSubscriptionHeaders(t *testing.T) {
 	headers, err := NewServiceAuthorizer(nil, source).Headers(context.Background(), contract.Endpoint{
 		ID:   serviceID,
 		Kind: contract.ServiceKindCodexSubscription,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Headers() error = %v", err)
 	}
@@ -213,7 +215,7 @@ func TestServiceAuthorizerOmitsEmptySubscriptionAccountID(t *testing.T) {
 	headers, err := NewServiceAuthorizer(nil, source).Headers(context.Background(), contract.Endpoint{
 		ID:   "service_subscription",
 		Kind: contract.ServiceKindCodexSubscription,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Headers() error = %v", err)
 	}
@@ -225,5 +227,45 @@ func TestServiceAuthorizerOmitsEmptySubscriptionAccountID(t *testing.T) {
 	}
 	if got := headers.Get("OAI-Product-Sku"); got != "codex" {
 		t.Fatalf("OAI-Product-Sku header = %q", got)
+	}
+}
+
+func TestServiceAuthorizerUsesClientCodexVersionWithoutCopyingCredentials(t *testing.T) {
+	source := &fakeSubscriptionTokenSource{tokens: accountauth.AccountTokens{
+		AccessToken: "upstream-token", AccountID: "upstream-account",
+	}}
+	for _, explicit := range []string{"", "0.100.0"} {
+		t.Run("version="+explicit, func(t *testing.T) {
+			clientHeaders := make(http.Header)
+			clientHeaders.Set("User-Agent", "codex_cli_rs/0.156.0 (Mac OS; arm64)")
+			clientHeaders.Set("version", explicit)
+			clientHeaders.Set("Authorization", "Bearer local-token")
+			clientHeaders.Set("ChatGPT-Account-ID", "client-account")
+			clientHeaders.Set("originator", "codex_cli_rs")
+			clientHeaders.Set("X-Api-Key", "local-key")
+			original := clientHeaders.Clone()
+			headers, err := NewServiceAuthorizer(nil, source).Headers(context.Background(), contract.Endpoint{
+				ID: "service_subscription", Kind: contract.ServiceKindCodexSubscription,
+			}, clientHeaders)
+			if err != nil {
+				t.Fatal(err)
+			}
+			version := explicit
+			if version == "" {
+				version = "0.156.0"
+			}
+			for name, want := range map[string]string{
+				"version": version, "User-Agent": "codex-cli/" + version,
+				"Authorization": "Bearer upstream-token", "ChatGPT-Account-ID": "upstream-account",
+				"originator": "astrlink", "X-Api-Key": "",
+			} {
+				if got := headers.Get(name); got != want {
+					t.Errorf("%s = %q, want %q", name, got, want)
+				}
+			}
+			if !reflect.DeepEqual(clientHeaders, original) {
+				t.Fatal("client headers were mutated")
+			}
+		})
 	}
 }

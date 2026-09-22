@@ -17,11 +17,11 @@ export const UNATTRIBUTED_SERVICE_LABEL = unattributedServiceLabel;
 export const UNKNOWN_SERVICE_LABEL = unknownServiceLabel;
 export const UNKNOWN_MODEL_LABEL = unknownModelLabel;
 
-export const USAGE_RANGE_PRESETS = ["1d", "7d", "30d"] as const;
+export const USAGE_RANGE_PRESETS = ["1d", "7d", "30d", "90d", "1y"] as const;
 
 export type UsageRangePreset = (typeof USAGE_RANGE_PRESETS)[number];
 
-export const DEFAULT_USAGE_RANGE_PRESET: UsageRangePreset = "7d";
+export const DEFAULT_USAGE_RANGE_PRESET: UsageRangePreset = "1y";
 
 export function isUsageRangePreset(value: unknown): value is UsageRangePreset {
   return USAGE_RANGE_PRESETS.includes(value as UsageRangePreset);
@@ -35,6 +35,10 @@ export function usageRangeDays(preset: UsageRangePreset): number {
       return 7;
     case "30d":
       return 30;
+    case "90d":
+      return 90;
+    case "1y":
+      return 365;
   }
 }
 

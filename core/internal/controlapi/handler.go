@@ -57,14 +57,23 @@ type Dependencies struct {
 	AuditKeys          storage.AuditKeyStore
 	AuditBlobs         storage.AuditBlobStore
 	Subscriptions      *subscription.Manager
-	ServiceModels      ServiceModelProber
-	AutoClassifiers    AutoClassifierRegistry
-	AutoClassifier     AutoClassifier
-	ControlToken       string
-	NewServiceID       func() (contract.ServiceID, error)
-	NewRouteID         func() (contract.RouteID, error)
-	ConversionEngine   relaykitbridge.ConversionEngine
-	Shutdown           context.CancelFunc
+	// CodingPlans reads first-party plan quotas for API-key coding plan
+	// services (Kimi, GLM, MiniMax, OpenCode Go). Optional.
+	CodingPlans      CodingPlanUsage
+	ServiceModels    ServiceModelProber
+	ServiceTester    ServiceTester
+	AutoClassifiers  AutoClassifierRegistry
+	AutoClassifier   AutoClassifier
+	ControlToken     string
+	NewServiceID     func() (contract.ServiceID, error)
+	NewRouteID       func() (contract.RouteID, error)
+	ConversionEngine relaykitbridge.ConversionEngine
+	Shutdown         context.CancelFunc
+}
+
+// CodingPlanUsage is satisfied by *codingplan.Fetcher.
+type CodingPlanUsage interface {
+	Usage(context.Context, contract.Service) (contract.SubscriptionUsage, error)
 }
 
 type AccessTokenManager interface {
@@ -108,7 +117,9 @@ type Handler struct {
 	auditKeys         storage.AuditKeyStore
 	auditBlobs        storage.AuditBlobStore
 	subscriptions     *subscription.Manager
+	codingPlans       CodingPlanUsage
 	serviceModels     ServiceModelProber
+	serviceTester     ServiceTester
 	autoClassifiers   AutoClassifierRegistry
 	autoClassifier    AutoClassifier
 	controlToken      []byte
@@ -162,7 +173,9 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		auditKeys:       dependencies.AuditKeys,
 		auditBlobs:      dependencies.AuditBlobs,
 		subscriptions:   dependencies.Subscriptions,
+		codingPlans:     dependencies.CodingPlans,
 		serviceModels:   dependencies.ServiceModels,
+		serviceTester:   dependencies.ServiceTester,
 		autoClassifiers: dependencies.AutoClassifiers,
 		autoClassifier:  dependencies.AutoClassifier,
 		controlToken:    []byte(dependencies.ControlToken),
