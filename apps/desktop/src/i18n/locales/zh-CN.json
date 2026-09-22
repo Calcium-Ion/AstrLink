@@ -1683,7 +1683,11 @@
     "tray": {
       "show": "显示 AstrLink",
       "quit": "退出",
-      "reload": "重新加载界面"
+      "reload": "重新加载界面",
+      "hiddenMenuBarTitle": "已进入顶部菜单栏",
+      "hiddenMenuBarBody": "AstrLink 仍在后台运行。点击顶部菜单栏中的图标可重新打开窗口。",
+      "hiddenTitle": "已隐藏到系统托盘",
+      "hiddenBody": "AstrLink 仍在后台运行。点击系统托盘中的图标可重新打开窗口。"
     },
     "window": {
       "trajectoryInspector": "AstrLink · 轨迹链路",

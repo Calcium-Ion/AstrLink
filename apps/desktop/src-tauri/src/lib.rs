@@ -4,6 +4,8 @@ mod control_session;
 mod dev_reload;
 mod failure_policy;
 mod i18n;
+#[cfg(target_os = "macos")]
+mod macos_app;
 mod preferences;
 mod recovery_path;
 mod sidecar;
@@ -29,6 +31,8 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
+#[cfg(not(target_os = "macos"))]
+use tauri_plugin_notification::NotificationExt;
 
 #[derive(Debug, Serialize)]
 struct AppSnapshot {
@@ -352,9 +356,69 @@ fn rebuild_tray_menu(app: &tauri::AppHandle, locale: Locale) -> Result<(), Strin
 
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        // Restore the foreground app before showing/focusing its window.
+        #[cfg(target_os = "macos")]
+        if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
+            eprintln!("unable to restore AstrLink in the Dock: {error}");
+        }
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+fn hide_main_window_to_tray(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Err(error) = window.hide() {
+        eprintln!("unable to hide AstrLink to the tray: {error}");
+        return;
+    }
+    // Hiding a window does not remove a regular macOS app from the Dock.
+    // Accessory mode keeps the tray and pinned inspector windows available.
+    // Use the activation policy directly: Tao's set_dock_visibility(false)
+    // can ignore a close that follows a reopen by less than one second.
+    #[cfg(target_os = "macos")]
+    if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Accessory) {
+        eprintln!("unable to remove AstrLink from the Dock: {error}");
+    }
+    // A tray-parked app must not leave a following inspector on screen showing
+    // a request the operator can no longer reach. Pinned ones stay.
+    close_unpinned_inspectors(app);
+    notify_hidden_to_tray(app);
+}
+
+fn notify_hidden_to_tray(app: &tauri::AppHandle) {
+    let locale = app
+        .state::<Arc<PreferencesStore>>()
+        .snapshot()
+        .values
+        .locale;
+    let (title_key, body_key) = if cfg!(target_os = "macos") {
+        (
+            "host.tray.hiddenMenuBarTitle",
+            "host.tray.hiddenMenuBarBody",
+        )
+    } else {
+        ("host.tray.hiddenTitle", "host.tray.hiddenBody")
+    };
+    // Use a native notification: an in-window toast is invisible after hiding.
+    // Notification delivery must never prevent the app from staying in the tray.
+    #[cfg(target_os = "macos")]
+    macos_app::notify(
+        i18n::t(locale, title_key, &[]),
+        i18n::t(locale, body_key, &[]),
+    );
+    #[cfg(not(target_os = "macos"))]
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title(i18n::t(locale, title_key, &[]))
+        .body(i18n::t(locale, body_key, &[]))
+        .show()
+    {
+        eprintln!("unable to send AstrLink tray notification: {error}");
     }
 }
 
@@ -1284,12 +1348,20 @@ fn platform_initialization_script(platform: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Cocoa must see the .app before NSApplication is initialized. Replacing
+    // this process preserves the PID and Tauri dev's signal/restart handling.
+    #[cfg(all(target_os = "macos", dev))]
+    if let Err(error) = macos_app::enter_dev_bundle() {
+        eprintln!("unable to start the AstrLink development app bundle: {error}");
+        std::process::exit(1);
+    }
+
     let manager = Arc::new(CoreManager::new());
     let setup_manager = Arc::clone(&manager);
     let explicit_quit = Arc::new(AtomicBool::new(false));
     let quit_state = Arc::clone(&explicit_quit);
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
@@ -1299,7 +1371,11 @@ pub fn run() {
         ))
         .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+
+    let app = builder
         .manage(manager)
         .manage(explicit_quit)
         .manage(Mutex::new(InspectorRegistry::default()))
@@ -1529,18 +1605,18 @@ pub fn run() {
                     .close_behavior;
                 if behavior == CloseBehavior::HideToTray {
                     api.prevent_close();
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.hide();
-                    }
-                    // A tray-parked app must not leave a following inspector on
-                    // screen showing a request the operator can no longer
-                    // reach. Pinned ones were kept on purpose and stay.
-                    close_unpinned_inspectors(app_handle);
+                    hide_main_window_to_tray(app_handle);
                 } else {
                     app_handle
                         .state::<Arc<AtomicBool>>()
                         .store(true, Ordering::SeqCst);
                 }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = &event {
+            if !app_handle.state::<Arc<AtomicBool>>().load(Ordering::SeqCst) {
+                show_main_window(app_handle);
             }
         }
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {

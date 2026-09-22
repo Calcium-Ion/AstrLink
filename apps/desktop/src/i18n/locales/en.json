@@ -1683,7 +1683,11 @@
     "tray": {
       "show": "Show AstrLink",
       "quit": "Quit",
-      "reload": "Reload interface"
+      "reload": "Reload interface",
+      "hiddenMenuBarTitle": "Moved to the menu bar",
+      "hiddenMenuBarBody": "AstrLink is still running in the background. Click its icon in the top menu bar to reopen the window.",
+      "hiddenTitle": "Hidden to the system tray",
+      "hiddenBody": "AstrLink is still running in the background. Click its system tray icon to reopen the window."
     },
     "window": {
       "trajectoryInspector": "AstrLink · Trajectory call",

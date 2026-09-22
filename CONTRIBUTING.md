@@ -30,6 +30,8 @@ bun run desktop:dev
 
 仅调试前端时，在 `apps/desktop` 下运行 `bun run dev`。纯浏览器预览没有桌面原生接口，需要模拟数据；完整功能请通过 `desktop:dev` 使用。
 
+macOS 开发版会自动在 Cargo 输出目录生成 `AstrLink Dev.app` 并从该应用包运行，确保隐藏到菜单栏、重新打开和系统通知始终使用 AstrLink 的名称与图标。开发版使用独立的 `com.astrlink.desktop.dev` 系统身份，通知权限与正式版分开；配置和网关数据仍使用原有目录。Rust 重编译和前端热加载保持原来的启动方式。
+
 ## 检查改动
 
 在仓库根目录运行与改动相关的检查：
