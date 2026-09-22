@@ -397,8 +397,11 @@ func (handler *Handler) applyPrivacy(
 		session.notePrivacyDecision("block", contract.RequestStatusBlocked)
 		return finish, privacyOutcome{}, errPrivacyBlocked
 	case privacy.DecisionRedact:
-		if buffered == nil || (handler.maxRequestBodyBytes > 0 && int64(len(result.Body)) > handler.maxRequestBodyBytes) {
+		if buffered == nil {
 			return finish, privacyOutcome{}, privacy.ErrUnsafeRewrite
+		}
+		if handler.maxRequestBodyBytes > 0 && int64(len(result.Body)) > handler.maxRequestBodyBytes {
+			return finish, privacyOutcome{}, errMetadataTooLarge
 		}
 		buffered.Replace(result.Body)
 		mappingCount := uniqueRedactionMappingCount(result.Redactions)
@@ -453,9 +456,17 @@ func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *h
 		writeInferenceError(writer, http.StatusServiceUnavailable, "safety_engine_unavailable", "local safety engine is unavailable", true, nil)
 		session.notePrivacyDecision("safety_engine_unavailable", contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("safety_engine_unavailable", "local safety engine is unavailable", true))
-	case errors.Is(err, errPrivacyBlocked),
-		errors.Is(err, privacy.ErrUnsafeInput),
-		errors.Is(err, privacy.ErrUnsafeRewrite):
+	case errors.Is(err, privacy.ErrUnsafeInput):
+		// These content-dependent processing failures are non-retryable, but
+		// are not policy decisions. Only an explicit block is reported as 403.
+		writeInferenceError(writer, http.StatusUnprocessableEntity, "privacy_inspection_failed", "local privacy inspection failed: request body could not be inspected safely", false, nil)
+		session.notePrivacyDecision("privacy_inspection_failed", contract.RequestStatusFailed)
+		session.noteFailed(errorSummaryFromInference("privacy_inspection_failed", "local privacy inspection failed: request body could not be inspected safely", false))
+	case errors.Is(err, privacy.ErrUnsafeRewrite):
+		writeInferenceError(writer, http.StatusUnprocessableEntity, "privacy_redaction_failed", "local privacy redaction failed: request body could not be rewritten safely", false, nil)
+		session.notePrivacyDecision("privacy_redaction_failed", contract.RequestStatusFailed)
+		session.noteFailed(errorSummaryFromInference("privacy_redaction_failed", "local privacy redaction failed: request body could not be rewritten safely", false))
+	case errors.Is(err, errPrivacyBlocked):
 		writeInferenceError(writer, http.StatusForbidden, "policy_blocked", "request was blocked by local privacy policy", false, nil)
 		session.noteBlocked(errorSummaryFromInference("policy_blocked", "request was blocked by local privacy policy", false))
 	default:

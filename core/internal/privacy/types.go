@@ -196,6 +196,8 @@ const (
 )
 
 type Result struct {
+	// Decision is only populated when inspection succeeds. A processing error
+	// must not be reported as a policy decision to block the request.
 	Decision           Decision
 	Body               []byte
 	Findings           []Finding

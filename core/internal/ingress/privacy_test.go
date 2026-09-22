@@ -495,6 +495,7 @@ func TestPrivacyBlockRunsBeforeCredentialLoadingAndDoesNotLeakMatch(t *testing.T
 	}, nil)
 	authorized := false
 	forwarded := false
+	records := &memoryRequestRecordStore{}
 	handler := NewWithDependencies(Dependencies{
 		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
 			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
@@ -503,7 +504,8 @@ func TestPrivacyBlockRunsBeforeCredentialLoadingAndDoesNotLeakMatch(t *testing.T
 			authorized = true
 			return nil, nil
 		}),
-		PrivacyFilter: filter,
+		PrivacyFilter:  filter,
+		RequestRecords: records,
 		Forwarder: forwarderFunc(func(http.ResponseWriter, *http.Request, transport.Target) error {
 			forwarded = true
 			return nil
@@ -512,15 +514,26 @@ func TestPrivacyBlockRunsBeforeCredentialLoadingAndDoesNotLeakMatch(t *testing.T
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
 
-	assertInferenceError(t, response, http.StatusForbidden, "policy_blocked")
+	envelope := assertInferenceError(t, response, http.StatusForbidden, "policy_blocked")
+	assertPrivacyErrorRecord(t, records, response.Code, contract.RequestStatusBlocked, "privacy", "block", envelope.Error)
 	if authorized || forwarded || strings.Contains(response.Body.String(), "alice@example.com") {
 		t.Fatalf("unsafe block result: authorized=%t forwarded=%t body=%s", authorized, forwarded, response.Body.String())
 	}
 }
 
 func TestPrivacyUnsafeRewriteStopsBeforeCredentialLoadingAndForwarding(t *testing.T) {
+	// A detector can mistakenly include JSON structure in a sensitive span.
+	// The original request is valid; only the redaction attempt fails.
+	const body = `{"model":"gpt-5","input":[{"type":"function_call","name":"lookup","arguments":"{\"email\":\"alice@example.com\"}"}]}`
+	filter := testPrivacyEngine(t, privacy.Policy{
+		Enabled: true, Mode: privacy.ModeLocalModel, Action: privacy.ActionRedact,
+		LocalModelID: "model_00000000000000000000000000000001",
+	}, privacy.DetectorFunc(func(context.Context, privacy.DetectInput) ([]privacy.Finding, error) {
+		return []privacy.Finding{{Segment: 0, Start: 0, End: 1, Kind: privacy.KindEmail, Confidence: 1}}, nil
+	}))
 	authorized := false
 	forwarded := false
+	records := &memoryRequestRecordStore{}
 	handler := NewWithDependencies(Dependencies{
 		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
 			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
@@ -529,7 +542,8 @@ func TestPrivacyUnsafeRewriteStopsBeforeCredentialLoadingAndForwarding(t *testin
 			authorized = true
 			return nil, nil
 		}),
-		PrivacyFilter: unsafeRewritePrivacyFilter{},
+		PrivacyFilter:  filter,
+		RequestRecords: records,
 		Forwarder: forwarderFunc(func(http.ResponseWriter, *http.Request, transport.Target) error {
 			forwarded = true
 			return nil
@@ -538,10 +552,14 @@ func TestPrivacyUnsafeRewriteStopsBeforeCredentialLoadingAndForwarding(t *testin
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(
 		response,
-		httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"alice@example.com"}`)),
+		httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)),
 	)
 
-	assertInferenceError(t, response, http.StatusForbidden, "policy_blocked")
+	envelope := assertInferenceError(t, response, http.StatusUnprocessableEntity, "privacy_redaction_failed")
+	if !strings.Contains(envelope.Error.Message, "redaction failed") || envelope.Error.Retryable {
+		t.Fatalf("redaction failure = %#v", envelope.Error)
+	}
+	assertPrivacyErrorRecord(t, records, response.Code, contract.RequestStatusFailed, "privacy", "privacy_redaction_failed", envelope.Error)
 	if authorized || forwarded {
 		t.Fatalf("unsafe rewrite escaped privacy boundary: authorized=%t forwarded=%t", authorized, forwarded)
 	}
@@ -734,33 +752,53 @@ func TestInspectedRetryBodyBorrowsOnePrivacyResidencyPermit(t *testing.T) {
 	}
 }
 
-func TestPrivacyEnabledFailsClosedForMalformedGeminiJSON(t *testing.T) {
-	filter := testPrivacyEngine(t, privacy.Policy{
-		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionWarn,
-	}, nil)
-	forwarded := false
-	handler := NewWithDependencies(Dependencies{
-		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
-			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolGoogleGenerateContent, false)}, nil
-		}),
-		PrivacyFilter: filter,
-		Forwarder: forwarderFunc(func(http.ResponseWriter, *http.Request, transport.Target) error {
-			forwarded = true
-			return nil
-		}),
-	})
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/v1beta/models/gemini:generateContent",
-		strings.NewReader(`{"contents":[`),
-	)
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+func TestPrivacyInvalidInputIsReportedAsInspectionFailure(t *testing.T) {
+	for _, body := range []string{
+		`{"contents":[`,
+		`{"contents":[{"parts":[{"text":"alice@example.com","text":"safe"}]}]}`,
+	} {
+		for _, action := range []privacy.Action{privacy.ActionWarn, privacy.ActionRedact} {
+			t.Run(string(action)+"/"+body, func(t *testing.T) {
+				filter := testPrivacyEngine(t, privacy.Policy{
+					Enabled: true, Mode: privacy.ModeRegex, Action: action,
+				}, nil)
+				records := &memoryRequestRecordStore{}
+				authorized := false
+				forwarded := false
+				handler := NewWithDependencies(Dependencies{
+					Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+						return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolGoogleGenerateContent, false)}, nil
+					}),
+					Authorizer: authorizerFunc(func(context.Context, contract.Endpoint) (http.Header, error) {
+						authorized = true
+						return nil, nil
+					}),
+					PrivacyFilter:  filter,
+					RequestRecords: records,
+					Forwarder: forwarderFunc(func(http.ResponseWriter, *http.Request, transport.Target) error {
+						forwarded = true
+						return nil
+					}),
+				})
+				request := httptest.NewRequest(
+					http.MethodPost,
+					"/v1beta/models/gemini:generateContent",
+					strings.NewReader(body),
+				)
+				request.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
 
-	assertInferenceError(t, response, http.StatusForbidden, "policy_blocked")
-	if forwarded {
-		t.Fatal("malformed Gemini body was forwarded")
+				envelope := assertInferenceError(t, response, http.StatusUnprocessableEntity, "privacy_inspection_failed")
+				if !strings.Contains(envelope.Error.Message, "inspection failed") || envelope.Error.Retryable {
+					t.Fatalf("inspection failure = %#v", envelope.Error)
+				}
+				assertPrivacyErrorRecord(t, records, response.Code, contract.RequestStatusFailed, "privacy", "privacy_inspection_failed", envelope.Error)
+				if authorized || forwarded {
+					t.Fatalf("unsafe input escaped privacy boundary: authorized=%t forwarded=%t", authorized, forwarded)
+				}
+			})
+		}
 	}
 }
 
@@ -796,18 +834,21 @@ func TestPrivacyDetectorAndPolicyFailuresUseSanitizedStatusMapping(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
+			records := &memoryRequestRecordStore{}
 			handler := NewWithDependencies(Dependencies{
 				Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
 					return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
 				}),
-				PrivacyFilter: filter,
+				PrivacyFilter:  filter,
+				RequestRecords: records,
 			})
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(
 				response,
 				httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"alice@example.com"}`)),
 			)
-			assertInferenceError(t, response, test.status, test.code)
+			envelope := assertInferenceError(t, response, test.status, test.code)
+			assertPrivacyErrorRecord(t, records, response.Code, contract.RequestStatusFailed, "privacy", test.code, envelope.Error)
 			if strings.Contains(response.Body.String(), "alice@example.com") ||
 				strings.Contains(response.Body.String(), "private") {
 				t.Fatalf("private detector detail leaked: %s", response.Body.String())
@@ -919,23 +960,31 @@ func emailPlaceholderFromBody(t *testing.T, body []byte) string {
 	return string(matches[0])
 }
 
-type unsafeRewritePrivacyFilter struct{}
-
-func (unsafeRewritePrivacyFilter) ResolvePolicy(context.Context, privacy.Scope) (privacy.Policy, error) {
-	return privacy.Policy{
-		Enabled: true,
-		Mode:    privacy.ModeRegex,
-		Action:  privacy.ActionRedact,
-	}, nil
-}
-
-func (unsafeRewritePrivacyFilter) Inspect(
-	context.Context,
-	privacy.Policy,
-	contract.ProtocolID,
-	[]byte,
-) (privacy.Result, error) {
-	return privacy.Result{Decision: privacy.DecisionBlock}, privacy.ErrUnsafeRewrite
+func assertPrivacyErrorRecord(t *testing.T, records *memoryRequestRecordStore, httpStatus int, status contract.RequestStatus, category, eventSummary string, failure inferenceError) {
+	t.Helper()
+	if len(records.records) != 1 {
+		t.Fatalf("records = %#v", records.records)
+	}
+	record := records.records[0]
+	if record.Status != status || record.HTTPStatus == nil || *record.HTTPStatus != httpStatus || record.AttemptIndex != 0 {
+		t.Fatalf("request failure metadata = %#v", record)
+	}
+	want := contract.ErrorSummary{Category: category, Code: failure.Code, Message: failure.Message, Retryable: failure.Retryable}
+	if record.Error == nil || *record.Error != want {
+		t.Fatalf("recorded error = %#v, want %#v", record.Error, want)
+	}
+	var privacyEvents []contract.RequestEvent
+	for _, event := range record.Events {
+		if event.Kind == contract.RequestEventPrivacy {
+			privacyEvents = append(privacyEvents, event)
+		}
+	}
+	if len(privacyEvents) != 1 || privacyEvents[0].Status != status || privacyEvents[0].Summary != eventSummary {
+		t.Fatalf("privacy events = %#v", privacyEvents)
+	}
+	if strings.Contains(failure.Message, "alice@example.com") {
+		t.Fatalf("error leaked sensitive input: %q", failure.Message)
+	}
 }
 
 type trackingRequestBody struct {

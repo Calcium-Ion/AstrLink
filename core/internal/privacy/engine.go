@@ -129,7 +129,6 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 	case ActionRedact:
 		if !utf8.Valid(body) || document.duplicateKeys {
 			return Result{
-				Decision:           DecisionBlock,
 				Findings:           accepted,
 				SuppressedFindings: suppressed,
 			}, ErrUnsafeRewrite
@@ -145,7 +144,6 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 		)
 		if err != nil {
 			return Result{
-				Decision:           DecisionBlock,
 				Findings:           accepted,
 				SuppressedFindings: suppressed,
 			}, ErrUnsafeRewrite

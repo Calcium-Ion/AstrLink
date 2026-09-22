@@ -370,7 +370,7 @@ func TestProtocolExtractionScansOfficialObjectToolPayloads(t *testing.T) {
 	}
 }
 
-func TestEngineBlocksMalformedDuplicateOrUnsafeRewriteInputWithoutLeakingIt(t *testing.T) {
+func TestEngineRejectsUnsafeInputWithoutReportingPolicyBlockOrLeakingIt(t *testing.T) {
 	const sensitive = "alice@example.com"
 	engine := newTestEngine(t, nil)
 	for _, body := range []string{
@@ -378,11 +378,14 @@ func TestEngineBlocksMalformedDuplicateOrUnsafeRewriteInputWithoutLeakingIt(t *t
 		`{"input":"alice@example.com","input":"safe"}`,
 		string([]byte{'{', '"', 'i', 'n', 'p', 'u', 't', '"', ':', '"', 0xff, '"', '}'}),
 	} {
-		_, err := engine.Inspect(context.Background(), Policy{
+		result, err := engine.Inspect(context.Background(), Policy{
 			Enabled: true, Mode: ModeRegex, Action: ActionRedact,
 		}, contract.ProtocolOpenAIResponses, []byte(body))
 		if !errors.Is(err, ErrUnsafeInput) && !errors.Is(err, ErrUnsafeRewrite) {
 			t.Fatalf("Inspect(%q) error = %v", body, err)
+		}
+		if result.Decision != "" {
+			t.Fatalf("failed inspection reported policy decision %q", result.Decision)
 		}
 		if strings.Contains(err.Error(), sensitive) {
 			t.Fatalf("error leaked match: %v", err)
@@ -425,7 +428,7 @@ func TestEngineRevalidatesStructuredToolArgumentStringsAfterRedaction(t *testing
 	result, err := newTestEngine(t, unsafeModel).Inspect(context.Background(), Policy{
 		Enabled: true, Mode: ModeModel, LocalModelID: testLocalModelID, Action: ActionRedact,
 	}, contract.ProtocolOpenAIResponses, []byte(body))
-	if !errors.Is(err, ErrUnsafeRewrite) || result.Decision != DecisionBlock {
+	if !errors.Is(err, ErrUnsafeRewrite) || result.Decision != "" {
 		t.Fatalf("unsafe structured rewrite result = %#v, error = %v", result, err)
 	}
 }

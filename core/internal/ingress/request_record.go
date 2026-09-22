@@ -1537,7 +1537,8 @@ func errorSummaryFromHTTPStatus(status int) contract.ErrorSummary {
 func errorSummaryFromInference(code, message string, retryable bool) contract.ErrorSummary {
 	category := "gateway"
 	switch code {
-	case "policy_blocked":
+	case "policy_blocked", "privacy_inspection_failed", "privacy_redaction_failed",
+		"privacy_policy_unavailable", "safety_engine_unavailable":
 		category = "privacy"
 	case "invalid_access_token", "token_query_forbidden":
 		category = "auth"
