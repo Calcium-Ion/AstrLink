@@ -33,6 +33,22 @@ func TestRequestRecordValidation(t *testing.T) {
 		wantErr string
 	}{
 		{name: "accepts valid metadata record"},
+		{name: "accepts zero first token latency", mutate: func(record *RequestRecord) {
+			value := 0
+			record.Streaming, record.FirstTokenMs = true, &value
+		}},
+		{name: "rejects first token for non-streaming", mutate: func(record *RequestRecord) {
+			value := 1
+			record.FirstTokenMs = &value
+		}, wantErr: "first_token_ms"},
+		{name: "rejects first token after completion", mutate: func(record *RequestRecord) {
+			value := 13
+			record.Streaming, record.FirstTokenMs = true, &value
+		}, wantErr: "first_token_ms"},
+		{name: "rejects negative first token latency", mutate: func(record *RequestRecord) {
+			value := -1
+			record.Streaming, record.FirstTokenMs = true, &value
+		}, wantErr: "first_token_ms"},
 		{
 			name: "rejects invalid status",
 			mutate: func(record *RequestRecord) {

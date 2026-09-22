@@ -125,6 +125,7 @@ export interface RequestRecord {
   local_access_token_id: string | null;
   http_status: number | null;
   latency_ms: number | null;
+  first_token_ms?: number | null;
   usage: RequestUsage | null;
   error: RequestErrorSummary | null;
   audit: RequestAuditSummary;
@@ -162,6 +163,9 @@ export interface RequestSession {
   last_started_at: string;
   completed_at: string | null;
   duration_ms: number;
+  tool_duration_ms?: number | null;
+  average_ttft_ms?: number | null;
+  output_tokens_per_second?: number | null;
   active_request_starts: string[];
   turn_count: number;
   call_count: number;
@@ -546,6 +550,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     ),
     http_status: nullableIntAt(record.http_status, `${path}.http_status`),
     latency_ms: nullableIntAt(record.latency_ms, `${path}.latency_ms`),
+    first_token_ms: optionalPerformanceNumber(record.first_token_ms, `${path}.first_token_ms`, true),
     usage: parseUsage(record.usage, `${path}.usage`),
     error: parseError(record.error, `${path}.error`),
     audit: parseAuditSummary(record.audit, `${path}.audit`),
@@ -672,6 +677,14 @@ export function parseRequestSession(value: unknown): RequestSession {
   return parseRequestSessionAt(value, "$");
 }
 
+function optionalPerformanceNumber(value: unknown, path: string, integer = false): number | null {
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || (integer && !Number.isInteger(value))) {
+    return invalid(path, "应为非负有效数值");
+  }
+  return value;
+}
+
 function parseRequestSessionAt(value: unknown, path: string): RequestSession {
   const session = objectAt(value, path);
   if (
@@ -703,6 +716,9 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
     last_started_at: stringAt(session.last_started_at, `${path}.last_started_at`),
     completed_at: nullableStringAt(session.completed_at, `${path}.completed_at`),
     duration_ms: durationMs,
+    tool_duration_ms: optionalPerformanceNumber(session.tool_duration_ms, `${path}.tool_duration_ms`, true),
+    average_ttft_ms: optionalPerformanceNumber(session.average_ttft_ms, `${path}.average_ttft_ms`),
+    output_tokens_per_second: optionalPerformanceNumber(session.output_tokens_per_second, `${path}.output_tokens_per_second`),
     active_request_starts: activeRequestStarts,
     turn_count: turnCount,
     call_count: callCount,

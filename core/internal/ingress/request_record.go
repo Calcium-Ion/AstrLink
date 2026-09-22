@@ -419,6 +419,10 @@ func (session *recordSession) recordSnapshot(
 		PrivacyRestore:     session.privacyRestore,
 		Events:             append([]contract.RequestEvent(nil), session.events...),
 	}
+	if session.upstreamScanner != nil && !session.upstreamScanner.firstOutputAt.IsZero() {
+		firstTokenMs := int(max(0, session.upstreamScanner.firstOutputAt.Sub(session.startedAt).Milliseconds()))
+		record.FirstTokenMs = &firstTokenMs
+	}
 	if session.sessionID != "" {
 		id := session.sessionID
 		record.SessionID = &id

@@ -143,6 +143,7 @@ describe("request-record IPC contract", () => {
       local_access_token_id: fullRecord.local_access_token_id,
       http_status: 200,
       latency_ms: 120,
+      first_token_ms: null,
       usage: {
         input_tokens: 10,
         output_tokens: 20,
@@ -161,6 +162,7 @@ describe("request-record IPC contract", () => {
     });
     expect(parseRequestRecord(nullOptionalRecord)).toEqual({
       ...nullOptionalRecord,
+      first_token_ms: null,
       reasoning_effort: null,
       parent_request_id: null,
       attempt_index: 1,
@@ -273,6 +275,7 @@ describe("request-record IPC contract", () => {
       items: [
         {
           ...nullOptionalRecord,
+          first_token_ms: null,
           reasoning_effort: null,
           parent_request_id: null,
           attempt_index: 1,
@@ -322,6 +325,9 @@ describe("request-record IPC contract", () => {
       started_at: "2026-08-16T10:00:00Z",
       last_started_at: "2026-08-16T10:01:00Z",
       duration_ms: 120,
+      tool_duration_ms: null,
+      average_ttft_ms: null,
+      output_tokens_per_second: null,
       active_request_starts: [],
       completed_at: "2026-08-16T10:01:30Z",
       turn_count: 2,
@@ -475,4 +481,19 @@ describe("request-record IPC contract", () => {
     expect(displayRequestStatus("failed", 502)).toBe("failed");
     expect(displayRequestStatus("succeeded", null)).toBe("succeeded");
   });
+});
+
+it("parses performance samples and rejects invalid timing and rates", () => {
+  expect(parseRequestRecord({ ...fullRecord, first_token_ms: 0 }).first_token_ms).toBe(0);
+  expect(parseRequestSession({ ...fullSession, tool_duration_ms: 0, average_ttft_ms: 2200.5, output_tokens_per_second: 131.25 })).toMatchObject({
+    tool_duration_ms: 0, average_ttft_ms: 2200.5, output_tokens_per_second: 131.25,
+  });
+  for (const key of ["tool_duration_ms", "average_ttft_ms", "output_tokens_per_second"]) {
+    expect(parseRequestSession(fullSession)[key as "tool_duration_ms"]).toBeNull();
+    for (const value of [-1, Infinity, NaN, "12"]) {
+      expect(() => parseRequestSession({ ...fullSession, [key]: value })).toThrow(key);
+    }
+  }
+  expect(() => parseRequestSession({ ...fullSession, tool_duration_ms: 1.5 })).toThrow("tool_duration_ms");
+  expect(() => parseRequestRecord({ ...fullRecord, first_token_ms: -1 })).toThrow("first_token_ms");
 });

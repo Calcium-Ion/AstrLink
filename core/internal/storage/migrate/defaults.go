@@ -631,5 +631,8 @@ SET document_json = json_remove(document_json, '$.disabled_models')`,
 			`CREATE TABLE channel_binding_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, document_json TEXT NOT NULL)`,
 			`CREATE INDEX channel_binding_events_session_idx ON channel_binding_events(session_id, id DESC)`,
 		}},
+		{Version: 31, Name: "request_first_token_timing", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN first_token_ms INTEGER CHECK(first_token_ms IS NULL OR first_token_ms >= 0)`,
+		}},
 	}
 }

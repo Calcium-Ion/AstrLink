@@ -23,6 +23,8 @@ import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterSelect } from "@/components/FilterSelect";
 import { FormMessage } from "@/components/FormMessage";
+import { HelpPopover } from "@/components/HelpPopover";
+import { Metric as SummaryMetric, MetricGroup } from "@/components/Metric";
 import { IconButton } from "@/components/IconButton";
 import { ModelLabel } from "@/components/ModelLabel";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
@@ -165,6 +167,9 @@ function sessionSummaryKey(session: RequestSession): string {
     session.last_started_at,
     session.completed_at ?? "",
     session.duration_ms,
+    session.tool_duration_ms ?? "",
+    session.average_ttft_ms ?? "",
+    session.output_tokens_per_second ?? "",
     ...session.active_request_starts,
   ].join("|");
 }
@@ -1260,6 +1265,52 @@ function SessionDuration({ session }: { session: RequestSession }) {
   return <>{formatDuration(sessionRuntimeMs(session, nowMs))}</>;
 }
 
+function SessionPerformance({ session }: { session: RequestSession }) {
+  const t = useT();
+  return (
+    <MetricGroup
+      aria-label={t("records.performanceStats")}
+      className="shrink-0 border-b"
+      data-testid="session-performance"
+    >
+      <SummaryMetric
+        size="compact"
+        label={
+          <span className="flex items-center gap-1">
+            {t("records.modelDuration")}
+            <HelpPopover label={t("records.performanceStats")}>
+              <div className="space-y-2">
+                <p>{t("records.modelDurationHint")}</p>
+                <p>{t("records.toolDurationHint")}</p>
+                <p>{t("records.averageTTFTHint")}</p>
+                <p>{t("records.outputSpeedHint")}</p>
+                <p>{t("records.performanceMissingHint")}</p>
+              </div>
+            </HelpPopover>
+          </span>
+        }
+        value={<SessionDuration session={session} />}
+      />
+      <SummaryMetric
+        size="compact"
+        label={t("records.toolDuration")}
+        title={t("records.toolDurationHint")}
+        value={session.tool_duration_ms == null ? "—" : `≈ ${formatDuration(session.tool_duration_ms)}`}
+      />
+      <SummaryMetric
+        size="compact"
+        label={t("records.averageTTFT")}
+        value={session.average_ttft_ms == null ? "—" : formatDuration(session.average_ttft_ms)}
+      />
+      <SummaryMetric
+        size="compact"
+        label={t("records.outputSpeed")}
+        value={session.output_tokens_per_second == null ? "—" : `${session.output_tokens_per_second.toFixed(1)} tok/s`}
+      />
+    </MetricGroup>
+  );
+}
+
 function RecordLatency({ record }: { record: RequestRecord }) {
   const nowMs = useLiveClock(
     record.latency_ms === null && !record.completed_at,
@@ -1748,12 +1799,12 @@ function RecordDetail({
                 <RequestServiceLabel service={requestServiceIdentity(record, services)} />
               </dd>
             </div>
-            <div className="flex items-center gap-1.5">
+            {isModelDiscoveryProtocol(session.input_protocol) && <div className="flex items-center gap-1.5">
               <dt>{t("records.duration")}</dt>
               <dd className="font-medium tabular-nums text-foreground">
                 <SessionDuration session={session} />
               </dd>
-            </div>
+            </div>}
             <div className="flex items-center gap-1.5">
               <dt>{t("records.turns")}</dt>
               <dd className="font-medium tabular-nums text-foreground">{session.turn_count}</dd>
@@ -1764,6 +1815,8 @@ function RecordDetail({
             </div>
           </dl>
         </div>
+
+        {!isModelDiscoveryProtocol(session.input_protocol) && <SessionPerformance session={session} />}
 
         <TabsContent className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" value="binding">
           <SessionChannelBindings key={session.id} sessionId={session.id} serviceNames={serviceNames} onSelectRequest={(id) => { onSelectTurn(id); setDetailTab("trajectory"); }} />

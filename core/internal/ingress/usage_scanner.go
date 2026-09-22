@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -14,6 +15,7 @@ import (
 // usageScanner is a passive observer of client-facing response bytes. It never
 // modifies the stream and never fails the response; overflow disables capture.
 type usageScanner struct {
+	firstOutputAt    time.Time
 	complete         bool
 	protocol         contract.ProtocolID
 	streaming        bool
@@ -198,6 +200,9 @@ func (scanner *usageScanner) parseEventJSON(payload []byte) {
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &document); err != nil || document == nil {
 		return
+	}
+	if scanner.streaming && scanner.firstOutputAt.IsZero() && hasGeneratedOutput(scanner.protocol, payload) {
+		scanner.firstOutputAt = time.Now()
 	}
 	if scanner.observer != nil && (scanner.streaming || !scanner.observerFed) {
 		scanner.observer.ObserveEvent(document)

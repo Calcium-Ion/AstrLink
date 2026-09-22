@@ -405,6 +405,9 @@ describe("RequestRecords", () => {
       turn_count: 2,
       call_count: 3,
       duration_ms: 3620,
+      tool_duration_ms: 19800,
+      average_ttft_ms: 2200,
+      output_tokens_per_second: 131.25,
     });
     bridgeMocks.listRequestSessions.mockResolvedValue({ items: [summary], next_cursor: null });
     bridgeMocks.getRequestSession.mockResolvedValue({ ...summary, turns: [firstRecord, last] });
@@ -414,8 +417,12 @@ describe("RequestRecords", () => {
     await act(async () => { row.click(); });
     await act(async () => await Promise.resolve());
     const duration = () => [...container.querySelectorAll("dt")]
-      .find(node => node.textContent === i18n.t("records.duration"))?.nextElementSibling?.textContent;
+      .find(node => node.textContent === i18n.t("records.modelDuration"))?.nextElementSibling?.textContent;
     expect(duration()).toBe("3.6 s");
+    const stats = container.querySelector('[data-testid="session-performance"]')!;
+    expect(stats.textContent).toContain("≈ 19.8 s");
+    expect(stats.textContent).toContain("2.2 s");
+    expect(stats.textContent).toContain("131.3 tok/s");
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(duration()).toBe("3.6 s");
   });

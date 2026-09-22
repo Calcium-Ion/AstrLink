@@ -325,18 +325,22 @@ func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract
 		return nil
 	}
 	byID := make(map[string]*contract.RequestSession, len(sessions))
+	performance := make(map[string]*sessionPerformance, len(sessions))
 	args := make([]any, len(sessions))
 	for i := range sessions {
 		session := &sessions[i]
 		session.DurationMs = 0
 		session.ActiveRequestStarts = make([]time.Time, 0)
 		byID[string(session.ID)] = session
+		performance[string(session.ID)] = &sessionPerformance{}
 		args[i] = string(session.ID)
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
 	rows, err := store.db.QueryContext(ctx, `
 SELECT COALESCE(root.session_id, root.id), call.started_at, call.completed_at,
-       call.status, call.latency_ms, json_extract(call.error_json, '$.code')
+       call.status, call.latency_ms, json_extract(call.error_json, '$.code'),
+       root.id, root.turn_index, call.id, call.input_protocol, call.streaming, call.first_token_ms,
+       json_extract(call.usage_json, '$.output_tokens'), json_extract(call.usage_json, '$.billing_incomplete')
 FROM request_records root
 JOIN request_records call ON call.id = root.id OR call.parent_request_id = root.id
 WHERE root.parent_request_id IS NULL AND COALESCE(root.session_id, root.id) IN (`+placeholders+`)
@@ -349,32 +353,58 @@ ORDER BY call.started_at, call.id`, args...)
 		var id, startedAt, status string
 		var completedAt, errorCode sql.NullString
 		var latency sql.NullInt64
-		if err := rows.Scan(&id, &startedAt, &completedAt, &status, &latency, &errorCode); err != nil {
+		var rootID, callID, protocol string
+		var turn, firstToken, outputTokens sql.NullInt64
+		var streaming bool
+		var incomplete sql.NullBool
+		if err := rows.Scan(&id, &startedAt, &completedAt, &status, &latency, &errorCode,
+			&rootID, &turn, &callID, &protocol, &streaming, &firstToken, &outputTokens, &incomplete); err != nil {
 			return fmt.Errorf("scan session runtime: %w", err)
 		}
 		session := byID[id]
-		if latency.Valid {
-			session.DurationMs += max(0, latency.Int64)
-			continue
-		}
 		started, err := time.Parse(time.RFC3339Nano, startedAt)
 		if err != nil {
 			return fmt.Errorf("parse session runtime start: %w", err)
 		}
-		if completedAt.Valid {
+		record := contract.RequestRecord{ID: contract.RequestID(callID), StartedAt: started,
+			InputProtocol: contract.ProtocolID(protocol), Streaming: streaming}
+		if firstToken.Valid {
+			value := int(firstToken.Int64)
+			record.FirstTokenMs = &value
+		}
+		if latency.Valid {
+			value := int(latency.Int64)
+			record.LatencyMs = &value
+		}
+		if outputTokens.Valid {
+			record.Usage = &contract.Usage{OutputTokens: int(outputTokens.Int64), BillingIncomplete: incomplete.Bool}
+		}
+		if errorCode.Valid {
+			record.Error = &contract.ErrorSummary{Code: errorCode.String}
+		}
+		if completedAt.Valid && errorCode.String != "core_interrupted" {
+			completed, err := time.Parse(time.RFC3339Nano, completedAt.String)
+			if err != nil {
+				return fmt.Errorf("parse session runtime completion: %w", err)
+			}
+			record.CompletedAt = &completed
+		}
+		performance[id].observe(rootID, int(turn.Int64), record)
+		if latency.Valid {
+			session.DurationMs += max(0, latency.Int64)
+		} else if completedAt.Valid {
 			// Startup recovery timestamps say when the interruption was discovered,
 			// not when execution stopped. Unknown runtime must not include downtime.
 			if errorCode.String == "core_interrupted" {
 				continue
 			}
-			completed, err := time.Parse(time.RFC3339Nano, completedAt.String)
-			if err != nil {
-				return fmt.Errorf("parse session runtime completion: %w", err)
-			}
-			session.DurationMs += max(0, completed.Sub(started).Milliseconds())
+			session.DurationMs += max(0, record.CompletedAt.Sub(started).Milliseconds())
 		} else if status == string(contract.RequestStatusPending) {
 			session.ActiveRequestStarts = append(session.ActiveRequestStarts, started)
 		}
+	}
+	for id, stats := range performance {
+		stats.apply(byID[id])
 	}
 	return rows.Err()
 }
@@ -410,7 +440,7 @@ const requestSessionSummaryColumns = `
     session_id, NULL, NULL, input_preview, NULL, created_at,
     turn_index, NULL, NULL, NULL, NULL,
     (SELECT COUNT(*) FROM request_records children
-     WHERE children.parent_request_id = request_records.id), NULL`
+     WHERE children.parent_request_id = request_records.id), NULL, NULL`
 
 func (store *Store) loadSessionSummaries(ctx context.Context, items []sessionAggregate) (map[string][]contract.RequestRecord, error) {
 	result := make(map[string][]contract.RequestRecord, len(items))

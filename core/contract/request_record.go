@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"time"
 	"unicode/utf8"
@@ -348,14 +349,17 @@ type RequestRecord struct {
 	InputProtocol   ProtocolID       `json:"input_protocol"`
 	RequestedModel  *string          `json:"requested_model"`
 	// ReasoningEffort is the explicitly requested level; nil means unspecified or historical.
-	ReasoningEffort    *string                `json:"reasoning_effort"`
-	Streaming          bool                   `json:"streaming"`
-	RouteID            *RouteID               `json:"route_id"`
-	ServiceID          *ServiceID             `json:"service_id"`
-	LocalAccessTokenID *AccessTokenID         `json:"local_access_token_id"`
-	Plan               *ExecutionPlan         `json:"plan"`
-	HTTPStatus         *int                   `json:"http_status"`
-	LatencyMs          *int                   `json:"latency_ms"`
+	ReasoningEffort    *string        `json:"reasoning_effort"`
+	Streaming          bool           `json:"streaming"`
+	RouteID            *RouteID       `json:"route_id"`
+	ServiceID          *ServiceID     `json:"service_id"`
+	LocalAccessTokenID *AccessTokenID `json:"local_access_token_id"`
+	Plan               *ExecutionPlan `json:"plan"`
+	HTTPStatus         *int           `json:"http_status"`
+	LatencyMs          *int           `json:"latency_ms"`
+	// FirstTokenMs measures upstream send to first generated stream content
+	// (text, reasoning, or tool call). Nil for non-streaming and historical calls.
+	FirstTokenMs       *int                   `json:"first_token_ms"`
 	Usage              *Usage                 `json:"usage"`
 	Error              *ErrorSummary          `json:"error"`
 	Audit              AuditRecordSummary     `json:"audit"`
@@ -458,6 +462,10 @@ func (record RequestRecord) Validate() error {
 	if record.LatencyMs != nil && *record.LatencyMs < 0 {
 		return fmt.Errorf("latency_ms must be non-negative")
 	}
+	if record.FirstTokenMs != nil && (!record.Streaming || *record.FirstTokenMs < 0 ||
+		(record.LatencyMs != nil && *record.FirstTokenMs > *record.LatencyMs)) {
+		return fmt.Errorf("first_token_ms requires streaming and must be between zero and latency_ms")
+	}
 	if record.Usage != nil {
 		if err := record.Usage.Validate(); err != nil {
 			return err
@@ -545,21 +553,26 @@ func (record RequestRecord) EffectiveStatus() RequestStatus {
 }
 
 type RequestSession struct {
-	ID                  SessionID      `json:"id"`
-	Title               string         `json:"title"`
-	StartedAt           time.Time      `json:"started_at"`
-	LastStartedAt       time.Time      `json:"last_started_at"`
-	CompletedAt         *time.Time     `json:"completed_at"`
-	DurationMs          int64          `json:"duration_ms"`
-	ActiveRequestStarts []time.Time    `json:"active_request_starts"`
-	TurnCount           int            `json:"turn_count"`
-	CallCount           int            `json:"call_count"`
-	Status              SessionStatus  `json:"status"`
-	RequestedModel      *string        `json:"requested_model"`
-	ReasoningEffort     *string        `json:"reasoning_effort"`
-	InputProtocol       ProtocolID     `json:"input_protocol"`
-	ServiceID           *ServiceID     `json:"service_id"`
-	LocalAccessTokenID  *AccessTokenID `json:"local_access_token_id"`
+	ID            SessionID  `json:"id"`
+	Title         string     `json:"title"`
+	StartedAt     time.Time  `json:"started_at"`
+	LastStartedAt time.Time  `json:"last_started_at"`
+	CompletedAt   *time.Time `json:"completed_at"`
+	DurationMs    int64      `json:"duration_ms"`
+	// ToolDurationMs estimates gaps between calls in the same user turn;
+	// retry backoff and gaps between user turns are excluded. Nil if unknown.
+	ToolDurationMs        *int64         `json:"tool_duration_ms"`
+	AverageTTFTMs         *float64       `json:"average_ttft_ms"`
+	OutputTokensPerSecond *float64       `json:"output_tokens_per_second"`
+	ActiveRequestStarts   []time.Time    `json:"active_request_starts"`
+	TurnCount             int            `json:"turn_count"`
+	CallCount             int            `json:"call_count"`
+	Status                SessionStatus  `json:"status"`
+	RequestedModel        *string        `json:"requested_model"`
+	ReasoningEffort       *string        `json:"reasoning_effort"`
+	InputProtocol         ProtocolID     `json:"input_protocol"`
+	ServiceID             *ServiceID     `json:"service_id"`
+	LocalAccessTokenID    *AccessTokenID `json:"local_access_token_id"`
 }
 
 func (session RequestSession) Validate() error {
@@ -577,6 +590,19 @@ func (session RequestSession) Validate() error {
 	}
 	if session.DurationMs < 0 {
 		return fmt.Errorf("duration_ms must be non-negative")
+	}
+	if session.ToolDurationMs != nil && *session.ToolDurationMs < 0 {
+		return fmt.Errorf("tool_duration_ms must be non-negative")
+	}
+	for _, metric := range []struct {
+		name  string
+		value *float64
+	}{
+		{"average_ttft_ms", session.AverageTTFTMs}, {"output_tokens_per_second", session.OutputTokensPerSecond},
+	} {
+		if metric.value != nil && (*metric.value < 0 || math.IsNaN(*metric.value) || math.IsInf(*metric.value, 0)) {
+			return fmt.Errorf("%s must be finite and non-negative", metric.name)
+		}
 	}
 	for _, started := range session.ActiveRequestStarts {
 		if started.IsZero() {

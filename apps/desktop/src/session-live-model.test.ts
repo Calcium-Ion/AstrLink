@@ -27,6 +27,13 @@ function session(
 }
 
 describe("mergeLiveSessions", () => {
+  it("adopts changes to conversation performance independently of runtime", () => {
+    const before = session("sess_a");
+    for (const field of ["tool_duration_ms", "average_ttft_ms", "output_tokens_per_second"]) {
+      const after = session("sess_a", { [field]: 100 });
+      expect(mergeLiveSessions([before], [], [after], false).items[0]).toBe(after);
+    }
+  });
   it("adopts runtime changes when an earlier concurrent call finishes", () => {
     const before = session("sess_a", { active_request_starts: ["2026-07-25T09:59:00Z"] });
     const after = session("sess_a", { duration_ms: 8000 });
