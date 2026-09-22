@@ -426,7 +426,9 @@ const (
 )
 
 // SubscriptionUsage is the sanitized live quota snapshot for a connected
-// Codex subscription. It never includes email, user_id, account_id, or tokens.
+// subscription (Codex, Claude Code or Grok). Each provider maps its own usage
+// endpoint onto these fields. It never includes email, user_id, account_id,
+// or tokens.
 type SubscriptionUsage struct {
 	ServiceID             ServiceID              `json:"service_id"`
 	FetchedAt             time.Time              `json:"fetched_at"`
@@ -483,7 +485,8 @@ func (usage SubscriptionUsage) Validate() error {
 	return nil
 }
 
-// RateLimitWindow is one rolling quota window from the official Codex usage API.
+// RateLimitWindow is one rolling quota window (Codex primary/secondary,
+// Claude five_hour/seven_day, Grok billing period).
 type RateLimitWindow struct {
 	UsedPercent        float64    `json:"used_percent"`
 	LimitWindowSeconds *int64     `json:"limit_window_seconds,omitempty"`
@@ -512,7 +515,7 @@ func (window *RateLimitWindow) validate(field string) error {
 }
 
 // AdditionalRateLimit is a model- or feature-specific quota besides the
-// default Codex windows.
+// default windows (Codex additional_rate_limits, Claude per-model weekly caps).
 type AdditionalRateLimit struct {
 	LimitName      string           `json:"limit_name"`
 	MeteredFeature string           `json:"metered_feature,omitempty"`

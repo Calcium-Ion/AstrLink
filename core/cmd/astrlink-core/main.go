@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
+	"github.com/QuantumNous/astrlink/core/internal/codingplan"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
@@ -232,6 +233,7 @@ func main() {
 			AuditKeys:          store,
 			AuditBlobs:         store,
 			Subscriptions:      subscriptionManager,
+			CodingPlans:        codingplan.New(store, nil),
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,

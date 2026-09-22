@@ -106,6 +106,7 @@ import { filterModels } from "./model-groups";
 import { ServiceModelsEditor } from "./ServiceModelsEditor";
 import {
   serviceKindLabel,
+  hasPlanUsage,
   isSubscriptionKind,
   serviceStatusLabel,
   type HTTPServiceKind,
@@ -638,7 +639,7 @@ export function ServiceManager({
   const connectedUsageIDs = useMemo(
     () =>
       services
-        .filter((service) => service.subscription?.status === "connected")
+        .filter((service) => hasPlanUsage(service))
         .map((service) => service.id)
         .sort()
         .join("\0"),
@@ -1573,7 +1574,7 @@ export function ServiceManager({
                       }
                       usage={
                         <div className="grid gap-1">
-                          {subscription?.status === "connected" ? (
+                          {hasPlanUsage(service) ? (
                             <SubscriptionUsageMeter
                               error={usageByService[service.id]?.error}
                               now={new Date()}

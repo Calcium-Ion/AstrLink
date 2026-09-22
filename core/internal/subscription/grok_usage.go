@@ -22,18 +22,18 @@ func (manager *Manager) grokUsage(ctx context.Context, tokens accountauth.Accoun
 	endpoint := strings.TrimRight(manager.grokConfig.APIBaseURL, "/") + "/v1/billing?format=credits"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return contract.SubscriptionUsage{}, ErrUsageUnavailable
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	accountauth.ApplyGrokAPIHeaders(request.Header, tokens, manager.grokConfig.ModelsClientVersion)
 	request.Header.Set("Accept", "application/json")
 	response, err := manager.grokConfig.HTTPClient.Do(request)
 	if err != nil {
-		return contract.SubscriptionUsage{}, ErrUsageUnavailable
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return contract.SubscriptionUsage{}, ErrUsageUnavailable
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	if response.StatusCode != http.StatusOK {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: status %d", ErrUsageUnavailable, response.StatusCode)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/codingplan"
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
@@ -687,20 +688,25 @@ func (handler *Handler) probeServiceResponses(writer http.ResponseWriter, reques
 }
 
 func (handler *Handler) getServiceUsage(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
-	if handler.subscriptions == nil {
-		writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
-		return
-	}
 	record, err := handler.serviceStore.GetService(request.Context(), id)
 	if err != nil {
 		handler.writeStoreError(writer, err)
 		return
 	}
-	if !record.Service.Kind.IsSubscription() {
+	var usage contract.SubscriptionUsage
+	switch {
+	case record.Service.Kind.IsSubscription():
+		if handler.subscriptions == nil {
+			writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
+			return
+		}
+		usage, err = handler.subscriptions.Usage(request.Context(), id)
+	case handler.codingPlans != nil && codingplan.Supports(record.Service.Kind):
+		usage, err = handler.codingPlans.Usage(request.Context(), record.Service)
+	default:
 		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription usage")
 		return
 	}
-	usage, err := handler.subscriptions.Usage(request.Context(), id)
 	if err != nil {
 		log.Printf("control: subscription usage %s failed: %s", id, sanitizeUsageError(err))
 		writeServiceUsageError(writer, err)
@@ -751,6 +757,10 @@ func writeServiceUsageError(writer http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, subscription.ErrNotConnected):
 		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")
+	case errors.Is(err, codingplan.ErrUnsupported):
+		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription usage")
+	case errors.Is(err, codingplan.ErrCredentialUnavailable):
+		writeError(writer, http.StatusConflict, "service_credential_unavailable", "coding plan usage needs the service API key")
 	case errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err):
 		writeError(writer, http.StatusGatewayTimeout, "subscription_usage_timeout", "subscription usage lookup timed out")
 	default:

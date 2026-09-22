@@ -417,12 +417,12 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 		usage, err = manager.provider.Usage(ctx, tokens)
 	}
 	if err != nil {
-		return contract.SubscriptionUsage{}, err
+		return contract.SubscriptionUsage{}, usageError(account.Provider, err)
 	}
 	usage.ServiceID = id
 	usage.FetchedAt = now
 	if err := usage.Validate(); err != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		return contract.SubscriptionUsage{}, usageError(account.Provider, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable))
 	}
 	if manager.usageObserver != nil {
 		if err := manager.usageObserver(ctx, account, usage); err != nil {
@@ -441,7 +441,7 @@ func (manager *Manager) ConsumeReset(ctx context.Context, id contract.ServiceID)
 		return contract.SubscriptionUsageReset{}, err
 	}
 	if account.Provider != contract.SubscriptionProviderOpenAICodex {
-		return contract.SubscriptionUsageReset{}, ErrResetUnavailable
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("%s %w", usageProviderLabel(account.Provider), ErrResetUnavailable)
 	}
 	tokens, err := manager.AccessToken(ctx, id)
 	if err != nil {
@@ -462,13 +462,37 @@ func (manager *Manager) ConsumeReset(ctx context.Context, id contract.ServiceID)
 		}
 	}
 	if err != nil {
+		if errors.Is(err, ErrResetUnavailable) {
+			err = fmt.Errorf("codex %w", err)
+		}
 		return result, err
 	}
 	result.ServiceID = id
 	if err := result.Validate(); err != nil {
-		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: invalid payload", ErrResetUnavailable)
+		return contract.SubscriptionUsageReset{}, fmt.Errorf("codex %w: invalid payload", ErrResetUnavailable)
 	}
 	return result, nil
+}
+
+// usageError names the provider that failed ("claude usage unavailable: …")
+// so a Claude or Grok lookup is never reported as a Codex one. The result
+// still matches ErrUsageUnavailable and keeps timeout causes in the chain.
+func usageError(provider contract.SubscriptionProvider, err error) error {
+	if !errors.Is(err, ErrUsageUnavailable) {
+		err = fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
+	}
+	return fmt.Errorf("%s %w", usageProviderLabel(provider), err)
+}
+
+func usageProviderLabel(provider contract.SubscriptionProvider) string {
+	switch provider {
+	case contract.SubscriptionProviderClaudeCode:
+		return "claude"
+	case contract.SubscriptionProviderXAIGrok:
+		return "grok"
+	default:
+		return "codex"
+	}
 }
 
 func (manager *Manager) clearUsageCache(id contract.ServiceID) {

@@ -541,6 +541,65 @@ describe("ServiceManager", () => {
       .toEqual(["service_other_model", "service_second", "service_disabled", "service_first", codexService.id]);
   });
 
+  it("shows the provider plan quota on a Kimi coding plan row", async () => {
+    const kimi: Service = {
+      id: "service_kimi_plan",
+      name: "Kimi Coding",
+      kind: "kimi_coding",
+      enabled: true,
+      models: ["kimi-k2-thinking"],
+      capabilities: [{ protocol: "anthropic.messages", mode: "native", streaming: true }],
+      http: {
+        base_url: "https://api.kimi.com/coding",
+        auth: { scheme: "anthropic_api_key" },
+        credential_ref: "local://service/service_kimi_plan",
+      },
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    bridgeMocks.getServiceUsage.mockResolvedValue({
+      service_id: kimi.id,
+      fetched_at: "2026-09-22T11:00:00Z",
+      limit_reached: false,
+      primary: { used_percent: 25, limit_window_seconds: 18_000, reset_at: "2026-09-22T15:00:00Z" },
+      secondary: { used_percent: 10, limit_window_seconds: 604_800, reset_at: "2026-09-25T00:00:00Z" },
+    });
+
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[kimi, gatewayService, codexService]}
+          view={{ kind: "list" }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Only the coding plan row queries usage: the gateway has no quota API and
+    // the Codex row is disconnected.
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(kimi.id);
+    expect(container.querySelectorAll('[data-testid="subscription-usage"]')).toHaveLength(1);
+    const rollingQuota = container.querySelector('[role="progressbar"][aria-label="5 小时"]');
+    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("75");
+    const weeklyQuota = container.querySelector('[role="progressbar"][aria-label="7 天"]');
+    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("90");
+    expect(container.querySelector('[data-testid="subscription-plan"]')).toBeNull();
+    expect(container.querySelector('[data-testid="subscription-usage-reset"]')).toBeNull();
+  });
+
   it("shows rolling quota and reset on a connected Codex row", async () => {
     const connected: Service = {
       ...codexService,
