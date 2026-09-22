@@ -44,6 +44,12 @@ const status = {
       skill_installed: true,
       mcp_installed: true,
     },
+    {
+      id: "grok" as const,
+      detected: true,
+      skill_installed: false,
+      mcp_installed: false,
+    },
   ],
   preview_paths: ["/tmp/.agents/skills/astrlink-debug"],
 };
@@ -88,6 +94,8 @@ describe("AgentDebugSettings", () => {
     expect(container.textContent).toContain("已检测到");
     expect(container.textContent).toContain("Codex");
     expect(container.textContent).toContain("已安装");
+    expect(container.textContent).toContain("Grok Build");
+    expect(container.textContent).toContain("1 / 3");
 
     const install = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "补全安装",

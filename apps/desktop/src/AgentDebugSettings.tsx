@@ -24,7 +24,7 @@ import { i18n, useT } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 
-const toolIds = ["cursor", "claude", "codex"] as const;
+const toolIds = ["cursor", "claude", "codex", "grok"] as const;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : i18n.t("agentDebug.failed");

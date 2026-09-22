@@ -201,7 +201,7 @@
     "installScopeShort": "Includes skill + MCP",
     "installScopeTitle": "What gets installed",
     "installScopeBody": "The skill provides debugging guidance; MCP lets agents read local records. Setup covers all detected tools. Reinstalling restores missing files.",
-    "noTools": "No supported tools detected. Install and launch Cursor, Claude Code, or Codex once, then check again.",
+    "noTools": "No supported tools detected. Install and launch Cursor, Claude Code, Codex, or Grok Build once, then check again.",
     "missingRuntime": "The local MCP binary is missing. Complete setup before using it.",
     "promptTitle": "Try asking your agent",
     "copyPrompt": "Copy example",
@@ -234,7 +234,8 @@
     "tools": {
       "cursor": "Cursor",
       "claude": "Claude Code",
-      "codex": "Codex"
+      "codex": "Codex",
+      "grok": "Grok Build"
     }
   },
   "today": {

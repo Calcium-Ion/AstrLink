@@ -1,4 +1,4 @@
-export type AgentToolId = "cursor" | "claude" | "codex";
+export type AgentToolId = "cursor" | "claude" | "codex" | "grok";
 
 export interface AgentToolStatus {
   id: AgentToolId;
@@ -24,7 +24,7 @@ export interface AgentInstallReceipt {
   files: string[];
 }
 
-const TOOL_IDS: readonly AgentToolId[] = ["cursor", "claude", "codex"];
+const TOOL_IDS: readonly AgentToolId[] = ["cursor", "claude", "codex", "grok"];
 
 function invalid(path: string, detail: string): never {
   throw new Error(`Invalid AstrLink agent-install IPC at ${path}: ${detail}`);
@@ -140,6 +140,6 @@ export function parseAgentInstallReceipt(value: unknown): AgentInstallReceipt {
   };
 }
 
-export function toolLabelKey(id: AgentToolId): "cursor" | "claude" | "codex" {
+export function toolLabelKey(id: AgentToolId): "cursor" | "claude" | "codex" | "grok" {
   return id;
 }

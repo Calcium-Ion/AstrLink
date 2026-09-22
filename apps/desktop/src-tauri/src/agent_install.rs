@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::control_session::astrlink_home;
 
 pub const BUNDLE_NAME: &str = "astrlink-debug";
-pub const BUNDLE_VERSION: &str = "0.1.1";
+pub const BUNDLE_VERSION: &str = "0.1.2";
 pub const MCP_SERVER_NAME: &str = "astrlink";
 const RECEIPT_VERSION: u32 = 1;
 const MANAGED_FILES_NAME: &str = ".astrlink-managed-files.json";
@@ -48,6 +48,7 @@ pub enum AgentToolId {
     Cursor,
     Claude,
     Codex,
+    Grok,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,8 +84,8 @@ pub struct InstallContext {
 }
 
 impl AgentToolId {
-    fn all() -> [Self; 3] {
-        [Self::Cursor, Self::Claude, Self::Codex]
+    fn all() -> [Self; 4] {
+        [Self::Cursor, Self::Claude, Self::Codex, Self::Grok]
     }
 }
 
@@ -256,6 +257,7 @@ fn tool_detected(home: &Path, id: AgentToolId) -> bool {
         AgentToolId::Cursor => home.join(".cursor").is_dir(),
         AgentToolId::Claude => home.join(".claude").is_dir() || home.join(".claude.json").is_file(),
         AgentToolId::Codex => home.join(".codex").is_dir(),
+        AgentToolId::Grok => home.join(".grok").is_dir(),
     }
 }
 
@@ -264,6 +266,7 @@ fn tool_skill_dir(home: &Path, id: AgentToolId) -> PathBuf {
         AgentToolId::Cursor => home.join(".cursor").join("skills").join(BUNDLE_NAME),
         AgentToolId::Claude => home.join(".claude").join("skills").join(BUNDLE_NAME),
         AgentToolId::Codex => home.join(".codex").join("skills").join(BUNDLE_NAME),
+        AgentToolId::Grok => home.join(".grok").join("skills").join(BUNDLE_NAME),
     }
 }
 
@@ -272,6 +275,7 @@ fn tool_mcp_path(home: &Path, id: AgentToolId) -> PathBuf {
         AgentToolId::Cursor => home.join(".cursor").join("mcp.json"),
         AgentToolId::Claude => home.join(".claude.json"),
         AgentToolId::Codex => home.join(".codex").join("config.toml"),
+        AgentToolId::Grok => home.join(".grok").join("config.toml"),
     }
 }
 
@@ -300,7 +304,7 @@ fn mcp_configured(path: &Path, id: AgentToolId, command: &str) -> bool {
         return false;
     };
     match id {
-        AgentToolId::Codex => toml_command(&raw).as_deref() == Some(command),
+        AgentToolId::Codex | AgentToolId::Grok => toml_command(&raw).as_deref() == Some(command),
         AgentToolId::Cursor | AgentToolId::Claude => json_command(&raw).as_deref() == Some(command),
     }
 }
@@ -366,6 +370,7 @@ fn uninstall_tool(home: &Path, id: AgentToolId) -> Result<(), String> {
         .map_err(|error| format!("unable to read {}: {error}", mcp_path.display()))?;
     let next = match id {
         AgentToolId::Codex => remove_codex_mcp(&raw)?,
+        AgentToolId::Grok => remove_grok_mcp(&raw)?,
         AgentToolId::Claude => remove_json_mcp(&raw)?,
         AgentToolId::Cursor => remove_json_mcp(&raw)?,
     };
@@ -574,6 +579,7 @@ fn merge_mcp_config(path: &Path, id: AgentToolId, command: &str) -> Result<(), S
         AgentToolId::Cursor => merge_cursor_mcp(&existing, command)?,
         AgentToolId::Claude => merge_claude_mcp(&existing, command)?,
         AgentToolId::Codex => merge_codex_mcp(&existing, command)?,
+        AgentToolId::Grok => merge_grok_mcp(&existing, command)?,
     };
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -616,13 +622,21 @@ fn merge_json_mcp(existing: &str, command: &str, typed: bool) -> Result<String, 
 }
 
 pub fn merge_codex_mcp(existing: &str, command: &str) -> Result<String, String> {
+    merge_toml_mcp(existing, command, "Codex")
+}
+
+pub fn merge_grok_mcp(existing: &str, command: &str) -> Result<String, String> {
+    merge_toml_mcp(existing, command, "Grok Build")
+}
+
+fn merge_toml_mcp(existing: &str, command: &str, tool: &str) -> Result<String, String> {
     let mut document = if existing.trim().is_empty() {
         toml_edit::DocumentMut::new()
     } else {
         existing
             .parse::<toml_edit::DocumentMut>()
             .map_err(|error| {
-                format!("Codex config.toml is invalid; AstrLink will not overwrite it: {error}")
+                format!("{tool} config.toml is invalid; AstrLink will not overwrite it: {error}")
             })?
     };
     let mut server = toml_edit::Table::new();
@@ -652,13 +666,21 @@ pub fn remove_json_mcp(existing: &str) -> Result<String, String> {
 }
 
 pub fn remove_codex_mcp(existing: &str) -> Result<String, String> {
+    remove_toml_mcp(existing, "Codex")
+}
+
+pub fn remove_grok_mcp(existing: &str) -> Result<String, String> {
+    remove_toml_mcp(existing, "Grok Build")
+}
+
+fn remove_toml_mcp(existing: &str, tool: &str) -> Result<String, String> {
     if existing.trim().is_empty() {
         return Ok(existing.to_string());
     }
     let mut document = existing
         .parse::<toml_edit::DocumentMut>()
         .map_err(|error| {
-            format!("Codex config.toml is invalid; AstrLink will not overwrite it: {error}")
+            format!("{tool} config.toml is invalid; AstrLink will not overwrite it: {error}")
         })?;
     if let Some(servers) = document
         .get_mut("mcp_servers")
@@ -757,14 +779,64 @@ mod tests {
     }
 
     #[test]
+    fn merge_grok_toml_keeps_models_and_other_servers() {
+        let existing = concat!(
+            "[models]\n",
+            "default = \"glm-5.3-flash-exl3\"\n\n",
+            "[mcp_servers.outline]\n",
+            "url = \"https://docs.example.test/mcp\"\n",
+            "enabled = true\n\n",
+            "[mcp_servers.outline.headers]\n",
+            "Authorization = \"Bearer keep-me\"\n\n",
+            "[model.\"glm-5.3-flash-exl3\"]\n",
+            "name = \"GLM 5.3 Flash\"\n\n",
+            "[[model.\"glm-5.3-flash-exl3\".reasoning_efforts]]\n",
+            "value = \"high\"\n",
+        );
+        let merged = merge_grok_mcp(existing, "/tmp/astrlink-mcp").unwrap();
+        assert!(merged.contains("[mcp_servers.astrlink]"));
+        assert!(merged.contains("/tmp/astrlink-mcp"));
+        assert!(merged.contains("Bearer keep-me"));
+        assert!(merged.contains("default = \"glm-5.3-flash-exl3\""));
+        assert!(merged.contains("[[model.\"glm-5.3-flash-exl3\".reasoning_efforts]]"));
+        let document = merged.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(
+            document["mcp_servers"]["astrlink"]["command"].as_str(),
+            Some("/tmp/astrlink-mcp")
+        );
+        assert_eq!(
+            document["mcp_servers"]["outline"]["url"].as_str(),
+            Some("https://docs.example.test/mcp")
+        );
+        assert_eq!(
+            document["models"]["default"].as_str(),
+            Some("glm-5.3-flash-exl3")
+        );
+
+        let removed = remove_grok_mcp(&merged).unwrap();
+        assert!(!removed.contains("astrlink"));
+        assert!(removed.contains("Bearer keep-me"));
+        assert!(removed.contains("[[model.\"glm-5.3-flash-exl3\".reasoning_efforts]]"));
+
+        let error = merge_grok_mcp("[models\ndefault = 1", "/tmp/astrlink-mcp").unwrap_err();
+        assert!(error.contains("Grok Build config.toml is invalid"));
+    }
+
+    #[test]
     fn install_and_uninstall_detected_tools() {
         let home = unique_temp("agent-install");
         fs::create_dir_all(home.join(".cursor")).unwrap();
         fs::create_dir_all(home.join(".claude")).unwrap();
         fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::create_dir_all(home.join(".grok")).unwrap();
         fs::write(
             home.join(".cursor").join("mcp.json"),
             r#"{"mcpServers":{"keep":{"command":"x"}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            home.join(".grok").join("config.toml"),
+            "[models]\ndefault = \"keep-model\"\n\n[mcp_servers.keep]\ncommand = \"x\"\n",
         )
         .unwrap();
         let mcp_source = home.join("src-astrlink-mcp");
@@ -787,6 +859,7 @@ mod tests {
         assert_real_skill_copy(&tool_skill_dir(&home, AgentToolId::Cursor));
         assert_real_skill_copy(&tool_skill_dir(&home, AgentToolId::Claude));
         assert_real_skill_copy(&tool_skill_dir(&home, AgentToolId::Codex));
+        assert_real_skill_copy(&tool_skill_dir(&home, AgentToolId::Grok));
 
         let after = status(&context);
         assert!(after.canonical_skill);
@@ -800,6 +873,11 @@ mod tests {
         assert!(cursor_mcp.contains("keep"));
         assert!(cursor_mcp.contains("\"type\": \"stdio\""));
         assert!(!cursor_mcp.contains("control_token"));
+        let grok_mcp = fs::read_to_string(home.join(".grok").join("config.toml")).unwrap();
+        assert!(grok_mcp.contains("keep-model"));
+        assert!(grok_mcp.contains("[mcp_servers.keep]"));
+        assert!(grok_mcp.contains("[mcp_servers.astrlink]"));
+        assert!(!grok_mcp.contains("control_token"));
 
         uninstall(&context).unwrap();
         let gone = status(&context);
@@ -813,8 +891,13 @@ mod tests {
         assert!(!tool_skill_dir(&home, AgentToolId::Cursor).exists());
         assert!(!tool_skill_dir(&home, AgentToolId::Claude).exists());
         assert!(!tool_skill_dir(&home, AgentToolId::Codex).exists());
+        assert!(!tool_skill_dir(&home, AgentToolId::Grok).exists());
         let cursor_mcp = fs::read_to_string(home.join(".cursor").join("mcp.json")).unwrap();
         assert!(cursor_mcp.contains("keep"));
+        let grok_mcp = fs::read_to_string(home.join(".grok").join("config.toml")).unwrap();
+        assert!(grok_mcp.contains("keep-model"));
+        assert!(grok_mcp.contains("[mcp_servers.keep]"));
+        assert!(!grok_mcp.contains("astrlink"));
         let _ = fs::remove_dir_all(&home);
     }
 

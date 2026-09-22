@@ -201,7 +201,7 @@
     "installScopeShort": "安装 Skill 与 MCP",
     "installScopeTitle": "安装内容与范围",
     "installScopeBody": "Skill 提供排查方法，MCP 让 Agent 读取本机记录。统一安装到已检测到的工具；重新安装可补全缺失文件。",
-    "noTools": "暂未检测到支持的工具。请先安装并启动一次 Cursor、Claude Code 或 Codex，再重新检测。",
+    "noTools": "暂未检测到支持的工具。请先安装并启动一次 Cursor、Claude Code、Codex 或 Grok Build，再重新检测。",
     "missingRuntime": "MCP 本地程序缺失，请补全安装后再使用。",
     "promptTitle": "试着这样问",
     "copyPrompt": "复制示例",
@@ -234,7 +234,8 @@
     "tools": {
       "cursor": "Cursor",
       "claude": "Claude Code",
-      "codex": "Codex"
+      "codex": "Codex",
+      "grok": "Grok Build"
     }
   },
   "today": {
