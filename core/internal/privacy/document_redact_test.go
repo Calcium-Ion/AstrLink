@@ -67,7 +67,6 @@ func TestAssignPlaceholdersIgnoresOverlappingDiscardedFindings(t *testing.T) {
 	}
 	extracted := []extractedSegment{{
 		Segment: Segment{Path: "/messages/0/content", Value: value},
-		set:     func(string) {},
 	}}
 	placed, redactions, err := assignPlaceholders(
 		extracted,

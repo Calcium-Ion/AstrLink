@@ -208,6 +208,57 @@ func TestNoticeIsNotInjectedTwiceAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestNoticeDeduplicatesAcrossSystemMessages(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol contract.ProtocolID
+		body     string
+	}{
+		{"later system", contract.ProtocolOpenAIChat, `{"messages":[{"role":"system","content":"new prefix"},{"content":"__NOTICE__","role":"system"},{"role":"user","content":"alice@example.com"}]}`},
+		{"later developer blocks", contract.ProtocolOpenAIChat, `{"messages":[{"role":"system","content":"new prefix"},{"content":[{"z":null,"text":"__NOTICE__","type":"text"}],"role":"developer"},{"role":"user","content":"alice@example.com"}]}`},
+		{"null prefix", contract.ProtocolOpenAIChat, `{"messages":[{"content":null,"role":"system"},{"role":"developer","content":"__NOTICE__"},{"role":"user","content":"alice@example.com"}]}`},
+		{"empty blocks prefix", contract.ProtocolOpenAIChat, `{"messages":[{"role":"developer","content":[]},{"role":"system","content":"__NOTICE__"},{"role":"user","content":"alice@example.com"}]}`},
+		{"after user message", contract.ProtocolOpenAIChat, `{"messages":[{"role":"user","content":"alice@example.com"},{"role":"system","content":"__NOTICE__"}]}`},
+		{"responses input", contract.ProtocolOpenAIResponses, `{"instructions":"new prefix","input":[{"role":"developer","content":[{"text":"__NOTICE__","type":"input_text"}]},{"role":"user","content":"alice@example.com"}]}`},
+		{"compact input", contract.ProtocolOpenAIResponsesCompact, `{"input":[{"role":"system","content":"__NOTICE__"},{"role":"user","content":"alice@example.com"}]}`},
+		{"anthropic later block", contract.ProtocolAnthropicMessages, `{"system":[{"type":"text","text":"new prefix"},{"text":"__NOTICE__","type":"text"}],"messages":[{"role":"user","content":"alice@example.com"}]}`},
+		{"gemini later part", contract.ProtocolGoogleGenerateContent, `{"systemInstruction":{"parts":[{"text":"new prefix"},{"text":"__NOTICE__"}]},"contents":[{"parts":[{"text":"alice@example.com"}]}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := tokenPolicy()
+			policy.PlaceholderNotice = true
+			body := strings.ReplaceAll(test.body, "__NOTICE__", placeholderNotice)
+			result, err := mustTestEngine(t).Inspect(t.Context(), policy, test.protocol, []byte(body))
+			if err != nil || result.Decision != DecisionRedact || result.NoticeInjected {
+				t.Fatalf("inspect: decision=%s notice=%t err=%v", result.Decision, result.NoticeInjected, err)
+			}
+			if count := strings.Count(string(result.Body), "redaction markers of the form"); count != 1 {
+				t.Fatalf("notice count=%d, want 1", count)
+			}
+			assertOnlyRedactionsChanged(t, body, result)
+		})
+	}
+}
+
+func TestUserAndAssistantNoticeQuotesDoNotSuppressSystemNotice(t *testing.T) {
+	for _, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIChat, contract.ProtocolOpenAIResponses} {
+		for _, role := range []string{"user", "assistant"} {
+			t.Run(string(protocol)+"/"+role, func(t *testing.T) {
+				body := `{"messages":[{"role":"system","content":"be brief"},{"role":"` + role + `","content":"` + placeholderNotice + `"},{"role":"user","content":"alice@example.com"}]}`
+				if protocol == contract.ProtocolOpenAIResponses {
+					body = strings.Replace(body, `"messages":`, `"input":`, 1)
+				}
+				policy := tokenPolicy()
+				policy.PlaceholderNotice = true
+				result, err := mustTestEngine(t).Inspect(t.Context(), policy, protocol, []byte(body))
+				if err != nil || !result.NoticeInjected {
+					t.Fatalf("notice wrongly suppressed by %s quote: %v", role, err)
+				}
+			})
+		}
+	}
+}
+
 func appendChatMessage(t *testing.T, body []byte, text string) []byte {
 	t.Helper()
 	var document map[string]any

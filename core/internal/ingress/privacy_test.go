@@ -150,8 +150,8 @@ func TestPrivacyNoMatchAndWarnPreserveExactBytesAndWarningStaysLocal(t *testing.
 	}
 }
 
-func TestPrivacyRedactReassemblesJSONAndUpdatesBodyLength(t *testing.T) {
-	const original = " {\n \"model\":\"model@example.com\", \"messages\":[{\"role\":\"user\",\"content\":\"alice@example.com\"}]\n} "
+func TestPrivacyRedactPreservesUnmodifiedBytesAndUpdatesBodyLength(t *testing.T) {
+	const original = " {\n \"z\":1.2300e+04, \"model\":\"model@example.com\", \"messages\":[{\"role\":\"user\",\"content\":\"alice@example.com\",\"a\":null}], \"a\":false\n} "
 	filter := testPrivacyEngine(t, privacy.Policy{
 		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact, ResponseRestore: true,
 	}, nil)
@@ -177,6 +177,18 @@ func TestPrivacyRedactReassemblesJSONAndUpdatesBodyLength(t *testing.T) {
 				t.Fatalf("redacted body = %s", body)
 			}
 			upstreamPlaceholder = emailPlaceholderFromBody(t, body)
+			if want := strings.Replace(original, "alice@example.com", upstreamPlaceholder, 1); string(body) != want {
+				t.Fatalf("unmodified bytes or field order changed: got %s want %s", body, want)
+			}
+			replay, err := request.GetBody()
+			if err != nil {
+				t.Fatal(err)
+			}
+			replayed, err := io.ReadAll(replay)
+			_ = replay.Close()
+			if err != nil || string(replayed) != string(body) {
+				t.Fatalf("replay differs from filtered body: %v", err)
+			}
 			if request.ContentLength != int64(len(body)) ||
 				request.Header.Get("Content-Length") != strconv.Itoa(len(body)) {
 				t.Fatalf(
@@ -604,6 +616,49 @@ func TestFallbackReevaluatesEndpointScopedPrivacyAgainstOriginalBody(t *testing.
 	}
 	if len(forwarded) != 1 || forwarded[0] != "endpoint_first" {
 		t.Fatalf("forwarded endpoints = %v", forwarded)
+	}
+}
+
+func TestPrivacyRetryDoesNotAccumulateNotice(t *testing.T) {
+	const original = ` { "model":"gpt-5", "messages":[{"content":"be brief","role":"system"},{"role":"user","content":"alice@example.com"}] } `
+	filter := testPrivacyEngine(t, privacy.Policy{
+		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact, PlaceholderNotice: true,
+	}, nil)
+	first := validEndpoint(contract.ProtocolOpenAIChat, false)
+	first.ID, first.BaseURL = "endpoint_first", "https://first.example"
+	second := first
+	second.ID, second.BaseURL = "endpoint_second", "https://second.example"
+	var attempts [][]byte
+	handler := NewWithDependencies(Dependencies{
+		Resolver:      candidateResolver{candidates: []endpoint.Resolved{{Endpoint: first}, {Endpoint: second}}},
+		PrivacyFilter: filter,
+		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count := strings.Count(string(body), "redaction markers of the form"); count != 1 {
+				t.Fatalf("attempt %d notice count=%d, want 1", len(attempts)+1, count)
+			}
+			if strings.Contains(string(body), "alice@example.com") {
+				t.Fatal("attempt forwarded an unredacted address")
+			}
+			attempts = append(attempts, body)
+			if request.URL.Host == "first.example" {
+				return nil, errors.New("dial failed")
+			}
+			return jsonResponse(http.StatusOK, `{"choices":[{"message":{"content":"ok"}}]}`), nil
+		})),
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(original))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || len(attempts) != 2 {
+		t.Fatalf("status=%d attempts=%d", response.Code, len(attempts))
+	}
+	if string(attempts[0]) != string(attempts[1]) {
+		t.Fatal("retry changed the filtered request body")
 	}
 }
 
