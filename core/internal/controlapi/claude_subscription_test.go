@@ -55,12 +55,12 @@ func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T
 				}
 				io.WriteString(w, `{"access_token":"claude-rotated-secret","refresh_token":"claude-refresh-rotated","expires_in":3600}`)
 			}
-		case "/v1/models", "/api/oauth/usage":
+		case "/v1/models", "/api/oauth/usage", "/api/oauth/profile":
 			if r.Header.Get("Authorization") != "Bearer claude-rotated-secret" || !strings.Contains(r.Header.Get("Anthropic-Beta"), "oauth-2025-04-20") || r.Header.Get("ChatGPT-Account-ID") != "" {
 				t.Error("wrong provider authentication")
 			}
-			if r.URL.Path == "/api/oauth/usage" && !strings.HasPrefix(r.Header.Get("User-Agent"), accountauth.ClaudeUserAgentPrefix) {
-				t.Errorf("Claude usage sent non-CLI User-Agent %q", r.Header.Get("User-Agent"))
+			if strings.HasPrefix(r.URL.Path, "/api/oauth/") && !strings.HasPrefix(r.Header.Get("User-Agent"), accountauth.ClaudeUserAgentPrefix) {
+				t.Errorf("Claude %s sent non-CLI User-Agent %q", r.URL.Path, r.Header.Get("User-Agent"))
 			}
 			if r.URL.Path == "/v1/models" {
 				if r.URL.Query().Get("client_version") != "" {
@@ -71,6 +71,8 @@ func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T
 				} else {
 					io.WriteString(w, `{"data":[{"id":"claude-opus-4-5"}],"has_more":false}`)
 				}
+			} else if r.URL.Path == "/api/oauth/profile" {
+				io.WriteString(w, `{"organization":{"organization_type":"claude_max","rate_limit_tier":"default_claude_max_20x"}}`)
 			} else {
 				io.WriteString(w, `{"five_hour":{"utilization":12,"resets_at":"2026-09-18T12:00:00Z"},"seven_day":{"utilization":34},"seven_day_sonnet":{"utilization":56},"seven_day_opus":null,"limits":[{"kind":"session","group":"session","percent":12},{"kind":"weekly_all","group":"weekly","percent":34},{"kind":"weekly_scoped","group":"weekly","percent":56,"scope":{"model":{"display_name":"Sonnet"}}}],"extra_usage":{"is_enabled":false}}`)
 			}
@@ -152,7 +154,7 @@ func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T
 	usageRaw := call("GET", path+"/usage", "", 200)
 	var usage contract.SubscriptionUsage
 	if err := json.Unmarshal(usageRaw, &usage); err != nil || usage.Primary == nil || usage.Primary.UsedPercent != 12 || usage.Secondary.UsedPercent != 34 ||
-		len(usage.AdditionalRateLimits) != 1 || usage.AdditionalRateLimits[0].LimitName != "Sonnet" || usage.AdditionalRateLimits[0].Primary.UsedPercent != 56 {
+		len(usage.AdditionalRateLimits) != 1 || usage.AdditionalRateLimits[0].LimitName != "Sonnet" || usage.AdditionalRateLimits[0].Primary.UsedPercent != 56 || usage.PlanType != "max_20x" {
 		t.Fatalf("invalid Claude usage: %s", usageRaw)
 	}
 	stored, err := store.GetService(ctx, service.ID)

@@ -127,10 +127,7 @@ func TestRegistryRestartUsesManifestBindingWithoutHashingAssets(t *testing.T) {
 	}
 	ready, _ := registry.ReadyInstallation(started.ID)
 	modelPath := filepath.Join(ready.Directory, "model_int8.onnx")
-	if err := os.Chmod(modelPath, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(modelPath, 0o600) })
+	makeFileUnreadable(t, modelPath)
 
 	restarted := newTestRegistry(t, root, repository, store)
 	if _, exists := restarted.ReadyInstallation(started.ID); !exists {

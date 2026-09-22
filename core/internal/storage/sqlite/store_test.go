@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,10 @@ func TestOpenMigratesDatabaseAndUsesRestrictiveFileModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o700 {
+	// Windows has no POSIX permission bits: os.Stat reports 0777 for every
+	// directory and 0666 for writable files, so only Unix can verify modes.
+	checkModes := runtime.GOOS != "windows"
+	if checkModes && info.Mode().Perm() != 0o700 {
 		t.Fatalf("data directory mode = %o, want 700", info.Mode().Perm())
 	}
 	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
@@ -40,7 +44,7 @@ func TestOpenMigratesDatabaseAndUsesRestrictiveFileModes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", filepath.Base(path), err)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if checkModes && info.Mode().Perm() != 0o600 {
 			t.Fatalf("%s mode = %o, want 600", filepath.Base(path), info.Mode().Perm())
 		}
 	}

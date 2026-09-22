@@ -1275,7 +1275,7 @@ func newStuckWorkerProcess() (*workerProcess, *stuckReadCloser) {
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	done := make(chan error)
+	done := make(chan struct{})
 	close(done)
 	return &workerProcess{
 		command: &exec.Cmd{},

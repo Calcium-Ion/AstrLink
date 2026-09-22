@@ -31,6 +31,12 @@ func TestClassifyFailOpenAndSuccess(t *testing.T) {
 	if !okClient.EligibleForRouting() {
 		t.Fatal("a ready installation is routing-eligible")
 	}
+	process := okClient.process
+	okClient.Close()
+	okClient.Close()
+	if okClient.process != nil || process.running() {
+		t.Fatal("worker remained active after Close")
+	}
 
 	missing := ReadyInstallationProviderFunc(func() (contract.ReadyAutoClassifierInstallation, bool) {
 		return contract.ReadyAutoClassifierInstallation{}, false

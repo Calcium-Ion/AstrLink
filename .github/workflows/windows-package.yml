@@ -48,21 +48,23 @@ jobs:
             core/go.mod
             core/go.sum
             convo/go.mod
+            contracts/go.mod
+            contracts/go.sum
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
-      - name: Check frontend types and tests
+      - name: Check frontend and Core in parallel
+        shell: bash
         run: |
-          bun run branding:sync
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          bun run typecheck
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          bun run test
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (bun run branding:sync && bun run typecheck && bun run test) &
+          frontend_pid=$!
+          (cd ../../core && go test ./cmd/astrlink-core ./internal/coreapp ./internal/parentwatch ./internal/ingress ./internal/servicemodel ./internal/pricing ./internal/controlapi) &
+          core_pid=$!
+          check_status=0
+          wait "$frontend_pid" || check_status=1
+          wait "$core_pid" || check_status=1
+          exit "$check_status"
       - name: Check model artifact policy
         run: bun ../../scripts/check-no-production-models.mjs
-      - name: Test Core startup and providers
-        working-directory: core
-        run: go test ./cmd/astrlink-core ./internal/coreapp ./internal/parentwatch ./internal/ingress ./internal/servicemodel ./internal/pricing ./internal/controlapi
 
   package:
     name: Build and verify Windows x64 installer
@@ -80,6 +82,8 @@ jobs:
             core/go.mod
             core/go.sum
             convo/go.mod
+            contracts/go.mod
+            contracts/go.sum
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -91,34 +95,30 @@ jobs:
           key: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/bun.lock') }}
           restore-keys: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-
       - uses: dtolnay/rust-toolchain@stable
-      - name: Compute native cache keys
+      - name: Compute worker executable cache key
         id: keys
         shell: pwsh
         env:
-          DEPENDENCY_HASH: ${{ hashFiles('apps/desktop/src-tauri/Cargo.*', 'apps/privacy-worker/Cargo.*', 'apps/classifier-worker/Cargo.*', '.cargo/**', 'apps/**/.cargo/**') }}
-          SOURCE_HASH: ${{ hashFiles('apps/desktop/src-tauri/**/*.rs', 'apps/desktop/src-tauri/Cargo.*', 'apps/privacy-worker/**/*.rs', 'apps/privacy-worker/Cargo.*', 'apps/classifier-worker/**/*.rs', 'apps/classifier-worker/Cargo.*', '.cargo/**', 'apps/**/.cargo/**') }}
           WORKER_HASH: ${{ hashFiles('apps/privacy-worker/**/*.rs', 'apps/privacy-worker/Cargo.*', 'apps/classifier-worker/**/*.rs', 'apps/classifier-worker/Cargo.*', 'apps/desktop/scripts/build-sidecar.mjs', '.cargo/**') }}
         run: |
           $rust = rustc -vV
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $identity = ($rust -join "`n") + "`n$env:ImageOS`n$env:ImageVersion"
           $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity))).ToLowerInvariant()
-          "rust-prefix=windows-rust-v3-$hash-$env:DEPENDENCY_HASH-" >> $env:GITHUB_OUTPUT
-          "rust-key=windows-rust-v3-$hash-$env:DEPENDENCY_HASH-$env:SOURCE_HASH" >> $env:GITHUB_OUTPUT
-          "workers=windows-workers-v2-$hash-$env:WORKER_HASH" >> $env:GITHUB_OUTPUT
-      - name: Restore successful Rust build cache
-        id: rust-cache
-        uses: actions/cache/restore@v4
+          # workers v3: earlier caches held DirectML.dll as a dangling
+          # symlink into the ort download cache; build-sidecar.mjs now stores
+          # a real copy, so older entries must never be reused.
+          "workers=windows-workers-v3-$hash-$env:WORKER_HASH" >> $env:GITHUB_OUTPUT
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/desktop/src-tauri/target
-            apps/privacy-worker/target
-            apps/classifier-worker/target
-          # Each successful run may refresh the immutable cache. Failed runs never save.
-          key: ${{ steps.keys.outputs.rust-key }}
-          restore-keys: ${{ steps.keys.outputs.rust-prefix }}
+          shared-key: astrlink-native
+          env-vars: ImageOS ImageVersion MACOSX_DEPLOYMENT_TARGET
+          cache-on-failure: true
+          workspaces: |
+            apps/desktop/src-tauri
+            apps/privacy-worker
+            apps/classifier-worker
+          cache-directories: apps/privacy-worker/target/onnxruntime
       - name: Restore unchanged worker executables
         id: workers
         uses: actions/cache/restore@v4
@@ -154,17 +154,6 @@ jobs:
             apps/privacy-worker/target/release/DirectML.dll
             apps/classifier-worker/target/release/astrlink-classifier-worker.exe
             apps/classifier-worker/target/release/DirectML.dll
-      - name: Save successful Rust build cache
-        if: steps.rust-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          key: ${{ steps.keys.outputs.rust-key }}
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/desktop/src-tauri/target
-            apps/privacy-worker/target
-            apps/classifier-worker/target
       - name: Upload candidate installer
         uses: actions/upload-artifact@v7
         with:
@@ -184,7 +173,7 @@ jobs:
   publish:
     name: Publish checked installer
     needs: [checks, package]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -201,7 +190,7 @@ jobs:
     name: Attach Windows installer to Release
     if: github.event_name == 'release'
     needs: publish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

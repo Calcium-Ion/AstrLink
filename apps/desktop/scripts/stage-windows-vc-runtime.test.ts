@@ -1,7 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import path from "node:path";
+import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stageWindowsVcRuntime, verifyWindowsVcRuntime } from "./stage-windows-vc-runtime.mjs";
 
@@ -27,10 +28,27 @@ function options() {
   };
 }
 afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  vi.clearAllMocks();
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
 describe("Windows model runtime staging", () => {
+  it("lets Windows PowerShell rebuild its module path when launched through Bun", async () => {
+    const config = options();
+    vi.stubEnv("PSModulePath", "C:\\Program Files\\PowerShell\\7\\Modules");
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    await stageWindowsVcRuntime(config);
+    const [command, args, spawnOptions] = vi.mocked(execFileSync).mock.calls[0];
+    expect(command).toBe("powershell.exe");
+    expect(args?.join(" ")).toContain("Get-AuthenticodeSignature");
+    expect(Object.keys(spawnOptions?.env ?? {}).some(key => key.toUpperCase() === "PSMODULEPATH")).toBe(false);
+    expect(spawnOptions?.env?.ASTRLINK_VC_REDIST_FILE)
+      .toBe(path.join(config.binariesDirectory, "vc_redist.x64.exe"));
+    expect(process.env.PSModulePath).toBe("C:\\Program Files\\PowerShell\\7\\Modules");
+  });
+
   it("rejects both truncated and same-size tampered downloads", () => {
     expect(() => verifyWindowsVcRuntime(bytes.subarray(1), asset)).toThrow("integrity");
     expect(() => verifyWindowsVcRuntime(Buffer.alloc(bytes.length), asset)).toThrow("integrity");

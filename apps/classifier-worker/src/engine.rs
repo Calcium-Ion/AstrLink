@@ -1,9 +1,8 @@
-use std::{
-    env,
-    ffi::OsStr,
-    io,
-    path::{Path, PathBuf},
-};
+use std::{env, ffi::OsStr, io, path::Path};
+// PathBuf only backs the Linux/macOS runtime discovery and the tests; an
+// unconditional import is flagged as unused on Windows.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+use std::path::PathBuf;
 
 use ort::{
     logging::LogLevel,
