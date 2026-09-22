@@ -3793,7 +3793,7 @@ components:
           type: number
           minimum: 0
           maximum: 1
-          default: 0.6
+          default: 0.8
           description: >
             Inclusive confidence threshold for local-model findings. Candidates
             below this value are suppressed before the request action is chosen.
@@ -3943,7 +3943,7 @@ components:
           type: number
           minimum: 0
           maximum: 1
-          default: 0.6
+          default: 0.8
         match:
           $ref: "#/components/schemas/PolicyMatch"
         request_action:

@@ -493,11 +493,11 @@ func TestModelConfidenceThresholdIsInclusiveAndReportsSuppressedFindings(t *test
 		wantSuppressed int
 	}{
 		{
-			name: "below default threshold", score: 0.596717,
+			name: "below default threshold", score: 0.799999,
 			wantDecision: DecisionAllow, wantSuppressed: 1,
 		},
 		{
-			name: "equal to threshold", score: 0.60,
+			name: "equal to threshold", score: 0.80,
 			wantDecision: DecisionBlock, wantAccepted: 1,
 		},
 		{

@@ -71,7 +71,7 @@ func DefaultMigrations() []Migration {
 				`INSERT OR IGNORE INTO policies (id, document_json, created_at, updated_at)
 VALUES (
     'policy_privacy_default',
-    '{"id":"policy_privacy_default","name":"隐私保护","enabled":false,"priority":0,"detector":"regex","min_confidence":0.6,"match":{},"request_action":"redact","response_action":"allow","response_restore":true}',
+    '{"id":"policy_privacy_default","name":"隐私保护","enabled":false,"priority":0,"detector":"regex","min_confidence":0.8,"match":{},"request_action":"redact","response_action":"allow","response_restore":true}',
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 )`,

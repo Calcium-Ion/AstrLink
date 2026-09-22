@@ -388,7 +388,7 @@ WHERE type = 'table'
 		`"enabled":false`,
 		`"detector":"regex"`,
 		`"local_model_id":null`,
-		`"min_confidence":0.6`,
+		`"min_confidence":0.8`,
 		`"regex_source":"builtin"`,
 		`"custom_regex_rules":[]`,
 		`"match":{}`,

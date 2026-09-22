@@ -44,7 +44,7 @@ const (
 	DefaultPrivacyPolicyID       PolicyID = "policy_privacy_default"
 	DefaultPrivacyPolicyName              = "隐私保护"
 	DefaultPrivacyPolicyPriority          = 0
-	DefaultPrivacyMinConfidence           = 0.60
+	DefaultPrivacyMinConfidence           = 0.80
 
 	MaxPolicyCustomRegexRules  = 64
 	MaxPolicyRegexPatternRunes = 512
