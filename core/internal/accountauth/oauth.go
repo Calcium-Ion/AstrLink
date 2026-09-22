@@ -20,9 +20,10 @@ const (
 	DefaultCodexAPIBaseURL    = "https://chatgpt.com/backend-api/codex"
 	DefaultCodexOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 	// DefaultCodexModelsClientVersion is the observed openai/codex ModelsClient
-	// query (public CLI 0.150.0). The backend may hide models below a
-	// catalog minimum; do not send a non-semver placeholder.
-	DefaultCodexModelsClientVersion = "0.150.0"
+	// query (public CLI 0.155.1). GPT-6 Astra support landed in CLI 0.154.0.
+	// The backend may hide models below a catalog minimum; keep this aligned
+	// with stable releases: https://learn.chatgpt.com/docs/changelog
+	DefaultCodexModelsClientVersion = "0.155.1"
 	DefaultAuthorizationTTL         = 10 * time.Minute
 	DefaultDeviceCodeTTL            = 15 * time.Minute
 	DefaultRefreshSkew              = 5 * time.Minute

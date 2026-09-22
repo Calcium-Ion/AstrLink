@@ -195,7 +195,7 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	responseBody := `{"models":[{"slug":"gpt-z","visibility":"list"},{"slug":"gpt-a","visibility":"list"}]}`
+	responseBody := `{"models":[{"slug":"gpt-z","visibility":"list"},{"slug":"gpt-a","visibility":"list"},{"slug":"gpt-6-astra","visibility":"list","supported_in_api":false}]}`
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		wantURL := "https://codex.example/backend-api/codex/models?client_version=" +
 			accountauth.DefaultCodexModelsClientVersion
@@ -207,6 +207,7 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 			request.Header.Get("OAI-Product-Sku") != "codex" ||
 			request.Header.Get("originator") != "astrlink" ||
 			request.Header.Get("User-Agent") != "codex-cli/"+accountauth.DefaultCodexModelsClientVersion ||
+			request.Header.Get("version") != accountauth.DefaultCodexModelsClientVersion ||
 			request.Header.Get("Accept") != "application/json" {
 			t.Fatalf("headers = %#v", request.Header)
 		}
@@ -247,7 +248,7 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 	}
 	prober := New(store, manager, nil)
 	models, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels)
-	if err != nil || strings.Join(models, ",") != "gpt-a,gpt-z" {
+	if err != nil || strings.Join(models, ",") != "gpt-6-astra,gpt-a,gpt-z" {
 		t.Fatalf("models=%v err=%v", models, err)
 	}
 	responseBody = `{"models":[]}`
