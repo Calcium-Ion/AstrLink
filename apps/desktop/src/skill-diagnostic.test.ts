@@ -144,6 +144,8 @@ const session: RequestSession = {
   started_at: root.started_at,
   last_started_at: root.started_at,
   completed_at: root.completed_at,
+  duration_ms: root.latency_ms ?? 0,
+  active_request_starts: [],
   turn_count: 1,
   call_count: 2,
   status: "cancelled",

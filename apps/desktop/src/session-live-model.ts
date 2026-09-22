@@ -31,6 +31,9 @@ function sameSession(left: RequestSession, right: RequestSession): boolean {
     left.started_at === right.started_at &&
     left.last_started_at === right.last_started_at &&
     left.completed_at === right.completed_at &&
+    left.duration_ms === right.duration_ms &&
+    left.active_request_starts.length === right.active_request_starts.length &&
+    left.active_request_starts.every((started, index) => started === right.active_request_starts[index]) &&
     left.turn_count === right.turn_count &&
     left.call_count === right.call_count &&
     left.status === right.status &&

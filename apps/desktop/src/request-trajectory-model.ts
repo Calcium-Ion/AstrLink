@@ -1,5 +1,5 @@
 import { i18n } from "./i18n";
-import { formatDuration, liveDurationMs } from "./request-live-model";
+import { liveDurationMs } from "./request-live-model";
 import {
   statusLabel,
   type RequestEvent,
@@ -1101,29 +1101,4 @@ function worstTone(tones: TrajectoryTone[]): TrajectoryTone {
     if (toneRank[tone] < toneRank[worst]) worst = tone;
   }
   return worst;
-}
-
-export function sessionDurationMs(
-  startedAt: string,
-  lastStartedAt: string,
-  turns: RequestRecord[],
-  nowMs: number,
-): number {
-  const start = Date.parse(startedAt);
-  if (Number.isNaN(start)) return 0;
-  const lastTurn = turns[turns.length - 1];
-  if (lastTurn) {
-    return Math.max(0, start ? liveDurationMs(lastTurn, nowMs) + (Date.parse(lastTurn.started_at) - start) : liveDurationMs(lastTurn, nowMs));
-  }
-  const last = Date.parse(lastStartedAt);
-  return Math.max(0, (Number.isNaN(last) ? nowMs : last) - start);
-}
-
-export function formatSessionDuration(
-  startedAt: string,
-  lastStartedAt: string,
-  turns: RequestRecord[],
-  nowMs: number,
-): string {
-  return formatDuration(sessionDurationMs(startedAt, lastStartedAt, turns, nowMs));
 }

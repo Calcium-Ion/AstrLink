@@ -79,7 +79,7 @@ import type { RoutableService } from "./service-model";
 import {
   formatDuration,
   liveDurationMs,
-  sessionElapsedMs,
+  sessionRuntimeMs,
   type RecordFilters,
 } from "./request-live-model";
 import {
@@ -101,7 +101,6 @@ import {
   mergeLiveSessions,
   sessionMatchesFilters,
 } from "./session-live-model";
-import { formatSessionDuration } from "./request-trajectory-model";
 import { protocolEntryPath } from "./service-presets";
 
 const PAGE_LIMIT = 50;
@@ -157,6 +156,8 @@ function sessionSummaryKey(session: RequestSession): string {
     session.call_count,
     session.last_started_at,
     session.completed_at ?? "",
+    session.duration_ms,
+    ...session.active_request_starts,
   ].join("|");
 }
 
@@ -1241,32 +1242,9 @@ export function RequestRecords({
  * trajectory list and the timeline beside it are never in the repaint path of
  * a label counting up.
  */
-function SessionElapsed({ session }: { session: RequestSession }) {
-  const nowMs = useLiveClock(session.completed_at === null);
-  return <>{formatDuration(sessionElapsedMs(session, nowMs))}</>;
-}
-
-function SessionDuration({
-  session,
-  turns,
-}: {
-  session: RequestSession;
-  turns: RequestRecord[];
-}) {
-  const lastTurn = turns[turns.length - 1];
-  const nowMs = useLiveClock(
-    Boolean(lastTurn && lastTurn.latency_ms === null && !lastTurn.completed_at),
-  );
-  return (
-    <>
-      {formatSessionDuration(
-        session.started_at,
-        session.last_started_at,
-        turns,
-        nowMs,
-      )}
-    </>
-  );
+function SessionDuration({ session }: { session: RequestSession }) {
+  const nowMs = useLiveClock(session.active_request_starts.length > 0);
+  return <>{formatDuration(sessionRuntimeMs(session, nowMs))}</>;
 }
 
 function RecordLatency({ record }: { record: RequestRecord }) {
@@ -1334,7 +1312,7 @@ function DiscoveryRow({
   onOpen: () => void;
 }) {
   const t = useT();
-  const nowMs = useLiveClock(session.completed_at === null);
+  const nowMs = useLiveClock(session.active_request_starts.length > 0);
   const last = new Date(session.last_started_at);
   return (
     <DataRow
@@ -1363,7 +1341,7 @@ function DiscoveryRow({
           </code>
         </span>
         <span className="col-start-2 row-start-2 text-micro tabular-nums text-muted-foreground @[680px]:col-start-3 @[680px]:row-start-1 @[680px]:text-right">
-          {formatDuration(sessionElapsedMs(session, nowMs))}
+          {formatDuration(sessionRuntimeMs(session, nowMs))}
         </span>
         <time
           className="col-start-3 row-start-1 text-right text-micro tabular-nums text-muted-foreground @[680px]:col-start-4"
@@ -1392,8 +1370,8 @@ function SessionRow({
 }) {
   const t = i18n.t.bind(i18n);
   // The elapsed time is interpolated into a translated sentence, so the row is
-  // the smallest thing that can repaint it. Only a live conversation ticks.
-  const nowMs = useLiveClock(session.completed_at === null);
+  // the smallest thing that can repaint it. Only active requests tick.
+  const nowMs = useLiveClock(session.active_request_starts.length > 0);
   const last = new Date(session.last_started_at);
   const resolvedServiceName =
     serviceName ?? session.service_id ?? t("records.selectingService");
@@ -1458,7 +1436,7 @@ function SessionRow({
               {
                 turns: session.turn_count,
                 calls: session.call_count,
-                duration: formatDuration(sessionElapsedMs(session, nowMs)),
+                duration: formatDuration(sessionRuntimeMs(session, nowMs)),
               },
             )}
           </span>
@@ -1640,7 +1618,7 @@ function RecordDetail({
             {statusLabel(session.status)}
             {session.status === "pending" ? (
               <span className="ml-1.5 tabular-nums">
-                <SessionElapsed session={session} />
+                <SessionDuration session={session} />
               </span>
             ) : null}
           </StatusBadge>
@@ -1756,7 +1734,7 @@ function RecordDetail({
             <div className="flex items-center gap-1.5">
               <dt>{t("records.duration")}</dt>
               <dd className="font-medium tabular-nums text-foreground">
-                <SessionDuration session={session} turns={turns} />
+                <SessionDuration session={session} />
               </dd>
             </div>
             <div className="flex items-center gap-1.5">

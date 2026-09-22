@@ -5053,6 +5053,8 @@ components:
         - started_at
         - last_started_at
         - completed_at
+        - duration_ms
+        - active_request_starts
         - turn_count
         - call_count
         - status
@@ -5076,6 +5078,16 @@ components:
         completed_at:
           type: [string, "null"]
           format: date-time
+        duration_ms:
+          type: integer
+          minimum: 0
+          description: Cumulative recorded runtime of finished calls, including retry children, in milliseconds. Excludes gaps between calls and unknown runtime of requests recovered after a Core interruption.
+        active_request_starts:
+          type: array
+          description: Start timestamps of calls still running without a recorded latency. Add their elapsed times to duration_ms for a live cumulative runtime.
+          items:
+            type: string
+            format: date-time
         turn_count:
           type: integer
           minimum: 1

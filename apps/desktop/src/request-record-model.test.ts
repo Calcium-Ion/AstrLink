@@ -55,6 +55,8 @@ const fullSession = {
   title: "创建快捷方式",
   started_at: "2026-08-16T10:00:00Z",
   last_started_at: "2026-08-16T10:01:00Z",
+  duration_ms: 120,
+  active_request_starts: [],
   completed_at: "2026-08-16T10:01:30Z",
   turn_count: 2,
   call_count: 3,
@@ -90,6 +92,20 @@ const nullOptionalRecord = {
 };
 
 describe("reasoning effort metadata", () => {
+  it("validates recorded runtime and active request timestamps", () => {
+    expect(parseRequestSession({
+      ...fullSession,
+      duration_ms: 5000,
+      active_request_starts: ["2026-08-16T10:01:00Z"],
+    })).toMatchObject({ duration_ms: 5000, active_request_starts: ["2026-08-16T10:01:00Z"] });
+    for (const duration_ms of [-1, 1.5, "12"]) {
+      expect(() => parseRequestSession({ ...fullSession, duration_ms })).toThrow(/duration_ms/);
+    }
+    for (const active_request_starts of [null, "invalid", ["invalid"], [42]]) {
+      expect(() => parseRequestSession({ ...fullSession, active_request_starts })).toThrow(/active_request_starts/);
+    }
+  });
+
   it("accepts explicit values and older records without the field", () => {
     expect(parseRequestRecord({ ...fullRecord, reasoning_effort: "high" }).reasoning_effort).toBe("high");
     expect(parseRequestSession({ ...fullSession, reasoning_effort: "xhigh" }).reasoning_effort).toBe("xhigh");
@@ -289,6 +305,8 @@ describe("request-record IPC contract", () => {
         title: "创建快捷方式",
         started_at: "2026-08-16T10:00:00Z",
         last_started_at: "2026-08-16T10:01:00Z",
+        duration_ms: 120,
+        active_request_starts: [],
         completed_at: "2026-08-16T10:01:30Z",
         turn_count: 2,
         call_count: 3,
@@ -303,6 +321,8 @@ describe("request-record IPC contract", () => {
       title: "创建快捷方式",
       started_at: "2026-08-16T10:00:00Z",
       last_started_at: "2026-08-16T10:01:00Z",
+      duration_ms: 120,
+      active_request_starts: [],
       completed_at: "2026-08-16T10:01:30Z",
       turn_count: 2,
       call_count: 3,
@@ -318,6 +338,8 @@ describe("request-record IPC contract", () => {
       title: "创建快捷方式",
       started_at: "2026-08-16T10:00:00Z",
       last_started_at: "2026-08-16T10:00:00Z",
+      duration_ms: 120,
+      active_request_starts: [],
       completed_at: "2026-08-16T10:00:01Z",
       turn_count: 1,
       call_count: 1,

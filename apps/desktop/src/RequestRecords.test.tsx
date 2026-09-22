@@ -36,6 +36,7 @@ import {
   type RequestSession,
 } from "./request-record-model";
 import type { RoutableService } from "./service-model";
+import { i18n } from "./i18n";
 
 const service: RoutableService = {
   id: "service_01",
@@ -132,6 +133,8 @@ function sessionFromRecord(
     started_at: record.started_at,
     last_started_at: record.started_at,
     completed_at: record.completed_at,
+    duration_ms: record.latency_ms ?? (record.completed_at ? Date.parse(record.completed_at) - Date.parse(record.started_at) : 0),
+    active_request_starts: record.status === "pending" && record.latency_ms === null && !record.completed_at ? [record.started_at] : [],
     turn_count: 1,
     call_count: 1 + record.child_count,
     status: displayRequestStatus(record.status, record.http_status),
@@ -358,9 +361,63 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("1 轮");
     expect(container.textContent).not.toContain("次调用");
-    expect(container.textContent).toContain("1.0 s");
-    expect(container.textContent).toContain("2.0 s");
+    expect(container.textContent).toContain("120 ms");
     expect(container.textContent).not.toMatch(/\d{3,}m /);
+  });
+
+  it("shows cumulative runtime in both the list and detail across a long idle gap", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:00Z"));
+    const last: RequestRecord = {
+      ...firstRecord,
+      id: "request_after_idle",
+      started_at: "2026-07-27T01:00:00Z",
+      completed_at: "2026-07-27T01:00:03Z",
+      latency_ms: 3000,
+    };
+    const summary = sessionFromRecord(firstRecord, {
+      last_started_at: last.started_at,
+      completed_at: last.completed_at,
+      turn_count: 2,
+      call_count: 3,
+      duration_ms: 3620,
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [summary], next_cursor: null });
+    bridgeMocks.getRequestSession.mockResolvedValue({ ...summary, turns: [firstRecord, last] });
+    await renderRecords();
+    const row = container.querySelector<HTMLButtonElement>('[data-testid="request-session-row"]')!;
+    expect(row.textContent).toContain("2 轮 · 3 次调用 · 3.6 s");
+    await act(async () => { row.click(); });
+    await act(async () => await Promise.resolve());
+    const duration = () => [...container.querySelectorAll("dt")]
+      .find(node => node.textContent === i18n.t("records.duration"))?.nextElementSibling?.textContent;
+    expect(duration()).toBe("3.6 s");
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(duration()).toBe("3.6 s");
+  });
+
+  it("ticks only the active call and stops after the completion poll", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
+    const summary = sessionFromRecord(firstRecord, {
+      completed_at: null,
+      status: "pending",
+      last_started_at: "2026-07-28T12:00:00Z",
+      duration_ms: 12_000,
+      active_request_starts: ["2026-07-28T12:00:00Z"],
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValue({ items: [summary], next_cursor: null });
+    await renderRecords();
+    const runtime = () => container.querySelector('[data-testid="request-session-row"]')?.textContent;
+    expect(runtime()).toContain("22.0 s");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(runtime()).toContain("23.0 s");
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [{ ...summary, status: "succeeded", completed_at: "2026-07-28T12:00:11Z", duration_ms: 23_000, active_request_starts: [] }],
+      next_cursor: null,
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(runtime()).toContain("23.0 s");
   });
 
   it("opens a session trajectory and shows retry children as RETRY rows", async () => {
