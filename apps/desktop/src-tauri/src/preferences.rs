@@ -327,8 +327,21 @@ mod tests {
         std::env::temp_dir().join(format!(
             "astrlink-preferences-{name}-{}-{}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[test]
+    fn temporary_directory_names_are_unique_and_portable() {
+        let first = temporary_directory("portable");
+        let second = temporary_directory("portable");
+        for directory in [&first, &second] {
+            let name = directory.file_name().unwrap().to_str().unwrap();
+            assert!(name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_".contains(character)));
+        }
+        assert_ne!(first, second);
     }
 
     #[test]
