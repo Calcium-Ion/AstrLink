@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, env, ffi::OsStr, fs, io, path::Path};
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::path::PathBuf;
 
 use ort::{
@@ -581,6 +581,7 @@ mod tests {
     use super::*;
     use std::{
         process,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
     use tokenizers::{
@@ -999,13 +1000,15 @@ mod tests {
     }
 
     fn micro_model_directory() -> PathBuf {
+        static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time")
             .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "astrlink-privacy-worker-synthetic-fixture-{}-{unique}",
-            process::id()
+            "astrlink-privacy-worker-synthetic-fixture-{}-{unique}-{}",
+            process::id(),
+            NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed)
         ));
         let onnx_directory = directory.join("onnx");
         fs::create_dir_all(&onnx_directory).expect("create fixture directory");
