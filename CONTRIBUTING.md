@@ -57,6 +57,22 @@ bun run desktop:build
 
 构建产物位于 `apps/desktop/src-tauri/target/release/bundle/`；指定 Rust target 时位于相应 target 子目录中。应用签名、公证和正式发布需要另行配置。
 
+## GitHub Actions 打包
+
+三个平台有独立的打包流程，推送 `main` 或在 Actions 页面选择 **Run workflow** 即可运行：
+
+| 流程 | 产物 |
+| --- | --- |
+| macOS package | Apple Silicon 和 Intel 的 `.dmg`、保留执行权限的 `.app.tar.gz`、`SHA256SUMS` |
+| Linux package | x64 `.deb`、`SHA256SUMS` |
+| Windows package | x64 NSIS `.exe` |
+
+macOS 和 Linux 的安装包仅在前端检查、Core 测试和包验证通过后上传，下载产物保留 14 天。macOS 在对应架构的 runner 上构建并挂载 DMG 验证；Linux 在 Ubuntu 22.04 构建，再在 Debian 12 容器内安装并校验依赖和启动。
+
+Unix 包验证检查架构、运行库与许可证、worker 进程启动，以及 Core 健康接口和正常退出；不启动桌面窗口，也不下载或执行生产模型。失败时上传诊断文件，保留 7 天。
+
+这些流程生成开发安装包，不会创建 GitHub Release。macOS 包不使用 Developer ID 签名或公证，运行 CI 无需配置 Apple 凭据。
+
 ## 代码目录
 
 | 目录 | 内容 |

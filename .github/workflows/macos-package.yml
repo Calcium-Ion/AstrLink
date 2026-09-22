@@ -1,0 +1,128 @@
+name: macOS package
+
+on:
+  push:
+    branches: [main, 'codex/macos-build-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-package-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ASTRLINK_CI_NO_REMOTE_MODELS: "1"
+  ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  MACOSX_DEPLOYMENT_TARGET: "13.4"
+
+jobs:
+  package:
+    name: Build and verify macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            convo/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Configure Bun cache
+        run: echo "BUN_INSTALL_CACHE_DIR=$RUNNER_TEMP/bun-cache" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/bun-cache
+          key: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/bun.lock') }}
+          restore-keys: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-package-${{ matrix.arch }}
+          workspaces: |
+            apps/desktop/src-tauri
+            apps/privacy-worker
+            apps/classifier-worker
+          cache-directories: apps/privacy-worker/target/onnxruntime
+      - name: Check runner architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Check frontend
+        run: |
+          bun run branding:sync
+          bun run typecheck
+          bun run test
+      - name: Test Core
+        working-directory: core
+        run: go test ./...
+      - name: Reject production model artifacts
+        run: bun ../../scripts/check-no-production-models.mjs
+      - name: Stage Core and worker sidecars
+        run: bun run sidecar:build
+      - name: Build development app and DMG
+        # No Developer ID certificate or notarization credentials are required.
+        run: bun run tauri build --ci --no-sign --bundles app,dmg
+      - name: Mount DMG and verify packaged application
+        env:
+          PACKAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          shopt -s nullglob
+          images=(src-tauri/target/release/bundle/dmg/*.dmg)
+          test "${#images[@]}" -eq 1
+          mount_dir="$RUNNER_TEMP/astrlink-dmg"
+          mkdir -p "$mount_dir"
+          hdiutil verify "${images[0]}"
+          hdiutil attach "${images[0]}" -readonly -nobrowse -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          bun ../../scripts/check-no-production-models.mjs --packaged "$mount_dir/AstrLink.app"
+          python3 scripts/verify-unix-package.py \
+            --platform macos --arch "$PACKAGE_ARCH" \
+            --root "$mount_dir/AstrLink.app" \
+            --logs "$RUNNER_TEMP/astrlink-smoke"
+      - name: Prepare downloads and checksums
+        env:
+          PACKAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p package
+          cp src-tauri/target/release/bundle/dmg/*.dmg package/
+          tar -czf "package/AstrLink-macOS-$PACKAGE_ARCH.app.tar.gz" \
+            -C src-tauri/target/release/bundle/macos AstrLink.app
+          cd package
+          shasum -a 256 ./*.dmg ./*.tar.gz > SHA256SUMS
+      - name: Upload checked macOS package
+        uses: actions/upload-artifact@v7
+        with:
+          name: AstrLink-macOS-${{ matrix.arch }}
+          path: apps/desktop/package/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macOS-${{ matrix.arch }}-smoke-diagnostics
+          path: ${{ runner.temp }}/astrlink-smoke/*
+          if-no-files-found: ignore
+          retention-days: 7

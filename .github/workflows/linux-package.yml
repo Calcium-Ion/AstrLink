@@ -1,0 +1,133 @@
+name: Linux package
+
+on:
+  push:
+    branches: [main, 'codex/linux-build-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-package-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ASTRLINK_CI_NO_REMOTE_MODELS: "1"
+  ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  package:
+    name: Build Linux x64 and verify on Debian 12
+    # Keep the build host older than the minimum supported runtime distribution.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf build-essential
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            convo/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Configure Bun cache
+        run: echo "BUN_INSTALL_CACHE_DIR=$RUNNER_TEMP/bun-cache" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/bun-cache
+          key: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/desktop/bun.lock') }}
+          restore-keys: bun-packages-v1-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-package-x86_64
+          workspaces: |
+            apps/desktop/src-tauri
+            apps/privacy-worker
+            apps/classifier-worker
+          cache-directories: apps/privacy-worker/target/onnxruntime
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Check frontend
+        run: |
+          bun run branding:sync
+          bun run typecheck
+          bun run test
+      - name: Test Core
+        working-directory: core
+        run: go test ./...
+      - name: Reject production model artifacts
+        run: bun ../../scripts/check-no-production-models.mjs
+      - name: Stage Core and worker sidecars
+        run: bun run sidecar:build
+      - name: Build Debian package
+        run: bun run tauri build --ci --bundles deb
+      - name: Inspect Debian package contents and dependencies
+        run: |
+          shopt -s nullglob
+          packages=(src-tauri/target/release/bundle/deb/*.deb)
+          test "${#packages[@]}" -eq 1
+          test "$(dpkg-deb --field "${packages[0]}" Architecture)" = amd64
+          dependencies="$(dpkg-deb --field "${packages[0]}" Depends)"
+          for dependency in 'libc6 (>= 2.36)' 'libstdc++6 (>= 12)' 'libgcc-s1'; do
+            if [[ "$dependencies" != *"$dependency"* ]]; then
+              echo "Missing package dependency: $dependency" >&2
+              exit 1
+            fi
+          done
+          scan_dir="$RUNNER_TEMP/astrlink-package-scan"
+          mkdir -p "$scan_dir"
+          dpkg-deb -x "${packages[0]}" "$scan_dir"
+          bun ../../scripts/check-no-production-models.mjs --packaged "$scan_dir"
+      - name: Install and verify on Debian 12
+        run: |
+          mkdir -p "$RUNNER_TEMP/astrlink-smoke"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RUNNER_TEMP/astrlink-smoke:/smoke" \
+            --env DEBIAN_FRONTEND=noninteractive \
+            --env ASTRLINK_CI_NO_REMOTE_MODELS=1 \
+            --env ASTRLINK_CI_SYNTHETIC_MODELS_ONLY=1 \
+            debian:12-slim bash -euc '
+              apt-get update
+              apt-get install -y --no-install-recommends python3 binutils ca-certificates \
+                /workspace/apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+              python3 /workspace/apps/desktop/scripts/verify-unix-package.py \
+                --platform linux --arch x86_64 --root / --logs /smoke
+            '
+      - name: Prepare downloads and checksums
+        run: |
+          mkdir -p package
+          cp src-tauri/target/release/bundle/deb/*.deb package/
+          cd package
+          sha256sum ./*.deb > SHA256SUMS
+      - name: Upload checked Linux package
+        uses: actions/upload-artifact@v7
+        with:
+          name: AstrLink-Linux-x86_64
+          path: apps/desktop/package/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Linux-x86_64-smoke-diagnostics
+          path: ${{ runner.temp }}/astrlink-smoke/*
+          if-no-files-found: ignore
+          retention-days: 7
