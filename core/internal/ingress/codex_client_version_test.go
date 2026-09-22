@@ -113,6 +113,11 @@ func TestCodexForwardingIdentityAcrossHTTPPaths(t *testing.T) {
 				}
 				request.Header = identity.clientHeaders()
 				request.Header.Set("Content-Type", "application/json")
+				accept := "application/json"
+				if route.stream {
+					accept = "text/event-stream"
+				}
+				request.Header.Set("Accept", accept)
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)
 				if response.Code != http.StatusOK {
@@ -121,6 +126,9 @@ func TestCodexForwardingIdentityAcrossHTTPPaths(t *testing.T) {
 				select {
 				case headers := <-sawHeaders:
 					identity.checkUpstream(t, headers)
+					if got := headers.Get("Accept"); got != accept {
+						t.Errorf("Accept = %q, want %q", got, accept)
+					}
 				default:
 					t.Fatal("no upstream request")
 				}

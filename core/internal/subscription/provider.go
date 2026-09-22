@@ -74,6 +74,7 @@ func (provider *CodexProvider) Usage(ctx context.Context, tokens accountauth.Acc
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
+	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
@@ -146,6 +147,7 @@ func (provider *CodexProvider) ListModels(ctx context.Context, tokens accountaut
 		return ModelList{}, err
 	}
 	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
+	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
 		return ModelList{}, err

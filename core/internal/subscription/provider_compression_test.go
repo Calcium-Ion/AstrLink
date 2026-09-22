@@ -14,6 +14,9 @@ import (
 
 func TestProviderReadsCompressedCatalogAndNormalizesResponseHeaders(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Accept"); got != "application/json" {
+			t.Errorf("Accept = %q, want application/json", got)
+		}
 		body := `{"id":"response-test","output":[]}`
 		if request.URL.Path == "/models" {
 			body = `{"models":[{"slug":"test-model","visibility":"list"}]}`

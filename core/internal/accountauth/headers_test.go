@@ -51,7 +51,7 @@ func TestCodexForwardIdentityPolicy(t *testing.T) {
 			for name, want := range map[string]string{
 				"User-Agent": ua, "originator": originator, "version": version,
 				"Authorization": "Bearer access", "ChatGPT-Account-ID": "acct_1",
-				"OAI-Product-Sku": "codex", "Accept": "application/json",
+				"OAI-Product-Sku": "codex", "Accept": "",
 			} {
 				if got := headers.Get(name); got != want {
 					t.Errorf("%s = %q, want %q", name, got, want)
@@ -61,6 +61,30 @@ func TestCodexForwardIdentityPolicy(t *testing.T) {
 				t.Fatal("client headers were mutated")
 			}
 		})
+	}
+}
+
+func TestCodexAuthPreservesAccept(t *testing.T) {
+	for _, accept := range [][]string{nil, {"application/json"}, {"text/event-stream"}, {"text/event-stream", "application/json;q=0.5"}} {
+		for name, apply := range map[string]func(http.Header){
+			"API": func(headers http.Header) {
+				ApplyCodexAPIHeaders(headers, AccountTokens{AccessToken: "access"}, "")
+			},
+			"forward": func(headers http.Header) {
+				ApplyCodexForwardHeaders(headers, AccountTokens{AccessToken: "access"}, nil, CodexIdentityPolicy{})
+			},
+		} {
+			t.Run(name+"/"+strings.Join(accept, ","), func(t *testing.T) {
+				headers := make(http.Header)
+				for _, value := range accept {
+					headers.Add("Accept", value)
+				}
+				apply(headers)
+				if got := headers.Values("Accept"); !reflect.DeepEqual(got, accept) {
+					t.Fatalf("Accept = %v, want %v", got, accept)
+				}
+			})
+		}
 	}
 }
 

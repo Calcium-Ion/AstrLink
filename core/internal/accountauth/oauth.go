@@ -163,6 +163,8 @@ func (config OAuthConfig) normalized() OAuthConfig {
 
 // ApplyCodexAPIHeaders uses one matched Codex identity for gateway-initiated
 // backend requests. Forwarded requests use the same identity by default.
+// Accept belongs to the request so authentication overlays cannot change its
+// response format (for example, an SSE inference stream).
 func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, clientVersion string) {
 	if header == nil {
 		return
@@ -174,7 +176,6 @@ func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, clientVersio
 		header.Set("ChatGPT-Account-ID", tokens.AccountID)
 	}
 	header.Set("OAI-Product-Sku", "codex")
-	header.Set("Accept", "application/json")
 	ApplyCodexAuthIdentity(header, clientVersion)
 	header.Set("version", clientVersion)
 }

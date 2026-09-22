@@ -50,6 +50,13 @@ func TestProviderRequests(t *testing.T) {
 				if test.header != "" && r.Header.Get(test.header) == "" {
 					t.Errorf("missing %s", test.header)
 				}
+				wantAccept := "application/json"
+				if test.stream {
+					wantAccept = "text/event-stream"
+				}
+				if got := r.Header.Get("Accept"); got != wantAccept {
+					t.Errorf("Accept = %q, want %q", got, wantAccept)
+				}
 				var body map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
@@ -66,9 +73,9 @@ func TestProviderRequests(t *testing.T) {
 				if test.kind == contract.ServiceKindClaudeSubscription && !strings.HasPrefix(r.Header.Get("User-Agent"), "claude-cli/") {
 					t.Error("missing subscription user agent")
 				}
-				if test.stream {
-					w.Header().Set("Content-Type", "text/event-stream")
-				}
+				// Reproduce providers that label the response using Accept even
+				// when stream=true still makes the body contain SSE events.
+				w.Header().Set("Content-Type", r.Header.Get("Accept"))
 				_, _ = io.WriteString(w, test.response)
 			}))
 			defer server.Close()
@@ -81,6 +88,9 @@ func TestProviderRequests(t *testing.T) {
 			result := tester.Test(context.Background(), service, contract.ServiceTestRequest{Protocol: test.protocol, Model: "test-model", Stream: test.stream})
 			if !result.OK || result.Output != "OK" || result.StatusCode != 200 || calls != 1 {
 				t.Fatalf("result = %+v; calls = %d", result, calls)
+			}
+			if test.stream && result.FirstTokenMS == nil {
+				t.Fatal("streaming text was not timed")
 			}
 			if result.RawResponse != test.response || result.RawResponseTruncated {
 				t.Fatalf("original upstream body was not preserved: %q", result.RawResponse)
