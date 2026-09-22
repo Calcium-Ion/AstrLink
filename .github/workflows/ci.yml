@@ -48,11 +48,11 @@ jobs:
         run: go build -trimpath -o astrlink-mcp${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/astrlink-mcp
       - name: Archive Core executable
         if: runner.os != 'Windows'
-        run: tar -czf astrlink-core-${{ runner.arch }}.tar.gz astrlink-core
+        run: tar -czf astrlink-core-${{ runner.arch }}.tar.gz astrlink-core -C .. LICENSE LICENSING.md LICENSES
       - name: Archive Core executable
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path astrlink-core.exe -DestinationPath astrlink-core-${{ runner.arch }}.zip
+        run: Compress-Archive -Path astrlink-core.exe, ../LICENSE, ../LICENSING.md, ../LICENSES -DestinationPath astrlink-core-${{ runner.arch }}.zip
       - uses: actions/upload-artifact@v7
         with:
           name: astrlink-core-${{ runner.os }}-${{ runner.arch }}

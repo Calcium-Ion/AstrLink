@@ -35,6 +35,14 @@ if (-not $install.WaitForExit(120000)) {
   throw "Silent installer timed out"
 }
 if ($install.ExitCode -ne 0) { throw "Silent installer failed: $($install.ExitCode)" }
+$repository = (Resolve-Path (Join-Path $PSScriptRoot "../../..")).Path
+foreach ($name in @("LICENSE", "LICENSING.md", "LICENSES/AGPL-3.0.txt")) {
+  $installed = Join-Path $installDir "licenses/$name"
+  $source = Join-Path $repository $name
+  if ((Get-FileHash $installed -Algorithm SHA256).Hash -ne (Get-FileHash $source -Algorithm SHA256).Hash) {
+    throw "Packaged $name does not match the repository license file"
+  }
+}
 $names = @("astrlink-desktop.exe", "astrlink-core.exe", "astrlink-mcp.exe", "astrlink-privacy-worker.exe", "astrlink-classifier-worker.exe", "DirectML.dll")
 $files = @{}
 foreach ($name in $names) {
