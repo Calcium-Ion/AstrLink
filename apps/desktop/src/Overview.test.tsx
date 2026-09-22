@@ -450,6 +450,81 @@ describe("Overview", () => {
     expect(onUsagePresetChange).toHaveBeenCalledWith("30d");
   });
 
+  it("pages the two usage cards independently without dropping rows or rescaling bars", async () => {
+    const services = Array.from({ length: 7 }, (_, index) => ({
+      ...gateway,
+      id: `service_${index}`,
+      name: `Provider ${index + 1}`,
+    }));
+    const models = Array.from({ length: 14 }, (_, index) =>
+      group(`model-${index + 1}`, {
+        requests: 14 - index,
+        total_tokens: (14 - index) * 100,
+      }),
+    );
+    await renderOverview({
+      catalog: { ...readyCatalog, items: services },
+      usage: {
+        status: "ready",
+        error: null,
+        summary: readySummary({
+          by_service: services.map((service, index) =>
+            group(service.id, { requests: 7 - index, total_tokens: (7 - index) * 100 }),
+          ),
+          by_model: models,
+        }),
+      },
+    });
+
+    const serviceCard = container.querySelector<HTMLElement>('[aria-labelledby="usage-by-service-heading"]')!;
+    const modelCard = container.querySelector<HTMLElement>('[aria-labelledby="usage-by-model-heading"]')!;
+    const labels = (card: HTMLElement) => [...card.querySelectorAll('[data-slot="paginated-list-items"] strong[title]')].map((node) => node.textContent);
+    const next = (card: HTMLElement) => card.querySelector<HTMLButtonElement>('button[aria-label="下一页"]')!;
+
+    expect(labels(serviceCard)).toEqual(services.slice(0, 5).map((service) => service.name));
+    expect(labels(modelCard)).toEqual(models.slice(0, 5).map((model) => model.id));
+    const allModelLabels = labels(modelCard);
+    await act(async () => next(modelCard).click());
+    allModelLabels.push(...labels(modelCard));
+    expect(labels(serviceCard)).toEqual(services.slice(0, 5).map((service) => service.name));
+    const firstBar = modelCard.querySelector<HTMLElement>('[data-slot="paginated-list-items"] [aria-hidden="true"] > span[style]')!;
+    expect(Number.parseFloat(firstBar.style.width)).toBeCloseTo(900 / 1400 * 100, 0);
+    await act(async () => next(modelCard).click());
+    allModelLabels.push(...labels(modelCard));
+    expect(allModelLabels).toEqual(models.map((model) => model.id));
+    expect(next(modelCard).disabled).toBe(true);
+    await act(async () => next(serviceCard).click());
+    expect(labels(serviceCard)).toEqual(services.slice(5).map((service) => service.name));
+    expect(labels(modelCard)).toEqual(models.slice(10).map((model) => model.id));
+    expect(next(serviceCard).disabled).toBe(true);
+    expect(button("热力图").getAttribute("data-state")).toBe("on");
+  });
+
+  it("keeps card pages valid after refresh and resets them when the usage range changes", async () => {
+    const models = Array.from({ length: 12 }, (_, index) =>
+      group(`model-${index + 1}`, { requests: 12 - index, total_tokens: 1200 - index * 100 }),
+    );
+    const usage = { status: "ready" as const, error: null, summary: readySummary({ by_model: models }) };
+    await renderOverview({ usage });
+    const card = () => container.querySelector<HTMLElement>('[aria-labelledby="usage-by-model-heading"]')!;
+    const next = () => card().querySelector<HTMLButtonElement>('button[aria-label="下一页"]')!;
+    await act(async () => next().click());
+    await act(async () => next().click());
+    expect(card().textContent).toContain("model-12");
+
+    await renderOverview({ usage: { ...usage, summary: readySummary({ by_model: models.slice(0, 2) }) } });
+    expect(card().textContent).toContain("model-1");
+    expect(card().querySelector("nav")).toBeNull();
+    await renderOverview({ usage });
+    expect(card().textContent).not.toContain("model-12");
+    await act(async () => next().click());
+    expect(card().textContent).toContain("model-6");
+
+    await renderOverview({ usage, usagePreset: "30d" });
+    expect(card().textContent).toContain("model-1");
+    expect(card().textContent).not.toContain("model-6");
+  });
+
   it("switches between heatmap and chart without changing the selected range", async () => {
     const summary = emptyUsageSummary(resolveUsageWindow("30d", now));
     summary.by_day[0] = {

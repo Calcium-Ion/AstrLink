@@ -33,6 +33,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { Metric, MetricGroup, MetricValuePair } from "@/components/Metric";
 import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { Panel, PanelHeader } from "@/components/Panel";
+import { PaginatedList } from "@/components/PaginatedList";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
@@ -95,6 +96,8 @@ export interface ServiceCatalog {
 
 const USAGE_METRIC_GRID =
   "gap-3 bg-transparent [&>div]:rounded-md [&>div]:border @min-[640px]/workspace-surface:grid-cols-[1fr_1fr_1.4fr_1fr]";
+
+const USAGE_BREAKDOWN_HEADER = "min-h-14 flex-wrap items-center py-2";
 
 export function Overview({
   catalog,
@@ -450,7 +453,7 @@ export function Overview({
               <div className="grid min-w-0 grid-cols-1 items-start gap-3 @min-[640px]/workspace-surface:grid-cols-2">
                 <Panel aria-labelledby="usage-by-service-heading">
                   <PanelHeader
-                    className="min-h-11 flex-wrap items-center"
+                    className={USAGE_BREAKDOWN_HEADER}
                     actions={
                       <>
                         <div className="flex items-baseline gap-2 pr-1">
@@ -502,38 +505,47 @@ export function Overview({
                     </h2>
                   </PanelHeader>
 
-                  {/* Keep the list viewport stable when a range changes its row count. */}
-                  <div className="h-44 overflow-y-auto overscroll-contain">
-                    <ServiceUsageBody
-                      catalog={catalog}
-                      catalogUnknown={catalogUnknown}
-                      isReady={isReady}
-                      onAddService={onAddService}
-                      onOpenService={onOpenService}
-                      onRefreshServices={onRefreshServices}
-                      rows={serviceRows}
-                      showBar={
-                        usage.status === "ready" &&
-                        serviceRows.some((row) => row.total_tokens > 0)
-                      }
-                      status={usage.status}
-                    />
-                  </div>
-
-                  <Button
-                    className="h-auto w-full justify-between rounded-none border-t px-4 py-2.5 text-xs font-medium text-text-secondary no-underline hover:bg-muted hover:text-foreground hover:no-underline"
-                    onClick={onManageServices}
-                    type="button"
-                    variant="link"
+                  <PaginatedList
+                    key={usagePreset}
+                    items={serviceRows}
+                    itemsClassName="min-h-75"
+                    label={t("overview.byService")}
+                    footer={
+                      <Button
+                        className="justify-start px-0 text-xs text-text-secondary has-[>svg]:px-0"
+                        onClick={onManageServices}
+                        size="sm"
+                        type="button"
+                        variant="link"
+                      >
+                        {t("overview.manageAllServices")}
+                        <ArrowRight className="size-4" />
+                      </Button>
+                    }
                   >
-                    {t("overview.manageAllServices")}
-                    <ArrowRight className="size-4" />
-                  </Button>
+                    {(visibleRows) => (
+                      <ServiceUsageBody
+                        catalog={catalog}
+                        catalogUnknown={catalogUnknown}
+                        isReady={isReady}
+                        onAddService={onAddService}
+                        onOpenService={onOpenService}
+                        onRefreshServices={onRefreshServices}
+                        rows={serviceRows}
+                        visibleRows={visibleRows}
+                        showBar={
+                          usage.status === "ready" &&
+                          serviceRows.some((row) => row.total_tokens > 0)
+                        }
+                        status={usage.status}
+                      />
+                    )}
+                  </PaginatedList>
                 </Panel>
 
                 <Panel aria-labelledby="usage-by-model-heading">
                   <PanelHeader
-                    className="min-h-11 items-center"
+                    className={USAGE_BREAKDOWN_HEADER}
                     actions={
                       <span className="text-micro text-muted-foreground">
                         {t("overview.rankedByTokens")}
@@ -547,27 +559,37 @@ export function Overview({
                       {t("overview.byModel")}
                     </h2>
                   </PanelHeader>
-                  <div className="h-44 overflow-y-auto overscroll-contain">
-                    <ModelUsageBody
-                      rows={modelRows}
-                      showBar={
-                        usage.status === "ready" &&
-                        modelRows.some((row) => row.total_tokens > 0)
-                      }
-                      status={usage.status}
-                    />
-                  </div>
-                  <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">
-                    {usage.status === "ready"
-                      ? t("overview.modelCount", { count: modelRows.length })
-                      : usage.status === "loading"
-                        ? t("overview.aggregatingModels")
-                        : t(
-                            usage.status === "blocked"
-                              ? "overview.waitingGateway"
-                              : "overview.waitingRefresh",
-                          )}
-                  </p>
+                  <PaginatedList
+                    key={usagePreset}
+                    items={modelRows}
+                    itemsClassName="min-h-75"
+                    label={t("overview.byModel")}
+                    footer={
+                      <span className="text-xs text-muted-foreground">
+                        {usage.status === "ready"
+                          ? t("overview.modelCount", { count: modelRows.length })
+                          : usage.status === "loading"
+                            ? t("overview.aggregatingModels")
+                            : t(
+                                usage.status === "blocked"
+                                  ? "overview.waitingGateway"
+                                  : "overview.waitingRefresh",
+                              )}
+                      </span>
+                    }
+                  >
+                    {(visibleRows) => (
+                      <ModelUsageBody
+                        rows={modelRows}
+                        visibleRows={visibleRows}
+                        showBar={
+                          usage.status === "ready" &&
+                          modelRows.some((row) => row.total_tokens > 0)
+                        }
+                        status={usage.status}
+                      />
+                    )}
+                  </PaginatedList>
                 </Panel>
               </div>
               <Panel
@@ -1407,6 +1429,7 @@ function ServiceUsageBody({
   onOpenService,
   onRefreshServices,
   rows,
+  visibleRows,
   showBar,
   status,
 }: {
@@ -1417,6 +1440,7 @@ function ServiceUsageBody({
   onOpenService: (serviceId: string) => void;
   onRefreshServices: () => void;
   rows: MergedServiceUsage[];
+  visibleRows: MergedServiceUsage[];
   showBar: boolean;
   status: UsageStatus;
 }) {
@@ -1484,7 +1508,7 @@ function ServiceUsageBody({
 
   return (
     <div>
-      {rows.map((row) => (
+      {visibleRows.map((row) => (
         <UsageBreakdownRow
           barPercent={usageBarPercent(row.total_tokens, rows)}
           key={row.id ?? "unattributed"}
@@ -1517,10 +1541,12 @@ function ServiceUsageBody({
 
 function ModelUsageBody({
   rows,
+  visibleRows,
   showBar,
   status,
 }: {
   rows: UsageGroup[];
+  visibleRows: UsageGroup[];
   showBar: boolean;
   status: UsageStatus;
 }) {
@@ -1560,7 +1586,7 @@ function ModelUsageBody({
 
   return (
     <div>
-      {rows.map((row) => {
+      {visibleRows.map((row) => {
         const label = modelUsageLabel(row.id);
         return (
           <UsageBreakdownRow
@@ -1644,7 +1670,7 @@ function UsageBreakdownRow({
   if (onClick) {
     return (
       <Button
-        className="grid h-auto min-w-0 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-none border-b bg-transparent px-4 py-2.5 text-left font-normal text-foreground hover:bg-muted"
+        className="grid h-15 min-w-0 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-none border-b bg-transparent px-4 py-2.5 text-left font-normal text-foreground hover:bg-muted"
         onClick={onClick}
         type="button"
         variant="ghost"
@@ -1655,7 +1681,7 @@ function UsageBreakdownRow({
   }
 
   return (
-    <DataRow className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center py-2.5">
+    <DataRow className="grid h-15 grid-cols-[auto_minmax(0,1fr)_auto] items-center py-2.5">
       {content}
     </DataRow>
   );

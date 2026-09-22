@@ -98,6 +98,8 @@
     "unsupported": "尚未配置可直接测试的文本生成协议，请先配置原生或委托协议。"
   },
   "common": {
+    "previousPage": "上一页",
+    "nextPage": "下一页",
     "showSecret": "显示明文",
     "hideSecret": "隐藏明文",
     "clearSearch": "清除搜索",

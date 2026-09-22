@@ -98,6 +98,8 @@
     "unsupported": "No directly supported text generation protocol is configured. Configure a native or delegated protocol first."
   },
   "common": {
+    "previousPage": "Previous page",
+    "nextPage": "Next page",
     "showSecret": "Show secret",
     "hideSecret": "Hide secret",
     "clearSearch": "Clear search",
