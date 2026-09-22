@@ -20,6 +20,8 @@ import {
 import { ConfirmDialog as AppConfirmDialog } from "@/components/ConfirmDialog";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
+import { ActionGroup } from "@/components/ActionGroup";
+import { ScrollWorkspace } from "@/components/ScrollWorkspace";
 import { FilterSelect } from "@/components/FilterSelect";
 import { FormMessage } from "@/components/FormMessage";
 import { HelpPopover } from "@/components/HelpPopover";
@@ -904,53 +906,6 @@ export function RequestRecords({
 
   return (
     <>
-      {view === "monitor" ? (
-        <PageHeader
-          actions={
-            <>
-              <Label className="mr-2 inline-flex cursor-pointer items-center gap-2 text-xs font-normal text-text-secondary @max-[760px]:mr-auto">
-                <span>{t("records.captureTitle")}</span>
-                {settings ? (
-                  <Switch
-                    aria-label={t("records.captureTitle")}
-                    checked={bodyCaptureEnabled}
-                    disabled={!isReady || settingsBusy}
-                    onCheckedChange={toggleBodyCapture}
-                    size="sm"
-                  />
-                ) : (
-                  <span aria-hidden className="inline-block h-5 w-9" />
-                )}
-              </Label>
-              <Button
-                variant="ghost"
-                disabled={!isReady}
-                onClick={() => setPurgeOpen(true)}
-                size="sm"
-                type="button"
-              >
-                <Trash2 aria-hidden="true" />
-                {t("records.purgeEllipsis")}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={!isReady}
-                onClick={() => void openSettings()}
-                size="sm"
-                type="button"
-              >
-                <Settings2 aria-hidden="true" />
-                {t("records.auditSettings")}
-              </Button>
-            </>
-          }
-          actionsClassName="flex-wrap @max-[760px]:w-full"
-          className="mb-0 @max-[760px]:items-start @max-[760px]:flex-col"
-          description={t("records.description")}
-          title={t("records.title")}
-          titleId="request-records-heading"
-        />
-      ) : null}
       <div className="flex h-full min-h-0 min-w-0 flex-1">
         <Tabs
           aria-labelledby="request-records-heading"
@@ -963,98 +918,85 @@ export function RequestRecords({
             setError(null);
           }}
         >
-          <TabsList
-            aria-label={t("records.kind")}
-            className="w-full shrink-0 justify-start border-b"
-            variant="line"
-          >
-            <TabsTrigger className="flex-none" value="inference">
-              <MessageSquare aria-hidden="true" />
-              {t("records.inference")}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none" value="discovery">
-              <ListFilter aria-hidden="true" />
-              {t("records.discovery")}
-            </TabsTrigger>
-            <TabsTrigger className="flex-none" value="all">{t("common.all")}</TabsTrigger>
-          </TabsList>
-          {error ? (
-            <FormMessage className="mt-2.5 shrink-0" tone="error">
-              {error}
-            </FormMessage>
-          ) : null}
-          {syncWarning ? (
-            <FormMessage className="mt-2.5 flex shrink-0 items-center gap-2" tone="warning">
-              <StatusDot tone="pending" />
-              {syncWarning}
-            </FormMessage>
-          ) : null}
-
-          <TabsContent
-            value={kind}
-            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
-            data-testid="request-records-scroll"
-            onScroll={(event) => {
-              atTopRef.current = event.currentTarget.scrollTop <= 8;
-            }}
-            ref={monitorScrollRef}
-          >
-            <div className="sticky top-0 z-7">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background py-3">
-                <div className="grid min-w-0 flex-1 basis-96 grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.2fr)] gap-2 @[760px]:max-w-xl">
-                  <FilterSelect
-                    ariaLabel={t("records.filter", { label: t("records.status") })}
-                    className="w-full"
-                    label={t("records.status")}
-                    onChange={(status) =>
-                      setFilters((current) => ({
-                        ...current,
-                        status: status as SessionStatus | "",
-                      }))
+          <ScrollWorkspace
+            className="gap-0"
+            contentAsChild
+            headerClassName="gap-0"
+            header={
+              <>
+                {view === "monitor" ? (
+                  <PageHeader
+                    actions={
+                      <>
+                        <Label className="mr-2 inline-flex cursor-pointer items-center gap-2 text-xs font-normal text-text-secondary">
+                          <span>{t("records.captureTitle")}</span>
+                          {settings ? (
+                            <Switch
+                              aria-label={t("records.captureTitle")}
+                              checked={bodyCaptureEnabled}
+                              disabled={!isReady || settingsBusy}
+                              onCheckedChange={toggleBodyCapture}
+                              size="sm"
+                            />
+                          ) : (
+                            <span aria-hidden className="inline-block h-5 w-9" />
+                          )}
+                        </Label>
+                        <Button
+                          variant="ghost"
+                          disabled={!isReady}
+                          onClick={() => setPurgeOpen(true)}
+                          size="sm"
+                          type="button"
+                        >
+                          <Trash2 aria-hidden="true" />
+                          {t("records.purgeEllipsis")}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={!isReady}
+                          onClick={() => void openSettings()}
+                          size="sm"
+                          type="button"
+                        >
+                          <Settings2 aria-hidden="true" />
+                          {t("records.auditSettings")}
+                        </Button>
+                      </>
                     }
-                    options={[
-                      { label: t("common.all"), value: "" },
-                      ...STATUSES.map((status) => ({
-                        label: statusLabel(status),
-                        value: status,
-                      })),
-                    ]}
-                    value={filters.status}
+                    className="mb-0 flex-wrap"
+                    description={t("records.description")}
+                    title={t("records.title")}
+                    titleId="request-records-heading"
                   />
-                  <FilterSelect
-                    ariaLabel={t("records.filter", { label: t("records.provider") })}
-                    className="w-full"
-                    label={t("records.provider")}
-                    onChange={(serviceId) =>
-                      setFilters((current) => ({ ...current, serviceId }))
-                    }
-                    options={[
-                      { label: t("common.all"), value: "" },
-                      ...services.map((service) => ({
-                        label: service.name,
-                        value: service.id,
-                      })),
-                    ]}
-                    value={filters.serviceId}
-                  />
-                  <FilterSelect
-                    ariaLabel={t("records.filter", { label: t("records.protocol") })}
-                    className="w-full"
-                    label={t("records.protocol")}
-                    onChange={(protocol) =>
-                      setFilters((current) => ({ ...current, protocol }))
-                    }
-                    options={[
-                      { label: t("common.all"), value: "" },
-                      ...protocolOptions.map((protocol) => ({
-                        label: protocolEntryPath(protocol),
-                        value: protocol,
-                      })),
-                    ]}
-                    value={filters.protocol}
-                  />
-                </div>
-                <div className="ml-auto flex shrink-0 items-center gap-3">
+                ) : null}
+                <TabsList
+                  aria-label={t("records.kind")}
+                  className="w-full shrink-0 justify-start border-b"
+                  variant="line"
+                >
+                  <TabsTrigger className="flex-none" value="inference">
+                    <MessageSquare aria-hidden="true" />
+                    {t("records.inference")}
+                  </TabsTrigger>
+                  <TabsTrigger className="flex-none" value="discovery">
+                    <ListFilter aria-hidden="true" />
+                    {t("records.discovery")}
+                  </TabsTrigger>
+                  <TabsTrigger className="flex-none" value="all">{t("common.all")}</TabsTrigger>
+                </TabsList>
+                {error ? (
+                  <FormMessage className="mt-2.5 shrink-0" tone="error">
+                    {error}
+                  </FormMessage>
+                ) : null}
+                {syncWarning ? (
+                  <FormMessage className="mt-2.5 flex shrink-0 items-center gap-2" tone="warning">
+                    <StatusDot tone="pending" />
+                    {syncWarning}
+                  </FormMessage>
+                ) : null}
+                <ActionGroup className="w-full border-b bg-background py-2">
                   <span className="inline-flex items-center gap-1.5 text-micro text-muted-foreground">
                     <StatusDot
                       tone={
@@ -1067,8 +1009,61 @@ export function RequestRecords({
                     />
                     {t("records.syncEverySecond")}
                   </span>
+                  <div className="grid min-w-0 flex-1 basis-72 grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.2fr)] gap-2 @[760px]:max-w-xl">
+                    <FilterSelect
+                      ariaLabel={t("records.filter", { label: t("records.status") })}
+                      className="w-full"
+                      label={t("records.status")}
+                      onChange={(status) =>
+                        setFilters((current) => ({
+                          ...current,
+                          status: status as SessionStatus | "",
+                        }))
+                      }
+                      options={[
+                        { label: t("common.all"), value: "" },
+                        ...STATUSES.map((status) => ({
+                          label: statusLabel(status),
+                          value: status,
+                        })),
+                      ]}
+                      value={filters.status}
+                    />
+                    <FilterSelect
+                      ariaLabel={t("records.filter", { label: t("records.provider") })}
+                      className="w-full"
+                      label={t("records.provider")}
+                      onChange={(serviceId) =>
+                        setFilters((current) => ({ ...current, serviceId }))
+                      }
+                      options={[
+                        { label: t("common.all"), value: "" },
+                        ...services.map((service) => ({
+                          label: service.name,
+                          value: service.id,
+                        })),
+                      ]}
+                      value={filters.serviceId}
+                    />
+                    <FilterSelect
+                      ariaLabel={t("records.filter", { label: t("records.protocol") })}
+                      className="w-full"
+                      label={t("records.protocol")}
+                      onChange={(protocol) =>
+                        setFilters((current) => ({ ...current, protocol }))
+                      }
+                      options={[
+                        { label: t("common.all"), value: "" },
+                        ...protocolOptions.map((protocol) => ({
+                          label: protocolEntryPath(protocol),
+                          value: protocol,
+                        })),
+                      ]}
+                      value={filters.protocol}
+                    />
+                  </div>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     disabled={!isReady || listStatus === "loading"}
                     onClick={() => manualPollRef.current?.()}
                     size="sm"
@@ -1077,75 +1072,86 @@ export function RequestRecords({
                     <RefreshCw aria-hidden="true" />
                     {t("common.refresh")}
                   </Button>
-                </div>
-              </div>
-              {/* Floating inside the sticky toolbar, and absolute so it adds
-                  no height: the pill follows the toolbar without anyone
-                  hardcoding its height as a top offset. */}
-              {queuedVisibleCount > 0 ? (
-                <div className="relative">
-                  <Button
-                    className="absolute top-2 left-1/2 -translate-x-1/2 shadow-md"
-                    onClick={applyQueue}
-                    size="sm"
-                    type="button"
-                  >
-                    {t("records.newRecords", { count: queuedVisibleCount })}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-
-            {!isReady || listStatus === "blocked" ? (
-              <EmptyState
-                className="my-4 min-h-64"
-                title={t("records.waitingReady")}
-                description={t("records.waitingHint")}
-              />
-            ) : listStatus === "error" && listError ? (
-              <EmptyState
-                className="my-4 min-h-64"
-                title={t("records.readFailedTitle")}
-                description={listError}
-              />
-            ) : listStatus === "loading" && live.items.length === 0 ? (
-              <RecordSkeleton />
-            ) : visibleItems.length === 0 ? (
-              <EmptyState
-                className="my-4 min-h-64"
-                title={t(
-                  kind === "discovery" ? "records.emptyDiscovery"
-                    : kind === "inference" ? "records.emptyInference" : "records.empty",
-                )}
-                action={
-                  filters.status || filters.serviceId || filters.protocol ? (
-                    <Button variant="outline" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
-                      {t("records.clearFilters")}
+                </ActionGroup>
+              </>
+            }
+          >
+            <TabsContent
+              value={kind}
+              className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+              data-testid="request-records-scroll"
+              onScroll={(event) => {
+                atTopRef.current = event.currentTarget.scrollTop <= 8;
+              }}
+              ref={monitorScrollRef}
+            >
+              <div className="sticky top-0 z-7">
+                {/* Keep queued updates at the top of the list without taking up row space. */}
+                {queuedVisibleCount > 0 ? (
+                  <div className="relative">
+                    <Button
+                      className="absolute top-2 left-1/2 -translate-x-1/2 shadow-md"
+                      onClick={applyQueue}
+                      size="sm"
+                      type="button"
+                    >
+                      {t("records.newRecords", { count: queuedVisibleCount })}
                     </Button>
-                  ) : undefined
-                }
-              />
-            ) : (
-              <SessionStream
-                onOpen={openDetail}
-                selectedId={selectedId}
-                services={servicesById}
-                sessions={visibleItems}
-              />
-            )}
+                  </div>
+                ) : null}
+              </div>
 
-            {live.nextCursor ? (
-              <Button
-                className="mx-auto my-3 flex"
-                variant="outline"
-                disabled={loadingMore}
-                onClick={() => void loadMore()}
-                type="button"
-              >
-                {loadingMore ? t("common.loading") : t("records.loadEarlier")}
-              </Button>
-            ) : null}
-          </TabsContent>
+              {!isReady || listStatus === "blocked" ? (
+                <EmptyState
+                  className="my-4 min-h-64"
+                  title={t("records.waitingReady")}
+                  description={t("records.waitingHint")}
+                />
+              ) : listStatus === "error" && listError ? (
+                <EmptyState
+                  className="my-4 min-h-64"
+                  title={t("records.readFailedTitle")}
+                  description={listError}
+                />
+              ) : listStatus === "loading" && live.items.length === 0 ? (
+                <RecordSkeleton />
+              ) : visibleItems.length === 0 ? (
+                <EmptyState
+                  className="my-4 min-h-64"
+                  title={t(
+                    kind === "discovery" ? "records.emptyDiscovery"
+                      : kind === "inference" ? "records.emptyInference" : "records.empty",
+                  )}
+                  action={
+                    filters.status || filters.serviceId || filters.protocol ? (
+                      <Button variant="outline" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+                        {t("records.clearFilters")}
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <SessionStream
+                  onOpen={openDetail}
+                  selectedId={selectedId}
+                  services={servicesById}
+                  sessions={visibleItems}
+                />
+              )}
+
+              {live.nextCursor ? (
+                <Button
+                  className="mx-auto my-3 flex"
+                  variant="outline"
+                  disabled={loadingMore}
+                  onClick={() => void loadMore()}
+                  type="button"
+                >
+                  {loadingMore ? t("common.loading") : t("records.loadEarlier")}
+                </Button>
+              ) : null}
+            </TabsContent>
+          </ScrollWorkspace>
         </Tabs>
 
         {view === "detail" && selectedSession && selected ? (
@@ -1680,6 +1686,15 @@ function RecordDetail({
                 {copyButtonLabel(copyFeedback, "bundle-meta")}
               </span>
             ) : null}
+            <IconButton
+              className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+              disabled={deleting || record.status === "pending"}
+              label={record.status === "pending" ? t("records.deletePending") : deleting ? t("records.deleting") : t("common.delete")}
+              onClick={onDelete}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" />
+            </IconButton>
             <Button
               data-testid="copy-skill-diagnostic"
               onClick={copySkillDiagnostic}
@@ -1738,15 +1753,6 @@ function RecordDetail({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            <IconButton
-              className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-              disabled={deleting || record.status === "pending"}
-              label={record.status === "pending" ? t("records.deletePending") : deleting ? t("records.deleting") : t("common.delete")}
-              onClick={onDelete}
-              type="button"
-            >
-              <Trash2 aria-hidden="true" />
-            </IconButton>
           </>
         }
       />

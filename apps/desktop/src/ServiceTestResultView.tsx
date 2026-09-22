@@ -10,6 +10,7 @@ import { ResponseViewer } from "./components/ResponseViewer";
 import { StatusBadge } from "./components/StatusBadge";
 import { Activity, LoaderCircle } from "./components/icons";
 import { Badge } from "./components/ui/badge";
+import { ActionGroup } from "./components/ActionGroup";
 
 export function ServiceTestResultView({ result, error, running = false, blocked, stream = true, leading }: {
   result?: ServiceTestResult | null; error?: string | null; running?: boolean; blocked?: string | null; stream?: boolean; leading?: ReactNode;
@@ -23,16 +24,18 @@ export function ServiceTestResultView({ result, error, running = false, blocked,
   return <>
     <div className="flex shrink-0 items-center justify-between gap-2">
       {leading ? <div className="flex min-w-0 flex-1 items-center gap-2">{leading}</div> : null}
-      <div className="flex shrink-0 items-center gap-2" role="status" aria-live="polite">
-        <StatusBadge tone={running ? "pending" : result?.ok ? "positive" : result || error ? "negative" : "neutral"}>{status}</StatusBadge>
-        {result && result.status_code > 0 ? <Badge variant="outline">HTTP {result.status_code}</Badge> : null}
-      </div>
-      <HelpPopover label={t("serviceTest.timingHelp")} inDialog>
-        <p>{t("serviceTest.headersHint")}</p>
-        <p className="mt-2">{t("serviceTest.firstTokenHint")}</p>
-        <p className="mt-2">{t("serviceTest.totalHint")}</p>
-        {!(result?.stream ?? stream) ? <p className="mt-2">{t("serviceTest.nonStreamingTiming")}</p> : null}
-      </HelpPopover>
+      <ActionGroup className="shrink-0">
+        <HelpPopover label={t("serviceTest.timingHelp")} inDialog>
+          <p>{t("serviceTest.headersHint")}</p>
+          <p className="mt-2">{t("serviceTest.firstTokenHint")}</p>
+          <p className="mt-2">{t("serviceTest.totalHint")}</p>
+          {!(result?.stream ?? stream) ? <p className="mt-2">{t("serviceTest.nonStreamingTiming")}</p> : null}
+        </HelpPopover>
+        <div className="flex shrink-0 items-center gap-2" role="status" aria-live="polite">
+          <StatusBadge tone={running ? "pending" : result?.ok ? "positive" : result || error ? "negative" : "neutral"}>{status}</StatusBadge>
+          {result && result.status_code > 0 ? <Badge variant="outline">HTTP {result.status_code}</Badge> : null}
+        </div>
+      </ActionGroup>
     </div>
     <Panel className="shrink-0">
       <MetricGroup className="grid-cols-4">

@@ -108,8 +108,8 @@ export function BatchModelTest({ service, input, blocked, settings, onClose, onB
           searchLabel={t("batchTest.search")} placeholder={t("batchTest.search")} clearLabel={t("common.clearSearch")}
           filters={<span className="truncate text-xs font-medium" title={t("batchTest.selected", { count: selected.size, limit: MAX_BATCH_MODELS })}>{t("batchTest.selectedShort", { count: selected.size, total: models.length })}</span>}
           actions={<>
-            {canAdd ? <Button size="sm" variant="outline" disabled={running || selected.size >= MAX_BATCH_MODELS} onClick={() => { setCustomModels(previous => [...previous, newModel]); toggleModel(newModel, true); }}><Plus aria-hidden="true" />{t("batchTest.add")}</Button> : null}
             <Button size="sm" variant="ghost" disabled={running || selected.size === 0} onClick={() => setSelected(new Set())}>{t("batchTest.clear")}</Button>
+            {canAdd ? <Button size="sm" variant="outline" disabled={running || selected.size >= MAX_BATCH_MODELS} onClick={() => { setCustomModels(previous => [...previous, newModel]); toggleModel(newModel, true); }}><Plus aria-hidden="true" />{t("batchTest.add")}</Button> : null}
             <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger asChild><Button size="sm" variant="outline" disabled={running}><SlidersHorizontal aria-hidden="true" />{t("serviceTest.settings")}</Button></PopoverTrigger>
             <PopoverContent className="z-110 grid max-h-[var(--radix-popover-content-available-height)] w-80 gap-4 overflow-y-auto">

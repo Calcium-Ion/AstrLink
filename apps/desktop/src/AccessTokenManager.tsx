@@ -1,3 +1,4 @@
+import { ActionGroup } from "@/components/ActionGroup";
 import {
   type FormEvent,
   useCallback,
@@ -541,7 +542,26 @@ export function AccessTokenManager({
                         }
                       />
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
+                    <ActionGroup className="shrink-0 gap-1">
+                      <Button
+                        className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+                        disabled={!isReady || deletingID !== null}
+                        onClick={() => {
+                          revealGeneration.current += 1;
+                          setCopyingID(null);
+                          setCopiedID(null);
+                          setPendingDelete(token);
+                          setError(null);
+                        }}
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Trash2 />
+                        {deletingID === token.id
+                          ? t("tokens.deleting")
+                          : t("common.delete")}
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
@@ -564,26 +584,7 @@ export function AccessTokenManager({
                             ? t("common.copied")
                             : t("common.copy")}
                       </Button>
-                      <Button
-                        className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-                        disabled={!isReady || deletingID !== null}
-                        onClick={() => {
-                          revealGeneration.current += 1;
-                          setCopyingID(null);
-                          setCopiedID(null);
-                          setPendingDelete(token);
-                          setError(null);
-                        }}
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                      >
-                        <Trash2 />
-                        {deletingID === token.id
-                          ? t("tokens.deleting")
-                          : t("common.delete")}
-                      </Button>
-                    </div>
+                    </ActionGroup>
                   </article>
                 </DataRow>
               );

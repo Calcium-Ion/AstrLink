@@ -2626,12 +2626,6 @@ export function SafetyPolicy({
               <Panel className="@container flex min-h-0 flex-col">
                 <PanelHeader className="shrink-0 items-center px-3 py-2" actions={
                   <>
-                    <Badge variant="secondary">
-                      {t("safety.enabledTypes", {
-                        count: PRIVACY_KINDS.filter((kind) => kindRuleFor(kind).enabled).length,
-                        total: PRIVACY_KINDS.length,
-                      })}
-                    </Badge>
                     <HelpPopover label={t("safety.placeholderGuide")}>
                       <div className="grid gap-3">
                         <p>{t("safety.redactTypesHint")}</p>
@@ -2657,6 +2651,12 @@ export function SafetyPolicy({
                         </ul>
                       </div>
                     </HelpPopover>
+                    <Badge variant="secondary">
+                      {t("safety.enabledTypes", {
+                        count: PRIVACY_KINDS.filter((kind) => kindRuleFor(kind).enabled).length,
+                        total: PRIVACY_KINDS.length,
+                      })}
+                    </Badge>
                   </>
                 }>
                   <h2 className="text-sm font-semibold">{t("safety.perKindRedact")}</h2>
@@ -3039,7 +3039,6 @@ export function SafetyPolicy({
               <Panel className="flex min-h-0 flex-col" data-testid="dry-run-output-panel">
                 <PanelHeader className="shrink-0 items-center px-3 py-2" actions={
                   <>
-                    <Badge variant="secondary">{t("safety.localPreviewOnly")}</Badge>
                     <Button
                       className="@[720px]:hidden"
                       onClick={() => {
@@ -3052,6 +3051,7 @@ export function SafetyPolicy({
                     >
                       {t("safety.backToInput")}
                     </Button>
+                    <Badge variant="secondary">{t("safety.localPreviewOnly")}</Badge>
                   </>
                 }>
                   <h2 className="text-sm font-semibold outline-none" id="dry-run-result-heading" ref={dryRunResultHeadingRef} tabIndex={-1}>

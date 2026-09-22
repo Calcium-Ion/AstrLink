@@ -8,6 +8,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { Panel } from "./Panel";
 import { SegmentedControl } from "./SegmentedControl";
 import { FormMessage } from "./FormMessage";
+import { ActionGroup } from "./ActionGroup";
 
 /** A bounded response workspace. View changes only scroll the content pane. */
 export function ResponseViewer({ content, rawContent, rawTruncated, contentType, label, notice, children }: {
@@ -23,15 +24,15 @@ export function ResponseViewer({ content, rawContent, rawTruncated, contentType,
     <Panel className="flex min-h-0 flex-1 flex-col" aria-label={label}>
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
         <span className="truncate text-xs font-medium text-text-secondary">{label}</span>
-        {hasResponse ? <div className="flex items-center gap-1">
-          <SegmentedControl label={t("responseViewer.view")} value={view} onValueChange={setView}
-            options={[{ value: "preview", label: t("responseViewer.preview") }, { value: "raw", label: t("responseViewer.raw") }]} />
+        {hasResponse ? <ActionGroup className="gap-1">
           <Button size="sm" variant="ghost" disabled={!visibleContent} aria-label={copyButtonLabel(copy, copyKey, t(view === "raw" ? "responseViewer.copyRaw" : "responseViewer.copy"))} onClick={() => { if (visibleContent) copy.copy(copyKey, visibleContent); }}>
             {copy.activeKey === copyKey && copy.state === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
             {copyButtonLabel(copy, copyKey)}
           </Button>
+          <SegmentedControl label={t("responseViewer.view")} value={view} onValueChange={setView}
+            options={[{ value: "preview", label: t("responseViewer.preview") }, { value: "raw", label: t("responseViewer.raw") }]} />
           <span className="sr-only" role="status">{copy.activeKey === copyKey ? copyButtonLabel(copy, copyKey) : ""}</span>
-        </div> : null}
+        </ActionGroup> : null}
       </div>
       <div className="min-h-0 flex-1 overflow-auto overscroll-contain p-4" data-slot="response-content" data-tab-scroller>
         {view === "raw" ? <>

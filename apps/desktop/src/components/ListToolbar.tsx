@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { HelpPopover } from "@/components/HelpPopover";
+import { ActionGroup } from "@/components/ActionGroup";
 import { cn } from "@/lib/utils";
 
 /** Keep list identity, search, help, and actions together in one compact toolbar. */
@@ -97,9 +98,9 @@ export function ListToolbar({
       </div>
       {secondaryFilters ? <div className="min-w-0">{secondaryFilters}</div> : null}
       {actions ? (
-        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-2 @[480px]:col-start-3">
+        <ActionGroup className="col-start-2 row-start-1 shrink-0 @[480px]:col-start-3">
           {actions}
-        </div>
+        </ActionGroup>
       ) : null}
     </div>
   );

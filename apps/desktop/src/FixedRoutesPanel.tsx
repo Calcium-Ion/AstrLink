@@ -1,3 +1,4 @@
+import { ActionGroup } from "@/components/ActionGroup";
 import { RecoveryPathPicker } from "./components/RecoveryPathPicker";
 import { createRecoveryPath } from "./bridge";
 import { newPathNodeID } from "./RecoveryPathEditor";
@@ -1213,7 +1214,17 @@ export function FixedRoutesPanel({
                                   })}
                                 </div>
                               </div>
-                              <div className="flex shrink-0 items-center gap-1 max-[760px]:w-full max-[760px]:justify-end">
+                              <ActionGroup className="shrink-0 gap-1 max-[760px]:w-full">
+                                <Button
+                                  className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+                                  disabled={mutatingID === route.id}
+                                  onClick={() => void askDelete(route)}
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                >
+                                  {t("common.delete")}
+                                </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -1236,17 +1247,7 @@ export function FixedRoutesPanel({
                                     ? t("routes.disable")
                                     : t("routes.enable")}
                                 </Button>
-                                <Button
-                                  className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-                                  disabled={mutatingID === route.id}
-                                  onClick={() => void askDelete(route)}
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                >
-                                  {t("common.delete")}
-                                </Button>
-                              </div>
+                              </ActionGroup>
                             </li>
                           </DataRow>
                         );

@@ -2,6 +2,7 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { Slot } from "radix-ui";
 
 import { cn } from "@/lib/utils";
+import { ActionGroup } from "@/components/ActionGroup";
 
 /**
  * A hairline-bounded region on the paper surface. Pages should reach for this
@@ -53,9 +54,9 @@ export function PanelHeader({
     >
       <div className="min-w-0">{children}</div>
       {actions ? (
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+        <ActionGroup className="shrink-0 gap-1.5">
           {actions}
-        </div>
+        </ActionGroup>
       ) : null}
     </div>
   );
@@ -79,9 +80,9 @@ export function PanelFooter({
     >
       {children ? <div className="min-w-0">{children}</div> : null}
       {actions ? (
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+        <ActionGroup>
           {actions}
-        </div>
+        </ActionGroup>
       ) : null}
     </div>
   );

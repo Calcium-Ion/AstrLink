@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { ArrowLeft } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
+import { ActionGroup } from "@/components/ActionGroup";
 import { cn } from "@/lib/utils";
 
 export function PageHeader({
@@ -97,9 +98,9 @@ export function PageHeader({
         )}
       </div>
       {actions ? (
-        <div className={cn("flex shrink-0 items-center gap-2", actionsClassName)}>
+        <ActionGroup className={cn("shrink-0", actionsClassName)}>
           {actions}
-        </div>
+        </ActionGroup>
       ) : null}
     </header>
   );

@@ -1336,17 +1336,11 @@ export function ServiceManager({
           className="@max-[360px]:gap-2"
           actions={
             <>
-              <Button
-                aria-label={t("services.add")}
-                disabled={!isReady || busy}
-                onClick={() => onViewChange({ kind: "create" })}
-                size="sm"
-                type="button"
-              >
-                <Plus aria-hidden="true" />
-                <span className="@max-[480px]:hidden">{t("services.add")}</span>
-                <span className="hidden @max-[480px]:inline">{t("overview.add")}</span>
-              </Button>
+              <ServiceOrderHelp ready={isReady && catalogStatus === "ready"}>
+                <p>{t("services.orderHint")}</p>
+                {filtered ? <p className="mt-2">{t("services.orderFiltered")}</p> : null}
+                {routingDefaults.loaded && !routingDefaults.allow_unmatched_failover ? <p className="mt-2">{t("failure.globalOffHint")}</p> : null}
+              </ServiceOrderHelp>
               <IconButton
                 label={
                   busy ? t("common.refreshing") : t("services.refreshList")
@@ -1367,11 +1361,17 @@ export function ServiceManager({
                   )}
                 />
               </IconButton>
-              <ServiceOrderHelp ready={isReady && catalogStatus === "ready"}>
-                <p>{t("services.orderHint")}</p>
-                {filtered ? <p className="mt-2">{t("services.orderFiltered")}</p> : null}
-                {routingDefaults.loaded && !routingDefaults.allow_unmatched_failover ? <p className="mt-2">{t("failure.globalOffHint")}</p> : null}
-              </ServiceOrderHelp>
+              <Button
+                aria-label={t("services.add")}
+                disabled={!isReady || busy}
+                onClick={() => onViewChange({ kind: "create" })}
+                size="sm"
+                type="button"
+              >
+                <Plus aria-hidden="true" />
+                <span className="@max-[480px]:hidden">{t("services.add")}</span>
+                <span className="hidden @max-[480px]:inline">{t("overview.add")}</span>
+              </Button>
             </>
           }
           title={t("services.title")}
