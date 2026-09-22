@@ -82,6 +82,7 @@
     "testNamed": "Test {{name}}",
     "model": "Test model",
     "modelPlaceholder": "Select or enter a model ID",
+    "noMatchingModels": "No matching models. You can use the entered model ID directly.",
     "protocol": "Protocol",
     "prompt": "Test prompt (optional)",
     "stream": "Streaming",

@@ -49,6 +49,92 @@ function button(text: string) {
   return [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(item => item.textContent === text || (text === "开始测试" && item.textContent === "重新测试"))!;
 }
 
+const modelInput = () => document.querySelector<HTMLInputElement>('input[aria-label="测试模型"]')!;
+const modelOptions = () => [...document.querySelectorAll<HTMLElement>('[role="listbox"][aria-label="测试模型"] [role="option"]')];
+async function typeModel(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+async function press(input: HTMLInputElement, key: string) {
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })));
+}
+
+it("opens the full model list with a preselected value and reopens it after choosing another model", async () => {
+  const models = ["grok-4.5", "grok-4.1-fast", "grok-code-fast"];
+  mocks.testService.mockResolvedValue({ service_id: service.id, protocol: "openai.chat", model: models[1], stream: true, ok: true, status_code: 200, duration_ms: 100, output: "OK" });
+  await act(async () => root.render(<ServiceTestDialog service={{ ...service, models }} onClose={() => {}} />));
+  const input = modelInput();
+  expect(input.value).toBe(models[0]);
+  expect(document.querySelector("datalist")).toBeNull();
+  await act(async () => input.click());
+  expect(modelOptions().map(item => item.textContent)).toEqual(models);
+  expect(modelOptions()[0].getAttribute("aria-selected")).toBe("true");
+  await act(async () => modelOptions()[1].click());
+  expect(input.value).toBe(models[1]);
+  expect(input.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="测试模型"]')!.click());
+  expect(modelOptions().map(item => item.textContent)).toEqual(models);
+  await press(input, "Escape");
+  await act(async () => button("开始测试").click());
+  expect(mocks.testService).toHaveBeenCalledWith(service.id, { protocol: "openai.chat", model: models[1], stream: true });
+});
+
+it("filters only while typing, preserves custom IDs, and clears the filter when reopened", async () => {
+  await act(async () => root.render(<ServiceTestDialog service={{ ...service, models: ["alpha", "beta"] }} onClose={() => {}} />));
+  const input = modelInput();
+  await typeModel(input, "BETA");
+  expect(modelOptions().map(item => item.textContent)).toEqual(["beta"]);
+  await press(input, "Escape");
+  await act(async () => input.click());
+  expect(modelOptions().map(item => item.textContent)).toEqual(["alpha", "beta"]);
+  expect(input.value).toBe("BETA");
+  await typeModel(input, "custom-model");
+  expect(modelOptions()).toHaveLength(0);
+  expect(document.body.textContent).toContain("没有匹配的模型，可直接使用输入的模型 ID。");
+  await press(input, "Enter");
+  expect(input.value).toBe("custom-model");
+  expect(input.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => button("开始测试").click());
+  expect(mocks.testService).toHaveBeenCalledWith(service.id, { protocol: "openai.chat", model: "custom-model", stream: true });
+});
+
+it("supports keyboard selection and dismisses the model list without closing the containing dialog", async () => {
+  const onClose = vi.fn();
+  await act(async () => root.render(<ServiceTestDialog service={{ ...service, models: ["alpha", "beta", "gamma"] }} onClose={onClose} />));
+  const input = modelInput();
+  await press(input, "ArrowDown");
+  await press(input, "ArrowDown");
+  expect(document.getElementById(input.getAttribute("aria-activedescendant")!)?.textContent).toBe("beta");
+  expect(input.value).toBe("alpha");
+  await press(input, "Enter");
+  expect(input.value).toBe("beta");
+  await press(input, "ArrowUp");
+  await press(input, "Escape");
+  expect(input.getAttribute("aria-expanded")).toBe("false");
+  expect(onClose).not.toHaveBeenCalled();
+  await press(input, "ArrowDown");
+  await press(input, "Tab");
+  expect(input.getAttribute("aria-expanded")).toBe("false");
+  expect(input.value).toBe("beta");
+});
+
+it("accepts a manual model without saved models and disables selection while testing", async () => {
+  let finish!: (value: unknown) => void;
+  mocks.testService.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => root.render(<ServiceTestDialog service={{ ...service, models: [] }} onClose={() => {}} />));
+  const input = modelInput();
+  expect(button("开始测试").disabled).toBe(true);
+  await typeModel(input, "custom-model");
+  await act(async () => button("开始测试").click());
+  expect(mocks.testService).toHaveBeenCalledWith(service.id, { protocol: "openai.chat", model: "custom-model", stream: true });
+  expect(input.disabled).toBe(true);
+  expect(document.querySelector<HTMLButtonElement>('button[aria-label="测试模型"]')!.disabled).toBe(true);
+  expect(input.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => finish({ service_id: service.id, protocol: "openai.chat", model: "custom-model", stream: true, ok: true, status_code: 200, duration_ms: 100, output: "OK" }));
+});
+
 it("shows header, post-header, first-text and complete timings without treating missing data as zero", async () => {
   mocks.testService.mockResolvedValue({ service_id: service.id, protocol: "openai.chat", model: "test-model", stream: true, ok: true, status_code: 200, duration_ms: 2665, response_headers_ms: 120, first_token_ms: 840, output: "OK" });
   await act(async () => root.render(<ServiceTestDialog service={service} onClose={() => {}} />));

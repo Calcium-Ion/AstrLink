@@ -82,6 +82,7 @@
     "testNamed": "测试 {{name}}",
     "model": "测试模型",
     "modelPlaceholder": "选择或输入模型 ID",
+    "noMatchingModels": "没有匹配的模型，可直接使用输入的模型 ID。",
     "protocol": "测试协议",
     "prompt": "测试提示词（可选）",
     "stream": "流式响应",

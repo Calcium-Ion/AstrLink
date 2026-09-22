@@ -11,7 +11,7 @@ import { FilterSelect } from "./components/FilterSelect";
 import { ServiceKindIcon } from "./components/ServiceKindIcon";
 import { Flask, LoaderCircle, RefreshCw, SlidersHorizontal } from "./components/icons";
 import { Button } from "./components/ui/button";
-import { Input, InputDatalist } from "./components/ui/input";
+import { Combobox } from "./components/ui/combobox";
 import { Label } from "./components/ui/label";
 import { Textarea } from "./components/ui/textarea";
 import { Switch } from "./components/ui/switch";
@@ -39,9 +39,9 @@ function TestSettings({ showModel = true, service, protocol, model, prompt, stre
   const capability = capabilities.find(item => item.protocol === protocol);
   return <div className="grid gap-4">
     {showModel ? <Field label={t("serviceTest.model")} htmlFor={`${id}-model`}>
-      <Input id={`${id}-model`} aria-label={t("serviceTest.model")} list={`${id}-models`} value={model} maxLength={256}
-        placeholder={t("serviceTest.modelPlaceholder")} disabled={running} onChange={event => onModel(event.target.value)} />
-      <InputDatalist id={`${id}-models`} options={service.models} />
+      <Combobox id={`${id}-model`} aria-label={t("serviceTest.model")} value={model} options={service.models} maxLength={256}
+        placeholder={t("serviceTest.modelPlaceholder")} emptyMessage={t("serviceTest.noMatchingModels")}
+        disabled={running} onValueChange={onModel} />
     </Field> : null}
     <Field label={t("serviceTest.protocol")}>
       <FilterSelect ariaLabel={t("serviceTest.protocol")} label="" className="w-full" disabled={running || capabilities.length === 0}
