@@ -68,6 +68,8 @@
   --shadow-card: none;
   --shadow-overlay:
     0 1px 3px rgb(26 42 61 / 10%), 0 10px 30px rgb(26 42 61 / 8%);
+  --shadow-floating:
+    0 2px 8px rgb(16 24 40 / 12%), 0 18px 48px -12px rgb(16 24 40 / 35%);
   --radius: 0.5rem;
   --window-chrome-height: 0px;
   --scrollbar-thumb: color-mix(
@@ -134,6 +136,7 @@
   --text-secondary: #bdcadd;
   --overlay: rgb(0 0 0 / 60%);
   --shadow-overlay: 0 1px 3px rgb(0 0 0 / 30%), 0 10px 30px rgb(0 0 0 / 25%);
+  --shadow-floating: 0 0 0 1px rgb(255 255 255 / 4%), 0 18px 48px -12px rgb(0 0 0 / 70%);
 }
 
 @keyframes streaming-restore-demo-plain {
@@ -334,6 +337,16 @@
   --window-chrome-height: 0px;
 }
 
+/* The tray popover is a transparent window; the panel draws its own surface. */
+:root[data-surface="tray-popover"] {
+  --window-chrome-height: 0px;
+  background: transparent;
+}
+
+:root[data-surface="tray-popover"] body {
+  background: transparent;
+}
+
 @theme inline {
   --font-sans:
     "IBM Plex Sans Variable", "PingFang SC", "Hiragino Sans GB",
@@ -371,6 +384,8 @@
   --shadow-md: var(--shadow-overlay);
   --shadow-lg: var(--shadow-overlay);
   --shadow-xl: var(--shadow-overlay);
+  /* Floating surfaces detached from any window, such as the tray popover. */
+  --shadow-2xl: var(--shadow-floating);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);

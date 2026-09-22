@@ -128,6 +128,7 @@ type Handler struct {
 	mux               *http.ServeMux
 	privacyMu         sync.Mutex
 	shutdown          context.CancelFunc
+	observers         *observerTracker
 }
 
 func New(version contract.VersionResponse) *Handler {
@@ -183,7 +184,9 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		newRouteID:      dependencies.NewRouteID,
 		shutdown:        dependencies.Shutdown,
 		mux:             http.NewServeMux(),
+		observers:       newObserverTracker(),
 	}
+	handler.mux.HandleFunc(ObserversPath, handler.authenticated(handler.getObservers))
 	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource))
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {

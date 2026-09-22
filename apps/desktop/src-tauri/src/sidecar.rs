@@ -38,6 +38,9 @@ const PRIVACY_MODEL_METADATA_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const HEALTH_ATTEMPTS: usize = 8;
 const HEALTH_RETRY_DELAY: Duration = Duration::from_millis(250);
 const RECOVERY_STABILITY_THRESHOLD: Duration = Duration::from_secs(30);
+/// How long after the last agent-side control request the gateway still
+/// counts as being read. Long enough to bridge the desktop's observer polls.
+pub const OBSERVER_ACTIVE_WINDOW: Duration = Duration::from_secs(6);
 const MAX_RECOVERY_ATTEMPTS: u8 = 5;
 const MAX_ERROR_BODY: usize = 512;
 // A valid 100-installation model directory can exceed 2 MiB when every
@@ -367,7 +370,7 @@ pub struct CapabilitiesResponse {
     pub conversion_engine: ConversionEngineCapability,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct InferencePortFallback {
     pub requested_port: u16,
     pub active_port: u16,
@@ -409,6 +412,8 @@ struct CoreInner {
     auto_recover: bool,
     recovery_attempt: u8,
     recovery_scheduled_at: Option<Instant>,
+    /// Last agent-side control request, as reported by `/control/v1/observers`.
+    observer_seen_at: Option<Instant>,
     data_directory: Option<PathBuf>,
     #[cfg(windows)]
     job: Option<windows_job::JobObject>,
@@ -438,6 +443,7 @@ impl Default for CoreInner {
             auto_recover: true,
             recovery_attempt: 0,
             recovery_scheduled_at: None,
+            observer_seen_at: None,
             data_directory: None,
             #[cfg(windows)]
             job: None,
@@ -445,7 +451,39 @@ impl Default for CoreInner {
     }
 }
 
+/// The slice of Core state that native surfaces (the tray) render from. It is
+/// published on every state change, so it stays small and cheap to compare:
+/// no capabilities, no health payload, no countdown that ticks on its own.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct CoreView {
+    pub phase: CorePhase,
+    pub inference_url: Option<String>,
+    pub core_version: Option<String>,
+    pub inference_port_fallback: Option<InferencePortFallback>,
+    pub last_error: Option<String>,
+    pub recovery_attempt: u8,
+    pub recovery_scheduled: bool,
+    /// An agent is reading records through the MCP bridge right now.
+    pub observer_active: bool,
+}
+
 impl CoreInner {
+    fn view(&self) -> CoreView {
+        CoreView {
+            phase: self.phase,
+            inference_url: self.ready.as_ref().map(|ready| ready.inference_url.clone()),
+            core_version: self.ready.as_ref().map(|ready| ready.core_version.clone()),
+            inference_port_fallback: self.inference_port_fallback(),
+            last_error: self.last_error.clone(),
+            recovery_attempt: self.recovery_attempt,
+            recovery_scheduled: self.recovery_scheduled_at.is_some(),
+            observer_active: self.phase == CorePhase::Ready
+                && self
+                    .observer_seen_at
+                    .is_some_and(|at| at.elapsed() < OBSERVER_ACTIVE_WINDOW),
+        }
+    }
+
     fn inference_port_fallback(&self) -> Option<InferencePortFallback> {
         let requested_port = self.started_inference_port?;
         let active_port = reqwest::Url::parse(&self.ready.as_ref()?.inference_url)
@@ -474,6 +512,7 @@ impl CoreInner {
     }
 
     fn clear_handshake(&mut self) {
+        self.observer_seen_at = None;
         self.ready = None;
         self.started_inference_port = None;
         self.health = None;
@@ -491,6 +530,42 @@ impl CoreInner {
 pub struct CoreManager {
     inner: Mutex<CoreInner>,
     client: Client,
+    /// Latest `CoreView`, republished whenever a lock release changed it.
+    changes: tokio::sync::watch::Sender<CoreView>,
+}
+
+/// Every mutation path goes through `lock_inner`, so publishing from the
+/// guard's drop covers all of them without a hook at each `phase =` site.
+struct InnerGuard<'a> {
+    guard: MutexGuard<'a, CoreInner>,
+    changes: &'a tokio::sync::watch::Sender<CoreView>,
+}
+
+impl std::ops::Deref for InnerGuard<'_> {
+    type Target = CoreInner;
+
+    fn deref(&self) -> &CoreInner {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for InnerGuard<'_> {
+    fn deref_mut(&mut self) -> &mut CoreInner {
+        &mut self.guard
+    }
+}
+
+impl Drop for InnerGuard<'_> {
+    fn drop(&mut self) {
+        let next = self.guard.view();
+        self.changes.send_if_modified(|current| {
+            if *current == next {
+                return false;
+            }
+            *current = next;
+            true
+        });
+    }
 }
 
 #[derive(Serialize)]
@@ -520,10 +595,24 @@ impl CoreManager {
             .build()
             .expect("reqwest client configuration is valid");
 
+        let (changes, _) = tokio::sync::watch::channel(CoreView::default());
         Self {
             inner: Mutex::new(CoreInner::default()),
             client,
+            changes,
         }
+    }
+
+    /// Subscribe to state changes. The receiver starts marked as changed, so a
+    /// subscriber renders the current state before waiting for the next one.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<CoreView> {
+        let mut receiver = self.changes.subscribe();
+        receiver.mark_changed();
+        receiver
+    }
+
+    pub fn view(&self) -> CoreView {
+        self.lock_inner().view()
     }
 
     pub fn start(self: &Arc<Self>, app: &AppHandle) -> Result<(), String> {
@@ -1222,6 +1311,29 @@ impl CoreManager {
             Some(etag),
         )
         .await?;
+        Ok(())
+    }
+
+    /// Polls the agent-side observer state and folds it into the view. The
+    /// lock release republishes the view, which is also how an observation
+    /// expires: the poll after the window closes recomputes it as inactive.
+    pub async fn poll_observers(&self) -> Result<(), String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/observers", None, None)
+            .await?;
+        let value: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|error| format!("observer state returned invalid JSON: {error}"))?;
+        let age = value
+            .get("last_seen_at")
+            .and_then(|seen| seen.as_str())
+            .and_then(|seen| chrono::DateTime::parse_from_rfc3339(seen).ok())
+            .map(|seen| {
+                (chrono::Utc::now() - seen.with_timezone(&chrono::Utc))
+                    .to_std()
+                    .unwrap_or_default()
+            });
+        let mut inner = self.lock_inner();
+        inner.observer_seen_at = age.and_then(|age| Instant::now().checked_sub(age));
         Ok(())
     }
 
@@ -2296,10 +2408,14 @@ impl CoreManager {
         inner.apply_lifecycle(next);
     }
 
-    fn lock_inner(&self) -> MutexGuard<'_, CoreInner> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock_inner(&self) -> InnerGuard<'_> {
+        InnerGuard {
+            guard: self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            changes: &self.changes,
+        }
     }
 }
 
@@ -5146,6 +5262,55 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn every_lock_release_publishes_a_changed_view_exactly_once() {
+        let manager = CoreManager::new();
+        let mut changes = manager.subscribe();
+        // A fresh subscription renders the current state before waiting.
+        assert!(changes.has_changed().unwrap());
+        assert_eq!(changes.borrow_and_update().phase, CorePhase::Stopped);
+
+        // Reading does not count as a change.
+        let _ = manager.snapshot();
+        assert!(!changes.has_changed().unwrap());
+
+        {
+            let mut inner = manager.lock_inner();
+            inner.phase = CorePhase::Spawning;
+            // Nothing is visible while the lock is held.
+            assert!(!changes.has_changed().unwrap());
+        }
+        assert!(changes.has_changed().unwrap());
+        let view = changes.borrow_and_update().clone();
+        assert_eq!(view.phase, CorePhase::Spawning);
+        assert_eq!(view.inference_url, None);
+
+        {
+            let mut inner = manager.lock_inner();
+            inner.phase = CorePhase::Ready;
+            inner.ready = Some(ReadyAnnouncement {
+                event: "ready".to_string(),
+                core_version: "0.1.0".to_string(),
+                control_api_version: "v1".to_string(),
+                protocol_contract_version: "v1".to_string(),
+                inference_url: "http://127.0.0.1:8324".to_string(),
+                control_url: "http://127.0.0.1:43117".to_string(),
+            });
+            inner.started_inference_port = Some(8317);
+        }
+        let view = changes.borrow_and_update().clone();
+        assert_eq!(view.phase, CorePhase::Ready);
+        assert_eq!(view.inference_url.as_deref(), Some("http://127.0.0.1:8324"));
+        assert_eq!(
+            view.inference_port_fallback,
+            Some(InferencePortFallback {
+                requested_port: 8317,
+                active_port: 8324,
+            })
+        );
+        assert_eq!(manager.view(), view);
+    }
 
     #[test]
     fn strictly_parses_browser_and_device_authorization_sessions() {

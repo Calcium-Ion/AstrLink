@@ -226,7 +226,48 @@
     "quit": "Quit AstrLink",
     "quitHint": "Stop every process",
     "autostart": "Start AstrLink when you sign in",
-    "trayHint": "The tray menu always includes “Show AstrLink” and “Quit”.",
+    "trayHint": "Click the tray icon (either button) to open the panel; opening the window, gateway controls and quitting all live there.",
+    "trayKicker": "Tray panel",
+    "trayPanelHint": "The panel that opens from the tray icon. Changes apply immediately; the preview is the real panel.",
+    "trayMenubarText": "Menu bar text",
+    "trayMenubarTextHint": "Shown next to the menu bar icon without opening anything. Windows and Linux show it in the icon tooltip.",
+    "trayMenubarOptions": {
+      "none": "None",
+      "requests": "Today's calls",
+      "tokens": "Today's tokens",
+      "cost": "Today's cost",
+      "subscription": "Subscription window",
+      "alert_only": "Alerts only"
+    },
+    "trayUsageSection": "Usage",
+    "trayUsage": {
+      "today": "Today at a glance",
+      "todayHint": "Calls, tokens and failures",
+      "cost": "Estimated cost",
+      "costHint": "At official API list prices; not a bill",
+      "subscription_windows": "Subscription quota windows",
+      "subscription_windowsHint": "Window usage and reset time for Codex, Claude and similar plans",
+      "top_model": "Top model",
+      "top_modelHint": "The model with the largest share of today's tokens",
+      "compare_yesterday": "Compare with yesterday",
+      "compare_yesterdayHint": "Change in today's tokens against yesterday",
+      "cache_hit": "Cache hit rate",
+      "cache_hitHint": "Cache reads as a share of input tokens",
+      "top_client": "Top client",
+      "top_clientHint": "The access token with the most usage today",
+      "last_request": "Last call",
+      "last_requestHint": "Model and latency of the most recent call",
+      "month_total": "Month to date",
+      "month_totalHint": "Total tokens so far this month"
+    },
+    "trayActionsSection": "Quick actions",
+    "trayCopyAddress": "Copy API address",
+    "trayGatewayControls": "Gateway start/stop buttons",
+    "trayPagesSection": "Quick pages",
+    "trayPagesHint": "Page shortcuts at the bottom of the panel. “Open AstrLink” and “Settings” are always available.",
+    "trayPreview": "Panel preview",
+    "trayPreviewHint": "Rendered with live data.",
+    "trayPreviewFailed": "Unable to read the tray state.",
     "runtimeKicker": "Local runtime",
     "gatewayTitle": "Gateway and network",
     "useSystemProxy": "Use system proxy",
@@ -269,7 +310,12 @@
     "notifyStop": "The gateway has stopped.",
     "notifyRestart": "The gateway is restarting with the saved settings.",
     "notifyPortSavedRestart": "Entry settings saved. Restart the gateway to apply them.",
-    "notifyPortSaved": "Entry settings saved."
+    "notifyPortSaved": "Entry settings saved.",
+    "tabsLabel": "Settings groups",
+    "tabs": {
+      "general": "General",
+      "tray": "Tray panel"
+    }
   },
   "agentDebug": {
     "title": "Agent tools",
@@ -516,6 +562,7 @@
     "moreNamed": "More actions for {{name}}",
     "openaiAccount": "OpenAI account {{hint}}",
     "modelCount": "{{count}} models",
+    "openModels": "Open the model list of {{name}}",
     "viewLogin": "View sign-in",
     "signIn": "Sign in",
     "resignIn": "Sign in again",
@@ -1680,15 +1727,91 @@
   "dialog": {
     "close": "Close"
   },
+  "tray": {
+    "panelLabel": "AstrLink tray panel",
+    "open": "Open AstrLink",
+    "settings": "Settings",
+    "quit": "Quit",
+    "copyAddress": "Copy API address",
+    "copied": "Copied",
+    "copyFailed": "Copy failed",
+    "observed": "An agent is reading via MCP",
+    "status": {
+      "ready": "Gateway running",
+      "stopped": "Gateway stopped",
+      "starting": "Gateway starting…",
+      "stopping": "Gateway stopping…",
+      "failed": "Gateway exited unexpectedly",
+      "unavailable": "Gateway unavailable",
+      "recovery": "Recovering automatically (attempt {{attempt}})",
+      "fallback": "Port {{requested}} was busy, using {{active}}"
+    },
+    "core": {
+      "start": "Start gateway",
+      "stop": "Stop gateway",
+      "restart": "Restart gateway"
+    },
+    "gatewayControls": "Gateway controls",
+    "today": "Today",
+    "requests": "calls",
+    "tokens": "tokens",
+    "cost": "est. cost",
+    "failedCount": "{{count}} failed",
+    "noCallsToday": "No calls yet today",
+    "loading": "Reading usage…",
+    "notReadyHint": "Today's usage appears here once the gateway is running.",
+    "vsYesterday": "vs yesterday",
+    "up": "↑ {{percent}}%",
+    "down": "↓ {{percent}}%",
+    "flat": "flat",
+    "noYesterday": "no calls yesterday",
+    "cacheHit": "Cache hits",
+    "topModel": "Top model",
+    "topClient": "Top client",
+    "lastRequest": "Last call",
+    "lastFailed": "failed",
+    "month": "This month",
+    "subscriptions": "Subscription quotas",
+    "showMoreSubscriptions": "Show {{count}} more",
+    "showLessSubscriptions": "Show less",
+    "hourlyChart": "Tokens per hour today",
+    "hourlyPeak": "Peak {{hour}}:00 · {{tokens}}",
+    "justNow": "just now",
+    "minutesAgo": "{{count}} min ago",
+    "hoursAgo": "{{count}} h ago",
+    "daysAgo": "{{count}} d ago",
+    "updatedAgo": "Updated {{ago}}",
+    "refresh": "Refresh",
+    "version": "AstrLink {{version}}"
+  },
   "host": {
     "tray": {
-      "show": "Show AstrLink",
-      "quit": "Quit",
-      "reload": "Reload interface",
+      "show": "Open AstrLink",
+      "settings": "Settings…",
+      "quit": "Quit AstrLink",
+      "copied": "Copied",
+      "tooltip": "AstrLink · {{status}}",
+      "status": {
+        "ready": "Gateway running · {{address}}",
+        "fallback": "{{requested}} was busy, using {{active}}",
+        "stopped": "Gateway stopped",
+        "starting": "Gateway starting…",
+        "stopping": "Gateway stopping…",
+        "failed": "Gateway exited unexpectedly",
+        "observed": "An agent is reading via MCP"
+      },
+      "menubar": {
+        "alert": "!"
+      },
       "hiddenMenuBarTitle": "Moved to the menu bar",
-      "hiddenMenuBarBody": "AstrLink is still running in the background. Click its icon in the top menu bar to reopen the window.",
+      "hiddenMenuBarBody": "AstrLink is still running in the background. Click its icon in the top menu bar for usage and status, and reopen the window from the panel.",
       "hiddenTitle": "Hidden to the system tray",
-      "hiddenBody": "AstrLink is still running in the background. Click its system tray icon to reopen the window."
+      "hiddenBody": "AstrLink is still running in the background. Click its system tray icon for usage and status, and reopen the window from the panel.",
+      "core": {
+        "start": "Start gateway",
+        "stop": "Stop gateway",
+        "restart": "Restart gateway"
+      }
     },
     "window": {
       "trajectoryInspector": "AstrLink · Trajectory call",
@@ -1706,6 +1829,7 @@
       "startupCheckFailed": "Unable to check the system login-item state at startup: {{error}}"
     },
     "preferences": {
+      "trayPagesDuplicate": "Tray quick pages must not repeat.",
       "portRange": "The inference port must be between 1024 and 65535.",
       "concurrencyRange": "Inspection concurrency must be between 4 and 128.",
       "responseStartTimeoutRange": "Response header wait must be between 0 and 86400 seconds.",

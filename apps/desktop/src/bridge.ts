@@ -122,7 +122,9 @@ import {
   parseSettingsSnapshot,
   type Preferences,
   type SettingsSnapshot,
+  type TrayPreferences,
 } from "./preferences-model";
+import { parseTrayState, type TrayAction, type TrayState } from "./tray-model";
 import { downloadTextFile } from "./download-text-file";
 import {
   parseAgentInstallReceipt,
@@ -213,6 +215,30 @@ export async function updatePreferences(
   return parseSettingsSnapshot(
     await invoke<unknown>("update_preferences", { input }),
   );
+}
+
+/**
+ * The snapshot the tray popover renders. Settings pass a draft of the tray
+ * preferences to preview the panel exactly as the tray would show it.
+ */
+export async function getTrayState(tray?: TrayPreferences): Promise<TrayState> {
+  requireNativeBridge();
+  return parseTrayState(await invoke<unknown>("tray_state", { tray: tray ?? null }));
+}
+
+export async function trayAction(action: TrayAction): Promise<void> {
+  requireNativeBridge();
+  await invoke<void>("tray_action", { action });
+}
+
+export async function trayPopoverResize(height: number): Promise<void> {
+  requireNativeBridge();
+  await invoke<void>("tray_popover_resize", { height });
+}
+
+export async function trayPopoverHide(): Promise<void> {
+  requireNativeBridge();
+  await invoke<void>("tray_popover_hide");
 }
 
 function requireNativeBridge(): void {

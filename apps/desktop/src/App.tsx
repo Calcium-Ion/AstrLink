@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Activity,
   Bot,
@@ -47,6 +49,7 @@ import { AgentDebugSettings } from "./AgentDebugSettings";
 import { SettingsCenter } from "./SettingsCenter";
 import { ServiceManager, type ServiceManagerView } from "./ServiceManager";
 import type { Service } from "./service-model";
+import { TRAY_NAVIGATE_EVENT } from "./tray-popover-window";
 import {
   DEFAULT_USAGE_RANGE_PRESET,
   resolveUsageWindow,
@@ -96,6 +99,23 @@ const blockedUsage: UsageState = {
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+/** The pages the tray popover may open; anything else is ignored. */
+export function trayNavigationTarget(kind: unknown): WorkspacePage | null {
+  switch (kind) {
+    case "overview":
+    case "tokens":
+    case "safety":
+    case "records":
+    case "routing":
+    case "agentTools":
+    case "settings":
+    case "list":
+      return { kind };
+    default:
+      return null;
+  }
 }
 
 const icons: Record<IconName, AnimatedIcon> = {
@@ -457,6 +477,29 @@ export default function App() {
     [handleEditorDirtyChange, page],
   );
 
+  // The tray popover routes through the same guard as the sidebar, so a dirty
+  // editor still gets its confirmation.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    let stop: UnlistenFn | null = null;
+    listen<unknown>(TRAY_NAVIGATE_EVENT, ({ payload }) => {
+      const target = trayNavigationTarget(payload);
+      if (target) navigateRef.current(target);
+    })
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else stop = unlisten;
+      })
+      .catch((error) => console.error("Unable to observe AstrLink tray navigation", error));
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, []);
+
   const confirmPendingNavigation = () => {
     if (pendingPage === null) return;
     setPage(pendingPage);
@@ -633,6 +676,7 @@ export default function App() {
             "safety",
             "routing",
             "agentTools",
+            "settings",
           ].includes(page.kind)
             ? "overflow-hidden"
             : "overflow-y-auto overscroll-none",
