@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,6 +14,61 @@ import (
 )
 
 const testLocalModelID contract.PrivacyModelID = "model_00000000000000000000000000000001"
+
+func TestEnginePreservesCodeInToolResultsWhileRedactingSensitiveValues(t *testing.T) {
+	toolText := `command: ["npx", "-y", "@qwen-code/qwen-code@0.20.1", "--acp"]
+<path d="M0 0 c 175 105 101 38 184 51 328"/>
+<path d="M0 0 c-18 1248 3 1319 4 1322 21 2"/>
+<path d="M0 0 c 33 532 175 650 70 59 97 75"/>
+contact alice@example.com; card 4242 4242 4242 4242`
+	encodedText, err := json.Marshal(toolText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		protocol contract.ProtocolID
+		body     string
+	}{
+		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"function_call_output","call_id":"call_test","output":` + string(encodedText) + `}]}`},
+		{contract.ProtocolOpenAIChat, `{"messages":[{"role":"tool","tool_call_id":"call_test","content":` + string(encodedText) + `}]}`},
+		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_test","content":[{"type":"text","text":` + string(encodedText) + `}]}]}]}`},
+	} {
+		t.Run(string(test.protocol), func(t *testing.T) {
+			result, err := mustTestEngine(t).Inspect(t.Context(), tokenPolicy(), test.protocol, []byte(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != DecisionRedact || len(result.Redactions) != 2 {
+				t.Fatalf("decision = %s, redactions = %#v", result.Decision, result.Redactions)
+			}
+			for _, sensitive := range []string{"alice@example.com", "4242 4242 4242 4242"} {
+				if bytes.Contains(result.Body, []byte(sensitive)) {
+					t.Fatalf("sensitive value %q was not redacted", sensitive)
+				}
+			}
+			for _, code := range []string{
+				"@qwen-code/qwen-code@0.20.1",
+				"175 105 101 38 184 51 328",
+				"18 1248 3 1319 4 1322 21 2",
+				"33 532 175 650 70 59 97 75",
+			} {
+				if !bytes.Contains(result.Body, []byte(code)) {
+					t.Fatalf("code %q was changed", code)
+				}
+			}
+			var original, restored any
+			if err := json.Unmarshal([]byte(test.body), &original); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(RestorePlaceholders(result.Body, result.Redactions), &restored); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(restored, original) {
+				t.Fatal("redaction and restoration changed the tool result structure")
+			}
+		})
+	}
+}
 
 func TestEngineProtocolAwareRedactionFixtures(t *testing.T) {
 	tests := []struct {

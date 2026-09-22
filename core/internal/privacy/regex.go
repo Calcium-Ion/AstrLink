@@ -47,10 +47,14 @@ func builtinRegexDefinitions() []builtinRegexDefinition {
 			kind:     KindPaymentCard,
 			pattern:  `\b[0-9](?:[ -]?[0-9]){12,18}\b`,
 			validate: validPaymentCard,
+			boundary: validPaymentCardBoundary,
 		},
 		{
-			kind:    KindEmail,
-			pattern: `(?i)\b[A-Z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+\b`,
+			kind: KindEmail,
+			// A numeric final domain label is typically a package version, such
+			// as package@1.2.3. Keep alphabetic and punycode domain suffixes.
+			pattern:  `(?i)\b[A-Z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:XN--[A-Z0-9](?:[A-Z0-9-]{0,57}[A-Z0-9])?|[A-Z]{2,63})\b`,
+			boundary: validEmailBoundary,
 		},
 		{
 			kind:     KindAccount,
@@ -240,6 +244,9 @@ func selectDeterministicFindings(candidates []Finding) []Finding {
 }
 
 func validPaymentCard(value string) bool {
+	if !validPaymentCardGrouping(value) {
+		return false
+	}
 	digits := decimalDigits(value)
 	if len(digits) < 13 || len(digits) > 19 || allSameByte(digits) {
 		return false
@@ -257,6 +264,62 @@ func validPaymentCard(value string) bool {
 		sum += number
 	}
 	return sum%10 == 0
+}
+
+func validPaymentCardGrouping(value string) bool {
+	separator := " "
+	if strings.Contains(value, "-") {
+		if strings.Contains(value, " ") {
+			return false
+		}
+		separator = "-"
+	}
+	groups := strings.Split(value, separator)
+	if len(groups) == 1 {
+		return true
+	}
+	// Luhn alone accepts roughly one in ten arbitrary digit sequences. SVG
+	// coordinates must not become cards just because their digits concatenate
+	// to a valid checksum. Accept common PAN layouts: groups of four, or 4-6-5
+	// / 4-6-4. The digit count and checksum are still checked separately.
+	if len(groups) == 3 && len(groups[0]) == 4 && len(groups[1]) == 6 {
+		return len(groups[2]) == 4 || len(groups[2]) == 5
+	}
+	if len(groups) < 4 || len(groups) > 5 {
+		return false
+	}
+	for _, group := range groups[:len(groups)-1] {
+		if len(group) != 4 {
+			return false
+		}
+	}
+	last := groups[len(groups)-1]
+	return len(last) >= 1 && len(last) <= 4
+}
+
+func validPaymentCardBoundary(value string, start, end int) bool {
+	// Do not turn the fractional or integral part of a decimal into a card.
+	if start >= 2 && value[start-1] == '.' && isDecimalByte(value[start-2]) {
+		return false
+	}
+	return end+1 >= len(value) || value[end] != '.' || !isDecimalByte(value[end+1])
+}
+
+func isDecimalByte(value byte) bool {
+	return value >= '0' && value <= '9'
+}
+
+func validEmailBoundary(value string, _, end int) bool {
+	if end >= len(value) {
+		return true
+	}
+	// Avoid accepting only the alphabetic prefix of a longer domain label or
+	// version suffix. A sentence-ending dot is still outside the email span.
+	if value[end] == '-' {
+		return false
+	}
+	return value[end] != '.' || end+1 == len(value) ||
+		!isIdentifierOrColon(value[end+1]) && value[end+1] != '-'
 }
 
 func validPhone(value string) bool {

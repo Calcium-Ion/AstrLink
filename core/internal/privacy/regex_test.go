@@ -67,6 +67,70 @@ func TestRegexDetectorRejectsLowConfidenceNumericFalsePositives(t *testing.T) {
 	}
 }
 
+func TestRegexDetectorPreservesPackageVersionsAndSVGCoordinates(t *testing.T) {
+	// Request audits showed package specifiers rewritten as email addresses and
+	// these SVG coordinate runs rewritten as cards because they pass Luhn.
+	for _, value := range []string{
+		`npx -y agoragentic-mcp@1.3.6 --acp`,
+		`npx -y @augmentcode/auggie@0.33.0 --acp`,
+		`npx -y @qwen-code/qwen-code@0.20.1 --acp`,
+		`bun add cline@3.0.46`,
+		`npm install package@1.2.3-beta.1 other@v2.0.0`,
+		`package@1.2.rc.1 package@1.2.beta-1`,
+		`<path d="M0 0 c 175 105 101 38 184 51 328"/>`,
+		`<path d="M0 0 c-18 1248 3 1319 4 1322 21 2"/>`,
+		`<path d="M0 0 c 33 532 175 650 70 59 97 75"/>`,
+		`duration=0.4242424242424242`,
+		`id=4242424242424242.123`,
+		`id=4242 4242 4242 4242 99`,
+	} {
+		t.Run(value, func(t *testing.T) {
+			findings, err := NewRegexDetector().Detect(t.Context(), DetectInput{
+				Segments: []Segment{{Value: value}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(findings) != 0 {
+				t.Fatalf("code produced privacy findings: %#v", findings)
+			}
+		})
+	}
+}
+
+func TestRegexDetectorKeepsRealEmailAndCardCoverage(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		kind  Kind
+	}{
+		{"alice+tag@team.example.com", KindEmail},
+		{"ALICE@EXAMPLE.COM", KindEmail},
+		{"alice@xn--bcher-kva.de", KindEmail},
+		{"alice@example.xn--p1ai", KindEmail},
+		{"4242424242424242", KindPaymentCard},
+		{"4242 4242 4242 4242", KindPaymentCard},
+		{"4242-4242-4242-4242", KindPaymentCard},
+		{"3782 822463 10005", KindPaymentCard},
+		{"3056 930902 5904", KindPaymentCard},
+		{"4222 2222 2222 2", KindPaymentCard},
+		{"4000 0000 0000 0000 006", KindPaymentCard},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			value := "Value: " + test.value + "."
+			findings, err := NewRegexDetector().Detect(t.Context(), DetectInput{
+				Segments: []Segment{{Value: value}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(findings) != 1 || findings[0].Kind != test.kind ||
+				value[findings[0].Start:findings[0].End] != test.value {
+				t.Fatalf("findings = %#v, want complete %s span", findings, test.kind)
+			}
+		})
+	}
+}
+
 func TestRegexDetectorDeterministicallyResolvesOverlapsAndOrder(t *testing.T) {
 	input := DetectInput{Segments: []Segment{
 		{Path: "/one", Value: "https://192.168.1.10/private alice@example.com"},
