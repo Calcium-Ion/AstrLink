@@ -1,5 +1,6 @@
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
+import { ServiceOrderHelp } from "./ServiceOrderHelp";
 import { OrderedList } from "./components/OrderedList";
 import { useRoutingDefaults } from "./use-routing-defaults";
 import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
@@ -1355,6 +1356,11 @@ export function ServiceManager({
                   )}
                 />
               </IconButton>
+              <ServiceOrderHelp ready={isReady && catalogStatus === "ready"}>
+                <p>{t("services.orderHint")}</p>
+                {filtered ? <p className="mt-2">{t("services.orderFiltered")}</p> : null}
+                {routingDefaults.loaded && !routingDefaults.allow_unmatched_failover ? <p className="mt-2">{t("failure.globalOffHint")}</p> : null}
+              </ServiceOrderHelp>
             </>
           }
           title={t("services.title")}
@@ -1425,9 +1431,8 @@ export function ServiceManager({
             }
           />
         </div>
-        <p className="mb-3 shrink-0 text-xs text-muted-foreground" aria-live="polite">
-          {serviceOrder.saving ? t("services.orderSaving") : filtered ? t("services.orderFiltered") : t("services.orderHint")}
-          {routingDefaults.loaded && !routingDefaults.allow_unmatched_failover ? ` ${t("failure.globalOffHint")}` : ""}
+        <p className="sr-only" aria-live="polite">
+          {serviceOrder.saving ? t("services.orderSaving") : filtered ? t("services.orderFiltered") : ""}
         </p>
         {serviceOrder.error ? <FormMessage className="mb-3" tone="error">{serviceOrder.error}<Button type="button" variant="ghost" onClick={serviceOrder.reload}>{t("common.retry")}</Button></FormMessage> : null}
         <div

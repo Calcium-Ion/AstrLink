@@ -35,6 +35,7 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { ServiceManager } from "./ServiceManager";
+import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
 import { parseService, type Service } from "./service-model";
 import { httpServicePreset } from "./service-presets";
 
@@ -175,6 +176,8 @@ describe("ServiceManager", () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
+    // Existing editor/action tests represent returning users.
+    localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
     bridgeMocks.getRoutingSettings.mockResolvedValue({ default_failure_policy: defaultFailurePolicy(), allow_unmatched_failover: false, strategy: "retry_first", max_attempts: 6 });
     (
       globalThis as typeof globalThis & {

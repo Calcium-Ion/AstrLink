@@ -565,6 +565,19 @@
     "orderSaving": "Saving service order…",
     "orderFiltered": "Drag to change matching services’ global priority; other services keep their positions.",
     "orderHint": "Top services take priority. Drag a handle to reorder; disabled services keep their position.",
+    "orderGuide": {
+      "title": "Drag to set provider priority",
+      "description": "When multiple providers support a model, those at the top take priority.",
+      "examples": "Example provider order",
+      "first": "First",
+      "grab": "Hold the handle on the left to move a provider.",
+      "raise": "Move New API to the top to give it priority.",
+      "lower": "Move Codex down to try it after the other providers.",
+      "done": "With failover enabled, subsequent available providers are tried in order.",
+      "note": "This demo does not change your settings. Routing and session binding rules still apply to real requests.",
+      "replay": "Replay drag demo",
+      "dismiss": "Got it"
+    },
     "groupPayAsYouGo": "Pay-as-you-go APIs"
   },
   "models": {
