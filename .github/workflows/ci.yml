@@ -65,8 +65,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version-file: contracts/go.mod
+          go-version-file: core/go.mod
           cache-dependency-path: |
+            core/go.mod
+            core/go.sum
+            convo/go.mod
             contracts/go.mod
             contracts/go.sum
       - name: Validate frozen contracts

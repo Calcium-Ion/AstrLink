@@ -4,8 +4,10 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -74,22 +76,21 @@ if (!target) {
 }
 
 const executableSuffix = target.includes("windows") ? ".exe" : "";
-const reuseWindowsWorkers = process.env.ASTRLINK_REUSE_WINDOWS_WORKERS === "1";
+let reuseWindowsWorkers = process.env.ASTRLINK_REUSE_WINDOWS_WORKERS === "1";
 if (reuseWindowsWorkers && target !== "x86_64-pc-windows-msvc") {
   throw new Error("Prebuilt worker reuse is only supported for Windows x64.");
 }
 if (reuseWindowsWorkers) {
-  // CI enables this only after an exact source/toolchain cache hit.
-  for (const [directory, executable] of [
-    [workerDirectory, "astrlink-privacy-worker.exe"],
-    [classifierWorkerDirectory, "astrlink-classifier-worker.exe"],
-  ]) {
-    for (const name of [executable, "DirectML.dll"]) {
-      const cached = path.join(directory, "target", "release", name);
-      if (!existsSync(cached) || !statSync(cached).isFile() || statSync(cached).size === 0) {
-        throw new Error(`Incomplete Windows worker cache: ${cached}`);
-      }
-    }
+  // CI enables this only after an exact source/toolchain cache hit. A cache
+  // that still holds DirectML.dll as a symlink (see
+  // materializeWindowsWorkerRuntime) is unusable on a fresh runner, so fall
+  // back to a full build rather than staging a broken worker.
+  const gaps = windowsWorkerCacheGaps();
+  if (gaps.length > 0) {
+    console.warn(
+      `Incomplete Windows worker cache, rebuilding workers:\n  ${gaps.join("\n  ")}`,
+    );
+    reuseWindowsWorkers = false;
   }
 }
 const binariesDirectory = path.join(desktopDirectory, "src-tauri", "binaries");
@@ -338,6 +339,57 @@ async function stageLinuxRuntime() {
   return { runtimeSource, runtimeDestinations };
 }
 
+function isRegularNonEmptyFile(filePath) {
+  try {
+    const info = lstatSync(filePath);
+    return info.isFile() && info.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function windowsWorkerCacheGaps() {
+  const gaps = [];
+  for (const [directory, executable] of [
+    [workerDirectory, "astrlink-privacy-worker.exe"],
+    [classifierWorkerDirectory, "astrlink-classifier-worker.exe"],
+  ]) {
+    for (const name of [executable, "DirectML.dll"]) {
+      const cached = path.join(directory, "target", "release", name);
+      if (!isRegularNonEmptyFile(cached)) gaps.push(cached);
+    }
+  }
+  return gaps;
+}
+
+function materializeWindowsWorkerRuntime(directory) {
+  // ort-sys (`copy-dylibs`) places DirectML.dll next to the executable as a
+  // symlink into the user-level ONNX Runtime download cache. CI never caches
+  // that directory, so a restored target/ would only hold a dangling link.
+  // Replace the link with a real copy before anything archives it.
+  const runtime = path.join(directory, "target", "release", "DirectML.dll");
+  let info;
+  try {
+    info = lstatSync(runtime);
+  } catch {
+    throw new Error(`Windows worker build did not produce ${runtime}`);
+  }
+  if (!info.isSymbolicLink()) return;
+  let source;
+  try {
+    source = realpathSync(runtime);
+  } catch {
+    throw new Error(
+      `${runtime} is a dangling symlink; clear the Rust build cache and rebuild.`,
+    );
+  }
+  const temporary = `${runtime}.${process.pid}.copy`;
+  copyFileSync(source, temporary);
+  rmSync(runtime, { force: true });
+  renameSync(temporary, runtime);
+  console.log(`Materialized ${runtime} from ${source}`);
+}
+
 function fileMatches(filePath, size, expectedSha256) {
   return (
     statSync(filePath).size === size &&
@@ -379,20 +431,25 @@ console.log(`Staged astrlink-mcp for Tauri: ${mcpOutput}`);
 const macOSRuntime = await stageMacOSRuntime();
 const linuxRuntime = await stageLinuxRuntime();
 
-if (!reuseWindowsWorkers) execFileSync(
-  "cargo",
-  [
-    "build",
-    "--locked",
-    "--release",
-    "--manifest-path",
-    path.join(workerDirectory, "Cargo.toml"),
-  ],
-  {
-    cwd: workerDirectory,
-    stdio: "inherit",
-  },
-);
+if (!reuseWindowsWorkers) {
+  execFileSync(
+    "cargo",
+    [
+      "build",
+      "--locked",
+      "--release",
+      "--manifest-path",
+      path.join(workerDirectory, "Cargo.toml"),
+    ],
+    {
+      cwd: workerDirectory,
+      stdio: "inherit",
+    },
+  );
+  if (target.includes("windows")) {
+    materializeWindowsWorkerRuntime(workerDirectory);
+  }
+}
 
 if (macOSRuntime) {
   for (const destination of macOSRuntime.runtimeDestinations) {
@@ -427,20 +484,25 @@ if (!target.includes("windows")) {
 
 console.log(`Staged astrlink-privacy-worker for Tauri: ${workerOutput}`);
 
-if (!reuseWindowsWorkers) execFileSync(
-  "cargo",
-  [
-    "build",
-    "--locked",
-    "--release",
-    "--manifest-path",
-    path.join(classifierWorkerDirectory, "Cargo.toml"),
-  ],
-  {
-    cwd: classifierWorkerDirectory,
-    stdio: "inherit",
-  },
-);
+if (!reuseWindowsWorkers) {
+  execFileSync(
+    "cargo",
+    [
+      "build",
+      "--locked",
+      "--release",
+      "--manifest-path",
+      path.join(classifierWorkerDirectory, "Cargo.toml"),
+    ],
+    {
+      cwd: classifierWorkerDirectory,
+      stdio: "inherit",
+    },
+  );
+  if (target.includes("windows")) {
+    materializeWindowsWorkerRuntime(classifierWorkerDirectory);
+  }
+}
 
 const builtClassifierWorker = path.join(
   classifierWorkerDirectory,

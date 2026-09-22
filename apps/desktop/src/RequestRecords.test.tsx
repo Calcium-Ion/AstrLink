@@ -412,7 +412,9 @@ describe("RequestRecords", () => {
     await act(async () => await Promise.resolve());
 
     expect(bridgeMocks.listRequestRecordChildren).toHaveBeenCalledWith(root.id);
-    expect(container.textContent).toContain("重试");
+    // Children arrive through an effect-driven fetch after the session opens;
+    // poll instead of counting microtask turns, which slow runners exceed.
+    await vi.waitFor(() => expect(container.textContent).toContain("重试"));
     expect(container.textContent).toContain("子请求 1");
     expect(container.textContent).toContain("子请求 2");
     expect(container.querySelectorAll('[data-testid="trajectory-row"]').length).toBeGreaterThan(0);
@@ -1014,11 +1016,17 @@ describe("RequestRecords", () => {
     await act(async () => await Promise.resolve());
     await act(async () => await Promise.resolve());
 
+    // The result row only turns cancelled once the session detail resolves;
+    // poll so slow runners do not read the row while it still shows ok.
+    const result = await vi.waitFor(() => {
+      const row = container.querySelector(
+        '[data-testid="trajectory-row"][data-chip="RESULT"]',
+      );
+      expect(row?.getAttribute("data-tone")).toBe("cancelled");
+      return row;
+    });
     const upstream = container.querySelector(
       '[data-testid="trajectory-row"][data-chip="UPSTREAM"]',
-    );
-    const result = container.querySelector(
-      '[data-testid="trajectory-row"][data-chip="RESULT"]',
     );
     expect(upstream?.getAttribute("data-tone")).toBe("ok");
     expect(upstream?.textContent).toContain("HTTP 200");

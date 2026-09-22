@@ -103,9 +103,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $identity = ($rust -join "`n") + "`n$env:ImageOS`n$env:ImageVersion"
           $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity))).ToLowerInvariant()
-          "rust-prefix=windows-rust-v3-$hash-$env:DEPENDENCY_HASH-" >> $env:GITHUB_OUTPUT
-          "rust-key=windows-rust-v3-$hash-$env:DEPENDENCY_HASH-$env:SOURCE_HASH" >> $env:GITHUB_OUTPUT
-          "workers=windows-workers-v2-$hash-$env:WORKER_HASH" >> $env:GITHUB_OUTPUT
+          # rust v4 / workers v3: earlier caches held DirectML.dll as a dangling
+          # symlink into the ort download cache; build-sidecar.mjs now stores
+          # a real copy, so older entries must never be reused.
+          "rust-prefix=windows-rust-v4-$hash-$env:DEPENDENCY_HASH-" >> $env:GITHUB_OUTPUT
+          "rust-key=windows-rust-v4-$hash-$env:DEPENDENCY_HASH-$env:SOURCE_HASH" >> $env:GITHUB_OUTPUT
+          "workers=windows-workers-v3-$hash-$env:WORKER_HASH" >> $env:GITHUB_OUTPUT
       - name: Restore successful Rust build cache
         id: rust-cache
         uses: actions/cache/restore@v4

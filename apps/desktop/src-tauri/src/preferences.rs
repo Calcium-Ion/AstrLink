@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::{
@@ -268,7 +268,7 @@ fn persist_atomic(path: &Path, values: &Preferences) -> Result<(), String> {
             )
         })?;
         #[cfg(unix)]
-        File::open(parent)
+        fs::File::open(parent)
             .and_then(|directory| directory.sync_all())
             .map_err(|error| {
                 i18n::t(
