@@ -380,6 +380,28 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+if (process.argv.includes("--test-runtime-only")) {
+  // Worker tests load the runtime beside their test executables. They do not
+  // need packaged sidecars, license resources, or the Windows VC installer.
+  // On Windows, ort-sys stages its runtime dependencies during cargo test.
+  const runtime = (await stageMacOSRuntime()) ?? (await stageLinuxRuntime());
+  if (runtime) {
+    for (const directory of [workerDirectory, classifierWorkerDirectory]) {
+      const destination = path.join(
+        directory,
+        "target",
+        "debug",
+        "deps",
+        path.basename(runtime.runtimeSource),
+      );
+      mkdirSync(path.dirname(destination), { recursive: true });
+      copyFileSync(runtime.runtimeSource, destination);
+    }
+  }
+  console.log("Prepared worker test runtime without building sidecars.");
+  process.exit(0);
+}
+
 await stageOnnxRuntimeNotices();
 await stageWindowsVcRuntime({ target, binariesDirectory });
 
