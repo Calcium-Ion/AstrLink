@@ -68,6 +68,28 @@ export function isSubscriptionKind(kind: unknown): kind is SubscriptionServiceKi
   return typeof kind === "string" && Object.hasOwn(subscriptionKindProviders, kind);
 }
 
+/**
+ * API-key coding plans whose provider publishes a first-party quota route
+ * (mirrors core codingplan.Supports). OpenCode Zen is pay-as-you-go and has
+ * no usage API, so it is deliberately absent.
+ */
+export const codingPlanUsageKinds: ReadonlySet<ServiceKind> = new Set<ServiceKind>([
+  "opencode_go",
+  "kimi_coding",
+  "glm_coding",
+  "minimax_coding",
+]);
+
+/** True when the service row can show a live plan quota meter. */
+export function hasPlanUsage(service: {
+  kind: ServiceKind;
+  subscription?: { status: SubscriptionStatus } | null;
+  http?: unknown;
+}): boolean {
+  if (service.subscription) return service.subscription.status === "connected";
+  return codingPlanUsageKinds.has(service.kind) && service.http != null;
+}
+
 export interface HTTPServiceConnection {
   base_url: string;
   auth: ServiceAuth;

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
@@ -347,8 +348,8 @@ func (handler *Handler) executeCandidates(
 			if headers == nil {
 				headers = make(http.Header)
 			}
-			if !strings.HasPrefix(attemptRequest.Header.Get("User-Agent"), "claude-cli/") {
-				headers.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
+			if !strings.HasPrefix(attemptRequest.Header.Get("User-Agent"), accountauth.ClaudeUserAgentPrefix) {
+				headers.Set("User-Agent", accountauth.DefaultClaudeUserAgent)
 			}
 			// Keep client feature flags while adding the subscription OAuth betas.
 			if beta := attemptRequest.Header.Get("Anthropic-Beta"); beta != "" {
