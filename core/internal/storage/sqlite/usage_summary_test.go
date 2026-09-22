@@ -121,6 +121,78 @@ func TestUsageSummaryDSTRepeatingHour(t *testing.T) {
 	}
 }
 
+func TestUsageSummaryExcludesModelDiscovery(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "discovery.db"))
+	defer store.Close()
+	ctx := context.Background()
+	from := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
+	options := storage.UsageSummaryOptions{From: from, To: from.AddDate(0, 0, 2), TimeZone: "UTC", Bucket: "hour"}
+	empty, err := store.GetUsageSummary(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := contract.ServiceID("service_one")
+	for protocolIndex, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIModels, contract.ProtocolGoogleModels} {
+		for i, outcome := range []struct {
+			status     contract.RequestStatus
+			httpStatus int
+			attributed bool
+		}{
+			{contract.RequestStatusSucceeded, 200, false},
+			{contract.RequestStatusFailed, 502, false},
+			{contract.RequestStatusSucceeded, 500, false},
+			{contract.RequestStatusSucceeded, 200, true},
+		} {
+			record := contract.RequestRecord{
+				ID: contract.RequestID(fmt.Sprintf("request_discovery_%d_%d", protocolIndex, i)), StartedAt: from.Add(time.Duration(i) * time.Hour),
+				Status: outcome.status, HTTPStatus: &outcome.httpStatus, InputProtocol: protocol, Audit: contract.NotCapturedAuditSummary(),
+			}
+			// Exclude discovery by protocol even if it has attribution or usage.
+			if outcome.attributed {
+				record.ServiceID, record.RequestedModel = &service, ptrString("model_one")
+				record.Usage = &contract.Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7}
+			}
+			if err := store.InsertRequestRecord(ctx, record); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	summary, err := store.GetUsageSummary(ctx, options)
+	if err != nil || !reflect.DeepEqual(summary, empty) {
+		t.Fatalf("discovery-only summary=%+v err=%v", summary, err)
+	}
+	for i, status := range []contract.RequestStatus{contract.RequestStatusSucceeded, contract.RequestStatusSucceeded, contract.RequestStatusFailed} {
+		record := contract.RequestRecord{
+			ID: contract.RequestID(fmt.Sprintf("request_inference_%d", i)), StartedAt: from.Add(24 * time.Hour),
+			Status: status, InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+			ServiceID: &service, RequestedModel: ptrString("model_one"),
+		}
+		if i == 0 {
+			record.Usage = &contract.Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7}
+		}
+		if status == contract.RequestStatusFailed {
+			record.ServiceID = nil // Pre-routing failures still count.
+		}
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, err = store.GetUsageSummary(ctx, options)
+	want := storage.UsageTotals{Requests: 2, FailedRequests: 1, InputTokens: 5, OutputTokens: 2, TotalTokens: 7}
+	if err != nil || summary.Totals != want || summary.ScannedRecords != 3 {
+		t.Fatalf("mixed summary=%+v err=%v", summary, err)
+	}
+	if len(summary.ByDay) != 1 || summary.ByDay[0].Date != "2026-09-20" || summary.ByDay[0].UsageTotals != want ||
+		len(summary.ByHour) != 1 || summary.ByHour[0].Date != "2026-09-20" || *summary.ByHour[0].Hour != 0 || summary.ByHour[0].UsageTotals != want {
+		t.Fatalf("days=%+v hours=%+v", summary.ByDay, summary.ByHour)
+	}
+	for _, groups := range [][]storage.UsageGroup{summary.ByService, summary.ByModel} {
+		if len(groups) != 1 || groups[0].ID == nil || groups[0].Requests != 2 || groups[0].TotalTokens != 7 {
+			t.Fatalf("groups=%+v", groups)
+		}
+	}
+}
+
 func TestSessionSummaryMatchesDetailAcrossFiltersAndRetries(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "summaries.db"))
 	defer store.Close()

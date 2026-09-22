@@ -14,8 +14,8 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
-// GetUsageSummary streams only the fields used by statistics. Detailed plans,
-// events, audit data, cursors and retry children never leave the database here.
+// GetUsageSummary streams only the fields used by inference statistics. Detailed
+// plans, events, audit data, cursors, discovery and retry children stay in the database.
 func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSummaryOptions) (storage.UsageSummary, error) {
 	result := storage.UsageSummary{
 		ByDay: []storage.UsageTimeBucket{}, ByHour: []storage.UsageTimeBucket{},
@@ -31,8 +31,9 @@ func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSu
     service_id, requested_model, usage_json
 FROM request_records
 WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
-  AND status IN ('succeeded', 'failed')`,
-		options.From.UTC().Format("2006-01-02T15:04:05"), options.To.UTC().Format("2006-01-02T15:04:05"))
+  AND status IN ('succeeded', 'failed') AND input_protocol NOT IN (?, ?)`,
+		options.From.UTC().Format("2006-01-02T15:04:05"), options.To.UTC().Format("2006-01-02T15:04:05"),
+		string(contract.ProtocolOpenAIModels), string(contract.ProtocolGoogleModels))
 	if err != nil {
 		return result, fmt.Errorf("query usage summary: %w", err)
 	}

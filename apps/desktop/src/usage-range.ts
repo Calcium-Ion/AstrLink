@@ -1,6 +1,7 @@
 import { i18n } from "./i18n";
 import {
   displayRequestStatus,
+  isModelDiscoveryProtocol,
   type RequestRecord,
 } from "./request-record-model";
 
@@ -365,9 +366,9 @@ export interface UsageAggregate {
 }
 
 /**
- * Fold root records into totals and breakdowns. Retry children are skipped so a
- * failed attempt that later succeeded is never counted twice, and only
- * successful roots contribute tokens.
+ * Fold inference root records into totals and breakdowns. Discovery and retry
+ * children are skipped so a failed attempt that later succeeded is never
+ * counted twice, and only successful roots contribute tokens.
  */
 export function aggregateUsageRecords(
   records: RequestRecord[],
@@ -436,11 +437,12 @@ export function aggregateUsage(
   };
 }
 
-/** Failed and succeeded roots only; retry children never count. */
+/** Failed and succeeded inference roots only; discovery and retries never count. */
 function usageRecordStatus(
   record: RequestRecord,
 ): "failed" | "succeeded" | null {
   if (record.parent_request_id !== null) return null;
+  if (isModelDiscoveryProtocol(record.input_protocol)) return null;
   const status = displayRequestStatus(record.status, record.http_status);
   if (status !== "failed" && status !== "succeeded") return null;
   return status;

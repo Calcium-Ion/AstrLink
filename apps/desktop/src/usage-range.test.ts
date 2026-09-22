@@ -220,6 +220,52 @@ describe("usage range windows", () => {
 });
 
 describe("usage aggregation", () => {
+  it.each(["openai.models", "google.models"])(
+    "excludes %s discovery from totals, groups, and calendar buckets",
+    (input_protocol) => {
+      const window = resolveUsageWindow("1d", new Date(2026, 8, 4, 20));
+      const discovery = [
+        localRecord([2026, 8, 4, 9], null, { input_protocol }),
+        localRecord([2026, 8, 4, 10], null, {
+          input_protocol,
+          status: "failed",
+        }),
+        localRecord([2026, 8, 4, 11], null, {
+          input_protocol,
+          http_status: 500,
+        }),
+        localRecord(
+          [2026, 8, 4, 12],
+          { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+          {
+            input_protocol,
+            service_id: "service_one",
+            requested_model: "model_one",
+          },
+        ),
+      ];
+      expect(aggregateUsage(discovery, window, false)).toEqual(
+        emptyUsageSummary(window),
+      );
+
+      const inference = [
+        localRecord(
+          [2026, 8, 4, 13],
+          { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+          { service_id: "service_one", requested_model: "model_one" },
+        ),
+        localRecord([2026, 8, 4, 13], null, {
+          service_id: "service_one",
+          requested_model: "model_one",
+        }),
+        localRecord([2026, 8, 4, 13], null, { status: "failed" }),
+      ];
+      expect(
+        aggregateUsage([...inference, ...discovery], window, false),
+      ).toEqual(aggregateUsage(inference, window, false));
+    },
+  );
+
   it("sums usage including cache read/write", () => {
     const aggregate = aggregateUsageRecords([
       record({
