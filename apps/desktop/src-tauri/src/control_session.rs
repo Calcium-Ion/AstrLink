@@ -18,8 +18,13 @@ pub struct ControlSessionFile {
     pub control_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control_token: Option<String>,
+    /// Core process id, for readers that want to check liveness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// Desktop process that wrote the file. Clearing is skipped when another
+    /// live desktop owns it, so a restart cannot delete its successor's file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop_pid: Option<u32>,
 }
 
 pub fn user_home() -> Result<PathBuf, String> {
@@ -60,6 +65,7 @@ pub fn publish_control_session(
             control_url: Some(control_url.to_string()),
             control_token: control_token.map(str::to_string),
             pid,
+            desktop_pid: Some(std::process::id()),
         }
     } else {
         ControlSessionFile {
@@ -73,13 +79,30 @@ pub fn publish_control_session(
             control_url: None,
             control_token: None,
             pid,
+            desktop_pid: Some(std::process::id()),
         }
     };
     write_private_json(&session_path(home), &session)
 }
 
+/// Removes the session file unless another desktop process published it.
+/// During a development restart the old instance shuts down after the new
+/// one has already announced itself; deleting here would leave MCP clients
+/// without a locator until the next full launch.
 pub fn clear_control_session(home: &Path) -> Result<(), String> {
+    clear_control_session_for(home, std::process::id())
+}
+
+fn clear_control_session_for(home: &Path, current_pid: u32) -> Result<(), String> {
     let path = session_path(home);
+    let owned_by_other = fs::read(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<ControlSessionFile>(&raw).ok())
+        .and_then(|session| session.desktop_pid)
+        .is_some_and(|owner| owner != current_pid);
+    if owned_by_other {
+        return Ok(());
+    }
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -162,6 +185,31 @@ mod tests {
         .unwrap();
         assert!(session_path(&home).is_file());
         clear_control_session(&home).unwrap();
+        assert!(!session_path(&home).exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn clear_leaves_a_session_published_by_another_desktop() {
+        let home = tempfile_home("session-foreign");
+        let data = home.join("data");
+        fs::create_dir_all(&data).unwrap();
+        publish_control_session(&home, &data, "http://127.0.0.1:9", None, Some(7)).unwrap();
+        let raw = fs::read_to_string(session_path(&home)).unwrap();
+        assert!(raw.contains("desktop_pid"));
+
+        // A different desktop process (the successor after a dev restart)
+        // must not lose its locator to our shutdown.
+        clear_control_session_for(&home, std::process::id().wrapping_add(1)).unwrap();
+        assert!(session_path(&home).is_file());
+
+        // Legacy files without an owner are still cleared.
+        fs::write(
+            session_path(&home),
+            br#"{"schema_version":1,"control_socket":"/tmp/x.sock"}"#,
+        )
+        .unwrap();
+        clear_control_session_for(&home, std::process::id().wrapping_add(1)).unwrap();
         assert!(!session_path(&home).exists());
         let _ = fs::remove_dir_all(&home);
     }

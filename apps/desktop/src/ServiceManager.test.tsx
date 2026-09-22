@@ -1333,7 +1333,7 @@ describe("ServiceManager", () => {
     // Only the coding plan row queries usage: the gateway has no quota API and
     // the Codex row is disconnected.
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
-    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(kimi.id);
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(kimi.id, { fresh: false });
     expect(
       container.querySelectorAll('[data-testid="subscription-usage"]'),
     ).toHaveLength(1);
@@ -1388,7 +1388,7 @@ describe("ServiceManager", () => {
           />,
         );
       });
-      expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id);
+      expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id, { fresh: false });
       expect(
         container.querySelector('[data-testid="subscription-plan"]')
           ?.textContent,
@@ -1461,7 +1461,7 @@ describe("ServiceManager", () => {
     });
 
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
-    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id);
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id, { fresh: false });
     expect(
       container.querySelector('[data-testid="subscription-plan"]')?.textContent,
     ).toBe("Plus");
@@ -1573,6 +1573,7 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
     expect(bridgeMocks.resetServiceUsage).toHaveBeenCalledWith(connected.id);
+    expect(bridgeMocks.getServiceUsage).toHaveBeenLastCalledWith(connected.id, { fresh: true });
     expect(notifyMocks.success).toHaveBeenCalledWith("额度已重置。");
   });
 

@@ -96,6 +96,17 @@ func New(secrets secretstore.SecretStore, client *http.Client) *Fetcher {
 	return &Fetcher{secrets: secrets, client: networkproxy.WrapClient(client), now: time.Now, cache: make(map[contract.ServiceID]cacheEntry)}
 }
 
+// ForgetUsage drops the cached quota snapshot so the next Usage call goes to
+// the provider. A nil fetcher has nothing to forget.
+func (fetcher *Fetcher) ForgetUsage(id contract.ServiceID) {
+	if fetcher == nil {
+		return
+	}
+	fetcher.mu.Lock()
+	delete(fetcher.cache, id)
+	fetcher.mu.Unlock()
+}
+
 // Usage returns the sanitized quota snapshot for a coding plan service.
 func (fetcher *Fetcher) Usage(ctx context.Context, service contract.Service) (contract.SubscriptionUsage, error) {
 	if fetcher == nil || !Supports(service.Kind) || service.HTTP == nil {

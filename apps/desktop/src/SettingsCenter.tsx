@@ -23,6 +23,7 @@ import {
   restartCore,
   startCore,
   stopCore,
+  trayAction,
   updatePreferences,
 } from "./bridge";
 import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
@@ -49,6 +50,8 @@ import type { TrayState } from "./tray-model";
 import { TrayPopoverPanel } from "./TrayPopover";
 
 const TRAY_PREVIEW_REFRESH_MS = 30_000;
+/** Time for a requested usage collection to land before the preview re-reads. */
+const TRAY_PREVIEW_SETTLE_MS = 2_500;
 
 type SettingsTab = "general" | "tray";
 
@@ -190,6 +193,37 @@ export function SettingsCenter({
       window.clearInterval(timer);
     };
   }, []);
+
+  // The host only collects usage while someone is looking at it. Opening
+  // the tray tab counts, so ask once and re-read after the numbers land.
+  useEffect(() => {
+    if (tab !== "tray") return;
+    let cancelled = false;
+    let timer: number | null = null;
+    Promise.resolve()
+      .then(() => trayAction({ kind: "refresh" }))
+      .then(() => {
+        timer = window.setTimeout(() => {
+          timer = null;
+          Promise.resolve()
+            .then(() => getTrayState())
+            .then((next) => {
+              if (cancelled) return;
+              setTrayState(next);
+              setTrayStateError(null);
+              setNow(new Date());
+            })
+            .catch(() => {});
+        }, TRAY_PREVIEW_SETTLE_MS);
+      })
+      .catch(() => {
+        // Browser preview has no host; the periodic read still runs.
+      });
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [tab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -424,9 +458,10 @@ export function SettingsCenter({
       settings.values.inference_port;
 
   return (
-    <section className="flex h-full min-h-0 min-w-0 flex-col gap-4">
+    <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <PageHeader title={t("settings.title")} />
 
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       <InferencePortNotice snapshot={snapshot} />
 
       {settings.load_warning ? (
@@ -444,7 +479,7 @@ export function SettingsCenter({
       ) : null}
 
       <Tabs
-        className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+        className="min-h-0 min-w-0 flex-1 gap-3 overflow-hidden"
         onValueChange={(value) => setTab(value as SettingsTab)}
         value={tab}
       >
@@ -933,6 +968,7 @@ export function SettingsCenter({
           </div>
         </TabsContent>
       </Tabs>
+      </div>
     </section>
   );
 }

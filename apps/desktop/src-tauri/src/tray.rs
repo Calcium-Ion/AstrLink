@@ -38,15 +38,31 @@ pub const NAVIGATE_EVENT: &str = "tray:navigate";
 /// Emitted to the popover with a fresh [`TrayStateSnapshot`].
 pub const STATE_EVENT: &str = "tray:state";
 
-const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-/// Subscription windows come from upstream provider APIs; Core caches them
-/// briefly but the tray must not be the reason those endpoints get polled.
-const SUBSCRIPTION_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+/// Two cadences. Everything except plan quotas is local (Core's SQLite over
+/// loopback), so it can run often: every tick while the popover is open,
+/// every `LOCAL_REFRESH_HIDDEN` otherwise, which also keeps a menu-bar
+/// figure current.
+const SCHEDULER_TICK: Duration = Duration::from_secs(5);
+const LOCAL_REFRESH_HIDDEN: Duration = Duration::from_secs(30);
+/// Plan quota windows are upstream provider calls (Codex, Claude, Kimi…)
+/// and must not be polled on anyone's behalf: refreshed every two minutes
+/// while the popover is open, every five while only the menu bar shows a
+/// plan figure, and otherwise only when the popover opens or the operator
+/// asks. Core additionally caches each lookup for 30s.
+pub const PLAN_REFRESH_VISIBLE: Duration = Duration::from_secs(120);
+const PLAN_REFRESH_BACKGROUND: Duration = Duration::from_secs(300);
 const CLICK_REFRESH_DEBOUNCE: Duration = Duration::from_secs(10);
+/// Upper bound for one digest collection; the slowest part is a plan quota
+/// lookup that Core forwards upstream with its own 20s timeout.
+const DIGEST_TIMEOUT: Duration = Duration::from_secs(45);
+#[cfg(target_os = "macos")]
 const COPIED_FLASH: Duration = Duration::from_millis(1500);
 const MAX_ERROR_CHARS: usize = 80;
 /// Bounds the number of upstream usage lookups a single refresh can trigger.
 const MAX_SUBSCRIPTION_SERVICES: usize = 8;
+/// Primary, secondary and a handful of named limits per plan.
+const MAX_WINDOWS_PER_SUBSCRIPTION: usize = 6;
+const MAX_WINDOW_LABEL_CHARS: usize = 40;
 
 pub const POPOVER_WIDTH: f64 = 360.0;
 const POPOVER_INITIAL_HEIGHT: f64 = 320.0;
@@ -62,7 +78,7 @@ const POPOVER_GAP: f64 = 2.0;
 const POPOVER_MARGIN_X: f64 = 8.0;
 const POPOVER_MARGIN_Y: f64 = 2.0;
 /// How often the observer state is polled while the gateway is ready.
-const OBSERVER_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const OBSERVER_POLL_INTERVAL: Duration = Duration::from_secs(4);
 /// Clicking the tray icon while the popover is open first blurs (and hides)
 /// it, then delivers the click. A click this soon after hiding is that click.
 const POPOVER_REOPEN_GUARD: Duration = Duration::from_millis(350);
@@ -154,6 +170,9 @@ pub struct LastRequest {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WindowDigest {
+    /// Provider-named limit (Kimi "Monthly", Claude "Opus"); None for the
+    /// primary/secondary windows, which the panel labels by their length.
+    pub label: Option<String>,
     pub limit_window_seconds: Option<i64>,
     pub secondary: bool,
     pub used_percent: f64,
@@ -523,9 +542,17 @@ fn last_request_from(value: &serde_json::Value) -> Option<LastRequest> {
     })
 }
 
-fn window_from(value: &serde_json::Value, secondary: bool) -> Option<WindowDigest> {
+fn window_from(
+    value: &serde_json::Value,
+    secondary: bool,
+    label: Option<&str>,
+) -> Option<WindowDigest> {
     let window = value.as_object()?;
     Some(WindowDigest {
+        label: label
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(|label| truncate(label, MAX_WINDOW_LABEL_CHARS)),
         limit_window_seconds: window
             .get("limit_window_seconds")
             .and_then(|value| value.as_i64()),
@@ -539,20 +566,44 @@ fn window_from(value: &serde_json::Value, secondary: bool) -> Option<WindowDiges
     })
 }
 
+/// Every window a plan reports: the primary/secondary pair, then any named
+/// additional limits. Some plans (Kimi monthly, Claude per-model weekly caps)
+/// only have the latter, so dropping them hid those plans entirely.
 fn subscription_from(name: &str, usage: &serde_json::Value) -> Option<SubscriptionDigest> {
     let mut windows = Vec::new();
     if let Some(window) = usage
         .get("primary")
-        .and_then(|value| window_from(value, false))
+        .and_then(|value| window_from(value, false, None))
     {
         windows.push(window);
     }
     if let Some(window) = usage
         .get("secondary")
-        .and_then(|value| window_from(value, true))
+        .and_then(|value| window_from(value, true, None))
     {
         windows.push(window);
     }
+    if let Some(limits) = usage
+        .get("additional_rate_limits")
+        .and_then(|value| value.as_array())
+    {
+        for limit in limits {
+            let label = limit.get("limit_name").and_then(|value| value.as_str());
+            if let Some(window) = limit
+                .get("primary")
+                .and_then(|value| window_from(value, false, label))
+            {
+                windows.push(window);
+            }
+            if let Some(window) = limit
+                .get("secondary")
+                .and_then(|value| window_from(value, true, label))
+            {
+                windows.push(window);
+            }
+        }
+    }
+    windows.truncate(MAX_WINDOWS_PER_SUBSCRIPTION);
     (!windows.is_empty()).then(|| SubscriptionDigest {
         name: name.to_string(),
         windows,
@@ -566,9 +617,8 @@ fn subscription_services(services: &serde_json::Value) -> Vec<(String, String)> 
         .map(|items| {
             items
                 .iter()
-                .filter(|service| {
-                    service.get("enabled").and_then(|enabled| enabled.as_bool()) != Some(false)
-                })
+                // Disabled providers keep their plan; the quota is worth
+                // watching even while the gateway is not routing to them.
                 .filter(|service| {
                     service
                         .get("kind")
@@ -587,7 +637,9 @@ fn subscription_services(services: &serde_json::Value) -> Vec<(String, String)> 
         .unwrap_or_default()
 }
 
-async fn collect_subscriptions(manager: &Arc<CoreManager>) -> Vec<SubscriptionDigest> {
+/// `fresh` bypasses Core's 30s quota snapshot: an operator pressing refresh
+/// wants the provider's current numbers, not a cache.
+async fn collect_subscriptions(manager: &Arc<CoreManager>, fresh: bool) -> Vec<SubscriptionDigest> {
     let Ok(services) = manager.list_services().await else {
         return Vec::new();
     };
@@ -595,11 +647,15 @@ async fn collect_subscriptions(manager: &Arc<CoreManager>) -> Vec<SubscriptionDi
     for (id, name) in subscription_services(&services) {
         let manager = Arc::clone(manager);
         handles.push(tauri::async_runtime::spawn(async move {
-            manager
-                .get_service_usage(&id)
-                .await
-                .ok()
-                .and_then(|usage| subscription_from(&name, &usage))
+            match manager.get_service_usage_with(&id, fresh).await {
+                Ok(usage) => subscription_from(&name, &usage),
+                Err(error) => {
+                    // Visible in the dev log; the panel just omits the plan
+                    // until the next refresh succeeds.
+                    eprintln!("tray: subscription usage for {id} unavailable: {error}");
+                    None
+                }
+            }
         }));
     }
     let mut digests = Vec::new();
@@ -611,12 +667,24 @@ async fn collect_subscriptions(manager: &Arc<CoreManager>) -> Vec<SubscriptionDi
     digests
 }
 
-/// Pulls only what the enabled cards need. Subscription windows are reused
-/// from `previous` while they are younger than their refresh interval.
+/// How a refresh treats the upstream plan quota lookups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanRefresh {
+    /// Reuse whatever is cached, however old; never call upstream.
+    Reuse,
+    /// Call upstream unless the cache is younger than `max_age`.
+    IfOlderThan(Duration),
+    /// Call upstream now, and make Core skip its own snapshot too.
+    Force,
+}
+
+/// Pulls only what the enabled cards need. Local numbers are always
+/// collected; plan windows follow `plans` against the cached `previous`.
 async fn collect_digest(
     manager: &Arc<CoreManager>,
     prefs: &TrayUsagePreferences,
     previous: Option<(&Vec<SubscriptionDigest>, Instant)>,
+    plans: PlanRefresh,
 ) -> (UsageDigest, Option<Instant>) {
     let mut digest = UsageDigest::default();
     let Some(windows) = local_windows(Local::now()) else {
@@ -700,14 +768,28 @@ async fn collect_digest(
 
     let mut subscriptions_at = None;
     if prefs.subscription_windows {
-        match previous {
-            Some((cached, at)) if at.elapsed() < SUBSCRIPTION_REFRESH_INTERVAL => {
+        // Only a non-empty result counts as cached. An empty one usually means
+        // the lookups failed (typically right after start-up, before upstream
+        // auth settles) and is retried whenever plans are next allowed.
+        let cached = previous.filter(|(cached, _)| !cached.is_empty());
+        let reuse = match (plans, cached) {
+            (PlanRefresh::Force, _) => None,
+            (PlanRefresh::Reuse, cached) => cached,
+            (PlanRefresh::IfOlderThan(max_age), Some((cached, at))) if at.elapsed() < max_age => {
+                Some((cached, at))
+            }
+            (PlanRefresh::IfOlderThan(_), _) => None,
+        };
+        match reuse {
+            Some((cached, at)) => {
                 digest.subscriptions = cached.clone();
                 subscriptions_at = Some(at);
             }
-            _ => {
-                digest.subscriptions = collect_subscriptions(manager).await;
-                subscriptions_at = Some(Instant::now());
+            None if plans == PlanRefresh::Reuse => {}
+            None => {
+                digest.subscriptions =
+                    collect_subscriptions(manager, plans == PlanRefresh::Force).await;
+                subscriptions_at = (!digest.subscriptions.is_empty()).then(Instant::now);
             }
         }
     }
@@ -1109,7 +1191,8 @@ pub fn perform(app: &AppHandle, action: TrayAction) -> Result<(), String> {
         }
         TrayAction::CopyAddress => copy_address(app)?,
         TrayAction::Core { op } => run_core(app, op),
-        TrayAction::Refresh => request_usage_refresh(app, true),
+        // An explicit refresh means "now", plan windows included.
+        TrayAction::Refresh => request_usage_refresh(app, true, PlanRefresh::Force),
         TrayAction::Quit => quit(app),
     }
     Ok(())
@@ -1311,7 +1394,7 @@ fn present_popover(app: &AppHandle) {
     if let Err(error) = app.emit_to(POPOVER_LABEL, STATE_EVENT, state_snapshot(app, None)) {
         eprintln!("unable to seed the AstrLink tray popover: {error}");
     }
-    request_usage_refresh(app, false);
+    request_usage_refresh(app, false, PlanRefresh::IfOlderThan(PLAN_REFRESH_VISIBLE));
 }
 
 pub fn hide_popover(app: &AppHandle) {
@@ -1367,7 +1450,7 @@ pub fn resize_popover(app: &AppHandle, height: f64) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Collects a fresh digest and re-renders. Concurrent requests coalesce.
-pub async fn refresh_usage(app: AppHandle) {
+pub async fn refresh_usage(app: AppHandle, plans: PlanRefresh) {
     let (Some(state), Some(manager)) = (
         app.try_state::<TrayState>(),
         app.try_state::<Arc<CoreManager>>(),
@@ -1389,32 +1472,117 @@ pub async fn refresh_usage(app: AppHandle) {
             _ => None,
         }
     };
-    let (digest, subscriptions_at) = if prefs.needs_anything() {
+    // Whatever happens below, the next refresh must be allowed to run. A
+    // collection that hung or panicked used to leave this flag set and
+    // freeze the panel until the app was restarted.
+    let _in_flight = InFlightGuard(state.inner());
+
+    let collected = if prefs.needs_anything() {
         let manager = Arc::clone(manager.inner());
-        let (digest, at) = collect_digest(
-            &manager,
-            &prefs,
-            previous
-                .as_ref()
-                .map(|(subscriptions, at)| (subscriptions, *at)),
+        match tokio::time::timeout(
+            DIGEST_TIMEOUT,
+            collect_digest(
+                &manager,
+                &prefs,
+                previous
+                    .as_ref()
+                    .map(|(subscriptions, at)| (subscriptions, *at)),
+                plans,
+            ),
         )
-        .await;
-        (Some(digest), at)
+        .await
+        {
+            Ok((digest, at)) => Some((Some(digest), at)),
+            Err(_) => {
+                eprintln!(
+                    "tray: usage digest collection exceeded {}s; keeping the previous numbers",
+                    DIGEST_TIMEOUT.as_secs()
+                );
+                None
+            }
+        }
     } else {
-        (None, None)
+        Some((None, None))
     };
+    let Some((digest, subscriptions_at)) = collected else {
+        return;
+    };
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "tray: usage digest refreshed (today={}, subscriptions={})",
+        digest.as_ref().is_some_and(|digest| digest.today.is_some()),
+        digest
+            .as_ref()
+            .map_or(0, |digest| digest.subscriptions.len())
+    );
     {
         let mut runtime = state.lock();
         runtime.digest = digest;
         runtime.digest_at = Some(Instant::now());
         runtime.subscriptions_at = subscriptions_at;
-        runtime.refresh_in_flight = false;
     }
     refresh(&app);
 }
 
+/// Clears `refresh_in_flight` when the refresh ends, however it ends.
+struct InFlightGuard<'a>(&'a TrayState);
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.0.lock().refresh_in_flight = false;
+    }
+}
+
+/// What a scheduler tick should do: `None` skips the tick, otherwise the
+/// local numbers are collected and plans follow the returned policy.
+fn tick_plan(app: &AppHandle) -> Option<PlanRefresh> {
+    let visible = popover_visible(app);
+    let (digest_at, subscriptions_at) = app
+        .try_state::<TrayState>()
+        .map(|state| {
+            let runtime = state.lock();
+            (runtime.digest_at, runtime.subscriptions_at)
+        })
+        .unwrap_or((None, None));
+    if visible {
+        return Some(PlanRefresh::IfOlderThan(PLAN_REFRESH_VISIBLE));
+    }
+    let local_due = digest_at.is_none_or_older(LOCAL_REFRESH_HIDDEN);
+    if !local_due {
+        return None;
+    }
+    let plans = if preferences_of(app).tray.menubar_text == TrayMenubarText::Subscription
+        && subscriptions_at.is_none_or_older(PLAN_REFRESH_BACKGROUND)
+    {
+        PlanRefresh::IfOlderThan(PLAN_REFRESH_BACKGROUND)
+    } else {
+        PlanRefresh::Reuse
+    };
+    Some(plans)
+}
+
+/// `Option<Instant>` helper spelled out for the 1.77 MSRV.
+trait InstantAge {
+    fn is_none_or_older(&self, age: Duration) -> bool;
+}
+
+impl InstantAge for Option<Instant> {
+    fn is_none_or_older(&self, age: Duration) -> bool {
+        match self {
+            Some(at) => at.elapsed() >= age,
+            None => true,
+        }
+    }
+}
+
+fn popover_visible(app: &AppHandle) -> bool {
+    app.get_webview_window(POPOVER_LABEL)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+}
+
 /// Schedules a usage refresh. Clicks are debounced; state transitions are not.
-pub fn request_usage_refresh(app: &AppHandle, immediate: bool) {
+pub fn request_usage_refresh(app: &AppHandle, immediate: bool, plans: PlanRefresh) {
     if let Some(state) = app.try_state::<TrayState>() {
         if !immediate {
             let mut runtime = state.lock();
@@ -1428,7 +1596,7 @@ pub fn request_usage_refresh(app: &AppHandle, immediate: bool) {
         }
     }
     let app = app.clone();
-    tauri::async_runtime::spawn(refresh_usage(app));
+    tauri::async_runtime::spawn(refresh_usage(app, plans));
 }
 
 /// Starts the watcher that follows Core state and the usage ticker.
@@ -1443,7 +1611,12 @@ pub fn start(app: &AppHandle) {
         while changes.changed().await.is_ok() {
             let ready = changes.borrow_and_update().phase == CorePhase::Ready;
             if ready && !was_ready {
-                request_usage_refresh(&watcher, true);
+                // Warm the panel once so the first open is not blank.
+                request_usage_refresh(
+                    &watcher,
+                    true,
+                    PlanRefresh::IfOlderThan(PLAN_REFRESH_VISIBLE),
+                );
             } else if !ready && was_ready {
                 // Numbers from a gateway that is gone would be stale on return.
                 if let Some(state) = watcher.try_state::<TrayState>() {
@@ -1461,8 +1634,10 @@ pub fn start(app: &AppHandle) {
     let ticker = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(USAGE_REFRESH_INTERVAL).await;
-            refresh_usage(ticker.clone()).await;
+            tokio::time::sleep(SCHEDULER_TICK).await;
+            if let Some(plans) = tick_plan(&ticker) {
+                refresh_usage(ticker.clone(), plans).await;
+            }
         }
     });
 
@@ -1524,6 +1699,7 @@ mod tests {
             subscriptions: vec![SubscriptionDigest {
                 name: "Codex".to_string(),
                 windows: vec![WindowDigest {
+                    label: None,
                     limit_window_seconds: Some(18_000),
                     secondary: false,
                     used_percent: 62.0,
@@ -1720,7 +1896,10 @@ mod tests {
         ]});
         assert_eq!(
             subscription_services(&services),
-            vec![("svc_codex".to_string(), "Codex".to_string())]
+            vec![
+                ("svc_codex".to_string(), "Codex".to_string()),
+                ("svc_off".to_string(), "Off".to_string())
+            ]
         );
 
         let usage = serde_json::json!({
@@ -1732,7 +1911,43 @@ mod tests {
         assert_eq!(digest.windows.len(), 2);
         assert!(digest.windows[1].secondary);
         assert!(digest.windows[0].reset_at.is_some());
+        assert!(digest.windows[0].label.is_none());
         assert!(subscription_from("Codex", &serde_json::json!({"service_id": "x"})).is_none());
+
+        // Kimi-style plans report only a named monthly limit; Claude adds
+        // per-model weekly caps next to its primary pair.
+        let monthly_only = serde_json::json!({
+            "service_id": "svc_kimi", "fetched_at": "2026-09-22T10:00:00Z",
+            "additional_rate_limits": [
+                {"limit_name": "Monthly", "metered_feature": "monthly",
+                 "primary": {"used_percent": 41.5, "limit_window_seconds": 2592000}}
+            ]
+        });
+        let digest = subscription_from("Kimi", &monthly_only).unwrap();
+        assert_eq!(digest.windows.len(), 1);
+        assert_eq!(digest.windows[0].label.as_deref(), Some("Monthly"));
+        assert_eq!(digest.windows[0].used_percent, 41.5);
+
+        let claude = serde_json::json!({
+            "service_id": "svc_claude", "fetched_at": "2026-09-22T10:00:00Z",
+            "primary": {"used_percent": 30.0, "limit_window_seconds": 18000},
+            "secondary": {"used_percent": 12.0, "limit_window_seconds": 604800},
+            "additional_rate_limits": [
+                {"limit_name": "Opus", "primary": {"used_percent": 70.0, "limit_window_seconds": 604800}},
+                {"limit_name": "  ", "primary": {"used_percent": 1.0}},
+                {"limit_name": "Extra usage", "secondary": {"used_percent": 5.0}}
+            ]
+        });
+        let digest = subscription_from("Claude", &claude).unwrap();
+        let labels: Vec<Option<&str>> = digest
+            .windows
+            .iter()
+            .map(|window| window.label.as_deref())
+            .collect();
+        assert_eq!(
+            labels,
+            vec![None, None, Some("Opus"), None, Some("Extra usage")]
+        );
     }
 
     #[test]

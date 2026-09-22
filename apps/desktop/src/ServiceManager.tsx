@@ -718,10 +718,14 @@ export function ServiceManager({
       return next;
     });
     if (ids.length === 0) return;
+    // Entering the page (epoch 0) is fine with Core's 30s snapshot; a bumped
+    // epoch is the operator pressing refresh or resetting a window, and they
+    // expect the provider's current numbers.
+    const fresh = usageEpoch > 0;
     void Promise.all(
       ids.map(async (id) => {
         try {
-          const usage = await getServiceUsage(id);
+          const usage = await getServiceUsage(id, { fresh });
           if (usageGeneration.current !== generation) return;
           setUsageByService((current) => ({
             ...current,

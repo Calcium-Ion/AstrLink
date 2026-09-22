@@ -44,6 +44,8 @@ export interface TrayLastRequest {
 }
 
 export interface TrayWindow {
+  /** Provider-named limit (Kimi "Monthly", Claude "Opus"); null for the primary pair. */
+  label: string | null;
   limit_window_seconds: number | null;
   secondary: boolean;
   used_percent: number;
@@ -268,15 +270,15 @@ function parseDigest(value: unknown, path: string): TrayUsageDigest {
     const subscriptionPath = `${path}.subscriptions[${index}]`;
     const object = objectAt(raw, subscriptionPath);
     exactKeys(object, ["name", "windows"], subscriptionPath);
-    if (!Array.isArray(object.windows) || object.windows.length === 0 || object.windows.length > 4) {
-      invalid(`${subscriptionPath}.windows`, "expected 1 through 4 windows");
+    if (!Array.isArray(object.windows) || object.windows.length === 0 || object.windows.length > 8) {
+      invalid(`${subscriptionPath}.windows`, "expected 1 through 8 windows");
     }
     return {
       name: stringAt(object.name, `${subscriptionPath}.name`, 256),
       windows: (object.windows as unknown[]).map((rawWindow, windowIndex) => {
         const windowPath = `${subscriptionPath}.windows[${windowIndex}]`;
         const window = objectAt(rawWindow, windowPath);
-        exactKeys(window, ["limit_window_seconds", "secondary", "used_percent", "reset_at"], windowPath);
+        exactKeys(window, ["label", "limit_window_seconds", "secondary", "used_percent", "reset_at"], windowPath);
         const used = numberAt(window.used_percent, `${windowPath}.used_percent`);
         if (used < 0) invalid(`${windowPath}.used_percent`, "expected a non-negative percent");
         const resetAt = nullableStringAt(window.reset_at, `${windowPath}.reset_at`, 64);
@@ -284,6 +286,7 @@ function parseDigest(value: unknown, path: string): TrayUsageDigest {
           invalid(`${windowPath}.reset_at`, "expected a timestamp");
         }
         return {
+          label: nullableStringAt(window.label, `${windowPath}.label`, 64),
           limit_window_seconds: nullableCountAt(window.limit_window_seconds, `${windowPath}.limit_window_seconds`),
           secondary: booleanAt(window.secondary, `${windowPath}.secondary`),
           used_percent: used,

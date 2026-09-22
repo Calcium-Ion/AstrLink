@@ -74,6 +74,7 @@ type Dependencies struct {
 // CodingPlanUsage is satisfied by *codingplan.Fetcher.
 type CodingPlanUsage interface {
 	Usage(context.Context, contract.Service) (contract.SubscriptionUsage, error)
+	ForgetUsage(contract.ServiceID)
 }
 
 type AccessTokenManager interface {

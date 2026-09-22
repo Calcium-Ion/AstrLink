@@ -40,7 +40,7 @@ const HEALTH_RETRY_DELAY: Duration = Duration::from_millis(250);
 const RECOVERY_STABILITY_THRESHOLD: Duration = Duration::from_secs(30);
 /// How long after the last agent-side control request the gateway still
 /// counts as being read. Long enough to bridge the desktop's observer polls.
-pub const OBSERVER_ACTIVE_WINDOW: Duration = Duration::from_secs(6);
+pub const OBSERVER_ACTIVE_WINDOW: Duration = Duration::from_secs(8);
 const MAX_RECOVERY_ATTEMPTS: u8 = 5;
 const MAX_ERROR_BODY: usize = 512;
 // A valid 100-installation model directory can exceed 2 MiB when every
@@ -1710,9 +1710,19 @@ impl CoreManager {
         serde_json::from_slice(&body).map_err(|_| "pricing returned invalid JSON".into())
     }
 
-    pub async fn get_service_usage(&self, service_id: &str) -> Result<serde_json::Value, String> {
+    /// `fresh` asks Core to drop its 30s quota snapshot and query the
+    /// provider now. Only operator-initiated refreshes set it.
+    pub async fn get_service_usage_with(
+        &self,
+        service_id: &str,
+        fresh: bool,
+    ) -> Result<serde_json::Value, String> {
         validate_resource_id(service_id)?;
-        let path = format!("{SERVICES_PATH}/{service_id}/usage");
+        let path = if fresh {
+            format!("{SERVICES_PATH}/{service_id}/usage?refresh=1")
+        } else {
+            format!("{SERVICES_PATH}/{service_id}/usage")
+        };
         let (_, body) = self
             .authenticated_control(Method::GET, &path, None, None)
             .await?;

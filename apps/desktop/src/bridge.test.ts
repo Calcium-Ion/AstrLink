@@ -916,6 +916,13 @@ describe("desktop bridge contract", () => {
     await expect(getServiceUsage(service.id)).resolves.toEqual(usage);
     expect(invokeMock).toHaveBeenLastCalledWith("get_service_usage", {
       serviceId: service.id,
+      fresh: false,
+    });
+    invokeMock.mockResolvedValueOnce(usage);
+    await expect(getServiceUsage(service.id, { fresh: true })).resolves.toEqual(usage);
+    expect(invokeMock).toHaveBeenLastCalledWith("get_service_usage", {
+      serviceId: service.id,
+      fresh: true,
     });
 
     const reset = {

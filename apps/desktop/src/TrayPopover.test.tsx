@@ -145,8 +145,8 @@ describe("TrayPopoverPanel", () => {
     const subscriptions = Array.from({ length: 6 }, (_, index) => ({
       name: `Plan ${index + 1}`,
       windows: [
-        { limit_window_seconds: 18_000, secondary: false, used_percent: 10 * index, reset_at: null },
-        { limit_window_seconds: 604_800, secondary: true, used_percent: 5 * index, reset_at: null },
+        { label: null, limit_window_seconds: 18_000, secondary: false, used_percent: 10 * index, reset_at: null },
+        { label: null, limit_window_seconds: 604_800, secondary: true, used_percent: 5 * index, reset_at: null },
       ],
     }));
     await render({ ...readyTrayState, digest: { ...readyTrayState.digest, subscriptions } });
@@ -171,6 +171,23 @@ describe("TrayPopoverPanel", () => {
     expect(rows()).toBe(10);
     expect(container.textContent).not.toContain("展开其余");
     expect(container.textContent).not.toContain("10/10");
+  });
+
+  it("labels provider-named limits and lists disabled plans too", async () => {
+    await render({
+      ...readyTrayState,
+      digest: {
+        ...readyTrayState.digest,
+        subscriptions: [
+          {
+            name: "Kimi",
+            windows: [{ label: "Monthly", limit_window_seconds: 2_592_000, secondary: false, used_percent: 41.5, reset_at: null }],
+          },
+        ],
+      },
+    });
+    expect(container.textContent).toContain("Kimi · Monthly");
+    expect(container.textContent).toContain("42%");
   });
 
   it("flags an agent reading records through MCP", async () => {

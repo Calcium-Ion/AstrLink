@@ -320,12 +320,20 @@ export async function deleteService(
   await invoke("delete_service", { serviceId, etag });
 }
 
+/**
+ * `fresh` makes Core query the provider instead of serving its 30s quota
+ * snapshot; pass it only for an operator's explicit refresh.
+ */
 export async function getServiceUsage(
   serviceId: string,
+  options: { fresh?: boolean } = {},
 ): Promise<SubscriptionUsage> {
   requireNativeBridge();
   return parseSubscriptionUsage(
-    await invoke<unknown>("get_service_usage", { serviceId }),
+    await invoke<unknown>("get_service_usage", {
+      serviceId,
+      fresh: options.fresh ?? false,
+    }),
   );
 }
 

@@ -457,7 +457,7 @@ export function TrayPopoverPanel({
                       },
                       now,
                     )}
-                    label={`${name} · ${windowLabel(window.limit_window_seconds ?? undefined, window.secondary)}`}
+                    label={`${name} · ${window.label ?? windowLabel(window.limit_window_seconds ?? undefined, window.secondary)}`}
                     tone={
                       usageWindowTone(window.used_percent) === "critical"
                         ? "destructive"
