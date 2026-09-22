@@ -910,27 +910,37 @@ pub fn refresh(app: &AppHandle) {
     }
 }
 
-fn icon_for(state: TrayIconState) -> tauri::image::Image<'static> {
+/// The image for a state, and whether macOS should treat it as a template.
+/// Running uses the native template glyph (the menu bar tints it, off-white
+/// on a dark bar). Idle is a fixed black glyph and watched a fixed off-white
+/// glyph with a red badge; neither can be a template, since templates are
+/// alpha-only and would lose the black/red.
+fn icon_for(state: TrayIconState) -> (tauri::image::Image<'static>, bool) {
     #[cfg(target_os = "macos")]
     {
-        // Full-colour mark at 18pt (36px Retina).
         match state {
-            TrayIconState::Ready => tauri::include_image!("icons/tray/mac-color-ready/36x36.png"),
-            TrayIconState::Idle => tauri::include_image!("icons/tray/mac-color-idle/36x36.png"),
-            TrayIconState::Watched => {
-                tauri::include_image!("icons/tray/mac-color-watched/36x36.png")
-            }
+            TrayIconState::Ready => (
+                tauri::include_image!("icons/tray/mac-ready/36x36.png"),
+                true,
+            ),
+            TrayIconState::Idle => (
+                tauri::include_image!("icons/tray/mac-idle/36x36.png"),
+                false,
+            ),
+            TrayIconState::Watched => (
+                tauri::include_image!("icons/tray/mac-watched/36x36.png"),
+                false,
+            ),
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        match state {
+        let image = match state {
             TrayIconState::Ready => tauri::include_image!("icons/tray/color-ready/32x32.png"),
             TrayIconState::Idle => tauri::include_image!("icons/tray/color-idle/32x32.png"),
-            TrayIconState::Watched => {
-                tauri::include_image!("icons/tray/color-watched/32x32.png")
-            }
-        }
+            TrayIconState::Watched => tauri::include_image!("icons/tray/color-watched/32x32.png"),
+        };
+        (image, false)
     }
 }
 
@@ -1023,7 +1033,10 @@ fn render(app: &AppHandle, model: &TrayModel) -> Result<(), String> {
         tray.set_menu(Some(menu))
             .map_err(|error| error.to_string())?;
     }
-    tray.set_icon(Some(icon_for(model.icon)))
+    let (image, template) = icon_for(model.icon);
+    tray.set_icon(Some(image))
+        .map_err(|error| error.to_string())?;
+    tray.set_icon_as_template(template)
         .map_err(|error| error.to_string())?;
     tray.set_tooltip(Some(&model.tooltip))
         .map_err(|error| error.to_string())?;
@@ -1039,11 +1052,12 @@ fn render(app: &AppHandle, model: &TrayModel) -> Result<(), String> {
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let preferences = preferences_of(app);
     let model = tray_model(&core_view(app), &preferences.tray, None, preferences.locale);
-    // Not a template image: the status item shows the brand colours on macOS
-    // too, so the state badges keep their red / violet meaning.
+    // macOS gets the monochrome glyph set; the colour mark with its red badge
+    // is for Windows and Linux trays.
+    let (image, template) = icon_for(model.icon);
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .icon(icon_for(model.icon))
-        .icon_as_template(false)
+        .icon(image)
+        .icon_as_template(template)
         .tooltip(&model.tooltip);
     if LINUX_FALLBACK_MENU {
         let menu = fallback_menu(app, &model)?;

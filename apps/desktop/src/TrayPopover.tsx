@@ -4,11 +4,13 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Activity,
   ArrowUpRight,
+  Ban,
   Bot,
   Copy,
   Eye,
   Key as KeyRound,
   RefreshCw,
+  RotateCcw,
   Route,
   Server,
   Settings,
@@ -535,26 +537,27 @@ export function TrayPopoverPanel({
       <footer className="flex items-center justify-between gap-2 border-t bg-muted/40 px-2 py-2">
         <div className="flex min-w-0 items-center gap-0.5">
           {tray.gateway_controls && ready ? (
-            <>
-              <Button
-                className="h-7 px-2 text-xs"
+            // Bare icon buttons, the same weight as the header's copy and
+            // settings controls; the destructive one only turns red on intent.
+            <div
+              aria-label={t("tray.gatewayControls")}
+              className="inline-flex items-center gap-0.5"
+              role="group"
+            >
+              <IconButton
+                label={t("tray.core.restart")}
                 onClick={() => onAction({ kind: "core", op: "restart" })}
-                size="sm"
-                type="button"
-                variant="ghost"
               >
-                {t("tray.core.restart")}
-              </Button>
-              <Button
-                className="h-7 px-2 text-xs text-muted-foreground"
+                <RotateCcw aria-hidden="true" />
+              </IconButton>
+              <IconButton
+                className="hover:bg-danger-wash hover:text-destructive"
+                label={t("tray.core.stop")}
                 onClick={() => onAction({ kind: "core", op: "stop" })}
-                size="sm"
-                type="button"
-                variant="ghost"
               >
-                {t("tray.core.stop")}
-              </Button>
-            </>
+                <Ban aria-hidden="true" />
+              </IconButton>
+            </div>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">

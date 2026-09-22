@@ -1751,6 +1751,7 @@
       "stop": "Stop gateway",
       "restart": "Restart gateway"
     },
+    "gatewayControls": "Gateway controls",
     "today": "Today",
     "requests": "calls",
     "tokens": "tokens",

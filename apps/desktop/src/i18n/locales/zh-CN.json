@@ -1751,6 +1751,7 @@
       "stop": "停止网关",
       "restart": "重启网关"
     },
+    "gatewayControls": "网关控制",
     "today": "今日",
     "requests": "次调用",
     "tokens": "tokens",
