@@ -30,9 +30,11 @@ one place.
 Simulated accounts, usage, costs, and request content. Click an image to view it
 at full size.
 
-| Overview                                                                                                   | API providers                                                                                                               | On-device privacy protection                                                                                               |
-| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| [![Overview with simulated usage](assets/screenshots/overview.en.jpg)](assets/screenshots/overview.en.jpg) | [![Providers with simulated accounts and quotas](assets/screenshots/providers.en.jpg)](assets/screenshots/providers.en.jpg) | [![Privacy dry run with a simulated support ticket](assets/screenshots/privacy.en.jpg)](assets/screenshots/privacy.en.jpg) |
+| Overview                                                                                                                   | API providers                                                                                                                                                |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [![Overview with simulated usage](assets/screenshots/overview.en.jpg)](assets/screenshots/overview.en.jpg)                 | [![Providers with simulated accounts and quotas](assets/screenshots/providers.en.jpg)](assets/screenshots/providers.en.jpg)                                  |
+| **On-device privacy protection**                                                                                           | **Request details**                                                                                                                                          |
+| [![Privacy dry run with a simulated support ticket](assets/screenshots/privacy.en.jpg)](assets/screenshots/privacy.en.jpg) | [![Request details with a simulated agent session and processing trace](assets/screenshots/request-detail.en.jpg)](assets/screenshots/request-detail.en.jpg) |
 
 ## Features
 

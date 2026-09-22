@@ -24,9 +24,11 @@ AstrLink 是一款开源桌面应用，支持 macOS、Windows 和 Linux。连接
 
 账号、用量、费用和请求内容均为模拟数据。点击图片可查看原图。
 
-| 概览                                                                                                  | API 提供商                                                                                                          | 本地隐私保护                                                                                                  |
-| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| [![概览：模拟用量数据](assets/screenshots/overview.zh-CN.jpg)](assets/screenshots/overview.zh-CN.jpg) | [![API 提供商：模拟账号和订阅额度](assets/screenshots/providers.zh-CN.jpg)](assets/screenshots/providers.zh-CN.jpg) | [![隐私保护试运行：模拟售后工单](assets/screenshots/privacy.zh-CN.jpg)](assets/screenshots/privacy.zh-CN.jpg) |
+| 概览                                                                                                          | API 提供商                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| [![概览：模拟用量数据](assets/screenshots/overview.zh-CN.jpg)](assets/screenshots/overview.zh-CN.jpg)         | [![API 提供商：模拟账号和订阅额度](assets/screenshots/providers.zh-CN.jpg)](assets/screenshots/providers.zh-CN.jpg)                |
+| **本地隐私保护**                                                                                              | **请求详情**                                                                                                                       |
+| [![隐私保护试运行：模拟售后工单](assets/screenshots/privacy.zh-CN.jpg)](assets/screenshots/privacy.zh-CN.jpg) | [![请求详情：模拟 Agent 会话与处理轨迹](assets/screenshots/request-detail.zh-CN.jpg)](assets/screenshots/request-detail.zh-CN.jpg) |
 
 ## 核心能力
 
