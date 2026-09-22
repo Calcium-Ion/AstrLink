@@ -128,7 +128,7 @@ func TestCompatibleReasoningModelsUseCompletionTokenLimit(t *testing.T) {
 
 type authorizerFunc func(context.Context, contract.Endpoint) (http.Header, error)
 
-func (f authorizerFunc) Headers(ctx context.Context, e contract.Endpoint) (http.Header, error) {
+func (f authorizerFunc) Headers(ctx context.Context, e contract.Endpoint, _ http.Header) (http.Header, error) {
 	return f(ctx, e)
 }
 

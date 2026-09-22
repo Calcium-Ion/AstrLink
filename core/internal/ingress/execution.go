@@ -292,7 +292,7 @@ func (handler *Handler) executeCandidates(
 		if authorizeErr == nil {
 			authorizationEndpoint.Auth = providerapi.Auth(candidate.Service.Kind, plan.UpstreamProtocol, authorizationEndpoint.Auth)
 			var headersErr error
-			headers, headersErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint)
+			headers, headersErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint, attemptRequest.Header)
 			authorizeErr = headersErr
 		}
 		if authorizeErr != nil {

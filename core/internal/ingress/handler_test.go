@@ -146,7 +146,7 @@ func (reader endpointPageReader) ListEndpoints(
 
 type authorizerFunc func(context.Context, contract.Endpoint) (http.Header, error)
 
-func (function authorizerFunc) Headers(ctx context.Context, endpoint contract.Endpoint) (http.Header, error) {
+func (function authorizerFunc) Headers(ctx context.Context, endpoint contract.Endpoint, _ http.Header) (http.Header, error) {
 	return function(ctx, endpoint)
 }
 

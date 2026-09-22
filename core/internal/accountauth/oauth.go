@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -157,6 +158,21 @@ func (config OAuthConfig) normalized() OAuthConfig {
 		config.ModelsClientVersion = DefaultCodexModelsClientVersion
 	}
 	return config
+}
+
+var codexUserAgentVersion = regexp.MustCompile(`^(?:codex_cli_rs|codex-cli)/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:\s|$)`)
+
+// CodexClientVersion uses the explicit backend version header when present.
+// Public Responses API clients such as Codex CLI send their version only in
+// User-Agent. Unrelated client versions must not replace the Codex fallback.
+func CodexClientVersion(header http.Header) string {
+	if version := strings.TrimSpace(header.Get("version")); version != "" {
+		return version
+	}
+	if match := codexUserAgentVersion.FindStringSubmatch(strings.TrimSpace(header.Get("User-Agent"))); match != nil {
+		return match[1]
+	}
+	return DefaultCodexModelsClientVersion
 }
 
 // ApplyCodexAPIHeaders writes the observed ChatGPT Codex backend request

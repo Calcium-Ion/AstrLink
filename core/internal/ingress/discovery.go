@@ -294,7 +294,7 @@ func (handler *Handler) fetchModelDiscovery(
 	authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
 	var headers http.Header
 	if authorizeErr == nil {
-		headers, authorizeErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint)
+		headers, authorizeErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint, fetchRequest.Header)
 	}
 	if authorizeErr != nil {
 		if request.Context().Err() != nil {
@@ -322,7 +322,7 @@ func (handler *Handler) fetchModelDiscovery(
 			fetchRequest.URL.RawPath = strings.TrimPrefix(fetchRequest.URL.RawPath, "/v1")
 		}
 		query := fetchRequest.URL.Query()
-		subscription.ApplyCodexModelsQuery(query, "")
+		subscription.ApplyCodexModelsQuery(query, headers.Get("version"))
 		fetchRequest.URL.RawQuery = query.Encode()
 	}
 

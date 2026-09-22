@@ -60,7 +60,7 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	if err != nil {
 		return fail("invalid_configuration", "Provider connection is invalid.")
 	}
-	headers, err := tester.authorizer.Headers(ctx, authEndpoint)
+	headers, err := tester.authorizer.Headers(ctx, authEndpoint, nil)
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail("timeout", "Provider test timed out after 60 seconds.")
