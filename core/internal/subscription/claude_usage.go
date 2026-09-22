@@ -26,7 +26,8 @@ const (
 // carries the Claude CLI User-Agent because api.anthropic.com puts unknown
 // agents into an aggressively rate-limited bucket that answers 429 for hours.
 func (manager *Manager) claudeUsage(ctx context.Context, tokens accountauth.AccountTokens) (contract.SubscriptionUsage, error) {
-	endpoint := strings.TrimRight(manager.claudeConfig.APIBaseURL, "/") + "/api/oauth/usage"
+	baseURL := strings.TrimRight(manager.claudeConfig.APIBaseURL, "/")
+	endpoint := baseURL + "/api/oauth/usage"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
@@ -47,7 +48,26 @@ func (manager *Manager) claudeUsage(ctx context.Context, tokens accountauth.Acco
 	if response.StatusCode != http.StatusOK {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: status %d", ErrUsageUnavailable, response.StatusCode)
 	}
-	return DecodeClaudeUsage(body)
+	usage, err := DecodeClaudeUsage(body)
+	if err != nil {
+		return contract.SubscriptionUsage{}, err
+	}
+	var profile struct {
+		Organization struct {
+			Type          json.RawMessage `json:"organization_type"`
+			RateLimitTier json.RawMessage `json:"rate_limit_tier"`
+		} `json:"organization"`
+	}
+	if readPlanMetadata(manager.claudeConfig.HTTPClient, request, baseURL+"/api/oauth/profile", &profile) {
+		usage.PlanType = strings.TrimPrefix(decodePlanType(profile.Organization.Type), "claude_")
+		if usage.PlanType == "max" {
+			switch tier := decodePlanType(profile.Organization.RateLimitTier); tier {
+			case "default_claude_max_5x", "default_claude_max_20x":
+				usage.PlanType = strings.TrimPrefix(tier, "default_claude_")
+			}
+		}
+	}
+	return usage, nil
 }
 
 // claudeUsageWindow is one flat window object such as five_hour or seven_day.

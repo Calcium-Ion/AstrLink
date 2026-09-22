@@ -46,7 +46,6 @@ const snapshot = {
 describe("subscription usage contract", () => {
   it("parses a sanitized official snapshot", () => {
     expect(parseSubscriptionUsage(snapshot)).toEqual(snapshot);
-    expect(planTypeLabel("plus")).toBe("Plus");
     expect(windowLabel(18_000, false)).toBe("5 小时");
     expect(windowLabel(604_800, true)).toBe("7 天");
     expect(usageBarPercent(134)).toBe(100);
@@ -56,6 +55,28 @@ describe("subscription usage contract", () => {
     expect(usageBarFillClass("warning")).toBe("bg-warning");
     expect(usageBarFillClass("critical")).toBe("bg-destructive");
     expect(usageBarTrackClass("ok")).toBe("bg-success-wash");
+  });
+
+  it.each([
+    ["openai_codex", "plus", "Plus"],
+    ["openai_codex", "prolite", "Pro 5x"],
+    ["openai_codex", "PRO", "Pro 20x"],
+    ["openai_codex", "team", "Team"],
+    ["claude_code", "pro", "Pro"],
+    ["claude_code", "max", "Max"],
+    ["claude_code", "max_5x", "Max 5×"],
+    ["claude_code", "max_20x", "Max 20×"],
+    ["xai_grok", "supergrok", "SuperGrok"],
+    ["xai_grok", "supergrok_heavy", "SuperGrok Heavy"],
+    ["xai_grok", "SuperGrok Heavy", "SuperGrok Heavy"],
+    ["claude_code", "prolite", "prolite"],
+    ["xai_grok", "pro", "pro"],
+    ["openai_codex", "future_plan", "future_plan"],
+    ["openai_codex", "constructor", "constructor"],
+    [undefined, "pro", "pro"],
+    ["openai_codex", undefined, null],
+  ] as const)("formats %s / %s within its provider", (provider, planType, label) => {
+    expect(planTypeLabel(planType, provider)).toBe(label);
   });
 
   it("rejects PII and unexpected fields", () => {
