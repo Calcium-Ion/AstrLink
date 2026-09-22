@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ArrowLeft,
   ChevronDown,
   Copy,
   SlidersHorizontal as ListFilter,
@@ -946,7 +945,7 @@ export function RequestRecords({
             </>
           }
           actionsClassName="flex-wrap @max-[760px]:w-full"
-          className="mb-0 gap-4 pb-4 @max-[760px]:items-start @max-[760px]:flex-col @max-[760px]:gap-3"
+          className="mb-0 @max-[760px]:items-start @max-[760px]:flex-col"
           description={t("records.description")}
           title={t("records.title")}
           titleId="request-records-heading"
@@ -1653,32 +1652,13 @@ function RecordDetail({
       aria-labelledby="request-detail-heading"
       className="@container/detail flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
     >
-      <header
-        className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-2"
-        data-slot="page-header"
-      >
-        <div className="flex min-w-0 flex-1 basis-64 items-center gap-2">
-          <Button
-            aria-label={t("records.live")}
-            className="h-auto gap-1 px-0 py-0.5 text-micro text-muted-foreground no-underline hover:bg-transparent hover:text-foreground hover:no-underline has-[>svg]:px-0"
-            onClick={onBack}
-            size="sm"
-            type="button"
-            variant="link"
-          >
-            <ArrowLeft aria-hidden="true" className="size-3" />
-            {t("records.live")}
-          </Button>
-          <span aria-hidden="true" className="text-border">
-            /
-          </span>
-          <h1
-            className="truncate text-sm font-semibold"
-            id="request-detail-heading"
-            title={isModelDiscoveryProtocol(session.input_protocol) ? t("records.fetchModels") : session.title}
-          >
-            {isModelDiscoveryProtocol(session.input_protocol) ? t("records.fetchModels") : session.title}
-          </h1>
+      <PageHeader
+        back={{ label: t("records.live"), onClick: onBack }}
+        className="mb-0 flex-wrap gap-x-4 gap-y-2"
+        titleGroupClassName="flex-1 basis-64"
+        title={isModelDiscoveryProtocol(session.input_protocol) ? t("records.fetchModels") : session.title}
+        titleId="request-detail-heading"
+        titleSuffix={
           <StatusBadge
             className="shrink-0"
             data-testid="record-status"
@@ -1691,82 +1671,85 @@ function RecordDetail({
               </span>
             ) : null}
           </StatusBadge>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-          {copyFeedback.activeKey === "bundle-meta" ? (
-            <span className="text-micro text-muted-foreground" role="status">
-              {copyButtonLabel(copyFeedback, "bundle-meta")}
-            </span>
-          ) : null}
-          <Button
-            data-testid="copy-skill-diagnostic"
-            onClick={copySkillDiagnostic}
-            size="sm"
-            title={t("records.copySkillDiagnosticHint")}
-            type="button"
-            variant="outline"
-          >
-            <Copy aria-hidden="true" />
-            {copyButtonLabel(
-              copyFeedback,
-              "skill-diagnostic",
-              t("records.copySkillDiagnostic"),
-            )}
-          </Button>
-          <div className="inline-flex">
+        }
+        actionsClassName="flex-wrap justify-end gap-1.5"
+        actions={
+          <>
+            {copyFeedback.activeKey === "bundle-meta" ? (
+              <span className="text-micro text-muted-foreground" role="status">
+                {copyButtonLabel(copyFeedback, "bundle-meta")}
+              </span>
+            ) : null}
             <Button
-              className="rounded-r-none"
-              onClick={() => copyBundle(true)}
+              data-testid="copy-skill-diagnostic"
+              onClick={copySkillDiagnostic}
               size="sm"
+              title={t("records.copySkillDiagnosticHint")}
               type="button"
+              variant="outline"
             >
               <Copy aria-hidden="true" />
               {copyButtonLabel(
                 copyFeedback,
-                "bundle",
-                t("records.copyAll"),
-                bundleSize !== null
-                  ? t("records.copiedBytes", { size: formatBytes(bundleSize) })
-                  : t("common.copied"),
+                "skill-diagnostic",
+                t("records.copySkillDiagnostic"),
               )}
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  aria-label={t("records.copyExportOptions")}
-                  className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
-                  size="sm"
-                  type="button"
-                >
-                  <ChevronDown aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => copyBundle(false)}>
-                  <Copy aria-hidden="true" />
-                  {copyButtonLabel(copyFeedback, "bundle-meta", t("records.copyMetaHttp"))}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => exportBundle("markdown")}>
-                  {t("records.exportMarkdown")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => exportBundle("txt")}>
-                  {t("records.exportTxt")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          <IconButton
-            className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-            disabled={deleting || record.status === "pending"}
-            label={record.status === "pending" ? t("records.deletePending") : deleting ? t("records.deleting") : t("common.delete")}
-            onClick={onDelete}
-            type="button"
-          >
-            <Trash2 aria-hidden="true" />
-          </IconButton>
-        </div>
-      </header>
+            <div className="inline-flex">
+              <Button
+                className="rounded-r-none"
+                onClick={() => copyBundle(true)}
+                size="sm"
+                type="button"
+              >
+                <Copy aria-hidden="true" />
+                {copyButtonLabel(
+                  copyFeedback,
+                  "bundle",
+                  t("records.copyAll"),
+                  bundleSize !== null
+                    ? t("records.copiedBytes", { size: formatBytes(bundleSize) })
+                    : t("common.copied"),
+                )}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    aria-label={t("records.copyExportOptions")}
+                    className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
+                    size="sm"
+                    type="button"
+                  >
+                    <ChevronDown aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => copyBundle(false)}>
+                    <Copy aria-hidden="true" />
+                    {copyButtonLabel(copyFeedback, "bundle-meta", t("records.copyMetaHttp"))}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => exportBundle("markdown")}>
+                    {t("records.exportMarkdown")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => exportBundle("txt")}>
+                    {t("records.exportTxt")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <IconButton
+              className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+              disabled={deleting || record.status === "pending"}
+              label={record.status === "pending" ? t("records.deletePending") : deleting ? t("records.deleting") : t("common.delete")}
+              onClick={onDelete}
+              type="button"
+            >
+              <Trash2 aria-hidden="true" />
+            </IconButton>
+          </>
+        }
+      />
 
       <Tabs
         className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"

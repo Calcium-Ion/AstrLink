@@ -12,8 +12,10 @@ export function PageHeader({
   description,
   headingLevel = 1,
   title,
+  titleGroupClassName,
   titleId,
-  variant = "plain",
+  titleSuffix,
+  variant = "compact",
 }: {
   actions?: ReactNode;
   actionsClassName?: string;
@@ -26,7 +28,9 @@ export function PageHeader({
   description?: ReactNode;
   headingLevel?: 1 | 2;
   title: string;
+  titleGroupClassName?: string;
   titleId?: string;
+  titleSuffix?: ReactNode;
   variant?: "card" | "plain" | "compact";
 }) {
   const compact = variant === "compact";
@@ -51,6 +55,7 @@ export function PageHeader({
         className={cn(
           "min-w-0",
           compact && "flex items-center gap-2",
+          titleGroupClassName,
         )}
       >
         {back ? (
@@ -76,13 +81,15 @@ export function PageHeader({
         ) : null}
         <Heading
           className={cn(
-            "font-semibold tracking-tight",
-            compact ? "truncate text-sm" : "text-xl",
+            "text-sm font-semibold tracking-tight",
+            compact && "truncate",
           )}
           id={titleId}
+          title={title}
         >
           {title}
         </Heading>
+        {titleSuffix}
         {compact || !description ? null : (
           <p className="mt-1 max-w-[64ch] truncate text-xs text-text-secondary [&_code]:text-text-secondary">
             {description}
