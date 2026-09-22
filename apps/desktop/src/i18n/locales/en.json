@@ -2150,8 +2150,13 @@
     "removeCredential": "Remove saved proxy authentication",
     "inheritHint": "Use the gateway’s global network settings.",
     "directHint": "Connect this instance directly to the provider, without the global proxy.",
-    "customHint": "Supports HTTP, HTTPS and SOCKS5. Proxy failures return an error without changing the exit.",
-    "savedHint": "Authentication is saved; leave blank to keep it. Proxy failures return an error without changing the exit.",
-    "invalid": "Enter a valid HTTP, HTTPS or SOCKS5 proxy URL. Enter authentication in the separate username and password fields."
+    "customHint": "Supports HTTP, HTTPS and SOCKS5, including pasted links with credentials. Unavailable proxies fail requests without changing the exit.",
+    "savedHint": "Leave both fields blank to keep saved authentication. Enter a username with a blank password to save an empty password. Select clear for no authentication.",
+    "invalid": "Enter a valid HTTP, HTTPS or SOCKS5 proxy URL. A password also requires a username.",
+    "test": "Test connection",
+    "testing": "Testing…",
+    "testHint": "Connect to {{target}} with this draft without saving or sending an API key.",
+    "testSuccess": "Received HTTP {{status}} in {{latency}} ms. This does not verify API access.",
+    "testFailed": "Connection failed. Check the proxy address, authentication and target, then retry."
   }
 }

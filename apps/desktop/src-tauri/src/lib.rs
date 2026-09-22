@@ -929,6 +929,14 @@ async fn probe_draft_service_models(
 }
 
 #[tauri::command]
+async fn probe_service_proxy(
+    manager: State<'_, Arc<CoreManager>>,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    manager.probe_service_proxy(input).await
+}
+
+#[tauri::command]
 async fn begin_service_authorization(
     service_id: String,
     flow: String,
@@ -1418,6 +1426,7 @@ pub fn run() {
             test_service,
             probe_service_models,
             probe_draft_service_models,
+            probe_service_proxy,
             begin_service_authorization,
             complete_service_authorization,
             open_authorization_url,

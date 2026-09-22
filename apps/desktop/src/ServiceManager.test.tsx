@@ -23,6 +23,7 @@ const bridgeMocks = vi.hoisted(() => ({
   openAuthorizationURL: vi.fn(),
   probeDraftServiceModels: vi.fn(),
   probeServiceModels: vi.fn(),
+  probeServiceProxy: vi.fn(),
   testService: vi.fn(),
   updateService: vi.fn(),
 }));
@@ -634,7 +635,7 @@ describe("ServiceManager", () => {
         'input[aria-label="代理密码（可选）"]',
       )?.value,
     ).toBe("");
-    expect(container.textContent).toContain("代理认证已保存");
+    expect(container.textContent).toContain("保留已保存认证");
     await chooseOption("代理模式", "继承全局");
     await act(async () =>
       container
@@ -649,6 +650,111 @@ describe("ServiceManager", () => {
       expect.objectContaining({ proxy: null }),
     );
   });
+
+  it.each([
+    {
+      url: "socks5://user:secret@127.0.0.1:1080",
+      username: "user",
+      password: "secret",
+      credential: { username: "user", password: "secret" },
+    },
+    {
+      url: "socks5://user:@127.0.0.1:1080",
+      username: "user",
+      password: "",
+      credential: { username: "user", password: "" },
+    },
+    {
+      url: "socks5://127.0.0.1:1080",
+      username: "",
+      password: "",
+      credential: undefined,
+    },
+  ])(
+    "tests and saves a proxy draft with password '$password'",
+    async ({ url, username, password, credential }) => {
+      const service: Service = {
+        ...gatewayService,
+        proxy: {
+          mode: "custom",
+          url: "socks5://127.0.0.1:1080",
+          credential_ref: `local://service-proxy/${gatewayService.id}`,
+        },
+      };
+      bridgeMocks.getService.mockResolvedValue({ service, etag });
+      bridgeMocks.updateService.mockResolvedValue({ service, etag });
+      bridgeMocks.probeServiceProxy.mockResolvedValue({
+        latency_ms: 23,
+        status_code: 401,
+      });
+      await act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[service]}
+            view={{ kind: "edit", serviceId: service.id }}
+          />,
+        ),
+      );
+      const address = container.querySelector<HTMLInputElement>(
+        'input[aria-label="代理地址"]',
+      )!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(address, url);
+        address.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(address.value).toBe("socks5://127.0.0.1:1080");
+      expect(
+        container.querySelector<HTMLInputElement>(
+          'input[aria-label="代理用户名（可选）"]',
+        )!.value,
+      ).toBe(username);
+      expect(
+        container.querySelector<HTMLInputElement>(
+          'input[aria-label="代理密码（可选）"]',
+        )!.value,
+      ).toBe(password);
+      const proxy = {
+        mode: "custom",
+        url: "socks5://127.0.0.1:1080",
+        ...(credential ? { credential } : {}),
+      };
+      const testButton = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "测试连通性",
+      )!;
+      await act(async () => testButton.click());
+      expect(bridgeMocks.probeServiceProxy).toHaveBeenCalledWith({
+        service_id: service.id,
+        proxy,
+        target_url: service.http!.base_url,
+      });
+      expect(bridgeMocks.updateService).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("已收到 HTTP 401 响应");
+      await act(async () =>
+        container
+          .querySelector("form")!
+          .dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true }),
+          ),
+      );
+      expect(bridgeMocks.updateService).toHaveBeenCalledWith(
+        service.id,
+        etag,
+        expect.objectContaining({ proxy }),
+      );
+    },
+  );
 
   it("creates a Claude subscription with its own authorization flow", async () => {
     const claude: Service = {
@@ -2719,20 +2825,31 @@ describe("ServiceManager", () => {
     await act(async () => {
       count?.click();
     });
-    expect(changed).toHaveBeenCalledWith({ kind: "edit", serviceId: gatewayService.id, tab: "models" });
+    expect(changed).toHaveBeenCalledWith({
+      kind: "edit",
+      serviceId: gatewayService.id,
+      tab: "models",
+    });
 
     // The host routes that view back in; the editor lands on the models tab.
     await act(async () => {
       root.render(
-        <ServiceManager {...props} view={{ kind: "edit", serviceId: gatewayService.id, tab: "models" }} />,
+        <ServiceManager
+          {...props}
+          view={{ kind: "edit", serviceId: gatewayService.id, tab: "models" }}
+        />,
       );
       await Promise.resolve();
     });
     expect(
-      container.querySelector('[data-testid="service-editor-tab-models"]')?.getAttribute("data-state"),
+      container
+        .querySelector('[data-testid="service-editor-tab-models"]')
+        ?.getAttribute("data-state"),
     ).toBe("active");
     expect(
-      container.querySelector('[data-testid="service-editor-tab-connection"]')?.getAttribute("data-state"),
+      container
+        .querySelector('[data-testid="service-editor-tab-connection"]')
+        ?.getAttribute("data-state"),
     ).toBe("inactive");
   });
 

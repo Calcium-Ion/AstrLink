@@ -1,4 +1,7 @@
 import { useTranslation } from "react-i18next";
+import { useState } from "react";
+import { Button } from "./ui/button";
+import { FormMessage } from "./FormMessage";
 import { Field } from "./Field";
 import { Panel, PanelHeader } from "./Panel";
 import { Input } from "./ui/input";
@@ -10,24 +13,90 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import type { ProxyDraft, ProxyMode } from "../service-proxy-model";
+import {
+  proxyDraftWithURL,
+  validProxyDraft,
+  type ProxyDraft,
+  type ProxyMode,
+  type ServiceProxyProbeResult,
+} from "../service-proxy-model";
 
 export function ServiceProxyFields({
   value,
   onChange,
   hasCredential = false,
+  onTest,
+  testTarget,
+  testDisabled = false,
 }: {
   value: ProxyDraft;
   onChange: (value: ProxyDraft) => void;
   hasCredential?: boolean;
+  onTest: () => Promise<ServiceProxyProbeResult>;
+  testTarget: string;
+  testDisabled?: boolean;
 }) {
   const { t } = useTranslation();
+  const [testing, setTesting] = useState(false);
+  const [test, setTest] = useState<{
+    draft: ProxyDraft;
+    target: string;
+    result?: ServiceProxyProbeResult;
+    failed?: boolean;
+  } | null>(null);
+  const testConnection = async () => {
+    setTesting(true);
+    setTest(null);
+    try {
+      const result = await onTest();
+      setTest({ draft: value, target: testTarget, result });
+    } catch {
+      setTest({ draft: value, target: testTarget, failed: true });
+    } finally {
+      setTesting(false);
+    }
+  };
+  const currentTest =
+    test?.draft === value && test.target === testTarget ? test : null;
   const update = (patch: Partial<ProxyDraft>) =>
     onChange({ ...value, ...patch });
   return (
     <Panel className="@[760px]:col-span-2" data-testid="service-proxy-fields">
-      <PanelHeader>
+      <PanelHeader
+        actions={
+          value.mode === "custom" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={
+                testing ||
+                testDisabled ||
+                !testTarget ||
+                !validProxyDraft(value)
+              }
+              onClick={() => void testConnection()}
+            >
+              {t(testing ? "serviceProxy.testing" : "serviceProxy.test")}
+            </Button>
+          ) : undefined
+        }
+      >
         <h2 className="text-sm font-semibold">{t("serviceProxy.title")}</h2>
+        {currentTest && (
+          <FormMessage
+            className="mt-2"
+            role="status"
+            tone={currentTest.failed ? "error" : "notice"}
+          >
+            {currentTest.result
+              ? t("serviceProxy.testSuccess", {
+                  latency: currentTest.result.latency_ms,
+                  status: currentTest.result.status_code,
+                })
+              : t("serviceProxy.testFailed")}
+          </FormMessage>
+        )}
       </PanelHeader>
       <div className="grid gap-3 p-4 @[600px]:grid-cols-2">
         <Field label={t("serviceProxy.mode")}>
@@ -57,7 +126,9 @@ export function ServiceProxyFields({
                 aria-label={t("serviceProxy.url")}
                 placeholder="socks5://127.0.0.1:1080"
                 value={value.url}
-                onChange={(e) => update({ url: e.target.value })}
+                onChange={(e) =>
+                  onChange(proxyDraftWithURL(value, e.target.value))
+                }
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -105,6 +176,11 @@ export function ServiceProxyFields({
                 : "serviceProxy.inheritHint",
           )}
         </p>
+        {value.mode === "custom" && (
+          <p className="text-xs text-muted-foreground @[600px]:col-span-2">
+            {t("serviceProxy.testHint", { target: testTarget })}
+          </p>
+        )}
       </div>
     </Panel>
   );

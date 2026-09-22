@@ -48,6 +48,7 @@ import {
   probeLocalPrivacyModel,
   probeDraftServiceModels,
   probeServiceModels,
+  probeServiceProxy,
   testService,
   probePrivacyModel,
   revealAccessToken,
@@ -96,6 +97,34 @@ function validSnapshot(): Record<string, unknown> {
 }
 
 describe("desktop bridge contract", () => {
+  it("validates proxy probe responses without persisting draft credentials", async () => {
+    const input = {
+      proxy: {
+        mode: "custom" as const,
+        url: "socks5://localhost:1080",
+        credential: { username: "user", password: "" },
+      },
+      target_url: "https://provider.example",
+    };
+    invokeMock.mockResolvedValueOnce({ latency_ms: 10, status_code: 401 });
+    await expect(probeServiceProxy(input)).resolves.toEqual({
+      latency_ms: 10,
+      status_code: 401,
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith("probe_service_proxy", {
+      input,
+    });
+    for (const result of [
+      { latency_ms: -1, status_code: 200 },
+      { latency_ms: 2, status_code: 407 },
+      { latency_ms: 2, status_code: "200" },
+    ]) {
+      invokeMock.mockResolvedValueOnce(result);
+      await expect(probeServiceProxy(input)).rejects.toThrow(
+        "Invalid proxy probe response",
+      );
+    }
+  });
   it("requests one aggregate for the complete usage window", async () => {
     const window = resolveUsageWindow("1d", new Date(2026, 8, 19, 12));
     invokeMock.mockResolvedValueOnce({

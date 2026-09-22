@@ -69,6 +69,7 @@ func (handler *Handler) registerServiceRoutes() {
 	handler.mux.HandleFunc(ServicesPath, handler.authenticated(handler.serviceCollection))
 	handler.mux.HandleFunc(ServicesPath+"/", handler.authenticated(handler.serviceItem))
 	handler.mux.HandleFunc(ServiceModelProbesPath, handler.authenticated(handler.probeDraftServiceModels))
+	handler.mux.HandleFunc(ServiceProxyProbesPath, handler.authenticated(handler.probeServiceProxy))
 }
 
 func (handler *Handler) serviceCollection(writer http.ResponseWriter, request *http.Request) {

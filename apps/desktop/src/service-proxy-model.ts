@@ -27,6 +27,62 @@ export function proxyDraft(proxy?: ServiceProxy): ProxyDraft {
   };
 }
 
+// Keep credentials out of the public URL even when a complete proxy link is pasted.
+export function proxyDraftWithURL(
+  draft: ProxyDraft,
+  value: string,
+): ProxyDraft {
+  const next = { ...draft, url: value };
+  // eslint-disable-next-line no-control-regex -- Do not let URL parsing silently remove control characters.
+  if (/[\u0000-\u001f\u007f]/.test(value)) return next;
+  try {
+    const url = new URL(value.trim());
+    if (!url.username && !url.password) return next;
+    const username = decodeURIComponent(url.username);
+    const password = decodeURIComponent(url.password);
+    url.username = "";
+    url.password = "";
+    const parsed = {
+      ...next,
+      url: url.toString(),
+      username,
+      password,
+      removeCredential: false,
+    };
+    return validProxyDraft(parsed) ? parsed : next;
+  } catch {
+    return next;
+  }
+}
+
+export interface ServiceProxyProbeInput {
+  service_id?: string;
+  proxy: ServiceProxyInput;
+  target_url: string;
+}
+
+export interface ServiceProxyProbeResult {
+  latency_ms: number;
+  status_code: number;
+}
+
+export function parseServiceProxyProbe(
+  value: unknown,
+): ServiceProxyProbeResult {
+  const result = value as ServiceProxyProbeResult | null;
+  if (
+    !result ||
+    !Number.isInteger(result.latency_ms) ||
+    result.latency_ms < 0 ||
+    !Number.isInteger(result.status_code) ||
+    result.status_code < 100 ||
+    result.status_code > 599 ||
+    result.status_code === 407
+  )
+    throw new Error("Invalid proxy probe response");
+  return { latency_ms: result.latency_ms, status_code: result.status_code };
+}
+
 export function validProxyURL(value: string): boolean {
   try {
     const u = new URL(value);

@@ -2150,8 +2150,13 @@
     "removeCredential": "清除已保存的代理认证",
     "inheritHint": "使用网关的全局网络设置。",
     "directHint": "此实例直接连接提供商，不使用全局代理。",
-    "customHint": "支持 HTTP、HTTPS、SOCKS5。代理不可用时请求报错，不自动更换出口。",
-    "savedHint": "代理认证已保存，留空保留。代理不可用时请求报错，不自动更换出口。",
-    "invalid": "请填写有效的 HTTP、HTTPS 或 SOCKS5 代理地址；认证信息请填写在独立的用户名和密码字段中。"
+    "customHint": "支持 HTTP、HTTPS、SOCKS5，可粘贴含用户名和密码的完整链接。代理不可用时请求报错，不自动更换出口。",
+    "savedHint": "用户名和密码均留空时保留已保存认证；填写用户名并留空密码会保存空密码。无需认证时请勾选清除。",
+    "invalid": "请填写有效的 HTTP、HTTPS 或 SOCKS5 代理地址；填写密码时也需填写用户名。",
+    "test": "测试连通性",
+    "testing": "测试中…",
+    "testHint": "使用当前配置连接 {{target}}，不保存配置、不发送 API 密钥。",
+    "testSuccess": "已收到 HTTP {{status}} 响应，耗时 {{latency}} ms。此测试不验证 API 权限。",
+    "testFailed": "连接失败，请检查代理地址、认证信息和目标地址后重试。"
   }
 }

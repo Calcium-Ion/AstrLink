@@ -80,3 +80,72 @@ func TestServiceProxyCRUDCredentialsAndDraftProbe(t *testing.T) {
 		t.Fatal("delete retained proxy credentials")
 	}
 }
+
+func TestServiceProxyProbeRetainsEmptyAndClearedCredentialsWithoutSaving(t *testing.T) {
+	store, handler := newServiceHandler(t, "service_proxy_probe_test")
+	var received []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead || r.URL.Host != "provider.invalid" {
+			t.Errorf("unexpected proxy test request: %s %s", r.Method, r.URL.Host)
+		}
+		if r.Header.Get("Authorization") != "" || r.Header.Get("User-Agent") != "" {
+			t.Error("proxy test sent API authentication or client identity")
+		}
+		received = append(received, r.Header.Get("Proxy-Authorization"))
+		w.Header().Set("Location", "http://do-not-follow.invalid")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer proxy.Close()
+	create := serviceRequestForTest(t, handler, "POST", ServicesPath, "application/json", `{"name":"proxy test","kind":"openai","http":{"base_url":"http://provider.invalid","auth":{"scheme":"bearer"},"credential":{"secret":"api-secret"}},"capabilities":[],"proxy":{"mode":"custom","url":"`+proxy.URL+`","credential":{"username":"user","password":""}}}`, "")
+	if create.Code != http.StatusCreated {
+		t.Fatal(create.Body.String())
+	}
+	var service contract.Service
+	if err := json.Unmarshal(create.Body.Bytes(), &service); err != nil {
+		t.Fatal(err)
+	}
+	path := ServicesPath + "/" + string(service.ID)
+	// Exercise the same full HTTP patch used by the desktop, with both proxy
+	// fields left blank to retain a saved empty password.
+	patch := serviceRequestForTest(t, handler, "PATCH", path, "application/merge-patch+json", `{"http":{"base_url":"http://provider.invalid","auth":{"scheme":"bearer"}},"proxy":{"mode":"custom","url":"`+proxy.URL+`"}}`, create.Header().Get("ETag"))
+	if patch.Code != http.StatusOK {
+		t.Fatal(patch.Body.String())
+	}
+	for _, credential := range []string{"", `,"credential":{"username":"other","password":"draft-secret"}`, `,"credential":null`} {
+		probe := serviceRequestForTest(t, handler, "POST", ServiceProxyProbesPath, "application/json", `{"service_id":"service_proxy_probe_test","target_url":"http://provider.invalid","proxy":{"mode":"custom","url":"`+proxy.URL+`"`+credential+`}}`, "")
+		if probe.Code != http.StatusOK || !strings.Contains(probe.Body.String(), `"status_code":302`) {
+			t.Fatal(probe.Body.String())
+		}
+	}
+	if len(received) != 3 || received[0] != "Basic dXNlcjo=" || received[1] != "Basic b3RoZXI6ZHJhZnQtc2VjcmV0" || received[2] != "" {
+		t.Fatal("probe did not select saved, draft and cleared authentication")
+	}
+	after := serviceRequestForTest(t, handler, "GET", path, "", "", "")
+	if after.Header().Get("ETag") != patch.Header().Get("ETag") {
+		t.Fatal("probe modified service")
+	}
+	secret, err := store.Get(context.Background(), secretstore.Ref(service.Proxy.CredentialRef))
+	if err != nil || string(secret) != `{"username":"user","password":""}` {
+		t.Fatal("probe modified saved credentials")
+	}
+}
+
+func TestServiceProxyProbeRejectsInvalidAndFailedConnections(t *testing.T) {
+	_, handler := newServiceHandler(t, "service_proxy_fail")
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusProxyAuthRequired) }))
+	defer proxy.Close()
+	for _, test := range []struct {
+		body   string
+		status int
+	}{
+		{`{"target_url":"http://provider.invalid","proxy":{"mode":"direct"}}`, 422},
+		{`{"target_url":"http://user:secret@provider.invalid","proxy":{"mode":"custom","url":"` + proxy.URL + `"}}`, 422},
+		{`{"target_url":"http://provider.invalid","proxy":{"mode":"custom","url":"` + proxy.URL + `","credential":{"username":"user","password":"draft-secret"}}}`, 502},
+		{`{"target_url":"http://provider.invalid","proxy":{"mode":"custom","url":"http://127.0.0.1:1","credential":{"username":"user","password":"draft-secret"}}}`, 502},
+	} {
+		response := serviceRequestForTest(t, handler, "POST", ServiceProxyProbesPath, "application/json", test.body, "")
+		if response.Code != test.status || strings.Contains(response.Body.String(), "draft-secret") {
+			t.Fatalf("unexpected proxy failure: %d %s", response.Code, response.Body.String())
+		}
+	}
+}

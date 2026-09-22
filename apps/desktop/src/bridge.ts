@@ -17,6 +17,11 @@ import {
   type RoutingSettings,
 } from "./failure-policy-model";
 import { invoke as invokeCommand } from "@tauri-apps/api/core";
+import {
+  parseServiceProxyProbe,
+  type ServiceProxyProbeInput,
+  type ServiceProxyProbeResult,
+} from "./service-proxy-model";
 
 import { i18n } from "./i18n";
 import { parseUsageSummary } from "./usage-summary-model";
@@ -223,7 +228,9 @@ export async function updatePreferences(
  */
 export async function getTrayState(tray?: TrayPreferences): Promise<TrayState> {
   requireNativeBridge();
-  return parseTrayState(await invoke<unknown>("tray_state", { tray: tray ?? null }));
+  return parseTrayState(
+    await invoke<unknown>("tray_state", { tray: tray ?? null }),
+  );
 }
 
 export async function trayAction(action: TrayAction): Promise<void> {
@@ -376,6 +383,13 @@ export async function probeDraftServiceModels(
   return parseServiceModelProbe(
     await invoke<unknown>("probe_draft_service_models", { input }),
   );
+}
+
+export async function probeServiceProxy(
+  input: ServiceProxyProbeInput,
+): Promise<ServiceProxyProbeResult> {
+  requireNativeBridge();
+  return parseServiceProxyProbe(await invoke("probe_service_proxy", { input }));
 }
 
 export async function beginServiceAuthorization(

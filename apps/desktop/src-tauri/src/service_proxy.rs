@@ -101,6 +101,23 @@ mod tests {
             assert!(validate_proxy(&json!({"mode": mode}), None, true).is_ok());
         }
         assert!(validate_proxy(&Value::Null, None, true).is_ok());
+        for credential in [
+            serde_json::json!({"username":"user", "password":""}),
+            Value::Null,
+        ] {
+            assert!(validate_proxy(
+                &json!({"mode":"custom", "url":"socks5://127.0.0.1:1080", "credential":credential}),
+                None,
+                true
+            )
+            .is_ok());
+        }
+        assert!(validate_proxy(
+            &json!({"mode":"custom", "url":"socks5://127.0.0.1:1080"}),
+            None,
+            true
+        )
+        .is_ok());
         for scheme in ["http", "https", "socks5"] {
             assert!(validate_proxy(&json!({"mode":"custom", "url":format!("{scheme}://127.0.0.1:1080"), "credential":{"username":"user", "password":"secret"}}), None, true).is_ok());
         }

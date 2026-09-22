@@ -65,6 +65,7 @@ x-astrlink-implementation:
     - POST /control/v1/services/{service_id}/logout
     - POST /control/v1/services/{service_id}/probe-models
     - POST /control/v1/service-model-probes
+    - POST /control/v1/service-proxy-probes
     - POST /control/v1/services/{service_id}/probe-responses
     - GET /control/v1/services/{service_id}/usage
     - POST /control/v1/services/{service_id}/usage/reset
@@ -788,6 +789,63 @@ paths:
           $ref: "#/components/responses/BadGateway"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
+  /control/v1/service-proxy-probes:
+    x-astrlink-implementation-status: implemented
+    post:
+      tags: [Services]
+      operationId: probeServiceProxy
+      summary: Test an unsaved custom proxy against an HTTP target.
+      description: Sends a HEAD request with a 10-second timeout, without saving the draft, sending API credentials, or following redirects. An omitted proxy credential reuses the given service's stored proxy authentication; null clears it for this test only. An HTTP response other than 407 confirms a response was received, not API authorization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proxy, target_url]
+              properties:
+                service_id:
+                  $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+                proxy:
+                  allOf:
+                    - $ref: "#/components/schemas/ServiceProxyInput"
+                    - properties:
+                        mode: { const: custom }
+                target_url:
+                  type: string
+                  maxLength: 2048
+                  description: HTTP or HTTPS target without userinfo, query or fragment.
+              additionalProperties: false
+      responses:
+        "200":
+          description: A response was received through the proxy.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [latency_ms, status_code]
+                properties:
+                  latency_ms: { type: integer, minimum: 0 }
+                  status_code:
+                    {
+                      type: integer,
+                      minimum: 100,
+                      maximum: 599,
+                      not: { const: 407 },
+                    }
+                additionalProperties: false
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          description: Only POST is supported.
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "502":
+          $ref: "#/components/responses/BadGateway"
   /control/v1/service-model-probes:
     x-astrlink-implementation-status: implemented
     post:

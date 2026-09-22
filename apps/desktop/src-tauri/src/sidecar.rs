@@ -60,6 +60,7 @@ const POLICY_DRY_RUN_PATH: &str = "/control/v1/policies/policy_privacy_default/d
 const ROUTES_PATH: &str = "/control/v1/routes";
 const SERVICES_PATH: &str = "/control/v1/services";
 const SERVICE_MODEL_PROBES_PATH: &str = "/control/v1/service-model-probes";
+const SERVICE_PROXY_PROBES_PATH: &str = "/control/v1/service-proxy-probes";
 // Every kind a detector may emit. The Regex detector emits the first seven and
 // the local model adds the rest.
 const PRIVACY_KINDS: &[&str] = &[
@@ -1796,6 +1797,23 @@ impl CoreManager {
             .map_err(|error| format!("draft service model probe returned invalid JSON: {error}"))
     }
 
+    pub async fn probe_service_proxy(
+        &self,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        crate::service_proxy::validate_proxy(&input["proxy"], None, true)?;
+        if input["proxy"]["mode"].as_str() != Some("custom") {
+            return Err("proxy test requires a custom proxy".into());
+        }
+        if let Some(id) = input.get("service_id") {
+            validate_resource_id(id.as_str().ok_or("invalid service id")?)?;
+        }
+        let (_, body) = self
+            .authenticated_control(Method::POST, SERVICE_PROXY_PROBES_PATH, Some(input), None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "proxy probe returned invalid JSON".into())
+    }
+
     pub async fn begin_service_authorization(
         &self,
         service_id: &str,
@@ -2471,6 +2489,7 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     }
     if method == Method::POST
         && (path == SERVICE_MODEL_PROBES_PATH
+            || path == SERVICE_PROXY_PROBES_PATH
             || (path.starts_with(&format!("{SERVICES_PATH}/")) && path.ends_with("/probe-models")))
     {
         return SERVICE_MODEL_PROBE_TIMEOUT;

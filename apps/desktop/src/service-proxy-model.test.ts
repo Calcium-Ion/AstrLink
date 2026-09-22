@@ -2,12 +2,49 @@ import { describe, expect, it } from "vitest";
 import {
   parseServiceProxy,
   proxyDraft,
+  proxyDraftWithURL,
   proxyInput,
   validProxyDraft,
   validProxyURL,
 } from "./service-proxy-model";
 
 describe("instance proxy configuration", () => {
+  it("splits complete proxy links, including encoded credentials and empty passwords", () => {
+    const draft = proxyDraft({ mode: "custom", url: "" });
+    for (const [url, username, password] of [
+      ["socks5://proxy-user:secret@127.0.0.1:1080", "proxy-user", "secret"],
+      ["socks5://proxy-user:@127.0.0.1:1080", "proxy-user", ""],
+      ["socks5://proxy-user@127.0.0.1:1080", "proxy-user", ""],
+      [
+        "socks5://user%40name:p%3A%40%2F%25@127.0.0.1:1080",
+        "user@name",
+        "p:@/%",
+      ],
+    ]) {
+      const parsed = proxyDraftWithURL(
+        { ...draft, removeCredential: true },
+        url!,
+      );
+      expect(validProxyDraft(parsed)).toBe(true);
+      expect(proxyInput(parsed)).toEqual({
+        mode: "custom",
+        url: "socks5://127.0.0.1:1080",
+        credential: { username, password },
+      });
+    }
+    const separate = { ...draft, username: "user", password: "secret" };
+    expect(proxyDraftWithURL(separate, "socks5://127.0.0.1:1080")).toEqual({
+      ...separate,
+      url: "socks5://127.0.0.1:1080",
+    });
+    for (const url of [
+      "socks5://:secret@proxy",
+      "socks5://user:%ZZ@proxy",
+      "socks5://user:secret@proxy/path",
+    ]) {
+      expect(validProxyDraft(proxyDraftWithURL(draft, url))).toBe(false);
+    }
+  });
   it("defaults to inheritance and keeps credentials write-only", () => {
     expect(proxyInput(proxyDraft())).toBeNull();
     const draft = proxyDraft({

@@ -91,6 +91,7 @@ import {
   openAuthorizationURL,
   probeDraftServiceModels,
   probeServiceModels,
+  probeServiceProxy,
   updateService,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
@@ -151,7 +152,11 @@ import {
 } from "./subscription-usage-model";
 
 /** Tabs of the service editor; `models` is the per-provider model list. */
-export type ServiceEditorTab = "connection" | "models" | "protocols" | "failure";
+export type ServiceEditorTab =
+  | "connection"
+  | "models"
+  | "protocols"
+  | "failure";
 
 export type ServiceManagerView =
   | { kind: "list" }
@@ -687,7 +692,8 @@ export function ServiceManager({
   protocolsRef.current = protocols;
   const viewKind = view.kind;
   const editingServiceID = view.kind === "edit" ? view.serviceId : null;
-  const requestedEditorTab = view.kind === "edit" ? (view.tab ?? "connection") : "connection";
+  const requestedEditorTab =
+    view.kind === "edit" ? (view.tab ?? "connection") : "connection";
   const connectedUsageIDs = useMemo(
     () =>
       services
@@ -2396,6 +2402,14 @@ export function ServiceManager({
       </section>
     </Panel>
   );
+  const proxyTestTarget =
+    draft.kind === "codex_subscription"
+      ? "https://chatgpt.com"
+      : draft.kind === "claude_subscription"
+        ? "https://api.anthropic.com"
+        : draft.kind === "grok_subscription"
+          ? "https://api.x.ai"
+          : draft.baseURL.trim();
   const connectionFields = (
     <div className="grid min-w-0 items-start gap-4 pb-2 @[760px]:grid-cols-2">
       <Panel>
@@ -2776,6 +2790,15 @@ export function ServiceManager({
         value={draft.proxy}
         onChange={(proxy) => setDraft((current) => ({ ...current, proxy }))}
         hasCredential={Boolean(editing?.service.proxy?.credential_ref)}
+        testDisabled={!isReady || saving}
+        testTarget={proxyTestTarget}
+        onTest={() =>
+          probeServiceProxy({
+            ...(editing ? { service_id: editing.service.id } : {}),
+            proxy: proxyInput(draft.proxy)!,
+            target_url: proxyTestTarget,
+          })
+        }
       />
     </div>
   );
