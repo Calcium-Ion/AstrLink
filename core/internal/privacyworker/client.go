@@ -75,15 +75,16 @@ type Client struct {
 	slot           chan struct{}
 	nextRequestID  atomic.Uint64
 
-	mu         sync.Mutex
-	active     bool
-	modelID    contract.PrivacyModelID
-	generation uint64
-	change     chan struct{}
-	process    *workerProcess
-	starting   *workerProcess
-	verified   *modelKey
-	failed     *modelKey
+	mu                    sync.Mutex
+	active                bool
+	modelID               contract.PrivacyModelID
+	generation            uint64
+	change                chan struct{}
+	process               *workerProcess
+	starting              *workerProcess
+	verified              *modelKey
+	verifiedInputContract string
+	failed                *modelKey
 }
 
 type modelKey struct {
@@ -187,19 +188,7 @@ func (client *Client) Detect(ctx context.Context, input privacy.DetectInput) ([]
 		return nil, ctx.Err()
 	}
 
-	request := workerRequest{
-		Version: protocolVersion,
-		ID:      client.nextRequestID.Add(1),
-		Texts:   make([]workerText, len(input.Segments)),
-	}
-	for index, segment := range input.Segments {
-		request.Texts[index] = workerText{ID: uint32(index), Text: segment.Value}
-	}
-	payload, err := json.Marshal(request)
-	if err != nil || len(payload) == 0 || len(payload) > maxFrameBytes {
-		return nil, privacy.ErrDetectorLimit
-	}
-
+	requestID := client.nextRequestID.Add(1)
 	for attempt := 0; attempt <= maxStartupRetries; attempt++ {
 		process, err := client.ensureProcess(ctx, expectedModelID)
 		if err != nil {
@@ -209,17 +198,28 @@ func (client *Client) Detect(ctx context.Context, input privacy.DetectInput) ([]
 			}
 			return nil, privacy.ErrDetectorUnavailable
 		}
+		request, modelSegments, prefixLengths, err := contextualWorkerRequest(requestID, input.Segments, process.inputContract)
+		if err != nil {
+			return nil, err
+		}
+		payload, err := json.Marshal(request)
+		if err != nil || len(payload) == 0 || len(payload) > maxFrameBytes {
+			return nil, privacy.ErrDetectorLimit
+		}
 		response, err := client.exchange(ctx, process, payload)
 		if err == nil {
 			findings, responseErr := responseFindings(
 				response,
 				request.ID,
-				input.Segments,
+				modelSegments,
 			)
 			if responseErr != nil && !errors.Is(responseErr, privacy.ErrDetectorLimit) {
 				client.failProcess(process)
 			}
-			return findings, responseErr
+			if responseErr != nil {
+				return nil, responseErr
+			}
+			return projectContextFindings(findings, prefixLengths)
 		}
 		if errors.Is(err, context.Canceled) ||
 			errors.Is(err, context.DeadlineExceeded) ||
@@ -290,6 +290,7 @@ func (client *Client) ensureProcess(
 		client.stopLocked()
 	}
 	alreadyVerified := client.verified != nil && *client.verified == key
+	inputContract := client.verifiedInputContract
 	client.mu.Unlock()
 
 	if !alreadyVerified {
@@ -298,6 +299,12 @@ func (client *Client) ensureProcess(
 				!errors.Is(err, context.DeadlineExceeded) {
 				client.latchKeyIfCurrent(key, generation)
 			}
+			return nil, err
+		}
+		var err error
+		inputContract, err = installedInputContract(installation)
+		if err != nil {
+			client.latchKeyIfCurrent(key, generation)
 			return nil, err
 		}
 	}
@@ -320,6 +327,7 @@ func (client *Client) ensureProcess(
 	}
 	verified := key
 	client.verified = &verified
+	client.verifiedInputContract = inputContract
 	if client.process != nil {
 		client.stopLocked()
 	}
@@ -356,6 +364,7 @@ func (client *Client) ensureProcess(
 		directory:      installation.Directory,
 		identity:       installation.Identity,
 		manifestSHA256: installation.ManifestSHA256,
+		inputContract:  inputContract,
 		stdin:          stdin,
 		stdout:         stdout,
 		reader:         bufio.NewReader(stdout),
@@ -408,12 +417,14 @@ func (client *Client) invalidateLocked() {
 	}
 	client.change = make(chan struct{})
 	client.verified = nil
+	client.verifiedInputContract = ""
 	client.failed = nil
 }
 
 func (client *Client) resetCachedKeyLocked(key modelKey) {
 	if client.verified != nil && *client.verified != key {
 		client.verified = nil
+		client.verifiedInputContract = ""
 	}
 	if client.failed != nil && *client.failed != key {
 		client.failed = nil
@@ -535,6 +546,7 @@ type workerProcess struct {
 	directory      string
 	identity       string
 	manifestSHA256 string
+	inputContract  string
 	stdin          io.WriteCloser
 	stdout         io.ReadCloser
 	reader         *bufio.Reader

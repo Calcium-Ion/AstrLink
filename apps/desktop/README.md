@@ -39,8 +39,6 @@
 
 安装弹窗支持勾选一个或多个已检测到的工具，例如只为 Grok Build 安装 Skill 和 MCP。首次安装需选择目标；再次打开时会预选已有安装的工具。写入路径随选择更新，取消勾选不会卸载已有配置。“卸载”仍会移除所有工具中由 AstrLink 管理的诊断安装。
 
-Codex 使用公共目录 `~/.agents/skills/astrlink-debug`，不再另装一份到 `~/.codex/skills`。已安装用户在升级后启动 AstrLink 或重新安装 Agent 诊断功能时，会自动迁移 AstrLink 管理的旧副本：公共目录已存在时，旧副本连同自定义内容保存在 `~/.astrlink/agent-skill-backups`；仅有旧副本时，将其迁入公共目录。非 AstrLink 管理的目录不会自动迁移。迁移后请新建 Codex 会话，已有会话中的技能清单可能仍保留旧内容。
-
 ## 安装依赖
 
 | 平台 | 说明 |

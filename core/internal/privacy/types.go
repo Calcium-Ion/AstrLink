@@ -116,6 +116,10 @@ const (
 type Segment struct {
 	Path  string
 	Value string
+	// ContextPrefix describes a structured tool leaf, never another field's
+	// value. Only explicitly compatible local models consume it. All findings
+	// still index Value, and regex detection/redaction never scans this prefix.
+	ContextPrefix string
 }
 
 type DetectInput struct {

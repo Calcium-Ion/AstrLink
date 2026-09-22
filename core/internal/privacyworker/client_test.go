@@ -1001,6 +1001,9 @@ func writeTestManifest(
 	files := make([]installationFile, len(paths))
 	for index, relativePath := range paths {
 		content := []byte(relativePath)
+		if relativePath == "config.json" {
+			content = []byte(`{}`)
+		}
 		if err := os.WriteFile(
 			filepath.Join(directory, filepath.FromSlash(relativePath)),
 			content,
@@ -1176,6 +1179,27 @@ func TestPrivacyWorkerHelper(t *testing.T) {
 			End:    len(request.Texts[0].Text),
 			Score:  &score,
 		}}
+		if mode == "context_values" || mode == "context_crossing" {
+			const value = "秘密🔑same-value"
+			text := request.Texts[0].Text
+			start := strings.LastIndex(text, value)
+			if start < 0 || (start > 0 && !strings.HasPrefix(text, "Field: ")) {
+				os.Exit(8)
+			}
+			responseSpans[0].Start = start
+			responseSpans[0].End = start + len(value)
+			if mode == "context_crossing" {
+				if start <= 0 {
+					os.Exit(8)
+				}
+				responseSpans[0].Start = start - 1
+				responseSpans[0].Label = "common_secret"
+			} else if start > 0 {
+				responseSpans = append(responseSpans,
+					workerSpan{TextID: 0, Label: "email", Start: 0, End: start, Score: &score},
+				)
+			}
+		}
 		response := workerResponse{
 			Version: protocolVersion,
 			ID:      request.ID,
