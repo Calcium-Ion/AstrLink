@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
@@ -288,10 +289,15 @@ func (handler *Handler) executeCandidates(
 		}
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
+		proxyContext := request.Context()
+		if authorizeErr == nil {
+			proxyContext, authorizeErr = networkproxy.Bind(proxyContext, candidate.Service, handler.proxyCredentials)
+			attemptRequest = attemptRequest.WithContext(proxyContext)
+		}
 		if authorizeErr == nil {
 			authorizationEndpoint.Auth = providerapi.Auth(candidate.Service.Kind, plan.UpstreamProtocol, authorizationEndpoint.Auth)
 			var headersErr error
-			headers, headersErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint, attemptRequest.Header)
+			headers, headersErr = handler.authorizer.Headers(proxyContext, authorizationEndpoint, attemptRequest.Header)
 			authorizeErr = headersErr
 		}
 		if authorizeErr != nil {
@@ -429,7 +435,7 @@ func (handler *Handler) executeCandidates(
 		if policy.ResponseStartTimeoutSeconds != nil {
 			responseTimeout = time.Duration(*policy.ResponseStartTimeoutSeconds) * time.Second
 		}
-		attemptContext := newResponseStartContext(request.Context(), responseTimeout)
+		attemptContext := newResponseStartContext(attemptRequest.Context(), responseTimeout)
 		attemptRequest = attemptRequest.WithContext(attemptContext.Context())
 		startWriter := newResponseStartWriter(outWriter, func(status int) {
 			if attemptContext.ResponseStarted() {
@@ -440,6 +446,7 @@ func (handler *Handler) executeCandidates(
 			}
 		})
 		forwardTarget := transport.Target{
+			Service: candidate.Service, ProxyCredentials: handler.proxyCredentials,
 			BaseURL:        baseURL,
 			RequestHeaders: headers,
 		}

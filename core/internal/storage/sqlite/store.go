@@ -358,6 +358,9 @@ func (store *Store) UpdateEndpoint(ctx context.Context, endpoint contract.Endpoi
 		return record, err
 	}
 	service := contract.ServiceFromEndpoint(endpoint)
+	service.Proxy = current.Service.Proxy
+	service.ResponsesWebSocketEnabled = current.Service.ResponsesWebSocketEnabled
+	service.FailurePolicy = current.Service.FailurePolicy
 	service.CreatedAt = current.Service.CreatedAt
 	updated, err := store.UpdateService(ctx, service, credential, expectedETag)
 	if err != nil {
@@ -375,6 +378,9 @@ func (store *Store) DeleteEndpoint(ctx context.Context, id contract.ServiceID, e
 }
 
 func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error) {
+	if strings.HasPrefix(string(ref), "local://service-proxy/") {
+		return store.getProxyCredential(ctx, ref)
+	}
 	id, err := localServiceID(ref)
 	if err != nil {
 		return nil, err

@@ -236,7 +236,7 @@ func main() {
 			Subscriptions:      subscriptionManager,
 			CodingPlans:        codingplan.New(store, nil),
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
-			ServiceTester:      servicetest.New(endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store), nil, subscriptionManager.APIBaseURLFor),
+			ServiceTester:      servicetest.New(endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store), nil, subscriptionManager.APIBaseURLFor).WithProxyCredentials(store),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,
@@ -253,8 +253,9 @@ func main() {
 		}
 		dependencies.NewInferenceHandler = func(address string) (http.Handler, error) {
 			return ingress.NewProduction(ingress.Dependencies{
-				Resolver:   resolver,
-				Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store),
+				ProxyCredentials: store,
+				Resolver:         resolver,
+				Authorizer:       endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store),
 				AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
 					func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
 						return accessTokenManager.Authenticate(ctx, raw)
@@ -336,7 +337,8 @@ func readTokenLine(reader *bufio.Reader) (string, error) {
 
 func newSubscriptionManager(store *sqlite.Store) (*subscription.Manager, error) {
 	oauth := accountauth.OAuthConfig{
-		ClientID: accountauth.DefaultCodexOAuthClientID,
+		ResolveProxy: networkproxy.Resolver(store, store),
+		ClientID:     accountauth.DefaultCodexOAuthClientID,
 	}
 	if clientID := strings.TrimSpace(os.Getenv("ASTRLINK_CODEX_OAUTH_CLIENT_ID")); clientID != "" {
 		oauth.ClientID = clientID

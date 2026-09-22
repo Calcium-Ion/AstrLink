@@ -11,6 +11,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
+	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 )
 
 const copyBufferSize = 32 * 1024
@@ -20,6 +24,8 @@ const localPolicyWarningHeader = "X-AstrLink-Policy-Warning"
 // RequestHeaders may include authentication material prepared by a higher
 // layer. Forwarder does not log or otherwise retain those values.
 type Target struct {
+	Service          contract.Service
+	ProxyCredentials secretstore.SecretStore
 	// HandleResponse owns the body when set, and decides before any client bytes.
 	HandleResponse func(*http.Response) error
 	BaseURL        *url.URL
@@ -91,7 +97,8 @@ func (err *ResponseError) Unwrap() error {
 
 // Forwarder performs one protocol-preserving upstream round trip.
 type Forwarder struct {
-	roundTripper http.RoundTripper
+	roundTripper   http.RoundTripper
+	proxyTransport http.RoundTripper
 }
 
 func New(roundTripper http.RoundTripper) *Forwarder {
@@ -112,7 +119,7 @@ func NewWithResponseHeaderTimeout(roundTripper http.RoundTripper, headerTimeout 
 			roundTripper = http.DefaultTransport
 		}
 	}
-	return &Forwarder{roundTripper: roundTripper}
+	return &Forwarder{roundTripper: roundTripper, proxyTransport: networkproxy.WrapTransport(roundTripper)}
 }
 
 // Forward sends request to target and copies the response as it arrives.
@@ -123,7 +130,11 @@ func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*ht
 		return nil, &TargetError{err: err}
 	}
 
-	outbound := request.Clone(request.Context())
+	ctx, err := networkproxy.Bind(request.Context(), target.Service, target.ProxyCredentials)
+	if err != nil {
+		return nil, &TargetError{err: err}
+	}
+	outbound := request.Clone(ctx)
 	outbound.URL = joinTargetURL(target.BaseURL, request.URL)
 	outbound.Host = ""
 	outbound.RequestURI = ""
@@ -140,7 +151,7 @@ func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*ht
 		target.ObserveOutbound(outbound)
 	}
 
-	response, err := forwarder.roundTripper.RoundTrip(outbound)
+	response, err := forwarder.proxyTransport.RoundTrip(outbound)
 	if err != nil {
 		return nil, &UpstreamError{err: err}
 	}

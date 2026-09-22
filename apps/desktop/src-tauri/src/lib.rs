@@ -1,3 +1,4 @@
+mod service_proxy;
 mod agent_install;
 mod control_session;
 #[cfg(debug_assertions)]

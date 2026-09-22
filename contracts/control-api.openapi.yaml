@@ -3416,10 +3416,73 @@ components:
         last_error:
           $ref: "#/components/schemas/SubscriptionError"
       additionalProperties: false
+    ServiceProxy:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [inherit, direct, custom]
+        url:
+          type: string
+          maxLength: 2048
+          description: HTTP, HTTPS or SOCKS5 proxy URL, without userinfo, query or fragment. Required in custom mode only.
+        credential_ref:
+          type: string
+          readOnly: true
+          description: Local proxy credential reference; never contains authentication bytes.
+      additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              mode: {const: custom}
+          then:
+            required: [url]
+          else:
+            not:
+              anyOf:
+                - required: [url]
+                - required: [credential_ref]
+    ServiceProxyInput:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [inherit, direct, custom]
+        url:
+          type: string
+          maxLength: 2048
+          description: HTTP, HTTPS or SOCKS5 proxy URL without embedded credentials; required for custom mode.
+        credential:
+          oneOf:
+            - type: object
+              required: [username, password]
+              properties:
+                username: {type: string, minLength: 1, maxLength: 255, writeOnly: true}
+                password: {type: string, maxLength: 255, writeOnly: true}
+              additionalProperties: false
+            - type: "null"
+          writeOnly: true
+          description: Omit to keep saved authentication; null clears it. Authentication requires custom mode. Credentials are limited to 255 UTF-8 bytes each.
+      additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              mode: {const: custom}
+          then:
+            required: [url]
+          else:
+            not:
+              required: [url]
+            properties:
+              credential: {type: "null"}
     Service:
       type: object
       required: [id, name, kind, enabled, models, capabilities, created_at, updated_at]
       properties:
+        proxy:
+          $ref: "#/components/schemas/ServiceProxy"
         responses_websocket_enabled:
           type: boolean
           description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
@@ -3485,6 +3548,11 @@ components:
       type: object
       required: [name, kind]
       properties:
+        proxy:
+          oneOf:
+            - $ref: "#/components/schemas/ServiceProxyInput"
+            - type: "null"
+          description: Omit to retain the saved proxy; null inherits the global network policy.
         responses_websocket_enabled:
           type: boolean
           description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
@@ -3543,6 +3611,11 @@ components:
       type: object
       minProperties: 1
       properties:
+        proxy:
+          oneOf:
+            - $ref: "#/components/schemas/ServiceProxyInput"
+            - type: "null"
+          description: Omit to retain the saved proxy; null inherits the global network policy.
         responses_websocket_enabled:
           type: boolean
           description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
@@ -3590,6 +3663,11 @@ components:
       type: object
       required: [kind, http, protocol]
       properties:
+        proxy:
+          oneOf:
+            - $ref: "#/components/schemas/ServiceProxyInput"
+            - type: "null"
+          description: Omit to retain the saved proxy; null inherits the global network policy.
         service_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         kind:

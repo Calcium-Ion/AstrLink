@@ -1,3 +1,5 @@
+import { ServiceProxyFields } from "./components/ServiceProxyFields";
+import { proxyDraft, proxyInput, validProxyDraft, type ProxyDraft } from "./service-proxy-model";
 import { ServiceTestDialog } from "./ServiceTestDialog";
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
@@ -166,6 +168,7 @@ export interface ServiceManagerProps {
 }
 
 type Draft = {
+  proxy: ProxyDraft;
   failurePolicy?: FailurePolicy;
   kind: ServiceKind;
   name: string;
@@ -298,6 +301,7 @@ function draftForKind(
       headerName: "",
       secret: "",
       removeCredential: false,
+    proxy: proxyDraft(),
       models: [],
       capabilities: [],
       authorizationFlow: defaultAuthorizationFlow(kind),
@@ -317,6 +321,7 @@ function draftForKind(
     headerName: preset.headerName,
     secret: "",
     removeCredential: false,
+    proxy: proxyDraft(),
     models: [...(preset.models ?? [])],
     capabilities: preset.capabilities.map((capability) => ({ ...capability })),
     authorizationFlow: null,
@@ -329,6 +334,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
     return {
       ...draftForKind(service.kind, []),
       name: service.name,
+      proxy: proxyDraft(service.proxy),
       failurePolicy: service.failure_policy,
       enabled: service.enabled,
       responsesWebSocket: responsesWebSocketEnabled(service),
@@ -339,6 +345,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
   return {
     kind: service.kind,
     name: service.name,
+      proxy: proxyDraft(service.proxy),
       failurePolicy: service.failure_policy,
     enabled: service.enabled,
     responsesWebSocket: responsesWebSocketEnabled(service),
@@ -382,6 +389,7 @@ function validateDraft(
   draft: Draft,
   editing: ServiceRecord | null,
 ): string | null {
+  if (!validProxyDraft(draft.proxy)) return i18n.t("serviceProxy.invalid");
   if (draft.name.trim().length === 0 || [...draft.name.trim()].length > 128) {
     return i18n.t("services.nameInvalid");
   }
@@ -985,6 +993,7 @@ export function ServiceManager({
             return probeServiceModels(editing!.service.id, protocol);
           }
           return probeDraftServiceModels({
+            ...(draft.proxy.mode !== "inherit" || editing?.service.proxy ? { proxy: proxyInput(draft.proxy) } : {}),
             ...(editing ? { service_id: editing.service.id } : {}),
             kind: draft.kind as HTTPServiceKind,
             http: {
@@ -1076,6 +1085,7 @@ export function ServiceManager({
       let record: ServiceRecord;
       if (editing) {
         const patch: ServicePatchInput = {
+          ...(draft.proxy.mode !== "inherit" || editing?.service.proxy ? { proxy: proxyInput(draft.proxy) } : {}),
           name: draft.name.trim(),
           enabled: draft.enabled,
           responses_websocket_enabled: draft.responsesWebSocket,
@@ -1100,6 +1110,7 @@ export function ServiceManager({
         let input: ServiceCreateInput;
         if (isSubscriptionKind(draft.kind)) {
           input = {
+            ...(draft.proxy.mode !== "inherit" ? { proxy: proxyInput(draft.proxy) } : {}),
             name: draft.name.trim(),
             kind: draft.kind,
             enabled: draft.enabled,
@@ -1109,6 +1120,7 @@ export function ServiceManager({
           };
         } else {
           input = {
+            ...(draft.proxy.mode !== "inherit" ? { proxy: proxyInput(draft.proxy) } : {}),
             name: draft.name.trim(),
             kind: draft.kind as HTTPServiceKind,
             enabled: draft.enabled,
@@ -2480,6 +2492,7 @@ export function ServiceManager({
           )}
         </div>
       </Panel>
+      <ServiceProxyFields value={draft.proxy} onChange={proxy => setDraft(current => ({ ...current, proxy }))} hasCredential={Boolean(editing?.service.proxy?.credential_ref)} />
     </div>
   );
   const visibleEditorTab: EditorTab =

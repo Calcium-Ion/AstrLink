@@ -1,3 +1,4 @@
+import { parseServiceProxy, type ServiceProxy, type ServiceProxyInput } from "./service-proxy-model";
 import { parseFailurePolicy, type FailurePolicy } from "./failure-policy-model";
 import { i18n } from "./i18n";
 import type {
@@ -109,6 +110,7 @@ export interface SubscriptionServiceConnection {
 }
 
 export interface Service {
+  proxy?: ServiceProxy;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   id: string;
@@ -139,6 +141,7 @@ export interface ServiceRecord {
 }
 
 export type SubscriptionServiceCreateInput = {
+  proxy?: ServiceProxyInput | null;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   name: string;
@@ -148,6 +151,7 @@ export type SubscriptionServiceCreateInput = {
 };
 
 export type HTTPServiceCreateInput = {
+  proxy?: ServiceProxyInput | null;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   name: string;
@@ -167,6 +171,7 @@ export type ServiceCreateInput =
   | HTTPServiceCreateInput;
 
 export type ServicePatchInput = {
+  proxy?: ServiceProxyInput | null;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy | null;
   name?: string;
@@ -187,6 +192,7 @@ export interface ServiceModelProbe {
 }
 
 export interface DraftServiceModelProbeInput {
+  proxy?: ServiceProxyInput | null;
   service_id?: string;
   kind: HTTPServiceKind;
   http: HTTPServiceCreateInput["http"];
@@ -480,7 +486,7 @@ export function parseService(value: unknown, path = "$"): Service {
   keysAt(
     service,
     ["id", "name", "kind", "enabled", "models", "capabilities", "created_at", "updated_at"],
-    ["http", "subscription", "failure_policy", "responses_websocket_enabled"],
+    ["http", "subscription", "failure_policy", "responses_websocket_enabled", "proxy"],
     path,
   );
   const id = stringAt(service.id, `${path}.id`, 3, 96);
@@ -526,6 +532,7 @@ export function parseService(value: unknown, path = "$"): Service {
       kind: service.kind,
       enabled: service.enabled,
       ...websocketSetting,
+      ...(service.proxy !== undefined ? { proxy: parseServiceProxy(service.proxy, id) } : {}),
       models,
       capabilities,
       subscription,
@@ -543,6 +550,7 @@ export function parseService(value: unknown, path = "$"): Service {
     kind: service.kind as HTTPServiceKind,
     enabled: service.enabled,
     ...websocketSetting,
+      ...(service.proxy !== undefined ? { proxy: parseServiceProxy(service.proxy, id) } : {}),
     models,
     capabilities,
     http: parseHTTPConnection(service.http, `${path}.http`),

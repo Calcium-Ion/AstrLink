@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -76,6 +77,7 @@ type OAuthConfig struct {
 	RedirectPath          string
 	PreferredPort         int
 	FallbackPort          int
+	ResolveProxy          func(context.Context, contract.ServiceID) (context.Context, error)
 	HTTPClient            *http.Client
 	Now                   func() time.Time
 	SessionTTL            time.Duration
@@ -155,6 +157,7 @@ func (config OAuthConfig) normalized() OAuthConfig {
 	if config.Provider == contract.SubscriptionProviderOpenAICodex {
 		config.ModelsClientVersion = codexVersionOrDefault(config.ModelsClientVersion)
 	}
+	config.HTTPClient = networkproxy.WrapClient(config.HTTPClient)
 	return config
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
@@ -54,7 +55,7 @@ func New(secrets secretstore.SecretStore, subscriptions *subscription.Manager, c
 		}
 		client = &http.Client{Transport: transportCopy}
 	}
-	return &Prober{secrets: secrets, subscriptions: subscriptions, client: client}
+	return &Prober{secrets: secrets, subscriptions: subscriptions, client: networkproxy.WrapClient(client)}
 }
 
 func (prober *Prober) ProbeService(
@@ -62,6 +63,11 @@ func (prober *Prober) ProbeService(
 	service contract.Service,
 	protocol contract.ProtocolID,
 ) ([]string, error) {
+	var err error
+	ctx, err = networkproxy.Bind(ctx, service, prober.secrets)
+	if err != nil {
+		return nil, err
+	}
 	if !serviceSupportsDiscovery(service, protocol) {
 		return nil, ErrUnsupported
 	}
@@ -133,6 +139,10 @@ func (prober *Prober) probeSubscription(
 	}
 	probeContext, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
+	probeContext, err := prober.subscriptions.ProxyContext(probeContext, serviceID)
+	if err != nil {
+		return nil, err
+	}
 	tokens, err := prober.subscriptions.AccessToken(probeContext, serviceID)
 	if err != nil {
 		if errors.Is(probeContext.Err(), context.DeadlineExceeded) {

@@ -59,6 +59,9 @@ type protocolRoute struct {
 	inspectMetadata bool
 }
 
+// TODO(instance-proxy): Cover Claude Code direct telemetry through client launch
+// configuration or a dedicated proxy ingress. Those requests currently bypass
+// this gateway and cannot inherit the selected service proxy here.
 var exactProtocolRoutes = map[string]protocolRoute{
 	"/v1/responses": {
 		method: http.MethodPost, protocol: contract.ProtocolOpenAIResponses, inspectMetadata: true,

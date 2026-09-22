@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
+	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -48,6 +49,7 @@ func (function AccessTokenAuthenticatorFunc) AuthenticateAccessToken(ctx context
 }
 
 type Dependencies struct {
+	ProxyCredentials         secretstore.SecretStore
 	Resolver                 endpoint.Resolver
 	Authorizer               endpoint.Authorizer
 	Forwarder                Forwarder
@@ -100,6 +102,7 @@ func (function PolicyWarningReporterFunc) ReportPolicyWarning(
 }
 
 type Handler struct {
+	proxyCredentials         secretstore.SecretStore
 	affinities               responseAffinities
 	resolver                 endpoint.Resolver
 	authorizer               endpoint.Authorizer
@@ -205,7 +208,8 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		dependencies.Forwarder = transport.New(nil)
 	}
 	return &Handler{
-		resolver: dependencies.Resolver, authorizer: dependencies.Authorizer, forwarder: dependencies.Forwarder,
+		proxyCredentials: dependencies.ProxyCredentials,
+		resolver:         dependencies.Resolver, authorizer: dependencies.Authorizer, forwarder: dependencies.Forwarder,
 		accessTokenAuthenticator: dependencies.AccessTokenAuthenticator, privacyFilter: dependencies.PrivacyFilter,
 		policyWarningReporter: dependencies.PolicyWarningReporter,
 		requestRecords:        dependencies.RequestRecords,

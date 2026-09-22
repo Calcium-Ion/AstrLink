@@ -335,6 +335,38 @@ describe("ServiceManager", () => {
     });
   }
 
+  it("saves instance proxy authentication before starting subscription login", async () => {
+    const claude: Service = { ...codexService, id: "service_claude_proxy", kind: "claude_subscription", subscription: { provider: "claude_code", status: "disconnected" } };
+    bridgeMocks.createService.mockResolvedValue({ service: claude, etag });
+    bridgeMocks.beginServiceAuthorization.mockResolvedValue({ kind: "session", session: { id: "authorization_proxy", provider: "claude_code", status: "pending", flow: "authorization_code", authorization_url: "https://claude.com/cai/oauth/authorize", service_id: claude.id } });
+    await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
+      onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
+      onViewChange={() => {}} protocols={[]} services={[]} view={{ kind: "create" }} />));
+    await chooseOption("API 提供商类型", "Claude Code 订阅");
+    await chooseOption("代理模式", "自定义代理");
+    for (const [label,value] of [["代理地址","socks5://127.0.0.1:1080"],["代理用户名（可选）","proxy-user"],["代理密码（可选）","proxy-secret"]]) {
+      const input = container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+      await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(input,value); input.dispatchEvent(new Event("input",{bubbles:true})); });
+    }
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})));
+    expect(bridgeMocks.createService).toHaveBeenCalledWith(expect.objectContaining({ proxy: { mode:"custom", url:"socks5://127.0.0.1:1080", credential:{username:"proxy-user",password:"proxy-secret"} } }));
+    expect(bridgeMocks.createService.mock.invocationCallOrder[0]).toBeLessThan(bridgeMocks.beginServiceAuthorization.mock.invocationCallOrder[0]);
+  });
+
+  it("keeps stored proxy authentication when editing and sends null to restore inheritance", async () => {
+    const service: Service = {...gatewayService,proxy:{mode:"custom",url:"http://proxy.example:8080",credential_ref:`local://service-proxy/${gatewayService.id}`}};
+    bridgeMocks.getService.mockResolvedValue({service,etag});
+    bridgeMocks.updateService.mockResolvedValue({service,etag});
+    await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
+      onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
+      onViewChange={() => {}} protocols={[]} services={[service]} view={{ kind: "edit",serviceId:service.id }} />));
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="代理密码（可选）"]')?.value).toBe("");
+    expect(container.textContent).toContain("代理认证已保存");
+    await chooseOption("代理模式","继承全局");
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})));
+    expect(bridgeMocks.updateService).toHaveBeenCalledWith(service.id,etag,expect.objectContaining({proxy:null}));
+  });
+
   it("creates a Claude subscription with its own authorization flow", async () => {
     const claude: Service = { ...codexService, id: "service_claude", name: "Claude Code", kind: "claude_subscription",
       subscription: { provider: "claude_code", status: "disconnected" } };

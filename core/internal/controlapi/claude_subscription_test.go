@@ -15,16 +15,22 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
 
 func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T) {
+	testClaudeLifecycle(t, false)
+}
+func TestClaudeSubscriptionLifecycleUsesInstanceProxy(t *testing.T) { testClaudeLifecycle(t, true) }
+func testClaudeLifecycle(t *testing.T, useProxy bool) {
 	ctx := context.Background()
 	var challenge, state string
 	var exchanges, refreshes atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	providerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/oauth/token":
@@ -80,21 +86,36 @@ func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T
 			t.Errorf("unexpected upstream request %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
-	}))
+	})
+	upstream := httptest.NewServer(providerHandler)
 	t.Cleanup(upstream.Close)
 	store, err := sqlite.Open(ctx, t.TempDir()+"/astrlink.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	baseURL := upstream.URL
+	proxyInput := ""
+	if useProxy {
+		baseURL = "http://claude.invalid"
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Host != "claude.invalid" || r.Header.Get("Proxy-Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("proxy-user:proxy-password")) {
+				t.Error("wrong instance proxy request")
+			}
+			providerHandler.ServeHTTP(w, r)
+		}))
+		t.Cleanup(proxy.Close)
+		raw, _ := json.Marshal(map[string]any{"mode": "custom", "url": proxy.URL, "credential": map[string]string{"username": "proxy-user", "password": "proxy-password"}})
+		proxyInput = `,"proxy":` + string(raw)
+	}
 	credentials := accountauth.NewMemoryCredentialStore()
 	manager, err := subscription.NewManager(subscription.StorageAccountStore{Store: store}, credentials,
-		accountauth.OAuthConfig{HTTPClient: upstream.Client()}, accountauth.OAuthConfig{TokenURL: upstream.URL + "/oauth/token", APIBaseURL: upstream.URL, HTTPClient: upstream.Client()})
+		accountauth.OAuthConfig{HTTPClient: upstream.Client(), ResolveProxy: networkproxy.Resolver(store, store)}, accountauth.OAuthConfig{TokenURL: baseURL + "/oauth/token", APIBaseURL: baseURL, HTTPClient: upstream.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler, err := NewWithDependencies(contract.DefaultVersionResponse("test", "abc1234"), Dependencies{
-		ServiceStore: store, Subscriptions: manager, ServiceModels: servicemodel.New(nil, manager, upstream.Client()), ControlToken: testControlToken,
+		ServiceStore: store, Subscriptions: manager, ServiceModels: servicemodel.New(store, manager, upstream.Client()), ControlToken: testControlToken,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +130,7 @@ func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T
 		if w.Code != status {
 			t.Fatalf("%s %s: status=%d body=%s", method, path, w.Code, w.Body.String())
 		}
-		for _, secret := range []string{"claude-access-secret", "claude-refresh-secret", "claude-rotated-secret", "claude-refresh-rotated", "code-secret"} {
+		for _, secret := range []string{"claude-access-secret", "claude-refresh-secret", "claude-rotated-secret", "claude-refresh-rotated", "code-secret", "proxy-user", "proxy-password"} {
 			if strings.Contains(w.Body.String(), secret) {
 				t.Fatal("credential leaked in public response")
 			}
@@ -117,7 +138,7 @@ func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T
 		return w.Body.Bytes()
 	}
 	var service contract.Service
-	if err := json.Unmarshal(call("POST", ServicesPath, `{"name":"Claude Code","kind":"claude_subscription","models":["claude-sonnet-4-5"]}`, 201), &service); err != nil {
+	if err := json.Unmarshal(call("POST", ServicesPath, `{"name":"Claude Code","kind":"claude_subscription","models":["claude-sonnet-4-5"]`+proxyInput+`}`, 201), &service); err != nil {
 		t.Fatal(err)
 	}
 	if service.Subscription.Provider != contract.SubscriptionProviderClaudeCode || service.Capabilities[0].Protocol != contract.ProtocolAnthropicMessages {
@@ -142,7 +163,26 @@ func TestClaudeSubscriptionAuthorizationRefreshModelsUsageAndLogout(t *testing.T
 	if exchanges.Load() != 0 {
 		t.Fatal("invalid state reached provider")
 	}
+	var savedProxy *contract.ServiceProxy
+	if useProxy {
+		current, _ := store.GetService(ctx, service.ID)
+		savedProxy = current.Service.Proxy
+		current.Service.Proxy = &contract.ServiceProxy{Mode: "custom", URL: "http://127.0.0.1:1"}
+		if _, err := store.UpdateService(ctx, current.Service, storage.CredentialMutation{}, current.ETag); err != nil {
+			t.Fatal(err)
+		}
+	}
 	complete("code-secret#"+state, 200)
+	if useProxy {
+		current, _ := store.GetService(ctx, service.ID)
+		if current.Service.Proxy.URL != "http://127.0.0.1:1" {
+			t.Fatal("login overwrote latest proxy configuration")
+		}
+		current.Service.Proxy = savedProxy
+		if _, err := store.UpdateService(ctx, current.Service, storage.CredentialMutation{}, current.ETag); err != nil {
+			t.Fatal(err)
+		}
+	}
 	complete("code-secret#"+state, 409)
 	models := call("POST", path+"/probe-models", `{"protocol":"openai.models"}`, 200)
 	if !strings.Contains(string(models), "claude-opus-4-5") || !strings.Contains(string(models), "claude-sonnet-4-5") {

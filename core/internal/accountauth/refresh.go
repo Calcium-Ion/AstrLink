@@ -95,6 +95,13 @@ func (source *TokenSource) Activate(accountID contract.SubscriptionAccountID) {
 }
 
 func (source *TokenSource) AccessToken(ctx context.Context, accountID contract.SubscriptionAccountID) (AccountTokens, error) {
+	if source.client.config.ResolveProxy != nil {
+		var err error
+		ctx, err = source.client.config.ResolveProxy(ctx, accountID)
+		if err != nil {
+			return AccountTokens{}, err
+		}
+	}
 	if source.invalidated(accountID) {
 		return AccountTokens{}, ErrTokenSourceInvalidated
 	}

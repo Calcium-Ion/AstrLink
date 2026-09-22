@@ -41,8 +41,10 @@ type EndpointPage struct {
 // CredentialMutation distinguishes an omitted credential update from explicit
 // deletion. Secret bytes never enter the Endpoint JSON document.
 type CredentialMutation struct {
-	Present bool
-	Secret  []byte
+	ProxyPresent bool
+	Proxy        *contract.ProxyCredential
+	Present      bool
+	Secret       []byte
 }
 
 type EndpointStore interface {

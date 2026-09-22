@@ -59,6 +59,8 @@ func (store *Store) PutSubscriptionAccount(ctx context.Context, account contract
 		if !existing.Service.Kind.IsSubscription() {
 			return fmt.Errorf("%w: service %q has kind %q", storagecontract.ErrConflict, account.ID, existing.Service.Kind)
 		}
+		service.Proxy = existing.Service.Proxy
+		service.ResponsesWebSocketEnabled = existing.Service.ResponsesWebSocketEnabled
 		service.Enabled = existing.Service.Enabled
 		service.FailurePolicy = existing.Service.FailurePolicy
 		service.Models = append([]string{}, existing.Service.Models...)
@@ -76,7 +78,9 @@ func (store *Store) PutSubscriptionAccount(ctx context.Context, account contract
 		ctx,
 		`INSERT INTO services (id, document_json, created_at, updated_at, sort_position)
 VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_position), -1) + 1 FROM services))
-ON CONFLICT(id) DO UPDATE SET document_json = excluded.document_json, updated_at = excluded.updated_at`,
+ON CONFLICT(id) DO UPDATE SET document_json = json_set(services.document_json,
+ '$.subscription', json(json_extract(excluded.document_json, '$.subscription')),
+ '$.updated_at', json_extract(excluded.document_json, '$.updated_at')), updated_at = excluded.updated_at`,
 		service.ID, string(document), service.CreatedAt.UTC().Format(time.RFC3339Nano), now,
 	)
 	if err != nil {
