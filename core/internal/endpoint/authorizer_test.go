@@ -197,10 +197,10 @@ func TestServiceAuthorizerBuildsSubscriptionHeaders(t *testing.T) {
 	if got := headers.Get("OAI-Product-Sku"); got != "codex" {
 		t.Fatalf("OAI-Product-Sku = %q, want codex", got)
 	}
-	if got := headers.Get("originator"); got != "astrlink" {
+	if got := headers.Get("originator"); got != accountauth.DefaultCodexOriginator {
 		t.Fatalf("originator = %q", got)
 	}
-	if got := headers.Get("User-Agent"); got != "codex-cli/"+accountauth.DefaultCodexModelsClientVersion {
+	if got := headers.Get("User-Agent"); got != accountauth.CodexUserAgent("") {
 		t.Fatalf("User-Agent = %q", got)
 	}
 	if got := headers.Get("version"); got != accountauth.DefaultCodexModelsClientVersion {
@@ -219,8 +219,8 @@ func TestServiceAuthorizerOmitsEmptySubscriptionAccountID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Headers() error = %v", err)
 	}
-	if _, present := headers["Chatgpt-Account-Id"]; present {
-		t.Fatal("Headers() included ChatGPT-Account-ID for an empty account ID")
+	if values, present := headers["Chatgpt-Account-Id"]; !present || len(values) != 0 {
+		t.Fatal("Headers() must remove any inbound account ID when the selected account has none")
 	}
 	if got := headers.Get("Authorization"); got != "Bearer test-access-token" {
 		t.Fatal("Headers() did not inject the subscription bearer credential")
@@ -230,7 +230,7 @@ func TestServiceAuthorizerOmitsEmptySubscriptionAccountID(t *testing.T) {
 	}
 }
 
-func TestServiceAuthorizerUsesClientCodexVersionWithoutCopyingCredentials(t *testing.T) {
+func TestServiceAuthorizerEnforcesCodexIdentityWithoutCopyingCredentials(t *testing.T) {
 	source := &fakeSubscriptionTokenSource{tokens: accountauth.AccountTokens{
 		AccessToken: "upstream-token", AccountID: "upstream-account",
 	}}
@@ -241,7 +241,7 @@ func TestServiceAuthorizerUsesClientCodexVersionWithoutCopyingCredentials(t *tes
 			clientHeaders.Set("version", explicit)
 			clientHeaders.Set("Authorization", "Bearer local-token")
 			clientHeaders.Set("ChatGPT-Account-ID", "client-account")
-			clientHeaders.Set("originator", "codex_cli_rs")
+			clientHeaders.Set("originator", "astrlink")
 			clientHeaders.Set("X-Api-Key", "local-key")
 			original := clientHeaders.Clone()
 			headers, err := NewServiceAuthorizer(nil, source).Headers(context.Background(), contract.Endpoint{
@@ -250,14 +250,10 @@ func TestServiceAuthorizerUsesClientCodexVersionWithoutCopyingCredentials(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			version := explicit
-			if version == "" {
-				version = "0.156.0"
-			}
 			for name, want := range map[string]string{
-				"version": version, "User-Agent": "codex-cli/" + version,
+				"version": accountauth.DefaultCodexModelsClientVersion, "User-Agent": accountauth.CodexUserAgent(""),
 				"Authorization": "Bearer upstream-token", "ChatGPT-Account-ID": "upstream-account",
-				"originator": "astrlink", "X-Api-Key": "",
+				"originator": accountauth.DefaultCodexOriginator, "X-Api-Key": "",
 			} {
 				if got := headers.Get(name); got != want {
 					t.Errorf("%s = %q, want %q", name, got, want)

@@ -11,6 +11,7 @@ vi.mock("./bridge", () => bridge);
 vi.mock("./notify", () => ({ notify: { success: vi.fn() } }));
 import {
   defaultFailurePolicy,
+  identitySettingKeys,
   type FailurePolicy,
   type FailoverPolicy,
 } from "./failure-policy-model";
@@ -58,6 +59,41 @@ describe("shared global recovery settings", () => {
       .find((label) => label.querySelector(":scope > span")?.textContent === "最多重试几次")!
       .querySelector<HTMLInputElement>("input")!;
   }
+
+  it.each(["Codex", "Claude", "Grok"])("saves %s identity independently through Routing and retains a failed draft", async (provider) => {
+    const dirty = vi.fn();
+    await act(async () => root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />));
+    await selectTab("转发身份");
+    const toggles = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')];
+    expect(toggles).toHaveLength(3);
+    for (const toggle of toggles) expect(toggle.getAttribute("aria-checked")).toBe("true");
+    const toggle = container.querySelector<HTMLButtonElement>(`[aria-label="统一 ${provider} 客户端身份"]`)!;
+    await act(async () => toggle.click());
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+    await selectTab("会话粘性");
+    await selectTab("转发身份");
+    expect(container.querySelector(`[aria-label="统一 ${provider} 客户端身份"]`)?.getAttribute("aria-checked")).toBe("false");
+    const save = [...container.querySelectorAll("button")].find(button => button.textContent === "保存默认策略")!;
+    bridge.updateRoutingSettings.mockRejectedValueOnce(new Error("保存失败"));
+    await act(async () => save.click());
+    expect(container.textContent).toContain("保存失败");
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    await act(async () => save.click());
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({ [`${provider.toLowerCase()}_identity_enforcement`]: false });
+    expect(dirty).toHaveBeenLastCalledWith(false);
+  });
+
+  it("loads saved identity opt-outs and keeps them disabled while offline", async () => {
+    bridge.getRoutingSettings.mockResolvedValue({ ...settings(), ...Object.fromEntries(identitySettingKeys.map(key => [key, false])) });
+    const dirty = vi.fn();
+    await act(async () => root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />));
+    await selectTab("转发身份");
+    for (const toggle of container.querySelectorAll('[role="switch"]')) expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await act(async () => root.render(<RoutingSettingsPanel ready={false} onDirtyChange={dirty} />));
+    expect(container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled).toBe(true);
+    expect([...container.querySelectorAll("button")].find(button => button.textContent === "保存默认策略")?.disabled).toBe(true);
+  });
 
   it("loads and saves a single policy for all services", async () => {
     const dirty = vi.fn();
@@ -293,7 +329,7 @@ describe("shared global recovery settings", () => {
     const dirty = vi.fn();
     await act(async () => root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />));
     expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent))
-      .toEqual(["恢复与重试", "错误规则", "会话粘性"]);
+      .toEqual(["恢复与重试", "错误规则", "会话粘性", "转发身份"]);
     await act(async () => container.querySelector<HTMLButtonElement>('[role="switch"]')!.click());
     await selectTab("恢复与重试");
     await act(async () => {

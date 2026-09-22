@@ -65,6 +65,7 @@ func (socket *ResponsesSocket) Forward(writer http.ResponseWriter, request *http
 	removeInboundCredentials(outbound.Header)
 	overlayHeaders(outbound.Header, target.RequestHeaders)
 	removeHopByHopHeaders(outbound.Header)
+	removeGatewayHeaders(outbound.Header)
 	for name := range outbound.Header {
 		if strings.HasPrefix(strings.ToLower(name), "sec-websocket-") {
 			outbound.Header.Del(name)

@@ -1920,11 +1920,18 @@
     }
   },
   "routing": {
+    "identityTitle": "Subscription client identity",
+    "identityHint": "Enabled by default and controlled independently. Save to apply to new requests without restarting. When disabled, recognized client identities are preserved; unknown clients use the default identity. Authentication and required protocol headers still apply.",
+    "identityLabel": "Unify {{provider}} client identity",
+    "codexIdentityHint": "Unify User-Agent, originator, and version. They remain paired when disabled.",
+    "claudeIdentityHint": "Unify the Claude Code User-Agent. Preserve client feature betas and add required OAuth betas.",
+    "grokIdentityHint": "Unify the Grok CLI User-Agent and version. They remain paired when disabled.",
     "retryTitle": "Retry limits and delays",
     "repairTitle": "Reasoning content repair",
     "rulesTitle": "Retry rules",
     "rulesHint": "Applied to all API providers by default. Custom failure policies can override these rules.",
     "tabs": {
+      "identity": "Forwarding identity",
       "recovery": "Recovery & retries",
       "rules": "Error rules",
       "session": "Session stickiness",

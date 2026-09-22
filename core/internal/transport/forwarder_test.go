@@ -86,6 +86,11 @@ func TestForwardPreservesNativeRequestAndFiltersHopByHopHeaders(t *testing.T) {
 				t.Errorf("inbound credential header %s = %q", name, value)
 			}
 		}
+		for name := range request.Header {
+			if strings.HasPrefix(strings.ToLower(name), "x-astrlink-") {
+				t.Errorf("gateway header reached upstream: %s", name)
+			}
+		}
 		for _, name := range []string{"Connection", "Keep-Alive", "X-Request-Hop"} {
 			if value := request.Header.Get(name); value != "" {
 				t.Errorf("hop-by-hop request header %s = %q", name, value)
@@ -95,7 +100,7 @@ func TestForwardPreservesNativeRequestAndFiltersHopByHopHeaders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read body: %v", err)
 		}
-		if string(body) != `{"model":"native"}` {
+		if string(body) != `{"model":"native","input":"Explain AstrLink"}` {
 			t.Errorf("body = %q", body)
 		}
 		return &http.Response{
@@ -114,13 +119,14 @@ func TestForwardPreservesNativeRequestAndFiltersHopByHopHeaders(t *testing.T) {
 		}, nil
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/items/a%2Fb?limit=2&raw=%2F", strings.NewReader(`{"model":"native"}`))
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/items/a%2Fb?limit=2&raw=%2F", strings.NewReader(`{"model":"native","input":"Explain AstrLink"}`))
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
 	request.Header.Set("Authorization", "Bearer client-value")
 	request.Header.Set("Cookie", "local_session=secret")
 	request.Header.Set("X-Api-Key", "client-anthropic-key")
 	request.Header.Set("X-Goog-Api-Key", "client-google-key")
 	request.Header.Set(localPolicyWarningHeader, "spoofed=999")
+	request.Header["x-aStRlInK-debug"] = []string{"local-only"}
 	request.Header.Set("Connection", "X-Request-Hop")
 	request.Header.Set("X-Request-Hop", "remove-me")
 	request.Header.Set("Keep-Alive", "timeout=5")
@@ -129,9 +135,11 @@ func TestForwardPreservesNativeRequestAndFiltersHopByHopHeaders(t *testing.T) {
 	err := forwarder.Forward(response, request, Target{
 		BaseURL: baseURL,
 		RequestHeaders: http.Header{
-			"Authorization":       {"Bearer upstream-secret"},
-			"Connection":          {"X-Unsafe-Target-Hop"},
-			"X-Unsafe-Target-Hop": {"remove-me"},
+			"X-AstrLink-Trace":       {"local-overlay"},
+			localPolicyWarningHeader: {"local-overlay"},
+			"Authorization":          {"Bearer upstream-secret"},
+			"Connection":             {"X-Unsafe-Target-Hop"},
+			"X-Unsafe-Target-Hop":    {"remove-me"},
 		},
 	})
 	if err != nil {

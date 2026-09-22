@@ -64,7 +64,7 @@ describe("SettingsCenter", () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    bridge.getRoutingSettings.mockReset();
+    bridge.getRoutingSettings.mockReset().mockResolvedValue({ codex_identity_enforcement: true });
     bridge.updateRoutingSettings.mockReset();
     bridge.getPreferences.mockReset().mockResolvedValue(settings);
     bridge.updatePreferences.mockReset().mockResolvedValue(settings);
@@ -80,12 +80,10 @@ describe("SettingsCenter", () => {
     container.remove();
   });
 
-  it("does not mount or read routing settings", async () => {
+  it("keeps forwarding identity controls in Routing instead of desktop settings", async () => {
     await act(async () => root.render(<SettingsCenter snapshot={snapshot} onCoreSnapshot={() => {}} onDirtyChange={() => {}} />));
     expect(bridge.getRoutingSettings).not.toHaveBeenCalled();
-    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="routing-defaults-panel"]')).toBeNull();
-    expect(container.textContent).not.toContain("默认失败处理");
+    expect(container.querySelector('[data-testid="upstream-identity-settings"]')).toBeNull();
   });
 
   it("replaces the loading screen with the desktop timeout error", async () => {

@@ -640,7 +640,7 @@ describe("App workspace navigation", () => {
     expect(container.textContent).not.toContain("固定路由与别名");
     expect(container.textContent).not.toContain("还没有固定路由");
     expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent))
-      .toEqual(["恢复与重试", "错误规则", "会话粘性"]);
+      .toEqual(["恢复与重试", "错误规则", "会话粘性", "转发身份"]);
     expect(container.textContent).not.toContain("mmBERT");
     expect(bridgeMocks.listRoutes).not.toHaveBeenCalled();
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);

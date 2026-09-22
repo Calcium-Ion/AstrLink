@@ -1,12 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultFailurePolicy,
+  identitySettingKeys,
   parseFailurePolicy,
   parseFailoverPolicy,
   parseRoutingSettings,
 } from "./failure-policy-model";
 
 describe("failure policies", () => {
+  it("defaults identity enforcement on for older settings and preserves explicit opt-out", () => {
+    const settings = { default_failure_policy: defaultFailurePolicy(), allow_unmatched_failover: true, strategy: "failover_only", max_attempts: 6 };
+    for (const key of identitySettingKeys) {
+      expect(parseRoutingSettings(settings)[key]).toBe(true);
+      expect(parseRoutingSettings({ ...settings, [key]: false })[key]).toBe(false);
+      for (const value of [null, "false", 0]) {
+        expect(() => parseRoutingSettings({ ...settings, [key]: value })).toThrow();
+      }
+    }
+  });
   it("preserves the optional thinking signature recovery switch", () => {
     for (const enabled of [false, true]) {
       const policy = { ...defaultFailurePolicy(), thinking_signature_recovery: enabled };

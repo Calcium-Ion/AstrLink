@@ -25,8 +25,10 @@ func TestBeginAuthorizationUsesOfficialPublicClientByDefault(t *testing.T) {
 	store := accountauth.NewMemoryCredentialStore()
 	preferred, fallback := availablePortPair(t)
 	manager := accountauth.NewSessionManager(accountauth.OAuthConfig{
-		PreferredPort: preferred,
-		FallbackPort:  fallback,
+		PreferredPort:  preferred,
+		FallbackPort:   fallback,
+		AuthorizeURL:   "https://auth.openai.com/oauth/authorize?originator=astrlink&Originator=astrlink",
+		ExtraAuthQuery: url.Values{"originator": {"astrlink"}},
 	}, store, nil)
 	session, err := manager.Begin(
 		context.Background(),
@@ -44,6 +46,10 @@ func TestBeginAuthorizationUsesOfficialPublicClientByDefault(t *testing.T) {
 	if session.Flow != contract.AuthorizationFlowBrowser ||
 		authorizationURL.Query().Get("client_id") != accountauth.DefaultCodexOAuthClientID {
 		t.Fatalf("session = %#v url = %s", session, session.AuthorizationURL)
+	}
+	if values := authorizationURL.Query()["originator"]; len(values) != 1 || values[0] != accountauth.DefaultCodexOriginator ||
+		authorizationURL.Query().Get("Originator") != "" {
+		t.Fatal("authorization URL did not enforce the Codex originator")
 	}
 }
 
@@ -445,6 +451,10 @@ func TestDeviceCodeAuthorizationPollsExchangesAndPersists(t *testing.T) {
 	var exchanges atomic.Int32
 	var issuer *httptest.Server
 	issuer = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("originator") != accountauth.DefaultCodexOriginator ||
+			request.UserAgent() != accountauth.CodexUserAgent("") || request.Header.Get("version") != "" {
+			t.Errorf("unexpected auth identity on %s", request.URL.Path)
+		}
 		switch request.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
 			var input map[string]string

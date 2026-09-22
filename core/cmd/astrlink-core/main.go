@@ -236,7 +236,7 @@ func main() {
 			Subscriptions:      subscriptionManager,
 			CodingPlans:        codingplan.New(store, nil),
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
-			ServiceTester:      servicetest.New(endpoint.NewServiceAuthorizer(store, subscriptionManager), nil, subscriptionManager.APIBaseURLFor),
+			ServiceTester:      servicetest.New(endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store), nil, subscriptionManager.APIBaseURLFor),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,
@@ -254,7 +254,7 @@ func main() {
 		dependencies.NewInferenceHandler = func(address string) (http.Handler, error) {
 			return ingress.NewProduction(ingress.Dependencies{
 				Resolver:   resolver,
-				Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager),
+				Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store),
 				AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
 					func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
 						return accessTokenManager.Authenticate(ctx, raw)

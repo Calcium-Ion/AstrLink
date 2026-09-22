@@ -3,6 +3,36 @@
 These guidelines apply to the entire repository. Paths below are relative to
 the repository root.
 
+## Upstream forwarding identity
+
+AstrLink is an API gateway. Requests sent to upstream providers must not
+identify AstrLink as the forwarding client.
+
+- Do not inject AstrLink branding into upstream headers (including `originator`,
+  `User-Agent`, `Via`, `X-Powered-By`, and `X-AstrLink-*`), URL parameters,
+  generated request IDs, metadata, system prompts, or request bodies.
+- Keep gateway-owned headers local; strip the reserved `X-AstrLink-*` namespace
+  before HTTP forwarding and WebSocket handshakes, including target overlays.
+- When a provider requires a client identity, reuse its shared identity policy
+  and keep related fields consistent. Codex, Claude, and Grok subscription
+  identity enforcement defaults to on, with independent persisted controls in
+  Routing. Neither mode may introduce an AstrLink originator or User-Agent.
+- Apply this rule to inference, retries, protocol conversion, model discovery,
+  connection tests, OAuth/device authorization, token refresh, and quota/profile
+  requests. Verify the final outgoing request, not only intermediate headers.
+- Preserve caller-authored prompts, files, and tool schemas. Do not remove or
+  rewrite user content merely because it mentions AstrLink. Local UI, logs,
+  storage, control APIs, and explicitly installed debug tools may retain their
+  product names; they are not gateway-injected upstream identity.
+
+## Documentation changes
+
+- Do not modify README files, including those in subdirectories, unless the user
+  explicitly requests README changes.
+- Do not add documentation files unless the user explicitly requests them or
+  they are necessary to complete the requested task. Avoid unsolicited notes,
+  summaries, reports, and implementation plans in the repository.
+
 ## Desktop UI
 
 ### Reuse shared components

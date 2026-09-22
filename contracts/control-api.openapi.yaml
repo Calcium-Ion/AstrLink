@@ -3248,6 +3248,18 @@ components:
       type: object
       required: [allow_unmatched_failover, strategy, max_attempts, default_failure_policy]
       properties:
+        codex_identity_enforcement:
+          type: boolean
+          default: true
+          description: Use one consistent Codex upstream identity. Changes apply to new requests without a gateway restart.
+        claude_identity_enforcement:
+          type: boolean
+          default: true
+          description: Use the default Claude client identity. When disabled, preserve recognized Claude client identities.
+        grok_identity_enforcement:
+          type: boolean
+          default: true
+          description: Use the default Grok client identity. When disabled, preserve recognized Grok client identities with a matching version header.
         channel_stickiness:
           $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:
@@ -3273,6 +3285,12 @@ components:
       type: object
       minProperties: 1
       properties:
+        codex_identity_enforcement:
+          type: boolean
+        claude_identity_enforcement:
+          type: boolean
+        grok_identity_enforcement:
+          type: boolean
         channel_stickiness:
           $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:

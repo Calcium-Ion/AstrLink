@@ -162,7 +162,6 @@ func (fetcher *Fetcher) fetch(ctx context.Context, kind contract.ServiceKind, ba
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "astrlink/0.1")
 	switch kind {
 	case contract.ServiceKindGLMCoding:
 		// Zhipu's monitor route takes the raw key, not a Bearer token.

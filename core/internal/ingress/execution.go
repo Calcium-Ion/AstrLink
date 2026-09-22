@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
@@ -344,23 +343,10 @@ func (handler *Handler) executeCandidates(
 		}
 		health := newAttemptHealthOutcome(controller, candidate, healthAware)
 		recordSession := recordSessionFromContext(request.Context())
-		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription {
-			if headers == nil {
-				headers = make(http.Header)
-			}
-			if !strings.HasPrefix(attemptRequest.Header.Get("User-Agent"), accountauth.ClaudeUserAgentPrefix) {
-				headers.Set("User-Agent", accountauth.DefaultClaudeUserAgent)
-			}
-			// Keep client feature flags while adding the subscription OAuth betas.
-			if beta := attemptRequest.Header.Get("Anthropic-Beta"); beta != "" {
-				headers.Set("Anthropic-Beta", beta+","+headers.Get("Anthropic-Beta"))
-			}
-		}
 		if candidate.Service.Kind == contract.ServiceKindOpenCodeGo || candidate.Service.Kind == contract.ServiceKindOpenCodeZen {
 			if headers == nil {
 				headers = make(http.Header)
 			}
-			headers.Set("User-Agent", "astrlink/0.1")
 			if attemptRequest.Header.Get("X-Opencode-Session") == "" && recordSession != nil {
 				sessionID := recordSession.sessionID
 				if sessionID != "" {

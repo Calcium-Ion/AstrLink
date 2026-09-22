@@ -139,7 +139,11 @@ pub(crate) fn validate_routing_settings(
                 }
             }
             "default_failure_policy" => validate_failure_policy(value)?,
-            "allow_unmatched_failover" if value.is_boolean() => {}
+            "allow_unmatched_failover"
+            | "codex_identity_enforcement"
+            | "claude_identity_enforcement"
+            | "grok_identity_enforcement"
+                if value.is_boolean() => {}
             "strategy" => validate_strategy(value)?,
             "max_attempts" => validate_attempts(value)?,
             _ => return Err("invalid routing settings field".into()),
@@ -171,6 +175,21 @@ mod tests {
         assert!(
             validate_routing_settings(&json!({"default_failure_policy":policy()}), true).is_ok()
         );
+    }
+    #[test]
+    fn validates_subscription_identity_settings() {
+        for key in [
+            "codex_identity_enforcement",
+            "claude_identity_enforcement",
+            "grok_identity_enforcement",
+        ] {
+            for enabled in [true, false] {
+                assert!(validate_routing_settings(&json!({key: enabled}), true).is_ok());
+            }
+            for invalid in [json!(null), json!("false"), json!(0)] {
+                assert!(validate_routing_settings(&json!({key: invalid}), true).is_err());
+            }
+        }
     }
     #[test]
     fn rejects_incomplete_null_and_out_of_range_policies() {

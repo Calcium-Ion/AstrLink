@@ -322,6 +322,11 @@ func (handler *Handler) fetchModelDiscovery(
 			fetchRequest.URL.RawPath = strings.TrimPrefix(fetchRequest.URL.RawPath, "/v1")
 		}
 		query := fetchRequest.URL.Query()
+		if version := headers.Get("version"); version != "" {
+			// Keep the catalog version aligned with the resolved identity, even
+			// when the client supplied a conflicting query parameter.
+			query.Set("client_version", version)
+		}
 		subscription.ApplyCodexModelsQuery(query, headers.Get("version"))
 		fetchRequest.URL.RawQuery = query.Encode()
 	}

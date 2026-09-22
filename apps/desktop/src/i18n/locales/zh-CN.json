@@ -1920,11 +1920,18 @@
     }
   },
   "routing": {
+    "identityTitle": "订阅客户端身份",
+    "identityHint": "三个订阅渠道默认开启，互不影响。保存后对新请求生效，无需重启。关闭后保留可识别的对应客户端身份，无法识别时使用默认身份；认证和必要协议头仍会补齐。",
+    "identityLabel": "统一 {{provider}} 客户端身份",
+    "codexIdentityHint": "统一 User-Agent、originator 与版本；关闭后仍保持三者配对。",
+    "claudeIdentityHint": "统一 Claude Code User-Agent；保留客户端功能 Beta，并补齐 OAuth 必需项。",
+    "grokIdentityHint": "统一 Grok CLI User-Agent 与版本；关闭后仍保持版本配对。",
     "retryTitle": "重试次数与等待时间",
     "repairTitle": "推理内容修复",
     "rulesTitle": "重试规则",
     "rulesHint": "默认应用于所有 API 提供商；单独配置的失败处理可覆盖这些规则。",
     "tabs": {
+      "identity": "转发身份",
       "recovery": "恢复与重试",
       "rules": "错误规则",
       "session": "会话粘性",

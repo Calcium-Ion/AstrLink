@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -84,7 +83,6 @@ type OAuthConfig struct {
 	DevicePollMinInterval time.Duration
 	DevicePollMaxInterval time.Duration
 	RefreshSkew           time.Duration
-	Originator            string
 	ExtraAuthQuery        url.Values
 	ModelsClientVersion   string
 }
@@ -151,55 +149,31 @@ func (config OAuthConfig) normalized() OAuthConfig {
 	if config.RefreshSkew <= 0 {
 		config.RefreshSkew = DefaultRefreshSkew
 	}
-	if config.Originator == "" {
-		config.Originator = "astrlink"
-	}
 	if strings.TrimSpace(config.ModelsClientVersion) == "" {
 		config.ModelsClientVersion = DefaultCodexModelsClientVersion
+	}
+	if config.Provider == contract.SubscriptionProviderOpenAICodex {
+		config.ModelsClientVersion = codexVersionOrDefault(config.ModelsClientVersion)
 	}
 	return config
 }
 
-var codexUserAgentVersion = regexp.MustCompile(`^(?:codex_cli_rs|codex-cli)/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:\s|$)`)
-
-// CodexClientVersion uses the explicit backend version header when present.
-// Public Responses API clients such as Codex CLI send their version only in
-// User-Agent. Unrelated client versions must not replace the Codex fallback.
-func CodexClientVersion(header http.Header) string {
-	if version := strings.TrimSpace(header.Get("version")); version != "" {
-		return version
-	}
-	if match := codexUserAgentVersion.FindStringSubmatch(strings.TrimSpace(header.Get("User-Agent"))); match != nil {
-		return match[1]
-	}
-	return DefaultCodexModelsClientVersion
-}
-
-// ApplyCodexAPIHeaders writes the observed ChatGPT Codex backend request
-// headers. Official openai/codex clients always send originator plus a
-// Codex-style User-Agent; chatgpt.com otherwise treats Go's default
-// User-Agent as bot traffic. User-Agent follows the public new-api/Codex
-// CLI shape `codex-cli/{client_version}`. originator stays AstrLink's own
-// identity.
-func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, originator, clientVersion string) {
+// ApplyCodexAPIHeaders uses one matched Codex identity for gateway-initiated
+// backend requests. Forwarded requests use the same identity by default.
+func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, clientVersion string) {
 	if header == nil {
 		return
 	}
-	if strings.TrimSpace(originator) == "" {
-		originator = "astrlink"
-	}
-	if strings.TrimSpace(clientVersion) == "" {
-		clientVersion = DefaultCodexModelsClientVersion
-	}
+	clientVersion = codexVersionOrDefault(clientVersion)
 	header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	header.Del("ChatGPT-Account-ID")
 	if tokens.AccountID != "" {
 		header.Set("ChatGPT-Account-ID", tokens.AccountID)
 	}
 	header.Set("OAI-Product-Sku", "codex")
 	header.Set("Accept", "application/json")
-	header.Set("originator", originator)
+	ApplyCodexAuthIdentity(header, clientVersion)
 	header.Set("version", clientVersion)
-	header.Set("User-Agent", "codex-cli/"+clientVersion)
 }
 
 type tokenResponse struct {
@@ -276,6 +250,8 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	request.Header.Set("Accept", "application/json")
 	if client.config.Provider == contract.SubscriptionProviderXAIGrok {
 		applyGrokOAuthHeaders(request.Header, client.config.ModelsClientVersion)
+	} else if client.config.Provider == contract.SubscriptionProviderOpenAICodex {
+		ApplyCodexAuthIdentity(request.Header, client.config.ModelsClientVersion)
 	}
 	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := client.config.HTTPClient.Do(request)

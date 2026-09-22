@@ -11,11 +11,13 @@ import { Panel, PanelHeader } from "./components/Panel";
 import { Button } from "./components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import {
+  identitySettingKeys,
   parseRoutingSettings,
   type RoutingSettings,
 } from "./failure-policy-model";
 import { useT } from "./i18n";
 import { notify } from "./notify";
+import { UpstreamIdentitySettings } from "./UpstreamIdentitySettings";
 
 export function RoutingSettingsPanel({
   ready,
@@ -82,6 +84,7 @@ export function RoutingSettingsPanel({
         "strategy",
         "max_attempts",
         "channel_stickiness",
+        ...identitySettingKeys,
       ] as const) {
         if (JSON.stringify(draft[key]) !== JSON.stringify(original[key]))
           Object.assign(patch, { [key]: draft[key] });
@@ -128,7 +131,7 @@ export function RoutingSettingsPanel({
             aria-label={t("nav.routing")}
             className="min-w-0"
           >
-            {["recovery", "rules", "session"].map((value) => (
+            {["recovery", "rules", "session", "identity"].map((value) => (
               <TabsTrigger
                 key={value}
                 value={value}
@@ -253,6 +256,15 @@ export function RoutingSettingsPanel({
                     setDraft({ ...draft, channel_stickiness })
                   }
                 />
+              </fieldset>
+            </TabsContent>
+            <TabsContent
+              value="identity"
+              className="min-h-0 flex-1 overflow-y-auto pb-1"
+              data-tab-scroller
+            >
+              <fieldset disabled={!ready || saving} className="min-w-0">
+                <UpstreamIdentitySettings value={draft} onChange={setDraft} />
               </fieldset>
             </TabsContent>
           </>

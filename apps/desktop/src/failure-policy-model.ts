@@ -23,7 +23,13 @@ export interface FailoverPolicy {
 
 export interface ChannelStickiness { enabled: boolean; ttl_seconds: number; }
 
+export const identitySettingKeys = ["codex_identity_enforcement", "claude_identity_enforcement", "grok_identity_enforcement"] as const;
+export type IdentitySettingKey = typeof identitySettingKeys[number];
+
 export interface RoutingSettings {
+  codex_identity_enforcement?: boolean;
+  claude_identity_enforcement?: boolean;
+  grok_identity_enforcement?: boolean;
   channel_stickiness?: ChannelStickiness;
  default_recovery_paths?: Record<string,string>;
   default_failure_policy: FailurePolicy;
@@ -203,7 +209,7 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
       "max_attempts",
       "default_failure_policy",
     ],
-    ["default_recovery_paths", "channel_stickiness"],
+    ["default_recovery_paths", "channel_stickiness", ...identitySettingKeys],
     "routing_settings",
   );
   const parsed = parseFailoverPolicy({
@@ -211,6 +217,11 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
     strategy: settings.strategy,
     max_attempts: settings.max_attempts,
   });
+  for (const key of identitySettingKeys) {
+    if (Object.hasOwn(settings, key) && typeof settings[key] !== "boolean") {
+      throw Error(`${key}: expected a boolean`);
+    }
+  }
   let stickiness: ChannelStickiness | undefined;
   if (settings.channel_stickiness !== undefined) {
     const value = object(settings.channel_stickiness, "channel_stickiness");
@@ -221,6 +232,9 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
   const defaults = settings.default_recovery_paths===undefined?undefined:object(settings.default_recovery_paths,"default_recovery_paths");
  if(defaults)for(const [protocol,id] of Object.entries(defaults)){if(!/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(protocol)||typeof id!=="string"||!/^[a-z][a-z0-9_-]{2,95}$/.test(id))throw Error("invalid default recovery path")}
  return {
+    codex_identity_enforcement: (settings.codex_identity_enforcement as boolean | undefined) ?? true,
+    claude_identity_enforcement: (settings.claude_identity_enforcement as boolean | undefined) ?? true,
+    grok_identity_enforcement: (settings.grok_identity_enforcement as boolean | undefined) ?? true,
  ...(stickiness ? { channel_stickiness: stickiness } : {}),
  ...(defaults ? {default_recovery_paths:defaults as Record<string,string>}:{}),
     default_failure_policy: parseFailurePolicy(settings.default_failure_policy),

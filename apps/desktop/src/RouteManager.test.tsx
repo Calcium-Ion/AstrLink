@@ -44,7 +44,7 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
     expect(
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(4);
     expect(container.textContent).toContain("ABC：失败后换下一家");
     expect(container.textContent).not.toContain("astrlink/auto");
     expect(bridge.listRoutes).not.toHaveBeenCalled();

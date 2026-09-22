@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
 var (
@@ -35,16 +36,29 @@ type SubscriptionTokenSource interface {
 }
 
 type ServiceAuthorizer struct {
-	http          *SecretAuthorizer
-	subscriptions SubscriptionTokenSource
+	http            *SecretAuthorizer
+	subscriptions   SubscriptionTokenSource
+	codexIdentity   accountauth.CodexIdentityPolicy
+	routingSettings storage.RoutingSettingsStore
 }
 
 func NewSecretAuthorizer(store secretstore.SecretStore) *SecretAuthorizer {
 	return &SecretAuthorizer{store: store}
 }
 
-func NewServiceAuthorizer(store secretstore.SecretStore, subscriptions SubscriptionTokenSource) *ServiceAuthorizer {
-	return &ServiceAuthorizer{http: NewSecretAuthorizer(store), subscriptions: subscriptions}
+func NewServiceAuthorizer(store secretstore.SecretStore, subscriptions SubscriptionTokenSource, identity ...accountauth.CodexIdentityPolicy) *ServiceAuthorizer {
+	authorizer := &ServiceAuthorizer{http: NewSecretAuthorizer(store), subscriptions: subscriptions}
+	if len(identity) > 0 {
+		authorizer.codexIdentity = identity[0]
+	}
+	return authorizer
+}
+
+// WithRoutingSettings reads the persisted identity choice for each new request,
+// so changes in the desktop settings apply without restarting the gateway.
+func (authorizer *ServiceAuthorizer) WithRoutingSettings(settings storage.RoutingSettingsStore) *ServiceAuthorizer {
+	authorizer.routingSettings = settings
+	return authorizer
 }
 
 func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contract.Endpoint, clientHeaders http.Header) (http.Header, error) {
@@ -59,14 +73,28 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 		if err != nil {
 			return nil, fmt.Errorf("load subscription credential: %w", err)
 		}
+		settings := contract.DefaultRoutingSettings()
+		settings.CodexIdentityEnforcement = !authorizer.codexIdentity.DisableEnforcement
+		if authorizer.routingSettings != nil {
+			settings, err = authorizer.routingSettings.GetRoutingSettings(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("load forwarding identity settings: %w", err)
+			}
+		}
 		headers := make(http.Header)
 		switch endpoint.Kind {
 		case contract.ServiceKindClaudeSubscription:
-			accountauth.ApplyClaudeAPIHeaders(headers, tokens)
+			accountauth.ApplyClaudeForwardHeaders(headers, tokens, clientHeaders, settings.ClaudeIdentityEnforcement)
 		case contract.ServiceKindGrokSubscription:
-			accountauth.ApplyGrokAPIHeaders(headers, tokens, "")
+			accountauth.ApplyGrokForwardHeaders(headers, tokens, clientHeaders, settings.GrokIdentityEnforcement)
 		default:
-			accountauth.ApplyCodexAPIHeaders(headers, tokens, "", accountauth.CodexClientVersion(clientHeaders))
+			identity := authorizer.codexIdentity
+			identity.DisableEnforcement = !settings.CodexIdentityEnforcement
+			accountauth.ApplyCodexForwardHeaders(headers, tokens, clientHeaders, identity)
+			if tokens.AccountID == "" {
+				// An empty overlay deletes any client-supplied account binding.
+				headers[http.CanonicalHeaderKey("ChatGPT-Account-ID")] = nil
+			}
 		}
 		return headers, nil
 	}

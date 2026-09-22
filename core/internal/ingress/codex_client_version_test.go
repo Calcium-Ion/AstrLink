@@ -27,15 +27,53 @@ func codexVersionCandidate(baseURL string) endpoint.Resolved {
 	}
 }
 
-func TestCodexForwardingPrefersClientVersion(t *testing.T) {
-	for _, identity := range []struct {
-		name, version, userAgent, want string
-	}{
-		{"explicit older version", "0.100.0", "codex_cli_rs/0.156.0", "0.100.0"},
-		{"Rust CLI version", "", "codex_cli_rs/0.156.0 (Mac OS; arm64)", "0.156.0"},
-		{"older CLI version", "", "codex_cli_rs/0.99.0", "0.99.0"},
-		{"fallback", "", "OpenAI/Python 1.0", accountauth.DefaultCodexModelsClientVersion},
+type codexIdentityTestCase struct {
+	name, userAgent, version            string
+	policy                              accountauth.CodexIdentityPolicy
+	wantUA, wantOriginator, wantVersion string
+}
+
+func codexIdentityCases() []codexIdentityTestCase {
+	const clientUA = "codex_cli_rs/0.156.0 (Mac OS; arm64)"
+	return []codexIdentityTestCase{
+		{name: "default enforced", userAgent: clientUA, version: "0.100.0", wantUA: accountauth.CodexUserAgent(""), wantOriginator: "codex-tui", wantVersion: accountauth.DefaultCodexModelsClientVersion},
+		{name: "configured version", userAgent: clientUA, policy: accountauth.CodexIdentityPolicy{ClientVersion: "0.157.0"}, wantUA: accountauth.CodexUserAgent("0.157.0"), wantOriginator: "codex-tui", wantVersion: "0.157.0"},
+		{name: "disabled paired client", userAgent: clientUA, version: "0.100.0", policy: accountauth.CodexIdentityPolicy{DisableEnforcement: true}, wantUA: clientUA, wantOriginator: "codex_cli_rs", wantVersion: "0.156.0"},
+		{name: "disabled old client fallback", userAgent: "codex_cli_rs/0.99.0", policy: accountauth.CodexIdentityPolicy{DisableEnforcement: true}, wantUA: accountauth.CodexUserAgent(""), wantOriginator: "codex-tui", wantVersion: accountauth.DefaultCodexModelsClientVersion},
+		{name: "disabled unrelated client fallback", userAgent: "astrlink/0.1", policy: accountauth.CodexIdentityPolicy{DisableEnforcement: true}, wantUA: accountauth.CodexUserAgent(""), wantOriginator: "codex-tui", wantVersion: accountauth.DefaultCodexModelsClientVersion},
+	}
+}
+
+func (test codexIdentityTestCase) clientHeaders() http.Header {
+	headers := make(http.Header)
+	headers.Set("User-Agent", test.userAgent)
+	headers.Set("version", test.version)
+	headers.Set("originator", "astrlink")
+	headers.Set("Authorization", "Bearer local-token")
+	headers.Set("ChatGPT-Account-ID", "client-account")
+	headers.Set("X-Api-Key", "local-key")
+	headers.Set("Cookie", "session=local-secret")
+	headers.Set("X-Client-Feature", "preserved")
+	headers.Set("X-AstrLink-Debug", "local-only")
+	return headers
+}
+
+func (test codexIdentityTestCase) checkUpstream(t *testing.T, headers http.Header) {
+	t.Helper()
+	for name, want := range map[string]string{
+		"version": test.wantVersion, "User-Agent": test.wantUA, "originator": test.wantOriginator,
+		"Authorization": "Bearer subscription-token", "ChatGPT-Account-ID": "",
+		"Cookie": "", "X-Api-Key": "", "X-Client-Feature": "preserved",
+		"X-AstrLink-Debug": "",
 	} {
+		if got := headers.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestCodexForwardingIdentityAcrossHTTPPaths(t *testing.T) {
+	for _, identity := range codexIdentityCases() {
 		for _, route := range []struct {
 			path, response string
 			stream         bool
@@ -54,14 +92,8 @@ func TestCodexForwardingPrefersClientVersion(t *testing.T) {
 					if r.URL.Path != wantPath {
 						t.Errorf("path = %q, want %q", r.URL.Path, wantPath)
 					}
-					if strings.HasPrefix(route.path, "/v1/models") {
-						want := identity.want
-						if strings.Contains(route.path, "?") {
-							want = "0.103.0"
-						}
-						if got := r.URL.Query().Get("client_version"); got != want {
-							t.Errorf("models client_version = %q, want %q", got, want)
-						}
+					if strings.HasPrefix(route.path, "/v1/models") && r.URL.Query().Get("client_version") != identity.wantVersion {
+						t.Errorf("catalog version does not match identity: %q", r.URL.Query().Get("client_version"))
 					}
 					w.Header().Set("Content-Type", "application/json")
 					if route.stream {
@@ -72,17 +104,15 @@ func TestCodexForwardingPrefersClientVersion(t *testing.T) {
 				defer upstream.Close()
 				handler := NewWithDependencies(Dependencies{
 					Resolver:   candidateResolver{candidates: []endpoint.Resolved{codexVersionCandidate(upstream.URL + "/backend-api/codex")}},
-					Authorizer: endpoint.NewServiceAuthorizer(nil, codingPlanCredentials{}),
+					Authorizer: endpoint.NewServiceAuthorizer(nil, codingPlanCredentials{}, identity.policy),
 				})
 				body := fmt.Sprintf(`{"model":"gpt-6-astra","input":"hello","stream":%t}`, route.stream)
 				request := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader(body))
 				if strings.HasPrefix(route.path, "/v1/models") {
 					request = httptest.NewRequest(http.MethodGet, route.path, nil)
 				}
+				request.Header = identity.clientHeaders()
 				request.Header.Set("Content-Type", "application/json")
-				request.Header.Set("Authorization", "Bearer local-token")
-				request.Header.Set("version", identity.version)
-				request.Header.Set("User-Agent", identity.userAgent)
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)
 				if response.Code != http.StatusOK {
@@ -90,14 +120,7 @@ func TestCodexForwardingPrefersClientVersion(t *testing.T) {
 				}
 				select {
 				case headers := <-sawHeaders:
-					for name, want := range map[string]string{
-						"version": identity.want, "User-Agent": "codex-cli/" + identity.want,
-						"Authorization": "Bearer subscription-token", "originator": "astrlink",
-					} {
-						if got := headers.Get(name); got != want {
-							t.Errorf("%s = %q, want %q", name, got, want)
-						}
-					}
+					identity.checkUpstream(t, headers)
 				default:
 					t.Fatal("no upstream request")
 				}
@@ -106,18 +129,14 @@ func TestCodexForwardingPrefersClientVersion(t *testing.T) {
 	}
 }
 
-func TestCodexWebSocketPrefersClientVersion(t *testing.T) {
-	for _, explicit := range []string{"", "0.100.0"} {
-		t.Run("version="+explicit, func(t *testing.T) {
-			want := explicit
-			if want == "" {
-				want = "0.156.0"
-			}
+func TestCodexWebSocketIdentityPolicy(t *testing.T) {
+	for _, identity := range codexIdentityCases() {
+		t.Run(identity.name, func(t *testing.T) {
 			upstream := wsUpstream(t, func(conn *websocket.Conn, request *http.Request) {
-				if request.URL.Path != "/backend-api/codex/responses" ||
-					request.Header.Get("version") != want || request.UserAgent() != "codex-cli/"+want {
-					t.Errorf("upstream path=%q version=%q User-Agent=%q", request.URL.Path, request.Header.Get("version"), request.UserAgent())
+				if request.URL.Path != "/backend-api/codex/responses" {
+					t.Errorf("upstream path = %q", request.URL.Path)
 				}
+				identity.checkUpstream(t, request.Header)
 				var event map[string]any
 				if err := conn.ReadJSON(&event); err != nil {
 					t.Error(err)
@@ -130,12 +149,9 @@ func TestCodexWebSocketPrefersClientVersion(t *testing.T) {
 			candidate.Service.ResponsesWebSocketEnabled = &enabled
 			handler := NewWithDependencies(Dependencies{
 				Resolver:   candidateResolver{candidates: []endpoint.Resolved{candidate}},
-				Authorizer: endpoint.NewServiceAuthorizer(nil, codingPlanCredentials{}),
+				Authorizer: endpoint.NewServiceAuthorizer(nil, codingPlanCredentials{}, identity.policy),
 			})
-			headers := make(http.Header)
-			headers.Set("version", explicit)
-			headers.Set("User-Agent", "codex_cli_rs/0.156.0 (Mac OS; arm64)")
-			client := dialResponses(t, handler, headers)
+			client := dialResponses(t, handler, identity.clientHeaders())
 			sendWS(t, client, `{"type":"response.create","model":"gpt-6-astra","input":"hello"}`)
 			if event := readWS(t, client); event["type"] != "response.completed" {
 				t.Fatalf("event = %#v", event)

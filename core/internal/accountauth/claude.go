@@ -46,6 +46,10 @@ func normalizeClaudeConfig(config OAuthConfig) OAuthConfig {
 }
 
 func ApplyClaudeAPIHeaders(header http.Header, tokens AccountTokens) {
+	if header == nil {
+		return
+	}
+	header.Set("User-Agent", DefaultClaudeUserAgent)
 	header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	header.Set("Anthropic-Version", "2023-06-01")
 	header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20")

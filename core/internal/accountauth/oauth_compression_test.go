@@ -23,6 +23,9 @@ func TestTokenClientHandlesCompressedSuccessAndInvalidGrant(t *testing.T) {
 		_, _ = compressor.Write([]byte(body))
 		_ = compressor.Close()
 		upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.Header.Get("originator") != DefaultCodexOriginator || request.UserAgent() != CodexUserAgent("") || request.Header.Get("version") != "" {
+				t.Error("token request must use the Codex auth identity without an inference version header")
+			}
 			if request.Header.Get("Accept-Encoding") != transport.SupportedResponseEncodings {
 				t.Errorf("Accept-Encoding = %q", request.Header.Get("Accept-Encoding"))
 			}

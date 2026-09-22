@@ -18,20 +18,24 @@ import (
 // Service addresses come from official openai/codex open-source evidence
 // (ADR 0009); AstrLink never invents alternate private entitlement APIs.
 type CodexProvider struct {
-	apiBaseURL          string
-	modelsClientVersion string
-	originator          string
-	httpClient          *http.Client
+	apiBaseURL string
+	identity   accountauth.CodexIdentityPolicy
+	httpClient *http.Client
 }
 
 func NewCodexProvider(oauth accountauth.OAuthConfig) *CodexProvider {
 	oauth = oauth.Normalize()
 	return &CodexProvider{
-		apiBaseURL:          strings.TrimRight(oauth.APIBaseURL, "/"),
-		modelsClientVersion: oauth.ModelsClientVersion,
-		originator:          oauth.Originator,
-		httpClient:          oauth.HTTPClient,
+		apiBaseURL: strings.TrimRight(oauth.APIBaseURL, "/"),
+		identity: accountauth.CodexIdentityPolicy{
+			ClientVersion: oauth.ModelsClientVersion,
+		},
+		httpClient: oauth.HTTPClient,
 	}
+}
+
+func (provider *CodexProvider) IdentityPolicy() accountauth.CodexIdentityPolicy {
+	return provider.identity
 }
 
 func (provider *CodexProvider) APIBaseURL() string {
@@ -53,10 +57,10 @@ type ModelRecord struct {
 }
 
 func (provider *CodexProvider) ModelsClientVersion() string {
-	if provider == nil || strings.TrimSpace(provider.modelsClientVersion) == "" {
+	if provider == nil || strings.TrimSpace(provider.identity.ClientVersion) == "" {
 		return accountauth.DefaultCodexModelsClientVersion
 	}
-	return provider.modelsClientVersion
+	return provider.identity.ClientVersion
 }
 
 func (provider *CodexProvider) Usage(ctx context.Context, tokens accountauth.AccountTokens) (contract.SubscriptionUsage, error) {
@@ -69,7 +73,7 @@ func (provider *CodexProvider) Usage(ctx context.Context, tokens accountauth.Acc
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
-	applyCodexAuth(request, tokens, provider.originator, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
@@ -108,7 +112,7 @@ func (provider *CodexProvider) ConsumeReset(
 	if err != nil {
 		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
-	applyCodexAuth(request, tokens, provider.originator, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
@@ -141,7 +145,7 @@ func (provider *CodexProvider) ListModels(ctx context.Context, tokens accountaut
 	if err != nil {
 		return ModelList{}, err
 	}
-	applyCodexAuth(request, tokens, provider.originator, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
 		return ModelList{}, err
@@ -162,7 +166,7 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	applyCodexAuth(request, tokens, provider.originator, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
@@ -178,8 +182,8 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 	return body, response.StatusCode, header, nil
 }
 
-func applyCodexAuth(request *http.Request, tokens accountauth.AccountTokens, originator, clientVersion string) {
-	accountauth.ApplyCodexAPIHeaders(request.Header, tokens, originator, clientVersion)
+func applyCodexAuth(request *http.Request, tokens accountauth.AccountTokens, clientVersion string) {
+	accountauth.ApplyCodexAPIHeaders(request.Header, tokens, clientVersion)
 	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 }
 

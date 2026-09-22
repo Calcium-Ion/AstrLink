@@ -73,6 +73,11 @@ func TestBeginAuthorizationUsesOfficialPublicClientByDefault(t *testing.T) {
 func TestConnectedAccountModelsAndResponsesPath(t *testing.T) {
 	t.Parallel()
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("originator") != accountauth.DefaultCodexOriginator ||
+			request.UserAgent() != accountauth.CodexUserAgent("") ||
+			request.Header.Get("version") != accountauth.DefaultCodexModelsClientVersion {
+			t.Errorf("inconsistent Codex identity on %s", request.URL.Path)
+		}
 		auth := request.Header.Get("Authorization")
 		if auth != "Bearer access-secret-token-value" {
 			http.Error(writer, "unauthorized", http.StatusUnauthorized)

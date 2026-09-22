@@ -134,6 +134,7 @@ func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*ht
 	removeInboundCredentials(outbound.Header)
 	overlayHeaders(outbound.Header, target.RequestHeaders)
 	removeHopByHopHeaders(outbound.Header)
+	removeGatewayHeaders(outbound.Header)
 
 	if target.ObserveOutbound != nil {
 		target.ObserveOutbound(outbound)
@@ -205,6 +206,16 @@ func removeInboundCredentials(header http.Header) {
 		localPolicyWarningHeader,
 	} {
 		header.Del(name)
+	}
+}
+
+// Gateway diagnostics belong to the local connection. Apply this after target
+// overlays as well, so a provider adapter cannot reintroduce gateway branding.
+func removeGatewayHeaders(header http.Header) {
+	for name := range header {
+		if strings.HasPrefix(strings.ToLower(name), "x-astrlink-") {
+			delete(header, name)
+		}
 	}
 }
 

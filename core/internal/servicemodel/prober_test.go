@@ -252,8 +252,8 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 		if request.Header.Get("Authorization") != "Bearer codex-access" ||
 			request.Header.Get("ChatGPT-Account-ID") != "acct_codex" ||
 			request.Header.Get("OAI-Product-Sku") != "codex" ||
-			request.Header.Get("originator") != "astrlink" ||
-			request.Header.Get("User-Agent") != "codex-cli/"+accountauth.DefaultCodexModelsClientVersion ||
+			request.Header.Get("originator") != accountauth.DefaultCodexOriginator ||
+			request.Header.Get("User-Agent") != accountauth.CodexUserAgent("") ||
 			request.Header.Get("version") != accountauth.DefaultCodexModelsClientVersion ||
 			request.Header.Get("Accept") != "application/json" {
 			t.Fatalf("headers = %#v", request.Header)

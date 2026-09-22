@@ -391,12 +391,22 @@ func (manager *SessionManager) buildAuthorizeURL(redirectURI, state, challenge s
 	} else {
 		query.Set("id_token_add_organizations", "true")
 		query.Set("codex_cli_simplified_flow", "true")
-		query.Set("originator", manager.config.Originator)
 	}
 	for key, values := range manager.config.ExtraAuthQuery {
+		if strings.EqualFold(key, "originator") {
+			continue
+		}
 		for _, value := range values {
 			query.Add(key, value)
 		}
+	}
+	if manager.config.Provider == contract.SubscriptionProviderOpenAICodex {
+		for key := range query {
+			if strings.EqualFold(key, "originator") {
+				query.Del(key)
+			}
+		}
+		query.Set("originator", DefaultCodexOriginator)
 	}
 	endpoint.RawQuery = query.Encode()
 	return endpoint.String(), nil

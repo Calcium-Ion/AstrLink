@@ -237,7 +237,7 @@ func TestFetcherUsesProviderRouteAuthAndNamesProviderOnFailure(t *testing.T) {
 			}
 			http.Error(writer, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		case "/zen/go/v1/usage":
-			if request.Header.Get("Authorization") != "Bearer go-secret-key" || request.Header.Get("X-Api-Key") != "" {
+			if request.Header.Get("Authorization") != "Bearer go-secret-key" || request.Header.Get("X-Api-Key") != "" || strings.Contains(strings.ToLower(request.UserAgent()), "astrlink") {
 				badHeaders++
 			}
 			http.Error(writer, `{"error":"EntitlementError"}`, http.StatusForbidden)

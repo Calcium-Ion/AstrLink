@@ -42,6 +42,12 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 		for key, raw := range patch {
 			var destination any
 			switch key {
+			case "codex_identity_enforcement":
+				destination = &settings.CodexIdentityEnforcement
+			case "claude_identity_enforcement":
+				destination = &settings.ClaudeIdentityEnforcement
+			case "grok_identity_enforcement":
+				destination = &settings.GrokIdentityEnforcement
 			case "default_recovery_paths":
 				writeError(writer, http.StatusGone, "routing_feature_retired", "default call paths are retired")
 				return

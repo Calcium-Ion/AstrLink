@@ -100,7 +100,7 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 							t.Error("Grok CLI header reached another provider")
 						}
 						if test.kind == contract.ServiceKindOpenCodeGo || test.kind == contract.ServiceKindOpenCodeZen {
-							if request.Header.Get("X-Opencode-Session") != "client-session" || request.UserAgent() != "astrlink/0.1" {
+							if request.Header.Get("X-Opencode-Session") != "client-session" || request.UserAgent() != "opencode/1.0.0" {
 								t.Error("missing OpenCode session or user agent")
 							}
 						}
@@ -137,12 +137,80 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 					request.Header.Set("Anthropic-Version", "2023-06-01")
 					request.Header.Set("Anthropic-Beta", "client-feature")
 					request.Header.Set("X-Opencode-Session", "client-session")
+					request.Header.Set("User-Agent", "opencode/1.0.0")
 					response := httptest.NewRecorder()
 					handler.ServeHTTP(response, request)
 					if !called.Load() || response.Code != http.StatusOK || response.Body.String() != responseBody {
 						t.Fatalf("forwarding failed: called=%t status=%d body=%s", called.Load(), response.Code, response.Body.String())
 					}
 				})
+			}
+		})
+	}
+}
+
+type subscriptionIdentitySettings struct{ settings contract.RoutingSettings }
+
+func (store subscriptionIdentitySettings) GetRoutingSettings(context.Context) (contract.RoutingSettings, error) {
+	return store.settings, nil
+}
+func (store subscriptionIdentitySettings) UpdateRoutingSettings(context.Context, contract.RoutingSettings) error {
+	return nil
+}
+
+func TestSubscriptionIdentityOptOutReachesUpstream(t *testing.T) {
+	for _, test := range []struct {
+		kind                  contract.ServiceKind
+		protocol              contract.ProtocolID
+		model, path, clientUA string
+	}{
+		{contract.ServiceKindClaudeSubscription, contract.ProtocolAnthropicMessages, "claude-sonnet-4-5", "/v1/messages", "claude-cli/2.2.0 (external, cli)"},
+		{contract.ServiceKindGrokSubscription, contract.ProtocolOpenAIResponses, "grok-4.5", "/v1/responses", "xai-grok-workspace/0.2.102"},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			var called atomic.Bool
+			upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				called.Store(true)
+				if request.UserAgent() != test.clientUA {
+					t.Errorf("opt-out UA was overwritten: %q", request.UserAgent())
+				}
+				if request.Header.Get("Authorization") != "Bearer subscription-token" || request.Header.Get("X-Api-Key") != "" {
+					t.Error("credentials not replaced")
+				}
+				if request.Header.Get("X-AstrLink-Debug") != "" || request.Header.Get("X-Client-Feature") != "keep" {
+					t.Error("unexpected forwarding headers")
+				}
+				if test.kind == contract.ServiceKindGrokSubscription && request.Header.Get("X-Grok-Client-Version") != "0.2.102" {
+					t.Error("Grok version did not follow UA")
+				}
+				if test.kind == contract.ServiceKindClaudeSubscription && request.Header.Get("Anthropic-Beta") != "claude-code-20250219,oauth-2025-04-20,client-feature" {
+					t.Errorf("invalid beta headers: %s", request.Header.Get("Anthropic-Beta"))
+				}
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(writer, `{"id":"test","content":[]}`)
+			}))
+			defer upstream.Close()
+			settings := contract.DefaultRoutingSettings()
+			settings.ClaudeIdentityEnforcement = false
+			settings.GrokIdentityEnforcement = false
+			service := contract.Service{ID: "service_identity", Name: "Subscription", Kind: test.kind, Enabled: true, Models: []string{test.model}, Capabilities: test.kind.SubscriptionProvider().Capabilities(), Subscription: &contract.SubscriptionConnection{Provider: test.kind.SubscriptionProvider(), Status: contract.SubscriptionStatusConnected, CredentialRef: "keyring://subscription/service_identity"}}
+			handler := NewWithDependencies(Dependencies{
+				Resolver:   candidateResolver{candidates: []endpoint.Resolved{{Service: service, BaseURL: upstream.URL, UpstreamProtocol: test.protocol}}},
+				Authorizer: endpoint.NewServiceAuthorizer(codingPlanCredentials{}, codingPlanCredentials{}).WithRoutingSettings(subscriptionIdentitySettings{settings}),
+			})
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(fmt.Sprintf(`{"model":%q,"max_tokens":32,"messages":[{"role":"user","content":"hello"}]}`, test.model)))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("User-Agent", test.clientUA)
+			request.Header.Set("Authorization", "Bearer local-token")
+			request.Header.Set("X-Api-Key", "local-key")
+			request.Header.Set("X-Grok-Client-Version", "0.0.1")
+			request.Header.Set("X-AstrLink-Debug", "local-only")
+			request.Header.Set("X-Client-Feature", "keep")
+			request.Header.Set("Anthropic-Beta", "client-feature,oauth-2025-04-20")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || !called.Load() {
+				t.Fatalf("forwarding failed: %d %s", response.Code, response.Body.String())
 			}
 		})
 	}

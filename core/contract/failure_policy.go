@@ -136,21 +136,27 @@ func (policy FailoverPolicy) Validate() error {
 }
 
 type RoutingSettings struct {
-	ChannelStickiness      *ChannelStickiness            `json:"channel_stickiness,omitempty"`
-	DefaultRecoveryPaths   map[ProtocolID]RecoveryPathID `json:"default_recovery_paths,omitempty"`
-	DefaultFailurePolicy   FailurePolicy                 `json:"default_failure_policy"`
-	AllowUnmatchedFailover bool                          `json:"allow_unmatched_failover"`
-	Strategy               FailoverStrategy              `json:"strategy"`
-	MaxAttempts            int                           `json:"max_attempts"`
+	CodexIdentityEnforcement  bool                          `json:"codex_identity_enforcement"`
+	ClaudeIdentityEnforcement bool                          `json:"claude_identity_enforcement"`
+	GrokIdentityEnforcement   bool                          `json:"grok_identity_enforcement"`
+	ChannelStickiness         *ChannelStickiness            `json:"channel_stickiness,omitempty"`
+	DefaultRecoveryPaths      map[ProtocolID]RecoveryPathID `json:"default_recovery_paths,omitempty"`
+	DefaultFailurePolicy      FailurePolicy                 `json:"default_failure_policy"`
+	AllowUnmatchedFailover    bool                          `json:"allow_unmatched_failover"`
+	Strategy                  FailoverStrategy              `json:"strategy"`
+	MaxAttempts               int                           `json:"max_attempts"`
 }
 
 func DefaultRoutingSettings() RoutingSettings {
 	return RoutingSettings{
-		ChannelStickiness:      &ChannelStickiness{Enabled: true, TTLSeconds: 3600},
-		DefaultFailurePolicy:   DefaultFailurePolicy(),
-		AllowUnmatchedFailover: true,
-		Strategy:               FailoverOnly,
-		MaxAttempts:            6,
+		CodexIdentityEnforcement:  true,
+		ClaudeIdentityEnforcement: true,
+		GrokIdentityEnforcement:   true,
+		ChannelStickiness:         &ChannelStickiness{Enabled: true, TTLSeconds: 3600},
+		DefaultFailurePolicy:      DefaultFailurePolicy(),
+		AllowUnmatchedFailover:    true,
+		Strategy:                  FailoverOnly,
+		MaxAttempts:               6,
 	}
 }
 func (settings RoutingSettings) FailoverPolicy() FailoverPolicy {
