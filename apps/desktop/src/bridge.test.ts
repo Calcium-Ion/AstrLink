@@ -40,6 +40,7 @@ import {
   listRoutes,
   listServices,
   listRequestSessions,
+  listRequestRecords,
   listAccessTokens,
   listAccessTokenUsage,
   getUsageSummary,
@@ -104,6 +105,7 @@ describe("desktop bridge contract", () => {
       by_hour: [],
       by_service: [],
       by_model: [],
+      by_token: [],
       scanned_records: 0,
     });
     const result = await getUsageSummary(window);
@@ -240,6 +242,24 @@ describe("desktop bridge contract", () => {
     await listRequestSessions();
     expect(invokeMock).toHaveBeenLastCalledWith("list_request_sessions", {
       query: {},
+    });
+  });
+
+  it("forwards multi-token record and session filters without changing detail fields", async () => {
+    invokeMock.mockResolvedValue({ items: [], next_cursor: null });
+    const query = {
+      limit: 20,
+      service_id: "service_a",
+      local_access_token_ids: ["token_a", "token_b"],
+      status: "failed" as const,
+    };
+    await listRequestRecords(query);
+    expect(invokeMock).toHaveBeenLastCalledWith("list_request_records", {
+      query,
+    });
+    await listRequestSessions({ ...query, kind: "inference" });
+    expect(invokeMock).toHaveBeenLastCalledWith("list_request_sessions", {
+      query: { ...query, kind: "inference" },
     });
   });
 

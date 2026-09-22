@@ -9,7 +9,10 @@ export function sessionMatchesFilters(
   return (
     (!filters.status || session.status === filters.status) &&
     (!filters.serviceId || session.service_id === filters.serviceId) &&
-    (!filters.protocol || session.input_protocol === filters.protocol)
+    (!filters.protocol || session.input_protocol === filters.protocol) &&
+    (!filters.localAccessTokenIds?.length ||
+      (session.local_access_token_id !== null &&
+        filters.localAccessTokenIds.includes(session.local_access_token_id)))
   );
 }
 

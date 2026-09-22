@@ -49,12 +49,38 @@ describe("official pricing boundary", () => {
       from: "2026-09-19T00:00:00Z",
       to: "2026-09-20T00:00:00Z",
       by_model: [],
+      by_token: [],
     };
     expect(parseBillingSummary(value).amount_usd).toBe("0.000000001");
+    expect(parseBillingSummary(value).by_token).toEqual([]);
     expect(() =>
       parseBillingSummary({ ...value, amount_usd: "NaN" }),
     ).toThrow();
     expect(() => parseBillingSummary({ ...value, unpriced: -1 })).toThrow();
+  });
+
+  it("parses token billing groups with the stable token_id field", () => {
+    const value = {
+      amount_usd: "1.25",
+      priced: 1,
+      unpriced: 0,
+      pending: 0,
+      revalued: 0,
+      requests: 1,
+      from: "2026-09-19T00:00:00Z",
+      to: "2026-09-20T00:00:00Z",
+      by_model: [],
+      by_token: [{
+        token_id: "token_a",
+        amount_usd: "1.25",
+        priced: 1,
+        unpriced: 0,
+        pending: 0,
+        revalued: 0,
+        requests: 1,
+      }],
+    };
+    expect(parseBillingSummary(value).by_token).toEqual(value.by_token);
   });
   it("keeps missing prices distinct from free calls and prefers the official cycle", () => {
     const amounts = {

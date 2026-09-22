@@ -476,16 +476,16 @@ export async function deleteRoute(
 
 function compactQuery(
   query: RequestRecordListQuery,
-): Record<string, string | number> {
-  const compact: Record<string, string | number> = {};
+): Record<string, string | number | string[]> {
+  const compact: Record<string, string | number | string[]> = {};
   if (query.limit !== undefined) compact.limit = query.limit;
   if (query.cursor !== undefined) compact.cursor = query.cursor;
   if (query.from !== undefined) compact.from = query.from;
   if (query.to !== undefined) compact.to = query.to;
   if (query.protocol !== undefined) compact.protocol = query.protocol;
   if (query.service_id !== undefined) compact.service_id = query.service_id;
-  if (query.local_access_token_id !== undefined) {
-    compact.local_access_token_id = query.local_access_token_id;
+  if (query.local_access_token_ids !== undefined && query.local_access_token_ids.length > 0) {
+    compact.local_access_token_ids = query.local_access_token_ids;
   }
   if (query.status !== undefined) compact.status = query.status;
   return compact;

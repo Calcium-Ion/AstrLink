@@ -21,10 +21,14 @@ export interface BillingGroup extends BillingAmounts {
   model: string;
   provider: string;
 }
+export interface TokenGroup extends BillingAmounts {
+  token_id: string;
+}
 export interface BillingSummary extends BillingAmounts {
   from: string;
   to: string;
   by_model: BillingGroup[];
+  by_token: TokenGroup[];
 }
 export interface BillingPeriod {
   id: string;
@@ -148,6 +152,13 @@ export function parseBillingSummary(value: unknown): BillingSummary {
         ...amounts(row),
         provider: str(row.provider),
         model: str(row.model),
+      };
+    }),
+    by_token: array(o.by_token, (v) => {
+      const row = object(v);
+      return {
+        ...amounts(row),
+        token_id: str(row.token_id),
       };
     }),
   };

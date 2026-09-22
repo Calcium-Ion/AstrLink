@@ -11,6 +11,7 @@ export interface RecordFilters {
   status: SessionStatus | "";
   serviceId: string;
   protocol: string;
+  localAccessTokenIds: string[];
 }
 
 export interface LiveMergeResult {
@@ -26,7 +27,10 @@ export function recordMatchesFilters(
   return (
     (!filters.status || record.status === filters.status) &&
     (!filters.serviceId || record.service_id === filters.serviceId) &&
-    (!filters.protocol || record.input_protocol === filters.protocol)
+    (!filters.protocol || record.input_protocol === filters.protocol) &&
+    (!filters.localAccessTokenIds?.length ||
+      (record.local_access_token_id !== null &&
+        filters.localAccessTokenIds.includes(record.local_access_token_id)))
   );
 }
 

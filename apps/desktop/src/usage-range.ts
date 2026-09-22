@@ -93,6 +93,7 @@ export interface UsageSummary {
   by_hour: UsageHourBucket[];
   by_service: UsageGroup[];
   by_model: UsageGroup[];
+  by_token: UsageGroup[];
   scanned_records: number;
   capped: boolean;
 }
@@ -345,6 +346,7 @@ export function emptyUsageSummary(
     by_hour: emptyHourSeries(window),
     by_service: [],
     by_model: [],
+    by_token: [],
     scanned_records: 0,
     capped,
   };
@@ -361,6 +363,7 @@ export interface UsageAggregate {
   totals: UsageTotals;
   by_service: UsageGroup[];
   by_model: UsageGroup[];
+  by_token: UsageGroup[];
   by_day: UsageDayBucket[];
   scanned_records: number;
 }
@@ -376,6 +379,9 @@ export function aggregateUsageRecords(
   const totals = emptyUsageTotals();
   const serviceMap = new Map<string, UsageGroup>();
   const modelMap = new Map<string, UsageGroup>();
+  // The client only sees records, so it cannot apply Core's current-token
+  // whitelist. The display layer must intersect this list with the catalog.
+  const tokenMap = new Map<string, UsageGroup>();
   const dayMap = new Map<string, UsageDayBucket>();
   let scanned_records = 0;
 
@@ -384,6 +390,10 @@ export function aggregateUsageRecords(
     if (status == null) continue;
     scanned_records += 1;
     const day = dayBucket(dayMap, record.started_at);
+
+    addUsageGroup(serviceMap, record.service_id, record.usage, status === "failed");
+    addUsageGroup(modelMap, record.requested_model, record.usage, status === "failed");
+    addUsageGroup(tokenMap, record.local_access_token_id, record.usage, status === "failed", false);
 
     if (status === "failed") {
       totals.failed_requests += 1;
@@ -397,14 +407,13 @@ export function aggregateUsageRecords(
       addUsage(totals, record.usage);
       if (day) addUsage(day, record.usage);
     }
-    addUsageGroup(serviceMap, record.service_id, record.usage);
-    addUsageGroup(modelMap, record.requested_model, record.usage);
   }
 
   return {
     totals,
     by_service: sortUsageGroups([...serviceMap.values()]),
     by_model: sortUsageGroups([...modelMap.values()]),
+    by_token: sortUsageGroups([...tokenMap.values()]),
     by_day: [...dayMap.values()].sort((left, right) =>
       left.date.localeCompare(right.date),
     ),
@@ -432,6 +441,7 @@ export function aggregateUsage(
     by_hour: padHourBuckets(records, window),
     by_service: aggregate.by_service,
     by_model: aggregate.by_model,
+    by_token: aggregate.by_token,
     scanned_records: aggregate.scanned_records,
     capped,
   };
@@ -640,13 +650,20 @@ function addUsageGroup(
   groups: Map<string, UsageGroup>,
   id: string | null,
   usage: RequestRecord["usage"],
+  failed: boolean,
+  allowNull = true,
 ): void {
   const normalized = normalizeGroupId(id);
+  if (!allowNull && normalized === null) return;
   const key = normalized ?? "";
   let group = groups.get(key);
   if (!group) {
     group = { id: normalized, ...emptyUsageTotals() };
     groups.set(key, group);
+  }
+  if (failed) {
+    group.failed_requests += 1;
+    return;
   }
   group.requests += 1;
   if (!usage) return;

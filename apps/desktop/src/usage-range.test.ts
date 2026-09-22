@@ -186,6 +186,7 @@ describe("usage range windows", () => {
     expect(summary.capped).toBe(true);
     expect(summary.totals).toEqual(emptyUsageTotals());
     expect(summary.by_day).toHaveLength(7);
+    expect(summary.by_token).toEqual([]);
     expect(summary.by_hour).toEqual([]);
     expect(summary.by_day.at(-1)).toEqual({
       date: "2026-09-04",
@@ -334,6 +335,39 @@ describe("usage aggregation", () => {
     expect(aggregate.totals.failed_requests).toBe(2);
     expect(aggregate.totals.total_tokens).toBe(2);
     expect(aggregate.scanned_records).toBe(3);
+  });
+
+  it("groups successful and failed roots by service, model, and token", () => {
+    const aggregate = aggregateUsageRecords([
+      record(
+        { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+        { service_id: "service_a", requested_model: "model_a", local_access_token_id: "token_a" },
+      ),
+      record(null, {
+        status: "failed",
+        service_id: "service_a",
+        requested_model: "model_a",
+        local_access_token_id: "token_a",
+      }),
+      record(null, {
+        status: "failed",
+        service_id: "service_b",
+        requested_model: "model_b",
+        local_access_token_id: null,
+      }),
+    ]);
+
+    expect(aggregate.by_service).toEqual([
+      { id: "service_a", ...emptyUsageTotals(), requests: 1, failed_requests: 1, input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+      { id: "service_b", ...emptyUsageTotals(), failed_requests: 1 },
+    ]);
+    expect(aggregate.by_model).toEqual([
+      { id: "model_a", ...emptyUsageTotals(), requests: 1, failed_requests: 1, input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+      { id: "model_b", ...emptyUsageTotals(), failed_requests: 1 },
+    ]);
+    expect(aggregate.by_token).toEqual([
+      { id: "token_a", ...emptyUsageTotals(), requests: 1, failed_requests: 1, input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    ]);
   });
 
   it("counts failed roots and ignores cancelled or blocked roots", () => {
