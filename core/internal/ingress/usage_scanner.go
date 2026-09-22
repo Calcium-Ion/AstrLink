@@ -2,14 +2,13 @@ package ingress
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 // usageScanner is a passive observer of client-facing response bytes. It never
@@ -132,30 +131,8 @@ func (scanner *usageScanner) Usage() *contract.Usage {
 }
 
 func (scanner *usageScanner) decodeNonStreamingBody(body []byte) ([]byte, bool) {
-	encoding := strings.ToLower(strings.TrimSpace(scanner.contentEncoding))
-	switch encoding {
-	case "", "identity":
-		return body, true
-	case "gzip":
-		if len(body) == 0 {
-			return nil, false
-		}
-		reader, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			return nil, false
-		}
-		defer reader.Close()
-		decompressed, err := io.ReadAll(io.LimitReader(reader, int64(maxResponseInspectionBytes)+1))
-		if err != nil {
-			return nil, false
-		}
-		if len(decompressed) > maxResponseInspectionBytes {
-			return nil, false
-		}
-		return decompressed, true
-	default:
-		return nil, false
-	}
+	decoded, err := transport.DecodeBody(body, scanner.contentEncoding, maxResponseInspectionBytes)
+	return decoded, err == nil
 }
 
 func (scanner *usageScanner) observe(chunk []byte) {

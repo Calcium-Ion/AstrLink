@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 // CodexProvider calls the ChatGPT Codex backend using subscription tokens.
@@ -75,7 +75,7 @@ func (provider *CodexProvider) Usage(ctx context.Context, tokens accountauth.Acc
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
@@ -116,7 +116,7 @@ func (provider *CodexProvider) ConsumeReset(
 		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
 		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
@@ -147,7 +147,7 @@ func (provider *CodexProvider) ListModels(ctx context.Context, tokens accountaut
 		return ModelList{}, err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	body, err := transport.ReadResponseBody(response, 4<<20)
 	if err != nil {
 		return ModelList{}, err
 	}
@@ -170,7 +170,7 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 		return nil, 0, nil, err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 16<<20))
+	body, err := transport.ReadResponseBody(response, 16<<20)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -180,6 +180,7 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 
 func applyCodexAuth(request *http.Request, tokens accountauth.AccountTokens, originator, clientVersion string) {
 	accountauth.ApplyCodexAPIHeaders(request.Header, tokens, originator, clientVersion)
+	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 }
 
 // ProbeNonStreamingResponse is a tiny helper used by control/tests to exercise

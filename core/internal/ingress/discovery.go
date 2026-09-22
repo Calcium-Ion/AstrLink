@@ -274,6 +274,7 @@ func (handler *Handler) fetchModelDiscovery(
 	fetchRequest.Header.Del("If-None-Match")
 	fetchRequest.Header.Del("If-Modified-Since")
 	fetchRequest.Header.Del("Range")
+	fetchRequest.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 
 	recorder := newDiscoveryResponseRecorder(maxResponseInspectionBytes)
 	finishPrivacy, _, privacyErr := handler.applyPrivacy(
@@ -370,7 +371,17 @@ func (handler *Handler) fetchModelDiscovery(
 			endpointID: candidate.Service.ID,
 		}}
 	}
-	discoveryBody := recorder.body.Bytes()
+	discoveryBody, bodyErr := transport.DecodeBody(
+		recorder.body.Bytes(), strings.Join(recorder.Header().Values("Content-Encoding"), ","), maxResponseInspectionBytes,
+	)
+	if bodyErr != nil {
+		health.Failure()
+		return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
+			kind:       executionFailureUpstream,
+			err:        bodyErr,
+			endpointID: candidate.Service.ID,
+		}}
+	}
 	if candidate.Service.Kind == contract.ServiceKindCodexSubscription {
 		list, decodeErr := subscription.DecodeCodexModels(discoveryBody)
 		if decodeErr != nil {

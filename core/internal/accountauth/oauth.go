@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 const (
@@ -260,12 +261,13 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	if client.config.Provider == contract.SubscriptionProviderXAIGrok {
 		applyGrokOAuthHeaders(request.Header, client.config.ModelsClientVersion)
 	}
+	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := client.config.HTTPClient.Do(request)
 	if err != nil {
 		return AccountTokens{}, err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
 		return AccountTokens{}, err
 	}

@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 const (
@@ -34,12 +34,13 @@ func (manager *Manager) claudeUsage(ctx context.Context, tokens accountauth.Acco
 	accountauth.ApplyClaudeAPIHeaders(request.Header, tokens)
 	request.Header.Set("User-Agent", accountauth.DefaultClaudeUserAgent)
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := manager.claudeConfig.HTTPClient.Do(request)
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := transport.ReadResponseBody(response, 1<<20)
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
