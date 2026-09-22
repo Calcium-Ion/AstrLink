@@ -219,6 +219,35 @@ func main() {
 		}
 		resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
 		resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
+		gatewayDependencies := ingress.Dependencies{
+			ProxyCredentials: store,
+			Resolver:         resolver,
+			Authorizer:       endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store),
+			AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
+				func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
+					return accessTokenManager.Authenticate(ctx, raw)
+				},
+			),
+			PrivacyFilter: privacyFilter,
+			PolicyWarningReporter: ingress.PolicyWarningReporterFunc(
+				func(protocol contract.ProtocolID, endpointID contract.ServiceID, summary string) {
+					logger.Printf(
+						"privacy policy warning: protocol=%s service_id=%s findings=%s",
+						protocol,
+						endpointID,
+						summary,
+					)
+				},
+			),
+			RequestRecords:           store,
+			AuditSettings:            store,
+			AuditBlobs:               store,
+			RecordLogger:             logger.Printf,
+			ConversionEngine:         conversionEngine,
+			MaxConcurrentInspections: maxConcurrentInspections,
+			MaxRequestBodyMiB:        uint32(maxRequestBodyMiB),
+			ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
+		}
 		handler, err := controlapi.NewWithDependencies(config.Version, controlapi.Dependencies{
 			ServiceStore: store,
 			PricingStore: store, PricingManager: pricingManager,
@@ -236,7 +265,7 @@ func main() {
 			Subscriptions:      subscriptionManager,
 			CodingPlans:        codingplan.New(store, nil),
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
-			ServiceTester:      servicetest.New(endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store), nil, subscriptionManager.APIBaseURLFor).WithProxyCredentials(store),
+			ServiceTester:      servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,
@@ -252,36 +281,9 @@ func main() {
 			return err
 		}
 		dependencies.NewInferenceHandler = func(address string) (http.Handler, error) {
-			return ingress.NewProduction(ingress.Dependencies{
-				ProxyCredentials: store,
-				Resolver:         resolver,
-				Authorizer:       endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store),
-				AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
-					func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
-						return accessTokenManager.Authenticate(ctx, raw)
-					},
-				),
-				PrivacyFilter: privacyFilter,
-				PolicyWarningReporter: ingress.PolicyWarningReporterFunc(
-					func(protocol contract.ProtocolID, endpointID contract.ServiceID, summary string) {
-						logger.Printf(
-							"privacy policy warning: protocol=%s service_id=%s findings=%s",
-							protocol,
-							endpointID,
-							summary,
-						)
-					},
-				),
-				RequestRecords:           store,
-				AuditSettings:            store,
-				AuditBlobs:               store,
-				RecordLogger:             logger.Printf,
-				AllowedHost:              address,
-				ConversionEngine:         conversionEngine,
-				MaxConcurrentInspections: maxConcurrentInspections,
-				MaxRequestBodyMiB:        uint32(maxRequestBodyMiB),
-				ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
-			})
+			production := gatewayDependencies
+			production.AllowedHost = address
+			return ingress.NewProduction(production)
 		}
 		monitorCtx, stopMonitors := context.WithCancel(ctx)
 		var monitors sync.WaitGroup

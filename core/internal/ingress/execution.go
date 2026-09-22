@@ -71,6 +71,16 @@ func (handler *Handler) executeCandidates(
 	classified Request,
 	candidates []endpoint.Resolved,
 ) {
+	handler.executeCandidatesWithTest(writer, request, classified, candidates, nil)
+}
+
+func (handler *Handler) executeCandidatesWithTest(
+	writer http.ResponseWriter,
+	request *http.Request,
+	classified Request,
+	candidates []endpoint.Resolved,
+	test *serviceTestExecution,
+) {
 	if request.Context().Err() != nil {
 		return
 	}
@@ -106,6 +116,9 @@ func (handler *Handler) executeCandidates(
 	downstream := newCommitTrackingWriter(writer)
 	initialHeaders := downstream.Header().Clone()
 	controller, healthAware := handler.resolver.(endpoint.AttemptController)
+	if test != nil {
+		controller, healthAware = nil, false
+	}
 	schedule := newRecoverySchedule(candidates, body.Replayable())
 	repairedTargets := map[string][]byte{}
 	var last executionFailure
@@ -149,7 +162,11 @@ func (handler *Handler) executeCandidates(
 				convertTo = native
 			}
 		}
-		if planType == contract.PlanTypeRelayKit || convertTo != "" {
+		if test != nil {
+			// Control-plane tests validate the directly declared capability and
+			// deliberately bypass enabled/model-list gates and conversion.
+			plan = test.plan
+		} else if planType == contract.PlanTypeRelayKit || convertTo != "" {
 			if handler.conversionEngine == nil {
 				last = executionFailure{kind: executionFailureCapability, endpointID: candidate.Service.ID}
 				continue
@@ -316,6 +333,9 @@ func (handler *Handler) executeCandidates(
 			}
 			continue
 		}
+		if test != nil && test.observer.Authorization != nil {
+			test.observer.Authorization(headers.Clone())
+		}
 		baseURL, parseErr := url.Parse(candidate.BaseURL)
 		if parseErr != nil {
 			finishPrivacy()
@@ -435,6 +455,10 @@ func (handler *Handler) executeCandidates(
 		if policy.ResponseStartTimeoutSeconds != nil {
 			responseTimeout = time.Duration(*policy.ResponseStartTimeoutSeconds) * time.Second
 		}
+		if test != nil {
+			// The test owns its total deadline, independently of routing policy.
+			responseTimeout = 0
+		}
 		attemptContext := newResponseStartContext(attemptRequest.Context(), responseTimeout)
 		attemptRequest = attemptRequest.WithContext(attemptContext.Context())
 		startWriter := newResponseStartWriter(outWriter, func(status int) {
@@ -465,11 +489,23 @@ func (handler *Handler) executeCandidates(
 				)
 				recordSession.observeOutboundCapture(outbound)
 			}
+			if test != nil && test.observer.Outbound != nil {
+				test.observer.Outbound()
+			}
 		}
-		if recordSession != nil {
-			forwardTarget.WrapResponseBody = recordSession.wrapUpstreamResponseBody
+		forwardTarget.WrapResponseBody = func(status int, header http.Header, body io.ReadCloser) io.ReadCloser {
+			if test != nil && test.observer.WrapResponseBody != nil {
+				body = test.observer.WrapResponseBody(body)
+			}
+			if recordSession != nil {
+				body = recordSession.wrapUpstreamResponseBody(status, header, body)
+			}
+			return body
 		}
 		forwardTarget.HandleResponse = func(response *http.Response) error {
+			if test != nil && test.observer.Response != nil {
+				test.observer.Response(response.StatusCode)
+			}
 			startWriter.markStarted(response.StatusCode)
 			if response.StatusCode >= 400 {
 				action := policy.ActionForStatus(response.StatusCode)
@@ -502,7 +538,7 @@ func (handler *Handler) executeCandidates(
 					}
 				}
 				retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
-				if response.StatusCode == http.StatusTooManyRequests {
+				if test == nil && response.StatusCode == http.StatusTooManyRequests {
 					if cooldown, ok := handler.resolver.(endpoint.RateLimitController); ok {
 						cooldown.RecordRateLimit(candidate, max(retryAfter, time.Duration(policy.InitialDelayMS)*time.Millisecond))
 					}
@@ -559,6 +595,12 @@ func (handler *Handler) executeCandidates(
 			forwardErr = turn.forward(startWriter, attemptRequest, forwardTarget, candidate, upstreamModel)
 		} else {
 			forwardErr = handler.forwarder.Forward(startWriter, attemptRequest, forwardTarget)
+		}
+		if test != nil {
+			var responseErr *transport.ResponseError
+			if errors.As(forwardErr, &responseErr) {
+				test.responseError = forwardErr
+			}
 		}
 		// Compatibility forwarders may not expose ObserveOutbound. The built-in
 		// transport always calls it immediately before I/O.
@@ -630,8 +672,10 @@ func (handler *Handler) executeCandidates(
 				session.noteSucceeded()
 				if session.status == contract.RequestStatusSucceeded {
 					session.noteRecoveryStop("succeeded")
-					handler.rememberResponseAffinity(request.Context(), session, candidate, plan)
-					handler.rememberChannelBinding(request.Context(), session, candidate)
+					if test == nil {
+						handler.rememberResponseAffinity(request.Context(), session, candidate, plan)
+						handler.rememberChannelBinding(request.Context(), session, candidate)
+					}
 				}
 			}
 			return

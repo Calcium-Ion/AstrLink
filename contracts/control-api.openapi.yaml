@@ -832,10 +832,12 @@ paths:
       summary: Send one real text generation request to a saved provider.
       description: |
         Uses saved credentials and a directly configured native or delegated
-        protocol, without local conversion or failover. Disabled providers can
+        protocol, without local conversion, retries, repair resends or failover. Disabled providers can
         be tested; subscriptions must be connected. May consume upstream quota.
         Codex subscriptions require stream=true. Times out after 60 seconds.
-        Does not mutate provider configuration or routing health. Responses are
+        Applies the current gateway privacy policy and response restoration, and
+        writes request records using existing audit settings. Does not enable
+        body capture or mutate provider configuration or routing health. Responses are
         bounded to 1 MiB. Returned text is redacted and limited to 4096 characters
         plus a truncation marker. Inference failures return HTTP 200 with ok=false.
       requestBody:
@@ -6133,29 +6135,29 @@ components:
         duration_ms:
           type: integer
           minimum: 0
-          description: Total test duration including credential preparation, reading and validation.
+          description: Total test duration including credential preparation, privacy processing, reading, validation and request-record finalization.
         response_headers_ms:
           type: [integer, "null"]
           minimum: 0
-          description: Milliseconds from sending the upstream request to receiving response headers, excluding credential preparation. Null when headers were not received.
+          description: Milliseconds from sending the upstream request to receiving response headers, excluding credential preparation and request privacy processing. Null when headers were not received.
         first_token_ms:
           type: [integer, "null"]
           minimum: 0
-          description: Milliseconds from sending the upstream request to the first non-empty visible SSE text. Excludes heartbeats and reasoning. Null for non-streaming responses or when no text arrived. Subtract response_headers_ms for the wait after headers.
+          description: Milliseconds from sending the upstream request to the first non-empty visible SSE text after gateway processing. Excludes heartbeats and reasoning. Null for non-streaming responses or when no text arrived. Subtract response_headers_ms for the wait after headers.
         output:
           type: string
           maxLength: 4097
         raw_response:
           type: string
           maxLength: 65537
-          description: Original upstream body, including JSON or SSE framing and malformed responses. Credential values are redacted; limited to 65536 characters plus a truncation marker. Empty when no body was received. Older Core versions may omit this field.
+          description: Gateway-processed response body after configured privacy restoration, including actual JSON or SSE framing, local error envelopes and malformed responses. Credential values are redacted; limited to 65536 characters plus a truncation marker. Empty when no body was received. Older Core versions may omit this field.
         raw_response_truncated:
           type: boolean
           description: True if the body exceeded the size limit or could not be fully read.
         response_content_type:
           type: string
           maxLength: 257
-          description: Redacted upstream Content-Type, when present.
+          description: Credential-redacted gateway response Content-Type, when present.
         error_code:
           type: string
         message:

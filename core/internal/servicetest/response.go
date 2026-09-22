@@ -17,6 +17,8 @@ var errResponseTooLarge = errors.New("Provider response exceeded the test size l
 
 type responseReadFailure struct{ error }
 
+func (err *responseReadFailure) Unwrap() error { return err.error }
+
 func (err *responseFailure) Error() string { return err.message }
 
 type textBlock struct {

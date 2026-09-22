@@ -41,7 +41,7 @@
   },
   "responseViewer": {
     "copyRaw": "Copy raw response",
-    "rawHint": "Raw upstream response body (credentials redacted)",
+    "rawHint": "Response body after gateway processing (credentials redacted)",
     "truncated": "The response was too large or incomplete. Content below is truncated.",
     "rawUnavailable": "Raw response unavailable. Update and restart the gateway, then test again.",
     "rawEmpty": "No response body received.",
@@ -54,7 +54,7 @@
     "fallback": "Content could not be rendered. Showing the original text."
   },
   "serviceTest": {
-    "subtitle": "Check model availability and response speed",
+    "subtitle": "Privacy filtering and request logging; no retries",
     "settings": "Test settings",
     "results": "Test results",
     "defaultPrompt": "Leave blank to use the default prompt.",
@@ -75,7 +75,7 @@
     "timingHelp": "Timing details",
     "headersHint": "HTTP response: from sending the upstream request until response headers arrive. Includes connection, network and server wait, not just network latency.",
     "firstTokenHint": "First-text wait: from response headers to the first non-empty reply text. Time to first text = HTTP response + first-text wait. Heartbeats, empty events and reasoning fragments do not count.",
-    "totalHint": "Total duration: from test start through response reading and validation, including credential preparation. Unavailable timings appear as —.",
+    "totalHint": "Total duration: from test start through response reading and validation, including credential preparation, privacy processing and record finalization. Both reply and raw response show gateway-processed content. Unavailable timings appear as —.",
     "nonStreamingTiming": "First-text latency is unavailable for non-streaming responses. Enable streaming to measure it.",
     "title": "Test {{name}}",
     "description": "Send one real request using the saved connection. This may consume API provider quota.",

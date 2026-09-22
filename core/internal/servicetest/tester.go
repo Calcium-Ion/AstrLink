@@ -1,5 +1,5 @@
-// Package servicetest sends one bounded inference request directly to a saved
-// provider. It does not mutate configuration, routing health, or request logs.
+// Package servicetest sends one bounded inference request to a saved provider
+// through gateway privacy and recording, without routing, retries or failover.
 package servicetest
 
 import (
@@ -15,9 +15,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
-	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
-	"github.com/QuantumNous/astrlink/core/internal/providerapi"
-	"github.com/QuantumNous/astrlink/core/internal/secretstore"
+	"github.com/QuantumNous/astrlink/core/internal/ingress"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -26,17 +24,22 @@ const maxResponseBytes = 1 << 20
 const maxRawResponseCharacters = 64 << 10
 
 type Tester struct {
-	proxyCredentials    secretstore.SecretStore
-	authorizer          endpoint.Authorizer
-	forwarder           *transport.Forwarder
+	gateway             *ingress.Handler
 	subscriptionBaseURL func(contract.SubscriptionProvider) string
 }
 
 func New(authorizer endpoint.Authorizer, forwarder *transport.Forwarder, subscriptionBaseURL func(contract.SubscriptionProvider) string) *Tester {
-	if forwarder == nil {
-		forwarder = transport.New(nil)
+	dependencies := ingress.Dependencies{Authorizer: authorizer}
+	if forwarder != nil {
+		dependencies.Forwarder = forwarder
 	}
-	return &Tester{authorizer: authorizer, forwarder: forwarder, subscriptionBaseURL: subscriptionBaseURL}
+	return NewWithDependencies(dependencies, subscriptionBaseURL)
+}
+
+// NewWithDependencies shares the gateway's privacy, audit and provider
+// dependencies. Its handler is reachable only from the control-plane tester.
+func NewWithDependencies(dependencies ingress.Dependencies, subscriptionBaseURL func(contract.SubscriptionProvider) string) *Tester {
+	return &Tester{gateway: ingress.NewWithDependencies(dependencies), subscriptionBaseURL: subscriptionBaseURL}
 }
 
 func (tester *Tester) Test(ctx context.Context, service contract.Service, input contract.ServiceTestRequest) (result contract.ServiceTestResult) {
@@ -52,46 +55,12 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	resolved := endpoint.Resolved{Service: service}
-	if service.Kind.IsSubscription() {
-		if service.Subscription == nil || service.Subscription.Status != contract.SubscriptionStatusConnected || tester.subscriptionBaseURL == nil {
-			return fail("not_connected", "Subscription is not connected. Sign in before testing.")
-		}
-		resolved.BaseURL = tester.subscriptionBaseURL(service.Subscription.Provider)
-	}
-	authEndpoint, err := resolved.AuthorizationEndpoint()
-	if err != nil {
-		return fail("invalid_configuration", "Provider connection is invalid.")
-	}
-	ctx, err = networkproxy.Bind(ctx, service, tester.proxyCredentials)
-	if err != nil {
-		return fail("instance_proxy_unavailable", "Instance proxy configuration or authentication is unavailable.")
-	}
-	headers, err := tester.authorizer.Headers(ctx, authEndpoint, nil)
-	if err != nil {
-		if ctx.Err() != nil {
-			return fail("timeout", "Provider test timed out after 60 seconds.")
-		}
-		return fail("credential_unavailable", "Provider credential is unavailable. Update the API key or sign in again.")
-	}
-	// Only redacted, bounded output crosses the control boundary, including
-	// providers that echo request headers in error messages.
-	defer func() {
-		result.Output = redact(result.Output, headers, 4096)
-		result.Message = redact(result.Message, headers, 1000)
-	}()
-	base, err := url.Parse(resolved.EffectiveBaseURL())
-	if err != nil {
-		return fail("invalid_configuration", "Provider URL is invalid.")
-	}
-	base = providerapi.BaseURL(service.Kind, input.Protocol, base)
 	path, payload := testPayload(service.Kind, input)
 	body, _ := json.Marshal(payload)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(body))
 	if err != nil {
 		return fail("invalid_configuration", "Could not build the provider test request.")
 	}
-	request.URL = providerapi.RequestURL(service.Kind, input.Protocol, request.URL)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	if input.Stream {
@@ -103,18 +72,23 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	if service.Kind == contract.ServiceKindClaudeSubscription {
 		request.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
 	}
-	sentAt := time.Now()
-	response, err := tester.forwarder.RoundTrip(request, transport.Target{Service: service, ProxyCredentials: tester.proxyCredentials, BaseURL: base, RequestHeaders: headers})
+	exchange, err := tester.execute(request, service, input)
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail("timeout", "Provider test timed out or was cancelled.")
 		}
 		return fail("connection_failed", "Could not connect to the provider. Check its URL, network and TLS configuration.")
 	}
+	response := exchange.response
 	defer response.Body.Close()
-	result.StatusCode = response.StatusCode
-	headersMS := time.Since(sentAt).Milliseconds()
-	result.ResponseHeadersMS = &headersMS
+	headers := exchange.credentials
+	// Only credential-redacted, bounded output crosses the control boundary.
+	defer func() {
+		result.Output = redact(result.Output, headers, 4096)
+		result.Message = redact(result.Message, headers, 1000)
+	}()
+	result.StatusCode = exchange.upstreamStatus
+	result.ResponseHeadersMS = exchange.headersMS
 	result.ResponseContentType = redact(response.Header.Get("Content-Type"), headers, 256)
 	var captured bytes.Buffer
 	// Capture the actual bytes consumed by the parser, including SSE framing,
@@ -133,6 +107,9 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 		raw, readErr := io.ReadAll(responseBody)
 		if readErr != nil {
 			readFailed = true
+			if errors.Is(readErr, errResponseTooLarge) {
+				return fail("response_too_large", errResponseTooLarge.Error())
+			}
 			if ctx.Err() != nil {
 				return fail("timeout", "Provider test timed out or was cancelled.")
 			}
@@ -145,10 +122,29 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 		if message == "" {
 			message = "Provider returned HTTP " + response.Status + "."
 		}
-		return fail("upstream_error", message)
+		code := "upstream_error"
+		if exchange.upstreamStatus == 0 || response.StatusCode != exchange.upstreamStatus {
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if json.Unmarshal(raw, &envelope) == nil && envelope.Error.Code != "" {
+				code = envelope.Error.Code
+			}
+			switch code {
+			case "upstream_unavailable":
+				code = "connection_failed"
+			case "upstream_timeout":
+				code = "timeout"
+			case "invalid_endpoint_configuration":
+				code = "invalid_configuration"
+			}
+		}
+		return fail(code, message)
 	}
 	result.Output, err = decodeResponse(responseBody, input.Protocol, input.Stream, response.Header.Get("Content-Type"), func() {
-		firstTokenMS := time.Since(sentAt).Milliseconds()
+		firstTokenMS := time.Since(exchange.sentAt).Milliseconds()
 		result.FirstTokenMS = &firstTokenMS
 	})
 	if err != nil {
@@ -185,7 +181,7 @@ func testPayload(kind contract.ServiceKind, input contract.ServiceTestRequest) (
 		body["store"] = false
 		body["instructions"] = "This is a connection test. Reply briefly."
 		if kind == contract.ServiceKindCodexSubscription {
-			return "/responses", body
+			return "/v1/responses", body
 		}
 		body["max_output_tokens"] = 1024
 		return "/v1/responses", body
@@ -237,9 +233,4 @@ func redact(value string, headers http.Header, limit int) string {
 		return string(runes[:limit]) + "…"
 	}
 	return string(runes)
-}
-
-func (tester *Tester) WithProxyCredentials(secrets secretstore.SecretStore) *Tester {
-	tester.proxyCredentials = secrets
-	return tester
 }

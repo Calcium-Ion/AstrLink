@@ -52,9 +52,9 @@ type ServiceTestResult struct {
 	OK         bool       `json:"ok"`
 	StatusCode int        `json:"status_code"`
 	DurationMS int64      `json:"duration_ms"`
-	// Upstream timings start immediately before sending, excluding credential preparation.
+	// Upstream timings exclude credential preparation and request privacy processing.
 	ResponseHeadersMS *int64 `json:"response_headers_ms"`
-	// FirstTokenMS is time to the first non-empty visible text in an SSE stream.
+	// FirstTokenMS is time to the first non-empty visible text after gateway processing.
 	// Nil for non-streaming responses, or when no text has arrived.
 	FirstTokenMS         *int64 `json:"first_token_ms"`
 	Output               string `json:"output"`
