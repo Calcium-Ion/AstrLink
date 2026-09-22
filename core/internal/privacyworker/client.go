@@ -359,10 +359,10 @@ func (client *Client) ensureProcess(
 		stdin:          stdin,
 		stdout:         stdout,
 		reader:         bufio.NewReader(stdout),
-		done:           make(chan error, 1),
+		done:           make(chan struct{}),
 	}
 	go func() {
-		process.done <- command.Wait()
+		_ = command.Wait()
 		close(process.done)
 	}()
 	client.starting = process
@@ -538,7 +538,7 @@ type workerProcess struct {
 	stdin          io.WriteCloser
 	stdout         io.ReadCloser
 	reader         *bufio.Reader
-	done           chan error
+	done           chan struct{}
 	stopOnce       sync.Once
 }
 

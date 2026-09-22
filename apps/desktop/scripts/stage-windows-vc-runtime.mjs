@@ -55,6 +55,10 @@ export async function stageWindowsVcRuntime({
   // In addition to the pinned hash, validate Microsoft's signature on the build host.
   // Pass the path through the environment so it is never interpolated into PowerShell.
   if (process.platform === "win32") {
+    // Bun inherits PowerShell 7 module paths that Windows PowerShell cannot load.
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"),
+    );
     execFileSync("powershell.exe", [
       "-NoProfile", "-NonInteractive", "-Command",
       "$ErrorActionPreference = 'Stop'; " +
@@ -64,7 +68,7 @@ export async function stageWindowsVcRuntime({
       "{ throw 'Visual C++ Redistributable must have a valid Microsoft signature' }",
     ], {
       stdio: "inherit",
-      env: { ...process.env, ASTRLINK_VC_REDIST_FILE: destination },
+      env: { ...env, ASTRLINK_VC_REDIST_FILE: destination },
     });
   }
 

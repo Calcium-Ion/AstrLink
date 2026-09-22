@@ -219,6 +219,8 @@ describe("RequestRecords", () => {
   let reactRoot: Root;
 
   beforeEach(() => {
+    // Poll only when a test advances time, even on slow CI runners.
+    vi.useFakeTimers();
     (
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT?: boolean;
