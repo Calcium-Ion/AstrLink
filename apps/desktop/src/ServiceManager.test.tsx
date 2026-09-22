@@ -677,6 +677,44 @@ describe("ServiceManager", () => {
     expect(container.querySelector('[data-testid="subscription-usage-reset"]')).toBeNull();
   });
 
+  it.each([
+    ["codex_subscription", "openai_codex", "pro", "Pro 20x"],
+    ["claude_subscription", "claude_code", "pro", "Pro"],
+    ["grok_subscription", "xai_grok", "supergrok_heavy", "SuperGrok Heavy"],
+  ] as const)("shows the %s plan badge", async (kind, provider, planType, label) => {
+    const connected: Service = {
+      ...codexService,
+      kind,
+      subscription: { provider, status: "connected" },
+    };
+    bridgeMocks.getServiceUsage.mockResolvedValue({
+      service_id: connected.id,
+      fetched_at: timestamp,
+      plan_type: planType,
+      primary: { used_percent: 25 },
+    });
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[connected]}
+          view={{ kind: "list" }}
+        />,
+      );
+    });
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id);
+    expect(container.querySelector('[data-testid="subscription-plan"]')?.textContent).toBe(label);
+    expect(container.querySelector('[data-testid="subscription-usage-reset"]')).toBeNull();
+  });
+
   it("shows rolling quota and reset on a connected Codex row", async () => {
     const connected: Service = {
       ...codexService,

@@ -1,4 +1,5 @@
 import { i18n } from "./i18n";
+import type { SubscriptionProvider } from "./subscription-model";
 
 const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
 const rfc3339Pattern =
@@ -295,22 +296,44 @@ export function parseSubscriptionUsageReset(value: unknown): SubscriptionUsageRe
   return parsed;
 }
 
-const planTypeLabels: Record<string, string> = {
-  plus: "Plus",
-  pro: "Pro",
-  prolite: "Pro",
-  go: "Go",
-  free: "Free",
-  team: "Team",
-  business: "Business",
-  enterprise: "Enterprise",
-  edu: "Edu",
-  education: "Edu",
+const planTypeLabels: Record<SubscriptionProvider, Record<string, string>> = {
+  openai_codex: {
+    plus: "Plus",
+    pro: "Pro 20x",
+    prolite: "Pro 5x",
+    go: "Go",
+    free: "Free",
+    team: "Team",
+    business: "Business",
+    enterprise: "Enterprise",
+    edu: "Edu",
+    education: "Edu",
+  },
+  claude_code: {
+    pro: "Pro",
+    max: "Max",
+    max_5x: "Max 5×",
+    max_20x: "Max 20×",
+    free: "Free",
+    team: "Team",
+    enterprise: "Enterprise",
+  },
+  xai_grok: {
+    free: "Free",
+    supergrok: "SuperGrok",
+    supergrok_pro: "SuperGrok Pro",
+    supergrok_heavy: "SuperGrok Heavy",
+  },
 };
 
-export function planTypeLabel(planType: string | undefined): string | null {
+export function planTypeLabel(
+  planType: string | undefined,
+  provider?: SubscriptionProvider,
+): string | null {
   if (!planType) return null;
-  return planTypeLabels[planType.toLowerCase()] ?? planType;
+  const labels = provider && planTypeLabels[provider];
+  const key = planType.toLowerCase();
+  return labels && Object.hasOwn(labels, key) ? labels[key] : planType;
 }
 
 export function windowLabel(

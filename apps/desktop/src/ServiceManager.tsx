@@ -1515,6 +1515,7 @@ export function ServiceManager({
                   const acting = actionID === service.id;
                   const plan = planTypeLabel(
                     usageByService[service.id]?.usage?.plan_type,
+                    subscription?.provider,
                   );
                   const tone = serviceDot(service);
                   return (
