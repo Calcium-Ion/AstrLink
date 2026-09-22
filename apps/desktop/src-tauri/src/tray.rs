@@ -1771,9 +1771,16 @@ mod tests {
         assert!(model
             .tooltip
             .starts_with("AstrLink · 网关异常退出 · astrlink-core"));
-        assert!(model.tooltip.ends_with('…'));
+        assert!(model.tooltip.contains('…'), "{}", model.tooltip);
         assert_eq!(model.icon, TrayIconState::Idle);
+        // The alert mark is the status-item title on macOS; every other
+        // platform has no title slot and folds it into the tooltip.
         assert_eq!(model.title.as_deref(), Some("!"));
+        if cfg!(target_os = "macos") {
+            assert!(model.tooltip.ends_with('…'), "{}", model.tooltip);
+        } else {
+            assert!(model.tooltip.ends_with("… · !"), "{}", model.tooltip);
+        }
     }
 
     #[test]
