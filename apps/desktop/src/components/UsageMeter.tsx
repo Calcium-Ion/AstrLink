@@ -29,14 +29,14 @@ export function UsageMeter({
 }) {
   const percent = Number.isFinite(value) ? Math.max(0, value) : 0;
   return (
-    <div className="grid min-w-0 gap-1.5">
+    <div className="grid min-w-0 gap-1">
       <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
         <span className="min-w-0 truncate" title={label}>
           {label}
         </span>
         <span
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 font-medium tabular-nums",
+            "inline-flex min-w-0 shrink items-center gap-1 font-medium tabular-nums",
             tone === "destructive" && "text-destructive",
             tone === "warning" && "text-warning-foreground",
           )}
@@ -58,6 +58,11 @@ export function UsageMeter({
             </TooltipProvider>
           ) : null}
           <span aria-hidden="true">{Math.round(percent)}%</span>
+          {caption ? (
+            <span className="min-w-0 truncate font-normal text-muted-foreground">
+              · {caption}
+            </span>
+          ) : null}
         </span>
       </div>
       <Progress
@@ -67,9 +72,8 @@ export function UsageMeter({
         tone={tone}
         value={Math.min(100, percent)}
       />
-      {caption || action ? (
-        <div className="flex min-w-0 items-center justify-between gap-2 text-micro text-muted-foreground">
-          <span className="min-w-0">{caption}</span>
+      {action ? (
+        <div className="flex min-w-0 items-center justify-end gap-2 text-micro text-muted-foreground">
           {action}
         </div>
       ) : null}

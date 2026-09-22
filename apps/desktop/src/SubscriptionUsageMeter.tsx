@@ -37,17 +37,16 @@ export function SubscriptionUsageMeter({
     return (
       <div
         aria-busy="true"
-        className="grid gap-2"
+        className="grid gap-1.5"
         data-testid="subscription-usage"
       >
         {[0, 1].map((index) => (
-          <div aria-hidden="true" className="grid gap-1.5" key={index}>
+          <div aria-hidden="true" className="grid gap-1" key={index}>
             <div className="flex items-center justify-between">
               <span className="h-3 w-12 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
-              <span className="h-3 w-8 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
+              <span className="h-3 w-24 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
             </div>
             <span className="h-1 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
-            <span className="h-2.5 w-20 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
           </div>
         ))}
       </div>
@@ -73,9 +72,9 @@ export function SubscriptionUsageMeter({
   const extras = usage.additional_rate_limits ?? [];
   const resetCount = usage.rate_limit_reset_credits?.available_count ?? 0;
   return (
-    <div className="grid min-w-0 gap-2" data-testid="subscription-usage">
+    <div className="grid min-w-0 gap-1.5" data-testid="subscription-usage">
       {usage.primary || usage.secondary ? (
-        <div className="grid gap-2.5">
+        <div className="grid gap-1.5">
           <UsageWindowRow
             limitReached={usage.limit_reached}
             now={now}
@@ -95,10 +94,10 @@ export function SubscriptionUsageMeter({
         </p>
       ) : null}
       {extras.length > 0 ? (
-        <div className="grid gap-2.5" data-testid="subscription-usage-extras">
+        <div className="grid gap-1.5" data-testid="subscription-usage-extras">
           {extras.map((extra) => (
             <div
-              className="grid min-w-0 gap-2 border-t pt-2"
+              className="grid min-w-0 gap-1 border-t pt-1.5"
               key={extra.limit_name}
             >
               <AdditionalLimitRows extra={extra} now={now} />
