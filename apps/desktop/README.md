@@ -37,6 +37,8 @@
 
 设置中的 Agent 诊断功能可为支持的工具安装 AstrLink 调试技能，用于读取请求记录和执行轨迹。分享诊断结果前，请检查是否包含私人信息。
 
+Codex 使用公共目录 `~/.agents/skills/astrlink-debug`，不再另装一份到 `~/.codex/skills`。已安装用户在升级后启动 AstrLink 或重新安装 Agent 诊断功能时，会自动迁移 AstrLink 管理的旧副本：公共目录已存在时，旧副本连同自定义内容保存在 `~/.astrlink/agent-skill-backups`；仅有旧副本时，将其迁入公共目录。非 AstrLink 管理的目录不会自动迁移。迁移后请新建 Codex 会话，已有会话中的技能清单可能仍保留旧内容。
+
 ## 安装依赖
 
 | 平台 | 说明 |
