@@ -1,47 +1,70 @@
-# 隐私检测与思考续传数据
+# 隐私检测如何处理思考与续传数据
 
-思考签名、加密推理和加密续传内容属于上游协议状态。隐私过滤一旦将其替换，即使只替换部分字符，也可能导致下一轮 `invalid_encrypted_content` 或签名校验失败。它们必须在抽取正文时排除，不能依赖隐私模型的置信度或密文前缀。
+[返回使用指南](README.md)
 
-`core/internal/privacy/continuation.go` 从请求根结构识别这些字段，再由 `document.go` 在所有检测器之前跳过对应字符串。原有 Responses 专项修复已收拢到这一入口；原测试保留。规则、自定义规则、模型及 block/warn/redact 共用同一边界。重写只修改实际抽取的字符串，所以签名原始 JSON 字节也不被改写。
+有些模型会在响应中返回思考签名或加密的推理、续传数据。客户端在下一轮请求中回传这些内容，上游才能继续之前的推理。它们属于协议状态，不是普通聊天正文；即使只改动几个字符，也可能导致 `invalid_encrypted_content` 或签名校验失败。
 
-## 已实现的协议范围
+AstrLink 会识别受支持协议中这些数据所在的位置，并在隐私检测前将其排除，保持原样转发。这项处理自动生效，适用于内置规则、自定义规则和本地隐私模型，也适用于提醒、拦截和脱敏三种动作。
+
+## 哪些内容会保留
+
+| 协议 | 原样保留的内容 |
+| --- | --- |
+| OpenAI Responses / Responses Compact | 推理、上下文压缩及受支持工具结果中的加密续传内容 |
+| Anthropic Messages | 思考签名、带非空签名的完整思考文本，以及隐藏思考块中的数据 |
+| Gemini Generate Content | 模型响应片段中的思考签名 |
+| Chat Completions 兼容格式 | 受支持的 Anthropic 思考块、OpenRouter 推理签名与密文、Gemini 工具调用签名 |
+
+Anthropic 要求带签名的思考块完整且未经修改。因此，其中的思考文本会与签名一起保留；只保留签名、修改思考文字，也可能导致上游返回 400。OpenRouter 兼容格式中带非空签名的推理文本也会原样保留。
+
+## 哪些内容仍会检测
+
+普通用户消息、助手回答、工具参数和工具结果仍在检测范围内。没有签名的推理文本、Responses 和 OpenRouter 的摘要，以及 Gemini 响应片段中的普通文本，也会继续检测。
+
+识别依据是**协议结构中的位置、角色和类型**，而不是只看字段名或文字内容。例如：
+
+- 在用户消息中粘贴 `{"type":"reasoning","encrypted_content":"..."}`，不会让这段文字跳过检测。
+- 普通工具参数即使名为 `signature`、`data`、`thoughtSignature` 或 `encrypted_content`，其值仍会检测。
+- 与签名完全相同的字符串，如果出现在普通正文中，仍会检测。
+- 角色、层级或类型不匹配的对象，以及用 `{"0": ...}` 冒充数组的结构，不会被当作受保护的续传数据。
+
+这些规则按协议结构生效，不需要逐家厂商配置白名单。其他提供商使用相同的受支持结构时，也适用同样的处理。
+
+## 遇到续接或签名错误时
+
+如果客户端提示 `invalid_encrypted_content`、签名无效，或在第二轮请求时报错，可以先检查：
+
+1. 客户端是否完整回传了上游要求的思考块或加密续传数据。
+2. 中间代理、协议转换或客户端是否删除、改写了这些字段。
+3. 当前请求是否使用下方列出的协议结构。其他结构不能假定已被支持。
+
+需要定位失败阶段时，可在 **请求记录** 中查看上游错误。对于依赖原提供商状态的续接，还应核对实际使用的提供商，参见[会话绑定指南](provider-stickiness.md)。
+
+AstrLink 不持有上游签名密钥，不能验证签名真伪。原样保留只表示不修改该协议位置的数据，最终有效性仍由上游校验。
+
+## 协议字段参考
+
+以下信息供客户端或网关集成时核对。数组必须是实际的 JSON 数组，角色、类型和字段位置需要同时匹配。
 
 | 入站协议 | 结构位置 | 原样保留的字段 |
 | --- | --- | --- |
-| Responses / Responses compact | `input[]`，type 为 `reasoning`、`compaction` 或现有兼容 `compaction_summary`；无 role 或 assistant role | `encrypted_content` |
-| Responses / Responses compact | `input[]` 中 `function_call_output` / `custom_tool_call_output` 的 `output[]`，part type 为 `encrypted_content` | part 的 `encrypted_content` |
-| Anthropic Messages | `messages[]` assistant 的 `content[]`，type 为 `thinking` | `signature`，以及非空签名对应的 `thinking` 文本 |
-| Anthropic Messages | 同位置，type 为 `redacted_thinking` | `data` |
-| Gemini generateContent | `contents[]` model 的 `parts[]` | `thoughtSignature` / SDK 字段 `thought_signature` |
-| Chat Completions 兼容 Anthropic | assistant 的 `content[]` 或 LiteLLM `thinking_blocks[]` | 上述 thinking / redacted_thinking 字段 |
-| Chat Completions 兼容 OpenRouter | assistant 的 `reasoning_details[]`，type 为 `reasoning.encrypted` | `data` |
-| Chat Completions 兼容 OpenRouter | 同位置，type 为 `reasoning.text` | `signature`，以及非空签名对应的 `text` |
-| Chat Completions 兼容 Gemini | assistant 的 `tool_calls[]`，type 为 `function` | `extra_content.google.thought_signature`，call 或 function 下 `provider_specific_fields.thought_signature` |
+| Responses / Responses Compact | `input[]`，`type` 为 `reasoning`、`compaction` 或兼容的 `compaction_summary`；无 `role` 或 `role` 为 `assistant` | `encrypted_content` |
+| Responses / Responses Compact | `input[]` 中 `function_call_output` / `custom_tool_call_output` 的 `output[]`；外层无 `role` 或为 `assistant`，输出片段的 `type` 为 `encrypted_content` | 片段的 `encrypted_content` |
+| Anthropic Messages | `messages[]` 中 `assistant` 消息的 `content[]`，`type` 为 `thinking` | `signature`，以及非空签名对应的 `thinking` 文本 |
+| Anthropic Messages | 同一位置，`type` 为 `redacted_thinking` | `data` |
+| Gemini Generate Content | `contents[]` 中 `model` 消息的 `parts[]` | `thoughtSignature` 或 SDK 字段 `thought_signature` |
+| Chat Completions 兼容 Anthropic | `assistant` 消息的 `content[]` 或 LiteLLM `thinking_blocks[]` | 与 Anthropic `thinking` / `redacted_thinking` 相同的字段 |
+| Chat Completions 兼容 OpenRouter | `assistant` 消息的 `reasoning_details[]`，`type` 为 `reasoning.encrypted` | `data` |
+| Chat Completions 兼容 OpenRouter | 同一位置，`type` 为 `reasoning.text` | `signature`，以及非空签名对应的 `text` |
+| Chat Completions 兼容 Gemini | `assistant` 消息的 `tool_calls[]`，`type` 为 `function` | `extra_content.google.thought_signature`，以及调用对象或其 `function` 对象下的 `provider_specific_fields.thought_signature` |
 
-Anthropic 要求回传完整、未修改的 thinking block，修改其文字同样可能报 400。因此，带非空签名的这个 block 中的 thinking 文本与签名一起保留。普通 assistant 回答、无签名推理文本、Responses summary、OpenRouter summary，以及 Gemini part 里的普通 text 仍被检查。
+当前没有 Gemini Interactions、Bedrock Converse 等独立入站协议。其他结构以及厂商未来新增的字段不在上述支持范围内。
 
-这不是按厂商名称切换的白名单。使用以上相同协议结构的其他厂商自动适用。当前协议注册表没有 Gemini Interactions、Bedrock Converse 等独立入站协议；其其他载体与未来新字段不在已验证范围。新增载体必须先确认类型及结构位置，再增加抽取、伪造字段和回传测试，不能宣称所有未来厂商均已覆盖。
+## 相关协议资料
 
-## 不允许通过同名字段绕过
-
-以下内容继续正常检测：
-
-- 用户文字中粘贴的 `{"type":"reasoning","encrypted_content":"..."}`。
-- 普通消息、工具参数及工具结果中任意命名为 `signature`、`data`、`thoughtSignature`、`encrypted_content` 的值。
-- 将数组伪装成 `{"0": ...}` 的对象，或错误角色、错误层级和错误 type。
-- 与签名内容恰好完全相同、但位于普通正文里的字符串。
-
-协议结构只能确定该位置应当携带上游状态；AstrLink 不持有上游签名密钥，不能自行证明一个签名是真的。签名真伪仍由上游校验，不能把排除检测描述为密码学验证。
-
-## 证据与回归
-
-核实日期：2026-09-22。没有读取或上传私人请求记录，所有回归密文和密钥均为测试构造值。
-
-- [OpenAI reasoning 文档](https://developers.openai.com/api/docs/guides/reasoning)：stateless 的 `encrypted_content` 用于后续调用，输出历史需回传。
-- [Anthropic preserving thinking blocks](https://platform.claude.com/docs/en/build-with-claude/thinking#preserving-thinking-blocks)：thinking blocks 必须 complete and unmodified；修改可产生 400。该页也说明 `signature`、`redacted_thinking` 和流式 `signature_delta`。
-- [Google thinking 文档](https://ai.google.dev/gemini-api/docs/thinking#signatures)：generateContent 签名附着于 part，可以出现在函数调用或最终响应部分。
-- [Google Gen AI Python 类型](https://github.com/googleapis/python-genai/blob/main/google/genai/types.py)：`Part.thought_signature` 为用于后续请求的 opaque signature。
-- [Google ADK 兼容实现](https://github.com/google/adk-python/blob/main/src/google/adk/models/lite_llm.py)：`_extract_thought_signature_from_tool_call` 及 outbound tool-call 实现定义 `extra_content.google` / `provider_specific_fields`，也保留 Anthropic `thinking_blocks`。tool-call ID 内的 `__thought__` 载体已有协议 ID 排除规则，无需按字符串前缀另增规则。
-- [OpenRouter reasoning details](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)：定义 `reasoning.encrypted.data` 和 `reasoning.text.signature`。
-
-自动回归覆盖抽取、模型输入、相同字符串不同位置、真实敏感正文继续替换、请求原始字节保留、warn/block 不误触发、JSON/SSE 响应恢复、Anthropic signature delta，以及既有 Responses 双轮历史回放。没有连接厂商在线 API，不把离线回归称为在线厂商验收。
+- [OpenAI 推理说明](https://developers.openai.com/api/docs/guides/reasoning)：加密推理内容如何在后续调用中使用。
+- [Anthropic 思考块保留要求](https://platform.claude.com/docs/en/build-with-claude/thinking#preserving-thinking-blocks)：完整回传思考块、签名与隐藏思考数据。
+- [Google 思考签名说明](https://ai.google.dev/gemini-api/docs/thinking#signatures)：响应片段中的签名及后续回传要求。
+- [Google Gen AI Python 类型](https://github.com/googleapis/python-genai/blob/main/google/genai/types.py)：SDK 中的 `thought_signature` 字段。
+- [Google ADK 兼容实现](https://github.com/google/adk-python/blob/main/src/google/adk/models/lite_llm.py)：Chat Completions 兼容格式中的签名和思考块。
+- [OpenRouter 推理详情](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)：`reasoning.encrypted` 和 `reasoning.text` 的定义。

@@ -1,23 +1,46 @@
-# Unpriced calls
+# 理解未计价调用与费用估算
 
-AstrLink estimates API-equivalent cost from recorded upstream usage and the
-official price snapshot selected for each call. This estimate is separate from
-the upstream service's actual charge. Calls without enough data stay unpriced
-and are excluded from the displayed monetary total.
+[返回使用指南](README.md)
 
-Gemini usage reads `promptTokensDetails` and `candidatesTokensDetails` for audio
-counts. A complete modality breakdown can establish zero audio tokens; a missing
-or partial breakdown remains unknown. Output totals include thinking tokens.
+AstrLink 根据上游返回的用量，以及为该次调用选定的官方价格快照，估算按 API 价格折算的费用。**这项估算不等于提供商实际扣费，也不能替代账单。**
 
-Some price formulas, including Gemini 3.7 Flash's current formula, charge text
-and audio input at the same rate. The evaluator uses exact rational arithmetic
-to prove whether the split can affect the amount or selected tier. If it cannot,
-the known total is sufficient even without audio details. Different audio rates,
-audio-dependent tiers, missing usage and interrupted streams are not guessed.
+如果数据不足以可靠计算金额，调用会保持未计价，界面会显示“待计价”或“部分待计价”。这些调用不计入金额合计，但不代表免费或没有消耗额度；存在未计价调用时，金额合计可能不包含全部用量对应的费用。
 
-On startup and every five minutes, the pricing worker retries retained ledger
-entries marked `missing_audio_usage` or `missing_audio_cache_partition` against
-their original price and usage snapshots. Successful repairs are counted as
-revalued. This also works after detailed request logs have been deleted and does
-not require a catalog update. Already priced amounts and account ownership are
-unchanged. Entries that still need unknown data remain unpriced.
+## 为什么有用量却没有金额
+
+有些模型对文本、音频和缓存使用不同价格。即使已经知道总 token 数，只要无法确认各部分如何计费，就可能无法计算准确金额。
+
+| 情况 | 如何处理 |
+| --- | --- |
+| 缺少用量，或流式响应中断后没有拿到完整用量 | 保持未计价，不猜测缺失数据 |
+| 文本与音频价格不同，但没有完整的音频用量 | 保持未计价 |
+| 价格档位取决于音频用量，但音频用量未知 | 保持未计价 |
+| 缓存与音频用量的交叉部分会影响金额，但数据不足 | 保持未计价 |
+| 已知总用量，且文本与音频的拆分不会影响金额或价格档位 | 可以使用总用量计算 |
+
+例如，假设一个价格公式对文本输入和音频输入采用相同单价，且不存在受拆分影响的价格档位，那么知道输入总量就足以计价。如果两种输入的单价不同，则仍需各自的用量。
+
+AstrLink 会校验价格公式，只有确认缺失的拆分信息不会影响结果时才计算金额。
+
+## Gemini 音频用量的处理
+
+Gemini 响应通过 `promptTokensDetails` 和 `candidatesTokensDetails` 提供不同内容类型的用量。完整的明细可以确认音频 token 为零；缺失或不完整的明细只能视为未知，不能按零处理。输出总量包含思考 token。
+
+因此，“没有音频明细”并不直接等于“不能计价”。是否能计价，还取决于该次调用使用的价格公式是否需要这些明细。
+
+## 哪些调用会自动补算
+
+启动时以及之后每隔 5 分钟，AstrLink 会重新检查本地费用账本中因以下原因未计价的记录：
+
+| 原因标识 | 含义 |
+| --- | --- |
+| `missing_audio_usage` | 缺少计算所需的音频用量 |
+| `missing_audio_cache_partition` | 缺少音频与缓存用量的拆分信息 |
+
+补算使用调用原有的价格和用量快照。如果这些信息已经足以确定金额，就会补上费用，并计入重新计价数量（`revalued`）；如果仍然缺少必要数据，则继续保持未计价。
+
+只要费用账本中的记录仍在，即使详细请求日志已经删除，也可以进行这类补算。不需要为此更新价格目录，已经计价的金额和记录所属账号也不会改变。
+
+## 需要手动处理吗
+
+这类补算会自动执行，无需为了补算重新发送推理请求。如果记录持续未计价，说明现有数据仍不足以确定金额。核对实际支出时，请以提供商账单为准。
