@@ -262,7 +262,7 @@ describe("Overview", () => {
     expect(container.querySelector("#usage-heading")).toBeNull();
     expect(container.textContent).toContain("工作区已就绪");
     await act(async () => {
-      button("添加服务").click();
+      button("添加 API 提供商").click();
       button("创建访问令牌").click();
     });
     expect(onAddService).toHaveBeenCalledOnce();
@@ -282,7 +282,7 @@ describe("Overview", () => {
     expect(container.textContent).not.toContain("尚未配置");
     expect(container.textContent).not.toContain("创建访问令牌");
     expect(container.textContent).not.toContain("重启网关");
-    await act(async () => button("查看 API 服务").click());
+    await act(async () => button("查看 API 提供商").click());
     expect(onManageServices).toHaveBeenCalledOnce();
   });
 
@@ -293,7 +293,7 @@ describe("Overview", () => {
     });
     expect(container.textContent).toContain("正在读取工作区");
     expect(container.textContent).not.toContain("工作区已就绪");
-    expect(container.textContent).not.toContain("添加服务");
+    expect(container.textContent).not.toContain("添加 API 提供商");
     expect(container.querySelector("[data-slot='loading-state']")).toBeTruthy();
   });
 
@@ -411,7 +411,7 @@ describe("Overview", () => {
     expect(
       container.querySelector("[data-testid='billing-overview']"),
     ).toBeTruthy();
-    expect(container.textContent).toContain("按服务");
+    expect(container.textContent).toContain("按 API 提供商");
     expect(container.textContent).toContain("按模型");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("gpt-4o");

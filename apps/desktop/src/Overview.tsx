@@ -203,7 +203,7 @@ export function Overview({
       snapshot?.ready?.control_url ?? t("overview.unassigned"),
     ],
     [
-      t("overview.controlContract"),
+      t("overview.controlApiVersion"),
       snapshot?.version?.control_api_version ?? t("overview.pendingHandshake"),
     ],
     [

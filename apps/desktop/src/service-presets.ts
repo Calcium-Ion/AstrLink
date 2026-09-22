@@ -232,8 +232,8 @@ const profileDefinitions: Readonly<
   openai_compatible: {
     id: "openai_compatible",
     label: "OpenAI 兼容（Chat / Completions）",
-    description: "适用于提供标准 OpenAI Chat、Completions 与 Models 接口的服务。",
-    defaultName: "OpenAI 兼容服务",
+    description: "适用于提供标准 OpenAI Chat、Completions 与 Models 接口的 API 提供商。",
+    defaultName: "OpenAI 兼容 API 提供商",
     kind: "openai_compatible",
     baseURL: "",
     baseURLPlaceholder: "https://api.example.com/v1",
@@ -333,8 +333,8 @@ const profileDefinitions: Readonly<
   custom: {
     id: "custom",
     label: "自定义",
-    description: "仅在服务不符合上述类型时使用；需要在高级配置中声明能力。",
-    defaultName: "自定义服务",
+    description: "仅在 API 提供商不符合上述类型时使用；需要在高级配置中声明能力。",
+    defaultName: "自定义 API 提供商",
     kind: "custom",
     baseURL: "",
     baseURLPlaceholder: "https://api.example.com",

@@ -203,8 +203,8 @@ func (m *Manager) Run(ctx context.Context, logf func(string, ...any)) {
 				logf("price sync: %v", err)
 			}
 		}
-		// Calls recorded before their first price sync are filled automatically.
-		// Already valued entries retain their original price version.
+		// Fill missing prices and retry audio breakdowns after evaluator fixes,
+		// even when the catalog has not changed. Already valued entries stay fixed.
 		if pending, ok := m.store.(interface {
 			PriceUnpriced(context.Context) (int, error)
 		}); ok && ctx.Err() == nil {

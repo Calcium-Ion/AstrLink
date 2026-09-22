@@ -8,6 +8,7 @@ export function SegmentedControl<T extends string>({
   options,
   value,
   onValueChange,
+  disabled = false,
   variant = "default",
 }: {
   label: string;
@@ -19,11 +20,13 @@ export function SegmentedControl<T extends string>({
   }[];
   value: T;
   onValueChange: (value: T) => void;
+  disabled?: boolean;
   variant?: "default" | "line";
 }) {
   return (
     <ToggleGroup.Root
       aria-label={label}
+      disabled={disabled}
       className={cn(
         "inline-flex max-w-full flex-wrap items-center",
         variant === "line" ? "gap-4" : "gap-0.5 rounded-md bg-muted p-0.5",
@@ -38,7 +41,7 @@ export function SegmentedControl<T extends string>({
       {options.map((option) => (
         <ToggleGroup.Item
           className={cn(
-            "inline-flex h-7 items-center justify-center gap-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+            "inline-flex h-7 items-center justify-center gap-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-45",
             variant === "line"
               ? "border-b-2 border-transparent px-0.5 data-[state=on]:border-primary data-[state=on]:text-primary"
               : "rounded-sm px-2.5 data-[state=on]:bg-background data-[state=on]:text-foreground",

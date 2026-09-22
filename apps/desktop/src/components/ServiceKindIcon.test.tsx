@@ -33,19 +33,19 @@ describe("ServiceKindIcon", () => {
 
     const icon = container.querySelector(`[role="img"][aria-label="${label}"]`);
     expect(icon).not.toBeNull();
-    expect(icon?.querySelector("svg")).not.toBeNull();
+    expect(icon?.querySelector("svg, img")).not.toBeNull();
   });
 
-  it("keeps NewAPI smaller inside a fixed box so it matches padded brand marks", async () => {
+  it("uses the New API asset's built-in padding inside a fixed box", async () => {
     await act(async () => {
       root.render(<ServiceKindIcon kind="newapi" size={20} />);
     });
 
     const icon = container.querySelector('[role="img"]') as HTMLElement;
-    const svg = icon.querySelector("svg");
+    const image = icon.querySelector("img");
     expect(icon.style.width).toBe("20px");
     expect(icon.style.height).toBe("20px");
-    expect(svg?.getAttribute("width")).toBe("15");
-    expect(svg?.getAttribute("height")).toBe("15");
+    expect(image?.getAttribute("width")).toBe("20");
+    expect(image?.getAttribute("height")).toBe("20");
   });
 });

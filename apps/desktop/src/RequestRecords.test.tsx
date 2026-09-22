@@ -36,11 +36,13 @@ import {
   type RequestSession,
 } from "./request-record-model";
 import type { RoutableService } from "./service-model";
+import type { RequestService } from "./request-service-model";
 import { i18n } from "./i18n";
 
-const service: RoutableService = {
+const service: RoutableService & RequestService = {
   id: "service_01",
   name: "Primary gateway",
+  kind: "newapi",
   enabled: true,
   models: ["gpt-4.1"],
   capabilities: [
@@ -317,12 +319,12 @@ describe("RequestRecords", () => {
     container.remove();
   });
 
-  const renderRecords = async (session = "session-1") => {
+  const renderRecords = async (session = "session-1", services = [service]) => {
     await act(async () => {
       reactRoot.render(
         <RequestRecords
           coreSessionKey={session}
-          services={[service]}
+          services={services}
           isReady
         />,
       );
@@ -363,6 +365,28 @@ describe("RequestRecords", () => {
     expect(container.textContent).not.toContain("次调用");
     expect(container.textContent).toContain("120 ms");
     expect(container.textContent).not.toMatch(/\d{3,}m /);
+    const provider = container.querySelector(`[aria-label="${i18n.t("records.provider")}: Primary gateway"]`);
+    expect(provider?.querySelector('[aria-label="New API"]')).not.toBeNull();
+    expect(provider?.getAttribute("title")).toContain(service.id);
+  });
+
+  it("distinguishes pending selection, an unrouted result and a removed provider", async () => {
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, { id: "pending", service_id: null, status: "pending" }),
+        sessionFromRecord(firstRecord, { id: "blocked", service_id: null, status: "blocked" }),
+        sessionFromRecord(firstRecord, { id: "removed", service_id: "service_removed" }),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const labels = [...container.querySelectorAll('[data-testid="request-session-row"] [data-testid="request-service-label"]')]
+      .map(node => node.textContent);
+    expect(labels).toEqual([
+      `${i18n.t("records.provider")}${i18n.t("records.selectingService")}`,
+      `${i18n.t("records.provider")}${i18n.t("records.noService")}`,
+      `${i18n.t("records.provider")}service_removed`,
+    ]);
   });
 
   it("shows cumulative runtime in both the list and detail across a long idle gap", async () => {
@@ -433,6 +457,7 @@ describe("RequestRecords", () => {
         parent_request_id: root.id,
         attempt_index: 1,
         child_count: 0,
+        service_id: "service_backup",
       },
       {
         ...secondRecord,
@@ -455,8 +480,9 @@ describe("RequestRecords", () => {
       next_cursor: null,
     });
 
-    await renderRecords();
+    await renderRecords("session-1", [service, { ...service, id: "service_backup", name: "Backup gateway" }]);
     expect(container.textContent).toContain("1 轮 · 3 次调用");
+    expect(container.querySelector(`[aria-label="${i18n.t("records.latestProvider")}: Primary gateway"]`)).not.toBeNull();
     await act(async () => {
       (
         container.querySelector(
@@ -473,6 +499,9 @@ describe("RequestRecords", () => {
     expect(container.textContent).toContain("子请求 1");
     expect(container.textContent).toContain("子请求 2");
     expect(container.querySelectorAll('[data-testid="trajectory-row"]').length).toBeGreaterThan(0);
+    const retryProvider = container.querySelector(`[data-testid="trajectory-row"][data-chip="RETRY"][data-request-id="${children[0].id}"] [data-testid="request-service-label"]`);
+    expect(retryProvider?.textContent).toContain("Backup gateway");
+    expect(container.querySelector('[data-testid="trajectory-row"][data-chip="UPSTREAM"] [data-testid="request-service-label"]')?.textContent).toContain("Primary gateway");
 
     bridgeMocks.getRequestAuditContent.mockClear();
     await act(async () => {
@@ -487,6 +516,7 @@ describe("RequestRecords", () => {
     expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledWith(
       children[0].id,
     );
+    expect(container.querySelector('[data-testid="trajectory-inspector"] [data-testid="request-service-label"]')?.textContent).toContain("Backup gateway");
   });
 
   it("copies skill diagnostic metadata without captured bodies", async () => {

@@ -147,6 +147,7 @@ describe("RequestTrajectory in a window host", () => {
           onSelectRequest={() => {}}
           selectedRequestId={record.id}
           turns={turns}
+          services={{ [record.service_id!]: { id: record.service_id!, name: "Configured gateway", kind: "newapi" } }}
         />,
       );
     });
@@ -259,6 +260,8 @@ describe("RequestTrajectory in a window host", () => {
       "CLIENT",
       "UPSTREAM",
     ]);
+    expect(hostMocks.invoke.mock.calls.find(([command]) => command === "show_trajectory_inspector")?.[1].selection.service)
+      .toEqual({ id: record.service_id, name: "Configured gateway", kind: "newapi" });
   });
 
   it("follows a poll that replaced the record without opening a window", async () => {

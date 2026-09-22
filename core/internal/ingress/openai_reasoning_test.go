@@ -236,9 +236,9 @@ func TestOpenAIReasoningRecoveryEndToEnd(t *testing.T) {
 		{name: "compact", compact: true, retries: 1, limit: 6, want: 2, model: "gpt-5.3-codex"},
 		{name: "o-series", retries: 1, limit: 6, want: 2, model: "o3"},
 		{name: "disabled", disabled: true, retries: 1, limit: 6, want: 1, model: "gpt-5.3-codex"},
-		{name: "no retry budget", retries: 0, limit: 6, want: 1, model: "gpt-5.3-codex"},
+		{name: "no retry budget", retries: 0, limit: 6, want: 2, model: "gpt-5.3-codex"},
 		{name: "total limit", retries: 1, limit: 1, want: 1, model: "gpt-5.3-codex"},
-		{name: "explicit stop", stop: true, retries: 1, limit: 6, want: 1, model: "gpt-5.3-codex"},
+		{name: "explicit stop", stop: true, retries: 1, limit: 6, want: 2, model: "gpt-5.3-codex"},
 		{name: "only one repair", stillFails: true, retries: 5, limit: 6, want: 2, model: "gpt-5.3-codex"},
 		{name: "unknown model", retries: 1, limit: 6, want: 1, model: "other"},
 	} {

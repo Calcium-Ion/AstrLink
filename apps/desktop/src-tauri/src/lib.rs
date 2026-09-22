@@ -824,6 +824,15 @@ async fn reset_service_usage(
 }
 
 #[tauri::command]
+async fn test_service(
+    service_id: String,
+    input: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.test_service(&service_id, input).await
+}
+
+#[tauri::command]
 async fn probe_service_models(
     service_id: String,
     input: serde_json::Value,
@@ -998,6 +1007,27 @@ async fn get_request_session(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
     manager.get_request_session(&session_id).await
+}
+
+#[tauri::command]
+async fn get_session_channel_bindings(
+    session_id: String,
+    before: Option<i64>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .session_channel_bindings(&session_id, false, before)
+        .await
+}
+
+#[tauri::command]
+async fn release_session_channel_bindings(
+    session_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .session_channel_bindings(&session_id, true, None)
+        .await
 }
 
 #[tauri::command]
@@ -1289,6 +1319,7 @@ pub fn run() {
             get_service_usage,
             pricing,
             reset_service_usage,
+            test_service,
             probe_service_models,
             probe_draft_service_models,
             begin_service_authorization,
@@ -1308,6 +1339,8 @@ pub fn run() {
             list_request_records,
             list_request_sessions,
             get_request_session,
+            get_session_channel_bindings,
+            release_session_channel_bindings,
             get_request_record,
             list_request_record_children,
             delete_request_record,

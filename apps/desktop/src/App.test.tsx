@@ -9,7 +9,7 @@ describe("desktop application shell", () => {
 
     expect(markup).toContain("主要导航");
     expect(markup).toContain("概览");
-    expect(markup).toContain("API 服务");
+    expect(markup).toContain("API 提供商");
     expect(markup).toContain("访问令牌");
     expect(markup).toContain("路由");
     expect(markup).toContain("Agent 工具");
@@ -26,6 +26,6 @@ describe("desktop application shell", () => {
     expect(markup).not.toContain("本地 AI 网关");
     expect(markup).not.toContain("Alpha 将使用");
     expect(markup).not.toContain("新手引导");
-    expect(markup).not.toContain("尚未添加 API 服务");
+    expect(markup).not.toContain("尚未添加 API 提供商");
   });
 });

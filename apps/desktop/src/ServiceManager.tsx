@@ -1,3 +1,4 @@
+import { ServiceTestDialog } from "./ServiceTestDialog";
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
 import { ServiceOrderHelp } from "./ServiceOrderHelp";
@@ -8,6 +9,7 @@ import { parseFailurePolicy, type FailurePolicy } from "./failure-policy-model";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Boxes,
+  Flask,
   Connect as Cable,
   Menu as Ellipsis,
   Key as KeyRound,
@@ -26,6 +28,8 @@ import { Field } from "@/components/Field";
 import { ListToolbar } from "@/components/ListToolbar";
 import { IconButton } from "@/components/IconButton";
 import { SegmentedControl } from "@/components/SegmentedControl";
+import { CapabilityIndicator } from "@/components/CapabilityIndicator";
+import { CapabilityToggle } from "@/components/CapabilityToggle";
 import { ServiceListHeader, ServiceListRow } from "@/components/ServiceListRow";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { DataRow } from "@/components/DataRow";
@@ -106,6 +110,8 @@ import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 import { filterModels } from "./model-groups";
 import { ServiceModelsEditor } from "./ServiceModelsEditor";
 import {
+  responsesWebSocketEnabled,
+  supportsResponsesWebSocket,
   serviceKindLabel,
   hasPlanUsage,
   isSubscriptionKind,
@@ -164,6 +170,7 @@ type Draft = {
   kind: ServiceKind;
   name: string;
   enabled: boolean;
+  responsesWebSocket: boolean;
   baseURL: string;
   authScheme: ServiceAuthScheme;
   headerName: string;
@@ -285,6 +292,7 @@ function draftForKind(
       kind,
       name: subscriptionDefaultName(kind),
       enabled: true,
+      responsesWebSocket: kind === "codex_subscription",
       baseURL: "",
       authScheme: "none",
       headerName: "",
@@ -303,6 +311,7 @@ function draftForKind(
     kind,
     name: preset.defaultName,
     enabled: true,
+    responsesWebSocket: false,
     baseURL: preset.baseURL,
     authScheme: preset.authScheme,
     headerName: preset.headerName,
@@ -322,6 +331,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
       name: service.name,
       failurePolicy: service.failure_policy,
       enabled: service.enabled,
+      responsesWebSocket: responsesWebSocketEnabled(service),
       models: [...service.models],
     };
   }
@@ -331,6 +341,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
     name: service.name,
       failurePolicy: service.failure_policy,
     enabled: service.enabled,
+    responsesWebSocket: responsesWebSocketEnabled(service),
     baseURL: service.http.base_url,
     authScheme: service.http.auth.scheme,
     headerName: service.http.auth.header_name ?? "",
@@ -427,13 +438,6 @@ function serviceDot(service: Service): "positive" | "pending" | "negative" | "ne
   if (!status || status === "connected") return "positive";
   if (status === "authorizing" || status === "disconnected") return "pending";
   return "negative";
-}
-
-function serviceStatusTextClass(tone: ReturnType<typeof serviceDot>): string {
-  if (tone === "positive") return "text-success-foreground";
-  if (tone === "pending") return "text-warning-foreground";
-  if (tone === "negative") return "text-danger-foreground";
-  return "text-muted-foreground";
 }
 
 function ModelPreviewDialog({
@@ -628,6 +632,7 @@ export function ServiceManager({
     >
   >({});
   const [usageEpoch, setUsageEpoch] = useState(0);
+  const [testingService, setTestingService] = useState<Service | null>(null);
   const [billingService, setBillingService] = useState<string | null>(null);
   const copyFeedback = useCopyFeedback();
   const loadGeneration = useRef(0);
@@ -1073,6 +1078,7 @@ export function ServiceManager({
         const patch: ServicePatchInput = {
           name: draft.name.trim(),
           enabled: draft.enabled,
+          responses_websocket_enabled: draft.responsesWebSocket,
           models: draft.models,
           failure_policy: draft.failurePolicy ?? null,
         };
@@ -1097,6 +1103,7 @@ export function ServiceManager({
             name: draft.name.trim(),
             kind: draft.kind,
             enabled: draft.enabled,
+            responses_websocket_enabled: draft.responsesWebSocket,
             models: draft.models,
           ...(draft.failurePolicy ? { failure_policy: draft.failurePolicy } : {}),
           };
@@ -1105,6 +1112,7 @@ export function ServiceManager({
             name: draft.name.trim(),
             kind: draft.kind as HTTPServiceKind,
             enabled: draft.enabled,
+            responses_websocket_enabled: draft.responsesWebSocket,
             models: draft.models,
           ...(draft.failurePolicy ? { failure_policy: draft.failurePolicy } : {}),
             http: {
@@ -1324,17 +1332,20 @@ export function ServiceManager({
           />
         ) : null}
         <PageHeader
-          className="mb-4 items-center border-b-0 pb-1 @max-[560px]:flex-wrap @max-[560px]:items-start @max-[560px]:gap-3"
+          variant="compact"
+          className="@max-[360px]:gap-2"
           actions={
             <>
               <Button
+                aria-label={t("services.add")}
                 disabled={!isReady || busy}
                 onClick={() => onViewChange({ kind: "create" })}
                 size="sm"
                 type="button"
               >
                 <Plus aria-hidden="true" />
-                {t("services.add")}
+                <span className="@max-[480px]:hidden">{t("services.add")}</span>
+                <span className="hidden @max-[480px]:inline">{t("overview.add")}</span>
               </Button>
               <IconButton
                 label={
@@ -1382,7 +1393,7 @@ export function ServiceManager({
           </FormMessage>
         ) : null}
 
-        <div className="mb-4 shrink-0">
+        <div className="mb-3 shrink-0">
           <ListToolbar
             title={t("services.listLabel")}
             count={
@@ -1395,10 +1406,10 @@ export function ServiceManager({
             searchLabel={t("services.searchServices")}
             placeholder={t("services.searchServicesPlaceholder")}
             clearLabel={t("common.clearSearch")}
-            actions={
+            secondaryFilters={
               <Input
                 aria-label={t("services.filterModel")}
-                className="h-8 w-48"
+                className="h-8 w-full"
                 onChange={(event) => setModelQuery(event.currentTarget.value)}
                 placeholder={t("services.filterModelPlaceholder")}
                 type="search"
@@ -1462,7 +1473,7 @@ export function ServiceManager({
           ) : !serviceOrder.hasOrder ? null : (
             <>
               <div
-                className="group/service-list min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+                className="@container/service-list group/service-list min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
                 data-testid="service-list-scroller"
               >
                 <ServiceListHeader
@@ -1513,7 +1524,7 @@ export function ServiceManager({
                       order={controls}
                       sorting={sorting}
                       sortIcon={<ServiceKindIcon kind={service.kind} size={20} />}
-                      sortStatus={<><StatusDot tone={tone} />{serviceStatusLabel(service)}</>}
+                      sortStatus={<StatusDot label={serviceStatusLabel(service)} tone={tone} />}
                       identity={
                         <div className="flex min-w-0 items-center gap-3">
                           <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-background">
@@ -1570,10 +1581,15 @@ export function ServiceManager({
                               count: service.models.length,
                             })}
                           </span>
-                          <span className="text-micro text-muted-foreground tabular-nums">
+                          <span className="inline-flex items-center gap-1.5 text-micro text-muted-foreground tabular-nums">
                             {t("services.apiCount", {
                               count: service.capabilities.length,
                             })}
+                            {supportsResponsesWebSocket(service) && responsesWebSocketEnabled(service) ? (
+                              <CapabilityIndicator label={t("services.webSocketOn")}>
+                                <Cable aria-hidden="true" animateOnHover={false} className="size-3" />
+                              </CapabilityIndicator>
+                            ) : null}
                           </span>
                         </>
                       }
@@ -1611,15 +1627,7 @@ export function ServiceManager({
                       }
                       status={
                         <>
-                          <span
-                            className={cn(
-                              "inline-flex min-w-0 items-center gap-1.5 text-micro font-medium",
-                              serviceStatusTextClass(tone),
-                            )}
-                          >
-                            <StatusDot tone={tone} />
-                            {serviceStatusLabel(service)}
-                          </span>
+                          <StatusDot label={serviceStatusLabel(service)} tone={tone} />
                           <Switch
                             aria-label={t("services.enableNamed", {
                               name: service.name,
@@ -1633,6 +1641,14 @@ export function ServiceManager({
                       }
                       actions={
                         <>
+                          <IconButton
+                            label={t("serviceTest.testNamed", { name: service.name })}
+                            disabled={!isReady || acting}
+                            onClick={() => setTestingService(service)}
+                            type="button"
+                          >
+                            <Flask aria-hidden="true" />
+                          </IconButton>
                           <IconButton
                             label={t("services.editNamed", {
                               name: service.name,
@@ -1741,6 +1757,7 @@ export function ServiceManager({
             </>
           )}
         </div>
+        {testingService ? <ServiceTestDialog key={testingService.id} service={testingService} onClose={() => setTestingService(null)} /> : null}
         <ConfirmDialog
           confirmLabel={
             confirmAction?.kind === "reset-usage"
@@ -2264,6 +2281,13 @@ export function ServiceManager({
             />
             <span>{t("services.enableThis")}</span>
           </Label>
+          {supportsResponsesWebSocket(draft) ? (
+            <div className="border-t pt-4">
+              <CapabilityToggle label={t("services.responsesWebSocket")}
+                description={t("services.responsesWebSocketHint")} checked={draft.responsesWebSocket}
+                onCheckedChange={checked => setDraft(current => ({ ...current, responsesWebSocket: checked }))} />
+            </div>
+          ) : null}
         </div>
       </Panel>
       <Panel>

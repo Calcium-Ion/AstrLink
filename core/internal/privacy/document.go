@@ -34,8 +34,6 @@ const (
 	jsonContentContext jsonTraversalContext = iota
 	jsonSchemaContext
 	jsonToolPayloadContext
-	jsonResponsesInputContext
-	jsonResponsesOutputContext
 )
 
 func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, []extractedSegment, error) {
@@ -63,6 +61,7 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 	}
 
 	document := jsonDocument{body: body, duplicateKeys: duplicateKeys}
+	protected := continuationPaths(protocol, root)
 	extracted := make([]extractedSegment, 0)
 	overflow := false
 	for _, key := range roots {
@@ -70,14 +69,8 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 		if !exists || skipJSONChild(root, key, value, jsonContentContext) {
 			continue
 		}
-		context := jsonContentContext
-		if (protocol == contract.ProtocolOpenAIResponses || protocol == contract.ProtocolOpenAIResponsesCompact) && key == "input" {
-			if _, isArray := value.([]any); isArray {
-				context = jsonResponsesInputContext
-			}
-		}
 		walkJSONStrings(value, "/"+escapeJSONPointer(key), sjsonObjectKey(key),
-			1, context, &extracted, &overflow)
+			1, jsonContentContext, protected, &extracted, &overflow)
 	}
 	if overflow {
 		return jsonDocument{}, nil, ErrUnsafeInput
@@ -117,10 +110,14 @@ func walkJSONStrings(
 	writePath string,
 	depth int,
 	context jsonTraversalContext,
+	protected map[string]struct{},
 	extracted *[]extractedSegment,
 	overflow *bool,
 ) {
 	if *overflow || depth > maxJSONDepth {
+		return
+	}
+	if _, opaque := protected[path]; opaque {
 		return
 	}
 	switch typed := value.(type) {
@@ -143,7 +140,7 @@ func walkJSONStrings(
 	case []any:
 		for index, child := range typed {
 			walkJSONStrings(child, path+"/"+jsonIndex(index), writePath+"."+jsonIndex(index),
-				depth+1, context, extracted, overflow)
+				depth+1, context, protected, extracted, overflow)
 		}
 	case map[string]any:
 		keys := make([]string, 0, len(typed))
@@ -158,7 +155,7 @@ func walkJSONStrings(
 			}
 			childContext := nextJSONTraversalContext(typed, key, context)
 			walkJSONStrings(child, path+"/"+escapeJSONPointer(key), writePath+"."+sjsonObjectKey(key),
-				depth+1, childContext, extracted, overflow)
+				depth+1, childContext, protected, extracted, overflow)
 		}
 	}
 }
@@ -209,23 +206,6 @@ func skipJSONChild(
 	child any,
 	context jsonTraversalContext,
 ) bool {
-	// These upstream-authenticated values must survive history replay byte for
-	// byte (especially with store:false). Keep them out of every detector, while
-	// readable summaries and same-named keys in tool payloads remain inspectable.
-	if key == "encrypted_content" {
-		typeName, _ := parent["type"].(string)
-		switch context {
-		case jsonResponsesInputContext:
-			if typeName == "reasoning" || typeName == "compaction" || typeName == "compaction_summary" {
-				return true
-			}
-		case jsonResponsesOutputContext:
-			if typeName == "encrypted_content" {
-				return true
-			}
-		}
-	}
-
 	normalized := strings.ToLower(strings.ReplaceAll(key, "_", ""))
 
 	typeName, _ := parent["type"].(string)
@@ -235,7 +215,7 @@ func skipJSONChild(
 	// Names that resemble protocol media fields (for example "bytes" or
 	// "file_uri") are still ordinary inspectable arguments unless the
 	// surrounding value has the shape of a real non-text media block.
-	if context == jsonToolPayloadContext || context == jsonResponsesOutputContext {
+	if context == jsonToolPayloadContext {
 		return isNonTextMediaChild(parent, normalized, child, typeName)
 	}
 
@@ -353,15 +333,7 @@ func nextJSONTraversalContext(
 	key string,
 	context jsonTraversalContext,
 ) jsonTraversalContext {
-	if context == jsonResponsesInputContext && key == "output" {
-		typeName, _ := parent["type"].(string)
-		if typeName == "function_call_output" || typeName == "custom_tool_call_output" {
-			if _, isArray := parent[key].([]any); isArray {
-				return jsonResponsesOutputContext
-			}
-		}
-	}
-	if context == jsonToolPayloadContext || context == jsonResponsesOutputContext {
+	if context == jsonToolPayloadContext {
 		return jsonToolPayloadContext
 	}
 	if isToolPayloadField(parent, key) {

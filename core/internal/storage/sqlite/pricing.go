@@ -230,7 +230,8 @@ func recordBilling(ctx context.Context, tx *sql.Tx, r contract.RequestRecord, re
 	return err
 }
 
-// PriceUnpriced retries recorded calls when a new official catalog is available.
+// PriceUnpriced fills missing prices from new catalogs and retries audio
+// breakdown failures with the original price snapshot after evaluator fixes.
 // It does not import legacy logs or rewrite amounts that were already priced.
 func (s *Store) PriceUnpriced(ctx context.Context) (int, error) {
 	catalog, err := s.PricingCatalog(ctx)
@@ -241,20 +242,25 @@ func (s *Store) PriceUnpriced(ctx context.Context) (int, error) {
 	var lastRoot string
 	lastAttempt := 0
 	for {
-		rows, err := s.db.QueryContext(ctx, `SELECT b.root_id,b.attempt,b.service_id,b.started_at,b.model,b.usage_json
+		rows, err := s.db.QueryContext(ctx, `SELECT b.root_id,b.attempt,b.service_id,b.started_at,b.model,b.usage_json,COALESCE(b.price_json,''),b.reason
 FROM billing_ledger b JOIN services s ON s.id=b.service_id
-WHERE b.terminal=1 AND b.reason='missing_price' AND b.price_version<>?
+WHERE b.terminal=1 AND ((b.reason='missing_price' AND b.price_version<>?)
+OR b.reason IN ('missing_audio_usage','missing_audio_cache_partition'))
 AND (b.root_id>? OR (b.root_id=? AND b.attempt>?))
 ORDER BY b.root_id,b.attempt LIMIT 100`, catalog.Version, lastRoot, lastRoot, lastAttempt)
 		if err != nil {
 			return processed, err
 		}
-		records := []contract.RequestRecord{}
+		type pendingRecord struct {
+			contract.RequestRecord
+			priceJSON, usageJSON, reason string
+		}
+		records := []pendingRecord{}
 		for rows.Next() {
-			var r contract.RequestRecord
+			var r pendingRecord
 			var id contract.ServiceID
-			var started, model, usage string
-			if err = rows.Scan(&r.ID, &r.AttemptIndex, &id, &started, &model, &usage); err != nil {
+			var started, model string
+			if err = rows.Scan(&r.ID, &r.AttemptIndex, &id, &started, &model, &r.usageJSON, &r.priceJSON, &r.reason); err != nil {
 				rows.Close()
 				return processed, err
 			}
@@ -264,7 +270,7 @@ ORDER BY b.root_id,b.attempt LIMIT 100`, catalog.Version, lastRoot, lastRoot, la
 				rows.Close()
 				return processed, err
 			}
-			if err = json.Unmarshal([]byte(usage), &r.Usage); err != nil {
+			if err = json.Unmarshal([]byte(r.usageJSON), &r.Usage); err != nil {
 				rows.Close()
 				return processed, err
 			}
@@ -276,11 +282,33 @@ ORDER BY b.root_id,b.attempt LIMIT 100`, catalog.Version, lastRoot, lastRoot, la
 			return processed, err
 		}
 		for _, r := range records {
+			lastRoot, lastAttempt = string(r.ID), r.AttemptIndex
+			if r.reason != "missing_price" {
+				var price pricing.Price
+				if err = json.Unmarshal([]byte(r.priceJSON), &price); err != nil {
+					return processed, err
+				}
+				value, evaluationErr := pricing.Evaluate(price.Expression, r.Usage, r.StartedAt)
+				if evaluationErr != nil {
+					continue // A genuinely unknown, price-sensitive split stays unpriced.
+				}
+				result, err := s.db.ExecContext(ctx, `UPDATE billing_ledger SET amount_usd=?,tier=?,reason='priced',revalued=1
+WHERE root_id=? AND attempt=? AND terminal=1 AND reason=? AND price_json=? AND usage_json=?`, value.AmountUSD, value.Tier, r.ID, r.AttemptIndex, r.reason, r.priceJSON, r.usageJSON)
+				if err != nil {
+					return processed, err
+				}
+				n, err := result.RowsAffected()
+				if err != nil {
+					return processed, err
+				}
+				processed += int(n)
+				continue
+			}
 			tx, err := s.db.BeginTx(ctx, nil)
 			if err != nil {
 				return processed, err
 			}
-			if err = recordBilling(ctx, tx, r, true); err != nil {
+			if err = recordBilling(ctx, tx, r.RequestRecord, true); err != nil {
 				tx.Rollback()
 				return processed, err
 			}
@@ -288,7 +316,6 @@ ORDER BY b.root_id,b.attempt LIMIT 100`, catalog.Version, lastRoot, lastRoot, la
 				return processed, err
 			}
 			processed++
-			lastRoot, lastAttempt = string(r.ID), r.AttemptIndex
 		}
 	}
 }

@@ -61,6 +61,7 @@ type Dependencies struct {
 	// services (Kimi, GLM, MiniMax, OpenCode Go). Optional.
 	CodingPlans      CodingPlanUsage
 	ServiceModels    ServiceModelProber
+	ServiceTester    ServiceTester
 	AutoClassifiers  AutoClassifierRegistry
 	AutoClassifier   AutoClassifier
 	ControlToken     string
@@ -118,6 +119,7 @@ type Handler struct {
 	subscriptions     *subscription.Manager
 	codingPlans       CodingPlanUsage
 	serviceModels     ServiceModelProber
+	serviceTester     ServiceTester
 	autoClassifiers   AutoClassifierRegistry
 	autoClassifier    AutoClassifier
 	controlToken      []byte
@@ -173,6 +175,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		subscriptions:   dependencies.Subscriptions,
 		codingPlans:     dependencies.CodingPlans,
 		serviceModels:   dependencies.ServiceModels,
+		serviceTester:   dependencies.ServiceTester,
 		autoClassifiers: dependencies.AutoClassifiers,
 		autoClassifier:  dependencies.AutoClassifier,
 		controlToken:    []byte(dependencies.ControlToken),

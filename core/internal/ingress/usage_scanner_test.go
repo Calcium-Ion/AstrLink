@@ -3,13 +3,16 @@ package ingress
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/pricing"
 )
 
 func intPtr(value int) *int { return &value }
@@ -316,5 +319,51 @@ func TestBillingUsageAudioAndGeminiThoughts(t *testing.T) {
 	usage = scanner.Usage()
 	if usage == nil || usage.OutputTokens != 50 || usage.TotalTokens != 150 || !scanner.complete {
 		t.Fatalf("thoughts=%+v", usage)
+	}
+}
+
+func TestGeminiAudioModalityBreakdown(t *testing.T) {
+	tests := []struct {
+		name, input, output   string
+		wantInput, wantOutput *int
+	}{
+		{"missing", `null`, `null`, nil, nil},
+		{"empty", `[]`, `[]`, nil, nil},
+		{"text only", `[{"modality":"TEXT","tokenCount":100}]`, `[{"modality":"TEXT","tokenCount":30}]`, intPtr(0), intPtr(0)},
+		{"mixed audio", `[{"modality":"TEXT","tokenCount":70},{"modality":"AUDIO","tokenCount":30}]`, `[{"modality":"TEXT","tokenCount":10},{"modality":"AUDIO","tokenCount":20}]`, intPtr(30), intPtr(20)},
+		{"images and video", `[{"modality":"TEXT","tokenCount":30},{"modality":"IMAGE","tokenCount":20},{"modality":"VIDEO","tokenCount":50}]`, `[{"modality":"IMAGE","tokenCount":30}]`, intPtr(0), intPtr(0)},
+		{"partial", `[{"modality":"TEXT","tokenCount":80}]`, `[{"modality":"AUDIO","tokenCount":10}]`, nil, nil},
+		{"invalid counts", `[{"modality":"AUDIO","tokenCount":-1}]`, `[{"modality":"AUDIO","tokenCount":31}]`, nil, nil},
+		{"unknown modality", `[{"modality":"OTHER","tokenCount":100}]`, `[{"modality":"AUDIO"}]`, nil, nil},
+		{"malformed details", `{"modality":"AUDIO"}`, `"bad"`, nil, nil},
+	}
+	for _, tt := range tests {
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", tt.name, streaming), func(t *testing.T) {
+				scanner := newUsageScanner(contract.ProtocolGoogleGenerateContent, streaming)
+				body := fmt.Sprintf(`{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":30,"thoughtsTokenCount":20,"totalTokenCount":150,"promptTokensDetails":%s,"candidatesTokensDetails":%s}}`, tt.input, tt.output)
+				if streaming {
+					body = "data: " + body + "\n\n"
+				}
+				scanner.observe([]byte(body))
+				usage := scanner.Usage()
+				if usage == nil || usage.OutputTokens != 50 || !reflect.DeepEqual(usage.InputAudioTokens, tt.wantInput) || !reflect.DeepEqual(usage.OutputAudioTokens, tt.wantOutput) {
+					t.Fatalf("usage=%+v", usage)
+				}
+			})
+		}
+	}
+}
+
+func TestGeminiTotalsCanBePricedWithoutAudioDetails(t *testing.T) {
+	scanner := newUsageScanner(contract.ProtocolGoogleGenerateContent, true)
+	scanner.observe([]byte("data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":1000000,\"candidatesTokenCount\":60000,\"thoughtsTokenCount\":40000,\"cachedContentTokenCount\":400000,\"totalTokenCount\":1100000}}\n\n"))
+	usage := scanner.Usage()
+	if usage == nil || usage.InputAudioTokens != nil || !scanner.complete {
+		t.Fatalf("usage=%+v complete=%v", usage, scanner.complete)
+	}
+	value, err := pricing.Evaluate(`tier("standard", p * 0.75 + cr * 0.075 + ai * 0.75 + c * 3.75)`, usage, time.Now())
+	if err != nil || value.AmountUSD != "0.855000000" {
+		t.Fatalf("value=%+v error=%v", value, err)
 	}
 }

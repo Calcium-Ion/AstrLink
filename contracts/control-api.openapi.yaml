@@ -791,6 +791,50 @@ paths:
           $ref: "#/components/responses/BadGateway"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
+  /control/v1/services/{service_id}/test:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    post:
+      tags: [Services]
+      operationId: testService
+      summary: Send one real text generation request to a saved provider.
+      description: |
+        Uses saved credentials and a directly configured native or delegated
+        protocol, without local conversion or failover. Disabled providers can
+        be tested; subscriptions must be connected. May consume upstream quota.
+        Codex subscriptions require stream=true. Times out after 60 seconds.
+        Does not mutate provider configuration or routing health. Responses are
+        bounded to 1 MiB. Returned text is redacted and limited to 4096 characters
+        plus a truncation marker. Inference failures return HTTP 200 with ok=false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceTestRequest"
+      responses:
+        "200":
+          description: Test result with upstream status, duration and text output or failure detail.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceTestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          description: Content-Type must be application/json.
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          description: Provider testing is unavailable.
   /control/v1/services/{service_id}/probe-responses:
     x-astrlink-implementation-status: implemented
     parameters:
@@ -2288,6 +2332,53 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /control/v1/request-sessions/{session_id}/channel-bindings:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [Requests]
+      parameters:
+        - name: before
+          in: query
+          description: Read older audit events before this event id; active bindings are always current.
+          schema: {type: integer, minimum: 1}
+      operationId: getSessionChannelBindings
+      summary: Read active channel preferences and the latest 100 binding audit events.
+      responses:
+        "200":
+          description: Local session channel bindings and audit history, without conversation text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelBindingAudit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Requests]
+      operationId: releaseSessionChannelBindings
+      summary: Release all ordinary channel preferences for this session and fence in-flight writes.
+      description: Preserves request records, audit history and strict Responses or WebSocket bindings. The next ordinary request follows service order and may choose the same channel.
+      responses:
+        "200":
+          description: Updated bindings and audit history.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelBindingAudit"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
     controlToken:
@@ -3023,6 +3114,7 @@ components:
       properties:
         max_retries:
           type: integer
+          description: Ordinary retries per target, excluding the first request and independent request repairs. Zero does not disable repair.
           minimum: 0
           maximum: 5
           default: 1
@@ -3045,15 +3137,15 @@ components:
         thinking_signature_recovery:
           type: boolean
           default: true
-          description: On a recognized Claude Messages thinking signature HTTP 400, repair assistant history and retry the same target once within existing attempt limits. Explicit HTTP 400 rules prohibiting retries take precedence. Manual paths require a later step for the same target. Omission enables recovery; false disables it.
+          description: On a recognized Claude Messages thinking signature HTTP 400, repair assistant history and resend immediately to the same target. All request repairs share one repair per target, independent of failover strategy, max_retries, backoff and HTTP error rules, but count toward max_attempts. Manual paths repair within the current step without consuming a later step. Failed repairs follow ordinary error rules. Omission enables recovery; false disables it.
         openai_reasoning_recovery:
           type: boolean
           default: true
-          description: On a recognized OpenAI Responses or Responses Compact reasoning HTTP 400, repair rejected reasoning ciphertext or identified item fields and retry the same target once within existing attempt limits. Preserves summaries, tool pairs, previous_response_id and compaction context. Explicit HTTP 400 rules prohibiting retries take precedence. Manual paths require a later step for the same target. Omission enables recovery; false disables it.
+          description: On a recognized OpenAI Responses or Responses Compact reasoning HTTP 400, repair rejected reasoning ciphertext or identified item fields and resend immediately to the same target. Preserves summaries, tool pairs, previous_response_id and compaction context. All request repairs share one repair per target, independent of failover strategy, max_retries, backoff and HTTP error rules, but count toward max_attempts. Manual paths repair within the current step without consuming a later step. Failed repairs follow ordinary error rules. Omission enables recovery; false disables it.
         openai_function_output_recovery:
           type: boolean
           default: false
-          description: Opt-in. On a recognized OpenAI Responses or Responses Compact HTTP 400 for encrypted function or custom-tool output, drop encrypted output parts, keep plaintext, and retry the same target once within existing attempt limits. When a reasoning ciphertext repair already runs, this also clears those output parts in the same attempt. Tool call_id pairs and compaction stay intact. Explicit HTTP 400 rules prohibiting retries take precedence. Omission disables recovery; true enables it.
+          description: Opt-in. On a recognized OpenAI Responses or Responses Compact HTTP 400 for encrypted function or custom-tool output, drop encrypted output parts, keep plaintext, and resend immediately to the same target. Shares one repair per target with reasoning repair and can clear both in the same attempt. Tool call_id pairs and compaction stay intact. Independent of failover strategy, max_retries, backoff and HTTP error rules, but counts toward max_attempts. Manual paths repair within the current step. Failed repairs follow ordinary error rules. Omission disables recovery; true enables it.
         network_error:
           $ref: "#/components/schemas/FailureAction"
         response_timeout:
@@ -3064,7 +3156,7 @@ components:
             pattern: '^[45][0-9]{2}$'
           additionalProperties:
             $ref: "#/components/schemas/FailureAction"
-          description: Unlisted statuses stop, except recognized thinking signature, OpenAI reasoning, or opt-in encrypted function-output errors when the corresponding repair switch is enabled. Defaults permit retry and switching for 408, 429, 500, 502, 503, 504, 529; 401 and 403 permit switching only.
+          description: Controls ordinary retries and switching after any enabled request repair. Unlisted statuses stop. Request repair is independent of HTTP status rules. Defaults permit retry and switching for 408, 429, 500, 502, 503, 504, 529; 401 and 403 permit switching only.
       additionalProperties: false
       description: A complete policy. Missing service policy inherits RoutingSettings.default_failure_policy; missing route policy uses each service policy (or the global policy). A route override replaces the entire inherited policy. Missing route failover inherits global strategy and max_attempts with switching enabled.
     FailoverPolicy:
@@ -3083,7 +3175,7 @@ components:
           minimum: 1
           maximum: 20
           default: 6
-          description: Total actual upstream inference requests, including the first request, retries and backups.
+          description: Total actual upstream inference requests, including the first request, ordinary retries, request repairs and backups.
       additionalProperties: false
     ServiceOrder:
       type: object
@@ -3096,10 +3188,68 @@ components:
           items:
             type: string
             pattern: '^[a-z][a-z0-9_-]{2,95}$'
+    ChannelStickiness:
+      type: object
+      additionalProperties: false
+      required: [enabled, ttl_seconds]
+      properties:
+        enabled: {type: boolean, default: true}
+        ttl_seconds: {type: integer, minimum: 60, maximum: 86400, default: 3600}
+    ChannelBindingScope:
+      type: object
+      required: [session_id, local_access_token_id, protocol, model]
+      properties:
+        session_id: {type: string}
+        local_access_token_id: {type: string}
+        protocol: {type: string}
+        model: {type: string}
+    ChannelBinding:
+      allOf:
+        - $ref: "#/components/schemas/ChannelBindingScope"
+        - type: object
+          required: [service_id, source, request_id, updated_at, expires_at]
+          properties:
+            service_id: {type: string}
+            source: {type: string, enum: [new, explicit, echo_id, fingerprint]}
+            request_id: {type: string}
+            updated_at: {type: string, format: date-time}
+            expires_at: {type: string, format: date-time}
+    ChannelBindingEvent:
+      allOf:
+        - $ref: "#/components/schemas/ChannelBindingScope"
+        - type: object
+          required: [id, at, action, reason, source, service_id, previous_service_id, request_id]
+          properties:
+            id: {type: integer, minimum: 1}
+            at: {type: string, format: date-time}
+            action: {type: string, enum: [hit, miss, strict, bound, switched, released]}
+            reason: {type: string}
+            source: {type: string}
+            service_id: {type: string}
+            previous_service_id: {type: string}
+            request_id: {type: string}
+    ChannelBindingAudit:
+      type: object
+      additionalProperties: false
+      required: [enabled, bindings, events, has_more]
+      properties:
+        enabled: {type: boolean}
+        bindings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChannelBinding"
+        events:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ChannelBindingEvent"
+        has_more: {type: boolean}
     RoutingSettings:
       type: object
       required: [allow_unmatched_failover, strategy, max_attempts, default_failure_policy]
       properties:
+        channel_stickiness:
+          $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:
           type: object
           additionalProperties:
@@ -3108,7 +3258,7 @@ components:
           $ref: "#/components/schemas/FailurePolicy"
         allow_unmatched_failover:
           type: boolean
-          default: false
+          default: true
         strategy:
           type: string
           enum: [retry_first, failover_first, failover_only]
@@ -3123,6 +3273,8 @@ components:
       type: object
       minProperties: 1
       properties:
+        channel_stickiness:
+          $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:
           type: object
           additionalProperties:
@@ -3250,6 +3402,9 @@ components:
       type: object
       required: [id, name, kind, enabled, models, capabilities, created_at, updated_at]
       properties:
+        responses_websocket_enabled:
+          type: boolean
+          description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
         failure_policy:
           $ref: "#/components/schemas/FailurePolicy"
         id:
@@ -3312,6 +3467,9 @@ components:
       type: object
       required: [name, kind]
       properties:
+        responses_websocket_enabled:
+          type: boolean
+          description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
         failure_policy:
           $ref: "#/components/schemas/FailurePolicy"
         name:
@@ -3367,6 +3525,9 @@ components:
       type: object
       minProperties: 1
       properties:
+        responses_websocket_enabled:
+          type: boolean
+          description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
         failure_policy:
           oneOf:
             - $ref: "#/components/schemas/FailurePolicy"
@@ -5649,6 +5810,79 @@ components:
             minLength: 1
             maxLength: 256
       additionalProperties: false
+    ServiceTestProtocol:
+      type: string
+      enum: [openai.responses, openai.chat, openai.completions, anthropic.messages, google.generate_content]
+    ServiceTestRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, model]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ServiceTestProtocol"
+        model:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Upstream ID with at most 256 UTF-8 bytes, no control characters or surrounding whitespace. May be outside the saved model list.
+        stream:
+          type: boolean
+          default: false
+        prompt:
+          type: string
+          maxLength: 2000
+          description: Defaults to 'Reply with OK.' when omitted or blank.
+    ServiceTestResult:
+      type: object
+      additionalProperties: false
+      required: [service_id, protocol, model, stream, ok, status_code, duration_ms, output]
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        protocol:
+          $ref: "#/components/schemas/ServiceTestProtocol"
+        model:
+          type: string
+        stream:
+          type: boolean
+        ok:
+          type: boolean
+        status_code:
+          type: integer
+          minimum: 0
+          maximum: 599
+          description: Zero when no upstream response was received.
+        duration_ms:
+          type: integer
+          minimum: 0
+          description: Total test duration including credential preparation, reading and validation.
+        response_headers_ms:
+          type: [integer, "null"]
+          minimum: 0
+          description: Milliseconds from sending the upstream request to receiving response headers, excluding credential preparation. Null when headers were not received.
+        first_token_ms:
+          type: [integer, "null"]
+          minimum: 0
+          description: Milliseconds from sending the upstream request to the first non-empty visible SSE text. Excludes heartbeats and reasoning. Null for non-streaming responses or when no text arrived. Subtract response_headers_ms for the wait after headers.
+        output:
+          type: string
+          maxLength: 4097
+        raw_response:
+          type: string
+          maxLength: 65537
+          description: Original upstream body, including JSON or SSE framing and malformed responses. Credential values are redacted; limited to 65536 characters plus a truncation marker. Empty when no body was received. Older Core versions may omit this field.
+        raw_response_truncated:
+          type: boolean
+          description: True if the body exceeded the size limit or could not be fully read.
+        response_content_type:
+          type: string
+          maxLength: 257
+          description: Redacted upstream Content-Type, when present.
+        error_code:
+          type: string
+        message:
+          type: string
+          maxLength: 1001
     ServiceResponsesProbe:
       type: object
       required: [service_id, status_code, ok]

@@ -34,6 +34,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/privacyworker"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
+	"github.com/QuantumNous/astrlink/core/internal/servicetest"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
@@ -235,6 +236,7 @@ func main() {
 			Subscriptions:      subscriptionManager,
 			CodingPlans:        codingplan.New(store, nil),
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
+			ServiceTester:      servicetest.New(endpoint.NewServiceAuthorizer(store, subscriptionManager), nil, subscriptionManager.APIBaseURLFor),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,

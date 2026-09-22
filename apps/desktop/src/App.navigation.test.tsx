@@ -122,7 +122,7 @@ const readySnapshot: AppSnapshot = {
 
 function button(label: string): HTMLButtonElement {
   const match = [...document.querySelectorAll("button")].find(
-    (candidate) => candidate.textContent?.trim() === label,
+    (candidate) => (candidate.getAttribute("aria-label") ?? candidate.textContent?.trim()) === label,
   );
   if (!(match instanceof HTMLButtonElement)) {
     throw new Error(`Missing button: ${label}`);
@@ -393,7 +393,7 @@ describe("App workspace navigation", () => {
     expect(container.textContent).toContain("API 地址");
     expect(container.textContent).toContain("用量概览");
     expect(container.querySelector("[data-slot='activity-heatmap']")).not.toBeNull();
-    expect(container.textContent).toContain("按服务");
+    expect(container.textContent).toContain("按 API 提供商");
     expect(container.textContent).toContain("按模型");
     expect(container.textContent).toContain("Primary gateway");
 
@@ -419,12 +419,12 @@ describe("App workspace navigation", () => {
     expect(container.textContent).toContain("Regex 覆盖邮箱");
 
     await act(async () => {
-      button("API 服务").click();
+      button("API 提供商").click();
     });
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
-    ).toContain("API 服务");
-    expect(workspaceHeading().textContent).toBe("API 服务");
+    ).toContain("API 提供商");
+    expect(workspaceHeading().textContent).toBe("API 提供商");
     expect(container.textContent).toContain("Primary gateway");
     expect(container.textContent).toContain("Codex 订阅");
     expect(
@@ -433,22 +433,22 @@ describe("App workspace navigation", () => {
     expect(container.textContent).not.toContain("ADR 0009");
 
     await act(async () => {
-      button("添加服务").click();
+      button("添加 API 提供商").click();
     });
-    expect(workspaceHeading().textContent).toBe("添加服务");
+    expect(workspaceHeading().textContent).toBe("添加 API 提供商");
     expect(container.querySelector('[data-testid="service-form"]')).not.toBeNull();
     expect(container.querySelector('[data-slot="workspace"]')?.className).toContain(
       "overflow-hidden",
     );
 
     const back = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="返回服务列表"]',
+      'button[aria-label="返回 API 提供商列表"]',
     );
     expect(back).not.toBeNull();
     await act(async () => {
       back?.click();
     });
-    expect(workspaceHeading().textContent).toBe("API 服务");
+    expect(workspaceHeading().textContent).toBe("API 提供商");
   });
 
   it("opens a service editor from the overview usage list", async () => {
@@ -491,7 +491,7 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
 
-    expect(workspaceHeading().textContent).toBe("编辑服务");
+    expect(workspaceHeading().textContent).toBe("编辑 API 提供商");
     expect(bridgeMocks.getService).toHaveBeenCalledWith("service_gateway_01");
   });
 
@@ -503,14 +503,14 @@ describe("App workspace navigation", () => {
     );
 
     await act(async () => {
-      button("API 服务").click();
+      button("API 提供商").click();
       await Promise.resolve();
     });
 
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
-    ).toContain("API 服务");
-    expect(workspaceHeading().textContent).toBe("API 服务");
+    ).toContain("API 提供商");
+    expect(workspaceHeading().textContent).toBe("API 提供商");
     expect(container.textContent).toContain("Codex 订阅");
     expect(
       container.querySelector('[aria-label="更多 Codex 订阅 操作"]'),
@@ -636,7 +636,8 @@ describe("App workspace navigation", () => {
     expect(container.textContent).not.toContain("训练中 · 不可启用");
     expect(container.textContent).not.toContain("固定路由与别名");
     expect(container.textContent).not.toContain("还没有固定路由");
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent))
+      .toEqual(["恢复与重试", "错误规则", "会话粘性"]);
     expect(container.textContent).not.toContain("mmBERT");
     expect(bridgeMocks.listRoutes).not.toHaveBeenCalled();
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
@@ -772,19 +773,19 @@ describe("App workspace navigation", () => {
     });
     await renderApp();
 
-    await act(async () => button("API 服务").click());
-    await act(async () => button("添加服务").click());
-    await chooseOption("服务类型", "New API");
+    await act(async () => button("API 提供商").click());
+    await act(async () => button("添加 API 提供商").click());
+    await chooseOption("API 提供商类型", "New API");
     await setInput('[data-testid="service-form"] input[type="url"]', "https://saved.example");
     await setInput('[data-testid="service-form"] input[type="password"]', "secret-key");
     await act(async () => {
-      button("保存服务").click();
+      button("保存 API 提供商").click();
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(bridgeMocks.createService).toHaveBeenCalledOnce();
-    expect(workspaceHeading().textContent).toBe("API 服务");
+    expect(workspaceHeading().textContent).toBe("API 提供商");
     expect(container.textContent).not.toContain("放弃未保存的修改？");
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
@@ -793,15 +794,15 @@ describe("App workspace navigation", () => {
     await renderApp();
 
     await act(async () => {
-      button("API 服务").click();
+      button("API 提供商").click();
     });
     await act(async () => {
-      button("添加服务").click();
+      button("添加 API 提供商").click();
     });
     await setInput("#service-name", "Unfinished service");
 
     const back = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="返回服务列表"]',
+      'button[aria-label="返回 API 提供商列表"]',
     );
     await act(async () => {
       back?.click();
@@ -809,13 +810,13 @@ describe("App workspace navigation", () => {
 
     expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
     expect(document.body.textContent).toContain("放弃未保存的修改？");
-    expect(workspaceHeading().textContent).toBe("添加服务");
+    expect(workspaceHeading().textContent).toBe("添加 API 提供商");
 
     await act(async () => {
       button("继续编辑").click();
     });
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(workspaceHeading().textContent).toBe("添加服务");
+    expect(workspaceHeading().textContent).toBe("添加 API 提供商");
 
     await act(async () => {
       button("路由").click();

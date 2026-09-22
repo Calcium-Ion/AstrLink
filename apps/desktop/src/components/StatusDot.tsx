@@ -1,5 +1,6 @@
 import type { HTMLAttributes } from "react";
 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 export type StatusTone =
@@ -19,10 +20,11 @@ const toneClasses: Record<StatusTone, string> = {
 
 export function StatusDot({
   className,
+  label,
   tone = "neutral",
   ...props
-}: HTMLAttributes<HTMLSpanElement> & { tone?: StatusTone }) {
-  return (
+}: HTMLAttributes<HTMLSpanElement> & { label?: string; tone?: StatusTone }) {
+  const dot = (
     <span
       aria-hidden="true"
       className={cn(
@@ -33,5 +35,25 @@ export function StatusDot({
       data-tone={tone}
       {...props}
     />
+  );
+
+  if (!label) return dot;
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            aria-label={label}
+            className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            role="img"
+            tabIndex={0}
+          >
+            {dot}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent sideOffset={6}>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

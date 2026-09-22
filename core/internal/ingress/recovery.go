@@ -16,6 +16,8 @@ import (
 // next-target ordering; transports and protocol converters never retry.
 type recoverySchedule struct {
 	manual, simulation bool
+	nextRepair         bool
+	repairing          bool
 	previous           int
 	action             contract.FailureAction
 	states             map[string]*stepTargetState
@@ -25,7 +27,7 @@ type recoverySchedule struct {
 	policy             contract.FailoverPolicy
 	selected           []bool
 	maySwitch          bool
-	counts             []int
+	counts             []int // Ordinary attempts only; repairs still count toward total.
 	retryable          []bool
 	readyAt            []time.Time
 	total              int
@@ -66,7 +68,7 @@ func failurePolicy(candidate endpoint.Resolved) contract.FailurePolicy {
 }
 
 func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
-	if schedule.manual && schedule.nextIndex >= 0 && !schedule.chooseStep(schedule.nextIndex) {
+	if schedule.manual && !schedule.nextRepair && schedule.nextIndex >= 0 && !schedule.chooseStep(schedule.nextIndex) {
 		return 0, false
 	}
 	index := schedule.nextIndex
@@ -88,6 +90,8 @@ func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
 		schedule.stopReason = "cancelled"
 		return 0, false
 	}
+	schedule.repairing = schedule.nextRepair
+	schedule.nextRepair = false
 	if schedule.manual {
 		schedule.selected[index] = true
 		schedule.nextIndex = index + 1
@@ -117,11 +121,30 @@ func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
 }
 
 func (schedule *recoverySchedule) started(index int) {
-	schedule.counts[index]++
 	schedule.total++
+	if schedule.repairing {
+		return
+	}
+	schedule.counts[index]++
 	if schedule.manual {
 		schedule.stepState(index).attempts++
 	}
+}
+
+// repair inserts an immediate same-target attempt, including within a manual
+// step. The caller permits only one repair per target. It spends the overall
+// network budget, but neither a normal retry nor a manual path step.
+func (schedule *recoverySchedule) repair(index int) bool {
+	if schedule.total >= schedule.policy.MaxAttempts {
+		return false
+	}
+	schedule.nextIndex = index
+	schedule.nextRepair = true
+	schedule.readyAt[index] = time.Time{}
+	schedule.waitBounds[index] = [2]int{}
+	schedule.delay = 0
+	schedule.stopReason = ""
+	return true
 }
 
 func (schedule *recoverySchedule) recover(index int, action contract.FailureAction, retryAfter time.Duration) bool {

@@ -13,7 +13,7 @@ export function ServiceKindLabel({
 }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-2">
-      <span aria-hidden="true">
+      <span aria-hidden="true" className="inline-flex shrink-0 items-center">
         <ServiceKindIcon kind={kind} size={16} />
       </span>
       <span className="truncate">{children}</span>

@@ -29,13 +29,14 @@ type ServiceModelProber interface {
 }
 
 type serviceCreateRequest struct {
-	FailurePolicy *contract.FailurePolicy `json:"failure_policy,omitempty"`
-	Name          string                  `json:"name"`
-	Kind          *contract.ServiceKind   `json:"kind"`
-	Enabled       json.RawMessage         `json:"enabled,omitempty"`
-	Models        json.RawMessage         `json:"models,omitempty"`
-	HTTP          json.RawMessage         `json:"http,omitempty"`
-	Capabilities  json.RawMessage         `json:"capabilities,omitempty"`
+	ResponsesWebSocketEnabled json.RawMessage         `json:"responses_websocket_enabled,omitempty"`
+	FailurePolicy             *contract.FailurePolicy `json:"failure_policy,omitempty"`
+	Name                      string                  `json:"name"`
+	Kind                      *contract.ServiceKind   `json:"kind"`
+	Enabled                   json.RawMessage         `json:"enabled,omitempty"`
+	Models                    json.RawMessage         `json:"models,omitempty"`
+	HTTP                      json.RawMessage         `json:"http,omitempty"`
+	Capabilities              json.RawMessage         `json:"capabilities,omitempty"`
 }
 
 type serviceHTTPInput struct {
@@ -124,6 +125,12 @@ func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Re
 				return
 			}
 			handler.probeServiceModels(writer, request, id)
+		case "test":
+			if request.Method != http.MethodPost {
+				writeMethodNotAllowed(writer, http.MethodPost)
+				return
+			}
+			handler.testService(writer, request, id)
 		case "probe-responses":
 			if request.Method != http.MethodPost {
 				writeMethodNotAllowed(writer, http.MethodPost)
@@ -203,6 +210,14 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 	service := contract.Service{
 		ID: id, Name: input.Name, Kind: *input.Kind, Enabled: enabled, FailurePolicy: input.FailurePolicy,
 		CreatedAt: now, UpdatedAt: now,
+	}
+	if input.ResponsesWebSocketEnabled != nil {
+		var enabled bool
+		if isJSONNull(input.ResponsesWebSocketEnabled) || strictUnmarshal(input.ResponsesWebSocketEnabled, &enabled) != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "responses_websocket_enabled must be a boolean")
+			return
+		}
+		service.ResponsesWebSocketEnabled = &enabled
 	}
 	models, err := decodeServiceModels(input.Models)
 	if err != nil {
@@ -856,7 +871,7 @@ func applyServicePatch(
 	if len(patch) == 0 {
 		return service, credential, fmt.Errorf("patch is empty")
 	}
-	allowed := map[string]bool{"name": true, "enabled": true, "models": true, "failure_policy": true}
+	allowed := map[string]bool{"name": true, "enabled": true, "models": true, "failure_policy": true, "responses_websocket_enabled": true}
 	if service.Kind.IsHTTP() {
 		allowed["http"] = true
 		allowed["capabilities"] = true
@@ -883,6 +898,13 @@ func applyServicePatch(
 		if err := strictUnmarshal(raw, &service.Enabled); err != nil {
 			return service, credential, err
 		}
+	}
+	if raw, ok := patch["responses_websocket_enabled"]; ok {
+		var enabled bool
+		if err := strictUnmarshal(raw, &enabled); err != nil {
+			return service, credential, err
+		}
+		service.ResponsesWebSocketEnabled = &enabled
 	}
 	if raw, ok := patch["models"]; ok {
 		models, err := decodeServiceModels(raw)

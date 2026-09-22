@@ -60,10 +60,10 @@ func TestOpenAIReasoningPolicyCompatibilityAndIndependence(t *testing.T) {
 			t.Fatal("repair switches are not independent")
 		}
 	}
-	for action, want := range map[FailureAction]bool{FailureStop: false, FailureFailover: false, FailureRetry: true, FailureRetryAndFailover: true} {
+	for action, want := range map[FailureAction]bool{FailureStop: true, FailureFailover: true, FailureRetry: true, FailureRetryAndFailover: true} {
 		policy.HTTPStatus["400"] = action
 		if policy.AllowsOpenAIReasoningRecovery() != want {
-			t.Fatalf("ignored explicit rule %s", action)
+			t.Fatalf("ordinary rule %s changed repair availability", action)
 		}
 	}
 }
@@ -85,15 +85,15 @@ func TestOpenAIFunctionOutputPolicyIsOptInAndIndependent(t *testing.T) {
 	if !decoded.AllowsOpenAIFunctionOutputRecovery() || decoded.AllowsOpenAIReasoningRecovery() {
 		t.Fatal("function-output switch is not independent")
 	}
-	for action, want := range map[FailureAction]bool{FailureStop: false, FailureFailover: false, FailureRetry: true, FailureRetryAndFailover: true} {
+	for action, want := range map[FailureAction]bool{FailureStop: true, FailureFailover: true, FailureRetry: true, FailureRetryAndFailover: true} {
 		policy.HTTPStatus["400"] = action
 		if policy.AllowsOpenAIFunctionOutputRecovery() != want {
-			t.Fatalf("ignored explicit rule %s", action)
+			t.Fatalf("ordinary rule %s changed repair availability", action)
 		}
 	}
 }
 
-func TestThinkingSignaturePolicyCompatibilityAndExplicitRules(t *testing.T) {
+func TestThinkingSignaturePolicyCompatibilityAndIndependentRules(t *testing.T) {
 	policy := DefaultFailurePolicy()
 	if !policy.AllowsThinkingSignatureRecovery() {
 		t.Fatal("omitted setting must enable repair")
@@ -109,10 +109,10 @@ func TestThinkingSignaturePolicyCompatibilityAndExplicitRules(t *testing.T) {
 			t.Fatal("lost explicit switch")
 		}
 	}
-	for action, want := range map[FailureAction]bool{FailureStop: false, FailureFailover: false, FailureRetry: true, FailureRetryAndFailover: true} {
+	for action, want := range map[FailureAction]bool{FailureStop: true, FailureFailover: true, FailureRetry: true, FailureRetryAndFailover: true} {
 		policy.HTTPStatus["400"] = action
 		if policy.AllowsThinkingSignatureRecovery() != want {
-			t.Fatalf("ignored explicit rule %s", action)
+			t.Fatalf("ordinary rule %s changed repair availability", action)
 		}
 	}
 }

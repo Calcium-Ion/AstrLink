@@ -21,8 +21,11 @@ func TestRoutingSettingsGlobalInheritanceAndOverrides(t *testing.T) {
 	}
 	var settings contract.RoutingSettings
 	decode(t, response, &settings)
-	if settings.AllowUnmatchedFailover || settings.DefaultFailurePolicy.MaxRetries != 1 || settings.MaxAttempts != 6 {
+	if !settings.AllowUnmatchedFailover || settings.DefaultFailurePolicy.MaxRetries != 1 || settings.MaxAttempts != 6 {
 		t.Fatalf("defaults=%+v", settings)
+	}
+	if settings.ChannelStickiness == nil || !settings.ChannelStickiness.Enabled || settings.ChannelStickiness.TTLSeconds != 3600 {
+		t.Fatalf("stickiness defaults=%+v", settings.ChannelStickiness)
 	}
 	// A single global change applies to dozens of existing services.
 	for i := 0; i < 32; i++ {
@@ -37,8 +40,16 @@ func TestRoutingSettingsGlobalInheritanceAndOverrides(t *testing.T) {
 	}
 	request := endpoint.ResolveRequest{Protocol: contract.ProtocolOpenAIChat, Model: "public"}
 	original, err := resolver.ResolveCandidates(ctx, request)
-	if err != nil || len(original) != 1 {
+	if err != nil || len(original) != 32 {
 		t.Fatalf("default unmatched candidates=%d %v", len(original), err)
+	}
+	response = controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", `{"allow_unmatched_failover":false}`, "")
+	if response.Code != 200 {
+		t.Fatalf("disable failover: %d %s", response.Code, response.Body.String())
+	}
+	disabled, err := resolver.ResolveCandidates(ctx, request)
+	if err != nil || len(disabled) != 1 {
+		t.Fatalf("disabled failover candidates=%d %v", len(disabled), err)
 	}
 	settings.AllowUnmatchedFailover = true
 	settings.Strategy = contract.FailoverOnly

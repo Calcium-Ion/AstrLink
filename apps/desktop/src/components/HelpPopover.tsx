@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /** Supporting explanations stay available without consuming working height. */
-export function HelpPopover({ label, children, open, onOpenChange, onTriggerClick, triggerRef }: {
+export function HelpPopover({ label, children, inDialog = false, open, onOpenChange, onTriggerClick, triggerRef }: {
   label: string;
   children: ReactNode;
+  inDialog?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   onTriggerClick?: MouseEventHandler<HTMLButtonElement>;
@@ -19,7 +20,7 @@ export function HelpPopover({ label, children, open, onOpenChange, onTriggerClic
           <CircleHelp aria-hidden="true" className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="text-xs leading-relaxed">
+      <PopoverContent align="start" className={inDialog ? "z-110 text-xs leading-relaxed" : "text-xs leading-relaxed"}>
         {children}
       </PopoverContent>
     </Popover>

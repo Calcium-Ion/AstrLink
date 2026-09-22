@@ -118,7 +118,7 @@ func (handler *Handler) bindResponseAffinity(ctx context.Context, request Reques
 		selected = &copy
 	}
 	if selected == nil {
-		return nil, fmt.Errorf("the previous response belongs to an unavailable or unknown service; use its original service or start a new conversation")
+		return nil, fmt.Errorf("the previous response belongs to an unavailable or unknown API provider; use its original API provider or start a new conversation")
 	}
 	policy := contract.DefaultFailoverPolicy()
 	if selected.Failover != nil {

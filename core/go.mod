@@ -3,6 +3,7 @@ module github.com/QuantumNous/astrlink/core
 go 1.25.1
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/QuantumNous/astrlink/convo v0.0.0
 	github.com/QuantumNous/new-api/relaykit v0.2.1
 	github.com/expr-lang/expr v1.17.6

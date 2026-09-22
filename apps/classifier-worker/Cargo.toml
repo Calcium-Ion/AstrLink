@@ -1,6 +1,6 @@
 [package]
 name = "astrlink-classifier-worker"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 description = "Local sequence-classification inference worker for AstrLink auto routing"
 edition = "2024"
 rust-version = "1.88"

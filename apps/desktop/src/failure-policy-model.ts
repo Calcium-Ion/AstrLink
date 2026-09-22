@@ -21,7 +21,10 @@ export interface FailoverPolicy {
   max_attempts: number;
 }
 
+export interface ChannelStickiness { enabled: boolean; ttl_seconds: number; }
+
 export interface RoutingSettings {
+  channel_stickiness?: ChannelStickiness;
  default_recovery_paths?: Record<string,string>;
   default_failure_policy: FailurePolicy;
   allow_unmatched_failover: boolean;
@@ -200,7 +203,7 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
       "max_attempts",
       "default_failure_policy",
     ],
-    ["default_recovery_paths"],
+    ["default_recovery_paths", "channel_stickiness"],
     "routing_settings",
   );
   const parsed = parseFailoverPolicy({
@@ -208,9 +211,17 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
     strategy: settings.strategy,
     max_attempts: settings.max_attempts,
   });
+  let stickiness: ChannelStickiness | undefined;
+  if (settings.channel_stickiness !== undefined) {
+    const value = object(settings.channel_stickiness, "channel_stickiness");
+    keys(value, ["enabled", "ttl_seconds"], [], "channel_stickiness");
+    if (typeof value.enabled !== "boolean" || !Number.isInteger(value.ttl_seconds) || (value.ttl_seconds as number) < 60 || (value.ttl_seconds as number) > 86400) throw Error("invalid channel stickiness");
+    stickiness = { enabled: value.enabled, ttl_seconds: value.ttl_seconds as number };
+  }
   const defaults = settings.default_recovery_paths===undefined?undefined:object(settings.default_recovery_paths,"default_recovery_paths");
  if(defaults)for(const [protocol,id] of Object.entries(defaults)){if(!/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(protocol)||typeof id!=="string"||!/^[a-z][a-z0-9_-]{2,95}$/.test(id))throw Error("invalid default recovery path")}
  return {
+ ...(stickiness ? { channel_stickiness: stickiness } : {}),
  ...(defaults ? {default_recovery_paths:defaults as Record<string,string>}:{}),
     default_failure_policy: parseFailurePolicy(settings.default_failure_policy),
     allow_unmatched_failover: parsed.enabled,

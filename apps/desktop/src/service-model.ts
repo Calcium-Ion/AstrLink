@@ -109,6 +109,7 @@ export interface SubscriptionServiceConnection {
 }
 
 export interface Service {
+  responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   id: string;
   name: string;
@@ -138,6 +139,7 @@ export interface ServiceRecord {
 }
 
 export type SubscriptionServiceCreateInput = {
+  responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   name: string;
   kind: SubscriptionServiceKind;
@@ -146,6 +148,7 @@ export type SubscriptionServiceCreateInput = {
 };
 
 export type HTTPServiceCreateInput = {
+  responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   name: string;
   kind: HTTPServiceKind;
@@ -164,6 +167,7 @@ export type ServiceCreateInput =
   | HTTPServiceCreateInput;
 
 export type ServicePatchInput = {
+  responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy | null;
   name?: string;
   enabled?: boolean;
@@ -476,7 +480,7 @@ export function parseService(value: unknown, path = "$"): Service {
   keysAt(
     service,
     ["id", "name", "kind", "enabled", "models", "capabilities", "created_at", "updated_at"],
-    ["http", "subscription", "failure_policy"],
+    ["http", "subscription", "failure_policy", "responses_websocket_enabled"],
     path,
   );
   const id = stringAt(service.id, `${path}.id`, 3, 96);
@@ -490,6 +494,11 @@ export function parseService(value: unknown, path = "$"): Service {
     invalid(`${path}.kind`, "unknown service kind");
   }
   if (typeof service.enabled !== "boolean") invalid(`${path}.enabled`, "expected a boolean");
+  if (Object.hasOwn(service, "responses_websocket_enabled") && typeof service.responses_websocket_enabled !== "boolean") {
+    invalid(`${path}.responses_websocket_enabled`, "expected a boolean");
+  }
+  const websocketSetting = Object.hasOwn(service, "responses_websocket_enabled")
+    ? { responses_websocket_enabled: service.responses_websocket_enabled as boolean } : {};
   const models = parseModels(service.models, `${path}.models`);
   if (!Array.isArray(service.capabilities)) {
     invalid(`${path}.capabilities`, "expected an array");
@@ -516,6 +525,7 @@ export function parseService(value: unknown, path = "$"): Service {
       name,
       kind: service.kind,
       enabled: service.enabled,
+      ...websocketSetting,
       models,
       capabilities,
       subscription,
@@ -532,6 +542,7 @@ export function parseService(value: unknown, path = "$"): Service {
     name,
     kind: service.kind as HTTPServiceKind,
     enabled: service.enabled,
+    ...websocketSetting,
     models,
     capabilities,
     http: parseHTTPConnection(service.http, `${path}.http`),
@@ -591,4 +602,13 @@ export function serviceStatusLabel(service: Service): string {
   if (!service.enabled) return i18n.t("common.disabled");
   if (!service.subscription) return i18n.t("common.enabled");
   return i18n.t(`subscription.${service.subscription.status}`);
+}
+
+export function supportsResponsesWebSocket(service: Pick<Service, "kind" | "capabilities">): boolean {
+  return service.kind === "codex_subscription" || service.capabilities.some(capability =>
+    capability.protocol === "openai.responses" && capability.streaming && !capability.convert_to);
+}
+
+export function responsesWebSocketEnabled(service: Pick<Service, "kind" | "responses_websocket_enabled">): boolean {
+  return service.responses_websocket_enabled ?? service.kind === "codex_subscription";
 }

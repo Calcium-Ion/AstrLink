@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
@@ -91,7 +90,7 @@ func TestThinkingRecoveryCancellationDoesNotInventAttempt(t *testing.T) {
 	defer cancel()
 	store := &memoryRequestRecordStore{}
 	handler := NewWithDependencies(Dependencies{Resolver: candidateResolver{candidates: thinkingCandidates(policy, 6, "claude-sonnet-4-6")}, RequestRecords: store, Forwarder: transport.New(roundTripFunc(func(*http.Request) (*http.Response, error) {
-		time.AfterFunc(10*time.Millisecond, cancel)
+		cancel()
 		return jsonResponse(400, signatureFailure), nil
 	}))})
 	request := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(signedThinkingRequest)).WithContext(ctx)
@@ -164,9 +163,9 @@ func TestThinkingSignatureRecoveryBoundaries(t *testing.T) {
 		{name: "streaming request", model: "claude-sonnet-4-6", retries: 1, limit: 6, stream: true, want: 2},
 		{name: "does not rectify twice", model: "claude-sonnet-4-6", retries: 5, limit: 6, stillFails: true, want: 2},
 		{name: "switch disabled", model: "claude-sonnet-4-6", retries: 1, limit: 6, disabled: true, want: 1},
-		{name: "no retry budget", model: "claude-sonnet-4-6", retries: 0, limit: 6, want: 1},
+		{name: "no retry budget", model: "claude-sonnet-4-6", retries: 0, limit: 6, want: 2},
 		{name: "total budget", model: "claude-sonnet-4-6", retries: 1, limit: 1, want: 1},
-		{name: "explicit stop", model: "claude-sonnet-4-6", retries: 1, limit: 6, rule: contract.FailureStop, want: 1},
+		{name: "explicit stop", model: "claude-sonnet-4-6", retries: 1, limit: 6, rule: contract.FailureStop, want: 2},
 		{name: "mapped DeepSeek", model: "deepseek-v4-pro", retries: 1, limit: 6, want: 1},
 		{name: "mapped Kimi", model: "kimi-k2.5", retries: 1, limit: 6, want: 1},
 		{name: "unknown model", model: "my-model", retries: 1, limit: 6, want: 1},
@@ -288,7 +287,7 @@ func TestThinkingRepairIsTargetLocalAndReappliesPrivacy(t *testing.T) {
 	}
 }
 
-func TestThinkingRecoveryManualPathsDoNotInventSteps(t *testing.T) {
+func TestThinkingRecoveryRepairsWithinCurrentManualStep(t *testing.T) {
 	for _, repeat := range []bool{false, true} {
 		t.Run(fmt.Sprint(repeat), func(t *testing.T) {
 			policy := contract.DefaultFailurePolicy()
@@ -320,12 +319,8 @@ func TestThinkingRecoveryManualPathsDoNotInventSteps(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
-			want := 1
-			if repeat {
-				want = 2
-			}
-			if trips != want {
-				t.Fatalf("got %d attempts, want %d", trips, want)
+			if trips != 2 || response.Code != 200 {
+				t.Fatalf("got %d attempts, status %d; want repaired success in 2 attempts", trips, response.Code)
 			}
 		})
 	}

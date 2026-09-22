@@ -55,8 +55,13 @@ func TestRetiredRoutesAndPathsRemainReadableButInactive(t *testing.T) {
 	}
 	resolver, _ := endpoint.NewStoreResolver(store)
 	result, err := resolver.ResolveCandidates(ctx, endpoint.ResolveRequest{Protocol: path.Protocol, Model: "public"})
-	if err != nil || len(result) != 1 || result[0].CanonicalService().ID != "service_a" || result[0].Path != nil || result[0].RouteID != "" || result[0].UpstreamModel != "public" {
+	if err != nil || len(result) != 2 || result[0].CanonicalService().ID != "service_a" || result[1].CanonicalService().ID != "service_b" {
 		t.Fatalf("retired routing still executed: %v %v", result, err)
+	}
+	for _, candidate := range result {
+		if candidate.Path != nil || candidate.RouteID != "" || candidate.UpstreamModel != "public" {
+			t.Fatalf("retired routing still executed: %+v", candidate)
+		}
 	}
 	aliases, err := resolver.ListAliasModels(ctx, contract.ProtocolOpenAIModels)
 	if err != nil || len(aliases) != 0 {

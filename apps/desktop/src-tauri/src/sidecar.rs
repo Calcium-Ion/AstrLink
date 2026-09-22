@@ -1618,6 +1618,24 @@ impl CoreManager {
         })
     }
 
+    pub async fn test_service(
+        &self,
+        service_id: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::POST,
+                &format!("{SERVICES_PATH}/{service_id}/test"),
+                Some(input),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("service test returned invalid JSON: {error}"))
+    }
+
     pub async fn probe_service_models(
         &self,
         service_id: &str,
@@ -1795,6 +1813,29 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("request session returned invalid JSON: {error}"))
+    }
+
+    pub async fn session_channel_bindings(
+        &self,
+        session_id: &str,
+        release: bool,
+        before: Option<i64>,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(session_id)?;
+        if before.is_some_and(|id| id < 1) {
+            return Err("invalid binding event cursor".into());
+        }
+        let suffix = before.map(|id| format!("?before={id}")).unwrap_or_default();
+        let (_, body) = self
+            .authenticated_control(
+                if release { Method::DELETE } else { Method::GET },
+                &format!("/control/v1/request-sessions/{session_id}/channel-bindings{suffix}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("API provider bindings returned invalid JSON: {error}"))
     }
 
     pub async fn get_request_record(&self, request_id: &str) -> Result<serde_json::Value, String> {
@@ -2284,6 +2325,12 @@ fn is_request_record_list_path(path: &str) -> bool {
 
 fn control_request_timeout(method: &Method, path: &str) -> Duration {
     let path = control_path(path);
+    if method == Method::POST
+        && path.starts_with(&format!("{SERVICES_PATH}/"))
+        && path.ends_with("/test")
+    {
+        return Duration::from_secs(75);
+    }
     if method == Method::POST && path.starts_with("/control/v1/pricing/") {
         return Duration::from_secs(150);
     }
@@ -5136,6 +5183,22 @@ mod tests {
             "message": "device_auth_id=device-secret"
         });
         assert!(parse_authorization_session_value(&device).is_err());
+    }
+
+    #[test]
+    fn provider_tests_allow_the_core_deadline_to_finish() {
+        assert_eq!(
+            control_request_timeout(&Method::POST, "/control/v1/services/service_test/test"),
+            Duration::from_secs(75)
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/services/service_test/test"),
+            REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::POST, "/control/v1/services/service_test/logout"),
+            REQUEST_TIMEOUT
+        );
     }
 
     #[test]

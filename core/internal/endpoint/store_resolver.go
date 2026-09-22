@@ -163,7 +163,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 	if err != nil {
 		return nil, err
 	}
-	if !request.Protocol.IsModelDiscovery() && !request.Continuation && !settings.AllowUnmatchedFailover {
+	if !request.Protocol.IsModelDiscovery() && !request.Continuation && !request.AllCandidates && !settings.AllowUnmatchedFailover {
 		candidates = candidates[:1]
 	}
 	return candidates, nil

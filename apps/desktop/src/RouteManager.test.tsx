@@ -12,7 +12,7 @@ vi.mock("./bridge", () => bridge);
 import { RouteManager } from "./RouteManager";
 import { defaultFailurePolicy } from "./failure-policy-model";
 
-it("shows only defaults and clears dirty state on unmount under StrictMode", async () => {
+it("shows default-setting tabs and clears dirty state on unmount under StrictMode", async () => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,8 +44,8 @@ it("shows only defaults and clears dirty state on unmount under StrictMode", asy
     expect(
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
-    expect(container.querySelector('[role="tab"]')).toBeNull();
-    expect(container.textContent).toContain("ABC：每家最多一次");
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(3);
+    expect(container.textContent).toContain("ABC：失败后换下一家");
     expect(container.textContent).not.toContain("astrlink/auto");
     expect(bridge.listRoutes).not.toHaveBeenCalled();
     expect(bridge.listRecoveryPaths).not.toHaveBeenCalled();

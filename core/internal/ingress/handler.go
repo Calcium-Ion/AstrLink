@@ -228,6 +228,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	if !handler.allowInferenceBoundary(writer, request) {
 		return
 	}
+	if isResponsesWebSocket(request) {
+		handler.serveResponsesWebSocket(writer, request)
+		return
+	}
 	classified, finishMetadata, err := handler.classify(request)
 	defer finishMetadata()
 	if request.Context().Err() != nil {
@@ -274,16 +278,26 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	category := ""
+	session.channelBinding = handler.prepareChannelBinding(request.Context(), session)
 	candidates, err := handler.resolveCandidates(request.Context(), endpoint.ResolveRequest{
-		Protocol:     classified.Protocol,
-		Model:        classified.Model,
-		Streaming:    classified.Streaming,
-		Category:     category,
-		Continuation: classified.PreviousResponseID != "",
+		Protocol:      classified.Protocol,
+		Model:         classified.Model,
+		Streaming:     classified.Streaming,
+		Category:      category,
+		Continuation:  classified.PreviousResponseID != "",
+		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil,
 	})
 	if err != nil {
 		handler.writeResolveError(outWriter, request, classified, err)
 		return
+	}
+	if turn := responsesWSTurnFromContext(request.Context()); turn != nil {
+		candidates = turn.session.filterCandidates(classified.Model, candidates)
+		if len(candidates) == 0 {
+			writeInferenceError(outWriter, http.StatusUnprocessableEntity, "responses_websocket_unavailable", "no enabled API provider supports native Responses WebSocket for this model and connection", false, nil)
+			session.noteFailed(errorSummaryFromInference("responses_websocket_unavailable", "no enabled API provider supports Responses WebSocket for this connection", false))
+			return
+		}
 	}
 	candidates, err = handler.bindResponseAffinity(request.Context(), classified, candidates)
 	if err != nil {
@@ -294,6 +308,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	if classified.Protocol.IsModelDiscovery() {
 		handler.aggregateModelDiscovery(outWriter, request, classified, candidates)
 		return
+	}
+	candidates = handler.preferChannelBinding(request, session, candidates)
+	if len(candidates) > 1 && candidates[0].Failover != nil && !candidates[0].Failover.Enabled {
+		candidates = candidates[:1]
 	}
 	handler.executeCandidates(outWriter, request, classified, candidates)
 }

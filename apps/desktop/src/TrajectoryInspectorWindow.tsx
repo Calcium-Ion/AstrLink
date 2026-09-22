@@ -101,6 +101,7 @@ export function TrajectoryInspectorWindow() {
           pinned={pinned}
           record={selection.record}
           row={selection.row}
+          service={selection.service}
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1.5 p-8 text-center">

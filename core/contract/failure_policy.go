@@ -91,34 +91,20 @@ func (policy FailurePolicy) ActionForStatus(status int) FailureAction {
 	return FailureStop
 }
 
-// Omission enables targeted repair for older policy documents. An explicit
-// HTTP 400 rule still takes precedence when it prohibits retrying.
+// Omission enables targeted repair for older policy documents. Repair switches
+// are independent of ordinary HTTP error rules, retry quotas and backoff.
 func (policy FailurePolicy) AllowsThinkingSignatureRecovery() bool {
-	return policy.allowsRequestRepair(policy.ThinkingSignatureRecovery)
+	return policy.ThinkingSignatureRecovery == nil || *policy.ThinkingSignatureRecovery
 }
 
 func (policy FailurePolicy) AllowsOpenAIReasoningRecovery() bool {
-	return policy.allowsRequestRepair(policy.OpenAIReasoningRecovery)
+	return policy.OpenAIReasoningRecovery == nil || *policy.OpenAIReasoningRecovery
 }
 
 // Omission leaves function-output ciphertext intact. True enables one same-target
-// repair of encrypted function / custom-tool outputs. An explicit HTTP 400 rule
-// that prohibits retrying still takes precedence.
+// repair of encrypted function / custom-tool outputs, independently of error rules.
 func (policy FailurePolicy) AllowsOpenAIFunctionOutputRecovery() bool {
-	if policy.OpenAIFunctionOutputRecovery == nil || !*policy.OpenAIFunctionOutputRecovery {
-		return false
-	}
-	return policy.allowsRequestRepair(policy.OpenAIFunctionOutputRecovery)
-}
-
-func (policy FailurePolicy) allowsRequestRepair(enabled *bool) bool {
-	if enabled != nil && !*enabled {
-		return false
-	}
-	if action, exists := policy.HTTPStatus["400"]; exists {
-		return action.AllowsRetry()
-	}
-	return true
+	return policy.OpenAIFunctionOutputRecovery != nil && *policy.OpenAIFunctionOutputRecovery
 }
 
 type FailoverStrategy string
@@ -150,6 +136,7 @@ func (policy FailoverPolicy) Validate() error {
 }
 
 type RoutingSettings struct {
+	ChannelStickiness      *ChannelStickiness            `json:"channel_stickiness,omitempty"`
 	DefaultRecoveryPaths   map[ProtocolID]RecoveryPathID `json:"default_recovery_paths,omitempty"`
 	DefaultFailurePolicy   FailurePolicy                 `json:"default_failure_policy"`
 	AllowUnmatchedFailover bool                          `json:"allow_unmatched_failover"`
@@ -158,12 +145,23 @@ type RoutingSettings struct {
 }
 
 func DefaultRoutingSettings() RoutingSettings {
-	return RoutingSettings{DefaultFailurePolicy: DefaultFailurePolicy(), Strategy: FailoverOnly, MaxAttempts: 6}
+	return RoutingSettings{
+		ChannelStickiness:      &ChannelStickiness{Enabled: true, TTLSeconds: 3600},
+		DefaultFailurePolicy:   DefaultFailurePolicy(),
+		AllowUnmatchedFailover: true,
+		Strategy:               FailoverOnly,
+		MaxAttempts:            6,
+	}
 }
 func (settings RoutingSettings) FailoverPolicy() FailoverPolicy {
 	return FailoverPolicy{Enabled: settings.AllowUnmatchedFailover, Strategy: settings.Strategy, MaxAttempts: settings.MaxAttempts}
 }
 func (settings RoutingSettings) Validate() error {
+	if settings.ChannelStickiness != nil {
+		if err := settings.ChannelStickiness.Validate(); err != nil {
+			return err
+		}
+	}
 	for protocol, id := range settings.DefaultRecoveryPaths {
 		if err := protocol.Validate(); err != nil {
 			return err

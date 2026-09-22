@@ -113,6 +113,7 @@ type pendingAttemptRecord struct {
 }
 
 type recordSession struct {
+	channelBinding           *channelBindingAttempt
 	pendingAttempt           *pendingAttemptRecord
 	recovery                 *contract.RequestRecovery
 	id                       contract.RequestID

@@ -21,6 +21,7 @@ const bridgeMocks = vi.hoisted(() => ({
   openAuthorizationURL: vi.fn(),
   probeDraftServiceModels: vi.fn(),
   probeServiceModels: vi.fn(),
+  testService: vi.fn(),
   updateService: vi.fn(),
 }));
 
@@ -195,6 +196,79 @@ describe("ServiceManager", () => {
     container.remove();
   });
 
+  it("tests the selected saved provider without changing its configuration", async () => {
+    let finish!: (value: unknown) => void;
+    bridgeMocks.testService.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await act(async () => root.render(
+      <ServiceManager catalogError={null} catalogStatus="ready" isReady
+        services={[gatewayService]} protocols={[]} view={{ kind: "list" }}
+        onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
+        onServiceSaved={() => {}} onViewChange={() => {}} />,
+    ));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="测试 new-api"]')!.click());
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("额度");
+    expect(dialog.querySelector<HTMLInputElement>('input[aria-label="测试模型"]')!.value).toBe("gpt-5");
+    const start = [...dialog.querySelectorAll("button")].find(button => button.textContent === "开始测试")!;
+    await act(async () => { start.click(); start.click(); });
+    expect(bridgeMocks.testService).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.testService).toHaveBeenCalledWith("service_gateway", { protocol: "openai.responses", model: "gpt-5", stream: true });
+    expect(start.disabled).toBe(true);
+    expect(dialog.querySelector<HTMLInputElement>('input[aria-label="测试模型"]')!.disabled).toBe(true);
+    await act(async () => finish({ service_id: "service_gateway", protocol: "openai.responses", model: "gpt-5", stream: true, ok: true, status_code: 200, duration_ms: 124, output: "**OK**" }));
+    expect(dialog.textContent).toContain("测试成功");
+    expect(dialog.textContent).toContain("0.12 s");
+    expect(dialog.textContent).toContain("HTTP 200");
+    await act(async () => { await vi.dynamicImportSettled(); });
+    expect(dialog.querySelector('[data-slot="markdown-content"] strong')?.textContent).toBe("OK");
+    bridgeMocks.testService.mockResolvedValueOnce({ service_id: "service_gateway", protocol: "openai.responses", model: "gpt-5", stream: true, ok: false, status_code: 429, duration_ms: 50, output: "", error_code: "upstream_error", message: "Quota exceeded" });
+    await act(async () => start.click());
+    expect(dialog.textContent).toContain("测试失败");
+    expect(dialog.textContent).toContain("Quota exceeded");
+    expect(dialog.querySelector("pre")).toBeNull();
+    bridgeMocks.testService.mockRejectedValueOnce(new Error("Core unavailable"));
+    await act(async () => start.click());
+    expect(dialog.textContent).toContain("Core unavailable");
+    expect(start.disabled).toBe(false);
+    expect(bridgeMocks.updateService).not.toHaveBeenCalled();
+  });
+
+  it("requires a connected subscription before testing", async () => {
+    await act(async () => root.render(
+      <ServiceManager catalogError={null} catalogStatus="ready" isReady
+        services={[codexService]} protocols={[]} view={{ kind: "list" }}
+        onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
+        onServiceSaved={() => {}} onViewChange={() => {}} />,
+    ));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="测试 Codex personal"]')!.click());
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("请先登录此订阅");
+    expect([...dialog.querySelectorAll("button")].find(button => button.textContent === "开始测试")!.disabled).toBe(true);
+    expect(dialog.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(true);
+    expect(bridgeMocks.testService).not.toHaveBeenCalled();
+  });
+
+  it("shows channel WebSocket state and saves an explicit Codex opt-out", async () => {
+    const saved = { ...codexService, responses_websocket_enabled: false };
+    bridgeMocks.getService.mockResolvedValue({ service: codexService, etag });
+    bridgeMocks.updateService.mockResolvedValue({ service: saved, etag });
+    const onServiceSaved = vi.fn();
+    const props = { isReady: true, protocols: [], services: [codexService, gatewayService], catalogStatus: "ready" as const,
+      catalogError: null, onRefresh: vi.fn(), onViewChange: vi.fn(), onServiceSaved, onServiceRemoved: vi.fn(), onDirtyChange: vi.fn() };
+    await act(async () => root.render(<ServiceManager {...props} view={{ kind: "list" }} />));
+    expect(container.querySelectorAll('[role="img"][aria-label="WebSocket 已开启"]')).toHaveLength(1);
+    expect(container.querySelector('[role="switch"][aria-label*="WebSocket"]')).toBeNull();
+    expect(container.querySelector('[data-testid="service-card"][aria-label="new-api"]')?.textContent).not.toContain("WebSocket");
+    expect(bridgeMocks.updateService).not.toHaveBeenCalled();
+    await act(async () => root.render(<ServiceManager {...props} view={{ kind: "edit", serviceId: codexService.id }} />));
+    const toggle = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Responses WebSocket"]')!;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await act(async () => toggle.click());
+    await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(bridgeMocks.updateService).toHaveBeenCalledWith(codexService.id, etag, expect.objectContaining({ responses_websocket_enabled: false }));
+    expect(onServiceSaved).toHaveBeenCalledWith(saved);
+  });
+
   it("waits for saved priority before showing rows on every page entry", async () => {
     for (let entry = 0; entry < 2; entry++) {
       let resolveOrder!: (value: unknown) => void;
@@ -273,11 +347,11 @@ describe("ServiceManager", () => {
     await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
       onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
       onViewChange={() => {}} protocols={[]} services={[]} view={{ kind: "create" }} />));
-    await chooseOption("服务类型", "Claude Code 订阅");
+    await chooseOption("API 提供商类型", "Claude Code 订阅");
     expect(container.querySelector<HTMLInputElement>("#service-name")?.value).toBe("Claude Code");
     expect(container.querySelector('[role="radio"][aria-label="Device Code"]')).toBeNull();
     await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    expect(bridgeMocks.createService).toHaveBeenCalledWith({ name: "Claude Code", kind: "claude_subscription", enabled: true, models: [] });
+    expect(bridgeMocks.createService).toHaveBeenCalledWith({ name: "Claude Code", kind: "claude_subscription", enabled: true, responses_websocket_enabled: false, models: [] });
     expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith("service_claude", "authorization_code");
   });
 
@@ -299,13 +373,13 @@ describe("ServiceManager", () => {
     await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady
       onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}}
       onViewChange={() => {}} protocols={[]} services={[]} view={{ kind: "create" }} />));
-    await chooseOption("服务类型", "Grok 订阅（xAI OAuth）");
+    await chooseOption("API 提供商类型", "Grok 订阅（xAI OAuth）");
     expect(container.querySelector<HTMLInputElement>("#service-name")?.value).toBe("Grok 订阅");
     expect(container.querySelector('[role="radio"][aria-label="Device Code"]')).not.toBeNull();
     expect(container.querySelector('[role="radio"][aria-label="浏览器 OAuth"]')).toBeNull();
     expect(container.textContent).toContain("Device Code 登录");
     await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    expect(bridgeMocks.createService).toHaveBeenCalledWith({ name: "Grok 订阅", kind: "grok_subscription", enabled: true, models: [] });
+    expect(bridgeMocks.createService).toHaveBeenCalledWith({ name: "Grok 订阅", kind: "grok_subscription", enabled: true, responses_websocket_enabled: false, models: [] });
     expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith("service_grok", "device_code");
   });
 
@@ -430,7 +504,7 @@ describe("ServiceManager", () => {
     expect(container.querySelectorAll('[data-testid="service-card"]')).toHaveLength(1);
     expect(container.querySelector('[data-testid="service-card"]')?.textContent).toContain("Codex personal");
 
-    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索服务"]');
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索 API 提供商"]');
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (!search || !setter) throw new Error("Missing service search");
     await act(async () => {
@@ -506,8 +580,8 @@ describe("ServiceManager", () => {
         onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
         onServiceSaved={() => {}} onViewChange={() => {}} />,
     ));
-    const modelSearch = container.querySelector<HTMLInputElement>('input[aria-label="按模型名筛选服务"]')!;
-    const serviceSearch = container.querySelector<HTMLInputElement>('input[aria-label="搜索服务"]')!;
+    const modelSearch = container.querySelector<HTMLInputElement>('input[aria-label="按模型名筛选 API 提供商"]')!;
+    const serviceSearch = container.querySelector<HTMLInputElement>('input[aria-label="搜索 API 提供商"]')!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => {
       setter.call(modelSearch, "  GPT-5  ");
@@ -851,7 +925,7 @@ describe("ServiceManager", () => {
         onServiceSaved={() => {}} onViewChange={() => {}} protocols={[]} services={[]}
         view={{ kind: "create" }} />,
     ));
-    await chooseOption("服务类型", label);
+    await chooseOption("API 提供商类型", label);
     expect(container.querySelector<HTMLInputElement>("#service-name")?.value).toBe(preset.defaultName);
     await openEditorTab("protocols");
     const protocolRows = [...container.querySelectorAll('[data-testid="service-capability-row"]')];
@@ -956,6 +1030,7 @@ describe("ServiceManager", () => {
       name: "Personal Codex",
       kind: "codex_subscription",
       enabled: true,
+      responses_websocket_enabled: true,
       models: [],
     });
     expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
@@ -998,8 +1073,8 @@ describe("ServiceManager", () => {
       );
 
     await act(async () => render([]));
-    await chooseOption("服务类型", "Anthropic API");
-    const kind = container.querySelector<HTMLButtonElement>('[aria-label="服务类型"]');
+    await chooseOption("API 提供商类型", "Anthropic API");
+    const kind = container.querySelector<HTMLButtonElement>('[aria-label="API 提供商类型"]');
     expect(kind?.textContent).toContain("Anthropic API");
     expect(
       container.querySelector<HTMLInputElement>("#service-name")?.value,
@@ -1064,7 +1139,7 @@ describe("ServiceManager", () => {
       },
       protocol: "openai.models",
     });
-    expect(document.body.textContent).toContain("选择服务支持的模型");
+    expect(document.body.textContent).toContain("选择 API 提供商支持的模型");
     // Only the already allow-listed model opens checked; the discovery is opt-in.
     expect(previewModelCheckbox("gpt-5").getAttribute("aria-checked")).toBe("true");
     expect(previewModelCheckbox("gpt-4.1").getAttribute("aria-checked")).toBe(
@@ -1256,7 +1331,7 @@ describe("ServiceManager", () => {
       (button) => button.textContent === "确认删除",
     );
     await act(async () => confirm?.click());
-    expect(container.textContent).toContain("还没有模型 · 服务不会参与路由");
+    expect(container.textContent).toContain("还没有模型 · API 提供商不会参与路由");
     expect(container.textContent).toContain("0 个模型");
   });
 
@@ -1355,7 +1430,7 @@ describe("ServiceManager", () => {
     });
     await openEditorTab("models");
 
-    expect(container.textContent).toContain("还没有模型 · 服务不会参与路由");
+    expect(container.textContent).toContain("还没有模型 · API 提供商不会参与路由");
 
     const open = container.querySelector<HTMLButtonElement>(
       'button[aria-label="添加模型"]',
@@ -1442,7 +1517,7 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
 
-    expect(document.body.textContent).toContain("选择服务支持的模型");
+    expect(document.body.textContent).toContain("选择 API 提供商支持的模型");
     expect(document.body.textContent).toContain("gpt-4o");
     expect(document.body.textContent).not.toContain("此前已停用");
     expect(previewModelCheckbox("gpt-4o").getAttribute("aria-checked")).toBe(
@@ -1594,6 +1669,7 @@ describe("ServiceManager", () => {
       {
         name: gatewayService.name,
         enabled: true,
+        responses_websocket_enabled: false,
         failure_policy: null,
         models: ["gpt-5"],
         http: {
@@ -1637,7 +1713,7 @@ describe("ServiceManager", () => {
       );
     });
     const deviceFlow = container.querySelector<HTMLButtonElement>(
-      '[role="radiogroup"][aria-label="新服务登录方式"] [role="radio"][aria-label="Device Code"]',
+      '[role="radiogroup"][aria-label="新 API 提供商登录方式"] [role="radio"][aria-label="Device Code"]',
     );
     await act(async () => deviceFlow?.click());
     const form = container.querySelector<HTMLFormElement>("form");
@@ -1673,7 +1749,7 @@ describe("ServiceManager", () => {
       );
     });
     expect(notifyMocks.success).toHaveBeenCalledWith(
-      "订阅服务已添加，可稍后从服务列表重新登录。",
+      "订阅 API 提供商已添加，可稍后从 API 提供商列表重新登录。",
     );
   });
 
@@ -1846,7 +1922,7 @@ describe("ServiceManager", () => {
     );
     expect(saved).toHaveBeenCalledWith(disabledService);
     expect(changed).not.toHaveBeenCalled();
-    expect(notifyMocks.success).toHaveBeenCalledWith("服务已停用。");
+    expect(notifyMocks.success).toHaveBeenCalledWith("API 提供商已停用。");
   });
 
   it("reenables a stopped service from the list", async () => {
@@ -1893,7 +1969,7 @@ describe("ServiceManager", () => {
       etag,
       { enabled: true },
     );
-    expect(notifyMocks.success).toHaveBeenCalledWith("服务已启用。");
+    expect(notifyMocks.success).toHaveBeenCalledWith("API 提供商已启用。");
   });
 
   it("uses an in-app confirmation before deleting a service", async () => {
@@ -2062,14 +2138,14 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector("h1")?.textContent).toBe("编辑服务");
-    expect(container.textContent).toContain("返回服务列表");
+    expect(container.querySelector("h1")?.textContent).toBe("编辑 API 提供商");
+    expect(container.textContent).toContain("返回 API 提供商列表");
     expect(container.textContent).not.toContain("服务类型不可变");
     expect(
-      container.querySelector('[aria-label="服务类型"]')?.textContent,
+      container.querySelector('[aria-label="API 提供商类型"]')?.textContent,
     ).toContain("New API");
     expect(
-      container.querySelector('[aria-label="服务类型"]')?.textContent,
+      container.querySelector('[aria-label="API 提供商类型"]')?.textContent,
     ).not.toContain("new-api");
     expect(
       container.querySelector('[data-testid="service-editor-tab-connection"]'),
@@ -2207,7 +2283,7 @@ describe("ServiceManager", () => {
       "openai.models",
     );
     expect(bridgeMocks.probeDraftServiceModels).not.toHaveBeenCalled();
-    expect(document.body.textContent).toContain("选择服务支持的模型");
+    expect(document.body.textContent).toContain("选择 API 提供商支持的模型");
   });
 
   it("imports Codex models after login completes", async () => {
@@ -2374,7 +2450,7 @@ describe("ServiceManager", () => {
     bridgeMocks.updateService.mockResolvedValue({ service: gatewayService, etag });
     await act(async () => root.render(<ServiceManager catalogError={null} catalogStatus="ready" isReady onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}} onServiceSaved={() => {}} onViewChange={() => {}} protocols={[]} services={[gatewayService]} view={{ kind: "edit", serviceId: gatewayService.id }} />));
     await openEditorTab("failure");
-    const toggle = [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find(button => button.closest("label")?.textContent?.includes("为这个服务单独设置"))!;
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find(button => button.closest("label")?.textContent?.includes("为这个 API 提供商单独设置"))!;
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(container.textContent).toContain("默认跟随路由页面的默认策略");
     expect(container.textContent).not.toContain("遇到这些错误时");

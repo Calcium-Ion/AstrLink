@@ -123,10 +123,24 @@ func Evaluate(source string, u *contract.Usage, at time.Time) (Valuation, error)
 	if e.vars["cc"] || e.vars["cc1h"] {
 		in -= write
 	}
-	if e.vars["ai"] && u.InputAudioTokens == nil || e.vars["ao"] && u.OutputAudioTokens == nil {
+	// Equal text/audio rates can be evaluated from totals alone. Prove that
+	// moving tokens between the two partitions cannot change any price/tier;
+	// never treat unknown audio as zero when the breakdown affects the bill.
+	inputSplit := e.vars["ai"] && u.InputTokens > 0 && !e.audioSplitIndependent("p", "ai")
+	outputSplit := e.vars["ao"] && u.OutputTokens > 0 && !e.audioSplitIndependent("c", "ao")
+	if inputSplit && u.InputAudioTokens == nil || outputSplit && u.OutputAudioTokens == nil {
 		return Valuation{}, fmt.Errorf("missing_audio_usage")
 	}
 	audioIn, audioOut := count(u.InputAudioTokens), count(u.OutputAudioTokens)
+	if audioIn > int64(u.InputTokens) || audioOut > int64(u.OutputTokens) {
+		return Valuation{}, fmt.Errorf("invalid_token_partition")
+	}
+	if e.vars["ai"] && !inputSplit {
+		audioIn = 0
+	}
+	if e.vars["ao"] && !outputSplit {
+		audioOut = 0
+	}
 	if e.vars["ai"] {
 		in -= audioIn
 	}

@@ -412,11 +412,13 @@ func (scanner *usageScanner) parseGemini(document map[string]json.RawMessage) {
 		return
 	}
 	var payload struct {
-		PromptTokenCount        *int `json:"promptTokenCount"`
-		CandidatesTokenCount    *int `json:"candidatesTokenCount"`
-		TotalTokenCount         *int `json:"totalTokenCount"`
-		CachedContentTokenCount *int `json:"cachedContentTokenCount"`
-		ThoughtsTokenCount      int  `json:"thoughtsTokenCount"`
+		PromptTokenCount        *int            `json:"promptTokenCount"`
+		CandidatesTokenCount    *int            `json:"candidatesTokenCount"`
+		TotalTokenCount         *int            `json:"totalTokenCount"`
+		CachedContentTokenCount *int            `json:"cachedContentTokenCount"`
+		ThoughtsTokenCount      int             `json:"thoughtsTokenCount"`
+		PromptTokensDetails     json.RawMessage `json:"promptTokensDetails"`
+		CandidatesTokensDetails json.RawMessage `json:"candidatesTokensDetails"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return
@@ -430,6 +432,38 @@ func (scanner *usageScanner) parseGemini(document map[string]json.RawMessage) {
 		*payload.TotalTokenCount,
 		payload.CachedContentTokenCount,
 	)
+	scanner.usage.InputAudioTokens = geminiAudioTokens(payload.PromptTokensDetails, *payload.PromptTokenCount)
+	scanner.usage.OutputAudioTokens = geminiAudioTokens(payload.CandidatesTokensDetails, *payload.CandidatesTokenCount)
+}
+
+// An absent modality breakdown is unknown, not zero. Only a complete breakdown
+// (or a zero total) lets us distinguish text-only usage from unreported audio.
+func geminiAudioTokens(raw json.RawMessage, total int) *int {
+	var details []struct {
+		Modality   string `json:"modality"`
+		TokenCount *int   `json:"tokenCount"`
+	}
+	if len(raw) != 0 && json.Unmarshal(raw, &details) != nil {
+		return nil
+	}
+	remaining, audio := total, 0
+	for _, detail := range details {
+		if detail.TokenCount == nil || *detail.TokenCount < 0 || *detail.TokenCount > remaining {
+			return nil
+		}
+		switch detail.Modality {
+		case "AUDIO":
+			audio += *detail.TokenCount
+		case "TEXT", "IMAGE", "VIDEO":
+		default:
+			return nil
+		}
+		remaining -= *detail.TokenCount
+	}
+	if remaining != 0 {
+		return nil
+	}
+	return &audio
 }
 
 // normalizeOpenAIStyleUsage keeps provider input as-is (already includes cache
