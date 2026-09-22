@@ -23,7 +23,6 @@ import { FormMessage } from "@/components/FormMessage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -34,7 +33,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup } from "@/components/ui/radio-group";
 import {
@@ -100,7 +103,10 @@ import {
   type PrivacyRegexSource,
 } from "./privacy-policy-model";
 import { PageHeader } from "./PageHeader";
-import { PrivacyDryRunResult, type CompletedPrivacyDryRun } from "./PrivacyDryRunResult";
+import {
+  PrivacyDryRunResult,
+  type CompletedPrivacyDryRun,
+} from "./PrivacyDryRunResult";
 import type { DryRunTextSpan } from "./privacy-dry-run-model";
 
 type SafetyPolicyStatus = "blocked" | "loading" | "ready" | "error";
@@ -397,7 +403,10 @@ function defaultAllowlistRule(): PrivacyAllowlistRule {
 }
 
 function defaultCustomRegexRule(): PrivacyRegexRule {
-  return { kind: "email", pattern: `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b` };
+  return {
+    kind: "email",
+    pattern: `(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b`,
+  };
 }
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -503,9 +512,7 @@ function LabelMappingDialog({
       <DialogContent className="max-w-xl sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>
-          {t("safety.mappingHint")}
-          </DialogDescription>
+          <DialogDescription>{t("safety.mappingHint")}</DialogDescription>
         </DialogHeader>
         <div className="grid max-h-[52vh] gap-2 overflow-auto pr-1">
           {labels.map((label, index) => {
@@ -519,12 +526,16 @@ function LabelMappingDialog({
                 htmlFor={selectID}
                 key={label.label}
               >
-                <code className="overflow-hidden text-sm text-ellipsis whitespace-nowrap">{label.label}</code>
+                <code className="overflow-hidden text-sm text-ellipsis whitespace-nowrap">
+                  {label.label}
+                </code>
                 <Select
                   onValueChange={(value) => {
                     onChange(
                       label.label,
-                      value === "__ignore__" ? null : (value as CanonicalPrivacyKind),
+                      value === "__ignore__"
+                        ? null
+                        : (value as CanonicalPrivacyKind),
                     );
                   }}
                   value={
@@ -534,40 +545,42 @@ function LabelMappingDialog({
                   }
                 >
                   <SelectTrigger
-                    aria-label={t("safety.labelMapping", { label: label.label })}
+                    aria-label={t("safety.labelMapping", {
+                      label: label.label,
+                    })}
                     className="w-full"
                     id={selectID}
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                  {unresolved ? (
-                    <SelectItem disabled value="__unresolved__">
-                      {t("safety.pleaseSelect")}
+                    {unresolved ? (
+                      <SelectItem disabled value="__unresolved__">
+                        {t("safety.pleaseSelect")}
+                      </SelectItem>
+                    ) : null}
+                    <SelectItem value="__ignore__">
+                      {t("safety.ignoreLabel")}
                     </SelectItem>
-                  ) : null}
-                  <SelectItem value="__ignore__">{t("safety.ignoreLabel")}</SelectItem>
-                  {canonicalKindOptions().map((kind) => (
-                    <SelectItem key={kind.value} value={kind.value}>
-                      {kind.label}
-                    </SelectItem>
-                  ))}
+                    {canonicalKindOptions().map((kind) => (
+                      <SelectItem key={kind.value} value={kind.value}>
+                        {kind.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </Label>
             );
           })}
         </div>
-        <div className="rounded-lg bg-muted px-3 py-2 text-sm text-text-secondary">{summary}</div>
+        <div className="rounded-lg bg-muted px-3 py-2 text-sm text-text-secondary">
+          {summary}
+        </div>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel} type="button">
             {t("common.cancel")}
           </Button>
-          <Button
-            disabled={confirmDisabled}
-            onClick={onConfirm}
-            type="button"
-          >
+          <Button disabled={confirmDisabled} onClick={onConfirm} type="button">
             {confirmLabel}
           </Button>
         </DialogFooter>
@@ -608,37 +621,47 @@ function ModelActionDialog({
         ? t("safety.confirmCancelImport")
         : t("safety.confirmCancelDownload")
       : t("safety.confirmDelete");
-  const transferAction = local ? t("safety.importAction") : t("safety.downloadAction");
+  const transferAction = local
+    ? t("safety.importAction")
+    : t("safety.downloadAction");
 
   const description = (
     <>
       <p>
         {activating
-            ? t("safety.useBody", {
+          ? t("safety.useBody", {
+              name: installation.name,
+              variant: installation.variant_name,
+            })
+          : downloading
+            ? t("safety.stopBody", {
+                name: installation.name,
+                action: transferAction,
+              })
+            : t("safety.deleteBody", {
                 name: installation.name,
                 variant: installation.variant_name,
-              })
-            : downloading
-              ? t("safety.stopBody", {
-                  name: installation.name,
-                  action: transferAction,
-                })
-              : t("safety.deleteBody", {
-                  name: installation.name,
-                  variant: installation.variant_name,
-                  action: transferAction,
-                })}
+                action: transferAction,
+              })}
       </p>
       {activating ? (
         <>
           <dl className="grid grid-cols-2 gap-2.5">
             <div className="rounded-lg bg-muted p-3">
-              <dt className="text-sm text-muted-foreground">{t("safety.diskUsage")}</dt>
-              <dd className="mt-1 text-sm font-medium">{formatBytes(installation.bytes_total)}</dd>
+              <dt className="text-sm text-muted-foreground">
+                {t("safety.diskUsage")}
+              </dt>
+              <dd className="mt-1 text-sm font-medium">
+                {formatBytes(installation.bytes_total)}
+              </dd>
             </div>
             <div className="rounded-lg bg-muted p-3">
-              <dt className="text-sm text-muted-foreground">{t("safety.estimatedRam")}</dt>
-              <dd className="mt-1 text-sm font-medium">{formatBytes(installation.estimated_ram_bytes)}</dd>
+              <dt className="text-sm text-muted-foreground">
+                {t("safety.estimatedRam")}
+              </dt>
+              <dd className="mt-1 text-sm font-medium">
+                {formatBytes(installation.estimated_ram_bytes)}
+              </dd>
             </div>
           </dl>
           <FormMessage tone={heavy ? "warning" : "notice"}>
@@ -679,23 +702,31 @@ function InstallationResourceDialog({
       confirmLabel={t("safety.continueInstall")}
       description={
         <>
-          <p>{t("safety.heavyResource", {
-            name: pending.name,
-            variant: pending.variant.name,
-          })}</p>
-        <dl className="grid grid-cols-2 gap-2.5">
-          <div className="rounded-lg bg-muted p-3">
-            <dt className="text-sm text-muted-foreground">{local ? t("safety.importSize") : t("safety.downloadSize")}</dt>
-            <dd className="mt-1 text-sm font-medium">{formatBytes(pending.variant.bytes_total)}</dd>
-          </div>
-          <div className="rounded-lg bg-muted p-3">
-            <dt className="text-sm text-muted-foreground">{t("safety.estimatedRam")}</dt>
-            <dd className="mt-1 text-sm font-medium">{formatBytes(pending.variant.estimated_ram_bytes)}</dd>
-          </div>
-        </dl>
-        <FormMessage tone="warning">
-          {t("safety.slowDevice")}
-        </FormMessage>
+          <p>
+            {t("safety.heavyResource", {
+              name: pending.name,
+              variant: pending.variant.name,
+            })}
+          </p>
+          <dl className="grid grid-cols-2 gap-2.5">
+            <div className="rounded-lg bg-muted p-3">
+              <dt className="text-sm text-muted-foreground">
+                {local ? t("safety.importSize") : t("safety.downloadSize")}
+              </dt>
+              <dd className="mt-1 text-sm font-medium">
+                {formatBytes(pending.variant.bytes_total)}
+              </dd>
+            </div>
+            <div className="rounded-lg bg-muted p-3">
+              <dt className="text-sm text-muted-foreground">
+                {t("safety.estimatedRam")}
+              </dt>
+              <dd className="mt-1 text-sm font-medium">
+                {formatBytes(pending.variant.estimated_ram_bytes)}
+              </dd>
+            </div>
+          </dl>
+          <FormMessage tone="warning">{t("safety.slowDevice")}</FormMessage>
         </>
       }
       onCancel={onCancel}
@@ -731,19 +762,24 @@ function StreamingRestoreDemoDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[calc(100dvh-36px)] max-w-[720px] overflow-auto sm:max-w-[720px]">
         <DialogHeader>
-          <DialogTitle id="streaming-restore-demo-title">{t("safety.demoTitle")}</DialogTitle>
+          <DialogTitle id="streaming-restore-demo-title">
+            {t("safety.demoTitle")}
+          </DialogTitle>
           <DialogDescription>
-          {t("safety.demoDescriptionLead")}<code>stream: true</code>
-          {t("safety.demoDescriptionTail")}
+            {t("safety.demoDescriptionLead")}
+            <code>stream: true</code>
+            {t("safety.demoDescriptionTail")}
           </DialogDescription>
         </DialogHeader>
         <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-text-secondary">
-          {t("safety.demoEmailLead")}<code>alice@example.com</code>
+          {t("safety.demoEmailLead")}
+          <code>alice@example.com</code>
           {t("safety.demoEmailTail")}
         </p>
         <p className="rounded-lg bg-muted px-3 py-2.5 text-sm leading-relaxed text-text-secondary">
           {t("safety.demoTokenNote")}
-          <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>{t("safety.demoTokenNoteEnd")}
+          <code>&lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;</code>
+          {t("safety.demoTokenNoteEnd")}
         </p>
         <div
           aria-label={t("safety.flowTitle")}
@@ -753,22 +789,16 @@ function StreamingRestoreDemoDialog({
           key={replayKey}
         >
           <div className="grid grid-cols-3 gap-2.5" aria-hidden="true">
-            <div
-              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground"
-            >
+            <div className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground">
               <strong>{t("safety.demoClient")}</strong>
               <span>OpenAI Responses</span>
             </div>
-            <div
-              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-primary/40 bg-accent/70 px-2.5 py-2 text-center [&>strong]:text-sm [&>span:last-child]:text-xs [&>span:last-child]:text-muted-foreground"
-            >
+            <div className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-primary/40 bg-accent/70 px-2.5 py-2 text-center [&>strong]:text-sm [&>span:last-child]:text-xs [&>span:last-child]:text-muted-foreground">
               <span className="pointer-events-none absolute -inset-1 animate-[streaming-restore-demo-shield_12s_linear_infinite] rounded-md opacity-0" />
               <strong>AstrLink</strong>
               <span>{t("safety.demoGateway")}</span>
             </div>
-            <div
-              className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground"
-            >
+            <div className="relative z-2 flex min-h-[58px] flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-card px-2.5 py-2 text-center [&>strong]:text-sm [&>span]:text-xs [&>span]:text-muted-foreground">
               <strong>{t("safety.demoUpstream")}</strong>
               <span>{t("safety.demoSse")}</span>
             </div>
@@ -785,10 +815,16 @@ function StreamingRestoreDemoDialog({
                 {t("safety.demoRequest")}
               </span>
             </div>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-plain_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="plain">
+            <span
+              className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-plain_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm"
+              data-packet="plain"
+            >
               alice@example.com
             </span>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-redacted_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="redacted">
+            <span
+              className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-redacted_12s_linear_infinite] overflow-hidden rounded-full border border-primary/35 bg-accent px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-accent-foreground text-ellipsis whitespace-nowrap shadow-sm"
+              data-packet="redacted"
+            >
               &lt;PRIVATE_EMAIL_7f3a91c04d28be56&gt;
             </span>
           </div>
@@ -804,17 +840,26 @@ function StreamingRestoreDemoDialog({
                 {t("safety.demoResponse")}
               </span>
             </div>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-a_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="chunk-a">
+            <span
+              className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-a_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm"
+              data-packet="chunk-a"
+            >
               {
                 'data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"<PRIVATE_EMAIL_7f3a"}'
               }
             </span>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-b_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="chunk-b">
+            <span
+              className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-chunk-b_12s_linear_infinite] overflow-hidden rounded-full border border-warning/40 bg-warning-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-warning-foreground text-ellipsis whitespace-nowrap shadow-sm"
+              data-packet="chunk-b"
+            >
               {
                 'data: {"type":"response.output_text.delta","item_id":"item_1","content_index":0,"delta":"91c04d28be56>"}'
               }
             </span>
-            <span className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-restored_12s_linear_infinite] overflow-hidden rounded-full border border-success/40 bg-success-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-success-foreground text-ellipsis whitespace-nowrap shadow-sm" data-packet="restored">
+            <span
+              className="pointer-events-none absolute top-1/2 left-[17%] z-3 max-w-[min(168px,42%)] -translate-1/2 animate-[streaming-restore-demo-restored_12s_linear_infinite] overflow-hidden rounded-full border border-success/40 bg-success-wash px-[7px] py-1 font-mono text-xs leading-tight font-semibold text-success-foreground text-ellipsis whitespace-nowrap shadow-sm"
+              data-packet="restored"
+            >
               {t("safety.demoBody", { email: "alice@example.com" })}
             </span>
           </div>
@@ -843,11 +888,7 @@ function StreamingRestoreDemoDialog({
           >
             {t("safety.replay")}
           </Button>
-          <Button
-            autoFocus
-            onClick={onClose}
-            type="button"
-          >
+          <Button autoFocus onClick={onClose} type="button">
             {t("common.close")}
           </Button>
         </DialogFooter>
@@ -892,10 +933,7 @@ function PolicySection({
   );
 }
 
-export function SafetyPolicy({
-  coreSessionKey,
-  isReady,
-}: SafetyPolicyProps) {
+export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   const t = useT();
   const [status, setStatus] = useState<SafetyPolicyStatus>("blocked");
   const [record, setRecord] = useState<PrivacyPolicyRecord | null>(null);
@@ -930,9 +968,8 @@ export function SafetyPolicy({
   const [dryRunSample, setDryRunSample] = useState(defaultDryRunSample);
   const [dryRunBusy, setDryRunBusy] = useState(false);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
-  const [dryRunResult, setDryRunResult] = useState<CompletedPrivacyDryRun | null>(
-    null,
-  );
+  const [dryRunResult, setDryRunResult] =
+    useState<CompletedPrivacyDryRun | null>(null);
   const [minConfidenceDraft, setMinConfidenceDraft] = useState("");
   const [pendingModelAction, setPendingModelAction] =
     useState<PendingModelAction | null>(null);
@@ -991,12 +1028,16 @@ export function SafetyPolicy({
     heading?.focus({ preventScroll: true });
     const workspace = dryRunWorkspaceRef.current;
     const panel = heading?.closest<HTMLElement>('[data-slot="panel"]');
-    const resultScroller = panel?.querySelector<HTMLElement>("[data-tab-scroller]");
+    const resultScroller = panel?.querySelector<HTMLElement>(
+      "[data-tab-scroller]",
+    );
     if (resultScroller) resultScroller.scrollTop = 0;
     // Stacked panels need to reveal the completed result. Only move their inner
     // scroller; keep the page header and navigation fixed.
     if (workspace && panel && workspace.scrollHeight > workspace.clientHeight) {
-      workspace.scrollTop += panel.getBoundingClientRect().top - workspace.getBoundingClientRect().top;
+      workspace.scrollTop +=
+        panel.getBoundingClientRect().top -
+        workspace.getBoundingClientRect().top;
     }
   }, [dryRunResult]);
 
@@ -1090,11 +1131,7 @@ export function SafetyPolicy({
   const downloadingSignature = downloadingIDs.join(",");
 
   useEffect(() => {
-    if (
-      !isReady ||
-      coreSessionKey === null ||
-      downloadingIDs.length === 0
-    ) {
+    if (!isReady || coreSessionKey === null || downloadingIDs.length === 0) {
       return;
     }
     const generation = generationRef.current;
@@ -1139,11 +1176,7 @@ export function SafetyPolicy({
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [
-    coreSessionKey,
-    downloadingSignature,
-    isReady,
-  ]);
+  }, [coreSessionKey, downloadingSignature, isReady]);
 
   const refresh = () => {
     if (
@@ -1228,8 +1261,7 @@ export function SafetyPolicy({
     record?.policy.local_model_id === undefined
       ? null
       : (installations.find(
-          (installation) =>
-            installation.id === record.policy.local_model_id,
+          (installation) => installation.id === record.policy.local_model_id,
         ) ?? null);
   const selectedModelReady = selectedInstallation?.status === "ready";
 
@@ -1299,8 +1331,12 @@ export function SafetyPolicy({
 
   const addCustomRegexRule = () => {
     if (record === null) return;
-    if (record.policy.custom_regex_rules.length >= MAX_PRIVACY_CUSTOM_REGEX_RULES) {
-      setError(t("safety.tooManyCustom", { max: MAX_PRIVACY_CUSTOM_REGEX_RULES }));
+    if (
+      record.policy.custom_regex_rules.length >= MAX_PRIVACY_CUSTOM_REGEX_RULES
+    ) {
+      setError(
+        t("safety.tooManyCustom", { max: MAX_PRIVACY_CUSTOM_REGEX_RULES }),
+      );
       return;
     }
     saveCustomRegexRules([
@@ -1357,7 +1393,10 @@ export function SafetyPolicy({
       style: "token",
     };
 
-  const saveKindRule = (kind: CanonicalPrivacyKind, patch: Partial<PrivacyKindRule>) => {
+  const saveKindRule = (
+    kind: CanonicalPrivacyKind,
+    patch: Partial<PrivacyKindRule>,
+  ) => {
     if (record === null) return;
     // The whole list is sent because kind_rules is replaced, not merged.
     const next = PRIVACY_KINDS.map((candidate) => {
@@ -1374,7 +1413,9 @@ export function SafetyPolicy({
   const addAllowlistRule = () => {
     if (record === null) return;
     if (record.policy.allowlist_rules.length >= MAX_PRIVACY_ALLOWLIST_RULES) {
-      setError(t("safety.tooManyAllowlist", { max: MAX_PRIVACY_ALLOWLIST_RULES }));
+      setError(
+        t("safety.tooManyAllowlist", { max: MAX_PRIVACY_ALLOWLIST_RULES }),
+      );
       return;
     }
     setAllowlistQuery("");
@@ -1386,7 +1427,9 @@ export function SafetyPolicy({
     if (record === null) return;
     if (allowlistPending && index === record.policy.allowlist_rules.length) {
       setAllowlistPending(false);
-      setAllowlistDrafts(record.policy.allowlist_rules.map((rule) => rule.value));
+      setAllowlistDrafts(
+        record.policy.allowlist_rules.map((rule) => rule.value),
+      );
       return;
     }
     saveAllowlistRules(
@@ -1418,12 +1461,17 @@ export function SafetyPolicy({
       return;
     }
     if ([...draft].length > MAX_PRIVACY_ALLOWLIST_VALUE_CHARS) {
-      setError(t("safety.allowlistLength", { max: MAX_PRIVACY_ALLOWLIST_VALUE_CHARS }));
+      setError(
+        t("safety.allowlistLength", { max: MAX_PRIVACY_ALLOWLIST_VALUE_CHARS }),
+      );
       return;
     }
     if (isNew) {
       setAllowlistPending(false);
-      saveAllowlistRules([...rules, { type: allowlistPendingType, value: draft }]);
+      saveAllowlistRules([
+        ...rules,
+        { type: allowlistPendingType, value: draft },
+      ]);
       return;
     }
     if (draft === rules[index]?.value) return;
@@ -1635,9 +1683,7 @@ export function SafetyPolicy({
       ) {
         return;
       }
-      setInstallations((current) =>
-        mergeInstallation(current, installation),
-      );
+      setInstallations((current) => mergeInstallation(current, installation));
       setCatalogPreparation(null);
       setCustomMappingOpen(false);
       setView("installed");
@@ -1724,8 +1770,7 @@ export function SafetyPolicy({
         throw new Error(t("safety.probeMismatch"));
       }
       const probedVariant = result.variants.find(
-        (candidate) =>
-          candidate.id === variant.id && candidate.supported,
+        (candidate) => candidate.id === variant.id && candidate.supported,
       );
       if (probedVariant === undefined) {
         throw new Error(t("safety.variantIncompatible"));
@@ -1756,7 +1801,9 @@ export function SafetyPolicy({
     }
   };
 
-  const changeDownloadState = async (installation: PrivacyModelInstallation) => {
+  const changeDownloadState = async (
+    installation: PrivacyModelInstallation,
+  ) => {
     if (!isReady || coreSessionKey === null || operationBusy !== null) return;
     const pausing = installation.status === "downloading";
     const generation = generationRef.current;
@@ -1767,15 +1814,31 @@ export function SafetyPolicy({
       const updated = await (pausing
         ? pausePrivacyModelInstallation(installation.id)
         : resumePrivacyModelInstallation(installation.id));
-      if (generationRef.current !== generation || operationRequestRef.current !== request) return;
+      if (
+        generationRef.current !== generation ||
+        operationRequestRef.current !== request
+      )
+        return;
       // Invalidate progress requests issued before this action completed.
       pollRequestRef.current += 1;
       setInstallations((current) => mergeInstallation(current, updated));
     } catch (actionError) {
-      if (generationRef.current !== generation || operationRequestRef.current !== request) return;
-      setError(messageOf(actionError, t(pausing ? "safety.pauseFailed" : "safety.resumeFailed")));
+      if (
+        generationRef.current !== generation ||
+        operationRequestRef.current !== request
+      )
+        return;
+      setError(
+        messageOf(
+          actionError,
+          t(pausing ? "safety.pauseFailed" : "safety.resumeFailed"),
+        ),
+      );
     } finally {
-      if (generationRef.current === generation && operationRequestRef.current === request) {
+      if (
+        generationRef.current === generation &&
+        operationRequestRef.current === request
+      ) {
         setOperationBusy(null);
       }
     }
@@ -1849,7 +1912,9 @@ export function SafetyPolicy({
       setInstallations((current) =>
         current.filter((item) => item.id !== installation.id),
       );
-      notify.success(downloading ? t("safety.downloadCancelled") : t("safety.modelDeleted"));
+      notify.success(
+        downloading ? t("safety.downloadCancelled") : t("safety.modelDeleted"),
+      );
     } catch (removeError) {
       if (
         generationRef.current !== generation ||
@@ -1878,11 +1943,7 @@ export function SafetyPolicy({
   };
 
   const runProbe = async () => {
-    if (
-      probing ||
-      catalogProbeBusy !== null ||
-      operationBusy !== null
-    ) {
+    if (probing || catalogProbeBusy !== null || operationBusy !== null) {
       return;
     }
     const generation = generationRef.current;
@@ -1936,11 +1997,7 @@ export function SafetyPolicy({
   };
 
   const runLocalProbe = async () => {
-    if (
-      probing ||
-      catalogProbeBusy !== null ||
-      operationBusy !== null
-    ) {
+    if (probing || catalogProbeBusy !== null || operationBusy !== null) {
       return;
     }
     let input: ReturnType<typeof validateLocalProbeInput>;
@@ -1951,10 +2008,7 @@ export function SafetyPolicy({
         validationError instanceof Error &&
           validationError.message.includes("not a URI")
           ? t("safety.localNoUri")
-          : messageOf(
-              validationError,
-              t("safety.localPathRequired"),
-            ),
+          : messageOf(validationError, t("safety.localPathRequired")),
       );
       return;
     }
@@ -2021,12 +2075,13 @@ export function SafetyPolicy({
   ]
     // Keep the persisted index: filtering must never redirect an edit or removal.
     .map((rule, index) => ({ rule, index }))
-    .filter(({ rule, index }) =>
-      index === policy?.allowlist_rules.length ||
-      !normalizedAllowlistQuery ||
-      `${allowlistTypeLabel(rule.type)} ${rule.value}`
-        .toLocaleLowerCase()
-        .includes(normalizedAllowlistQuery),
+    .filter(
+      ({ rule, index }) =>
+        index === policy?.allowlist_rules.length ||
+        !normalizedAllowlistQuery ||
+        `${allowlistTypeLabel(rule.type)} ${rule.value}`
+          .toLocaleLowerCase()
+          .includes(normalizedAllowlistQuery),
     );
   const cannotEnableLocalModel =
     policy?.enabled === false &&
@@ -2048,9 +2103,8 @@ export function SafetyPolicy({
   const catalogPreparationModel =
     catalogPreparation === null
       ? null
-      : (catalog.find(
-          (model) => model.id === catalogPreparation.catalogID,
-        ) ?? null);
+      : (catalog.find((model) => model.id === catalogPreparation.catalogID) ??
+        null);
   const unresolvedCatalogLabels =
     catalogPreparation?.probe.labels.filter(
       (label) =>
@@ -2386,9 +2440,7 @@ export function SafetyPolicy({
                                   })}
                                   className="h-9 min-w-0 font-mono text-sm md:text-sm"
                                   disabled={saving || fillingBuiltinRules}
-                                  onBlur={() =>
-                                    commitCustomRegexPattern(index)
-                                  }
+                                  onBlur={() => commitCustomRegexPattern(index)}
                                   onChange={(event) => {
                                     const value = event.currentTarget.value;
                                     setRegexPatternDrafts((current) => {
@@ -2530,9 +2582,7 @@ export function SafetyPolicy({
                       <Switch
                         aria-label={t("safety.restore")}
                         checked={policy.response_restore}
-                        disabled={
-                          saving || policy.request_action !== "redact"
-                        }
+                        disabled={saving || policy.request_action !== "redact"}
                         id="privacy-response-restore"
                         onCheckedChange={(checked) =>
                           void patchPolicy({
@@ -2624,46 +2674,61 @@ export function SafetyPolicy({
           >
             <SplitWorkspace className="@[720px]:grid-cols-[minmax(0,0.95fr)_minmax(0,1.15fr)]">
               <Panel className="@container flex min-h-0 flex-col">
-                <PanelHeader className="shrink-0 items-center px-3 py-2" actions={
-                  <>
-                    <HelpPopover label={t("safety.placeholderGuide")}>
-                      <div className="grid gap-3">
-                        <p>{t("safety.redactTypesHint")}</p>
-                        <p className="text-xs leading-relaxed">
-                          {t("safety.styleHintLead", {
-                            natural: placeholderStyleLabel("natural"),
-                            token: placeholderStyleLabel("token"),
-                          })}
-                          <code className="font-mono">&lt;PRIVATE_…&gt;</code>
-                          {t("safety.styleHintTail")}
-                        </p>
-                        <ul className="grid gap-2">
-                          {PRIVACY_KINDS.filter((kind) =>
-                            PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind),
-                          ).map((kind) => (
-                            <li key={kind}>
-                              <strong className="font-medium text-foreground">
-                                {canonicalKindLabel(kind)}：
-                              </strong>
-                              {placeholderStyleLockReason(kind)}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </HelpPopover>
-                    <Badge variant="secondary">
-                      {t("safety.enabledTypes", {
-                        count: PRIVACY_KINDS.filter((kind) => kindRuleFor(kind).enabled).length,
-                        total: PRIVACY_KINDS.length,
-                      })}
-                    </Badge>
-                  </>
-                }>
-                  <h2 className="text-sm font-semibold">{t("safety.perKindRedact")}</h2>
+                <PanelHeader
+                  className="shrink-0 items-center px-3 py-2"
+                  actions={
+                    <>
+                      <HelpPopover label={t("safety.placeholderGuide")}>
+                        <div className="grid gap-3">
+                          <p>{t("safety.redactTypesHint")}</p>
+                          <p className="text-xs leading-relaxed">
+                            {t("safety.styleHintLead", {
+                              natural: placeholderStyleLabel("natural"),
+                              token: placeholderStyleLabel("token"),
+                            })}
+                            <code className="font-mono">&lt;PRIVATE_…&gt;</code>
+                            {t("safety.styleHintTail")}
+                          </p>
+                          <ul className="grid gap-2">
+                            {PRIVACY_KINDS.filter((kind) =>
+                              PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind),
+                            ).map((kind) => (
+                              <li key={kind}>
+                                <strong className="font-medium text-foreground">
+                                  {canonicalKindLabel(kind)}：
+                                </strong>
+                                {placeholderStyleLockReason(kind)}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </HelpPopover>
+                      <Badge variant="secondary">
+                        {t("safety.enabledTypes", {
+                          count: PRIVACY_KINDS.filter(
+                            (kind) => kindRuleFor(kind).enabled,
+                          ).length,
+                          total: PRIVACY_KINDS.length,
+                        })}
+                      </Badge>
+                    </>
+                  }
+                >
+                  <h2 className="text-sm font-semibold">
+                    {t("safety.perKindRedact")}
+                  </h2>
                 </PanelHeader>
-                <fieldset className="flex min-h-0 flex-1 flex-col border-0 px-3" disabled={saving}>
-                  <legend className="sr-only">{t("safety.perKindRedact")}</legend>
-                  <ul className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-tab-scroller>
+                <fieldset
+                  className="flex min-h-0 flex-1 flex-col border-0 px-3"
+                  disabled={saving}
+                >
+                  <legend className="sr-only">
+                    {t("safety.perKindRedact")}
+                  </legend>
+                  <ul
+                    className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1"
+                    data-tab-scroller
+                  >
                     {PRIVACY_KINDS.map((kind) => {
                       const rule = kindRuleFor(kind);
                       const lockReason = placeholderStyleLockReason(kind);
@@ -2703,18 +2768,14 @@ export function SafetyPolicy({
                                 className="sr-only"
                                 id={`privacy-kind-hint-${kind}`}
                               >
-                                {unreachable
-                                  ? t("safety.localOnlyKind")
-                                  : null}{" "}
+                                {unreachable ? t("safety.localOnlyKind") : null}{" "}
                                 {lockReason}
                               </span>
                             ) : null}
                           </span>
                           <span className="flex shrink-0 items-center gap-2">
                             <Select
-                              disabled={
-                                saving || styleLocked || !rule.enabled
-                              }
+                              disabled={saving || styleLocked || !rule.enabled}
                               onValueChange={(value) =>
                                 saveKindRule(kind, {
                                   style: value as PlaceholderStyle,
@@ -2784,8 +2845,10 @@ export function SafetyPolicy({
                   actions={
                     <Button
                       disabled={
-                        saving || allowlistPending ||
-                        policy.allowlist_rules.length >= MAX_PRIVACY_ALLOWLIST_RULES
+                        saving ||
+                        allowlistPending ||
+                        policy.allowlist_rules.length >=
+                          MAX_PRIVACY_ALLOWLIST_RULES
                       }
                       onClick={addAllowlistRule}
                       size="sm"
@@ -2804,12 +2867,16 @@ export function SafetyPolicy({
                   <legend className="sr-only">{t("safety.allowlist")}</legend>
                   {visibleAllowlistRules.length === 0 ? (
                     <EmptyState
-                      title={t(normalizedAllowlistQuery
-                        ? "safety.noAllowlistMatches"
-                        : "safety.allowlistEmpty")}
-                      description={normalizedAllowlistQuery
-                        ? t("safety.tryAnotherAllowlistSearch")
-                        : undefined}
+                      title={t(
+                        normalizedAllowlistQuery
+                          ? "safety.noAllowlistMatches"
+                          : "safety.allowlistEmpty",
+                      )}
+                      description={
+                        normalizedAllowlistQuery
+                          ? t("safety.tryAnotherAllowlistSearch")
+                          : undefined
+                      }
                     />
                   ) : (
                     <ul
@@ -2906,7 +2973,11 @@ export function SafetyPolicy({
             forceMount
             hidden={workspace !== "dryRun"}
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
+              if (
+                (event.metaKey || event.ctrlKey) &&
+                event.key === "Enter" &&
+                !event.nativeEvent.isComposing
+              ) {
                 event.preventDefault();
                 void runDryRun();
               }
@@ -2914,41 +2985,64 @@ export function SafetyPolicy({
             value="dryRun"
           >
             <SplitWorkspace ref={dryRunWorkspaceRef}>
-              <Panel className="flex min-h-0 flex-col" data-testid="dry-run-input-panel">
-                <PanelHeader className="shrink-0 flex-wrap items-center gap-2 px-3 py-2" actions={
-                  <Select
-                    disabled={dryRunBusy}
-                    onValueChange={(id) => {
-                      const preset = dryRunSamplePresets.find((item) => item.id === id);
-                      if (preset) changeDryRunSample(preset.text);
-                    }}
-                    value={selectedDryRunPreset?.id ?? "custom"}
-                  >
-                    <SelectTrigger aria-label={t("safety.loadSample")} className="w-auto min-w-36 text-xs" size="sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem disabled value="custom">{t("safety.customInput")}</SelectItem>
-                      {dryRunSamplePresets.map((preset) => (
-                        <SelectItem key={preset.id} value={preset.id}>
-                          {dryRunSampleLabel(preset.id)}
+              <Panel
+                className="flex min-h-0 flex-col"
+                data-testid="dry-run-input-panel"
+              >
+                <PanelHeader
+                  className="shrink-0 flex-wrap items-center gap-2 px-3 py-2"
+                  actions={
+                    <Select
+                      disabled={dryRunBusy}
+                      onValueChange={(id) => {
+                        const preset = dryRunSamplePresets.find(
+                          (item) => item.id === id,
+                        );
+                        if (preset) changeDryRunSample(preset.text);
+                      }}
+                      value={selectedDryRunPreset?.id ?? "custom"}
+                    >
+                      <SelectTrigger
+                        aria-label={t("safety.loadSample")}
+                        className="w-auto min-w-36 text-xs"
+                        size="sm"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem disabled value="custom">
+                          {t("safety.customInput")}
                         </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                }>
+                        {dryRunSamplePresets.map((preset) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {dryRunSampleLabel(preset.id)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  }
+                >
                   <div className="flex items-center gap-1 whitespace-nowrap">
-                    <Label htmlFor="privacy-dry-run-sample" className="text-sm font-semibold">
+                    <Label
+                      htmlFor="privacy-dry-run-sample"
+                      className="text-sm font-semibold"
+                    >
                       {t("safety.sampleTextShort")}
                     </Label>
                     <HelpPopover label={t("safety.testHelp")}>
                       <div className="grid gap-2">
                         <p>{t("safety.dryRunHint")}</p>
                         <p>{t("safety.testShortcut")}</p>
-                        <p>{t("safety.sampleCount", { count: dryRunSamplePresets.length })}</p>
-                        <p>{selectedDryRunPreset
-                          ? dryRunSampleDescription(selectedDryRunPreset.id)
-                          : t("safety.customSample")}</p>
+                        <p>
+                          {t("safety.sampleCount", {
+                            count: dryRunSamplePresets.length,
+                          })}
+                        </p>
+                        <p>
+                          {selectedDryRunPreset
+                            ? dryRunSampleDescription(selectedDryRunPreset.id)
+                            : t("safety.customSample")}
+                        </p>
                       </div>
                     </HelpPopover>
                   </div>
@@ -2960,44 +3054,68 @@ export function SafetyPolicy({
                   id="privacy-dry-run-sample"
                   ref={dryRunInputRef}
                   disabled={dryRunBusy}
-                  onChange={(event) => changeDryRunSample(event.currentTarget.value)}
+                  onChange={(event) =>
+                    changeDryRunSample(event.currentTarget.value)
+                  }
                   placeholder={t("safety.inputPlaceholder")}
                   value={dryRunSample}
                 />
-                <PanelFooter className="gap-2 px-3 py-2" actions={
-                  <>
-                    <Button disabled={dryRunBusy || !dryRunSample} onClick={() => {
-                      changeDryRunSample("");
-                      if (dryRunWorkspaceRef.current) dryRunWorkspaceRef.current.scrollTop = 0;
-                      dryRunInputRef.current?.focus({ preventScroll: true });
-                    }} size="xs" type="button" variant="ghost">
-                      {t("safety.clearSample")}
-                    </Button>
-                    <Button
-                      aria-keyshortcuts="Meta+Enter Control+Enter"
-                      title={t("safety.testShortcut")}
-                      aria-busy={dryRunBusy}
-                      disabled={
-                        dryRunBusy || saving || dryRunSample.trim() === "" ||
-                        dryRunSampleOverLimit ||
-                        (policy.enabled && policy.detector === "local_model" && !selectedModelReady)
-                      }
-                      onClick={() => void runDryRun()}
-                      size="sm"
-                      type="button"
-                    >
-                      <FlaskConical aria-hidden="true" />
-                      {dryRunBusy ? t("safety.running") : t("safety.startTest")}
-                    </Button>
-                  </>
-                }>
+                <PanelFooter
+                  className="gap-2 px-3 py-2"
+                  actions={
+                    <>
+                      <Button
+                        disabled={dryRunBusy || !dryRunSample}
+                        onClick={() => {
+                          changeDryRunSample("");
+                          if (dryRunWorkspaceRef.current)
+                            dryRunWorkspaceRef.current.scrollTop = 0;
+                          dryRunInputRef.current?.focus({
+                            preventScroll: true,
+                          });
+                        }}
+                        size="xs"
+                        type="button"
+                        variant="ghost"
+                      >
+                        {t("safety.clearSample")}
+                      </Button>
+                      <Button
+                        aria-keyshortcuts="Meta+Enter Control+Enter"
+                        title={t("safety.testShortcut")}
+                        aria-busy={dryRunBusy}
+                        disabled={
+                          dryRunBusy ||
+                          saving ||
+                          dryRunSample.trim() === "" ||
+                          dryRunSampleOverLimit ||
+                          (policy.enabled &&
+                            policy.detector === "local_model" &&
+                            !selectedModelReady)
+                        }
+                        onClick={() => void runDryRun()}
+                        size="sm"
+                        type="button"
+                      >
+                        <FlaskConical aria-hidden="true" />
+                        {dryRunBusy
+                          ? t("safety.running")
+                          : t("safety.startTest")}
+                      </Button>
+                    </>
+                  }
+                >
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button
                           disabled={dryRunBusy}
                           size="xs"
-                          title={dryRunProtocolOptions.find((option) => option.value === dryRunProtocol)?.label}
+                          title={
+                            dryRunProtocolOptions.find(
+                              (option) => option.value === dryRunProtocol,
+                            )?.label
+                          }
                           type="button"
                           variant="ghost"
                         >
@@ -3006,7 +3124,11 @@ export function SafetyPolicy({
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent align="start">
-                        <Field label={t("safety.protocol")} hint={t("safety.protocolHint")} htmlFor="privacy-dry-run-protocol">
+                        <Field
+                          label={t("safety.protocol")}
+                          hint={t("safety.protocolHint")}
+                          htmlFor="privacy-dry-run-protocol"
+                        >
                           <Select
                             disabled={dryRunBusy}
                             onValueChange={(value) => {
@@ -3016,55 +3138,104 @@ export function SafetyPolicy({
                             }}
                             value={dryRunProtocol}
                           >
-                            <SelectTrigger aria-label={t("safety.dryRunProtocol")} className="w-full" id="privacy-dry-run-protocol" size="sm">
+                            <SelectTrigger
+                              aria-label={t("safety.dryRunProtocol")}
+                              className="w-full"
+                              id="privacy-dry-run-protocol"
+                              size="sm"
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                               {dryRunProtocolOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                <SelectItem
+                                  key={option.value}
+                                  value={option.value}
+                                >
+                                  {option.label}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </Field>
                       </PopoverContent>
                     </Popover>
-                    <span className={cn("text-xs tabular-nums text-muted-foreground", dryRunSampleOverLimit && "text-destructive")}
-                      title={t("safety.sampleBytes", { used: dryRunSampleBytes.toLocaleString(), max: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString() })}>
-                      {formatBytes(dryRunSampleBytes)} / {formatBytes(MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES)}
+                    <span
+                      className={cn(
+                        "text-xs tabular-nums text-muted-foreground",
+                        dryRunSampleOverLimit && "text-destructive",
+                      )}
+                      title={t("safety.sampleBytes", {
+                        used: dryRunSampleBytes.toLocaleString(),
+                        max: MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES.toLocaleString(),
+                      })}
+                    >
+                      {formatBytes(dryRunSampleBytes)} /{" "}
+                      {formatBytes(MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES)}
                     </span>
                   </div>
                 </PanelFooter>
               </Panel>
 
-              <Panel className="flex min-h-0 flex-col" data-testid="dry-run-output-panel">
-                <PanelHeader className="shrink-0 items-center px-3 py-2" actions={
-                  <>
-                    <Button
-                      className="@[720px]:hidden"
-                      onClick={() => {
-                        if (dryRunWorkspaceRef.current) dryRunWorkspaceRef.current.scrollTop = 0;
-                        dryRunInputRef.current?.focus({ preventScroll: true });
-                      }}
-                      size="xs"
-                      type="button"
-                      variant="ghost"
-                    >
-                      {t("safety.backToInput")}
-                    </Button>
-                    <Badge variant="secondary">{t("safety.localPreviewOnly")}</Badge>
-                  </>
-                }>
-                  <h2 className="text-sm font-semibold outline-none" id="dry-run-result-heading" ref={dryRunResultHeadingRef} tabIndex={-1}>
+              <Panel
+                className="flex min-h-0 flex-col"
+                data-testid="dry-run-output-panel"
+              >
+                <PanelHeader
+                  className="shrink-0 items-center px-3 py-2"
+                  actions={
+                    <>
+                      <Button
+                        className="@[720px]:hidden"
+                        onClick={() => {
+                          if (dryRunWorkspaceRef.current)
+                            dryRunWorkspaceRef.current.scrollTop = 0;
+                          dryRunInputRef.current?.focus({
+                            preventScroll: true,
+                          });
+                        }}
+                        size="xs"
+                        type="button"
+                        variant="ghost"
+                      >
+                        {t("safety.backToInput")}
+                      </Button>
+                      <Badge variant="secondary">
+                        {t("safety.localPreviewOnly")}
+                      </Badge>
+                    </>
+                  }
+                >
+                  <h2
+                    className="text-sm font-semibold outline-none"
+                    id="dry-run-result-heading"
+                    ref={dryRunResultHeadingRef}
+                    tabIndex={-1}
+                  >
                     {t("safety.dryRunResult")}
                   </h2>
                 </PanelHeader>
                 <p aria-live="polite" className="sr-only">
-                  {dryRunBusy ? t("safety.running") : dryRunResult ? dryRunLiveSummary(dryRunResult) : ""}
+                  {dryRunBusy
+                    ? t("safety.running")
+                    : dryRunResult
+                      ? dryRunLiveSummary(dryRunResult)
+                      : ""}
                 </p>
-                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3" data-tab-scroller data-testid="dry-run-output-scroll">
-                  {dryRunError ? <FormMessage tone="error">{dryRunError}</FormMessage> : null}
+                <div
+                  className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3"
+                  data-tab-scroller
+                  data-testid="dry-run-output-scroll"
+                >
+                  {dryRunError ? (
+                    <FormMessage tone="error">{dryRunError}</FormMessage>
+                  ) : null}
                   {dryRunBusy ? (
-                    <EmptyState className="flex-1 border-0" title={t("safety.running")} description={t("safety.runningHint")} />
+                    <EmptyState
+                      className="flex-1 border-0"
+                      title={t("safety.running")}
+                      description={t("safety.runningHint")}
+                    />
                   ) : dryRunResult ? (
                     <PrivacyDryRunResult
                       result={dryRunResult}
@@ -3075,8 +3246,23 @@ export function SafetyPolicy({
                   ) : (
                     <EmptyState
                       className="flex-1 border-0"
-                      title={t(dryRunSampleOverLimit ? "safety.sampleTooLongTitle" : !policy.enabled ? "safety.testOffTitle" : "safety.notYetRun")}
-                      description={t(dryRunSampleOverLimit ? "safety.sampleTooLongHint" : !policy.enabled ? "safety.dryRunOffHint" : policy.detector === "local_model" && !selectedModelReady ? "safety.needReadyModelHint" : "safety.testEmptyHint")}
+                      title={t(
+                        dryRunSampleOverLimit
+                          ? "safety.sampleTooLongTitle"
+                          : !policy.enabled
+                            ? "safety.testOffTitle"
+                            : "safety.notYetRun",
+                      )}
+                      description={t(
+                        dryRunSampleOverLimit
+                          ? "safety.sampleTooLongHint"
+                          : !policy.enabled
+                            ? "safety.dryRunOffHint"
+                            : policy.detector === "local_model" &&
+                                !selectedModelReady
+                              ? "safety.needReadyModelHint"
+                              : "safety.testEmptyHint",
+                      )}
                     />
                   )}
                 </div>
@@ -3115,10 +3301,7 @@ export function SafetyPolicy({
                 scrollable
                 variant="line"
               >
-                <TabsTrigger
-                  onClick={() => setView("catalog")}
-                  value="catalog"
-                >
+                <TabsTrigger onClick={() => setView("catalog")} value="catalog">
                   {t("safety.builtin")}
                 </TabsTrigger>
                 <TabsTrigger
@@ -3127,26 +3310,20 @@ export function SafetyPolicy({
                 >
                   {t("safety.installedCount", { count: installations.length })}
                 </TabsTrigger>
-                <TabsTrigger
-                  onClick={() => setView("local")}
-                  value="local"
-                >
+                <TabsTrigger onClick={() => setView("local")} value="local">
                   {t("safety.localImport")}
                 </TabsTrigger>
-                <TabsTrigger
-                  onClick={() => setView("custom")}
-                  value="custom"
-                >
+                <TabsTrigger onClick={() => setView("custom")} value="custom">
                   {t("safety.custom")}
                 </TabsTrigger>
               </TabsList>
-              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="catalog">
+              <TabsContent
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+                value="catalog"
+              >
                 <div className="grid items-stretch gap-3 pb-3 pr-1 @[760px]/models:grid-cols-2">
                   {catalog.map((model) => {
-                    const variant = variantForCatalog(
-                      model,
-                      selectedVariants,
-                    );
+                    const variant = variantForCatalog(model, selectedVariants);
                     const existing =
                       variant === null
                         ? null
@@ -3162,15 +3339,26 @@ export function SafetyPolicy({
                         <article>
                           <div className="flex flex-1 flex-col gap-3 p-4">
                             <div className="min-w-0">
-                              <h4 className="text-sm font-semibold leading-snug break-words">{model.name}</h4>
+                              <h4 className="text-sm font-semibold leading-snug break-words">
+                                {model.name}
+                              </h4>
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                <span>{model.source === "official" ? t("safety.official") : t("safety.community")} · {model.license}</span>
+                                <span>
+                                  {model.source === "official"
+                                    ? t("safety.official")
+                                    : t("safety.community")}{" "}
+                                  · {model.license}
+                                </span>
                                 {model.languages.map((language) => (
-                                  <Badge key={language} variant="secondary">{language}</Badge>
+                                  <Badge key={language} variant="secondary">
+                                    {language}
+                                  </Badge>
                                 ))}
                               </div>
                             </div>
-                            <p className="text-xs leading-relaxed text-text-secondary">{model.summary}</p>
+                            <p className="text-xs leading-relaxed text-text-secondary">
+                              {model.summary}
+                            </p>
                             <Field
                               className="mt-auto"
                               htmlFor={variantSelectID}
@@ -3191,7 +3379,9 @@ export function SafetyPolicy({
                                 value={variant?.id ?? ""}
                               >
                                 <SelectTrigger
-                                  aria-label={t("safety.versionsFor", { name: model.name })}
+                                  aria-label={t("safety.versionsFor", {
+                                    name: model.name,
+                                  })}
                                   className="w-full"
                                   id={variantSelectID}
                                   size="sm"
@@ -3200,17 +3390,26 @@ export function SafetyPolicy({
                                 </SelectTrigger>
                                 <SelectContent>
                                   {model.variants.map((candidate) => (
-                                    <SelectItem disabled={!candidate.supported} key={candidate.id} value={candidate.id}>
+                                    <SelectItem
+                                      disabled={!candidate.supported}
+                                      key={candidate.id}
+                                      value={candidate.id}
+                                    >
                                       {candidate.name}
-                                      {candidate.recommended ? t("safety.recommended") : ""}
-                                      {!candidate.supported ? t("safety.unsupported") : ""}
+                                      {candidate.recommended
+                                        ? t("safety.recommended")
+                                        : ""}
+                                      {!candidate.supported
+                                        ? t("safety.unsupported")
+                                        : ""}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
                             </Field>
                           </div>
-                          <PanelFooter actions={
+                          <PanelFooter
+                            actions={
                               existing === null ? (
                                 <Button
                                   disabled={
@@ -3221,7 +3420,10 @@ export function SafetyPolicy({
                                   }
                                   onClick={() => {
                                     if (variant === null) return;
-                                    void prepareCatalogInstallation(model, variant);
+                                    void prepareCatalogInstallation(
+                                      model,
+                                      variant,
+                                    );
                                   }}
                                   size="sm"
                                   type="button"
@@ -3238,14 +3440,27 @@ export function SafetyPolicy({
                                   variant="outline"
                                 >
                                   {t("safety.viewStatus", {
-                                    status: installationStatusLabel(existing.status),
+                                    status: installationStatusLabel(
+                                      existing.status,
+                                    ),
                                   })}
                                 </Button>
                               )
-                          }>
+                            }
+                          >
                             <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-                              <span>{t("safety.downloadSizeInline", { size: formatBytes(variant?.bytes_total ?? 0) })}</span>
-                              <span>{t("safety.memoryInline", { size: formatBytes(variant?.estimated_ram_bytes ?? 0) })}</span>
+                              <span>
+                                {t("safety.downloadSizeInline", {
+                                  size: formatBytes(variant?.bytes_total ?? 0),
+                                })}
+                              </span>
+                              <span>
+                                {t("safety.memoryInline", {
+                                  size: formatBytes(
+                                    variant?.estimated_ram_bytes ?? 0,
+                                  ),
+                                })}
+                              </span>
                             </div>
                           </PanelFooter>
                         </article>
@@ -3253,16 +3468,21 @@ export function SafetyPolicy({
                     );
                   })}
                   {catalog.length === 0 ? (
-                    <EmptyState className="col-span-full" title={t("safety.catalogEmpty")} />
+                    <EmptyState
+                      className="col-span-full"
+                      title={t("safety.catalogEmpty")}
+                    />
                   ) : null}
                 </div>
               </TabsContent>
 
-              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="installed">
+              <TabsContent
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+                value="installed"
+              >
                 <div className="grid items-start gap-3 pb-3 pr-1 @[760px]/models:grid-cols-2">
                   {installations.map((installation) => {
-                    const selected =
-                      policy.local_model_id === installation.id;
+                    const selected = policy.local_model_id === installation.id;
                     const hasDownloadTotal = installation.bytes_total > 0;
                     const progress = hasDownloadTotal
                       ? Math.min(
@@ -3278,10 +3498,10 @@ export function SafetyPolicy({
                       installation.source === "local"
                         ? t("safety.localImport")
                         : installation.catalog_source === "official"
-                        ? t("safety.officialCatalog")
-                        : installation.catalog_source === "community"
-                          ? t("safety.communityCatalog")
-                          : t("safety.customRepo");
+                          ? t("safety.officialCatalog")
+                          : installation.catalog_source === "community"
+                            ? t("safety.communityCatalog")
+                            : t("safety.customRepo");
                     const licenseLabel =
                       installation.license ?? t("safety.licenseUnknown");
                     const languageLabel =
@@ -3293,7 +3513,8 @@ export function SafetyPolicy({
                         asChild
                         className={cn(
                           "flex h-full flex-col",
-                          selected && "border-primary/40 bg-accent/50 ring-1 ring-primary/10",
+                          selected &&
+                            "border-primary/40 bg-accent/50 ring-1 ring-primary/10",
                         )}
                         key={installation.id}
                       >
@@ -3310,21 +3531,34 @@ export function SafetyPolicy({
                                 </span>
                               </div>
                               <StatusBadge
-                                tone={installation.status === "ready" ? "positive" : installation.status === "error" ? "negative" : "pending"}
+                                tone={
+                                  installation.status === "ready"
+                                    ? "positive"
+                                    : installation.status === "error"
+                                      ? "negative"
+                                      : "pending"
+                                }
                               >
                                 {selected
                                   ? t("safety.policySelected")
                                   : installation.source === "local" &&
                                       installation.status === "downloading"
                                     ? t("safety.importing")
-                                    : installationStatusLabel(installation.status)}
+                                    : installationStatusLabel(
+                                        installation.status,
+                                      )}
                               </StatusBadge>
                             </div>
                             <div className="space-y-1 text-xs leading-relaxed text-muted-foreground">
-                              <p>{sourceLabel} · {licenseLabel} · {languageLabel}</p>
-                              <p className="break-all">{installation.repo_id}</p>
+                              <p>
+                                {sourceLabel} · {licenseLabel} · {languageLabel}
+                              </p>
+                              <p className="break-all">
+                                {installation.repo_id}
+                              </p>
                             </div>
-                            {installation.status === "downloading" || installation.status === "paused" ? (
+                            {installation.status === "downloading" ||
+                            installation.status === "paused" ? (
                               <div className="grid gap-1.5">
                                 <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
                                   <span>
@@ -3339,7 +3573,9 @@ export function SafetyPolicy({
                                         : t("safety.preparingDownload")}
                                   </span>
                                   <strong>
-                                    {hasDownloadTotal ? `${progress}%` : t("safety.preparing")}
+                                    {hasDownloadTotal
+                                      ? `${progress}%`
+                                      : t("safety.preparing")}
                                   </strong>
                                 </div>
                                 <Progress
@@ -3357,93 +3593,113 @@ export function SafetyPolicy({
                               <p className="text-xs leading-relaxed text-muted-foreground">
                                 {installation.error === null
                                   ? t("safety.diskAndRam", {
-                                      disk: formatBytes(installation.bytes_total),
-                                      ram: formatBytes(installation.estimated_ram_bytes),
+                                      disk: formatBytes(
+                                        installation.bytes_total,
+                                      ),
+                                      ram: formatBytes(
+                                        installation.estimated_ram_bytes,
+                                      ),
                                     })
                                   : installationErrorLabel(installation.error)}
                               </p>
                             )}
-                            {Object.keys(installation.label_mapping).length > 0 ? (
+                            {Object.keys(installation.label_mapping).length >
+                            0 ? (
                               <details className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
                                 <summary className="cursor-pointer font-semibold">
                                   {t("safety.labelMappingCount", {
-                                    count: Object.keys(installation.label_mapping).length,
+                                    count: Object.keys(
+                                      installation.label_mapping,
+                                    ).length,
                                   })}
                                 </summary>
                                 <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
-                                  {Object.entries(installation.label_mapping).map(
-                                    ([label, kind]) => (
-                                      <span key={label}>
-                                        <code>{label}</code>
-                                        {" → "}
-                                        {kind ?? t("safety.ignore")}
-                                      </span>
-                                    ),
-                                  )}
+                                  {Object.entries(
+                                    installation.label_mapping,
+                                  ).map(([label, kind]) => (
+                                    <span key={label}>
+                                      <code>{label}</code>
+                                      {" → "}
+                                      {kind ?? t("safety.ignore")}
+                                    </span>
+                                  ))}
                                 </div>
                               </details>
                             ) : null}
                           </div>
-                          <PanelFooter actions={<>
-                            {installation.status === "ready" ? (
-                              <Button
-                                disabled={saving || selected}
-                                onClick={() =>
-                                  chooseInstallation(installation)
-                                }
-                                size="sm"
-                                type="button"
-                                variant={selected ? "secondary" : "default"}
-                              >
-                                {selected ? t("safety.currentModel") : t("safety.usedByPolicy")}
-                              </Button>
-                            ) : null}
-                            {installation.source !== "local" && installation.status !== "ready" ? (
-                              <Button
-                                disabled={operationBusy !== null}
-                                onClick={() => void changeDownloadState(installation)}
-                                size="sm"
-                                type="button"
-                                variant="outline"
-                              >
-                                {operationBusy === installation.id
-                                  ? t("common.processing")
-                                  : installation.status === "downloading"
-                                    ? t("safety.pauseDownload")
-                                    : installation.status === "paused"
-                                      ? t("safety.resumeDownload")
-                                      : t("safety.retry")}
-                              </Button>
-                            ) : null}
-                            <Button
-                              disabled={
-                                operationBusy !== null || selected
-                              }
-                              onClick={() =>
-                                void removeInstallation(installation)
-                              }
-                              size="sm"
-                              type="button"
-                              variant="destructive"
-                            >
-                              {operationBusy === installation.id
-                                ? t("common.processing")
-                                : installation.status === "downloading"
-                                  ? t("common.cancel")
-                                  : t("common.delete")}
-                            </Button>
-                          </>} />
+                          <PanelFooter
+                            actions={
+                              <>
+                                {installation.status === "ready" ? (
+                                  <Button
+                                    disabled={saving || selected}
+                                    onClick={() =>
+                                      chooseInstallation(installation)
+                                    }
+                                    size="sm"
+                                    type="button"
+                                    variant={selected ? "secondary" : "default"}
+                                  >
+                                    {selected
+                                      ? t("safety.currentModel")
+                                      : t("safety.usedByPolicy")}
+                                  </Button>
+                                ) : null}
+                                {installation.source !== "local" &&
+                                installation.status !== "ready" ? (
+                                  <Button
+                                    disabled={operationBusy !== null}
+                                    onClick={() =>
+                                      void changeDownloadState(installation)
+                                    }
+                                    size="sm"
+                                    type="button"
+                                    variant="outline"
+                                  >
+                                    {operationBusy === installation.id
+                                      ? t("common.processing")
+                                      : installation.status === "downloading"
+                                        ? t("safety.pauseDownload")
+                                        : installation.status === "paused"
+                                          ? t("safety.resumeDownload")
+                                          : t("safety.retry")}
+                                  </Button>
+                                ) : null}
+                                <Button
+                                  disabled={operationBusy !== null || selected}
+                                  onClick={() =>
+                                    void removeInstallation(installation)
+                                  }
+                                  size="sm"
+                                  type="button"
+                                  variant="destructive"
+                                >
+                                  {operationBusy === installation.id
+                                    ? t("common.processing")
+                                    : installation.status === "downloading"
+                                      ? t("common.cancel")
+                                      : t("common.delete")}
+                                </Button>
+                              </>
+                            }
+                          />
                         </article>
                       </Panel>
                     );
                   })}
                   {installations.length === 0 ? (
-                    <EmptyState className="col-span-full" title={t("safety.noneInstalled")} />
+                    <EmptyState
+                      className="col-span-full"
+                      title={t("safety.noneInstalled")}
+                    />
                   ) : null}
                 </div>
               </TabsContent>
 
-              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="local">
+              <TabsContent
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+                value="local"
+              >
                 <Panel className="grid max-w-3xl gap-4 p-4">
                   <div className="grid gap-3 @[560px]:grid-cols-[minmax(0,1fr)_auto] @[560px]:items-end">
                     <Label
@@ -3480,7 +3736,10 @@ export function SafetyPolicy({
                       {probing ? t("common.checking") : t("safety.checkLocal")}
                     </Button>
                   </div>
-                  <p className="rounded-md bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground" id="local-model-mount-note">
+                  <p
+                    className="rounded-md bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground"
+                    id="local-model-mount-note"
+                  >
                     {t("safety.localMountNoteLead")}
                     <code>smb://</code>、<code>file://</code>
                     {t("safety.localMountNoteTail")}
@@ -3490,7 +3749,9 @@ export function SafetyPolicy({
                     <div className="grid gap-3 rounded-md border border-primary/20 bg-accent/40 p-3.5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <strong className="block text-sm">{probe.name}</strong>
+                          <strong className="block text-sm">
+                            {probe.name}
+                          </strong>
                           <span className="mt-0.5 block text-xs text-muted-foreground">
                             {t("safety.pathChecked", {
                               license:
@@ -3500,7 +3761,9 @@ export function SafetyPolicy({
                             })}
                           </span>
                         </div>
-                        <Badge variant="secondary">{probe.languages.join(" / ")}</Badge>
+                        <Badge variant="secondary">
+                          {probe.languages.join(" / ")}
+                        </Badge>
                       </div>
                       <Label
                         className="grid gap-1.5 text-xs font-medium"
@@ -3520,10 +3783,18 @@ export function SafetyPolicy({
                           </SelectTrigger>
                           <SelectContent>
                             {probe.variants.map((variant) => (
-                              <SelectItem disabled={!variant.supported} key={variant.id} value={variant.id}>
+                              <SelectItem
+                                disabled={!variant.supported}
+                                key={variant.id}
+                                value={variant.id}
+                              >
                                 {variant.name}
-                                {variant.recommended ? t("safety.recommended") : ""}
-                                {!variant.supported ? t("safety.unsupported") : ""}
+                                {variant.recommended
+                                  ? t("safety.recommended")
+                                  : ""}
+                                {!variant.supported
+                                  ? t("safety.unsupported")
+                                  : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -3536,7 +3807,9 @@ export function SafetyPolicy({
                             ? t("safety.noSupportedVariant")
                             : `${t("safety.importAndRam", {
                                 size: formatBytes(probeVariant.bytes_total),
-                                ram: formatBytes(probeVariant.estimated_ram_bytes),
+                                ram: formatBytes(
+                                  probeVariant.estimated_ram_bytes,
+                                ),
                               })}${
                                 unresolvedCustomLabels.length > 0
                                   ? t("safety.labelsPending", {
@@ -3588,7 +3861,10 @@ export function SafetyPolicy({
                 </Panel>
               </TabsContent>
 
-              <TabsContent className="min-h-0 min-w-0 flex-1 overflow-y-auto" value="custom">
+              <TabsContent
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+                value="custom"
+              >
                 <Panel className="grid max-w-3xl gap-4 p-4">
                   <div className="grid gap-3 @[560px]:grid-cols-2">
                     <Label
@@ -3646,7 +3922,9 @@ export function SafetyPolicy({
                     <div className="grid gap-3 rounded-md border border-primary/20 bg-accent/40 p-3.5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <strong className="block text-sm">{probe.name}</strong>
+                          <strong className="block text-sm">
+                            {probe.name}
+                          </strong>
                           <span className="mt-0.5 block text-xs text-muted-foreground">
                             {probe.repo_id} ·{" "}
                             {probe.license === null
@@ -3654,7 +3932,9 @@ export function SafetyPolicy({
                               : probe.license}
                           </span>
                         </div>
-                        <Badge variant="secondary">{probe.languages.join(" / ")}</Badge>
+                        <Badge variant="secondary">
+                          {probe.languages.join(" / ")}
+                        </Badge>
                       </div>
                       <Label
                         className="grid gap-1.5 text-xs font-medium"
@@ -3674,10 +3954,18 @@ export function SafetyPolicy({
                           </SelectTrigger>
                           <SelectContent>
                             {probe.variants.map((variant) => (
-                              <SelectItem disabled={!variant.supported} key={variant.id} value={variant.id}>
+                              <SelectItem
+                                disabled={!variant.supported}
+                                key={variant.id}
+                                value={variant.id}
+                              >
                                 {variant.name}
-                                {variant.recommended ? t("safety.recommended") : ""}
-                                {!variant.supported ? t("safety.unsupported") : ""}
+                                {variant.recommended
+                                  ? t("safety.recommended")
+                                  : ""}
+                                {!variant.supported
+                                  ? t("safety.unsupported")
+                                  : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -3690,7 +3978,9 @@ export function SafetyPolicy({
                             ? t("safety.noSupportedVariant")
                             : `${t("safety.downloadAndRam", {
                                 size: formatBytes(probeVariant.bytes_total),
-                                ram: formatBytes(probeVariant.estimated_ram_bytes),
+                                ram: formatBytes(
+                                  probeVariant.estimated_ram_bytes,
+                                ),
                               })}${
                                 unresolvedCustomLabels.length > 0
                                   ? t("safety.labelsPending", {
@@ -3745,12 +4035,10 @@ export function SafetyPolicy({
           </TabsContent>
         </Tabs>
       ) : null}
-      {catalogPreparation !== null &&
-      catalogPreparationModel !== null ? (
+      {catalogPreparation !== null && catalogPreparationModel !== null ? (
         <LabelMappingDialog
           confirmDisabled={
-            unresolvedCatalogLabels.length > 0 ||
-            operationBusy !== null
+            unresolvedCatalogLabels.length > 0 || operationBusy !== null
           }
           confirmLabel={
             operationBusy === catalogPreparation.catalogID
@@ -3845,8 +4133,7 @@ export function SafetyPolicy({
           title={t("safety.fillBuiltin")}
         />
       ) : null}
-      {pendingModelAction !== null &&
-      pendingActionInstallation !== null ? (
+      {pendingModelAction !== null && pendingActionInstallation !== null ? (
         <ModelActionDialog
           action={pendingModelAction}
           installation={pendingActionInstallation}

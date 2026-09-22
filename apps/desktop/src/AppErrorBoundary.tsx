@@ -37,14 +37,13 @@ export class AppErrorBoundary extends Component<
     if (!this.state.failed) return this.props.children;
 
     return (
-      <main
-        className="grid min-h-screen place-items-center p-6"
-        role="alert"
-      >
+      <main className="grid min-h-screen place-items-center p-6" role="alert">
         <Card className="w-full max-w-lg">
           <CardHeader>
             <SectionKicker>{i18n.t("errorBoundary.kicker")}</SectionKicker>
-            <CardTitle className="text-xl">{i18n.t("errorBoundary.title")}</CardTitle>
+            <CardTitle className="text-xl">
+              {i18n.t("errorBoundary.title")}
+            </CardTitle>
             <CardDescription>
               {i18n.t("errorBoundary.description")}
             </CardDescription>

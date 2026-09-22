@@ -152,6 +152,12 @@ def main():
         require(hashlib.sha256((notices / name).read_bytes()).hexdigest() == digest,
                 f"Packaged ONNX Runtime {name} does not match the pinned notice")
 
+    repository = Path(__file__).resolve().parents[3]
+    licenses = notices.parent.parent / "licenses"
+    for name in ("LICENSE", "LICENSING.md", "LICENSES/AGPL-3.0.txt"):
+        require((licenses / name).read_bytes() == (repository / name).read_bytes(),
+                f"Packaged {name} does not match the repository license file")
+
     # Load the packaged runtime itself; worker argument validation alone does not load it.
     class ApiBase(ctypes.Structure):
         _fields_ = [("get_api", ctypes.c_void_p),

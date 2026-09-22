@@ -36,7 +36,9 @@ function sameSession(left: RequestSession, right: RequestSession): boolean {
     left.average_ttft_ms === right.average_ttft_ms &&
     left.output_tokens_per_second === right.output_tokens_per_second &&
     left.active_request_starts.length === right.active_request_starts.length &&
-    left.active_request_starts.every((started, index) => started === right.active_request_starts[index]) &&
+    left.active_request_starts.every(
+      (started, index) => started === right.active_request_starts[index],
+    ) &&
     left.turn_count === right.turn_count &&
     left.call_count === right.call_count &&
     left.status === right.status &&
@@ -54,7 +56,9 @@ export function mergeLiveSessions(
   incoming: RequestSession[],
   queueNew: boolean,
 ): SessionMergeResult {
-  const incomingById = new Map(incoming.map((session) => [session.id, session]));
+  const incomingById = new Map(
+    incoming.map((session) => [session.id, session]),
+  );
   const known = new Set<string>();
   let moved = false;
   const adopt = (session: RequestSession): RequestSession => {

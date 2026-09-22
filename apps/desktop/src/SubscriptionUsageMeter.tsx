@@ -90,9 +90,7 @@ export function SubscriptionUsageMeter({
           />
         </div>
       ) : usage.limit_reached ? (
-        <p className="text-micro text-destructive">
-          {t("usage.limitReached")}
-        </p>
+        <p className="text-micro text-destructive">{t("usage.limitReached")}</p>
       ) : null}
       {extras.length > 0 ? (
         <div className="grid gap-2.5" data-testid="subscription-usage-extras">

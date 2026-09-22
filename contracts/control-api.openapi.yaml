@@ -140,7 +140,10 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: Service not found. }
-        "502": { description: Price synchronization failed; last valid catalog retained. }
+        "502":
+          {
+            description: Price synchronization failed; last valid catalog retained.,
+          }
   /control/v1/pricing/catalog:
     get:
       x-astrlink-implementation-status: implemented
@@ -156,7 +159,10 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: Service not found. }
-        "502": { description: Price synchronization failed; last valid catalog retained. }
+        "502":
+          {
+            description: Price synchronization failed; last valid catalog retained.,
+          }
   /control/v1/pricing/sync:
     post:
       x-astrlink-implementation-status: implemented
@@ -172,7 +178,10 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: Service not found. }
-        "502": { description: Price synchronization failed; last valid catalog retained. }
+        "502":
+          {
+            description: Price synchronization failed; last valid catalog retained.,
+          }
   /control/v1/pricing/summary:
     get:
       x-astrlink-implementation-status: implemented
@@ -180,8 +189,18 @@ paths:
       operationId: getBillingSummary
       summary: Aggregate retained call amounts in a half-open time range.
       parameters:
-        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - {
+            name: from,
+            in: query,
+            required: true,
+            schema: { type: string, format: date-time },
+          }
+        - {
+            name: to,
+            in: query,
+            required: true,
+            schema: { type: string, format: date-time },
+          }
       responses:
         "200":
           description: Local reference pricing result, denominated in USD.
@@ -191,7 +210,10 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: Service not found. }
-        "502": { description: Price synchronization failed; last valid catalog retained. }
+        "502":
+          {
+            description: Price synchronization failed; last valid catalog retained.,
+          }
   /control/v1/pricing/services/{service_id}:
     get:
       x-astrlink-implementation-status: implemented
@@ -212,7 +234,10 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: Service not found. }
-        "502": { description: Price synchronization failed; last valid catalog retained. }
+        "502":
+          {
+            description: Price synchronization failed; last valid catalog retained.,
+          }
     put:
       x-astrlink-implementation-status: implemented
       tags: [Services]
@@ -237,7 +262,10 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: Service not found. }
-        "502": { description: Price synchronization failed; last valid catalog retained. }
+        "502":
+          {
+            description: Price synchronization failed; last valid catalog retained.,
+          }
   /control/v1/pricing/services/{service_id}/backfill:
     post:
       x-astrlink-implementation-status: implemented
@@ -258,7 +286,10 @@ paths:
         "400": { description: Invalid input. }
         "401": { description: Local control authentication required. }
         "404": { description: Service not found. }
-        "502": { description: Price synchronization failed; last valid catalog retained. }
+        "502":
+          {
+            description: Price synchronization failed; last valid catalog retained.,
+          }
   /control/v1/health:
     get:
       x-astrlink-implementation-status: implemented
@@ -391,7 +422,7 @@ paths:
       security:
         - controlToken: []
       responses:
-        '200':
+        "200":
           description: All service IDs in priority order, including disabled services
           headers:
             ETag:
@@ -400,7 +431,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ServiceOrder'
+                $ref: "#/components/schemas/ServiceOrder"
     put:
       operationId: updateServiceOrder
       summary: Atomically replace the complete service order
@@ -417,9 +448,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ServiceOrder'
+              $ref: "#/components/schemas/ServiceOrder"
       responses:
-        '200':
+        "200":
           description: Saved order
           headers:
             ETag:
@@ -428,12 +459,12 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ServiceOrder'
-        '412':
+                $ref: "#/components/schemas/ServiceOrder"
+        "412":
           description: Service membership or order has changed; reload before retrying
-        '422':
+        "422":
           description: Duplicate, missing or unknown service IDs
-        '428':
+        "428":
           description: If-Match is required
   /control/v1/services:
     x-astrlink-implementation-status: implemented
@@ -1129,7 +1160,7 @@ paths:
             type: boolean
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Route page.
@@ -1154,7 +1185,7 @@ paths:
               $ref: "#/components/schemas/RouteCreate"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "201":
           description: Route created.
@@ -1187,7 +1218,7 @@ paths:
       summary: Read one route.
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Route details.
@@ -1218,7 +1249,7 @@ paths:
               $ref: "#/components/schemas/RoutePatch"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Updated route.
@@ -1249,7 +1280,7 @@ paths:
         - $ref: "#/components/parameters/IfMatch"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "204":
           description: Route deleted.
@@ -1717,7 +1748,7 @@ paths:
               $ref: "#/components/schemas/AutoClassifierLocalProbeRequest"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Content-pinned local package identity and frozen taxonomy mapping.
@@ -1744,7 +1775,7 @@ paths:
       summary: List local classifier installations.
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Installed classifier packages.
@@ -1770,7 +1801,7 @@ paths:
               $ref: "#/components/schemas/AutoClassifierInstallRequest"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "202":
           description: Installation accepted and ready.
@@ -1811,7 +1842,7 @@ paths:
               $ref: "#/components/schemas/AutoClassifierClassifyPreviewRequest"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Category, logits, latency, and routing eligibility.
@@ -1837,7 +1868,7 @@ paths:
       operationId: listRecoveryPaths
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: All reusable paths, versions, and references.
@@ -1863,7 +1894,7 @@ paths:
               $ref: "#/components/schemas/RecoveryPathCreate"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "201":
           description: Created path and strong version.
@@ -1886,7 +1917,7 @@ paths:
       operationId: getRecoveryPath
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Path and its current references.
@@ -1901,7 +1932,7 @@ paths:
         - name: If-Match
           in: header
           required: true
-          schema: {type: string}
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -1910,7 +1941,7 @@ paths:
               $ref: "#/components/schemas/RecoveryPathPatch"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Updated path; active requests retain their original snapshot.
@@ -1929,10 +1960,10 @@ paths:
         - name: If-Match
           in: header
           required: true
-          schema: {type: string}
+          schema: { type: string }
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "204":
           description: Path removed.
@@ -1954,7 +1985,7 @@ paths:
               $ref: "#/components/schemas/RecoveryPreviewInput"
       deprecated: true
       responses:
-        '410':
+        "410":
           description: Legacy routing feature retired; use service order and routing settings
         "200":
           description: Actual attempt ordering and skipped steps for synthetic outcomes.
@@ -2342,7 +2373,7 @@ paths:
         - name: before
           in: query
           description: Read older audit events before this event id; active bindings are always current.
-          schema: {type: integer, minimum: 1}
+          schema: { type: integer, minimum: 1 }
       operationId: getSessionChannelBindings
       summary: Read active channel preferences and the latest 100 binding audit events.
       responses:
@@ -2572,7 +2603,8 @@ components:
   schemas:
     PricingStatus:
       type: object
-      required: [source, version, updated_at, checked_at, error, models, warnings]
+      required:
+        [source, version, updated_at, checked_at, error, models, warnings]
       properties:
         source: { type: string }
         version: { type: string }
@@ -2586,10 +2618,18 @@ components:
       type: object
       required: [provider, model, name, expression]
       properties:
-        provider: { type: string, description: Canonical first-party supplier ID; plan and regional catalogs are excluded. }
+        provider:
+          {
+            type: string,
+            description: Canonical first-party supplier ID; plan and regional catalogs are excluded.,
+          }
         model: { type: string }
         name: { type: string }
-        expression: { type: string, description: Restricted tiered expression with USD per million token coefficients. }
+        expression:
+          {
+            type: string,
+            description: Restricted tiered expression with USD per million token coefficients.,
+          }
       additionalProperties: false
     PriceCatalog:
       type: object
@@ -2599,26 +2639,40 @@ components:
         generated_at: { type: string, format: date-time }
         activated_at: { type: string, format: date-time }
         etag: { type: string }
-        prices: { type: array, items: { $ref: "#/components/schemas/OfficialPrice" } }
+        prices:
+          { type: array, items: { $ref: "#/components/schemas/OfficialPrice" } }
         warnings: { type: array, items: { type: string } }
       additionalProperties: false
     PricingConfig:
       type: object
       required: [provider, bindings, monthly_budget_usd, billing_day, time_zone]
       properties:
-        provider: { type: string, description: Canonical first-party supplier ID; plan and regional catalogs are excluded. }
+        provider:
+          {
+            type: string,
+            description: Canonical first-party supplier ID; plan and regional catalogs are excluded.,
+          }
         bindings:
           type: object
           additionalProperties:
             type: object
             required: [provider, model]
             properties:
-              provider: { type: string, description: Canonical first-party supplier ID; plan and regional catalogs are excluded. }
+              provider:
+                {
+                  type: string,
+                  description: Canonical first-party supplier ID; plan and regional catalogs are excluded.,
+                }
               model: { type: string, minLength: 1, maxLength: 256 }
             additionalProperties: false
-        monthly_budget_usd: { type: string, description: Decimal USD reference budget; empty disables the budget. }
+        monthly_budget_usd:
+          {
+            type: string,
+            description: Decimal USD reference budget; empty disables the budget.,
+          }
         billing_day: { type: integer, minimum: 1, maximum: 31 }
-        time_zone: { type: string, description: IANA calendar billing time zone. }
+        time_zone:
+          { type: string, description: IANA calendar billing time zone. }
       additionalProperties: false
     BillingAmounts:
       type: object
@@ -2629,7 +2683,12 @@ components:
         unpriced: { type: integer, minimum: 0 }
         pending: { type: integer, minimum: 0 }
         revalued: { type: integer, minimum: 0 }
-        requests: { type: integer, minimum: 0, description: Distinct logical root requests; attempts are deduplicated separately. }
+        requests:
+          {
+            type: integer,
+            minimum: 0,
+            description: Distinct logical root requests; attempts are deduplicated separately.,
+          }
     BillingSummary:
       allOf:
         - { $ref: "#/components/schemas/BillingAmounts" }
@@ -2650,7 +2709,19 @@ components:
                       provider: { type: string }
     BillingPeriod:
       type: object
-      required: [id, kind, start, end, observed_at, used_percent, budget_usd, remaining_usd, coverage, summary]
+      required:
+        [
+          id,
+          kind,
+          start,
+          end,
+          observed_at,
+          used_percent,
+          budget_usd,
+          remaining_usd,
+          coverage,
+          summary,
+        ]
       properties:
         id: { type: string }
         kind: { type: string }
@@ -2659,7 +2730,11 @@ components:
         observed_at: { type: [string, "null"], format: date-time }
         used_percent: { type: [number, "null"], minimum: 0 }
         budget_usd: { type: string }
-        remaining_usd: { type: string, description: May be negative on overrun; provisional while calls are unpriced or pending. }
+        remaining_usd:
+          {
+            type: string,
+            description: May be negative on overrun; provisional while calls are unpriced or pending.,
+          }
         coverage: { type: string, enum: [partial, observed, recorded] }
         summary: { $ref: "#/components/schemas/BillingSummary" }
       additionalProperties: false
@@ -2668,7 +2743,8 @@ components:
       required: [config, periods]
       properties:
         config: { $ref: "#/components/schemas/PricingConfig" }
-        periods: { type: array, items: { $ref: "#/components/schemas/BillingPeriod" } }
+        periods:
+          { type: array, items: { $ref: "#/components/schemas/BillingPeriod" } }
       additionalProperties: false
     BillingBackfill:
       type: object
@@ -2716,7 +2792,16 @@ components:
       additionalProperties: false
     UsageTotals:
       type: object
-      required: [requests, failed_requests, input_tokens, output_tokens, total_tokens, cache_read_tokens, cache_write_tokens]
+      required:
+        [
+          requests,
+          failed_requests,
+          input_tokens,
+          output_tokens,
+          total_tokens,
+          cache_read_tokens,
+          cache_write_tokens,
+        ]
       properties:
         requests: { type: integer, minimum: 0 }
         failed_requests: { type: integer, minimum: 0 }
@@ -2943,12 +3028,12 @@ components:
           $ref: "#/components/schemas/FailurePolicy"
       oneOf:
         - properties:
-            mode: {const: automatic}
+            mode: { const: automatic }
           required: [targets]
           not:
             required: [steps]
         - properties:
-            mode: {const: steps}
+            mode: { const: steps }
             steps:
               items:
                 not:
@@ -2996,12 +3081,12 @@ components:
           $ref: "#/components/schemas/FailurePolicy"
       oneOf:
         - properties:
-            mode: {const: automatic}
+            mode: { const: automatic }
           required: [targets]
           not:
             required: [steps]
         - properties:
-            mode: {const: steps}
+            mode: { const: steps }
             steps:
               items:
                 not:
@@ -3060,11 +3145,11 @@ components:
             properties:
               route_id:
                 $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-              name: {type: string, maxLength: 128}
+              name: { type: string, maxLength: 128 }
               protocol:
                 $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-              category_id: {type: string, maxLength: 64}
-              override: {type: boolean}
+              category_id: { type: string, maxLength: 64 }
+              override: { type: boolean }
             additionalProperties: false
       additionalProperties: false
     RecoveryPreviewInput:
@@ -3073,44 +3158,61 @@ components:
       properties:
         path:
           $ref: "#/components/schemas/RecoveryPath"
-        model: {type: string, maxLength: 256}
-        streaming: {type: boolean}
+        model: { type: string, maxLength: 256 }
+        streaming: { type: boolean }
         error:
           type: string
-          pattern: '^(network_error|response_timeout|[45][0-9]{2})$'
-        success_at: {type: integer, minimum: 0, maximum: 20}
-        retry_after: {type: string, maxLength: 128}
+          pattern: "^(network_error|response_timeout|[45][0-9]{2})$"
+        success_at: { type: integer, minimum: 0, maximum: 20 }
+        retry_after: { type: string, maxLength: 128 }
         route_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        category_id: {type: string, maxLength: 64}
+        category_id: { type: string, maxLength: 64 }
       additionalProperties: false
     RecoveryPreview:
       type: object
       required: [steps, stop_reason, max_attempts]
       properties:
-        stop_reason: {type: string, maxLength: 128}
-        max_attempts: {type: integer, minimum: 1, maximum: 20}
+        stop_reason: { type: string, maxLength: 128 }
+        max_attempts: { type: integer, minimum: 1, maximum: 20 }
         steps:
           type: array
           items:
             type: object
-            required: [step_id, service_id, model, action, status, wait_min_ms, wait_max_ms]
+            required:
+              [
+                step_id,
+                service_id,
+                model,
+                action,
+                status,
+                wait_min_ms,
+                wait_max_ms,
+              ]
             properties:
               step_id:
                 $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
               service_id:
                 $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-              model: {type: string, maxLength: 256}
-              action: {type: string, enum: [initial, retry, failover]}
-              status: {type: string, enum: [failed, succeeded, skipped]}
-              reason: {type: string, maxLength: 128}
-              wait_min_ms: {type: integer, minimum: 0}
-              wait_max_ms: {type: integer, minimum: 0}
+              model: { type: string, maxLength: 256 }
+              action: { type: string, enum: [initial, retry, failover] }
+              status: { type: string, enum: [failed, succeeded, skipped] }
+              reason: { type: string, maxLength: 128 }
+              wait_min_ms: { type: integer, minimum: 0 }
+              wait_max_ms: { type: integer, minimum: 0 }
             additionalProperties: false
       additionalProperties: false
     FailurePolicy:
       type: object
-      required: [max_retries, initial_delay_ms, max_delay_ms, network_error, response_timeout, http_status]
+      required:
+        [
+          max_retries,
+          initial_delay_ms,
+          max_delay_ms,
+          network_error,
+          response_timeout,
+          http_status,
+        ]
       properties:
         max_retries:
           type: integer
@@ -3153,7 +3255,7 @@ components:
         http_status:
           type: object
           propertyNames:
-            pattern: '^[45][0-9]{2}$'
+            pattern: "^[45][0-9]{2}$"
           additionalProperties:
             $ref: "#/components/schemas/FailureAction"
           description: Controls ordinary retries and switching after any enabled request repair. Unlisted statuses stop. Request repair is independent of HTTP status rules. Defaults permit retry and switching for 408, 429, 500, 502, 503, 504, 529; 401 and 403 permit switching only.
@@ -3187,53 +3289,69 @@ components:
           uniqueItems: true
           items:
             type: string
-            pattern: '^[a-z][a-z0-9_-]{2,95}$'
+            pattern: "^[a-z][a-z0-9_-]{2,95}$"
     ChannelStickiness:
       type: object
       additionalProperties: false
       required: [enabled, ttl_seconds]
       properties:
-        enabled: {type: boolean, default: true}
-        ttl_seconds: {type: integer, minimum: 60, maximum: 86400, default: 3600}
+        enabled: { type: boolean, default: true }
+        ttl_seconds:
+          { type: integer, minimum: 60, maximum: 86400, default: 3600 }
     ChannelBindingScope:
       type: object
       required: [session_id, local_access_token_id, protocol, model]
       properties:
-        session_id: {type: string}
-        local_access_token_id: {type: string}
-        protocol: {type: string}
-        model: {type: string}
+        session_id: { type: string }
+        local_access_token_id: { type: string }
+        protocol: { type: string }
+        model: { type: string }
     ChannelBinding:
       allOf:
         - $ref: "#/components/schemas/ChannelBindingScope"
         - type: object
           required: [service_id, source, request_id, updated_at, expires_at]
           properties:
-            service_id: {type: string}
-            source: {type: string, enum: [new, explicit, echo_id, fingerprint]}
-            request_id: {type: string}
-            updated_at: {type: string, format: date-time}
-            expires_at: {type: string, format: date-time}
+            service_id: { type: string }
+            source:
+              { type: string, enum: [new, explicit, echo_id, fingerprint] }
+            request_id: { type: string }
+            updated_at: { type: string, format: date-time }
+            expires_at: { type: string, format: date-time }
     ChannelBindingEvent:
       allOf:
         - $ref: "#/components/schemas/ChannelBindingScope"
         - type: object
-          required: [id, at, action, reason, source, service_id, previous_service_id, request_id]
+          required:
+            [
+              id,
+              at,
+              action,
+              reason,
+              source,
+              service_id,
+              previous_service_id,
+              request_id,
+            ]
           properties:
-            id: {type: integer, minimum: 1}
-            at: {type: string, format: date-time}
-            action: {type: string, enum: [hit, miss, strict, bound, switched, released]}
-            reason: {type: string}
-            source: {type: string}
-            service_id: {type: string}
-            previous_service_id: {type: string}
-            request_id: {type: string}
+            id: { type: integer, minimum: 1 }
+            at: { type: string, format: date-time }
+            action:
+              {
+                type: string,
+                enum: [hit, miss, strict, bound, switched, released],
+              }
+            reason: { type: string }
+            source: { type: string }
+            service_id: { type: string }
+            previous_service_id: { type: string }
+            request_id: { type: string }
     ChannelBindingAudit:
       type: object
       additionalProperties: false
       required: [enabled, bindings, events, has_more]
       properties:
-        enabled: {type: boolean}
+        enabled: { type: boolean }
         bindings:
           type: array
           items:
@@ -3243,10 +3361,16 @@ components:
           maxItems: 100
           items:
             $ref: "#/components/schemas/ChannelBindingEvent"
-        has_more: {type: boolean}
+        has_more: { type: boolean }
     RoutingSettings:
       type: object
-      required: [allow_unmatched_failover, strategy, max_attempts, default_failure_policy]
+      required:
+        [
+          allow_unmatched_failover,
+          strategy,
+          max_attempts,
+          default_failure_policy,
+        ]
       properties:
         codex_identity_enforcement:
           type: boolean
@@ -3313,10 +3437,10 @@ components:
       type: object
       required: [delay_ms]
       properties:
-        path_id: {type: string, maxLength: 128}
-        path_name: {type: string, maxLength: 128}
-        path_version: {type: string, maxLength: 128}
-        step_id: {type: string, maxLength: 128}
+        path_id: { type: string, maxLength: 128 }
+        path_name: { type: string, maxLength: 128 }
+        path_version: { type: string, maxLength: 128 }
+        step_id: { type: string, maxLength: 128 }
         upstream_model:
           type: string
           maxLength: 256
@@ -3416,10 +3540,80 @@ components:
         last_error:
           $ref: "#/components/schemas/SubscriptionError"
       additionalProperties: false
+    ServiceProxy:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [inherit, direct, custom]
+        url:
+          type: string
+          maxLength: 2048
+          description: HTTP, HTTPS or SOCKS5 proxy URL, without userinfo, query or fragment. Required in custom mode only.
+        credential_ref:
+          type: string
+          readOnly: true
+          description: Local proxy credential reference; never contains authentication bytes.
+      additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              mode: { const: custom }
+          then:
+            required: [url]
+          else:
+            not:
+              anyOf:
+                - required: [url]
+                - required: [credential_ref]
+    ServiceProxyInput:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [inherit, direct, custom]
+        url:
+          type: string
+          maxLength: 2048
+          description: HTTP, HTTPS or SOCKS5 proxy URL without embedded credentials; required for custom mode.
+        credential:
+          oneOf:
+            - type: object
+              required: [username, password]
+              properties:
+                username:
+                  {
+                    type: string,
+                    minLength: 1,
+                    maxLength: 255,
+                    writeOnly: true,
+                  }
+                password: { type: string, maxLength: 255, writeOnly: true }
+              additionalProperties: false
+            - type: "null"
+          writeOnly: true
+          description: Omit to keep saved authentication; null clears it. Authentication requires custom mode. Credentials are limited to 255 UTF-8 bytes each.
+      additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              mode: { const: custom }
+          then:
+            required: [url]
+          else:
+            not:
+              required: [url]
+            properties:
+              credential: { type: "null" }
     Service:
       type: object
-      required: [id, name, kind, enabled, models, capabilities, created_at, updated_at]
+      required:
+        [id, name, kind, enabled, models, capabilities, created_at, updated_at]
       properties:
+        proxy:
+          $ref: "#/components/schemas/ServiceProxy"
         responses_websocket_enabled:
           type: boolean
           description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
@@ -3485,6 +3679,11 @@ components:
       type: object
       required: [name, kind]
       properties:
+        proxy:
+          oneOf:
+            - $ref: "#/components/schemas/ServiceProxyInput"
+            - type: "null"
+          description: Omit to retain the saved proxy; null inherits the global network policy.
         responses_websocket_enabled:
           type: boolean
           description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
@@ -3543,6 +3742,11 @@ components:
       type: object
       minProperties: 1
       properties:
+        proxy:
+          oneOf:
+            - $ref: "#/components/schemas/ServiceProxyInput"
+            - type: "null"
+          description: Omit to retain the saved proxy; null inherits the global network policy.
         responses_websocket_enabled:
           type: boolean
           description: Per-channel native Responses WebSocket switch. When omitted, defaults to true for codex_subscription and false for other providers. Explicit false overrides the Codex default.
@@ -3590,6 +3794,11 @@ components:
       type: object
       required: [kind, http, protocol]
       properties:
+        proxy:
+          oneOf:
+            - $ref: "#/components/schemas/ServiceProxyInput"
+            - type: "null"
+          description: Omit to retain the saved proxy; null inherits the global network policy.
         service_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         kind:
@@ -3627,7 +3836,7 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: '^[a-z][a-z0-9._-]{0,63}$'
+          pattern: "^[a-z][a-z0-9._-]{0,63}$"
           example: astrlink-text-v1
           description: >
             Versioned task-classification taxonomy used by auto selection.
@@ -3912,7 +4121,7 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          pattern: '^[a-z][a-z0-9._-]{0,63}$'
+          pattern: "^[a-z][a-z0-9._-]{0,63}$"
           description: >
             One classifier output from selection.taxonomy_id. Category IDs are
             supplied by AstrLink's versioned taxonomy, not inferred from model
@@ -4284,7 +4493,14 @@ components:
       additionalProperties: false
     PolicyDryRunResponse:
       type: object
-      required: [decision, findings_summary, findings, suppressed_findings, inspected_body]
+      required:
+        [
+          decision,
+          findings_summary,
+          findings,
+          suppressed_findings,
+          inspected_body,
+        ]
       properties:
         decision:
           $ref: "#/components/schemas/PolicyAction"
@@ -4352,7 +4568,12 @@ components:
       enum: [regex, local_model]
     PrivacyModelAdapter:
       type: string
-      enum: [openai_bioes_viterbi, hf_token_classification, astrlink_sensitive_guard]
+      enum:
+        [
+          openai_bioes_viterbi,
+          hf_token_classification,
+          astrlink_sensitive_guard,
+        ]
     PrivacyModelInstallationId:
       type: string
       pattern: "^model_[0-9a-f]{32}$"
@@ -5345,7 +5566,11 @@ components:
         input_audio_tokens: { type: integer, minimum: 0 }
         output_audio_tokens: { type: integer, minimum: 0 }
         thinking_enabled: { type: boolean }
-        billing_incomplete: { type: boolean, description: The upstream stream ended before final usage was observed. }
+        billing_incomplete:
+          {
+            type: boolean,
+            description: The upstream stream ended before final usage was observed.,
+          }
       additionalProperties: false
     ErrorSummary:
       type: object
@@ -5506,7 +5731,15 @@ components:
       additionalProperties: false
     AuditHTTPMeta:
       type: object
-      required: [method, url, http_version, request_headers, response_status, response_headers]
+      required:
+        [
+          method,
+          url,
+          http_version,
+          request_headers,
+          response_status,
+          response_headers,
+        ]
       properties:
         method:
           type: string
@@ -5746,7 +5979,17 @@ components:
       additionalProperties: false
     AuthorizationSession:
       type: object
-      required: [id, provider, status, flow, service_id, expires_at, created_at, updated_at]
+      required:
+        [
+          id,
+          provider,
+          status,
+          flow,
+          service_id,
+          expires_at,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -5830,7 +6073,14 @@ components:
       additionalProperties: false
     ServiceTestProtocol:
       type: string
-      enum: [openai.responses, openai.chat, openai.completions, anthropic.messages, google.generate_content]
+      enum:
+        [
+          openai.responses,
+          openai.chat,
+          openai.completions,
+          anthropic.messages,
+          google.generate_content,
+        ]
     ServiceTestRequest:
       type: object
       additionalProperties: false
@@ -5853,7 +6103,17 @@ components:
     ServiceTestResult:
       type: object
       additionalProperties: false
-      required: [service_id, protocol, model, stream, ok, status_code, duration_ms, output]
+      required:
+        [
+          service_id,
+          protocol,
+          model,
+          stream,
+          ok,
+          status_code,
+          duration_ms,
+          output,
+        ]
       properties:
         service_id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId

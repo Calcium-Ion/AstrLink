@@ -19,7 +19,8 @@ export function LoadingState({
       data-slot="loading-state"
       role="status"
     >
-      <LoaderCircle animateOnHover={false}
+      <LoaderCircle
+        animateOnHover={false}
         aria-hidden="true"
         className="size-3.5 animate-spin motion-reduce:animate-none"
       />

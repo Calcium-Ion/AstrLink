@@ -14,7 +14,8 @@
 
 此功能默认开启。闲置过期时间默认为 60 分钟，可设置为 1 至 1440 分钟，每次请求成功后重新计时。旧配置中没有这一设置时，也按开启处理；已经明确保存为关闭的设置会保留。
 
-**恢复与重试 → API 提供商切换** 是独立的设置。新工作区默认开启，已有工作区保留原值。关闭自动切换后，仍会优先选择已绑定的提供商，但请求失败后不会尝试其他提供商。
+**恢复与重试 → API 提供商切换**
+是独立的设置。新工作区默认开启，已有工作区保留原值。关闭自动切换后，仍会优先选择已绑定的提供商，但请求失败后不会尝试其他提供商。
 
 ## 什么时候会建立绑定
 
@@ -28,7 +29,9 @@
 - **协议族**：不同协议分别绑定，Responses 和 Responses Compact 共用一个协议族。
 - **请求模型**：不同模型可以绑定不同的提供商。
 
-因此，一个会话可能同时有多个绑定。支持会话识别的 Chat Completions、Responses、Anthropic Messages 和 Gemini Generate Content 请求可以建立绑定；模型目录请求和旧式 Completions 请求不建立普通会话绑定。
+因此，一个会话可能同时有多个绑定。支持会话识别的 Chat
+Completions、Responses、Anthropic Messages 和 Gemini Generate
+Content 请求可以建立绑定；模型目录请求和旧式 Completions 请求不建立普通会话绑定。
 
 ## 查看绑定记录
 
@@ -42,7 +45,8 @@
 
 ## 重新选择提供商
 
-点击 **重新选择 API 提供商**，会一次清除当前会话的全部普通绑定。请求和绑定历史仍会保留，正在执行的请求也不会被中断。
+点击
+**重新选择 API 提供商**，会一次清除当前会话的全部普通绑定。请求和绑定历史仍会保留，正在执行的请求也不会被中断。
 
 下一次请求会重新按路由规则选择提供商，因此仍有可能选中原来的那一家。解除前已经开始的请求，即使稍后成功，也不会恢复旧绑定；解除后发起的新请求成功时，可以建立新绑定。
 
@@ -53,7 +57,9 @@
 - 使用 `previous_response_id` 的 Responses 续接请求。
 - 已经建立的 Responses WebSocket 连接。
 
-**重新选择 API 提供商** 不会解除这些协议绑定。WebSocket 需要更换提供商或模型时，必须新建连接，详见 [WebSocket 指南](responses-websocket.md)。
+**重新选择 API 提供商**
+不会解除这些协议绑定。WebSocket 需要更换提供商或模型时，必须新建连接，详见
+[WebSocket 指南](responses-websocket.md)。
 
 ## 保存与保留范围
 
@@ -63,9 +69,11 @@
 
 ## 控制接口参考
 
-开发集成中，会话粘性设置沿用字段名 `channel_stickiness`。绑定接口为 `/control/v1/request-sessions/{session_id}/channel-bindings`，需要控制面认证：
+开发集成中，会话粘性设置沿用字段名 `channel_stickiness`。绑定接口为
+`/control/v1/request-sessions/{session_id}/channel-bindings`，需要控制面认证：
 
-- `GET`：读取绑定和历史记录。加载下一页时，将上一页末尾的事件 ID 作为 `before` 参数。
+- `GET`：读取绑定和历史记录。加载下一页时，将上一页末尾的事件 ID 作为 `before`
+  参数。
 - `DELETE`：解除当前会话的全部普通绑定。
 
 完整定义见[控制接口文档](../../contracts/control-api.openapi.yaml)。

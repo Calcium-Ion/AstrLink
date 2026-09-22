@@ -1,4 +1,18 @@
-import { DeepSeek, Doubao, Grok, Qwen, Anthropic, Claude, Codex, Gemini, Kimi, Minimax, OpenAI, OpenCode, Zhipu } from "@lobehub/icons";
+import {
+  DeepSeek,
+  Doubao,
+  Grok,
+  Qwen,
+  Anthropic,
+  Claude,
+  Codex,
+  Gemini,
+  Kimi,
+  Minimax,
+  OpenAI,
+  OpenCode,
+  Zhipu,
+} from "@lobehub/icons";
 import { Connect as Cable } from "@/components/icons";
 import type { ReactNode } from "react";
 
@@ -10,7 +24,15 @@ import { serviceKindLabel, type ServiceKind } from "../service-model";
 function kindMark(kind: ServiceKind, size: number): ReactNode {
   switch (kind) {
     case "newapi":
-      return <img src={newapiLogo} alt="" aria-hidden="true" width={size} height={size} />;
+      return (
+        <img
+          src={newapiLogo}
+          alt=""
+          aria-hidden="true"
+          width={size}
+          height={size}
+        />
+      );
     case "codex_subscription":
       return <Codex.Color size={size} />;
     case "claude_subscription":
@@ -45,7 +67,13 @@ function kindMark(kind: ServiceKind, size: number): ReactNode {
     case "xai":
       return <Grok size={size} />;
     case "custom":
-      return <Cable aria-hidden="true" className="text-muted-foreground" size={size} />;
+      return (
+        <Cable
+          aria-hidden="true"
+          className="text-muted-foreground"
+          size={size}
+        />
+      );
   }
 }
 
@@ -61,7 +89,10 @@ export function ServiceKindIcon({
   return (
     <span
       aria-label={serviceKindLabel(kind)}
-      className={cn("inline-flex shrink-0 items-center justify-center", className)}
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center",
+        className,
+      )}
       role="img"
       style={{ height: size, width: size }}
     >

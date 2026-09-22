@@ -7,19 +7,56 @@ import { ReorderPreview } from "./components/ReorderPreview";
 import { ServiceKindIcon } from "./components/ServiceKindIcon";
 import { RotateCcw } from "./components/icons";
 import { Button } from "./components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog";
 import { useT } from "./i18n";
 
 export const SERVICE_ORDER_GUIDE_KEY = "astrlink.service-order-guide.v1";
 
 const frames = [
   { at: 0, order: ["codex", "openai", "newapi"], lifted: null, step: "grab" },
-  { at: 900, order: ["codex", "openai", "newapi"], lifted: "newapi", step: "grab" },
-  { at: 1600, order: ["newapi", "codex", "openai"], lifted: "newapi", step: "raise" },
-  { at: 2700, order: ["newapi", "codex", "openai"], lifted: null, step: "raise" },
-  { at: 3700, order: ["newapi", "codex", "openai"], lifted: "codex", step: "lower" },
-  { at: 4400, order: ["newapi", "openai", "codex"], lifted: "codex", step: "lower" },
-  { at: 5500, order: ["newapi", "openai", "codex"], lifted: null, step: "done" },
+  {
+    at: 900,
+    order: ["codex", "openai", "newapi"],
+    lifted: "newapi",
+    step: "grab",
+  },
+  {
+    at: 1600,
+    order: ["newapi", "codex", "openai"],
+    lifted: "newapi",
+    step: "raise",
+  },
+  {
+    at: 2700,
+    order: ["newapi", "codex", "openai"],
+    lifted: null,
+    step: "raise",
+  },
+  {
+    at: 3700,
+    order: ["newapi", "codex", "openai"],
+    lifted: "codex",
+    step: "lower",
+  },
+  {
+    at: 4400,
+    order: ["newapi", "openai", "codex"],
+    lifted: "codex",
+    step: "lower",
+  },
+  {
+    at: 5500,
+    order: ["newapi", "openai", "codex"],
+    lifted: null,
+    step: "done",
+  },
 ] as const;
 
 function OrderAnimation() {
@@ -28,14 +65,20 @@ function OrderAnimation() {
   const [frame, setFrame] = useState(0);
   useEffect(() => {
     if (reducedMotion) return;
-    const timers = frames.slice(1).map((item, index) =>
-      window.setTimeout(() => setFrame(index + 1), item.at),
-    );
+    const timers = frames
+      .slice(1)
+      .map((item, index) =>
+        window.setTimeout(() => setFrame(index + 1), item.at),
+      );
     return () => timers.forEach(window.clearTimeout);
   }, [reducedMotion]);
   const current = frames[reducedMotion ? frames.length - 1 : frame];
   const items = [
-    { id: "codex", name: t("services.codexName"), icon: <ServiceKindIcon kind="codex_subscription" /> },
+    {
+      id: "codex",
+      name: t("services.codexName"),
+      icon: <ServiceKindIcon kind="codex_subscription" />,
+    },
     { id: "openai", name: "OpenAI", icon: <ServiceKindIcon kind="openai" /> },
     { id: "newapi", name: "New API", icon: <ServiceKindIcon kind="newapi" /> },
   ];
@@ -55,7 +98,13 @@ function OrderAnimation() {
   );
 }
 
-export function ServiceOrderHelp({ ready, children }: { ready: boolean; children: ReactNode }) {
+export function ServiceOrderHelp({
+  ready,
+  children,
+}: {
+  ready: boolean;
+  children: ReactNode;
+}) {
   const t = useT();
   const [helpOpen, setHelpOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -109,15 +158,25 @@ export function ServiceOrderHelp({ ready, children }: { ready: boolean; children
         >
           <DialogHeader className="pr-6 text-left">
             <DialogTitle>{t("services.orderGuide.title")}</DialogTitle>
-            <DialogDescription>{t("services.orderGuide.description")}</DialogDescription>
+            <DialogDescription>
+              {t("services.orderGuide.description")}
+            </DialogDescription>
           </DialogHeader>
           {guideOpen ? <OrderAnimation key={playback} /> : null}
-          <p className="text-xs leading-5 text-muted-foreground">{t("services.orderGuide.note")}</p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            {t("services.orderGuide.note")}
+          </p>
           <DialogFooter className="flex-row items-center justify-between sm:justify-between">
-            <IconButton label={t("services.orderGuide.replay")} onClick={() => setPlayback(value => value + 1)} variant="ghost">
+            <IconButton
+              label={t("services.orderGuide.replay")}
+              onClick={() => setPlayback((value) => value + 1)}
+              variant="ghost"
+            >
               <RotateCcw aria-hidden="true" />
             </IconButton>
-            <Button ref={dismiss} onClick={() => setGuideOpen(false)}>{t("services.orderGuide.dismiss")}</Button>
+            <Button ref={dismiss} onClick={() => setGuideOpen(false)}>
+              {t("services.orderGuide.dismiss")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 )
 
@@ -92,7 +93,7 @@ func New(secrets secretstore.SecretStore, client *http.Client) *Fetcher {
 	if client == nil {
 		client = &http.Client{Timeout: requestTimeout}
 	}
-	return &Fetcher{secrets: secrets, client: client, now: time.Now, cache: make(map[contract.ServiceID]cacheEntry)}
+	return &Fetcher{secrets: secrets, client: networkproxy.WrapClient(client), now: time.Now, cache: make(map[contract.ServiceID]cacheEntry)}
 }
 
 // Usage returns the sanitized quota snapshot for a coding plan service.
@@ -108,6 +109,10 @@ func (fetcher *Fetcher) Usage(ctx context.Context, service contract.Service) (co
 	}
 	fetcher.mu.Unlock()
 
+	ctx, err := networkproxy.Bind(ctx, service, fetcher.secrets)
+	if err != nil {
+		return contract.SubscriptionUsage{}, err
+	}
 	secret, err := fetcher.apiKey(ctx, *service.HTTP)
 	if err != nil {
 		return contract.SubscriptionUsage{}, err

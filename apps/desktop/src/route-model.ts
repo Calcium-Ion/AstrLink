@@ -1,4 +1,9 @@
-import { parseFailurePolicy, parseFailoverPolicy, type FailurePolicy, type FailoverPolicy } from "./failure-policy-model";
+import {
+  parseFailurePolicy,
+  parseFailoverPolicy,
+  type FailurePolicy,
+  type FailoverPolicy,
+} from "./failure-policy-model";
 export type RoutePlanType = "native" | "delegated" | "relaykit";
 export type RouteSelectionMode = "priority" | "auto";
 
@@ -71,11 +76,7 @@ const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
 const protocolIDPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 const classificationIDPattern = /^[a-z][a-z0-9._-]{0,63}$/;
 const etagPattern = /^"sha256:[0-9a-f]{64}"$/;
-const planTypes = new Set<RoutePlanType>([
-  "native",
-  "delegated",
-  "relaykit",
-]);
+const planTypes = new Set<RoutePlanType>(["native", "delegated", "relaykit"]);
 
 function invalid(path: string, message: string): never {
   throw new Error(`Invalid Route IPC response at ${path}: ${message}`);
@@ -184,12 +185,7 @@ function parseTarget(
     ["upstream_model"],
     path,
   );
-  const serviceID = stringAt(
-    target.service_id,
-    `${path}.service_id`,
-    3,
-    96,
-  );
+  const serviceID = stringAt(target.service_id, `${path}.service_id`, 3, 96);
   if (!resourceIDPattern.test(serviceID)) {
     invalid(`${path}.service_id`, "invalid service ID");
   }
@@ -244,7 +240,17 @@ function parseCategory(
   if (!classificationIDPattern.test(categoryID)) {
     invalid(`${path}.category_id`, "invalid category ID");
   }
-  if(category.recovery_path_id!==undefined){const id=stringAt(category.recovery_path_id,`${path}.recovery_path_id`,3,96);if(!resourceIDPattern.test(id)||category.targets!==undefined)invalid(path,"invalid path reference");return {category_id:categoryID,recovery_path_id:id}}
+  if (category.recovery_path_id !== undefined) {
+    const id = stringAt(
+      category.recovery_path_id,
+      `${path}.recovery_path_id`,
+      3,
+      96,
+    );
+    if (!resourceIDPattern.test(id) || category.targets !== undefined)
+      invalid(path, "invalid path reference");
+    return { category_id: categoryID, recovery_path_id: id };
+  }
   if (!Array.isArray(category.targets) || category.targets.length === 0) {
     invalid(`${path}.targets`, "expected at least one target");
   }
@@ -261,7 +267,14 @@ export function parseRoute(value: unknown, path = "$"): Route {
   keysAt(
     route,
     ["id", "name", "enabled", "priority", "match"],
-    ["selection", "targets", "categories", "failure_policy", "failover", "recovery_path_id"],
+    [
+      "selection",
+      "targets",
+      "categories",
+      "failure_policy",
+      "failover",
+      "recovery_path_id",
+    ],
     path,
   );
   const id = stringAt(route.id, `${path}.id`, 3, 96);
@@ -280,30 +293,49 @@ export function parseRoute(value: unknown, path = "$"): Route {
     if (match.model !== "astrlink/auto") {
       invalid(`${path}.match.model`, "auto selection requires astrlink/auto");
     }
-    if (Object.hasOwn(route, "targets") || Object.hasOwn(route,"recovery_path_id")) {
+    if (
+      Object.hasOwn(route, "targets") ||
+      Object.hasOwn(route, "recovery_path_id")
+    ) {
       invalid(`${path}.targets`, "auto selection uses category-owned targets");
     }
     if (!Array.isArray(route.categories) || route.categories.length < 2) {
-      invalid(`${path}.categories`, "auto selection requires at least two categories");
+      invalid(
+        `${path}.categories`,
+        "auto selection requires at least two categories",
+      );
     }
     const categories = route.categories.map((category, index) =>
       parseCategory(category, `${path}.categories[${index}]`, match),
     );
-    if (new Set(categories.map((category) => category.category_id)).size !== categories.length) {
+    if (
+      new Set(categories.map((category) => category.category_id)).size !==
+      categories.length
+    ) {
       invalid(`${path}.categories`, "duplicate category ID");
     }
     const models = new Set(
       categories.flatMap((category) =>
-        (category.targets??[]).map((target) => target.upstream_model),
+        (category.targets ?? []).map((target) => target.upstream_model),
       ),
     );
-    if (models.size < 2 && !categories.some(category=>category.recovery_path_id)) {
-      invalid(`${path}.categories`, "auto selection requires two distinct models");
+    if (
+      models.size < 2 &&
+      !categories.some((category) => category.recovery_path_id)
+    ) {
+      invalid(
+        `${path}.categories`,
+        "auto selection requires two distinct models",
+      );
     }
     return {
       id,
-      ...(Object.hasOwn(route, "failure_policy") ? { failure_policy: parseFailurePolicy(route.failure_policy) } : {}),
-      ...(Object.hasOwn(route, "failover") ? { failover: parseFailoverPolicy(route.failover) } : {}),
+      ...(Object.hasOwn(route, "failure_policy")
+        ? { failure_policy: parseFailurePolicy(route.failure_policy) }
+        : {}),
+      ...(Object.hasOwn(route, "failover")
+        ? { failover: parseFailoverPolicy(route.failover) }
+        : {}),
       name,
       enabled: route.enabled,
       priority: priorityAt(route.priority, `${path}.priority`),
@@ -314,26 +346,57 @@ export function parseRoute(value: unknown, path = "$"): Route {
   }
 
   if (match.model === "astrlink/auto") {
-    invalid(`${path}.match.model`, "astrlink/auto is reserved for auto selection");
+    invalid(
+      `${path}.match.model`,
+      "astrlink/auto is reserved for auto selection",
+    );
   }
   if (Object.hasOwn(route, "categories")) {
-    invalid(`${path}.categories`, "priority selection cannot contain categories");
+    invalid(
+      `${path}.categories`,
+      "priority selection cannot contain categories",
+    );
   }
-  let pathID: string|undefined;
- if(route.recovery_path_id!==undefined){pathID=stringAt(route.recovery_path_id,`${path}.recovery_path_id`,3,96);if(!resourceIDPattern.test(pathID)||route.targets!==undefined)invalid(path,"invalid path reference")}
-  if (!pathID && (!Array.isArray(route.targets) || route.targets.length === 0)) {
-    invalid(`${path}.targets`, "priority selection requires at least one target");
+  let pathID: string | undefined;
+  if (route.recovery_path_id !== undefined) {
+    pathID = stringAt(
+      route.recovery_path_id,
+      `${path}.recovery_path_id`,
+      3,
+      96,
+    );
+    if (!resourceIDPattern.test(pathID) || route.targets !== undefined)
+      invalid(path, "invalid path reference");
+  }
+  if (
+    !pathID &&
+    (!Array.isArray(route.targets) || route.targets.length === 0)
+  ) {
+    invalid(
+      `${path}.targets`,
+      "priority selection requires at least one target",
+    );
   }
   return {
     id,
-    ...(Object.hasOwn(route, "failure_policy") ? { failure_policy: parseFailurePolicy(route.failure_policy) } : {}),
-    ...(Object.hasOwn(route, "failover") ? { failover: parseFailoverPolicy(route.failover) } : {}),
+    ...(Object.hasOwn(route, "failure_policy")
+      ? { failure_policy: parseFailurePolicy(route.failure_policy) }
+      : {}),
+    ...(Object.hasOwn(route, "failover")
+      ? { failover: parseFailoverPolicy(route.failover) }
+      : {}),
     name,
     enabled: route.enabled,
     priority: priorityAt(route.priority, `${path}.priority`),
     match,
     ...(selection ? { selection } : {}),
-    ...(pathID?{recovery_path_id:pathID}:{targets:(route.targets as unknown[]).map((target,index)=>parseTarget(target,`${path}.targets[${index}]`,match,false))}),
+    ...(pathID
+      ? { recovery_path_id: pathID }
+      : {
+          targets: (route.targets as unknown[]).map((target, index) =>
+            parseTarget(target, `${path}.targets[${index}]`, match, false),
+          ),
+        }),
   };
 }
 
@@ -354,7 +417,9 @@ export function parseRoutePage(value: unknown): RoutePage {
 }
 
 export function isAutoRoute(route: Route): boolean {
-  return route.selection?.mode === "auto" || route.match.model === "astrlink/auto";
+  return (
+    route.selection?.mode === "auto" || route.match.model === "astrlink/auto"
+  );
 }
 
 export function autoRoutingStatus(

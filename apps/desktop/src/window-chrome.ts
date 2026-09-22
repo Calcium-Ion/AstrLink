@@ -18,10 +18,7 @@ const fallbackLinuxLayout = (): WindowControlLayout => ({
 });
 
 export function getDesktopPlatform(): DesktopPlatform {
-  if (
-    typeof window === "undefined" ||
-    !("__TAURI_INTERNALS__" in window)
-  ) {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
     return "browser";
   }
 

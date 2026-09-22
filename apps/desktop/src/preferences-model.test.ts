@@ -47,18 +47,25 @@ describe("preferences IPC contract", () => {
 
   it("accepts supported themes and rejects missing or invalid preferences", () => {
     for (const theme of ["system", "light", "dark"]) {
-      expect(parseSettingsSnapshot({ ...valid, values: { ...valid.values, theme } }).values.theme).toBe(theme);
+      expect(
+        parseSettingsSnapshot({ ...valid, values: { ...valid.values, theme } })
+          .values.theme,
+      ).toBe(theme);
     }
     for (const theme of [undefined, null, "auto", true]) {
-      expect(() => parseSettingsSnapshot({ ...valid, values: { ...valid.values, theme } })).toThrow("$.values.theme");
+      expect(() =>
+        parseSettingsSnapshot({ ...valid, values: { ...valid.values, theme } }),
+      ).toThrow("$.values.theme");
     }
   });
 
   it("rejects unknown fields and unsafe ports", () => {
-    expect(() => parseSettingsSnapshot({
-      ...valid,
-      values: { ...valid.values, use_system_proxy: "true" },
-    })).toThrow("$.values.use_system_proxy");
+    expect(() =>
+      parseSettingsSnapshot({
+        ...valid,
+        values: { ...valid.values, use_system_proxy: "true" },
+      }),
+    ).toThrow("$.values.use_system_proxy");
     expect(() => parseSettingsSnapshot({ ...valid, surprise: true })).toThrow(
       "$.surprise",
     );
@@ -84,10 +91,29 @@ describe("preferences IPC contract", () => {
 
   it("accepts unlimited and explicit request body limits and rejects invalid values", () => {
     for (const max_request_body_mib of [0, 1, 64, 0xffffffff]) {
-      expect(parseSettingsSnapshot({ ...valid, values: { ...valid.values, max_request_body_mib } }).values.max_request_body_mib).toBe(max_request_body_mib);
+      expect(
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, max_request_body_mib },
+        }).values.max_request_body_mib,
+      ).toBe(max_request_body_mib);
     }
-    for (const max_request_body_mib of [-1, 1.5, 0x100000000, NaN, Infinity, "8", null, undefined]) {
-      expect(() => parseSettingsSnapshot({ ...valid, values: { ...valid.values, max_request_body_mib } })).toThrow("$.values.max_request_body_mib");
+    for (const max_request_body_mib of [
+      -1,
+      1.5,
+      0x100000000,
+      NaN,
+      Infinity,
+      "8",
+      null,
+      undefined,
+    ]) {
+      expect(() =>
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, max_request_body_mib },
+        }),
+      ).toThrow("$.values.max_request_body_mib");
     }
   });
 

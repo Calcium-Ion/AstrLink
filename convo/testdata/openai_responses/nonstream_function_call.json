@@ -5,8 +5,15 @@
   "status": "completed",
   "model": "gpt-5",
   "output": [
-    {"id": "rs_68b7d1e2f3a4b5c6d7e8f9a0", "type": "reasoning", "summary": []},
-    {"id": "fc_68b7d1e2f3a4b5c6d7e8f9a1", "type": "function_call", "status": "completed", "call_id": "call_Ab12Cd34Ef56Gh78Ij90", "name": "shell", "arguments": "{\"command\":[\"ls\",\"src\"]}"}
+    { "id": "rs_68b7d1e2f3a4b5c6d7e8f9a0", "type": "reasoning", "summary": [] },
+    {
+      "id": "fc_68b7d1e2f3a4b5c6d7e8f9a1",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_Ab12Cd34Ef56Gh78Ij90",
+      "name": "shell",
+      "arguments": "{\"command\":[\"ls\",\"src\"]}"
+    }
   ],
-  "usage": {"input_tokens": 120, "output_tokens": 40, "total_tokens": 160}
+  "usage": { "input_tokens": 120, "output_tokens": 40, "total_tokens": 160 }
 }

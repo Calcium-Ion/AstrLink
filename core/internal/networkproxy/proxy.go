@@ -1,4 +1,4 @@
-// Package networkproxy selects the gateway's outbound proxy at startup.
+// Package networkproxy selects the global outbound proxy and isolates per-instance overrides.
 // It does not alter TLS verification or the isolated local/media transports.
 package networkproxy
 

@@ -369,7 +369,9 @@ export interface UsageAggregate {
  * failed attempt that later succeeded is never counted twice, and only
  * successful roots contribute tokens.
  */
-export function aggregateUsageRecords(records: RequestRecord[]): UsageAggregate {
+export function aggregateUsageRecords(
+  records: RequestRecord[],
+): UsageAggregate {
   const totals = emptyUsageTotals();
   const serviceMap = new Map<string, UsageGroup>();
   const modelMap = new Map<string, UsageGroup>();
@@ -541,7 +543,10 @@ export function usageBarPercent(
   value: number,
   groups: Array<Pick<UsageGroup, "total_tokens">>,
 ): number {
-  const max = groups.reduce((highest, group) => Math.max(highest, group.total_tokens), 0);
+  const max = groups.reduce(
+    (highest, group) => Math.max(highest, group.total_tokens),
+    0,
+  );
   if (max <= 0 || value <= 0) return 0;
   return Math.round((value / max) * 100);
 }
@@ -664,5 +669,8 @@ function compareUsageThenName(
     return right.total_tokens - left.total_tokens;
   }
   if (right.requests !== left.requests) return right.requests - left.requests;
-  return left.name.localeCompare(right.name, i18n.language === "zh-CN" ? "zh" : "en");
+  return left.name.localeCompare(
+    right.name,
+    i18n.language === "zh-CN" ? "zh" : "en",
+  );
 }

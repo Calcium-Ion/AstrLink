@@ -27,15 +27,16 @@ export type PrivacyRegexDetectorKind =
   | "url"
   | "common_secret";
 
-export const PRIVACY_REGEX_DETECTOR_KINDS: readonly PrivacyRegexDetectorKind[] = [
-  "email",
-  "phone",
-  "account",
-  "payment_card",
-  "ip_address",
-  "url",
-  "common_secret",
-];
+export const PRIVACY_REGEX_DETECTOR_KINDS: readonly PrivacyRegexDetectorKind[] =
+  [
+    "email",
+    "phone",
+    "account",
+    "payment_card",
+    "ip_address",
+    "url",
+    "common_secret",
+  ];
 
 export const MAX_PRIVACY_CUSTOM_REGEX_RULES = 64;
 export const MAX_PRIVACY_REGEX_PATTERN_CHARS = 512;
@@ -77,7 +78,12 @@ export const PRIVACY_KINDS: readonly CanonicalPrivacyKind[] = [
  * stand-in from.
  */
 export const PLACEHOLDER_STYLE_LOCKED_KINDS: ReadonlySet<CanonicalPrivacyKind> =
-  new Set(["common_secret", "private_person", "private_address", "private_date"]);
+  new Set([
+    "common_secret",
+    "private_person",
+    "private_address",
+    "private_date",
+  ]);
 
 export interface PrivacyKindRule {
   kind: CanonicalPrivacyKind;
@@ -106,10 +112,7 @@ export type PrivacyModelInstallationError =
   | "incompatible_model";
 
 export type PrivacyPolicyMatch = Record<string, never>;
-export type PrivacyLabelMapping = Record<
-  string,
-  CanonicalPrivacyKind | null
->;
+export type PrivacyLabelMapping = Record<string, CanonicalPrivacyKind | null>;
 
 export interface PrivacyPolicy {
   id: string;
@@ -309,7 +312,6 @@ const repoIDPattern =
 const revisionPattern = /^[0-9a-f]{40}$/;
 const requestedRevisionPattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const variantIDPattern = /^[a-z][a-z0-9_]{1,63}$/;
-const tokenPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
 const labelPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const etagPattern = /^"sha256:[0-9a-f]{64}"$/;
 const detectors = new Set<PrivacyDetector>(["regex", "local_model"]);
@@ -327,12 +329,7 @@ const suppressionReasons = new Set<PrivacySuppressionReason>([
   "placeholder",
   "unrepresentable",
 ]);
-const actions = new Set<PrivacyAction>([
-  "allow",
-  "warn",
-  "block",
-  "redact",
-]);
+const actions = new Set<PrivacyAction>(["allow", "warn", "block", "redact"]);
 const adapters = new Set<PrivacyModelAdapter>([
   "openai_bioes_viterbi",
   "hf_token_classification",
@@ -399,7 +396,12 @@ function keysAt(
   }
 }
 
-function stringAt(value: unknown, path: string, min: number, max: number): string {
+function stringAt(
+  value: unknown,
+  path: string,
+  min: number,
+  max: number,
+): string {
   if (typeof value !== "string") {
     return invalid(path, `expected ${min} to ${max} characters`);
   }
@@ -428,13 +430,12 @@ function booleanAt(value: unknown, path: string): boolean {
   return value;
 }
 
-function safeIntegerAt(
-  value: unknown,
-  path: string,
-  minimum = 0,
-): number {
+function safeIntegerAt(value: unknown, path: string, minimum = 0): number {
   if (!Number.isSafeInteger(value) || (value as number) < minimum) {
-    invalid(path, `expected a safe integer greater than or equal to ${minimum}`);
+    invalid(
+      path,
+      `expected a safe integer greater than or equal to ${minimum}`,
+    );
   }
   return value as number;
 }
@@ -466,22 +467,8 @@ function rfc3339At(value: unknown, path: string): string {
   const second = Number(match[6]);
   const offsetHour = match[8] === undefined ? 0 : Number(match[8]);
   const offsetMinute = match[9] === undefined ? 0 : Number(match[9]);
-  const leapYear =
-    year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const days = [
-    31,
-    leapYear ? 29 : 28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ];
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (
     month < 1 ||
     month > 12 ||
@@ -532,12 +519,6 @@ function revisionAt(value: unknown, path: string): string {
   return revision;
 }
 
-function tokenAt(value: unknown, path: string): string {
-  const token = stringAt(value, path, 1, 96);
-  if (!tokenPattern.test(token)) invalid(path, "invalid identifier");
-  return token;
-}
-
 function variantIDAt(value: unknown, path: string): string {
   const id = stringAt(value, path, 2, 64);
   if (!variantIDPattern.test(id)) invalid(path, "invalid variant ID");
@@ -567,10 +548,7 @@ function adapterAt(value: unknown, path: string): PrivacyModelAdapter {
   return value as PrivacyModelAdapter;
 }
 
-function canonicalKindAt(
-  value: unknown,
-  path: string,
-): CanonicalPrivacyKind {
+function canonicalKindAt(value: unknown, path: string): CanonicalPrivacyKind {
   if (
     typeof value !== "string" ||
     !canonicalKinds.has(value as CanonicalPrivacyKind)
@@ -603,10 +581,7 @@ function parseMatch(value: unknown, path: string): PrivacyPolicyMatch {
   return {};
 }
 
-function parseLabelMapping(
-  value: unknown,
-  path: string,
-): PrivacyLabelMapping {
+function parseLabelMapping(value: unknown, path: string): PrivacyLabelMapping {
   const mapping = objectAt(value, path);
   if (Object.keys(mapping).length > 256) {
     invalid(path, "too many label mappings");
@@ -649,10 +624,7 @@ function parseVariant(value: unknown, path: string): PrivacyModelVariant {
   if (supported !== (unsupportedReason === null)) {
     invalid(path, "supported state and unsupported reason are inconsistent");
   }
-  const bytesTotal = safeIntegerAt(
-    variant.bytes_total,
-    `${path}.bytes_total`,
-  );
+  const bytesTotal = safeIntegerAt(variant.bytes_total, `${path}.bytes_total`);
   if (supported && bytesTotal === 0) {
     invalid(`${path}.bytes_total`, "supported variants must have content");
   }
@@ -689,10 +661,7 @@ function parseVariants(value: unknown, path: string): PrivacyModelVariant[] {
   return variants;
 }
 
-export function parsePrivacyPolicy(
-  value: unknown,
-  path = "$",
-): PrivacyPolicy {
+export function parsePrivacyPolicy(value: unknown, path = "$"): PrivacyPolicy {
   const policy = objectAt(value, path);
   keysAt(
     policy,
@@ -816,7 +785,10 @@ export function parsePrivacyPolicy(
       : [],
     request_action: policy.request_action as PrivacyAction,
     response_action: policy.response_action as PrivacyAction,
-    response_restore: booleanAt(policy.response_restore, `${path}.response_restore`),
+    response_restore: booleanAt(
+      policy.response_restore,
+      `${path}.response_restore`,
+    ),
     restore_tool_arguments: Object.hasOwn(policy, "restore_tool_arguments")
       ? booleanAt(
           policy.restore_tool_arguments,
@@ -972,9 +944,7 @@ export function parsePrivacyPolicyPage(value: unknown): PrivacyPolicyPage {
   };
 }
 
-export function parsePrivacyPolicyRecord(
-  value: unknown,
-): PrivacyPolicyRecord {
+export function parsePrivacyPolicyRecord(value: unknown): PrivacyPolicyRecord {
   const record = objectAt(value, "$");
   keysAt(record, ["policy", "etag"], [], "$");
   const etag = stringAt(record.etag, "$.etag", 3, 128);
@@ -1026,9 +996,7 @@ function parsePrivacyDryRunFinding(
   return parsed;
 }
 
-export function parsePrivacyDryRunResult(
-  value: unknown,
-): PrivacyDryRunResult {
+export function parsePrivacyDryRunResult(value: unknown): PrivacyDryRunResult {
   const result = objectAt(value, "$");
   keysAt(
     result,
@@ -1060,16 +1028,17 @@ export function parsePrivacyDryRunResult(
   ) {
     invalid("$.suppressed_findings", "expected at most 4096 findings");
   }
-  const suppressedFindings = result.suppressed_findings.map(
-    (finding, index) =>
-      parsePrivacyDryRunFinding(
-        finding,
-        `$.suppressed_findings[${index}]`,
-      ),
+  const suppressedFindings = result.suppressed_findings.map((finding, index) =>
+    parsePrivacyDryRunFinding(finding, `$.suppressed_findings[${index}]`),
   );
   const parsed: PrivacyDryRunResult = {
     decision: result.decision as PrivacyAction,
-    findings_summary: stringAt(result.findings_summary, "$.findings_summary", 0, 4_096),
+    findings_summary: stringAt(
+      result.findings_summary,
+      "$.findings_summary",
+      0,
+      4_096,
+    ),
     findings,
     suppressed_findings: suppressedFindings,
     inspected_body: stringAt(
@@ -1104,9 +1073,19 @@ export function parsePrivacyDryRunResult(
         style = redaction.style as PlaceholderStyle;
       }
       return {
-        placeholder: stringAt(redaction.placeholder, `${path}.placeholder`, 1, 128),
+        placeholder: stringAt(
+          redaction.placeholder,
+          `${path}.placeholder`,
+          1,
+          128,
+        ),
         kind: redaction.kind as CanonicalPrivacyKind,
-        value: stringAt(redaction.value, `${path}.value`, 0, MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES),
+        value: stringAt(
+          redaction.value,
+          `${path}.value`,
+          0,
+          MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES,
+        ),
         style,
       };
     });
@@ -1272,9 +1251,7 @@ function validatePrivacyPolicyPatch(
   return validated;
 }
 
-export function parsePrivacyModelCatalog(
-  value: unknown,
-): PrivacyModelCatalog {
+export function parsePrivacyModelCatalog(value: unknown): PrivacyModelCatalog {
   const catalog = objectAt(value, "$");
   keysAt(catalog, ["items"], [], "$");
   if (!Array.isArray(catalog.items) || catalog.items.length > 100) {
@@ -1377,10 +1354,7 @@ export function parsePrivacyModelProbe(value: unknown): PrivacyModelProbe {
     requiresLabelMapping !==
     labels.some((label) => label.suggested_kind === null)
   ) {
-    invalid(
-      "$.requires_label_mapping",
-      "inconsistent with label suggestions",
-    );
+    invalid("$.requires_label_mapping", "inconsistent with label suggestions");
   }
   return {
     repo_id: repoIDAt(probe.repo_id, "$.repo_id"),
@@ -1475,10 +1449,7 @@ export function parsePrivacyModelInstallation(
     installation.bytes_downloaded,
     `${path}.bytes_downloaded`,
   );
-  const total = safeIntegerAt(
-    installation.bytes_total,
-    `${path}.bytes_total`,
-  );
+  const total = safeIntegerAt(installation.bytes_total, `${path}.bytes_total`);
   if (downloaded > total) invalid(path, "download progress is inconsistent");
   const error =
     installation.error === null
@@ -1500,7 +1471,8 @@ export function parsePrivacyModelInstallation(
         downloaded !== total ||
         error !== null ||
         installedAt === null)) ||
-    ((status === "downloading" || status === "paused") && (error !== null || installedAt !== null)) ||
+    ((status === "downloading" || status === "paused") &&
+      (error !== null || installedAt !== null)) ||
     (status === "error" && (error === null || installedAt !== null))
   ) {
     invalid(path, "installation lifecycle fields are inconsistent");
@@ -1514,23 +1486,11 @@ export function parsePrivacyModelInstallation(
     license:
       installation.license === null
         ? null
-        : metadataStringAt(
-            installation.license,
-            `${path}.license`,
-            1,
-            64,
-          ),
-    languages: stringArrayAt(
-      installation.languages,
-      `${path}.languages`,
-      32,
-    ),
+        : metadataStringAt(installation.license, `${path}.license`, 1, 64),
+    languages: stringArrayAt(installation.languages, `${path}.languages`, 32),
     repo_id: repoID,
     revision: revisionAt(installation.revision, `${path}.revision`),
-    variant_id: variantIDAt(
-      installation.variant_id,
-      `${path}.variant_id`,
-    ),
+    variant_id: variantIDAt(installation.variant_id, `${path}.variant_id`),
     variant_name: metadataStringAt(
       installation.variant_name,
       `${path}.variant_name`,
@@ -1623,10 +1583,7 @@ export function validatePrivacyModelInstallationID(
 }
 
 export function isResourceHeavyVariant(
-  variant: Pick<
-    PrivacyModelVariant,
-    "bytes_total" | "estimated_ram_bytes"
-  >,
+  variant: Pick<PrivacyModelVariant, "bytes_total" | "estimated_ram_bytes">,
 ): boolean {
   return (
     variant.bytes_total >= 1024 ** 3 ||

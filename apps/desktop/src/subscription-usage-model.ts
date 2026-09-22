@@ -111,7 +111,12 @@ function timestampAt(value: unknown, path: string): string {
   return timestamp;
 }
 
-function numberAt(value: unknown, path: string, min: number, max: number): number {
+function numberAt(
+  value: unknown,
+  path: string,
+  min: number,
+  max: number,
+): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return invalid(path, `expected a number from ${min} to ${max}`);
   }
@@ -138,7 +143,12 @@ function parseWindow(value: unknown, path: string): RateLimitWindow {
     path,
   );
   const parsed: RateLimitWindow = {
-    used_percent: numberAt(window.used_percent, `${path}.used_percent`, 0, 1000),
+    used_percent: numberAt(
+      window.used_percent,
+      `${path}.used_percent`,
+      0,
+      1000,
+    ),
   };
   if (Object.hasOwn(window, "limit_window_seconds")) {
     parsed.limit_window_seconds = intAt(
@@ -164,7 +174,12 @@ function parseWindow(value: unknown, path: string): RateLimitWindow {
 
 function parseAdditional(value: unknown, path: string): AdditionalRateLimit {
   const extra = objectAt(value, path);
-  keysAt(extra, ["limit_name"], ["metered_feature", "primary", "secondary"], path);
+  keysAt(
+    extra,
+    ["limit_name"],
+    ["metered_feature", "primary", "secondary"],
+    path,
+  );
   const parsed: AdditionalRateLimit = {
     limit_name: stringAt(extra.limit_name, `${path}.limit_name`, 1, 128),
   };
@@ -214,7 +229,8 @@ export function parseSubscriptionUsage(value: unknown): SubscriptionUsage {
     parsed.plan_type = stringAt(usage.plan_type, "$.plan_type", 1, 64);
   }
   if (Object.hasOwn(usage, "allowed")) {
-    if (typeof usage.allowed !== "boolean") invalid("$.allowed", "expected a boolean");
+    if (typeof usage.allowed !== "boolean")
+      invalid("$.allowed", "expected a boolean");
     parsed.allowed = usage.allowed;
   }
   if (Object.hasOwn(usage, "limit_reached")) {
@@ -230,11 +246,18 @@ export function parseSubscriptionUsage(value: unknown): SubscriptionUsage {
     parsed.secondary = parseWindow(usage.secondary, "$.secondary");
   }
   if (Object.hasOwn(usage, "additional_rate_limits")) {
-    if (!Array.isArray(usage.additional_rate_limits) || usage.additional_rate_limits.length > 16) {
-      invalid("$.additional_rate_limits", "expected an array with at most 16 items");
+    if (
+      !Array.isArray(usage.additional_rate_limits) ||
+      usage.additional_rate_limits.length > 16
+    ) {
+      invalid(
+        "$.additional_rate_limits",
+        "expected an array with at most 16 items",
+      );
     }
-    parsed.additional_rate_limits = usage.additional_rate_limits.map((item, index) =>
-      parseAdditional(item, `$.additional_rate_limits[${index}]`),
+    parsed.additional_rate_limits = usage.additional_rate_limits.map(
+      (item, index) =>
+        parseAdditional(item, `$.additional_rate_limits[${index}]`),
     );
   }
   if (Object.hasOwn(usage, "credits")) {
@@ -251,11 +274,19 @@ export function parseSubscriptionUsage(value: unknown): SubscriptionUsage {
       unlimited: credits.unlimited,
     };
     if (Object.hasOwn(credits, "balance")) {
-      parsed.credits.balance = stringAt(credits.balance, "$.credits.balance", 1, 32);
+      parsed.credits.balance = stringAt(
+        credits.balance,
+        "$.credits.balance",
+        1,
+        32,
+      );
     }
   }
   if (Object.hasOwn(usage, "rate_limit_reset_credits")) {
-    const resets = objectAt(usage.rate_limit_reset_credits, "$.rate_limit_reset_credits");
+    const resets = objectAt(
+      usage.rate_limit_reset_credits,
+      "$.rate_limit_reset_credits",
+    );
     keysAt(resets, ["available_count"], [], "$.rate_limit_reset_credits");
     parsed.rate_limit_reset_credits = {
       available_count: intAt(
@@ -276,14 +307,19 @@ const resetOutcomes = new Set<UsageResetOutcome>([
   "already_redeemed",
 ]);
 
-export function parseSubscriptionUsageReset(value: unknown): SubscriptionUsageReset {
+export function parseSubscriptionUsageReset(
+  value: unknown,
+): SubscriptionUsageReset {
   const result = objectAt(value, "$");
   keysAt(result, ["service_id", "outcome"], ["windows_reset"], "$");
   const serviceID = stringAt(result.service_id, "$.service_id", 3, 96);
   if (!resourceIDPattern.test(serviceID)) {
     invalid("$.service_id", "invalid service ID");
   }
-  if (typeof result.outcome !== "string" || !resetOutcomes.has(result.outcome as UsageResetOutcome)) {
+  if (
+    typeof result.outcome !== "string" ||
+    !resetOutcomes.has(result.outcome as UsageResetOutcome)
+  ) {
     invalid("$.outcome", "expected an official consume outcome");
   }
   const parsed: SubscriptionUsageReset = {
@@ -291,7 +327,12 @@ export function parseSubscriptionUsageReset(value: unknown): SubscriptionUsageRe
     outcome: result.outcome as UsageResetOutcome,
   };
   if (Object.hasOwn(result, "windows_reset")) {
-    parsed.windows_reset = intAt(result.windows_reset, "$.windows_reset", 0, 1000);
+    parsed.windows_reset = intAt(
+      result.windows_reset,
+      "$.windows_reset",
+      0,
+      1000,
+    );
   }
   return parsed;
 }
@@ -345,11 +386,16 @@ export function windowLabel(
   if (seconds === 86_400) return i18n.t("usage.daily");
   if (seconds === 3_600) return i18n.t("usage.hourly");
   if (seconds && seconds > 0) {
-    if (seconds % 86_400 === 0) return i18n.t("usage.days", { count: seconds / 86_400 });
-    if (seconds % 3_600 === 0) return i18n.t("usage.hours", { count: seconds / 3_600 });
-    if (seconds % 60 === 0) return i18n.t("usage.minutes", { count: seconds / 60 });
+    if (seconds % 86_400 === 0)
+      return i18n.t("usage.days", { count: seconds / 86_400 });
+    if (seconds % 3_600 === 0)
+      return i18n.t("usage.hours", { count: seconds / 3_600 });
+    if (seconds % 60 === 0)
+      return i18n.t("usage.minutes", { count: seconds / 60 });
   }
-  return isSecondary ? i18n.t("usage.periodLimit") : i18n.t("usage.rollingLimit");
+  return isSecondary
+    ? i18n.t("usage.periodLimit")
+    : i18n.t("usage.rollingLimit");
 }
 
 export function formatResetCountdown(
@@ -409,7 +455,8 @@ export function usagePercentClass(tone: UsageWindowTone): string {
 }
 
 function rawErrorText(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (error instanceof Error && error.message.trim())
+    return error.message.trim();
   if (typeof error === "string" && error.trim()) return error.trim();
   if (typeof error === "object" && error !== null && "message" in error) {
     const message = (error as { message: unknown }).message;
@@ -440,8 +487,11 @@ export function formatSubscriptionUsageError(error: unknown): string {
         error?: { code?: unknown; message?: unknown };
       };
       const message =
-        typeof parsed.error?.message === "string" ? parsed.error.message.trim() : "";
-      const code = typeof parsed.error?.code === "string" ? parsed.error.code.trim() : "";
+        typeof parsed.error?.message === "string"
+          ? parsed.error.message.trim()
+          : "";
+      const code =
+        typeof parsed.error?.code === "string" ? parsed.error.code.trim() : "";
       if (message && code) return `${code}: ${message}`;
       if (message) return message;
     } catch {

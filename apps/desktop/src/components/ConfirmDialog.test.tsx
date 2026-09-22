@@ -47,9 +47,9 @@ function Harness({
 }
 
 function dialogButton(label: string): HTMLButtonElement {
-  const match = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
-    (button) => button.textContent?.trim() === label,
-  );
+  const match = [
+    ...document.querySelectorAll<HTMLButtonElement>("button"),
+  ].find((button) => button.textContent?.trim() === label);
   if (!match) throw new Error(`Missing dialog button: ${label}`);
   return match;
 }
@@ -58,7 +58,9 @@ describe("ConfirmDialog", () => {
   it("does not report a confirmation as a cancellation", async () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();
-    await act(async () => root.render(<Harness onCancel={onCancel} onConfirm={onConfirm} />));
+    await act(async () =>
+      root.render(<Harness onCancel={onCancel} onConfirm={onConfirm} />),
+    );
 
     await act(async () => dialogButton("确认操作").click());
 
@@ -69,7 +71,9 @@ describe("ConfirmDialog", () => {
   it("reports an explicit cancellation once", async () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();
-    await act(async () => root.render(<Harness onCancel={onCancel} onConfirm={onConfirm} />));
+    await act(async () =>
+      root.render(<Harness onCancel={onCancel} onConfirm={onConfirm} />),
+    );
 
     await act(async () => dialogButton("取消").click());
 

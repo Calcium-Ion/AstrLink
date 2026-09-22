@@ -1,5 +1,4 @@
 import { i18n } from "./i18n";
-import { liveDurationMs } from "./request-live-model";
 import {
   statusLabel,
   type RequestEvent,
@@ -325,7 +324,10 @@ export function synthesizeEvents(record: RequestRecord): RequestEvent[] {
       started_at: started,
       ended_at: ended,
       status: record.status === "pending" ? "pending" : "succeeded",
-      summary: [record.requested_model ?? i18n.t("records.unspecifiedModel"), record.input_protocol]
+      summary: [
+        record.requested_model ?? i18n.t("records.unspecifiedModel"),
+        record.input_protocol,
+      ]
         .filter(Boolean)
         .join(" · "),
       attempt_index: record.attempt_index,
@@ -361,7 +363,9 @@ export function synthesizeEvents(record: RequestRecord): RequestEvent[] {
       status: record.status,
       summary:
         record.error?.code ??
-        (record.http_status !== null ? `HTTP ${record.http_status}` : "upstream"),
+        (record.http_status !== null
+          ? `HTTP ${record.http_status}`
+          : "upstream"),
       attempt_index: record.attempt_index,
     });
   }
@@ -453,7 +457,8 @@ function turnHeaderRow(group: TrajectoryTurnGroup): TrajectoryRow {
     status,
     tone: statusTone(status),
     startedAt: first.started_at,
-    endedAt: status === "pending" ? null : last.completed_at ?? last.started_at,
+    endedAt:
+      status === "pending" ? null : (last.completed_at ?? last.started_at),
     lane: "client",
     child: false,
     turnIndex: group.turnIndex,
@@ -679,9 +684,13 @@ export function trajectoryTimeline(
     .filter((call): call is DraftedCall => call !== null);
 
   const startedAtMs =
-    drafted.length > 0 ? Math.min(...drafted.map((call) => call.startAbs)) : nowMs;
+    drafted.length > 0
+      ? Math.min(...drafted.map((call) => call.startAbs))
+      : nowMs;
   const endedAtMs =
-    drafted.length > 0 ? Math.max(...drafted.map((call) => call.endAbs)) : nowMs;
+    drafted.length > 0
+      ? Math.max(...drafted.map((call) => call.endAbs))
+      : nowMs;
   const durationMs = Math.max(1, endedAtMs - startedAtMs);
   if (drafted.length === 0) {
     return {
@@ -720,8 +729,7 @@ export function trajectoryTimeline(
   calls.forEach((call, index) => {
     if (index > 0) {
       const previous = calls[index - 1]!;
-      const raw =
-        call.startMs - (previous.startMs + previous.durationMs);
+      const raw = call.startMs - (previous.startMs + previous.durationMs);
       const gapMs = Math.max(0, raw);
       items.push({
         kind: "gap",
@@ -843,7 +851,8 @@ export function timelineWeight(
   kneeMs: number = TIMELINE_KNEE_MS,
 ): number {
   if (!Number.isFinite(durationMs) || durationMs <= 0) return 0;
-  const knee = Number.isFinite(kneeMs) && kneeMs > 0 ? kneeMs : TIMELINE_KNEE_MS;
+  const knee =
+    Number.isFinite(kneeMs) && kneeMs > 0 ? kneeMs : TIMELINE_KNEE_MS;
   if (durationMs <= knee) return durationMs;
   return knee * (1 + Math.log(durationMs / knee));
 }
@@ -901,7 +910,8 @@ export function callProgressAtListOffset(
 ): TrajectoryCallProgress | null {
   if (rows.length === 0) return null;
   const index = Math.min(rows.length, Math.max(0, offset));
-  const requestId = rows[Math.min(rows.length - 1, Math.floor(index))]!.requestId;
+  const requestId =
+    rows[Math.min(rows.length - 1, Math.floor(index))]!.requestId;
   const { start, length } = callRowSpan(rows, requestId);
   if (length === 0) return { requestId, fraction: 0 };
   const fraction = Math.min(1, Math.max(0, (index - start) / length));
@@ -976,12 +986,18 @@ export function timelineScrollForList(
 ): number {
   const last = columns[columns.length - 1];
   const timelineExtent = last ? last.offset + last.width : 0;
-  if (listMaxScroll <= 0 || timelineMaxScroll <= 0 || timelineExtent <= 0) return 0;
+  if (listMaxScroll <= 0 || timelineMaxScroll <= 0 || timelineExtent <= 0)
+    return 0;
   const ratio = Math.min(1, Math.max(0, listOffset / listMaxScroll));
   const progress = callProgressAtListOffset(rows, ratio * rows.length);
   if (!progress) return 0;
-  const position = scrollLeftForCall(columns, progress.requestId, progress.fraction, timelineExtent);
-  return position / timelineExtent * timelineMaxScroll;
+  const position = scrollLeftForCall(
+    columns,
+    progress.requestId,
+    progress.fraction,
+    timelineExtent,
+  );
+  return (position / timelineExtent) * timelineMaxScroll;
 }
 
 /** Inverse projection for a user scrolling the timeline. */
@@ -994,12 +1010,23 @@ export function listScrollForTimeline(
 ): number {
   const last = columns[columns.length - 1];
   const timelineExtent = last ? last.offset + last.width : 0;
-  if (rows.length === 0 || timelineMaxScroll <= 0 || listMaxScroll <= 0 || timelineExtent <= 0) return 0;
+  if (
+    rows.length === 0 ||
+    timelineMaxScroll <= 0 ||
+    listMaxScroll <= 0 ||
+    timelineExtent <= 0
+  )
+    return 0;
   const ratio = Math.min(1, Math.max(0, timelineOffset / timelineMaxScroll));
   const progress = callProgressAtScrollLeft(columns, ratio * timelineExtent);
   if (!progress) return 0;
-  const position = listOffsetForCall(rows, progress.requestId, progress.fraction, 1);
-  return position / rows.length * listMaxScroll;
+  const position = listOffsetForCall(
+    rows,
+    progress.requestId,
+    progress.fraction,
+    1,
+  );
+  return (position / rows.length) * listMaxScroll;
 }
 
 function callRowSpan(
@@ -1049,8 +1076,7 @@ function draftTimelineCall(
     );
   const first = timed[0]!;
   const last = timed[timed.length - 1]!;
-  const resultRow =
-    timed.find((item) => item.row.chip === "RESULT") ?? last;
+  const resultRow = timed.find((item) => item.row.chip === "RESULT") ?? last;
   const startAbs = Math.min(...timed.map((item) => item.startAbs));
   return {
     requestId: first.row.requestId,

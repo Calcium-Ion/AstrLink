@@ -2136,5 +2136,21 @@
       "fingerprint": "助手文本指纹匹配"
     },
     "retention": "本地最多保留 50,000 条绑定审计记录。"
+  },
+  "serviceProxy": {
+    "title": "实例代理",
+    "mode": "代理模式",
+    "inherit": "继承全局",
+    "custom": "自定义代理",
+    "direct": "强制直连",
+    "url": "代理地址",
+    "username": "代理用户名（可选）",
+    "password": "代理密码（可选）",
+    "removeCredential": "清除已保存的代理认证",
+    "inheritHint": "使用网关的全局网络设置。",
+    "directHint": "此实例直接连接提供商，不使用全局代理。",
+    "customHint": "支持 HTTP、HTTPS、SOCKS5。代理不可用时请求报错，不自动更换出口。",
+    "savedHint": "代理认证已保存，留空保留。代理不可用时请求报错，不自动更换出口。",
+    "invalid": "请填写有效的 HTTP、HTTPS 或 SOCKS5 代理地址；认证信息请填写在独立的用户名和密码字段中。"
   }
 }

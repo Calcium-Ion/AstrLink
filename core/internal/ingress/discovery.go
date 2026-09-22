@@ -15,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
@@ -292,9 +293,14 @@ func (handler *Handler) fetchModelDiscovery(
 	}
 
 	authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
+	proxyContext := request.Context()
+	if authorizeErr == nil {
+		proxyContext, authorizeErr = networkproxy.Bind(proxyContext, candidate.Service, handler.proxyCredentials)
+		fetchRequest = fetchRequest.WithContext(proxyContext)
+	}
 	var headers http.Header
 	if authorizeErr == nil {
-		headers, authorizeErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint, fetchRequest.Header)
+		headers, authorizeErr = handler.authorizer.Headers(proxyContext, authorizationEndpoint, fetchRequest.Header)
 	}
 	if authorizeErr != nil {
 		if request.Context().Err() != nil {
@@ -338,6 +344,7 @@ func (handler *Handler) fetchModelDiscovery(
 	health := newAttemptHealthOutcome(controller, candidate, healthAware)
 
 	forwardErr := handler.forwarder.Forward(recorder, fetchRequest, transport.Target{
+		Service: candidate.Service, ProxyCredentials: handler.proxyCredentials,
 		BaseURL:        baseURL,
 		RequestHeaders: headers,
 	})

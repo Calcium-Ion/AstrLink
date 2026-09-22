@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/gorilla/websocket"
 )
 
@@ -58,7 +59,12 @@ func (socket *ResponsesSocket) Forward(writer http.ResponseWriter, request *http
 	if err := validateTarget(target); err != nil {
 		return &TargetError{err: err}
 	}
-	outbound := request.Clone(request.Context())
+	ctx, err := networkproxy.Bind(request.Context(), target.Service, target.ProxyCredentials)
+	if err != nil {
+		return &TargetError{err: err}
+	}
+	binding += ":" + networkproxy.Binding(ctx)
+	outbound := request.Clone(ctx)
 	outbound.URL = joinTargetURL(target.BaseURL, request.URL)
 	outbound.Header = request.Header.Clone()
 	removeHopByHopHeaders(outbound.Header)
@@ -104,11 +110,8 @@ func (socket *ResponsesSocket) Forward(writer http.ResponseWriter, request *http
 	}
 	if conn == nil {
 		dialer := *websocket.DefaultDialer
-		// AstrLink configures the selected system/environment/direct proxy here.
-		if configured, ok := http.DefaultTransport.(*http.Transport); ok {
-			dialer.Proxy = configured.Proxy
-			dialer.NetDialContext = configured.DialContext
-			dialer.TLSClientConfig = configured.TLSClientConfig
+		if err := networkproxy.ConfigureWebSocket(ctx, &dialer, outbound.URL); err != nil {
+			return NewUpstreamError(err)
 		}
 		url := *outbound.URL
 		if url.Scheme == "https" {
@@ -117,7 +120,7 @@ func (socket *ResponsesSocket) Forward(writer http.ResponseWriter, request *http
 			url.Scheme = "ws"
 		}
 		var response *http.Response
-		conn, response, err = dialer.DialContext(request.Context(), url.String(), outbound.Header)
+		conn, response, err = dialer.DialContext(ctx, url.String(), outbound.Header)
 		if err != nil {
 			if response != nil && response.Body != nil {
 				if target.WrapResponseBody != nil {

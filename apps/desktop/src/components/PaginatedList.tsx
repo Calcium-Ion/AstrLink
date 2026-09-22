@@ -36,37 +36,39 @@ export function PaginatedList<T>({
       </div>
       <PanelFooter
         className="min-h-12 bg-transparent px-4 py-2"
-        actions={pageCount > 1 ? (
-          <nav aria-label={label} className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={i18n.t("common.previousPage")}
-              disabled={currentPage === 0}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              <ChevronRight aria-hidden="true" className="rotate-180" />
-            </Button>
-            <span
-              className="min-w-9 text-center text-xs text-muted-foreground tabular-nums"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              {currentPage + 1} / {pageCount}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={i18n.t("common.nextPage")}
-              disabled={currentPage === pageCount - 1}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              <ChevronRight aria-hidden="true" />
-            </Button>
-          </nav>
-        ) : undefined}
+        actions={
+          pageCount > 1 ? (
+            <nav aria-label={label} className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={i18n.t("common.previousPage")}
+                disabled={currentPage === 0}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                <ChevronRight aria-hidden="true" className="rotate-180" />
+              </Button>
+              <span
+                className="min-w-9 text-center text-xs text-muted-foreground tabular-nums"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                {currentPage + 1} / {pageCount}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={i18n.t("common.nextPage")}
+                disabled={currentPage === pageCount - 1}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                <ChevronRight aria-hidden="true" />
+              </Button>
+            </nav>
+          ) : undefined
+        }
       >
         {footer}
       </PanelFooter>

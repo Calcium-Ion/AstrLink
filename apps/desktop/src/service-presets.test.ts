@@ -36,13 +36,23 @@ describe("HTTP service product presets", () => {
 
   it("does not expose API-key services as Codex, Claude, or Gemini subscriptions", () => {
     expect(httpServicePresetIDs).toEqual([
-      "opencode_go", "opencode_zen", "kimi_coding", "glm_coding", "minimax_coding",
+      "opencode_go",
+      "opencode_zen",
+      "kimi_coding",
+      "glm_coding",
+      "minimax_coding",
       "newapi",
       "openai_compatible",
       "openai",
       "anthropic",
       "gemini",
-      "deepseek", "qwen", "moonshot", "glm", "minimax", "doubao", "xai",
+      "deepseek",
+      "qwen",
+      "moonshot",
+      "glm",
+      "minimax",
+      "doubao",
+      "xai",
       "custom",
     ]);
     expect(
@@ -109,7 +119,12 @@ describe("HTTP service product presets", () => {
           streaming: true,
         },
         { protocol: "google.models", mode: "native", streaming: false },
-        { protocol: "openai.chat", mode: "native", streaming: true, convert_to: "google.generate_content" },
+        {
+          protocol: "openai.chat",
+          mode: "native",
+          streaming: true,
+          convert_to: "google.generate_content",
+        },
       ],
     });
   });
@@ -117,7 +132,9 @@ describe("HTTP service product presets", () => {
   it("keeps usage-based providers separate from coding plans and advertises only supported protocols", () => {
     expect(payAsYouGoPresetIDs).toContain("opencode_zen");
     expect(codingPlanPresetIDs).toContain("opencode_go");
-    expect(payAsYouGoPresetIDs.some((kind) => codingPlanPresetIDs.includes(kind))).toBe(false);
+    expect(
+      payAsYouGoPresetIDs.some((kind) => codingPlanPresetIDs.includes(kind)),
+    ).toBe(false);
     for (const [kind, baseURL, discovery] of [
       ["deepseek", "https://api.deepseek.com/v1", true],
       ["qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", false],
@@ -129,14 +146,48 @@ describe("HTTP service product presets", () => {
     ] as const) {
       const preset = httpServicePreset(kind);
       expect(payAsYouGoPresetIDs).toContain(kind);
-      expect(preset).toMatchObject({ kind, baseURL, authScheme: "bearer", advancedOnStart: false });
-      expect(preset.capabilities).toContainEqual({ protocol: "openai.chat", mode: "native", streaming: true });
-      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.models")).toBe(discovery);
-      expect(preset.capabilities).toContainEqual({ protocol: "anthropic.messages", mode: "native", streaming: true });
-      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.responses")).toBe(kind !== "glm");
-      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.responses.compact")).toBe(kind === "xai");
-      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.completions")).toBe(kind === "xai");
-      expect(preset.capabilities.every(({ mode, convert_to }) => mode === "native" && convert_to === undefined)).toBe(true);
+      expect(preset).toMatchObject({
+        kind,
+        baseURL,
+        authScheme: "bearer",
+        advancedOnStart: false,
+      });
+      expect(preset.capabilities).toContainEqual({
+        protocol: "openai.chat",
+        mode: "native",
+        streaming: true,
+      });
+      expect(
+        preset.capabilities.some(
+          ({ protocol }) => protocol === "openai.models",
+        ),
+      ).toBe(discovery);
+      expect(preset.capabilities).toContainEqual({
+        protocol: "anthropic.messages",
+        mode: "native",
+        streaming: true,
+      });
+      expect(
+        preset.capabilities.some(
+          ({ protocol }) => protocol === "openai.responses",
+        ),
+      ).toBe(kind !== "glm");
+      expect(
+        preset.capabilities.some(
+          ({ protocol }) => protocol === "openai.responses.compact",
+        ),
+      ).toBe(kind === "xai");
+      expect(
+        preset.capabilities.some(
+          ({ protocol }) => protocol === "openai.completions",
+        ),
+      ).toBe(kind === "xai");
+      expect(
+        preset.capabilities.every(
+          ({ mode, convert_to }) =>
+            mode === "native" && convert_to === undefined,
+        ),
+      ).toBe(true);
     }
   });
 
@@ -163,9 +214,10 @@ describe("HTTP service product presets", () => {
       { id: "openai.chat", enabled: true, quality: "fair", streaming: true },
     ]);
     expect(
-      localConversionTargets("openai.chat", { available: false, edges: [] }).every(
-        (target) => !target.enabled && target.quality === null,
-      ),
+      localConversionTargets("openai.chat", {
+        available: false,
+        edges: [],
+      }).every((target) => !target.enabled && target.quality === null),
     ).toBe(true);
   });
 

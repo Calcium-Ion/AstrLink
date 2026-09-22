@@ -19,6 +19,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 )
 
 func TestBeginAuthorizationUsesOfficialPublicClientByDefault(t *testing.T) {
@@ -66,10 +67,20 @@ func TestOAuthDefaultsUseRegisteredCallbackPorts(t *testing.T) {
 }
 
 func TestAuthorizationCallbackExchangesCodeAndPersistsTokens(t *testing.T) {
+	testCallbackProxy(t, false)
+}
+func TestAuthorizationCallbackExchangesCodeAndPersistsTokensWithInstanceProxy(t *testing.T) {
+	testCallbackProxy(t, true)
+}
+func testCallbackProxy(t *testing.T, useProxy bool) {
 	t.Parallel()
 	var exchanged atomic.Bool
 	var issuer *httptest.Server
+	var issuerURL string
 	issuer = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if useProxy && (!request.URL.IsAbs() || request.URL.Host != "auth.invalid") {
+			t.Error("OAuth bypassed instance proxy")
+		}
 		switch {
 		case request.URL.Path == "/oauth/authorize":
 			http.Error(writer, "not used", http.StatusNotFound)
@@ -94,12 +105,24 @@ func TestAuthorizationCallbackExchangesCodeAndPersistsTokens(t *testing.T) {
 	}))
 	t.Cleanup(issuer.Close)
 
+	issuerURL = issuer.URL
+	if useProxy {
+		issuerURL = "http://auth.invalid"
+	}
+	resolver := func(ctx context.Context, id contract.ServiceID) (context.Context, error) {
+		if !useProxy {
+			return ctx, nil
+		}
+		return networkproxy.BindConfig(ctx, id, &contract.ServiceProxy{Mode: "custom", URL: issuer.URL}, nil)
+	}
 	store := accountauth.NewMemoryCredentialStore()
 	var savedAccount contract.SubscriptionAccountID
 	preferred, fallback := availablePortPair(t)
 	manager := accountauth.NewSessionManager(accountauth.OAuthConfig{
+		AuthorizeURL:  "https://auth.openai.com/oauth/authorize",
+		ResolveProxy:  resolver,
 		ClientID:      "astrlink_test_client",
-		Issuer:        issuer.URL,
+		Issuer:        issuerURL,
 		HTTPClient:    issuer.Client(),
 		PreferredPort: preferred,
 		FallbackPort:  fallback,
@@ -446,11 +469,19 @@ func TestBrowserAuthorizationUsesFallbackPortThenDeviceCode(t *testing.T) {
 	}
 }
 
-func TestDeviceCodeAuthorizationPollsExchangesAndPersists(t *testing.T) {
+func TestDeviceCodeAuthorizationPollsExchangesAndPersists(t *testing.T) { testDeviceProxy(t, false) }
+func TestDeviceCodeAuthorizationPollsExchangesAndPersistsWithInstanceProxy(t *testing.T) {
+	testDeviceProxy(t, true)
+}
+func testDeviceProxy(t *testing.T, useProxy bool) {
 	var polls atomic.Int32
 	var exchanges atomic.Int32
 	var issuer *httptest.Server
+	var issuerURL string
 	issuer = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if useProxy && (!request.URL.IsAbs() || request.URL.Host != "auth.invalid") {
+			t.Error("OAuth bypassed instance proxy")
+		}
 		if request.Header.Get("originator") != accountauth.DefaultCodexOriginator ||
 			request.UserAgent() != accountauth.CodexUserAgent("") || request.Header.Get("version") != "" {
 			t.Errorf("unexpected auth identity on %s", request.URL.Path)
@@ -491,7 +522,7 @@ func TestDeviceCodeAuthorizationPollsExchangesAndPersists(t *testing.T) {
 			values, _ := url.ParseQuery(string(body))
 			if values.Get("code") != "device-authorization-secret" ||
 				values.Get("code_verifier") != "device-verifier-secret" ||
-				values.Get("redirect_uri") != issuer.URL+"/deviceauth/callback" {
+				values.Get("redirect_uri") != issuerURL+"/deviceauth/callback" {
 				http.Error(writer, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 				return
 			}
@@ -507,9 +538,20 @@ func TestDeviceCodeAuthorizationPollsExchangesAndPersists(t *testing.T) {
 	}))
 	defer issuer.Close()
 
+	issuerURL = issuer.URL
+	if useProxy {
+		issuerURL = "http://auth.invalid"
+	}
+	resolver := func(ctx context.Context, id contract.ServiceID) (context.Context, error) {
+		if !useProxy {
+			return ctx, nil
+		}
+		return networkproxy.BindConfig(ctx, id, &contract.ServiceProxy{Mode: "custom", URL: issuer.URL}, nil)
+	}
 	store := accountauth.NewMemoryCredentialStore()
 	manager := accountauth.NewSessionManager(accountauth.OAuthConfig{
-		Issuer:                issuer.URL,
+		ResolveProxy:          resolver,
+		Issuer:                issuerURL,
 		HTTPClient:            issuer.Client(),
 		DeviceCodeTTL:         2 * time.Second,
 		DevicePollMinInterval: 5 * time.Millisecond,
@@ -528,7 +570,7 @@ func TestDeviceCodeAuthorizationPollsExchangesAndPersists(t *testing.T) {
 	if session.Flow != contract.AuthorizationFlowDeviceCode ||
 		session.AuthorizationURL != "" ||
 		session.DeviceCode == nil ||
-		session.DeviceCode.VerificationURL != issuer.URL+"/codex/device" {
+		session.DeviceCode.VerificationURL != issuerURL+"/codex/device" {
 		t.Fatalf("device session = %#v", session)
 	}
 	waitForSessionStatus(

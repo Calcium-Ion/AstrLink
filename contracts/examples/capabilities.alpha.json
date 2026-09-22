@@ -1,19 +1,71 @@
 {
   "protocol_contract_version": "v1",
   "protocols": [
-    {"id": "openai.responses", "phase": "alpha", "primary": true, "streaming": true},
-    {"id": "openai.responses.compact", "phase": "alpha", "primary": false, "streaming": false},
-    {"id": "anthropic.messages", "phase": "alpha", "primary": false, "streaming": true},
-    {"id": "google.generate_content", "phase": "alpha", "primary": false, "streaming": true},
-    {"id": "openai.chat", "phase": "alpha", "primary": false, "streaming": true},
-    {"id": "openai.completions", "phase": "alpha", "primary": false, "streaming": true},
-    {"id": "openai.models", "phase": "alpha", "primary": false, "streaming": false},
-    {"id": "google.models", "phase": "alpha", "primary": false, "streaming": false}
+    {
+      "id": "openai.responses",
+      "phase": "alpha",
+      "primary": true,
+      "streaming": true
+    },
+    {
+      "id": "openai.responses.compact",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": false
+    },
+    {
+      "id": "anthropic.messages",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": true
+    },
+    {
+      "id": "google.generate_content",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": true
+    },
+    {
+      "id": "openai.chat",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": true
+    },
+    {
+      "id": "openai.completions",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": true
+    },
+    {
+      "id": "openai.models",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": false
+    },
+    {
+      "id": "google.models",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": false
+    }
   ],
   "plan_types": [
-    {"id": "native", "available_in_alpha": true, "uses_local_conversion": false},
-    {"id": "delegated", "available_in_alpha": true, "uses_local_conversion": false},
-    {"id": "relaykit", "available_in_alpha": false, "uses_local_conversion": true}
+    {
+      "id": "native",
+      "available_in_alpha": true,
+      "uses_local_conversion": false
+    },
+    {
+      "id": "delegated",
+      "available_in_alpha": true,
+      "uses_local_conversion": false
+    },
+    {
+      "id": "relaykit",
+      "available_in_alpha": false,
+      "uses_local_conversion": true
+    }
   ],
   "conversion_engine": {
     "name": "relaykit",

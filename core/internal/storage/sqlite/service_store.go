@@ -31,6 +31,10 @@ func (store *Store) CreateService(
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
+	service, err = applyProxyCredentialMutation(service, credential)
+	if err != nil {
+		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
 	document, err := encodeService(service)
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
@@ -55,6 +59,9 @@ func (store *Store) CreateService(
 		if err = putServiceCredentialTx(ctx, transaction, service.ID, credential.Secret, timestamp); err != nil {
 			return record, err
 		}
+	}
+	if err = putProxyCredentialTx(ctx, transaction, service, credential); err != nil {
+		return record, err
 	}
 	if err = transaction.Commit(); err != nil {
 		return record, fmt.Errorf("commit service create: %w", err)
@@ -166,6 +173,10 @@ func (store *Store) UpdateService(
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
+	service, err = applyProxyCredentialMutation(service, credential)
+	if err != nil {
+		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
 	document, err := encodeService(service)
 	if err != nil {
 		return record, fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
@@ -182,6 +193,9 @@ func (store *Store) UpdateService(
 		} else if err = putServiceCredentialTx(ctx, transaction, service.ID, credential.Secret, now); err != nil {
 			return record, err
 		}
+	}
+	if err = putProxyCredentialTx(ctx, transaction, service, credential); err != nil {
+		return record, err
 	}
 	if err = transaction.Commit(); err != nil {
 		return record, fmt.Errorf("commit service update: %w", err)

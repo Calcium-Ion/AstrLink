@@ -94,7 +94,11 @@ export function buildSkillDiagnosticPayload(
   const serviceNames = options.serviceNames ?? {};
   let childrenIncomplete = false;
   const records = options.turns.map((turn) => {
-    const mapped = diagnosticRecord(turn, options.selectedRequestId, serviceNames);
+    const mapped = diagnosticRecord(
+      turn,
+      options.selectedRequestId,
+      serviceNames,
+    );
     if (turn.parent_request_id !== null || turn.child_count <= 0) {
       return mapped;
     }

@@ -226,7 +226,10 @@ export function RoutingSettingsPanel({
               className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1"
               data-tab-scroller
             >
-              <fieldset disabled={!ready || saving} className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <fieldset
+                disabled={!ready || saving}
+                className="flex min-h-0 min-w-0 flex-1 flex-col"
+              >
                 <FailurePolicyEditor
                   section="rules"
                   title={t("routing.rulesTitle")}

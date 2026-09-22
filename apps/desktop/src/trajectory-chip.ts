@@ -47,7 +47,8 @@ export function chipToneClass(
     return "bg-destructive text-destructive-foreground";
   }
   if (tone === "blocked" && (chip === "RESULT" || chip === "POLICY")) {
-    if (appearance === "subtle") return "bg-blocked-wash text-blocked-foreground";
+    if (appearance === "subtle")
+      return "bg-blocked-wash text-blocked-foreground";
     return "bg-blocked text-primary-foreground";
   }
   if (
@@ -57,7 +58,8 @@ export function chipToneClass(
     return "bg-warning-wash text-warning-foreground";
   }
   if (tone === "pending" && chip === "RESULT") {
-    if (appearance === "subtle") return "bg-warning-wash text-warning-foreground";
+    if (appearance === "subtle")
+      return "bg-warning-wash text-warning-foreground";
     return "bg-warning text-primary-foreground";
   }
   return appearance === "subtle" ? subtleChipClass[chip] : chipClass[chip];

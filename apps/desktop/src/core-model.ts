@@ -131,7 +131,11 @@ function objectAt(value: unknown, path: string): JsonObject {
   return value as JsonObject;
 }
 
-function exactKeys(value: JsonObject, expected: readonly string[], path: string): void {
+function exactKeys(
+  value: JsonObject,
+  expected: readonly string[],
+  path: string,
+): void {
   const expectedSet = new Set(expected);
   for (const key of Object.keys(value)) {
     if (!expectedSet.has(key)) invalid(`${path}.${key}`, "unexpected field");
@@ -142,8 +146,15 @@ function exactKeys(value: JsonObject, expected: readonly string[], path: string)
 }
 
 function stringAt(value: unknown, path: string, maxLength = 256): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
-    return invalid(path, `expected a string containing 1 to ${maxLength} characters`);
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maxLength
+  ) {
+    return invalid(
+      path,
+      `expected a string containing 1 to ${maxLength} characters`,
+    );
   }
   return value;
 }
@@ -168,13 +179,19 @@ function nullable<T>(
 
 function contractVersionAt(value: unknown, path: string): string {
   const version = stringAt(value, path, 64);
-  if (!contractVersionPattern.test(version)) invalid(path, "invalid contract version");
+  if (!contractVersionPattern.test(version))
+    invalid(path, "invalid contract version");
   return version;
 }
 
-function supportedVersionAt(value: unknown, path: string, supported: string): string {
+function supportedVersionAt(
+  value: unknown,
+  path: string,
+  supported: string,
+): string {
   const version = contractVersionAt(value, path);
-  if (version !== supported) invalid(path, `unsupported version ${JSON.stringify(version)}`);
+  if (version !== supported)
+    invalid(path, `unsupported version ${JSON.stringify(version)}`);
   return version;
 }
 
@@ -204,7 +221,11 @@ function parseReady(value: unknown, path: string): ReadyAnnouncement {
     `${path}.protocol_contract_version`,
     SUPPORTED_PROTOCOL_CONTRACT_VERSION,
   );
-  const inferenceURL = stringAt(ready.inference_url, `${path}.inference_url`, 128);
+  const inferenceURL = stringAt(
+    ready.inference_url,
+    `${path}.inference_url`,
+    128,
+  );
   const controlURL = stringAt(ready.control_url, `${path}.control_url`, 128);
   if (!loopbackURLPattern.test(inferenceURL)) {
     invalid(`${path}.inference_url`, "expected a canonical IPv4 loopback URL");
@@ -240,9 +261,16 @@ function parseVersion(value: unknown, path: string): VersionResponse {
     ],
     path,
   );
-  const buildCommit = stringAt(version.build_commit, `${path}.build_commit`, 64);
+  const buildCommit = stringAt(
+    version.build_commit,
+    `${path}.build_commit`,
+    64,
+  );
   if (!buildCommitPattern.test(buildCommit)) {
-    invalid(`${path}.build_commit`, "expected unknown or a lowercase hexadecimal commit");
+    invalid(
+      `${path}.build_commit`,
+      "expected unknown or a lowercase hexadecimal commit",
+    );
   }
   return {
     core_version: stringAt(version.core_version, `${path}.core_version`, 64),
@@ -281,12 +309,19 @@ function parseProtocol(value: unknown, path: string): ProtocolCapability {
 function parsePlan(value: unknown, path: string): PlanTypeCapability {
   const plan = objectAt(value, path);
   exactKeys(plan, ["id", "available_in_alpha", "uses_local_conversion"], path);
-  if (plan.id !== "native" && plan.id !== "delegated" && plan.id !== "relaykit") {
+  if (
+    plan.id !== "native" &&
+    plan.id !== "delegated" &&
+    plan.id !== "relaykit"
+  ) {
     invalid(`${path}.id`, "unknown plan type");
   }
   return {
     id: plan.id,
-    available_in_alpha: booleanAt(plan.available_in_alpha, `${path}.available_in_alpha`),
+    available_in_alpha: booleanAt(
+      plan.available_in_alpha,
+      `${path}.available_in_alpha`,
+    ),
     uses_local_conversion: booleanAt(
       plan.uses_local_conversion,
       `${path}.uses_local_conversion`,
@@ -318,12 +353,15 @@ function parseConversionEngine(
 ): ConversionEngineCapability {
   const engine = objectAt(value, path);
   exactKeys(engine, ["name", "version", "available", "edges"], path);
-  if (engine.name !== "relaykit") invalid(`${path}.name`, 'expected "relaykit"');
+  if (engine.name !== "relaykit")
+    invalid(`${path}.name`, 'expected "relaykit"');
   const available = booleanAt(engine.available, `${path}.available`);
   const rawEdges = arrayAt(engine.edges, `${path}.edges`);
   if (!available) {
-    if (engine.version !== null) invalid(`${path}.version`, "must be null when unavailable");
-    if (rawEdges.length !== 0) invalid(`${path}.edges`, "must be empty when unavailable");
+    if (engine.version !== null)
+      invalid(`${path}.version`, "must be null when unavailable");
+    if (rawEdges.length !== 0)
+      invalid(`${path}.edges`, "must be empty when unavailable");
     return { name: "relaykit", version: null, available: false, edges: [] };
   }
   if (typeof engine.version !== "string" || engine.version.length === 0) {
@@ -343,7 +381,12 @@ function parseCapabilities(value: unknown, path: string): CapabilitiesResponse {
   const capabilities = objectAt(value, path);
   exactKeys(
     capabilities,
-    ["protocol_contract_version", "protocols", "plan_types", "conversion_engine"],
+    [
+      "protocol_contract_version",
+      "protocols",
+      "plan_types",
+      "conversion_engine",
+    ],
     path,
   );
   const protocolContractVersion = supportedVersionAt(
@@ -353,35 +396,45 @@ function parseCapabilities(value: unknown, path: string): CapabilitiesResponse {
   );
   const rawProtocols = arrayAt(capabilities.protocols, `${path}.protocols`);
   if (rawProtocols.length < requiredAlphaProtocols.length) {
-    invalid(`${path}.protocols`, `expected at least ${requiredAlphaProtocols.length} entries`);
+    invalid(
+      `${path}.protocols`,
+      `expected at least ${requiredAlphaProtocols.length} entries`,
+    );
   }
   const protocols = rawProtocols.map((protocol, index) =>
     parseProtocol(protocol, `${path}.protocols[${index}]`),
   );
   const byID = new Map<string, ProtocolCapability>();
   for (const protocol of protocols) {
-    if (byID.has(protocol.id)) invalid(`${path}.protocols`, `duplicate protocol ${protocol.id}`);
+    if (byID.has(protocol.id))
+      invalid(`${path}.protocols`, `duplicate protocol ${protocol.id}`);
     byID.set(protocol.id, protocol);
   }
   for (const expected of requiredAlphaProtocols) {
     const protocol = byID.get(expected.id);
-    if (!protocol) invalid(`${path}.protocols`, `missing required protocol ${expected.id}`);
+    if (!protocol)
+      invalid(`${path}.protocols`, `missing required protocol ${expected.id}`);
     if (
       protocol.phase !== "alpha" ||
       protocol.primary !== expected.primary ||
       protocol.streaming !== expected.streaming
     ) {
-      invalid(`${path}.protocols`, `invalid Alpha descriptor for ${expected.id}`);
+      invalid(
+        `${path}.protocols`,
+        `invalid Alpha descriptor for ${expected.id}`,
+      );
     }
   }
 
   const rawPlans = arrayAt(capabilities.plan_types, `${path}.plan_types`);
-  if (rawPlans.length !== 3) invalid(`${path}.plan_types`, "expected exactly three plans");
+  if (rawPlans.length !== 3)
+    invalid(`${path}.plan_types`, "expected exactly three plans");
   const plans = rawPlans.map((plan, index) =>
     parsePlan(plan, `${path}.plan_types[${index}]`),
   );
   const plansByID = new Map(plans.map((plan) => [plan.id, plan]));
-  if (plansByID.size !== 3) invalid(`${path}.plan_types`, "plan IDs must be unique");
+  if (plansByID.size !== 3)
+    invalid(`${path}.plan_types`, "plan IDs must be unique");
   const expectedPlans = {
     native: { available: true, converts: false },
     delegated: { available: true, converts: false },
@@ -411,7 +464,12 @@ function parseCapabilities(value: unknown, path: string): CapabilitiesResponse {
 
 function parsePID(value: unknown, path: string): number | null {
   if (value === null) return null;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 0xffff_ffff) {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > 0xffff_ffff
+  ) {
     return invalid(path, "expected null or a positive 32-bit process ID");
   }
   return value;
@@ -419,22 +477,32 @@ function parsePID(value: unknown, path: string): number | null {
 
 function parseLastError(value: unknown, path: string): string | null {
   if (value === null) return null;
-  if (typeof value !== "string") return invalid(path, "expected null or a string");
+  if (typeof value !== "string")
+    return invalid(path, "expected null or a string");
   return value;
 }
 
-function parsePortFallback(value: unknown, path: string): InferencePortFallback {
+function parsePortFallback(
+  value: unknown,
+  path: string,
+): InferencePortFallback {
   const fallback = objectAt(value, path);
   exactKeys(fallback, ["requested_port", "active_port"], path);
   const portAt = (value: unknown, key: string): number => {
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 1 ||
+      value > 65535
+    ) {
       return invalid(`${path}.${key}`, "expected a port from 1 through 65535");
     }
     return value;
   };
   const requested_port = portAt(fallback.requested_port, "requested_port");
   const active_port = portAt(fallback.active_port, "active_port");
-  if (requested_port === active_port) invalid(path, "fallback ports must differ");
+  if (requested_port === active_port)
+    invalid(path, "fallback ports must differ");
   return { requested_port, active_port };
 }
 
@@ -458,7 +526,10 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
     ],
     path,
   );
-  if (typeof snapshot.phase !== "string" || !nativeCorePhases.has(snapshot.phase as CorePhase)) {
+  if (
+    typeof snapshot.phase !== "string" ||
+    !nativeCorePhases.has(snapshot.phase as CorePhase)
+  ) {
     invalid("$.phase", "unknown native Core phase");
   }
 
@@ -468,10 +539,18 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
     pid: parsePID(snapshot.pid, "$.pid"),
     ready: nullable(snapshot.ready, "$.ready", parseReady),
     last_error: parseLastError(snapshot.last_error, "$.last_error"),
-    inference_port_fallback: nullable(snapshot.inference_port_fallback, "$.inference_port_fallback", parsePortFallback),
+    inference_port_fallback: nullable(
+      snapshot.inference_port_fallback,
+      "$.inference_port_fallback",
+      parsePortFallback,
+    ),
     health: nullable(snapshot.health, "$.health", parseHealth),
     version: nullable(snapshot.version, "$.version", parseVersion),
-    capabilities: nullable(snapshot.capabilities, "$.capabilities", parseCapabilities),
+    capabilities: nullable(
+      snapshot.capabilities,
+      "$.capabilities",
+      parseCapabilities,
+    ),
     recovery_attempt:
       typeof snapshot.recovery_attempt === "number" &&
       Number.isInteger(snapshot.recovery_attempt) &&
@@ -492,18 +571,32 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
             ),
   };
 
-  if (parsed.inference_port_fallback &&
-    parsed.ready?.inference_url !== `http://127.0.0.1:${parsed.inference_port_fallback.active_port}`) {
+  if (
+    parsed.inference_port_fallback &&
+    parsed.ready?.inference_url !==
+      `http://127.0.0.1:${parsed.inference_port_fallback.active_port}`
+  ) {
     invalid("$.inference_port_fallback", "must match the active inference URL");
   }
-  if (parsed.ready && parsed.version && parsed.ready.core_version !== parsed.version.core_version) {
+  if (
+    parsed.ready &&
+    parsed.version &&
+    parsed.ready.core_version !== parsed.version.core_version
+  ) {
     invalid("$.version.core_version", "does not match the ready announcement");
   }
   if (
     parsed.phase === "ready" &&
-    (!parsed.pid || !parsed.ready || !parsed.health || !parsed.version || !parsed.capabilities)
+    (!parsed.pid ||
+      !parsed.ready ||
+      !parsed.health ||
+      !parsed.version ||
+      !parsed.capabilities)
   ) {
-    invalid("$", "the ready phase requires pid, ready, health, version, and capabilities");
+    invalid(
+      "$",
+      "the ready phase requires pid, ready, health, version, and capabilities",
+    );
   }
   return parsed;
 }
@@ -580,8 +673,11 @@ export function phaseTone(
   return "neutral";
 }
 
-export function alphaPlanCount(capabilities: CapabilitiesResponse | null): number {
+export function alphaPlanCount(
+  capabilities: CapabilitiesResponse | null,
+): number {
   return (
-    capabilities?.plan_types.filter((plan) => plan.available_in_alpha).length ?? 0
+    capabilities?.plan_types.filter((plan) => plan.available_in_alpha).length ??
+    0
   );
 }

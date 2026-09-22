@@ -1,6 +1,10 @@
 import { RecoveryDetails } from "./components/RecoveryDetails";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, MapPin as Pin, MapPinOff as PinOff } from "@/components/icons";
+import {
+  ChevronRight,
+  MapPin as Pin,
+  MapPinOff as PinOff,
+} from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
@@ -10,7 +14,10 @@ import { AuditPartSection } from "./AuditReviewer";
 import type { CopyFeedback } from "./copy-feedback";
 import { i18n, useT } from "./i18n";
 import type { AuditContent, RequestRecord } from "./request-record-model";
-import { requestServiceIdentity, type RequestServiceIdentity } from "./request-service-model";
+import {
+  requestServiceIdentity,
+  type RequestServiceIdentity,
+} from "./request-service-model";
 import {
   clientDisconnectNote,
   extractPrivacyHits,
@@ -77,9 +84,7 @@ export function TrajectoryInspector({
   const result =
     chain.find((item) => item.chip === "RESULT") ?? chain[chain.length - 1];
   const title =
-    client?.summary ??
-    record.requested_model ??
-    t("records.unspecifiedModel");
+    client?.summary ?? record.requested_model ?? t("records.unspecifiedModel");
   const outcome = result?.result ?? "";
   const hideRestoreBody = chain.some((item) => item.chip === "RESULT");
 
@@ -93,8 +98,16 @@ export function TrajectoryInspector({
     >
       <header className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-          <RequestServiceLabel className="text-xs font-medium" service={service} />
-          <strong className="min-w-0 truncate text-xs font-medium" title={title}>{title}</strong>
+          <RequestServiceLabel
+            className="text-xs font-medium"
+            service={service}
+          />
+          <strong
+            className="min-w-0 truncate text-xs font-medium"
+            title={title}
+          >
+            {title}
+          </strong>
           {outcome ? (
             <span className="shrink-0 font-mono text-micro text-muted-foreground">
               → {outcome}
@@ -109,7 +122,9 @@ export function TrajectoryInspector({
               data-testid="trajectory-inspector-pin"
               onClick={() => onTogglePin(!pinned)}
               size="icon-sm"
-              title={pinned ? t("trajectory.unpinHint") : t("trajectory.pinHint")}
+              title={
+                pinned ? t("trajectory.unpinHint") : t("trajectory.pinHint")
+              }
               type="button"
               variant={pinned ? "default" : "outline"}
             >
@@ -138,7 +153,8 @@ export function TrajectoryInspector({
         {chain.map((item) => {
           const selected = item.chip === focusChip;
           return (
-            <Button variant="ghost"
+            <Button
+              variant="ghost"
               aria-selected={selected}
               className={cn(
                 CHIP_BADGE_CLASS,
@@ -158,12 +174,18 @@ export function TrajectoryInspector({
         })}
       </div>
       {auditError ? (
-        <p className="shrink-0 px-3 pt-2 text-xs text-danger-foreground" role="alert">
+        <p
+          className="shrink-0 px-3 pt-2 text-xs text-danger-foreground"
+          role="alert"
+        >
           {auditError}
         </p>
       ) : null}
       {auditLoading ? (
-        <p className="shrink-0 px-3 pt-2 text-xs text-muted-foreground" role="status">
+        <p
+          className="shrink-0 px-3 pt-2 text-xs text-muted-foreground"
+          role="status"
+        >
           {t("records.decrypting")}
         </p>
       ) : null}
@@ -251,7 +273,10 @@ function InspectorSection({
         ) : null}
       </header>
       {part === "route" ? (
-        <><RouteInspector record={record} row={row} service={service} /><RecoveryDetails value={record.recovery} /></>
+        <>
+          <RouteInspector record={record} row={row} service={service} />
+          <RecoveryDetails value={record.recovery} />
+        </>
       ) : (
         <BodyInspector
           auditContent={auditContent}
@@ -284,7 +309,14 @@ function RouteInspector({
   const t = i18n.t.bind(i18n);
   return (
     <dl className="grid gap-2 text-xs">
-      <InspectorField label={t("trajectory.summary")} value={service.id ? row.summary.replace(service.id, () => service.name) : row.summary} />
+      <InspectorField
+        label={t("trajectory.summary")}
+        value={
+          service.id
+            ? row.summary.replace(service.id, () => service.name)
+            : row.summary
+        }
+      />
       <InspectorField
         code
         label={t("trajectory.entry")}
@@ -297,11 +329,14 @@ function RouteInspector({
         label={t("trajectory.protocol")}
         value={record.input_protocol}
       />
-      <InspectorField
-        label={t("records.provider")}
-        value={service.name}
-      />
-      {service.id ? <InspectorField code label={`${t("trajectory.service")} ID`} value={service.id} /> : null}
+      <InspectorField label={t("records.provider")} value={service.name} />
+      {service.id ? (
+        <InspectorField
+          code
+          label={`${t("trajectory.service")} ID`}
+          value={service.id}
+        />
+      ) : null}
       <InspectorField
         label={t("trajectory.route")}
         value={record.route_id ?? "—"}
@@ -473,7 +508,10 @@ function RestoreSummary({
           : t("trajectory.restoreChip")}
       </p>
       {channels !== null ? (
-        <p className="text-xs text-muted-foreground" data-testid="restore-channels">
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="restore-channels"
+        >
           {channels}
         </p>
       ) : null}

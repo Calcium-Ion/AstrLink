@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import {
   CircleCheck as CircleCheckIcon,
@@ -8,7 +8,7 @@ import {
   BadgeAlert as TriangleAlertIcon,
   X,
 } from "@/components/icons";
-import { Toaster as Sonner, type ToasterProps } from "sonner"
+import { Toaster as Sonner, type ToasterProps } from "sonner";
 import { useResolvedTheme } from "@/theme";
 
 const Toaster = ({ ...props }: ToasterProps) => {
@@ -23,7 +23,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
         info: <InfoIcon className="size-4" />,
         warning: <TriangleAlertIcon className="size-4" />,
         error: <OctagonXIcon className="size-4" />,
-        loading: <Loader2Icon animateOnHover={false} className="size-4 animate-spin motion-reduce:animate-none" />,
+        loading: (
+          <Loader2Icon
+            animateOnHover={false}
+            className="size-4 animate-spin motion-reduce:animate-none"
+          />
+        ),
       }}
       style={
         {
@@ -35,7 +40,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }
       {...props}
     />
-  )
-}
+  );
+};
 
-export { Toaster }
+export { Toaster };

@@ -82,7 +82,9 @@ export function FailurePolicyEditor({
           headingLevel={headingLevel}
           onReset={reset}
         />
-        {invalid ? <FormMessage tone="error">{t("failure.invalid")}</FormMessage> : null}
+        {invalid ? (
+          <FormMessage tone="error">{t("failure.invalid")}</FormMessage>
+        ) : null}
       </div>
     );
   }

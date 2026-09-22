@@ -41,7 +41,11 @@ export class BuildGeneration {
 }
 
 export function createBuildGenerationMiddleware(generation: BuildGeneration) {
-  return (req: BuildIdRequest, res: BuildIdResponse, next: () => void): void => {
+  return (
+    req: BuildIdRequest,
+    res: BuildIdResponse,
+    next: () => void,
+  ): void => {
     if (req.url?.split("?")[0] !== DEV_BUILD_ID_PATH) {
       next();
       return;

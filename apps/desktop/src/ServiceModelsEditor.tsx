@@ -139,7 +139,10 @@ function ModelListHeader({
         >
           {title}
         </strong>
-        <Badge className="px-1.5 py-0 text-micro tabular-nums" variant="secondary">
+        <Badge
+          className="px-1.5 py-0 text-micro tabular-nums"
+          variant="secondary"
+        >
           {countLabel}
         </Badge>
       </Button>
@@ -279,13 +282,14 @@ export function ServiceModelsEditor({
     addInputRef.current?.focus();
   }, [adding, bulkPaste]);
 
-  const filtered = useMemo(() => filterModels(catalog, query), [catalog, query]);
-  const categories = useMemo(
-    () => groupModelsByCategory(filtered),
-    [filtered],
+  const filtered = useMemo(
+    () => filterModels(catalog, query),
+    [catalog, query],
   );
+  const categories = useMemo(() => groupModelsByCategory(filtered), [filtered]);
   const groupCount = useMemo(
-    () => categories.reduce((count, category) => count + category.groups.length, 0),
+    () =>
+      categories.reduce((count, category) => count + category.groups.length, 0),
     [categories],
   );
   const nestedCategoryCount = useMemo(
@@ -346,12 +350,19 @@ export function ServiceModelsEditor({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="grid min-w-0 gap-0.5">
-          <strong className="text-sm font-semibold" id="service-models-editor-heading">{t("models.title")}</strong>
-          <p className="text-xs text-muted-foreground">
-            {t("models.hint")}
-          </p>
+          <strong
+            className="text-sm font-semibold"
+            id="service-models-editor-heading"
+          >
+            {t("models.title")}
+          </strong>
+          <p className="text-xs text-muted-foreground">{t("models.hint")}</p>
         </div>
-        <Badge className="mt-px shrink-0 tabular-nums" aria-live="polite" variant="secondary">
+        <Badge
+          className="mt-px shrink-0 tabular-nums"
+          aria-live="polite"
+          variant="secondary"
+        >
           {t("models.count", { count: catalog.length })}
         </Badge>
       </div>
@@ -365,15 +376,17 @@ export function ServiceModelsEditor({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        {onDiscoverModels ? <Button
-          className="h-8 shrink-0"
-          disabled={probingModels}
-          onClick={onDiscoverModels}
-          type="button"
-          variant="outline"
-        >
-          {probingModels ? t("models.fetching") : t("models.fetchList")}
-        </Button> : null}
+        {onDiscoverModels ? (
+          <Button
+            className="h-8 shrink-0"
+            disabled={probingModels}
+            onClick={onDiscoverModels}
+            type="button"
+            variant="outline"
+          >
+            {probingModels ? t("models.fetching") : t("models.fetchList")}
+          </Button>
+        ) : null}
         <Button
           aria-expanded={adding}
           aria-label={t("models.addModel")}
@@ -440,7 +453,10 @@ export function ServiceModelsEditor({
       ) : null}
 
       {catalog.length === 0 ? (
-        <p className="mt-2.5 rounded-md border border-dashed bg-muted/70 p-3 text-center text-xs text-muted-foreground" role="status">
+        <p
+          className="mt-2.5 rounded-md border border-dashed bg-muted/70 p-3 text-center text-xs text-muted-foreground"
+          role="status"
+        >
           {t("models.empty")}
         </p>
       ) : (
@@ -486,7 +502,9 @@ export function ServiceModelsEditor({
                   type="button"
                   variant="link"
                 >
-                  {allCollapsed ? t("models.expandAll") : t("models.collapseAll")}
+                  {allCollapsed
+                    ? t("models.expandAll")
+                    : t("models.collapseAll")}
                 </Button>
               )}
               <Button
@@ -501,7 +519,10 @@ export function ServiceModelsEditor({
           </div>
 
           {filtered.length === 0 ? (
-            <p className="mt-1.5 rounded-md border border-dashed p-2.5 text-xs text-muted-foreground" role="status">
+            <p
+              className="mt-1.5 rounded-md border border-dashed p-2.5 text-xs text-muted-foreground"
+              role="status"
+            >
               {t("models.noMatch", { query: query.trim() })}
             </p>
           ) : (
@@ -593,11 +614,11 @@ export function ServiceModelsEditor({
         confirmLabel={t("models.confirmDelete")}
         description={
           <p>
-              {confirm?.kind === "clear"
-                ? t("models.clearAllBody", { count: catalog.length })
-                : confirm
-                  ? t("models.deleteSomeBody", { count: confirm.models.length })
-                  : ""}
+            {confirm?.kind === "clear"
+              ? t("models.clearAllBody", { count: catalog.length })
+              : confirm
+                ? t("models.deleteSomeBody", { count: confirm.models.length })
+                : ""}
           </p>
         }
         destructive

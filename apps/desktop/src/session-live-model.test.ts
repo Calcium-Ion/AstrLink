@@ -29,24 +29,43 @@ function session(
 describe("mergeLiveSessions", () => {
   it("adopts changes to conversation performance independently of runtime", () => {
     const before = session("sess_a");
-    for (const field of ["tool_duration_ms", "average_ttft_ms", "output_tokens_per_second"]) {
+    for (const field of [
+      "tool_duration_ms",
+      "average_ttft_ms",
+      "output_tokens_per_second",
+    ]) {
       const after = session("sess_a", { [field]: 100 });
-      expect(mergeLiveSessions([before], [], [after], false).items[0]).toBe(after);
+      expect(mergeLiveSessions([before], [], [after], false).items[0]).toBe(
+        after,
+      );
     }
   });
   it("adopts runtime changes when an earlier concurrent call finishes", () => {
-    const before = session("sess_a", { active_request_starts: ["2026-07-25T09:59:00Z"] });
+    const before = session("sess_a", {
+      active_request_starts: ["2026-07-25T09:59:00Z"],
+    });
     const after = session("sess_a", { duration_ms: 8000 });
     const changed = mergeLiveSessions([before], [], [after], false);
     expect(changed.items[0]).toBe(after);
-    const unchanged = mergeLiveSessions(changed.items, [], [{ ...after, active_request_starts: [] }], false);
+    const unchanged = mergeLiveSessions(
+      changed.items,
+      [],
+      [{ ...after, active_request_starts: [] }],
+      false,
+    );
     expect(unchanged.items).toBe(changed.items);
   });
 
   it("adopts a new active attempt even when the active count is unchanged", () => {
-    const before = session("sess_a", { active_request_starts: ["2026-07-25T09:59:00Z"] });
-    const after = session("sess_a", { active_request_starts: ["2026-07-25T09:59:01Z"] });
-    expect(mergeLiveSessions([], [before], [after], true).queued[0]).toBe(after);
+    const before = session("sess_a", {
+      active_request_starts: ["2026-07-25T09:59:00Z"],
+    });
+    const after = session("sess_a", {
+      active_request_starts: ["2026-07-25T09:59:01Z"],
+    });
+    expect(mergeLiveSessions([], [before], [after], true).queued[0]).toBe(
+      after,
+    );
   });
 
   it("updates the model badge when only reasoning effort changes or clears", () => {
@@ -55,7 +74,9 @@ describe("mergeLiveSessions", () => {
     const changed = mergeLiveSessions([before], [], [after], false);
     expect(changed.items[0]).toBe(after);
     const cleared = session("sess_a", { reasoning_effort: null });
-    expect(mergeLiveSessions(changed.items, [], [cleared], false).items[0]).toBe(cleared);
+    expect(
+      mergeLiveSessions(changed.items, [], [cleared], false).items[0],
+    ).toBe(cleared);
   });
 
   // The monitor polls once a second, and an idle gateway answers with the same

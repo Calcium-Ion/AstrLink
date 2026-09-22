@@ -24,7 +24,9 @@ describe("subscription IPC contract", () => {
       updated_at: timestamps.updated_at,
     });
     expect(session.status).toBe("pending");
-    expect(session.authorization_url).toBe("https://auth.example/oauth/authorize");
+    expect(session.authorization_url).toBe(
+      "https://auth.example/oauth/authorize",
+    );
   });
 
   it("allows loopback http authorization URLs for pending sessions", () => {
@@ -70,7 +72,8 @@ describe("subscription IPC contract", () => {
       flow: "device_code",
       service_id: "service_grok_01",
       device_code: {
-        verification_url: "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE",
+        verification_url:
+          "https://accounts.x.ai/oauth2/device?user_code=GROK-CODE",
         user_code: "GROK-CODE",
       },
       expires_at: "2026-07-28T08:15:00Z",

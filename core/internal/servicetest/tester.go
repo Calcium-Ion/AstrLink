@@ -15,7 +15,9 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/providerapi"
+	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -24,6 +26,7 @@ const maxResponseBytes = 1 << 20
 const maxRawResponseCharacters = 64 << 10
 
 type Tester struct {
+	proxyCredentials    secretstore.SecretStore
 	authorizer          endpoint.Authorizer
 	forwarder           *transport.Forwarder
 	subscriptionBaseURL func(contract.SubscriptionProvider) string
@@ -59,6 +62,10 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	authEndpoint, err := resolved.AuthorizationEndpoint()
 	if err != nil {
 		return fail("invalid_configuration", "Provider connection is invalid.")
+	}
+	ctx, err = networkproxy.Bind(ctx, service, tester.proxyCredentials)
+	if err != nil {
+		return fail("instance_proxy_unavailable", "Instance proxy configuration or authentication is unavailable.")
 	}
 	headers, err := tester.authorizer.Headers(ctx, authEndpoint, nil)
 	if err != nil {
@@ -97,7 +104,7 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 		request.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
 	}
 	sentAt := time.Now()
-	response, err := tester.forwarder.RoundTrip(request, transport.Target{BaseURL: base, RequestHeaders: headers})
+	response, err := tester.forwarder.RoundTrip(request, transport.Target{Service: service, ProxyCredentials: tester.proxyCredentials, BaseURL: base, RequestHeaders: headers})
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail("timeout", "Provider test timed out or was cancelled.")
@@ -230,4 +237,9 @@ func redact(value string, headers http.Header, limit int) string {
 		return string(runes[:limit]) + "…"
 	}
 	return string(runes)
+}
+
+func (tester *Tester) WithProxyCredentials(secrets secretstore.SecretStore) *Tester {
+	tester.proxyCredentials = secrets
+	return tester
 }

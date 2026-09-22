@@ -14,7 +14,10 @@ export type AuthorizationSessionStatus =
   | "expired"
   | "failed";
 
-export type AuthorizationFlow = "browser" | "device_code" | "authorization_code";
+export type AuthorizationFlow =
+  | "browser"
+  | "device_code"
+  | "authorization_code";
 
 export interface SubscriptionError {
   code: string;
@@ -54,10 +57,17 @@ const rfc3339Pattern =
 const credentialLeakPattern =
   /(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:access_token|refresh_token|id_token|device_auth_id|code_verifier|authorization_code)["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i;
 
-const providers = new Set<SubscriptionProvider>(["openai_codex", "claude_code", "xai_grok"]);
+const providers = new Set<SubscriptionProvider>([
+  "openai_codex",
+  "claude_code",
+  "xai_grok",
+]);
 
 /** Login transports each provider accepts; mirrors contract.AuthorizationFlow.SupportedBy. */
-export const providerAuthorizationFlows: Record<SubscriptionProvider, readonly AuthorizationFlow[]> = {
+export const providerAuthorizationFlows: Record<
+  SubscriptionProvider,
+  readonly AuthorizationFlow[]
+> = {
   openai_codex: ["browser", "device_code"],
   claude_code: ["authorization_code"],
   xai_grok: ["device_code"],
@@ -146,7 +156,8 @@ function validateAuthorizationURL(value: string, path: string): void {
     invalid(path, "invalid authorization URL");
   }
   if (parsed.protocol === "https:") {
-    if (!parsed.hostname) invalid(path, "authorization URL must be absolute https");
+    if (!parsed.hostname)
+      invalid(path, "authorization URL must be absolute https");
     return;
   }
   if (parsed.protocol === "http:") {
@@ -159,7 +170,10 @@ function validateAuthorizationURL(value: string, path: string): void {
   invalid(path, "authorization URL must use https");
 }
 
-function parseSubscriptionError(value: unknown, path: string): SubscriptionError {
+function parseSubscriptionError(
+  value: unknown,
+  path: string,
+): SubscriptionError {
   const error = objectAt(value, path);
   keysAt(error, ["code", "message"], [], path);
   const code = stringAt(error.code, `${path}.code`, 1, 64);
@@ -185,6 +199,7 @@ function parseAuthorizationDeviceCode(
   );
   validateAuthorizationURL(verificationURL, `${path}.verification_url`);
   const userCode = stringAt(device.user_code, `${path}.user_code`, 1, 128);
+  // eslint-disable-next-line no-control-regex -- Device codes must reject NUL and line breaks.
   if (/[\r\n\u0000]/u.test(userCode) || userCode.trim() === "") {
     invalid(`${path}.user_code`, "invalid Device Code");
   }
@@ -194,7 +209,9 @@ function parseAuthorizationDeviceCode(
   };
 }
 
-export function parseAuthorizationSession(value: unknown): AuthorizationSession {
+export function parseAuthorizationSession(
+  value: unknown,
+): AuthorizationSession {
   const session = objectAt(value, "$");
   keysAt(
     session,
@@ -213,7 +230,8 @@ export function parseAuthorizationSession(value: unknown): AuthorizationSession 
   );
 
   const id = stringAt(session.id, "$.id", 3, 96);
-  if (!resourceIDPattern.test(id)) invalid("$.id", "invalid authorization session ID");
+  if (!resourceIDPattern.test(id))
+    invalid("$.id", "invalid authorization session ID");
   if (
     typeof session.provider !== "string" ||
     !providers.has(session.provider as SubscriptionProvider)
@@ -222,7 +240,9 @@ export function parseAuthorizationSession(value: unknown): AuthorizationSession 
   }
   if (
     typeof session.status !== "string" ||
-    !authorizationSessionStatuses.has(session.status as AuthorizationSessionStatus)
+    !authorizationSessionStatuses.has(
+      session.status as AuthorizationSessionStatus,
+    )
   ) {
     invalid("$.status", "unknown authorization session status");
   }
@@ -234,38 +254,58 @@ export function parseAuthorizationSession(value: unknown): AuthorizationSession 
     invalid("$.flow", "unknown authorization flow");
   }
   const flow = session.flow as AuthorizationFlow;
-  if (!flowSupportedByProvider(session.provider as SubscriptionProvider, flow)) {
+  if (
+    !flowSupportedByProvider(session.provider as SubscriptionProvider, flow)
+  ) {
     invalid("$.flow", "authorization flow is unsupported by provider");
   }
 
   let authorizationURL: string | undefined;
   if (Object.hasOwn(session, "authorization_url")) {
-    authorizationURL = stringAt(session.authorization_url, "$.authorization_url", 8, 4096);
+    authorizationURL = stringAt(
+      session.authorization_url,
+      "$.authorization_url",
+      8,
+      4096,
+    );
     validateAuthorizationURL(authorizationURL, "$.authorization_url");
   }
   const deviceCode = Object.hasOwn(session, "device_code")
     ? parseAuthorizationDeviceCode(session.device_code, "$.device_code")
     : undefined;
-  if (status === "pending" && (flow === "browser" || flow === "authorization_code")) {
+  if (
+    status === "pending" &&
+    (flow === "browser" || flow === "authorization_code")
+  ) {
     if (!authorizationURL) {
-      invalid("$.authorization_url", "pending browser session requires authorization_url");
+      invalid(
+        "$.authorization_url",
+        "pending browser session requires authorization_url",
+      );
     }
     if (deviceCode) {
       invalid("$.device_code", "browser session must not include Device Code");
     }
   } else if (status === "pending" && flow === "device_code") {
     if (!deviceCode) {
-      invalid("$.device_code", "pending Device Code session requires device_code");
+      invalid(
+        "$.device_code",
+        "pending Device Code session requires device_code",
+      );
     }
     if (authorizationURL) {
-      invalid("$.authorization_url", "Device Code session must not include authorization_url");
+      invalid(
+        "$.authorization_url",
+        "Device Code session must not include authorization_url",
+      );
     }
   } else if (authorizationURL || deviceCode) {
     invalid("$", "terminal session must not include login instructions");
   }
 
   const serviceID = stringAt(session.service_id, "$.service_id", 3, 96);
-  if (!resourceIDPattern.test(serviceID)) invalid("$.service_id", "invalid service ID");
+  if (!resourceIDPattern.test(serviceID))
+    invalid("$.service_id", "invalid service ID");
 
   let error: SubscriptionError | undefined;
   if (Object.hasOwn(session, "error")) {

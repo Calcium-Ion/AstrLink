@@ -44,9 +44,7 @@ describe("desktop platform detection", () => {
 
 describe("Linux decoration layout", () => {
   it("keeps the GTK side and order for supported controls", () => {
-    expect(
-      parseLinuxDecorationLayout("close:minimize,maximize"),
-    ).toEqual({
+    expect(parseLinuxDecorationLayout("close:minimize,maximize")).toEqual({
       start: ["close"],
       end: ["minimize", "maximize"],
     });
@@ -54,9 +52,7 @@ describe("Linux decoration layout", () => {
 
   it("ignores unsupported GTK widgets and duplicate controls", () => {
     expect(
-      parseLinuxDecorationLayout(
-        "menu,close:appmenu,minimize,maximize,close",
-      ),
+      parseLinuxDecorationLayout("menu,close:appmenu,minimize,maximize,close"),
     ).toEqual({
       start: ["close"],
       end: ["minimize", "maximize"],

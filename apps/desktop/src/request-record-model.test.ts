@@ -93,25 +93,42 @@ const nullOptionalRecord = {
 
 describe("reasoning effort metadata", () => {
   it("validates recorded runtime and active request timestamps", () => {
-    expect(parseRequestSession({
-      ...fullSession,
+    expect(
+      parseRequestSession({
+        ...fullSession,
+        duration_ms: 5000,
+        active_request_starts: ["2026-08-16T10:01:00Z"],
+      }),
+    ).toMatchObject({
       duration_ms: 5000,
       active_request_starts: ["2026-08-16T10:01:00Z"],
-    })).toMatchObject({ duration_ms: 5000, active_request_starts: ["2026-08-16T10:01:00Z"] });
+    });
     for (const duration_ms of [-1, 1.5, "12"]) {
-      expect(() => parseRequestSession({ ...fullSession, duration_ms })).toThrow(/duration_ms/);
+      expect(() =>
+        parseRequestSession({ ...fullSession, duration_ms }),
+      ).toThrow(/duration_ms/);
     }
     for (const active_request_starts of [null, "invalid", ["invalid"], [42]]) {
-      expect(() => parseRequestSession({ ...fullSession, active_request_starts })).toThrow(/active_request_starts/);
+      expect(() =>
+        parseRequestSession({ ...fullSession, active_request_starts }),
+      ).toThrow(/active_request_starts/);
     }
   });
 
   it("accepts explicit values and older records without the field", () => {
-    expect(parseRequestRecord({ ...fullRecord, reasoning_effort: "high" }).reasoning_effort).toBe("high");
-    expect(parseRequestSession({ ...fullSession, reasoning_effort: "xhigh" }).reasoning_effort).toBe("xhigh");
+    expect(
+      parseRequestRecord({ ...fullRecord, reasoning_effort: "high" })
+        .reasoning_effort,
+    ).toBe("high");
+    expect(
+      parseRequestSession({ ...fullSession, reasoning_effort: "xhigh" })
+        .reasoning_effort,
+    ).toBe("xhigh");
     expect(parseRequestRecord(fullRecord).reasoning_effort).toBeNull();
     expect(parseRequestSession(fullSession).reasoning_effort).toBeNull();
-    expect(() => parseRequestRecord({ ...fullRecord, reasoning_effort: 42 })).toThrow();
+    expect(() =>
+      parseRequestRecord({ ...fullRecord, reasoning_effort: 42 }),
+    ).toThrow();
   });
 });
 
@@ -192,15 +209,22 @@ describe("request-record IPC contract", () => {
       session_link: { kind: "echo_id", value: "call_8f3kd92ls0a1Qz7" },
       cursors: [
         { kind: "explicit", direction: "out", value: "chatcmpl-1" },
-        { kind: "fingerprint", direction: "out", value: "fp1_0123456789abcdef0123456789abcdef" },
+        {
+          kind: "fingerprint",
+          direction: "out",
+          value: "fp1_0123456789abcdef0123456789abcdef",
+        },
       ],
     });
     expect(parsed.turn_index).toBe(2);
-    expect(parsed.session_link).toEqual({ kind: "echo_id", value: "call_8f3kd92ls0a1Qz7" });
+    expect(parsed.session_link).toEqual({
+      kind: "echo_id",
+      value: "call_8f3kd92ls0a1Qz7",
+    });
     expect(parsed.cursors).toHaveLength(2);
-    expect(() =>
-      parseRequestRecord({ ...fullRecord, turn_index: 0 }),
-    ).toThrow(/turn_index/);
+    expect(() => parseRequestRecord({ ...fullRecord, turn_index: 0 })).toThrow(
+      /turn_index/,
+    );
     expect(() =>
       parseRequestRecord({
         ...fullRecord,
@@ -225,9 +249,9 @@ describe("request-record IPC contract", () => {
     });
     expect(parsed.cursors).toEqual([]);
     expect(parsed.events).toEqual([]);
-    expect(() =>
-      parseRequestRecord({ ...fullRecord, events: "none" }),
-    ).toThrow(/events/);
+    expect(() => parseRequestRecord({ ...fullRecord, events: "none" })).toThrow(
+      /events/,
+    );
   });
 
   it("parses request-time privacy hit counts", () => {
@@ -364,9 +388,9 @@ describe("request-record IPC contract", () => {
   it("rejects missing id, bad status, and non-array items", () => {
     const { id: _id, ...missingId } = fullRecord;
     expect(() => parseRequestRecord(missingId)).toThrow("缺少字段");
-    expect(() =>
-      parseRequestRecord({ ...fullRecord, status: "ok" }),
-    ).toThrow("状态枚举无效");
+    expect(() => parseRequestRecord({ ...fullRecord, status: "ok" })).toThrow(
+      "状态枚举无效",
+    );
     expect(() =>
       parseRequestRecordPage({ items: {}, next_cursor: null }),
     ).toThrow("应为数组");
@@ -484,16 +508,39 @@ describe("request-record IPC contract", () => {
 });
 
 it("parses performance samples and rejects invalid timing and rates", () => {
-  expect(parseRequestRecord({ ...fullRecord, first_token_ms: 0 }).first_token_ms).toBe(0);
-  expect(parseRequestSession({ ...fullSession, tool_duration_ms: 0, average_ttft_ms: 2200.5, output_tokens_per_second: 131.25 })).toMatchObject({
-    tool_duration_ms: 0, average_ttft_ms: 2200.5, output_tokens_per_second: 131.25,
+  expect(
+    parseRequestRecord({ ...fullRecord, first_token_ms: 0 }).first_token_ms,
+  ).toBe(0);
+  expect(
+    parseRequestSession({
+      ...fullSession,
+      tool_duration_ms: 0,
+      average_ttft_ms: 2200.5,
+      output_tokens_per_second: 131.25,
+    }),
+  ).toMatchObject({
+    tool_duration_ms: 0,
+    average_ttft_ms: 2200.5,
+    output_tokens_per_second: 131.25,
   });
-  for (const key of ["tool_duration_ms", "average_ttft_ms", "output_tokens_per_second"]) {
-    expect(parseRequestSession(fullSession)[key as "tool_duration_ms"]).toBeNull();
+  for (const key of [
+    "tool_duration_ms",
+    "average_ttft_ms",
+    "output_tokens_per_second",
+  ]) {
+    expect(
+      parseRequestSession(fullSession)[key as "tool_duration_ms"],
+    ).toBeNull();
     for (const value of [-1, Infinity, NaN, "12"]) {
-      expect(() => parseRequestSession({ ...fullSession, [key]: value })).toThrow(key);
+      expect(() =>
+        parseRequestSession({ ...fullSession, [key]: value }),
+      ).toThrow(key);
     }
   }
-  expect(() => parseRequestSession({ ...fullSession, tool_duration_ms: 1.5 })).toThrow("tool_duration_ms");
-  expect(() => parseRequestRecord({ ...fullRecord, first_token_ms: -1 })).toThrow("first_token_ms");
+  expect(() =>
+    parseRequestSession({ ...fullSession, tool_duration_ms: 1.5 }),
+  ).toThrow("tool_duration_ms");
+  expect(() =>
+    parseRequestRecord({ ...fullRecord, first_token_ms: -1 }),
+  ).toThrow("first_token_ms");
 });

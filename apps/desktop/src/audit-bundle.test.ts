@@ -114,11 +114,11 @@ const content: AuditContent = {
     truncated: false,
     captured_bytes: 22,
   },
-}
+};
 
 describe("fence", () => {
   it("survives content containing backtick fences", () => {
-    const body = "text\n```json\n{\"a\":1}\n```\nmore ````raw````";
+    const body = 'text\n```json\n{"a":1}\n```\nmore ````raw````';
     const wrapped = fence(body);
     // The delimiter must be longer than any run inside the content.
     expect(wrapped.startsWith("`````\n")).toBe(true);

@@ -154,6 +154,7 @@ func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
 // Service is the canonical configured API-service aggregate. Exactly one
 // variant payload is present, determined by Kind.
 type Service struct {
+	Proxy *ServiceProxy `json:"proxy,omitempty"`
 	// Nil preserves the provider default for existing documents; explicit false is retained.
 	ResponsesWebSocketEnabled *bool                   `json:"responses_websocket_enabled,omitempty"`
 	FailurePolicy             *FailurePolicy          `json:"failure_policy,omitempty"`
@@ -178,6 +179,9 @@ func (service Service) ResponsesWebSocket() bool {
 }
 
 func (service Service) Validate() error {
+	if err := service.Proxy.Validate(service.ID); err != nil {
+		return err
+	}
 	if service.FailurePolicy != nil {
 		if err := service.FailurePolicy.Validate(); err != nil {
 			return fmt.Errorf("failure_policy: %w", err)

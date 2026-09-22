@@ -15,17 +15,22 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
 
 func TestGrokSubscriptionDeviceCodeModelsUsageAndLogout(t *testing.T) {
+	testGrokProxyLifecycle(t, false)
+}
+func TestGrokLifecycleUsesInstanceProxy(t *testing.T) { testGrokProxyLifecycle(t, true) }
+func testGrokProxyLifecycle(t *testing.T, useProxy bool) {
 	ctx := context.Background()
 	var polls, refreshes atomic.Int32
 	idToken := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`)) + "." +
 		base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"user_grok_42","email":"grok@example.com"}`)) + ".x"
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	providerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/oauth2/device/code":
@@ -72,23 +77,37 @@ func TestGrokSubscriptionDeviceCodeModelsUsageAndLogout(t *testing.T) {
 			t.Errorf("unexpected upstream request %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
-	}))
+	})
+	upstream := httptest.NewServer(providerHandler)
 	t.Cleanup(upstream.Close)
 	store, err := sqlite.Open(ctx, t.TempDir()+"/astrlink.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	baseURL := upstream.URL
+	proxyInput := ""
+	if useProxy {
+		baseURL = "http://grok.invalid"
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !r.URL.IsAbs() || r.URL.Host != "grok.invalid" {
+				t.Error("Grok bypassed instance proxy")
+			}
+			providerHandler.ServeHTTP(w, r)
+		}))
+		t.Cleanup(proxy.Close)
+		proxyInput = `,"proxy":{"mode":"custom","url":"` + proxy.URL + `"}`
+	}
 	credentials := accountauth.NewMemoryCredentialStore()
 	manager, err := subscription.NewManager(subscription.StorageAccountStore{Store: store}, credentials,
-		accountauth.OAuthConfig{HTTPClient: upstream.Client()},
-		accountauth.OAuthConfig{Provider: contract.SubscriptionProviderXAIGrok, Issuer: upstream.URL, APIBaseURL: upstream.URL,
+		accountauth.OAuthConfig{HTTPClient: upstream.Client(), ResolveProxy: networkproxy.Resolver(store, store)},
+		accountauth.OAuthConfig{Provider: contract.SubscriptionProviderXAIGrok, Issuer: baseURL, APIBaseURL: baseURL,
 			HTTPClient: upstream.Client(), DevicePollMinInterval: 5 * time.Millisecond, DevicePollMaxInterval: 5 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	handler, err := NewWithDependencies(contract.DefaultVersionResponse("test", "abc1234"), Dependencies{
-		ServiceStore: store, Subscriptions: manager, ServiceModels: servicemodel.New(nil, manager, upstream.Client()), ControlToken: testControlToken,
+		ServiceStore: store, Subscriptions: manager, ServiceModels: servicemodel.New(store, manager, upstream.Client()), ControlToken: testControlToken,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +130,7 @@ func TestGrokSubscriptionDeviceCodeModelsUsageAndLogout(t *testing.T) {
 		return w.Body.Bytes()
 	}
 	var service contract.Service
-	if err := json.Unmarshal(call("POST", ServicesPath, `{"name":"Grok","kind":"grok_subscription"}`, 201), &service); err != nil {
+	if err := json.Unmarshal(call("POST", ServicesPath, `{"name":"Grok","kind":"grok_subscription"`+proxyInput+`}`, 201), &service); err != nil {
 		t.Fatal(err)
 	}
 	if service.Subscription.Provider != contract.SubscriptionProviderXAIGrok || service.Capabilities[0].Protocol != contract.ProtocolOpenAIResponses || service.Capabilities[1].Protocol != contract.ProtocolOpenAIChat {

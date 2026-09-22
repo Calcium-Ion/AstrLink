@@ -24,14 +24,20 @@ export const Server = createAnimatedIcon("server", (controls) => (
       animate={controls}
       initial="normal"
       variants={LIGHT_VARIANTS}
-      x1="6" x2="10" y1="6" y2="6"
+      x1="6"
+      x2="10"
+      y1="6"
+      y2="6"
     />
     <rect height="8" rx="2" ry="2" width="20" x="2" y="14" />
     <motion.line
       animate={controls}
       initial="normal"
       variants={LIGHT_VARIANTS}
-      x1="6" x2="10" y1="18" y2="18"
+      x1="6"
+      x2="10"
+      y1="18"
+      y2="18"
     />
   </>
 ));

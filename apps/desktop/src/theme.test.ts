@@ -13,13 +13,18 @@ describe("desktop theme", () => {
   let stop: (() => void) | undefined;
 
   function changeSystem(dark: boolean) {
-    Object.defineProperty(media, "matches", { configurable: true, value: dark });
+    Object.defineProperty(media, "matches", {
+      configurable: true,
+      value: dark,
+    });
     media.dispatchEvent(new Event("change"));
   }
 
   beforeEach(() => {
     localStorage.clear();
-    media = Object.assign(new EventTarget(), { matches: false }) as MediaQueryList;
+    media = Object.assign(new EventTarget(), {
+      matches: false,
+    }) as MediaQueryList;
     vi.spyOn(window, "matchMedia").mockReturnValue(media);
   });
 
@@ -60,12 +65,21 @@ describe("desktop theme", () => {
 
   it("synchronizes other windows and removes observers on cleanup", () => {
     stop = initializeTheme();
-    window.dispatchEvent(new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: "dark" }));
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: "dark" }),
+    );
     expect(document.documentElement.dataset.theme).toBe("dark");
-    window.dispatchEvent(new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: "system" }));
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: THEME_STORAGE_KEY,
+        newValue: "system",
+      }),
+    );
     stop();
     changeSystem(true);
-    window.dispatchEvent(new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: "dark" }));
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: THEME_STORAGE_KEY, newValue: "dark" }),
+    );
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 
@@ -75,8 +89,12 @@ describe("desktop theme", () => {
     stop = initializeTheme();
     expect(document.documentElement.dataset.theme).toBe("dark");
     stop();
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
     stop = initializeTheme();
     expect(() => applyTheme("light")).not.toThrow();
     expect(document.documentElement.dataset.theme).toBe("light");
@@ -88,14 +106,26 @@ describe("desktop theme", () => {
     ["light", true, "light"],
     ["dark", false, "dark"],
     ["invalid", true, "dark"],
-  ])("applies %s before the app paints (system dark: %s)", (cached, systemDark, expected) => {
-    const root = { dataset: {} as Record<string, string>, style: { colorScheme: "" } };
-    runInNewContext(readFileSync(new NodeURL("../public/theme-init.js", import.meta.url), "utf8"), {
-      document: { documentElement: root },
-      localStorage: { getItem: () => cached },
-      window: { matchMedia: () => ({ matches: systemDark }) },
-    });
-    expect(root.dataset.theme).toBe(expected);
-    expect(root.style.colorScheme).toBe(expected);
-  });
+  ])(
+    "applies %s before the app paints (system dark: %s)",
+    (cached, systemDark, expected) => {
+      const root = {
+        dataset: {} as Record<string, string>,
+        style: { colorScheme: "" },
+      };
+      runInNewContext(
+        readFileSync(
+          new NodeURL("../public/theme-init.js", import.meta.url),
+          "utf8",
+        ),
+        {
+          document: { documentElement: root },
+          localStorage: { getItem: () => cached },
+          window: { matchMedia: () => ({ matches: systemDark }) },
+        },
+      );
+      expect(root.dataset.theme).toBe(expected);
+      expect(root.style.colorScheme).toBe(expected);
+    },
+  );
 });

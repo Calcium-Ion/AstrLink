@@ -73,4 +73,3 @@ func TestReadMCPMessageSkipsBlankLinesThenReadsNDJSON(t *testing.T) {
 		t.Fatalf("payload = %s", payload)
 	}
 }
-

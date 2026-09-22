@@ -41,6 +41,9 @@
       "binaries/astrlink-mcp"
     ],
     "resources": {
+      "../../../LICENSE": "licenses/LICENSE",
+      "../../../LICENSING.md": "licenses/LICENSING.md",
+      "../../../LICENSES/AGPL-3.0.txt": "licenses/LICENSES/AGPL-3.0.txt",
       "binaries/onnxruntime-1.23.2-LICENSE.txt": "notices/onnxruntime-1.23.2/LICENSE.txt",
       "binaries/onnxruntime-1.23.2-ThirdPartyNotices.txt": "notices/onnxruntime-1.23.2/ThirdPartyNotices.txt"
     },

@@ -59,7 +59,9 @@ export function ConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={disabled}>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel disabled={disabled}>
+            {cancelLabel}
+          </AlertDialogCancel>
           <AlertDialogAction
             disabled={disabled || confirmDisabled}
             onClick={() => {

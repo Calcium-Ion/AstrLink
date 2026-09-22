@@ -1,12 +1,22 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = join(rootDir, "..");
-const brandingLogo = join(desktopDir, "../../assets/branding/astrlink-logo.svg");
+const brandingLogo = join(
+  desktopDir,
+  "../../assets/branding/astrlink-logo.svg",
+);
 const uiLogo = join(desktopDir, "src/assets/astrlink-logo.svg");
 const iconsDir = join(desktopDir, "src-tauri/icons");
 const iconSvg = join(iconsDir, "icon.svg");
@@ -142,11 +152,10 @@ if (previous === hash) {
 
 copyFileSync(brandingLogo, iconSvg);
 
-const iconResult = spawnSync(
-  "bun",
-  ["run", "tauri", "icon", brandingLogo],
-  { cwd: desktopDir, stdio: "inherit" },
-);
+const iconResult = spawnSync("bun", ["run", "tauri", "icon", brandingLogo], {
+  cwd: desktopDir,
+  stdio: "inherit",
+});
 if (iconResult.status !== 0) {
   process.exit(iconResult.status ?? 1);
 }

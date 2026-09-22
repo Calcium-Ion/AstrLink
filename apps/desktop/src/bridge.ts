@@ -1,7 +1,21 @@
-import { parseServiceTestResult, type ServiceTestInput, type ServiceTestResult } from "./service-test-model";
+import {
+  parseServiceTestResult,
+  type ServiceTestInput,
+  type ServiceTestResult,
+} from "./service-test-model";
 import { parseChannelBindingAudit } from "./channel-binding-model";
-import { parseRecoveryPath, parseRecoveryPathRecord, parseRecoveryPathPage, parseRecoveryPreview, type RecoveryPathInput, type RecoveryPreviewInput } from "./recovery-path-model";
-import { parseRoutingSettings, type RoutingSettings } from "./failure-policy-model";
+import {
+  parseRecoveryPath,
+  parseRecoveryPathRecord,
+  parseRecoveryPathPage,
+  parseRecoveryPreview,
+  type RecoveryPathInput,
+  type RecoveryPreviewInput,
+} from "./recovery-path-model";
+import {
+  parseRoutingSettings,
+  type RoutingSettings,
+} from "./failure-policy-model";
 import { invoke as invokeCommand } from "@tauri-apps/api/core";
 
 import { i18n } from "./i18n";
@@ -238,21 +252,39 @@ export async function listServices(): Promise<ServicePage> {
   return parseServicePage(await invoke<unknown>("list_services"));
 }
 
-export interface ServiceOrderRecord { service_ids: string[]; etag: string }
+export interface ServiceOrderRecord {
+  service_ids: string[];
+  etag: string;
+}
 export function parseServiceOrder(value: unknown): ServiceOrderRecord {
-  if (!value || typeof value !== "object") throw new Error("Invalid service order");
+  if (!value || typeof value !== "object")
+    throw new Error("Invalid service order");
   const { service_ids, etag } = value as ServiceOrderRecord;
-  if (!Array.isArray(service_ids) || service_ids.some(id => typeof id !== "string" || !/^[a-z][a-z0-9_-]{2,95}$/.test(id)) || new Set(service_ids).size !== service_ids.length || typeof etag !== "string" || !/^"[^"\r\n]+"$/.test(etag)) throw new Error("Invalid service order");
+  if (
+    !Array.isArray(service_ids) ||
+    service_ids.some(
+      (id) => typeof id !== "string" || !/^[a-z][a-z0-9_-]{2,95}$/.test(id),
+    ) ||
+    new Set(service_ids).size !== service_ids.length ||
+    typeof etag !== "string" ||
+    !/^"[^"\r\n]+"$/.test(etag)
+  )
+    throw new Error("Invalid service order");
   return { service_ids, etag };
 }
 export async function getServiceOrder(): Promise<ServiceOrderRecord> {
   requireNativeBridge();
   return parseServiceOrder(await invoke("get_service_order"));
 }
-export async function updateServiceOrder(serviceIds: string[], etag: string): Promise<ServiceOrderRecord> {
+export async function updateServiceOrder(
+  serviceIds: string[],
+  etag: string,
+): Promise<ServiceOrderRecord> {
   requireNativeBridge();
   parseServiceOrder({ service_ids: serviceIds, etag });
-  return parseServiceOrder(await invoke("update_service_order", { serviceIds, etag }));
+  return parseServiceOrder(
+    await invoke("update_service_order", { serviceIds, etag }),
+  );
 }
 
 export async function getService(serviceId: string): Promise<ServiceRecord> {
@@ -280,7 +312,10 @@ export async function updateService(
   );
 }
 
-export async function deleteService(serviceId: string, etag: string): Promise<void> {
+export async function deleteService(
+  serviceId: string,
+  etag: string,
+): Promise<void> {
   requireNativeBridge();
   await invoke("delete_service", { serviceId, etag });
 }
@@ -303,9 +338,14 @@ export async function resetServiceUsage(
   );
 }
 
-export async function testService(serviceId: string, input: ServiceTestInput): Promise<ServiceTestResult> {
+export async function testService(
+  serviceId: string,
+  input: ServiceTestInput,
+): Promise<ServiceTestResult> {
   requireNativeBridge();
-  return parseServiceTestResult(await invoke<unknown>("test_service", { serviceId, input }));
+  return parseServiceTestResult(
+    await invoke<unknown>("test_service", { serviceId, input }),
+  );
 }
 
 export async function probeServiceModels(
@@ -350,9 +390,19 @@ export async function openExternalURL(url: string): Promise<void> {
   await invoke("open_external_url", { url });
 }
 
-export async function completeServiceAuthorization(serviceId: string, sessionId: string, code: string): Promise<AuthorizationSession> {
+export async function completeServiceAuthorization(
+  serviceId: string,
+  sessionId: string,
+  code: string,
+): Promise<AuthorizationSession> {
   requireNativeBridge();
-  return parseAuthorizationSession(await invoke<unknown>("complete_service_authorization", { serviceId, sessionId, code }));
+  return parseAuthorizationSession(
+    await invoke<unknown>("complete_service_authorization", {
+      serviceId,
+      sessionId,
+      code,
+    }),
+  );
 }
 
 export async function getServiceAuthorization(
@@ -408,7 +458,10 @@ export async function updateRoute(
   );
 }
 
-export async function deleteRoute(routeId: string, etag: string): Promise<void> {
+export async function deleteRoute(
+  routeId: string,
+  etag: string,
+): Promise<void> {
   requireNativeBridge();
   await invoke("delete_route", { routeId, etag });
 }
@@ -453,14 +506,24 @@ export async function getRequestSession(
   );
 }
 
-export async function getSessionChannelBindings(sessionId: string, before?: number) {
+export async function getSessionChannelBindings(
+  sessionId: string,
+  before?: number,
+) {
   requireNativeBridge();
-  return parseChannelBindingAudit(await invoke<unknown>("get_session_channel_bindings", { sessionId, ...(before === undefined ? {} : { before }) }));
+  return parseChannelBindingAudit(
+    await invoke<unknown>("get_session_channel_bindings", {
+      sessionId,
+      ...(before === undefined ? {} : { before }),
+    }),
+  );
 }
 
 export async function releaseSessionChannelBindings(sessionId: string) {
   requireNativeBridge();
-  return parseChannelBindingAudit(await invoke<unknown>("release_session_channel_bindings", { sessionId }));
+  return parseChannelBindingAudit(
+    await invoke<unknown>("release_session_channel_bindings", { sessionId }),
+  );
 }
 
 export async function listRequestRecords(
@@ -536,21 +599,28 @@ export async function listAccessTokens(): Promise<AccessTokenPage> {
   return parseAccessTokenPage(await invoke<unknown>("list_access_tokens"));
 }
 
-export async function listAccessTokenUsage(todayFrom: string): Promise<AccessTokenUsageResponse> {
+export async function listAccessTokenUsage(
+  todayFrom: string,
+): Promise<AccessTokenUsageResponse> {
   requireNativeBridge();
   return parseAccessTokenUsageResponse(
     await invoke<unknown>("list_access_token_usage", { todayFrom }),
   );
 }
 
-export async function getUsageSummary(window: UsageWindow): Promise<UsageSummary> {
+export async function getUsageSummary(
+  window: UsageWindow,
+): Promise<UsageSummary> {
   requireNativeBridge();
-  return parseUsageSummary(await invoke<unknown>("get_usage_summary", {
-    from: window.from,
-    to: window.to,
-    timeZone: window.time_zone || "UTC",
-    bucket: window.preset === "1d" ? "hour" : "day",
-  }), window);
+  return parseUsageSummary(
+    await invoke<unknown>("get_usage_summary", {
+      from: window.from,
+      to: window.to,
+      timeZone: window.time_zone || "UTC",
+      bucket: window.preset === "1d" ? "hour" : "day",
+    }),
+    window,
+  );
 }
 
 export async function createAccessToken(
@@ -578,16 +648,12 @@ export async function deleteAccessToken(tokenId: string): Promise<void> {
 
 export async function listPrivacyPolicies(): Promise<PrivacyPolicyPage> {
   requireNativeBridge();
-  return parsePrivacyPolicyPage(
-    await invoke<unknown>("list_privacy_policies"),
-  );
+  return parsePrivacyPolicyPage(await invoke<unknown>("list_privacy_policies"));
 }
 
 export async function getPrivacyPolicy(): Promise<PrivacyPolicyRecord> {
   requireNativeBridge();
-  return parsePrivacyPolicyRecord(
-    await invoke<unknown>("get_privacy_policy"),
-  );
+  return parsePrivacyPolicyRecord(await invoke<unknown>("get_privacy_policy"));
 }
 
 export async function updatePrivacyPolicy(
@@ -724,9 +790,13 @@ export async function getAgentDebugStatus(): Promise<AgentInstallStatus> {
   return parseAgentInstallStatus(await invoke<unknown>("agent_debug_status"));
 }
 
-export async function installAgentDebug(toolIds: AgentToolId[]): Promise<AgentInstallReceipt> {
+export async function installAgentDebug(
+  toolIds: AgentToolId[],
+): Promise<AgentInstallReceipt> {
   requireNativeBridge();
-  return parseAgentInstallReceipt(await invoke<unknown>("install_agent_debug", { toolIds }));
+  return parseAgentInstallReceipt(
+    await invoke<unknown>("install_agent_debug", { toolIds }),
+  );
 }
 
 export async function uninstallAgentDebug(): Promise<void> {
@@ -752,29 +822,57 @@ export async function getRoutingSettings(): Promise<RoutingSettings> {
   requireNativeBridge();
   return parseRoutingSettings(await invoke<unknown>("get_routing_settings"));
 }
-export async function updateRoutingSettings(patch: Partial<RoutingSettings>): Promise<RoutingSettings> {
+export async function updateRoutingSettings(
+  patch: Partial<RoutingSettings>,
+): Promise<RoutingSettings> {
   requireNativeBridge();
-  return parseRoutingSettings(await invoke<unknown>("update_routing_settings", { patch }));
+  return parseRoutingSettings(
+    await invoke<unknown>("update_routing_settings", { patch }),
+  );
 }
 
 export async function listRecoveryPaths() {
   requireNativeBridge();
-  return parseRecoveryPathPage(await invoke("recovery_paths", { operation: "list" }));
+  return parseRecoveryPathPage(
+    await invoke("recovery_paths", { operation: "list" }),
+  );
 }
 export async function getRecoveryPath(id: string) {
   requireNativeBridge();
-  return parseRecoveryPathRecord(await invoke("recovery_paths", { operation: "get", id }));
+  return parseRecoveryPathRecord(
+    await invoke("recovery_paths", { operation: "get", id }),
+  );
 }
 export async function createRecoveryPath(input: RecoveryPathInput) {
   requireNativeBridge();
   parseRecoveryPath({ ...input, id: "path_validation" });
-  return parseRecoveryPathRecord(await invoke("recovery_paths", { operation: "create", input }));
+  return parseRecoveryPathRecord(
+    await invoke("recovery_paths", { operation: "create", input }),
+  );
 }
-export async function updateRecoveryPath(id: string, etag: string, input: RecoveryPathInput) {
+export async function updateRecoveryPath(
+  id: string,
+  etag: string,
+  input: RecoveryPathInput,
+) {
   requireNativeBridge();
   parseRecoveryPath({ ...input, id });
-  const patch = { targets: null, steps: null, strategy: null, max_attempts: null, failure_policy: null, ...input };
-  return parseRecoveryPathRecord(await invoke("recovery_paths", { operation: "update", id, etag, input: patch }));
+  const patch = {
+    targets: null,
+    steps: null,
+    strategy: null,
+    max_attempts: null,
+    failure_policy: null,
+    ...input,
+  };
+  return parseRecoveryPathRecord(
+    await invoke("recovery_paths", {
+      operation: "update",
+      id,
+      etag,
+      input: patch,
+    }),
+  );
 }
 export async function deleteRecoveryPath(id: string, etag: string) {
   requireNativeBridge();
@@ -783,5 +881,7 @@ export async function deleteRecoveryPath(id: string, etag: string) {
 export async function previewRecoveryPath(input: RecoveryPreviewInput) {
   requireNativeBridge();
   parseRecoveryPath(input.path);
-  return parseRecoveryPreview(await invoke("recovery_paths", { operation: "preview", input }));
+  return parseRecoveryPreview(
+    await invoke("recovery_paths", { operation: "preview", input }),
+  );
 }

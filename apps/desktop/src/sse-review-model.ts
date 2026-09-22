@@ -82,7 +82,8 @@ export async function parseSSEIncremental(
     }
   }
   if (lines.length > 0) {
-    incompleteLastEvent = options.truncated === true || !content.endsWith("\n\n");
+    incompleteLastEvent =
+      options.truncated === true || !content.endsWith("\n\n");
     flush(incompleteLastEvent);
   }
   throwIfCancelled(options.signal);
@@ -110,7 +111,11 @@ export function parseSSESynchronously(
     if (!block) return;
     const incomplete =
       blockIndex === blocks.length - 1 && (truncated || hasOpenLastBlock);
-    const event = parseEventLines(block.split("\n"), events.length + 1, incomplete);
+    const event = parseEventLines(
+      block.split("\n"),
+      events.length + 1,
+      incomplete,
+    );
     if (event) events.push(event);
   });
   return {
@@ -162,7 +167,10 @@ function parseEventLines(
   return {
     index,
     event: eventName,
-    type: eventName !== "message" ? eventName : dataType ?? (done ? "[DONE]" : "message"),
+    type:
+      eventName !== "message"
+        ? eventName
+        : (dataType ?? (done ? "[DONE]" : "message")),
     data,
     json,
     invalidJson,

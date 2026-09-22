@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 )
 
 // Grok subscription login follows the public Grok CLI (grok-build) client:
@@ -153,7 +154,7 @@ func (manager *SessionManager) beginGrokDeviceAuthorization(
 		ServiceID: serviceID, ExpiresAt: now.Add(ttl),
 		CreatedAt: now, UpdatedAt: now,
 	}
-	sessionContext, cancel := context.WithCancel(context.Background())
+	sessionContext, cancel := context.WithCancel(networkproxy.Copy(context.Background(), ctx))
 	manager.sessions[sessionID] = &trackedSession{
 		public:  public,
 		secrets: &sessionSecrets{cancel: cancel},

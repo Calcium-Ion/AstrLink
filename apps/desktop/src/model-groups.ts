@@ -30,7 +30,10 @@ export function modelGroupKey(model: string): string {
   return `${parts[0]}-${parts[1]}`;
 }
 
-export function filterModels(models: readonly string[], query: string): string[] {
+export function filterModels(
+  models: readonly string[],
+  query: string,
+): string[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return [...models];
   return models.filter((model) => model.toLowerCase().includes(normalized));

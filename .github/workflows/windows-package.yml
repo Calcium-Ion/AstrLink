@@ -2,10 +2,8 @@ name: Windows package
 
 on:
   push:
-    branches: [main, 'codex/windows-build-*']
+    tags: ["**"]
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -185,25 +183,3 @@ jobs:
           path: installer/*
           if-no-files-found: error
           retention-days: 14
-
-  release:
-    name: Attach Windows installer to Release
-    if: github.event_name == 'release'
-    needs: publish
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: AstrLink-Windows-x86_64
-          path: release-assets
-      - name: Upload verified installer and checksum
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          cd release-assets
-          sha256sum ./*.exe > SHA256SUMS-Windows-x86_64.txt
-          gh release upload "$RELEASE_TAG" ./*.exe SHA256SUMS-Windows-x86_64.txt --clobber

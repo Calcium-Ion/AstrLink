@@ -2136,5 +2136,21 @@
       "fingerprint": "Assistant text fingerprint match"
     },
     "retention": "Up to 50,000 binding audit entries are retained locally."
+  },
+  "serviceProxy": {
+    "title": "Instance proxy",
+    "mode": "Proxy mode",
+    "inherit": "Inherit global",
+    "custom": "Custom proxy",
+    "direct": "Direct connection",
+    "url": "Proxy URL",
+    "username": "Proxy username (optional)",
+    "password": "Proxy password (optional)",
+    "removeCredential": "Remove saved proxy authentication",
+    "inheritHint": "Use the gateway’s global network settings.",
+    "directHint": "Connect this instance directly to the provider, without the global proxy.",
+    "customHint": "Supports HTTP, HTTPS and SOCKS5. Proxy failures return an error without changing the exit.",
+    "savedHint": "Authentication is saved; leave blank to keep it. Proxy failures return an error without changing the exit.",
+    "invalid": "Enter a valid HTTP, HTTPS or SOCKS5 proxy URL. Enter authentication in the separate username and password fields."
   }
 }

@@ -72,7 +72,9 @@ const rustVersion = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
 const target = rustVersion.match(/^host:\s+(.+)$/m)?.[1]?.trim();
 
 if (!target) {
-  throw new Error("Unable to determine the Rust host target for the Tauri sidecar.");
+  throw new Error(
+    "Unable to determine the Rust host target for the Tauri sidecar.",
+  );
 }
 
 const executableSuffix = target.includes("windows") ? ".exe" : "";
@@ -142,10 +144,7 @@ async function stageOnnxRuntimeNotices() {
         );
       }
       const bytes = Buffer.from(await response.arrayBuffer());
-      if (
-        bytes.byteLength !== notice.size ||
-        sha256(bytes) !== notice.sha256
-      ) {
+      if (bytes.byteLength !== notice.size || sha256(bytes) !== notice.sha256) {
         throw new Error(
           `Pinned ONNX Runtime ${notice.source} failed integrity verification.`,
         );
@@ -202,10 +201,7 @@ async function stageMacOSRuntime() {
       );
     }
     const bytes = Buffer.from(await response.arrayBuffer());
-    if (
-      bytes.byteLength !== asset.size ||
-      sha256(bytes) !== asset.sha256
-    ) {
+    if (bytes.byteLength !== asset.size || sha256(bytes) !== asset.sha256) {
       throw new Error(
         `Pinned ONNX Runtime ${onnxRuntimeVersion} archive failed integrity verification.`,
       );
@@ -217,11 +213,9 @@ async function stageMacOSRuntime() {
 
   rmSync(extractionDirectory, { recursive: true, force: true });
   mkdirSync(extractionDirectory, { recursive: true });
-  execFileSync(
-    "tar",
-    ["-xzf", archivePath, "-C", extractionDirectory],
-    { stdio: "inherit" },
-  );
+  execFileSync("tar", ["-xzf", archivePath, "-C", extractionDirectory], {
+    stdio: "inherit",
+  });
   const runtimeSource = path.join(
     extractionDirectory,
     asset.directory,
@@ -235,12 +229,7 @@ async function stageMacOSRuntime() {
   }
 
   const runtimeDestinations = [
-    path.join(
-      workerDirectory,
-      "target",
-      "release",
-      macOSRuntimeLibraryName,
-    ),
+    path.join(workerDirectory, "target", "release", macOSRuntimeLibraryName),
     path.join(
       classifierWorkerDirectory,
       "target",
@@ -289,10 +278,7 @@ async function stageLinuxRuntime() {
       );
     }
     const bytes = Buffer.from(await response.arrayBuffer());
-    if (
-      bytes.byteLength !== asset.size ||
-      sha256(bytes) !== asset.sha256
-    ) {
+    if (bytes.byteLength !== asset.size || sha256(bytes) !== asset.sha256) {
       throw new Error(
         `Pinned ONNX Runtime ${onnxRuntimeVersion} archive failed integrity verification.`,
       );
@@ -304,11 +290,9 @@ async function stageLinuxRuntime() {
 
   rmSync(extractionDirectory, { recursive: true, force: true });
   mkdirSync(extractionDirectory, { recursive: true });
-  execFileSync(
-    "tar",
-    ["-xzf", archivePath, "-C", extractionDirectory],
-    { stdio: "inherit" },
-  );
+  execFileSync("tar", ["-xzf", archivePath, "-C", extractionDirectory], {
+    stdio: "inherit",
+  });
   const runtimeSource = path.join(
     extractionDirectory,
     asset.directory,
@@ -322,12 +306,7 @@ async function stageLinuxRuntime() {
   }
 
   const runtimeDestinations = [
-    path.join(
-      workerDirectory,
-      "target",
-      "release",
-      linuxRuntimeLibraryName,
-    ),
+    path.join(workerDirectory, "target", "release", linuxRuntimeLibraryName),
     path.join(
       classifierWorkerDirectory,
       "target",
@@ -456,9 +435,7 @@ if (macOSRuntime) {
     mkdirSync(path.dirname(destination), { recursive: true });
     copyFileSync(macOSRuntime.runtimeSource, destination);
   }
-  console.log(
-    `Staged pinned ONNX Runtime ${onnxRuntimeVersion} for macOS.`,
-  );
+  console.log(`Staged pinned ONNX Runtime ${onnxRuntimeVersion} for macOS.`);
 }
 
 if (linuxRuntime) {
@@ -521,7 +498,12 @@ console.log(
 
 if (target.includes("windows")) {
   const runtimeName = "DirectML.dll";
-  const runtimeSource = path.join(workerDirectory, "target", "release", runtimeName);
+  const runtimeSource = path.join(
+    workerDirectory,
+    "target",
+    "release",
+    runtimeName,
+  );
   const classifierRuntime = path.join(
     classifierWorkerDirectory,
     "target",
@@ -531,7 +513,8 @@ if (target.includes("windows")) {
   if (
     !existsSync(runtimeSource) ||
     !existsSync(classifierRuntime) ||
-    sha256(readFileSync(runtimeSource)) !== sha256(readFileSync(classifierRuntime))
+    sha256(readFileSync(runtimeSource)) !==
+      sha256(readFileSync(classifierRuntime))
   ) {
     throw new Error("Windows workers require the same bundled DirectML.dll.");
   }

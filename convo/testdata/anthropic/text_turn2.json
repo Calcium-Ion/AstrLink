@@ -2,9 +2,17 @@
   "model": "claude-sonnet-4-5-20250929",
   "max_tokens": 1024,
   "messages": [
-    {"role": "user", "content": "用一句话介绍一下 Go 语言的 goroutine。"},
-    {"role": "assistant", "content": [{"type": "text", "text": "Goroutine 是 Go 运行时调度的轻量级线程，用 go 关键字即可并发执行函数，成本远低于操作系统线程。"}]},
-    {"role": "user", "content": "那 channel 呢？"}
+    { "role": "user", "content": "用一句话介绍一下 Go 语言的 goroutine。" },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Goroutine 是 Go 运行时调度的轻量级线程，用 go 关键字即可并发执行函数，成本远低于操作系统线程。"
+        }
+      ]
+    },
+    { "role": "user", "content": "那 channel 呢？" }
   ],
   "stream": false
 }

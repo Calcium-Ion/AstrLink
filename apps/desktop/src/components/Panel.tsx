@@ -54,9 +54,7 @@ export function PanelHeader({
     >
       <div className="min-w-0">{children}</div>
       {actions ? (
-        <ActionGroup className="shrink-0 gap-1.5">
-          {actions}
-        </ActionGroup>
+        <ActionGroup className="shrink-0 gap-1.5">{actions}</ActionGroup>
       ) : null}
     </div>
   );
@@ -79,11 +77,7 @@ export function PanelFooter({
       {...props}
     >
       {children ? <div className="min-w-0">{children}</div> : null}
-      {actions ? (
-        <ActionGroup>
-          {actions}
-        </ActionGroup>
-      ) : null}
+      {actions ? <ActionGroup>{actions}</ActionGroup> : null}
     </div>
   );
 }

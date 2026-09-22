@@ -105,7 +105,9 @@ export function TrajectoryInspectorWindow() {
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1.5 p-8 text-center">
-          <strong className="text-xs">{t("trajectory.inspectorWindowEmpty")}</strong>
+          <strong className="text-xs">
+            {t("trajectory.inspectorWindowEmpty")}
+          </strong>
           <span className="text-xs text-muted-foreground">
             {t("trajectory.inspectorWindowEmptyHint")}
           </span>

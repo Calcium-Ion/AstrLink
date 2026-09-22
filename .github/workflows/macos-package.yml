@@ -2,10 +2,8 @@ name: macOS package
 
 on:
   push:
-    branches: [main, 'codex/macos-build-*']
+    tags: ["**"]
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -135,27 +133,3 @@ jobs:
           path: ${{ runner.temp }}/astrlink-smoke/*
           if-no-files-found: ignore
           retention-days: 7
-
-  release:
-    name: Attach macOS packages to Release
-    if: github.event_name == 'release'
-    needs: package
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: AstrLink-macOS-*
-          path: release-assets
-      - name: Upload verified packages
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          for arch in arm64 x86_64; do
-            directory="release-assets/AstrLink-macOS-$arch"
-            mv "$directory/SHA256SUMS" "$directory/SHA256SUMS-macOS-$arch.txt"
-            gh release upload "$RELEASE_TAG" "$directory"/* --clobber
-          done

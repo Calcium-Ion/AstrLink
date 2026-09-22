@@ -10,11 +10,18 @@ const concepts = [
   ["03", "ARCH A", "03-arch.svg", "#CA6258"],
   ["04", "AL LIGATURE", "04-ligature.svg", "#303640"],
 ];
-const asImage = (source) => `data:image/svg+xml;base64,${Buffer.from(source).toString("base64")}`;
+const asImage = (source) =>
+  `data:image/svg+xml;base64,${Buffer.from(source).toString("base64")}`;
 const groups = concepts.map(([number, name, file, color], index) => {
   const data = asImage(readFileSync(join(dir, file)));
-  const mark = execFileSync("xmllint", ["--xpath", '/*[local-name()="svg"]/*[local-name()="g"]', join(dir, file)], { encoding: "utf8" });
-  const mono = asImage(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none"><defs><filter id="ink" x="0" y="0" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-color="#303740"/><feComposite in2="SourceGraphic" operator="in"/></filter></defs><g filter="url(#ink)">${mark}</g></svg>`);
+  const mark = execFileSync(
+    "xmllint",
+    ["--xpath", '/*[local-name()="svg"]/*[local-name()="g"]', join(dir, file)],
+    { encoding: "utf8" },
+  );
+  const mono = asImage(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none"><defs><filter id="ink" x="0" y="0" width="512" height="512" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-color="#303740"/><feComposite in2="SourceGraphic" operator="in"/></filter></defs><g filter="url(#ink)">${mark}</g></svg>`,
+  );
   const x = 48 + (index % 2) * 544;
   const y = 104 + Math.floor(index / 2) * 426;
   return `<g transform="translate(${x} ${y})">
@@ -29,7 +36,9 @@ const groups = concepts.map(([number, name, file, color], index) => {
     <line x1="0" y1="388" x2="488" y2="388" stroke="#E3E7E9"/>
   </g>`;
 });
-writeFileSync(join(dir, "comparison.svg"), `<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="984" viewBox="0 0 1120 984">
+writeFileSync(
+  join(dir, "comparison.svg"),
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="984" viewBox="0 0 1120 984">
   <title>AstrLink - Four A Monograms</title>
   <desc>Four A-based SVG concepts shown in color, one ink, and small icon sizes.</desc>
   <rect width="1120" height="984" fill="#FFFFFF"/>
@@ -40,5 +49,10 @@ writeFileSync(join(dir, "comparison.svg"), `<svg xmlns="http://www.w3.org/2000/s
     ${groups.join("\n")}
     <text x="48" y="960" font-size="12" fill="#78828B">EXPLORATIONS / 01-04</text>
   </g>
-</svg>\n`);
-execFileSync("rsvg-convert", ["-o", join(dir, "comparison.png"), join(dir, "comparison.svg")]);
+</svg>\n`,
+);
+execFileSync("rsvg-convert", [
+  "-o",
+  join(dir, "comparison.png"),
+  join(dir, "comparison.svg"),
+]);

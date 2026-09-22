@@ -29,6 +29,7 @@ type ServiceModelProber interface {
 }
 
 type serviceCreateRequest struct {
+	Proxy                     json.RawMessage         `json:"proxy,omitempty"`
 	ResponsesWebSocketEnabled json.RawMessage         `json:"responses_websocket_enabled,omitempty"`
 	FailurePolicy             *contract.FailurePolicy `json:"failure_policy,omitempty"`
 	Name                      string                  `json:"name"`
@@ -258,6 +259,10 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 		credential = mutation
 	default:
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "service kind is unsupported")
+		return
+	}
+	if err := applyServiceProxyInput(&service, &credential, input.Proxy); err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_proxy", err.Error())
 		return
 	}
 	record, err := handler.serviceStore.CreateService(request.Context(), service, credential)
@@ -545,6 +550,7 @@ type serviceModelProbeRequest struct {
 }
 
 type draftServiceModelProbeRequest struct {
+	Proxy     json.RawMessage       `json:"proxy,omitempty"`
 	ServiceID *contract.ServiceID   `json:"service_id,omitempty"`
 	Kind      *contract.ServiceKind `json:"kind"`
 	HTTP      json.RawMessage       `json:"http"`
@@ -619,6 +625,7 @@ func (handler *Handler) probeDraftServiceModels(writer http.ResponseWriter, requ
 		return
 	}
 	serviceID := contract.ServiceID("service_model_probe")
+	proxyService := contract.Service{ID: serviceID}
 	connection := contract.HTTPConnection{BaseURL: httpInput.BaseURL, Auth: auth}
 	var secret []byte
 	if httpInput.Credential != nil {
@@ -649,12 +656,18 @@ func (handler *Handler) probeDraftServiceModels(writer http.ResponseWriter, requ
 			return
 		}
 		serviceID = *input.ServiceID
+		proxyService = current.Service
 		if len(secret) == 0 {
 			connection.CredentialRef = current.Service.HTTP.CredentialRef
 		}
 	}
+	probeContext, err := handler.bindDraftProxy(request.Context(), proxyService, input.Proxy)
+	if err != nil {
+		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_proxy", err.Error())
+		return
+	}
 	ids, err := handler.serviceModels.ProbeHTTP(
-		request.Context(), serviceID, *input.Kind, connection, secret, *input.Protocol,
+		probeContext, serviceID, *input.Kind, connection, secret, *input.Protocol,
 	)
 	if err != nil {
 		writeServiceModelProbeError(writer, err)
@@ -871,15 +884,18 @@ func applyServicePatch(
 	if len(patch) == 0 {
 		return service, credential, fmt.Errorf("patch is empty")
 	}
-	allowed := map[string]bool{"name": true, "enabled": true, "models": true, "failure_policy": true, "responses_websocket_enabled": true}
+	allowed := map[string]bool{"proxy": true, "name": true, "enabled": true, "models": true, "failure_policy": true, "responses_websocket_enabled": true}
 	if service.Kind.IsHTTP() {
 		allowed["http"] = true
 		allowed["capabilities"] = true
 	}
 	for name, raw := range patch {
-		if !allowed[name] || (isJSONNull(raw) && name != "failure_policy") {
+		if !allowed[name] || (isJSONNull(raw) && name != "failure_policy" && name != "proxy") {
 			return service, credential, fmt.Errorf("field %q cannot be patched", name)
 		}
+	}
+	if err := applyServiceProxyInput(&service, &credential, patch["proxy"]); err != nil {
+		return service, credential, err
 	}
 	if raw, ok := patch["failure_policy"]; ok {
 		service.FailurePolicy = nil
@@ -1030,6 +1046,12 @@ func probeSubscriptionResponses(
 			return
 		}
 	}
+	proxyContext, proxyErr := manager.ProxyContext(request.Context(), id)
+	if proxyErr != nil {
+		writeError(writer, http.StatusBadGateway, "instance_proxy_unavailable", "instance proxy configuration unavailable")
+		return
+	}
+	request = request.WithContext(proxyContext)
 	tokens, err := manager.AccessToken(request.Context(), id)
 	if err != nil {
 		writeError(writer, http.StatusConflict, "service_not_connected", "subscription service is not connected")

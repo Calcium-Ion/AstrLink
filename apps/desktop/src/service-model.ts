@@ -1,3 +1,8 @@
+import {
+  parseServiceProxy,
+  type ServiceProxy,
+  type ServiceProxyInput,
+} from "./service-proxy-model";
 import { parseFailurePolicy, type FailurePolicy } from "./failure-policy-model";
 import { i18n } from "./i18n";
 import type {
@@ -54,7 +59,10 @@ export type SubscriptionServiceKind =
 export type ServiceKind = SubscriptionServiceKind | HTTPServiceKind;
 
 /** Provider owning each subscription kind; mirrors contract.ServiceKind.SubscriptionProvider. */
-export const subscriptionKindProviders: Record<SubscriptionServiceKind, SubscriptionProvider> = {
+export const subscriptionKindProviders: Record<
+  SubscriptionServiceKind,
+  SubscriptionProvider
+> = {
   codex_subscription: "openai_codex",
   claude_subscription: "claude_code",
   grok_subscription: "xai_grok",
@@ -64,8 +72,12 @@ export const subscriptionKinds = Object.keys(
   subscriptionKindProviders,
 ) as readonly SubscriptionServiceKind[];
 
-export function isSubscriptionKind(kind: unknown): kind is SubscriptionServiceKind {
-  return typeof kind === "string" && Object.hasOwn(subscriptionKindProviders, kind);
+export function isSubscriptionKind(
+  kind: unknown,
+): kind is SubscriptionServiceKind {
+  return (
+    typeof kind === "string" && Object.hasOwn(subscriptionKindProviders, kind)
+  );
 }
 
 /**
@@ -73,12 +85,13 @@ export function isSubscriptionKind(kind: unknown): kind is SubscriptionServiceKi
  * (mirrors core codingplan.Supports). OpenCode Zen is pay-as-you-go and has
  * no usage API, so it is deliberately absent.
  */
-export const codingPlanUsageKinds: ReadonlySet<ServiceKind> = new Set<ServiceKind>([
-  "opencode_go",
-  "kimi_coding",
-  "glm_coding",
-  "minimax_coding",
-]);
+export const codingPlanUsageKinds: ReadonlySet<ServiceKind> =
+  new Set<ServiceKind>([
+    "opencode_go",
+    "kimi_coding",
+    "glm_coding",
+    "minimax_coding",
+  ]);
 
 /** True when the service row can show a live plan quota meter. */
 export function hasPlanUsage(service: {
@@ -109,6 +122,7 @@ export interface SubscriptionServiceConnection {
 }
 
 export interface Service {
+  proxy?: ServiceProxy;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   id: string;
@@ -139,6 +153,7 @@ export interface ServiceRecord {
 }
 
 export type SubscriptionServiceCreateInput = {
+  proxy?: ServiceProxyInput | null;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   name: string;
@@ -148,6 +163,7 @@ export type SubscriptionServiceCreateInput = {
 };
 
 export type HTTPServiceCreateInput = {
+  proxy?: ServiceProxyInput | null;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy;
   name: string;
@@ -167,6 +183,7 @@ export type ServiceCreateInput =
   | HTTPServiceCreateInput;
 
 export type ServicePatchInput = {
+  proxy?: ServiceProxyInput | null;
   responses_websocket_enabled?: boolean;
   failure_policy?: FailurePolicy | null;
   name?: string;
@@ -187,6 +204,7 @@ export interface ServiceModelProbe {
 }
 
 export interface DraftServiceModelProbeInput {
+  proxy?: ServiceProxyInput | null;
   service_id?: string;
   kind: HTTPServiceKind;
   http: HTTPServiceCreateInput["http"];
@@ -198,8 +216,7 @@ type JsonObject = Record<string, unknown>;
 const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
 const protocolIDPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
-const localCredentialRefPattern =
-  /^local:\/\/service\/[a-z][a-z0-9_-]{2,95}$/;
+const localCredentialRefPattern = /^local:\/\/service\/[a-z][a-z0-9_-]{2,95}$/;
 const keyringCredentialRefPattern =
   /^keyring:\/\/[A-Za-z0-9._~-]+\/[A-Za-z0-9._~!$&'()*+,;=:@/-]*[A-Za-z0-9._~!$&'()*+,;=:@-]$/;
 const rfc3339Pattern =
@@ -210,7 +227,11 @@ const credentialLeakPattern =
   /(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|code_verifier=[A-Za-z0-9._~-]{20,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i;
 
 const httpKinds = new Set<HTTPServiceKind>([
-  "opencode_go", "opencode_zen", "kimi_coding", "glm_coding", "minimax_coding",
+  "opencode_go",
+  "opencode_zen",
+  "kimi_coding",
+  "glm_coding",
+  "minimax_coding",
   "newapi",
   "openai",
   "anthropic",
@@ -266,7 +287,12 @@ function keysAt(
   }
 }
 
-function stringAt(value: unknown, path: string, min: number, max: number): string {
+function stringAt(
+  value: unknown,
+  path: string,
+  min: number,
+  max: number,
+): string {
   if (typeof value !== "string") {
     return invalid(path, `expected ${min} to ${max} characters`);
   }
@@ -296,7 +322,12 @@ function parseAuth(value: unknown, path: string): ServiceAuth {
   }
   const scheme = auth.scheme as ServiceAuthScheme;
   if (scheme === "custom_header") {
-    const headerName = stringAt(auth.header_name, `${path}.header_name`, 1, 128);
+    const headerName = stringAt(
+      auth.header_name,
+      `${path}.header_name`,
+      1,
+      128,
+    );
     if (!headerNamePattern.test(headerName)) {
       invalid(`${path}.header_name`, "invalid header name");
     }
@@ -312,7 +343,8 @@ function parseCapability(value: unknown, path: string): ServiceCapability {
   const capability = objectAt(value, path);
   keysAt(capability, ["protocol", "mode", "streaming"], ["convert_to"], path);
   const protocol = stringAt(capability.protocol, `${path}.protocol`, 3, 96);
-  if (!protocolIDPattern.test(protocol)) invalid(`${path}.protocol`, "invalid protocol ID");
+  if (!protocolIDPattern.test(protocol))
+    invalid(`${path}.protocol`, "invalid protocol ID");
   if (capability.mode !== "native" && capability.mode !== "delegated") {
     invalid(`${path}.mode`, "unknown capability mode");
   }
@@ -325,7 +357,12 @@ function parseCapability(value: unknown, path: string): ServiceCapability {
     streaming: capability.streaming,
   };
   if (Object.hasOwn(capability, "convert_to")) {
-    const convertTo = stringAt(capability.convert_to, `${path}.convert_to`, 3, 96);
+    const convertTo = stringAt(
+      capability.convert_to,
+      `${path}.convert_to`,
+      3,
+      96,
+    );
     if (!protocolIDPattern.test(convertTo)) {
       invalid(`${path}.convert_to`, "invalid protocol ID");
     }
@@ -348,7 +385,10 @@ function parseModels(value: unknown, path: string, maximum = 2_000): string[] {
   return models;
 }
 
-function parseHTTPConnection(value: unknown, path: string): HTTPServiceConnection {
+function parseHTTPConnection(
+  value: unknown,
+  path: string,
+): HTTPServiceConnection {
   const connection = objectAt(value, path);
   keysAt(connection, ["base_url", "auth"], ["credential_ref"], path);
   const baseURL = stringAt(connection.base_url, `${path}.base_url`, 1, 2048);
@@ -369,7 +409,12 @@ function parseHTTPConnection(value: unknown, path: string): HTTPServiceConnectio
   }
   let credentialRef: string | undefined;
   if (Object.hasOwn(connection, "credential_ref")) {
-    credentialRef = stringAt(connection.credential_ref, `${path}.credential_ref`, 1, 512);
+    credentialRef = stringAt(
+      connection.credential_ref,
+      `${path}.credential_ref`,
+      1,
+      512,
+    );
     if (!localCredentialRefPattern.test(credentialRef)) {
       invalid(`${path}.credential_ref`, "must use local://service/<id>");
     }
@@ -381,12 +426,16 @@ function parseHTTPConnection(value: unknown, path: string): HTTPServiceConnectio
   };
 }
 
-function parseSubscriptionError(value: unknown, path: string): SubscriptionError {
+function parseSubscriptionError(
+  value: unknown,
+  path: string,
+): SubscriptionError {
   const error = objectAt(value, path);
   keysAt(error, ["code", "message"], [], path);
   const code = stringAt(error.code, `${path}.code`, 2, 64);
   const message = stringAt(error.message, `${path}.message`, 1, 240);
-  if (!errorCodePattern.test(code)) invalid(`${path}.code`, "invalid error code");
+  if (!errorCodePattern.test(code))
+    invalid(`${path}.code`, "invalid error code");
   if (credentialLeakPattern.test(message)) {
     invalid(`${path}.message`, "must not contain credential material");
   }
@@ -479,8 +528,23 @@ export function parseService(value: unknown, path = "$"): Service {
   const service = objectAt(value, path);
   keysAt(
     service,
-    ["id", "name", "kind", "enabled", "models", "capabilities", "created_at", "updated_at"],
-    ["http", "subscription", "failure_policy", "responses_websocket_enabled"],
+    [
+      "id",
+      "name",
+      "kind",
+      "enabled",
+      "models",
+      "capabilities",
+      "created_at",
+      "updated_at",
+    ],
+    [
+      "http",
+      "subscription",
+      "failure_policy",
+      "responses_websocket_enabled",
+      "proxy",
+    ],
     path,
   );
   const id = stringAt(service.id, `${path}.id`, 3, 96);
@@ -493,12 +557,20 @@ export function parseService(value: unknown, path = "$"): Service {
   ) {
     invalid(`${path}.kind`, "unknown service kind");
   }
-  if (typeof service.enabled !== "boolean") invalid(`${path}.enabled`, "expected a boolean");
-  if (Object.hasOwn(service, "responses_websocket_enabled") && typeof service.responses_websocket_enabled !== "boolean") {
+  if (typeof service.enabled !== "boolean")
+    invalid(`${path}.enabled`, "expected a boolean");
+  if (
+    Object.hasOwn(service, "responses_websocket_enabled") &&
+    typeof service.responses_websocket_enabled !== "boolean"
+  ) {
     invalid(`${path}.responses_websocket_enabled`, "expected a boolean");
   }
   const websocketSetting = Object.hasOwn(service, "responses_websocket_enabled")
-    ? { responses_websocket_enabled: service.responses_websocket_enabled as boolean } : {};
+    ? {
+        responses_websocket_enabled:
+          service.responses_websocket_enabled as boolean,
+      }
+    : {};
   const models = parseModels(service.models, `${path}.models`);
   if (!Array.isArray(service.capabilities)) {
     invalid(`${path}.capabilities`, "expected an array");
@@ -513,12 +585,21 @@ export function parseService(value: unknown, path = "$"): Service {
   }
 
   if (isSubscriptionKind(service.kind)) {
-    if (!Object.hasOwn(service, "subscription") || Object.hasOwn(service, "http")) {
+    if (
+      !Object.hasOwn(service, "subscription") ||
+      Object.hasOwn(service, "http")
+    ) {
       invalid(path, "subscription service requires only subscription");
     }
-    const subscription = parseSubscriptionConnection(service.subscription, `${path}.subscription`);
+    const subscription = parseSubscriptionConnection(
+      service.subscription,
+      `${path}.subscription`,
+    );
     if (subscription.provider !== subscriptionKindProviders[service.kind]) {
-      invalid(`${path}.subscription.provider`, "provider does not match service kind");
+      invalid(
+        `${path}.subscription.provider`,
+        "provider does not match service kind",
+      );
     }
     return {
       id,
@@ -526,15 +607,28 @@ export function parseService(value: unknown, path = "$"): Service {
       kind: service.kind,
       enabled: service.enabled,
       ...websocketSetting,
+      ...(service.proxy !== undefined
+        ? { proxy: parseServiceProxy(service.proxy, id) }
+        : {}),
       models,
       capabilities,
       subscription,
       created_at: createdAt,
       updated_at: updatedAt,
-      ...(Object.hasOwn(service, "failure_policy") ? { failure_policy: parseFailurePolicy(service.failure_policy, `${path}.failure_policy`) } : {}),
+      ...(Object.hasOwn(service, "failure_policy")
+        ? {
+            failure_policy: parseFailurePolicy(
+              service.failure_policy,
+              `${path}.failure_policy`,
+            ),
+          }
+        : {}),
     };
   }
-  if (!Object.hasOwn(service, "http") || Object.hasOwn(service, "subscription")) {
+  if (
+    !Object.hasOwn(service, "http") ||
+    Object.hasOwn(service, "subscription")
+  ) {
     invalid(path, "HTTP service requires only http");
   }
   return {
@@ -543,19 +637,32 @@ export function parseService(value: unknown, path = "$"): Service {
     kind: service.kind as HTTPServiceKind,
     enabled: service.enabled,
     ...websocketSetting,
+    ...(service.proxy !== undefined
+      ? { proxy: parseServiceProxy(service.proxy, id) }
+      : {}),
     models,
     capabilities,
     http: parseHTTPConnection(service.http, `${path}.http`),
     created_at: createdAt,
     updated_at: updatedAt,
-      ...(Object.hasOwn(service, "failure_policy") ? { failure_policy: parseFailurePolicy(service.failure_policy, `${path}.failure_policy`) } : {}),
+    ...(Object.hasOwn(service, "failure_policy")
+      ? {
+          failure_policy: parseFailurePolicy(
+            service.failure_policy,
+            `${path}.failure_policy`,
+          ),
+        }
+      : {}),
   };
 }
 
 export function parseServiceModelProbe(value: unknown): ServiceModelProbe {
   const probe = objectAt(value, "$");
   keysAt(probe, ["protocol", "model_ids"], ["service_id"], "$");
-  if (probe.protocol !== "openai.models" && probe.protocol !== "google.models") {
+  if (
+    probe.protocol !== "openai.models" &&
+    probe.protocol !== "google.models"
+  ) {
     invalid("$.protocol", "unknown model discovery protocol");
   }
   const result: ServiceModelProbe = {
@@ -564,7 +671,8 @@ export function parseServiceModelProbe(value: unknown): ServiceModelProbe {
   };
   if (Object.hasOwn(probe, "service_id")) {
     const serviceID = stringAt(probe.service_id, "$.service_id", 3, 96);
-    if (!resourceIDPattern.test(serviceID)) invalid("$.service_id", "invalid service ID");
+    if (!resourceIDPattern.test(serviceID))
+      invalid("$.service_id", "invalid service ID");
     result.service_id = serviceID;
   }
   return result;
@@ -604,11 +712,24 @@ export function serviceStatusLabel(service: Service): string {
   return i18n.t(`subscription.${service.subscription.status}`);
 }
 
-export function supportsResponsesWebSocket(service: Pick<Service, "kind" | "capabilities">): boolean {
-  return service.kind === "codex_subscription" || service.capabilities.some(capability =>
-    capability.protocol === "openai.responses" && capability.streaming && !capability.convert_to);
+export function supportsResponsesWebSocket(
+  service: Pick<Service, "kind" | "capabilities">,
+): boolean {
+  return (
+    service.kind === "codex_subscription" ||
+    service.capabilities.some(
+      (capability) =>
+        capability.protocol === "openai.responses" &&
+        capability.streaming &&
+        !capability.convert_to,
+    )
+  );
 }
 
-export function responsesWebSocketEnabled(service: Pick<Service, "kind" | "responses_websocket_enabled">): boolean {
-  return service.responses_websocket_enabled ?? service.kind === "codex_subscription";
+export function responsesWebSocketEnabled(
+  service: Pick<Service, "kind" | "responses_websocket_enabled">,
+): boolean {
+  return (
+    service.responses_websocket_enabled ?? service.kind === "codex_subscription"
+  );
 }

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const motionPreference = vi.hoisted(() => ({ reduced: false }));
 vi.mock("motion/react", async (importOriginal) => ({
-  ...await importOriginal<typeof import("motion/react")>(),
+  ...(await importOriginal<typeof import("motion/react")>()),
   useReducedMotion: () => motionPreference.reduced,
 }));
 
@@ -16,16 +16,34 @@ import { i18n } from "./i18n";
 let root: Root;
 let container: HTMLDivElement;
 const dialog = () => document.querySelector('[data-slot="dialog-content"]');
-const help = () => container.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.t("services.orderLabel")}"]`)!;
-const button = (text: string) => [...document.querySelectorAll("button")].find(item => item.textContent === text)!;
-const order = () => [...document.querySelectorAll<HTMLElement>("[data-preview-item]")].map(item => item.dataset.previewItem);
-const render = (ready = true) => act(async () => root.render(
-  <StrictMode><ServiceOrderHelp ready={ready}><p>排序帮助</p></ServiceOrderHelp></StrictMode>,
-));
+const help = () =>
+  container.querySelector<HTMLButtonElement>(
+    `button[aria-label="${i18n.t("services.orderLabel")}"]`,
+  )!;
+const button = (text: string) =>
+  [...document.querySelectorAll("button")].find(
+    (item) => item.textContent === text,
+  )!;
+const order = () =>
+  [...document.querySelectorAll<HTMLElement>("[data-preview-item]")].map(
+    (item) => item.dataset.previewItem,
+  );
+const render = (ready = true) =>
+  act(async () =>
+    root.render(
+      <StrictMode>
+        <ServiceOrderHelp ready={ready}>
+          <p>排序帮助</p>
+        </ServiceOrderHelp>
+      </StrictMode>,
+    ),
+  );
 
 beforeEach(() => {
   motionPreference.reduced = false;
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.removeItem(SERVICE_ORDER_GUIDE_KEY);
   container = document.createElement("div");
   document.body.append(container);
@@ -61,7 +79,9 @@ it("preserves help on clicks one to four and replays on every fifth click", asyn
     for (let index = 0; index < 4; index++) {
       await act(async () => help().click());
       expect(dialog()).toBeNull();
-      expect(document.querySelector('[data-slot="popover-content"]') !== null).toBe(index % 2 === 0);
+      expect(
+        document.querySelector('[data-slot="popover-content"]') !== null,
+      ).toBe(index % 2 === 0);
     }
     await act(async () => help().click());
     expect(dialog()).not.toBeNull();
@@ -80,7 +100,11 @@ it("demonstrates two provider moves, replays from the beginning and cancels on c
   await act(async () => vi.advanceTimersByTime(4000));
   expect(order()).toEqual(["newapi", "openai", "codex"]);
   expect(dialog()?.textContent).toContain("开启故障切换后");
-  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="重播拖拽演示"]')!.click());
+  await act(async () =>
+    document
+      .querySelector<HTMLButtonElement>('button[aria-label="重播拖拽演示"]')!
+      .click(),
+  );
   expect(order()).toEqual(["codex", "openai", "newapi"]);
   await act(async () => button("知道了").click());
   await act(async () => vi.advanceTimersByTime(6000));
@@ -88,7 +112,9 @@ it("demonstrates two provider moves, replays from the beginning and cancels on c
 });
 
 it("still opens and dismisses when browser storage is unavailable", async () => {
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("unavailable");
+  });
   await render();
   expect(dialog()).not.toBeNull();
   await act(async () => button("知道了").click());
@@ -105,8 +131,12 @@ it("shows the result without animated dragging for reduced motion", async () => 
 
 it("closes with Escape and returns focus to the help trigger", async () => {
   await render();
-  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await act(async () =>
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    ),
+  );
   expect(dialog()).toBeNull();
-  await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   expect(document.activeElement).toBe(help());
 });

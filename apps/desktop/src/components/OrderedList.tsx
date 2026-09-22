@@ -1,5 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { animate, motion, useMotionValue, useReducedMotion } from "motion/react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  animate,
+  motion,
+  useMotionValue,
+  useReducedMotion,
+} from "motion/react";
 import { GripVertical, ArrowUp, ArrowDown } from "@/components/icons";
 import { Button } from "./ui/button";
 import { Panel } from "./Panel";
@@ -19,7 +30,10 @@ export function OrderedList<T extends { id: string }>({
   items: T[];
   onChange: (items: T[]) => void;
   children: (
-    item: T, index: number, controls: ReactNode, sorting: boolean,
+    item: T,
+    index: number,
+    controls: ReactNode,
+    sorting: boolean,
   ) => ReactNode;
   label: string;
   disabled?: boolean;
@@ -48,7 +62,9 @@ export function OrderedList<T extends { id: string }>({
   // Catalog loads and usage updates must not animate as user reorders.
   const [animationEpoch, setAnimationEpoch] = useState(0);
   const [lifted, setLifted] = useState<string | null>(null);
-  const [slot, setSlot] = useState<{ top: number; height: number } | null>(null);
+  const [slot, setSlot] = useState<{ top: number; height: number } | null>(
+    null,
+  );
   const [dragLayout, setDragLayout] = useState<{
     minHeight: number;
     paddingTop: number;
@@ -73,7 +89,10 @@ export function OrderedList<T extends { id: string }>({
     if (!point) return;
     const row = rowFor(point.source);
     if (point.moved && row) {
-      landing.current = { id: point.source, top: row.getBoundingClientRect().top };
+      landing.current = {
+        id: point.source,
+        top: row.getBoundingClientRect().top,
+      };
     }
     if (frame.current !== null) cancelAnimationFrame(frame.current);
     frame.current = null;
@@ -87,7 +106,11 @@ export function OrderedList<T extends { id: string }>({
     if (point.moved) setAnimationEpoch((value) => value + 1);
     if (list.current?.hasPointerCapture(point.id))
       list.current.releasePointerCapture(point.id);
-    if (commit && next && next.some((item, index) => item.id !== items[index]?.id))
+    if (
+      commit &&
+      next &&
+      next.some((item, index) => item.id !== items[index]?.id)
+    )
       onChange(next);
   };
   useEffect(
@@ -120,13 +143,16 @@ export function OrderedList<T extends { id: string }>({
       const row = rowFor(point.source);
       const handle = row?.querySelector("button");
       if (row && handle) {
-        point.grabOffset = handle.getBoundingClientRect().top -
-          row.getBoundingClientRect().top + point.handleOffset;
+        point.grabOffset =
+          handle.getBoundingClientRect().top -
+          row.getBoundingClientRect().top +
+          point.handleOffset;
         if (point.needsAnchor) {
           point.needsAnchor = false;
           // Compact around the grabbed row without collapsing the scroll extent.
           const paddingTop = Math.max(
-            0, point.startAnchor - row.offsetTop - point.grabOffset,
+            0,
+            point.startAnchor - row.offsetTop - point.grabOffset,
           );
           if (paddingTop > 0) {
             setDragLayout((current) => current && { ...current, paddingTop });
@@ -175,7 +201,10 @@ export function OrderedList<T extends { id: string }>({
     const row = rowFor(point.source);
     if (!row) return;
     dragY.set(
-      point.y - point.grabOffset - list.current.getBoundingClientRect().top - row.offsetTop,
+      point.y -
+        point.grabOffset -
+        list.current.getBoundingClientRect().top -
+        row.offsetTop,
     );
     setSlot((current) =>
       current?.top === row.offsetTop && current.height === row.offsetHeight
@@ -203,7 +232,9 @@ export function OrderedList<T extends { id: string }>({
     if (index < 0) index = remaining.length;
     if (current[index]?.id === point.source) return;
     remaining.splice(
-      index, 0, current.find((item) => item.id === point.source)!,
+      index,
+      0,
+      current.find((item) => item.id === point.source)!,
     );
     previewRef.current = remaining;
     setAnimationEpoch((value) => value + 1);
@@ -268,7 +299,10 @@ export function OrderedList<T extends { id: string }>({
           setPreview(items);
           setDragging(point.source);
           setLifted(point.source);
-          setDragLayout({ minHeight: list.current?.offsetHeight ?? 0, paddingTop: 0 });
+          setDragLayout({
+            minHeight: list.current?.offsetHeight ?? 0,
+            paddingTop: 0,
+          });
           setAnimationEpoch((value) => value + 1);
           return;
         }
@@ -315,9 +349,13 @@ export function OrderedList<T extends { id: string }>({
               }}
               onPointerDown={(event) => {
                 if (
-                  disabled || pointer.current || lifted ||
-                  event.button !== 0 || !list.current
-                ) return;
+                  disabled ||
+                  pointer.current ||
+                  lifted ||
+                  event.button !== 0 ||
+                  !list.current
+                )
+                  return;
                 const row = rowFor(item.id);
                 if (!row) return;
                 event.preventDefault();
@@ -331,8 +369,13 @@ export function OrderedList<T extends { id: string }>({
                   y: event.clientY,
                   startY: event.clientY,
                   grabOffset: event.clientY - row.getBoundingClientRect().top,
-                  handleOffset: event.clientY - event.currentTarget.getBoundingClientRect().top,
-                  startAnchor: row.offsetTop + event.clientY - row.getBoundingClientRect().top,
+                  handleOffset:
+                    event.clientY -
+                    event.currentTarget.getBoundingClientRect().top,
+                  startAnchor:
+                    row.offsetTop +
+                    event.clientY -
+                    row.getBoundingClientRect().top,
                   needsAnchor: true,
                   needsTarget: true,
                   moved: false,

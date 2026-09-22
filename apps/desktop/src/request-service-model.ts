@@ -2,7 +2,8 @@ import { i18n } from "./i18n";
 import type { RequestRecord, RequestSession } from "./request-record-model";
 import type { Service } from "./service-model";
 
-export type RequestService = Pick<Service, "id" | "name"> & Partial<Pick<Service, "kind">>;
+export type RequestService = Pick<Service, "id" | "name"> &
+  Partial<Pick<Service, "kind">>;
 export type RequestServiceMap = Readonly<Record<string, RequestService>>;
 
 export interface RequestServiceIdentity {
@@ -20,7 +21,11 @@ export function requestServiceIdentity(
   if (!id) {
     return {
       id: null,
-      name: i18n.t(record.status === "pending" ? "records.selectingService" : "records.noService"),
+      name: i18n.t(
+        record.status === "pending"
+          ? "records.selectingService"
+          : "records.noService",
+      ),
     };
   }
   const service = services[id];

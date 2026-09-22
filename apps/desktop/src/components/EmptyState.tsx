@@ -31,15 +31,27 @@ export function EmptyState({
       )}
       data-slot="empty-state"
     >
-      {illustration ? <div className="mb-3 max-w-full" data-slot="empty-state-illustration">{illustration}</div> : null}
+      {illustration ? (
+        <div className="mb-3 max-w-full" data-slot="empty-state-illustration">
+          {illustration}
+        </div>
+      ) : null}
       <Heading
-        className={cn("text-foreground", variant === "page" ? "text-xl font-semibold" : "text-sm font-medium")}
+        className={cn(
+          "text-foreground",
+          variant === "page" ? "text-xl font-semibold" : "text-sm font-medium",
+        )}
         id={titleId}
       >
         {title}
       </Heading>
       {description ? (
-        <p className={cn("max-w-[52ch] text-text-secondary", variant === "page" ? "text-sm" : "text-xs")}>
+        <p
+          className={cn(
+            "max-w-[52ch] text-text-secondary",
+            variant === "page" ? "text-sm" : "text-xs",
+          )}
+        >
           {description}
         </p>
       ) : null}

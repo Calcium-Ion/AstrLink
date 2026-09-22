@@ -634,5 +634,8 @@ SET document_json = json_remove(document_json, '$.disabled_models')`,
 		{Version: 31, Name: "request_first_token_timing", Statements: []string{
 			`ALTER TABLE request_records ADD COLUMN first_token_ms INTEGER CHECK(first_token_ms IS NULL OR first_token_ms >= 0)`,
 		}},
+		{Version: 32, Name: "service_proxy_credentials", Statements: []string{
+			`CREATE TABLE service_proxy_credentials (service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE, credential_value BLOB NOT NULL)`,
+		}},
 	}
 }

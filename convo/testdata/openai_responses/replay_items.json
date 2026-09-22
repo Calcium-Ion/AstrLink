@@ -2,12 +2,32 @@
   "model": "gpt-5",
   "instructions": "You are Codex, a coding agent.",
   "input": [
-    {"role": "user", "content": [{"type": "input_text", "text": "List the Go files in src and tell me which one has a TODO"}]},
-    {"type": "reasoning", "id": "rs_68b7d1e2f3a4b5c6d7e8f9a0", "summary": []},
-    {"type": "function_call", "id": "fc_68b7d1e2f3a4b5c6d7e8f9a1", "call_id": "call_Ab12Cd34Ef56Gh78Ij90", "name": "shell", "arguments": "{\"command\":[\"ls\",\"src\"]}"},
-    {"type": "function_call_output", "call_id": "call_Ab12Cd34Ef56Gh78Ij90", "output": "a.go\nb.go\n"}
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "List the Go files in src and tell me which one has a TODO"
+        }
+      ]
+    },
+    { "type": "reasoning", "id": "rs_68b7d1e2f3a4b5c6d7e8f9a0", "summary": [] },
+    {
+      "type": "function_call",
+      "id": "fc_68b7d1e2f3a4b5c6d7e8f9a1",
+      "call_id": "call_Ab12Cd34Ef56Gh78Ij90",
+      "name": "shell",
+      "arguments": "{\"command\":[\"ls\",\"src\"]}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_Ab12Cd34Ef56Gh78Ij90",
+      "output": "a.go\nb.go\n"
+    }
   ],
-  "tools": [{"type": "function", "name": "shell", "parameters": {"type": "object"}}],
+  "tools": [
+    { "type": "function", "name": "shell", "parameters": { "type": "object" } }
+  ],
   "prompt_cache_key": "codex-sess-3f9a1c2b-7d4e-4f6a-9b8c-0d1e2f3a4b5c",
   "store": false,
   "stream": true

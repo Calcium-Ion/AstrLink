@@ -17,8 +17,13 @@ function updateDocument(): void {
   resolved = resolveTheme(preference, systemTheme?.matches ?? false);
   document.documentElement.dataset.theme = resolved;
   document.documentElement.style.colorScheme = resolved;
-  const background = getComputedStyle(document.documentElement).getPropertyValue("--background").trim();
-  if (background) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", background);
+  const background = getComputedStyle(document.documentElement)
+    .getPropertyValue("--background")
+    .trim();
+  if (background)
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", background);
   listeners.forEach((listener) => listener());
 }
 
@@ -58,9 +63,15 @@ export function initializeTheme(): () => void {
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
-  return () => { listeners.delete(listener); };
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function useResolvedTheme(): ResolvedTheme {
-  return useSyncExternalStore(subscribe, () => resolved, () => "light");
+  return useSyncExternalStore(
+    subscribe,
+    () => resolved,
+    () => "light",
+  );
 }

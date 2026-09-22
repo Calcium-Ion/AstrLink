@@ -26,6 +26,7 @@ type authorizationAttempt struct {
 
 // Manager owns subscription lifecycle and isolates each provider's OAuth client.
 type Manager struct {
+	resolveProxy            func(context.Context, contract.ServiceID) (context.Context, error)
 	usageObserver           func(context.Context, contract.SubscriptionAccount, contract.SubscriptionUsage) error
 	resetObserver           func(context.Context, contract.SubscriptionAccount) error
 	mu                      sync.Mutex
@@ -71,6 +72,7 @@ func NewManager(accounts AccountStore, credentials accountauth.AccountCredential
 	oauth = oauth.Normalize()
 	now := oauth.Now
 	manager := &Manager{
+		resolveProxy:            oauth.ResolveProxy,
 		accounts:                accounts,
 		credentials:             credentials,
 		now:                     now,
@@ -115,6 +117,9 @@ func providerOverride(overrides []accountauth.OAuthConfig, provider contract.Sub
 	}
 	if config.Now == nil {
 		config.Now = base.Now
+	}
+	if config.ResolveProxy == nil {
+		config.ResolveProxy = base.ResolveProxy
 	}
 	config.Provider = provider
 	return config.Normalize()
@@ -390,6 +395,10 @@ func (manager *Manager) AccessToken(ctx context.Context, id contract.Subscriptio
 }
 
 func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsage, error) {
+	ctx, proxyErr := manager.ProxyContext(ctx, id)
+	if proxyErr != nil {
+		return contract.SubscriptionUsage{}, proxyErr
+	}
 	now := manager.now().UTC()
 	manager.mu.Lock()
 	if entry, ok := manager.usageCache[id]; ok && now.Before(entry.until) {
@@ -436,6 +445,10 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 }
 
 func (manager *Manager) ConsumeReset(ctx context.Context, id contract.ServiceID) (contract.SubscriptionUsageReset, error) {
+	ctx, proxyErr := manager.ProxyContext(ctx, id)
+	if proxyErr != nil {
+		return contract.SubscriptionUsageReset{}, proxyErr
+	}
 	account, err := manager.Get(ctx, id)
 	if err != nil {
 		return contract.SubscriptionUsageReset{}, err
@@ -902,4 +915,12 @@ func (manager *Manager) RunUsageMonitor(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+// ProxyContext binds gateway-initiated provider operations to their account.
+func (manager *Manager) ProxyContext(ctx context.Context, id contract.ServiceID) (context.Context, error) {
+	if manager.resolveProxy == nil {
+		return ctx, nil
+	}
+	return manager.resolveProxy(ctx, id)
 }

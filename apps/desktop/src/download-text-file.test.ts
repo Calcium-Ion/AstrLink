@@ -17,16 +17,18 @@ describe("downloadTextFile", () => {
 
     const clicks: Array<{ download: string; href: string }> = [];
     const createElement = document.createElement.bind(document);
-    vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
-      const element = createElement(tagName, options);
-      if (tagName === "a") {
-        const anchor = element as HTMLAnchorElement;
-        anchor.click = () => {
-          clicks.push({ download: anchor.download, href: anchor.href });
-        };
-      }
-      return element;
-    });
+    vi.spyOn(document, "createElement").mockImplementation(
+      (tagName, options) => {
+        const element = createElement(tagName, options);
+        if (tagName === "a") {
+          const anchor = element as HTMLAnchorElement;
+          anchor.click = () => {
+            clicks.push({ download: anchor.download, href: anchor.href });
+          };
+        }
+        return element;
+      },
+    );
 
     downloadTextFile(
       "astrlink-req_bundle_test.txt",
