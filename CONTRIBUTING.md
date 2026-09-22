@@ -59,7 +59,7 @@ bun run desktop:build
 
 ## GitHub Actions 打包
 
-三个平台有独立的打包流程，推送 `main` 或在 Actions 页面选择 **Run workflow** 即可运行：
+三个平台有独立的打包流程，推送 `main`、在 Actions 页面选择 **Run workflow**，或发布 GitHub Release 即可运行：
 
 | 流程 | 产物 |
 | --- | --- |
@@ -71,7 +71,18 @@ macOS 和 Linux 的安装包仅在前端检查、Core 测试和包验证通过�
 
 Unix 包验证检查架构、运行库与许可证、worker 进程启动，以及 Core 健康接口和正常退出；不启动桌面窗口，也不下载或执行生产模型。失败时上传诊断文件，保留 7 天。
 
-这些流程生成开发安装包，不会创建 GitHub Release。macOS 包不使用 Developer ID 签名或公证，运行 CI 无需配置 Apple 凭据。
+普通推送和手动运行将产物保存在 Actions 中。发布 Release 时，流程会构建对应标签的代码，验证成功后自动将各平台安装包和独立的 SHA-256 校验文件附加到该 Release。只有上传任务具有 `contents: write` 权限，使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需配置个人访问令牌。
+
+### 发布版本
+
+1. 在待发布提交中同步版本号：`apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml` 和对应的 `Cargo.lock` 包条目。推送包含这些工作流的代码，并确认打包检查通过。
+2. 打开 GitHub **Releases → Draft a new release**，选择该提交或分支，创建版本标签，例如 `v0.1.0`。标签中的版本应与应用版本一致。
+3. 填写版本说明，点击 **Publish release**；预发布版本也会触发。仅保存草稿或推送标签不会触发这次 Release 打包。
+4. 在 Actions 查看三个平台的构建。完成后，安装包会出现在该 Release 的 **Assets** 中，各平台独立上传。发布页面在构建完成前可能暂时没有安装包。
+
+构建失败时可以使用 **Re-run failed jobs** 重试；已存在的同名附件会被该次构建覆盖。编辑已发布 Release 的说明不会重新打包。标签必须包含这些工作流，旧版本标签不会自动取得 `main` 上的新流程。
+
+macOS 包仍不使用 Developer ID 签名或公证，发布 Release 不会改变这一点。正式签名需要另行配置 Apple 凭据。
 
 ## 代码目录
 

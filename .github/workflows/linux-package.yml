@@ -4,12 +4,14 @@ on:
   push:
     branches: [main, 'codex/linux-build-*']
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 concurrency:
-  group: linux-package-${{ github.ref }}
+  group: linux-package-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -131,3 +133,24 @@ jobs:
           path: ${{ runner.temp }}/astrlink-smoke/*
           if-no-files-found: ignore
           retention-days: 7
+
+  release:
+    name: Attach Linux package to Release
+    if: github.event_name == 'release'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AstrLink-Linux-x86_64
+          path: release-assets
+      - name: Upload verified package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mv release-assets/SHA256SUMS release-assets/SHA256SUMS-Linux-x86_64.txt
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
