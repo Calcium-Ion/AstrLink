@@ -57,6 +57,7 @@ pub struct AgentToolStatus {
     pub detected: bool,
     pub skill_installed: bool,
     pub mcp_installed: bool,
+    pub preview_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -65,7 +66,7 @@ pub struct AgentInstallStatus {
     pub mcp_binary: bool,
     pub mcp_command: Option<String>,
     pub tools: Vec<AgentToolStatus>,
-    pub preview_paths: Vec<String>,
+    pub shared_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -98,7 +99,10 @@ pub fn status(context: &InstallContext) -> AgentInstallStatus {
         .map(|id| tool_status(&context.home, id, mcp_command.as_deref()))
         .collect::<Vec<_>>();
     AgentInstallStatus {
-        preview_paths: preview_paths(&context.home, &tools, &mcp_dest),
+        shared_paths: vec![
+            display_path(&mcp_dest).unwrap_or_default(),
+            display_path(&receipt_path(&context.home)).unwrap_or_default(),
+        ],
         canonical_skill: canonical.join("SKILL.md").is_file(),
         mcp_binary: mcp_dest.is_file(),
         mcp_command,
@@ -106,7 +110,18 @@ pub fn status(context: &InstallContext) -> AgentInstallStatus {
     }
 }
 
-pub fn install(context: &InstallContext) -> Result<InstallReceipt, String> {
+pub fn install(
+    context: &InstallContext,
+    tool_ids: &[AgentToolId],
+) -> Result<InstallReceipt, String> {
+    if tool_ids.is_empty() {
+        return Err("select at least one agent tool to install".to_string());
+    }
+    for id in tool_ids {
+        if !tool_detected(&context.home, *id) {
+            return Err(format!("selected agent tool {id:?} is no longer detected"));
+        }
+    }
     if !context.mcp_source.is_file() {
         return Err(
             "unable to locate astrlink-mcp. Build desktop sidecars first (bun run sidecar:build)."
@@ -118,13 +133,9 @@ pub fn install(context: &InstallContext) -> Result<InstallReceipt, String> {
     copy_mcp_binary(&context.mcp_source, &mcp_dest)?;
     files.push(display_path(&mcp_dest)?);
 
-    migrate_legacy_codex_skill(&context.home)?;
-    let canonical = write_canonical_skill(&context.home)?;
-    files.push(display_path(&canonical)?);
-
     let mcp_command = display_path(&mcp_dest)?;
     for id in AgentToolId::all() {
-        if !tool_detected(&context.home, id) {
+        if !tool_ids.contains(&id) {
             continue;
         }
         files.extend(install_tool(&context.home, id, &mcp_command)?);
@@ -366,6 +377,10 @@ fn tool_status(home: &Path, id: AgentToolId, mcp_command: Option<&str>) -> Agent
         mcp_installed: mcp_command
             .map(|command| mcp_configured(&tool_mcp_path(home, id), id, command))
             .unwrap_or(false),
+        preview_paths: vec![
+            display_path(&skill).unwrap_or_default(),
+            display_path(&tool_mcp_path(home, id)).unwrap_or_default(),
+        ],
     }
 }
 
@@ -406,20 +421,6 @@ fn toml_command(raw: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn preview_paths(home: &Path, tools: &[AgentToolStatus], mcp_dest: &Path) -> Vec<String> {
-    let mut paths = vec![
-        display_path(&canonical_skill_dir(home)).unwrap_or_default(),
-        display_path(mcp_dest).unwrap_or_default(),
-        display_path(&receipt_path(home)).unwrap_or_default(),
-    ];
-    for tool in tools.iter().filter(|tool| tool.detected) {
-        paths.push(display_path(&tool_skill_dir(home, tool.id)).unwrap_or_default());
-        paths.push(display_path(&tool_mcp_path(home, tool.id)).unwrap_or_default());
-    }
-    deduplicate_paths(&mut paths);
-    paths
-}
-
 fn deduplicate_paths(paths: &mut Vec<String>) {
     let mut seen = BTreeSet::new();
     paths.retain(|path| !path.is_empty() && seen.insert(path.clone()));
@@ -433,9 +434,11 @@ fn write_canonical_skill(home: &Path) -> Result<PathBuf, String> {
 
 fn install_tool(home: &Path, id: AgentToolId, mcp_command: &str) -> Result<Vec<String>, String> {
     let skill = tool_skill_dir(home, id);
-    if id != AgentToolId::Codex {
-        write_skill_tree(&skill, &canonical_skill_dir(home))?;
+    // The shared directory is discovered by Codex, so only write it when selected.
+    if id == AgentToolId::Codex {
+        migrate_legacy_codex_skill(home)?;
     }
+    write_skill_tree(&skill, &canonical_skill_dir(home))?;
     let mcp_path = tool_mcp_path(home, id);
     merge_mcp_config(&mcp_path, id, mcp_command)?;
     Ok(vec![display_path(&skill)?, display_path(&mcp_path)?])
@@ -956,7 +959,7 @@ mod tests {
             .iter()
             .all(|tool| tool.detected && !tool.mcp_installed));
 
-        let receipt = install(&context).unwrap();
+        let receipt = install(&context, &AgentToolId::all()).unwrap();
         assert!(receipt.mcp_binary.contains("astrlink-mcp"));
         assert!(mcp_binary_dest(&home).is_file());
         assert_real_skill_copy(&canonical_skill_dir(&home));
@@ -981,15 +984,18 @@ mod tests {
         let after = status(&context);
         assert_eq!(
             after
-                .preview_paths
+                .tools
                 .iter()
+                .flat_map(|tool| &tool.preview_paths)
                 .filter(|path| **path == shared_path)
                 .count(),
             1
         );
         assert!(!after
-            .preview_paths
-            .contains(&display_path(&legacy_codex_skill_dir(&home)).unwrap()));
+            .tools
+            .iter()
+            .flat_map(|tool| &tool.preview_paths)
+            .any(|path| *path == display_path(&legacy_codex_skill_dir(&home)).unwrap()));
         assert!(after.canonical_skill);
         assert!(after.mcp_binary);
         for tool in &after.tools {
@@ -1043,7 +1049,7 @@ mod tests {
             let legacy_manifest = fs::read(managed_files_path(&legacy)).unwrap();
 
             if reinstall {
-                install(&context).unwrap();
+                install(&context, &[AgentToolId::Codex]).unwrap();
             } else {
                 sync_installed_skills(home).unwrap();
             }
@@ -1078,7 +1084,7 @@ mod tests {
 
             // Startup and a later reinstall must not recreate the duplicate.
             sync_installed_skills(home).unwrap();
-            install(&context).unwrap();
+            install(&context, &[AgentToolId::Codex]).unwrap();
             assert!(!legacy.exists());
             assert_eq!(codex_backups(home), backups);
             uninstall(&context).unwrap();
@@ -1127,7 +1133,7 @@ mod tests {
         fs::create_dir_all(&legacy).unwrap();
         fs::write(legacy.join("SKILL.md"), "not ours").unwrap();
         sync_installed_skills(home).unwrap();
-        install(&context).unwrap();
+        install(&context, &[AgentToolId::Codex]).unwrap();
         uninstall(&context).unwrap();
         assert_eq!(
             fs::read_to_string(legacy.join("SKILL.md")).unwrap(),
@@ -1215,7 +1221,7 @@ mod tests {
         let mcp_source = home.join("src-astrlink-mcp");
         fs::write(&mcp_source, b"mcp").unwrap();
         let context = InstallContext { home, mcp_source };
-        install(&context).unwrap();
+        install(&context, &[AgentToolId::Codex]).unwrap();
         context
     }
 
@@ -1282,10 +1288,13 @@ mod tests {
         fs::write(dest.join("SKILL.md"), "not yours").unwrap();
         let mcp_source = home.join("src-astrlink-mcp");
         fs::write(&mcp_source, b"mcp").unwrap();
-        let error = install(&InstallContext {
-            home: home.clone(),
-            mcp_source,
-        })
+        let error = install(
+            &InstallContext {
+                home: home.clone(),
+                mcp_source,
+            },
+            &[AgentToolId::Cursor],
+        )
         .unwrap_err();
         assert!(error.contains("refusing to overwrite"));
         assert_eq!(
@@ -1311,10 +1320,13 @@ mod tests {
 
         let mcp_source = home.join("src-astrlink-mcp");
         fs::write(&mcp_source, b"mcp").unwrap();
-        install(&InstallContext {
-            home: home.clone(),
-            mcp_source,
-        })
+        install(
+            &InstallContext {
+                home: home.clone(),
+                mcp_source,
+            },
+            &[AgentToolId::Cursor],
+        )
         .unwrap();
         assert_real_skill_copy(&dest);
         let _ = fs::remove_dir_all(&home);
@@ -1392,7 +1404,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_undetected_tools() {
+    fn rejects_empty_or_undetected_selection_before_writing() {
         let home = unique_temp("agent-skip");
         let mcp_source = home.join("src-astrlink-mcp");
         fs::write(&mcp_source, b"mcp").unwrap();
@@ -1400,10 +1412,106 @@ mod tests {
             home: home.clone(),
             mcp_source,
         };
-        install(&context).unwrap();
+        fs::create_dir_all(home.join(".grok")).unwrap();
+        assert!(install(&context, &[])
+            .unwrap_err()
+            .contains("select at least one"));
+        assert!(install(&context, &[AgentToolId::Grok, AgentToolId::Cursor])
+            .unwrap_err()
+            .contains("no longer detected"));
         assert!(!home.join(".cursor").exists());
-        assert!(canonical_skill_dir(&home).join("SKILL.md").is_file());
+        assert!(!canonical_skill_dir(&home).exists());
+        assert!(!mcp_binary_dest(&home).exists());
+        assert!(!receipt_path(&home).exists());
+        assert!(!tool_skill_dir(&home, AgentToolId::Grok).exists());
         let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn installs_only_selected_tools_and_startup_preserves_scope() {
+        for selected in [
+            vec![AgentToolId::Grok],
+            vec![AgentToolId::Cursor, AgentToolId::Grok],
+            vec![AgentToolId::Codex],
+            vec![AgentToolId::Claude, AgentToolId::Grok, AgentToolId::Grok],
+        ] {
+            let home = unique_temp("agent-selected");
+            for dir in [".cursor", ".claude", ".codex", ".grok"] {
+                fs::create_dir_all(home.join(dir)).unwrap();
+            }
+            let mcp_source = home.join("src-astrlink-mcp");
+            fs::write(&mcp_source, b"mcp").unwrap();
+            let context = InstallContext { home, mcp_source };
+            let before = status(&context);
+            let mut expected_paths = before.shared_paths;
+            for tool in before
+                .tools
+                .iter()
+                .filter(|tool| selected.contains(&tool.id))
+            {
+                expected_paths.extend(tool.preview_paths.clone());
+            }
+            let receipt = install(&context, &selected).unwrap();
+            assert_eq!(
+                receipt.files.into_iter().collect::<BTreeSet<_>>(),
+                expected_paths.into_iter().collect::<BTreeSet<_>>()
+            );
+            sync_installed_skills(&context.home).unwrap();
+            sync_installed_mcp(&context).unwrap();
+            let after = status(&context);
+            assert_eq!(
+                after.canonical_skill,
+                selected.contains(&AgentToolId::Codex)
+            );
+            for tool in after.tools {
+                let installed = selected.contains(&tool.id);
+                assert_eq!(tool.skill_installed, installed, "{:?}", tool.id);
+                assert_eq!(tool.mcp_installed, installed, "{:?}", tool.id);
+                assert_eq!(tool_mcp_path(&context.home, tool.id).exists(), installed);
+            }
+            uninstall(&context).unwrap();
+            assert!(!mcp_binary_dest(&context.home).exists());
+            assert!(status(&context)
+                .tools
+                .iter()
+                .all(|tool| !tool.skill_installed && !tool.mcp_installed));
+            let _ = fs::remove_dir_all(&context.home);
+        }
+    }
+
+    #[test]
+    fn selecting_grok_preserves_existing_unselected_installations() {
+        let context = installed_codex_context("agent-unselected");
+        let home = &context.home;
+        fs::create_dir_all(home.join(".grok")).unwrap();
+        fs::create_dir_all(home.join(".cursor")).unwrap();
+        let cursor_config = tool_mcp_path(home, AgentToolId::Cursor);
+        fs::write(&cursor_config, "invalid JSON must remain untouched").unwrap();
+        let canonical = canonical_skill_dir(home);
+        let legacy = legacy_codex_skill_dir(home);
+        write_skill_tree(&legacy, &canonical).unwrap();
+        let tracked = [
+            canonical.join("SKILL.md"),
+            managed_files_path(&canonical),
+            legacy.join("SKILL.md"),
+            tool_mcp_path(home, AgentToolId::Codex),
+            cursor_config,
+        ];
+        let before = tracked
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect::<Vec<_>>();
+        install(&context, &[AgentToolId::Grok]).unwrap();
+        for (path, bytes) in tracked.iter().zip(before) {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+        assert!(status(&context)
+            .tools
+            .iter()
+            .filter(|tool| [AgentToolId::Codex, AgentToolId::Grok].contains(&tool.id))
+            .all(|tool| tool.skill_installed && tool.mcp_installed));
+        assert!(codex_backups(home).is_empty());
+        let _ = fs::remove_dir_all(home);
     }
 
     fn unique_temp(name: &str) -> PathBuf {

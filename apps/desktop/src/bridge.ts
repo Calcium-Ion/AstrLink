@@ -115,6 +115,7 @@ import {
   parseAgentInstallStatus,
   type AgentInstallReceipt,
   type AgentInstallStatus,
+  type AgentToolId,
 } from "./agent-install-model";
 
 function hasNativeBridge(): boolean {
@@ -697,9 +698,9 @@ export async function getAgentDebugStatus(): Promise<AgentInstallStatus> {
   return parseAgentInstallStatus(await invoke<unknown>("agent_debug_status"));
 }
 
-export async function installAgentDebug(): Promise<AgentInstallReceipt> {
+export async function installAgentDebug(toolIds: AgentToolId[]): Promise<AgentInstallReceipt> {
   requireNativeBridge();
-  return parseAgentInstallReceipt(await invoke<unknown>("install_agent_debug"));
+  return parseAgentInstallReceipt(await invoke<unknown>("install_agent_debug", { toolIds }));
 }
 
 export async function uninstallAgentDebug(): Promise<void> {

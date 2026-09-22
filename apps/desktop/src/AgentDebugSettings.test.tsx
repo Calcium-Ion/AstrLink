@@ -31,27 +31,31 @@ const status = {
       detected: true,
       skill_installed: false,
       mcp_installed: false,
+      preview_paths: ["/tmp/.cursor/skills/astrlink-debug", "/tmp/.cursor/mcp.json"],
     },
     {
       id: "claude" as const,
       detected: false,
       skill_installed: false,
       mcp_installed: false,
+      preview_paths: ["/tmp/.claude/skills/astrlink-debug", "/tmp/.claude.json"],
     },
     {
       id: "codex" as const,
       detected: true,
       skill_installed: true,
       mcp_installed: true,
+      preview_paths: ["/tmp/.agents/skills/astrlink-debug", "/tmp/.codex/config.toml"],
     },
     {
       id: "grok" as const,
       detected: true,
       skill_installed: false,
       mcp_installed: false,
+      preview_paths: ["/tmp/.grok/skills/astrlink-debug", "/tmp/.grok/config.toml"],
     },
   ],
-  preview_paths: ["/tmp/.agents/skills/astrlink-debug"],
+  shared_paths: ["/tmp/astrlink-mcp", "/tmp/.astrlink/agent-installs.json"],
 };
 
 describe("AgentDebugSettings", () => {
@@ -69,7 +73,7 @@ describe("AgentDebugSettings", () => {
       bundle_version: "0.1.0",
       installed_at_unix: 1,
       mcp_binary: "/tmp/astrlink-mcp",
-      files: status.preview_paths,
+      files: status.shared_paths,
     });
     bridge.uninstallAgentDebug.mockReset().mockResolvedValue(undefined);
     notifyMocks.success.mockReset();
@@ -98,7 +102,7 @@ describe("AgentDebugSettings", () => {
     expect(container.textContent).toContain("1 / 3");
 
     const install = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "补全安装",
+      (button) => button.textContent === "安装 / 更新",
     );
     if (!install) throw new Error("missing install button");
     await act(async () => {
@@ -110,7 +114,7 @@ describe("AgentDebugSettings", () => {
     const dialog = document.querySelector("[role='alertdialog']");
     const confirm = dialog
       ? [...dialog.querySelectorAll("button")].find(
-          (button) => button.textContent === "补全安装",
+          (button) => button.textContent === "安装所选工具（1）",
         )
       : undefined;
     if (!confirm) throw new Error("missing confirm");
@@ -119,7 +123,7 @@ describe("AgentDebugSettings", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(bridge.installAgentDebug).toHaveBeenCalled();
+    expect(bridge.installAgentDebug).toHaveBeenCalledWith(["codex"]);
     expect(notifyMocks.success).toHaveBeenCalled();
   });
 
@@ -127,7 +131,7 @@ describe("AgentDebugSettings", () => {
     const partial = {
       ...status,
       mcp_binary: true,
-      tools: [{ id: "codex", detected: true, skill_installed: true, mcp_installed: false }],
+      tools: [{ ...status.tools[2], mcp_installed: false }],
     };
     bridge.getAgentDebugStatus.mockResolvedValueOnce(partial).mockResolvedValue({
       ...partial,
@@ -137,11 +141,56 @@ describe("AgentDebugSettings", () => {
     const row = [...container.querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("Codex"));
     expect(row?.querySelectorAll("td")[1]?.textContent).toBe("已安装");
     expect(row?.querySelectorAll("td")[2]?.textContent).toBe("未安装");
-    await act(async () => button("补全安装").click());
-    await act(async () => button("补全安装", document.querySelector("[role='alertdialog']")!).click());
+    await act(async () => button("安装 / 更新").click());
+    await act(async () => button("安装所选工具（1）", document.querySelector("[role='alertdialog']")!).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledTimes(1);
-    expect(button("重新安装").disabled).toBe(false);
+    expect(button("安装 / 更新").disabled).toBe(false);
     expect(container.textContent).toContain("1 / 1");
+  });
+
+  it("installs only Grok and previews only its paths and the shared runtime", async () => {
+    await act(async () => root.render(<AgentDebugSettings />));
+    await act(async () => button("安装 / 更新").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
+    expect(checkbox("claude").disabled).toBe(true);
+    await act(async () => checkbox("codex").click());
+    expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
+    expect(button("取消", dialog).disabled).toBe(false);
+    expect(dialog.querySelector("details")).toBeNull();
+    await act(async () => checkbox("grok").click());
+    expect(button("安装所选工具（1）", dialog).disabled).toBe(false);
+    expect(dialog.textContent).toContain("/tmp/.grok/config.toml");
+    expect(dialog.textContent).toContain("/tmp/astrlink-mcp");
+    expect(dialog.textContent).not.toContain("/tmp/.agents");
+    expect(dialog.textContent).not.toContain("/tmp/.codex");
+    expect(dialog.textContent).not.toContain("/tmp/.cursor");
+    await act(async () => button("安装所选工具（1）", dialog).click());
+    expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(["grok"]);
+  });
+
+  it("requires an explicit first selection and supports multiple tools", async () => {
+    bridge.getAgentDebugStatus.mockResolvedValue({
+      ...status,
+      tools: status.tools.map((tool) => ({ ...tool, skill_installed: false, mcp_installed: false })),
+    });
+    await act(async () => root.render(<AgentDebugSettings />));
+    await act(async () => button("安装工具").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
+    await act(async () => checkbox("cursor").click());
+    await act(async () => checkbox("grok").click());
+    await act(async () => button("安装所选工具（2）", dialog).click());
+    expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(["cursor", "grok"]);
+  });
+
+  it("cancels an empty selection without installing", async () => {
+    await act(async () => root.render(<AgentDebugSettings />));
+    await act(async () => button("安装 / 更新").click());
+    await act(async () => checkbox("codex").click());
+    await act(async () => button("取消", document.querySelector("[role='alertdialog']")!).click());
+    expect(bridge.installAgentDebug).not.toHaveBeenCalled();
+    expect(document.querySelector("[role='alertdialog']")).toBeNull();
   });
 
   it("offers a retry after status failure and prevents installing without detected tools", async () => {
@@ -170,6 +219,12 @@ describe("AgentDebugSettings", () => {
     expect(bridge.uninstallAgentDebug).toHaveBeenCalledTimes(1);
     copy.mockRestore();
   });
+
+  function checkbox(id: string): HTMLButtonElement {
+    const found = document.querySelector<HTMLButtonElement>(`#agent-install-${id}`);
+    if (!found) throw new Error(`Missing checkbox: ${id}`);
+    return found;
+  }
 
   function button(text: string, scope: ParentNode = container): HTMLButtonElement {
     const found = [...scope.querySelectorAll("button")].find((item) => item.textContent === text);

@@ -16,6 +16,7 @@ import {
 interface ConfirmDialogProps {
   cancelLabel?: string;
   confirmLabel: string;
+  confirmDisabled?: boolean;
   description: ReactNode;
   destructive?: boolean;
   disabled?: boolean;
@@ -28,6 +29,7 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   cancelLabel = i18n.t("common.cancel"),
   confirmLabel,
+  confirmDisabled = false,
   description,
   destructive = false,
   disabled = false,
@@ -59,7 +61,7 @@ export function ConfirmDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={disabled}>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
-            disabled={disabled}
+            disabled={disabled || confirmDisabled}
             onClick={() => {
               actionPendingRef.current = true;
               onConfirm();

@@ -198,8 +198,10 @@ fn agent_debug_status() -> Result<agent_install::AgentInstallStatus, String> {
 }
 
 #[tauri::command]
-fn install_agent_debug() -> Result<agent_install::InstallReceipt, String> {
-    agent_install::install(&agent_install_context()?)
+fn install_agent_debug(
+    tool_ids: Vec<agent_install::AgentToolId>,
+) -> Result<agent_install::InstallReceipt, String> {
+    agent_install::install(&agent_install_context()?, &tool_ids)
 }
 
 #[tauri::command]

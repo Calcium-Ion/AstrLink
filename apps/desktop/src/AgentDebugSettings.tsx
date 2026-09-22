@@ -10,6 +10,8 @@ import { RefreshCw, ShieldCheck } from "@/components/icons";
 import { Panel, PanelFooter, PanelHeader } from "@/components/Panel";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -19,7 +21,7 @@ import {
   installAgentDebug,
   uninstallAgentDebug,
 } from "./bridge";
-import type { AgentInstallStatus } from "./agent-install-model";
+import type { AgentInstallStatus, AgentToolId } from "./agent-install-model";
 import { i18n, useT } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
@@ -37,6 +39,7 @@ export function AgentDebugSettings() {
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState<"install" | "uninstall" | null>(null);
   const [confirm, setConfirm] = useState<"install" | "uninstall" | null>(null);
+  const [selectedTools, setSelectedTools] = useState<AgentToolId[]>([]);
 
   const refresh = async (): Promise<boolean> => {
     setChecking(true);
@@ -57,11 +60,12 @@ export function AgentDebugSettings() {
   }, []);
 
   const run = async (operation: "install" | "uninstall"): Promise<void> => {
+    if (operation === "install" && selectedTools.length === 0) return;
     setBusy(operation);
     setConfirm(null);
     setError(null);
     try {
-      if (operation === "install") await installAgentDebug();
+      if (operation === "install") await installAgentDebug(selectedTools);
       else await uninstallAgentDebug();
       if (await refresh()) {
         notify.success(i18n.t(operation === "install"
@@ -78,10 +82,18 @@ export function AgentDebugSettings() {
   const configured = detected.filter((tool) => tool.skill_installed && tool.mcp_installed);
   const anyInstalled = Boolean(status?.canonical_skill || status?.mcp_binary ||
     status?.tools.some((tool) => tool.skill_installed || tool.mcp_installed));
-  const complete = detected.length > 0 && configured.length === detected.length && status?.mcp_binary;
-  const installLabel = t(complete ? "agentDebug.reinstall"
-    : anyInstalled ? "agentDebug.repair" : "agentDebug.install");
+  const installLabel = t(anyInstalled ? "agentDebug.manage" : "agentDebug.install");
   const locked = busy !== null || checking;
+  const previewPaths = status && selectedTools.length > 0
+    ? [...new Set([
+      ...status.shared_paths,
+      ...status.tools.filter((tool) => selectedTools.includes(tool.id)).flatMap((tool) => tool.preview_paths),
+    ])] : [];
+
+  const openInstall = (): void => {
+    setSelectedTools(detected.filter((tool) => tool.skill_installed || tool.mcp_installed).map((tool) => tool.id));
+    setConfirm("install");
+  };
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -167,7 +179,7 @@ export function AgentDebugSettings() {
                   {anyInstalled ? <Button disabled={locked} onClick={() => setConfirm("uninstall")} size="sm" type="button" variant="ghost">
                     {busy === "uninstall" ? t("agentDebug.removing") : t("agentDebug.remove")}
                   </Button> : null}
-                  <Button disabled={locked || !status || detected.length === 0} onClick={() => setConfirm("install")} type="button">
+                  <Button disabled={locked || !status || detected.length === 0} onClick={openInstall} type="button">
                     {busy === "install" ? t("agentDebug.installing") : installLabel}
                   </Button>
                 </>
@@ -224,14 +236,42 @@ export function AgentDebugSettings() {
       </div>
 
       <ConfirmDialog
-        confirmLabel={confirm === "uninstall" ? t("agentDebug.remove") : installLabel}
+        confirmLabel={confirm === "uninstall" ? t("agentDebug.remove") : t("agentDebug.installSelected", { count: selectedTools.length })}
+        confirmDisabled={confirm === "install" && selectedTools.length === 0}
         description={confirm === "uninstall" ? <p>{t("agentDebug.removeBody")}</p> : (
           <div className="grid gap-3">
             <p>{t("agentDebug.installBody")}</p>
-            {status?.preview_paths.length ? (
+            <fieldset className="grid min-w-0 gap-2 text-left" disabled={locked}>
+              <legend className="mb-2 text-sm font-medium text-foreground">{t("agentDebug.selectTools")}</legend>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                {toolIds.map((id) => {
+                  const tool = status?.tools.find((item) => item.id === id);
+                  return (
+                    <Label className="min-w-0 items-start gap-2" htmlFor={`agent-install-${id}`} key={id}>
+                      <Checkbox
+                        checked={selectedTools.includes(id)}
+                        disabled={locked || !tool?.detected}
+                        id={`agent-install-${id}`}
+                        onCheckedChange={(checked) => setSelectedTools((current) => checked === true
+                          ? [...current, id] : current.filter((item) => item !== id))}
+                      />
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className="text-foreground">{t(`agentDebug.tools.${id}`)}</span>
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {t(!tool?.detected ? "agentDebug.notDetected"
+                            : tool.skill_installed && tool.mcp_installed ? "agentDebug.installed" : "agentDebug.detected")}
+                        </span>
+                      </span>
+                    </Label>
+                  );
+                })}
+              </div>
+            </fieldset>
+            <p>{t("agentDebug.selectionHint")}</p>
+            {previewPaths.length ? (
               <HelpDisclosure title={t("agentDebug.pathsTitle")}>
-                <ul className="list-disc pl-4 font-mono text-xs text-text-secondary">
-                  {status.preview_paths.map((path) => <li key={path} className="[overflow-wrap:anywhere]">{path}</li>)}
+                <ul className="max-h-40 overflow-y-auto list-disc pl-4 text-left font-mono text-xs text-text-secondary">
+                  {previewPaths.map((path) => <li key={path} className="[overflow-wrap:anywhere]">{path}</li>)}
                 </ul>
               </HelpDisclosure>
             ) : null}

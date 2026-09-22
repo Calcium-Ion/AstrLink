@@ -62,6 +62,7 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 
 	document := jsonDocument{body: body, duplicateKeys: duplicateKeys}
 	protected := continuationPaths(protocol, root)
+	toolPayloads := structuredToolPayloadPaths(protocol, root)
 	extracted := make([]extractedSegment, 0)
 	overflow := false
 	for _, key := range roots {
@@ -70,7 +71,7 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 			continue
 		}
 		walkJSONStrings(value, "/"+escapeJSONPointer(key), sjsonObjectKey(key),
-			1, jsonContentContext, protected, &extracted, &overflow)
+			1, jsonContentContext, false, protected, toolPayloads, &extracted, &overflow)
 	}
 	if overflow {
 		return jsonDocument{}, nil, ErrUnsafeInput
@@ -110,7 +111,9 @@ func walkJSONStrings(
 	writePath string,
 	depth int,
 	context jsonTraversalContext,
+	structuredToolLeaf bool,
 	protected map[string]struct{},
+	toolPayloads map[string]struct{},
 	extracted *[]extractedSegment,
 	overflow *bool,
 ) {
@@ -126,8 +129,12 @@ func walkJSONStrings(
 			*overflow = true
 			return
 		}
+		segment := Segment{Path: path, Value: typed}
+		if structuredToolLeaf {
+			segment.ContextPrefix = toolFieldContextPrefix(path)
+		}
 		*extracted = append(*extracted, extractedSegment{
-			Segment:   Segment{Path: path, Value: typed},
+			Segment:   segment,
 			writePath: writePath,
 			// Only re-validate after rewrite when the original string was
 			// already JSON. Tool transcripts often start with '{' (a truncated
@@ -138,11 +145,17 @@ func walkJSONStrings(
 				validStructuredJSON(typed),
 		})
 	case []any:
+		if _, payload := toolPayloads[path]; payload {
+			structuredToolLeaf = true
+		}
 		for index, child := range typed {
 			walkJSONStrings(child, path+"/"+jsonIndex(index), writePath+"."+jsonIndex(index),
-				depth+1, context, protected, extracted, overflow)
+				depth+1, context, structuredToolLeaf, protected, toolPayloads, extracted, overflow)
 		}
 	case map[string]any:
+		if _, payload := toolPayloads[path]; payload {
+			structuredToolLeaf = true
+		}
 		keys := make([]string, 0, len(typed))
 		for key := range typed {
 			keys = append(keys, key)
@@ -154,8 +167,9 @@ func walkJSONStrings(
 				continue
 			}
 			childContext := nextJSONTraversalContext(typed, key, context)
+			childToolLeaf := structuredToolLeaf && !isToolTextBlockField(typed, key)
 			walkJSONStrings(child, path+"/"+escapeJSONPointer(key), writePath+"."+sjsonObjectKey(key),
-				depth+1, childContext, protected, extracted, overflow)
+				depth+1, childContext, childToolLeaf, protected, toolPayloads, extracted, overflow)
 		}
 	}
 }

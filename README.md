@@ -8,7 +8,7 @@
 
 AstrLink 是一款开源桌面应用。在界面中添加API 提供商、选择模型，再把客户端连接到本机 API 地址即可使用。支持 macOS、Windows 和 Linux。
 
-[开始使用](#开始使用) · [API 提供商接入指南](docs/guides/pay-as-you-go-providers.md) · [桌面设置](apps/desktop/README.md) · [参与开发](CONTRIBUTING.md)
+[开始使用](#开始使用) · [使用指南](docs/guides/README.md) · [API 提供商接入指南](docs/guides/pay-as-you-go-providers.md) · [桌面设置](apps/desktop/README.md) · [参与开发](CONTRIBUTING.md)
 
 ## 可以用它做什么
 
