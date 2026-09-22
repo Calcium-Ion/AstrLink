@@ -836,7 +836,6 @@
     "resetInMinutes": "Resets in {{count}} minutes",
     "resetInHours": "Resets in {{count}} hours",
     "resetInDays": "Resets in {{count}} days",
-    "extra": "Extra limits",
     "resetOk": "Usage reset.",
     "resetNone": "There is no window that can be reset.",
     "resetNoAttempts": "No reset attempts left.",

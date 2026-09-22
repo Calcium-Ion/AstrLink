@@ -836,7 +836,6 @@
     "resetInMinutes": "{{count}} 分钟后重置",
     "resetInHours": "{{count}} 小时后重置",
     "resetInDays": "{{count}} 天后重置",
-    "extra": "附加额度",
     "resetOk": "额度已重置。",
     "resetNone": "当前没有可重置的窗口。",
     "resetNoAttempts": "没有可用的重置次数。",

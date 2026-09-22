@@ -791,16 +791,14 @@ describe("ServiceManager", () => {
     expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("剩余 88%");
     expect(container.textContent).toMatch(/重置/);
     expect(container.textContent).toContain("重置 ×2");
-    expect(container.textContent).toContain("附加额度");
-    expect(container.textContent).not.toContain("附加额度 ·");
-    expect(container.textContent).not.toContain("GPT-5.3-Codex-Spark");
-    expect(container.textContent).not.toContain("gpt-reserve");
+    expect(container.textContent).toContain("GPT-5.3-Codex-Spark");
+    expect(container.textContent).toContain("gpt-reserve");
     expect(container.querySelectorAll('[data-testid="subscription-usage"]')).toHaveLength(1);
     expect(container.querySelector('[data-tone="ok"]')).not.toBeNull();
-    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(5);
   });
 
-  it("expands extra limits and confirms a manual reset", async () => {
+  it("shows extra limits inline and confirms a manual reset", async () => {
     const connected: Service = {
       ...codexService,
       subscription: {
@@ -854,21 +852,13 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).not.toContain("GPT-5.3-Codex-Spark");
-    const extras = container.querySelector<HTMLButtonElement>(
+    const extras = container.querySelector<HTMLElement>(
       '[data-testid="subscription-usage-extras"]',
     );
-    if (!extras) throw new Error("missing extras toggle");
-    await act(async () => {
-      extras.click();
-    });
-    expect(extras.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("GPT-5.3-Codex-Spark");
-    expect(container.textContent).not.toContain("GPT-5.3-Codex-Spark");
-    await act(async () => {
-      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
-    expect(extras.getAttribute("aria-expanded")).toBe("false");
+    if (!extras) throw new Error("missing extra limits");
+    expect(extras.textContent).toContain("GPT-5.3-Codex-Spark");
+    expect(extras.textContent).toContain("5 小时");
+    expect(container.querySelector('[data-testid="subscription-usage-extras"] button')).toBeNull();
 
     const reset = container.querySelector<HTMLButtonElement>(
       '[data-testid="subscription-usage-reset"]',
