@@ -12,6 +12,7 @@ const valid = {
     inference_port: 8317,
     max_concurrent_inspections: 16,
     response_start_timeout_seconds: 0,
+    max_request_body_mib: 0,
     theme: "system" as const,
     locale: "zh-CN",
   },
@@ -60,6 +61,15 @@ describe("preferences IPC contract", () => {
         values: { ...valid.values, response_start_timeout_seconds: 86401 },
       }),
     ).toThrow("$.values.response_start_timeout_seconds");
+  });
+
+  it("accepts unlimited and explicit request body limits and rejects invalid values", () => {
+    for (const max_request_body_mib of [0, 1, 64, 0xffffffff]) {
+      expect(parseSettingsSnapshot({ ...valid, values: { ...valid.values, max_request_body_mib } }).values.max_request_body_mib).toBe(max_request_body_mib);
+    }
+    for (const max_request_body_mib of [-1, 1.5, 0x100000000, NaN, Infinity, "8", null, undefined]) {
+      expect(() => parseSettingsSnapshot({ ...valid, values: { ...valid.values, max_request_body_mib } })).toThrow("$.values.max_request_body_mib");
+    }
   });
 
   it("does not invent an OS state when reconciliation failed", () => {

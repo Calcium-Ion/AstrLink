@@ -18,10 +18,11 @@ import (
 
 var errProtocolPathNotFound = errors.New("protocol path not found")
 var errInvalidMetadata = errors.New("invalid JSON request metadata")
-var errMetadataTooLarge = errors.New("request metadata exceeds the M1 inspection limit")
+var errMetadataTooLarge = errors.New("request body exceeds the configured size limit")
 var errUnsupportedContentEncoding = errors.New("encoded JSON request metadata cannot be inspected safely")
 
-const maxMetadataBytes = 8 << 20
+// Response inspection buffers keep a separate bound from configurable request sizes.
+const maxResponseInspectionBytes = 8 << 20
 const maxModelRunes = 256
 
 type methodNotAllowedError struct {
@@ -99,7 +100,7 @@ func classifyFromPath(request *http.Request) (Request, bool) {
 	}, true
 }
 
-func classify(request *http.Request) (Request, error) {
+func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	route, model, ok := matchProtocolRoute(request.URL.Path)
 	if !ok {
 		return Request{}, errProtocolPathNotFound
@@ -114,12 +115,15 @@ func classify(request *http.Request) (Request, error) {
 		Streaming: route.streaming,
 	}
 	if !route.inspectMetadata {
-		raw := inspectConversationBestEffort(&result, request)
-		attachAutoClassifyText(&result, request, raw)
+		raw, err := inspectConversationBestEffort(&result, request, maxBodyBytes)
+		if err != nil {
+			return Request{}, err
+		}
+		attachAutoClassifyText(&result, request, raw, maxBodyBytes)
 		return validateClassifiedRequest(result)
 	}
 
-	metadata, err := inspectJSONMetadata(request, route.protocol)
+	metadata, err := inspectJSONMetadata(request, route.protocol, maxBodyBytes)
 	if err != nil {
 		return Request{}, err
 	}
@@ -135,7 +139,7 @@ func classify(request *http.Request) (Request, error) {
 	result.ConversationID = metadata.ConversationID
 	result.InputPreview = metadata.InputPreview
 	result.Conversation = metadata.Conversation
-	attachAutoClassifyText(&result, request, metadata.raw)
+	attachAutoClassifyText(&result, request, metadata.raw, maxBodyBytes)
 	return validateClassifiedRequest(result)
 }
 
@@ -194,40 +198,43 @@ type requestMetadata struct {
 
 // inspectConversationBestEffort summarises the replayed history of protocols
 // whose bodies AstrLink otherwise treats as opaque (Gemini: model and
-// streaming come from the path). Unlike inspectJSONMetadata it never rejects
-// the request: encoded, oversized, or malformed bodies are forwarded untouched
-// and simply do not link. The buffered bytes are returned so the auto
-// classifier can reuse them.
-func inspectConversationBestEffort(result *Request, request *http.Request) []byte {
+// streaming come from the path). Encoded or malformed bodies are forwarded
+// untouched and simply do not link; the configured size limit still applies.
+// The buffered bytes are returned so the auto classifier can reuse them.
+func inspectConversationBestEffort(result *Request, request *http.Request, maxBodyBytes int64) ([]byte, error) {
 	convoProto, ok := convoProtocol(result.Protocol)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	raw, err := bufferRequestBody(request)
-	if err != nil || len(raw) == 0 {
-		return nil
+	raw, err := readAndReplayRequestBody(request, maxBodyBytes)
+	if errors.Is(err, errMetadataTooLarge) {
+		return nil, err
+	}
+	encoding := strings.ToLower(strings.TrimSpace(request.Header.Get("Content-Encoding")))
+	if err != nil || len(raw) == 0 || (encoding != "" && encoding != "identity") {
+		return nil, nil
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil || fields == nil {
-		return raw
+		return raw, nil
 	}
 	result.ReasoningEffort = extractReasoningEffort(result.Protocol, fields)
 	summary, err := conversationPolicy.InspectFields(convoProto, fields)
 	if err != nil {
-		return raw
+		return raw, nil
 	}
 	result.Conversation = summary
 	result.ConversationID = conversationCursor(summary, "")
 	result.InputPreview = sanitizePreview(summary.LastUserText)
-	return raw
+	return raw, nil
 }
 
-func attachAutoClassifyText(result *Request, request *http.Request, raw []byte) {
+func attachAutoClassifyText(result *Request, request *http.Request, raw []byte, maxBodyBytes int64) {
 	if result.Model != contract.AstrLinkAutoModelID {
 		return
 	}
 	if len(raw) == 0 {
-		buffered, err := bufferRequestBody(request)
+		buffered, err := bufferRequestBody(request, maxBodyBytes)
 		if err != nil {
 			return
 		}
@@ -236,7 +243,7 @@ func attachAutoClassifyText(result *Request, request *http.Request, raw []byte) 
 	result.lastUserText = autotext.ExtractLastUserText(result.Protocol, raw)
 }
 
-func bufferRequestBody(request *http.Request) ([]byte, error) {
+func bufferRequestBody(request *http.Request, maxBodyBytes int64) ([]byte, error) {
 	if request.Body == nil || request.Body == http.NoBody {
 		return nil, nil
 	}
@@ -244,28 +251,39 @@ func bufferRequestBody(request *http.Request) ([]byte, error) {
 	if encoding != "" && encoding != "identity" {
 		return nil, errUnsupportedContentEncoding
 	}
+	return readAndReplayRequestBody(request, maxBodyBytes)
+}
+
+func readRequestBody(reader io.Reader, maxBodyBytes int64) ([]byte, error) {
+	if maxBodyBytes > 0 {
+		reader = io.LimitReader(reader, maxBodyBytes+1)
+	}
+	body, err := io.ReadAll(reader)
+	if maxBodyBytes > 0 && int64(len(body)) > maxBodyBytes {
+		return body, errMetadataTooLarge
+	}
+	return body, err
+}
+
+func readAndReplayRequestBody(request *http.Request, maxBodyBytes int64) ([]byte, error) {
+	if request.Body == nil || request.Body == http.NoBody {
+		return nil, nil
+	}
 	original := request.Body
-	var consumed bytes.Buffer
-	_, copyErr := io.Copy(&consumed, io.LimitReader(original, maxMetadataBytes+1))
+	body, err := readRequestBody(original, maxBodyBytes)
 	request.Body = &replayReadCloser{
-		reader: io.MultiReader(bytes.NewReader(consumed.Bytes()), original),
+		reader: io.MultiReader(bytes.NewReader(body), original),
 		closer: original,
 	}
-	if consumed.Len() > maxMetadataBytes {
-		return nil, errMetadataTooLarge
-	}
-	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
-		return nil, copyErr
-	}
-	return consumed.Bytes(), nil
+	return body, err
 }
 
 // inspectJSONMetadata observes routing fields without changing bytes that are
 // forwarded. Malformed JSON is rejected locally because planning cannot safely
 // infer its streaming/model requirements; encoded JSON is likewise rejected
 // unless it explicitly uses the no-op identity encoding.
-func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID) (requestMetadata, error) {
-	raw, err := bufferRequestBody(request)
+func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, maxBodyBytes int64) (requestMetadata, error) {
+	raw, err := bufferRequestBody(request, maxBodyBytes)
 	if err != nil {
 		return requestMetadata{}, err
 	}

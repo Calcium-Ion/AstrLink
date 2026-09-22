@@ -137,12 +137,33 @@ async function invoke<T>(
   }
 }
 
+// These local reads should finish promptly. A stuck native event loop must not
+// leave settings loading forever or keep displaying an old ready snapshot.
+async function invokeDesktopRead(
+  command: "core_status" | "get_preferences",
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      invoke<unknown>(command),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(i18n.t("bridge.desktopUnresponsive"))),
+          10_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function getCoreStatus(): Promise<AppSnapshot> {
   if (!hasNativeBridge()) {
     return browserSnapshot();
   }
 
-  return parseAppSnapshot(await invoke<unknown>("core_status"));
+  return parseAppSnapshot(await invokeDesktopRead("core_status"));
 }
 
 export async function restartCore(): Promise<AppSnapshot> {
@@ -165,7 +186,7 @@ export async function stopCore(): Promise<AppSnapshot> {
 
 export async function getPreferences(): Promise<SettingsSnapshot> {
   requireNativeBridge();
-  return parseSettingsSnapshot(await invoke<unknown>("get_preferences"));
+  return parseSettingsSnapshot(await invokeDesktopRead("get_preferences"));
 }
 
 export async function updatePreferences(

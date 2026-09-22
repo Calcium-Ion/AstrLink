@@ -6,6 +6,7 @@ export type CloseBehavior = "hide_to_tray" | "quit";
 export const DEFAULT_MAX_CONCURRENT_INSPECTIONS = 16;
 export const MIN_MAX_CONCURRENT_INSPECTIONS = 4;
 export const MAX_MAX_CONCURRENT_INSPECTIONS = 128;
+export const MAX_REQUEST_BODY_MIB = 0xffffffff;
 export const DEFAULT_RESPONSE_START_TIMEOUT_SECONDS = 0;
 export const MAX_RESPONSE_START_TIMEOUT_SECONDS = 86400;
 
@@ -18,6 +19,7 @@ export interface Preferences {
   inference_port: number;
   max_concurrent_inspections: number;
   response_start_timeout_seconds: number;
+  max_request_body_mib: number;
   locale: Locale;
   theme: ThemePreference;
 }
@@ -77,6 +79,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "inference_port",
       "max_concurrent_inspections",
       "response_start_timeout_seconds",
+      "max_request_body_mib",
       "locale",
       "theme",
     ],
@@ -123,6 +126,14 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "$.values.response_start_timeout_seconds",
       `expected an integer from ${DEFAULT_RESPONSE_START_TIMEOUT_SECONDS} through ${MAX_RESPONSE_START_TIMEOUT_SECONDS}`,
     );
+  }
+  if (
+    typeof values.max_request_body_mib !== "number" ||
+    !Number.isInteger(values.max_request_body_mib) ||
+    values.max_request_body_mib < 0 ||
+    values.max_request_body_mib > MAX_REQUEST_BODY_MIB
+  ) {
+    invalid("$.values.max_request_body_mib", `expected an integer from 0 through ${MAX_REQUEST_BODY_MIB}`);
   }
   if (root.autostart_actual !== null && typeof root.autostart_actual !== "boolean") {
     invalid("$.autostart_actual", "expected null or boolean");

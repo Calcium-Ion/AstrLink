@@ -155,8 +155,8 @@ func prepareReasoningRecovery(source *requestBodySource, repair func([]byte) ([]
 		return nil
 	}
 	defer body.Close()
-	data, err := io.ReadAll(io.LimitReader(body, maxMetadataBytes+1))
-	if err != nil || len(data) > maxMetadataBytes {
+	data, err := io.ReadAll(body)
+	if err != nil {
 		return nil
 	}
 	repaired, changed := repair(data)

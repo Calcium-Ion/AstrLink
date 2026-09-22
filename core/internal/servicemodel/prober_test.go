@@ -260,3 +260,46 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 		t.Fatalf("malformed Codex response error = %v, want ErrUpstream", err)
 	}
 }
+
+func TestPayAsYouGoModelDiscovery(t *testing.T) {
+	for _, kind := range []contract.ServiceKind{contract.ServiceKindDeepSeek, contract.ServiceKindMoonshot, contract.ServiceKindMiniMax, contract.ServiceKindXAI} {
+		t.Run(string(kind), func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer api-key" {
+					t.Fatalf("wrong discovery request: %s", r.URL)
+				}
+				return probeResponse(`{"data":[{"id":"model-test"}]}`), nil
+			})}
+			models, err := New(nil, nil, client).ProbeHTTP(context.Background(), "service_api", kind, contract.HTTPConnection{BaseURL: "https://api.example/v1", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeBearer}}, []byte("api-key"), contract.ProtocolOpenAIModels)
+			if err != nil || len(models) != 1 || models[0] != "model-test" {
+				t.Fatalf("models=%v err=%v", models, err)
+			}
+		})
+	}
+	for _, kind := range []contract.ServiceKind{contract.ServiceKindQwen, contract.ServiceKindGLM, contract.ServiceKindDoubao} {
+		if kindSupportsDiscovery(kind, contract.ProtocolOpenAIModels) {
+			t.Fatalf("advertised unverified discovery for %s", kind)
+		}
+	}
+}
+
+func TestPayAsYouGoDiscoveryFromAnthropicSDKRoot(t *testing.T) {
+	for _, kind := range []contract.ServiceKind{contract.ServiceKindDeepSeek, contract.ServiceKindMoonshot, contract.ServiceKindMiniMax} {
+		t.Run(string(kind), func(t *testing.T) {
+			called := false
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				called = true
+				if r.URL.String() != "https://proxy.example/tenant%2Fone/v1/models" || r.Header.Get("Authorization") != "Bearer api-key" {
+					t.Fatalf("wrong discovery request: %s", r.URL)
+				}
+				return probeResponse(`{"data":[{"id":"model-test"}]}`), nil
+			})}
+			models, err := New(nil, nil, client).ProbeHTTP(context.Background(), "service_api", kind, contract.HTTPConnection{
+				BaseURL: "https://proxy.example/tenant%2Fone/anthropic/v1/", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeBearer},
+			}, []byte("api-key"), contract.ProtocolOpenAIModels)
+			if !called || err != nil || len(models) != 1 || models[0] != "model-test" {
+				t.Fatalf("called=%t models=%v err=%v", called, models, err)
+			}
+		})
+	}
+}

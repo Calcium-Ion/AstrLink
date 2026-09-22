@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   httpServicePreset,
+  payAsYouGoPresetIDs,
+  codingPlanPresetIDs,
   httpServicePresetIDs,
   httpServicePresetLabel,
   localConversionTargets,
@@ -40,6 +42,7 @@ describe("HTTP service product presets", () => {
       "openai",
       "anthropic",
       "gemini",
+      "deepseek", "qwen", "moonshot", "glm", "minimax", "doubao", "xai",
       "custom",
     ]);
     expect(
@@ -106,8 +109,35 @@ describe("HTTP service product presets", () => {
           streaming: true,
         },
         { protocol: "google.models", mode: "native", streaming: false },
+        { protocol: "openai.chat", mode: "native", streaming: true, convert_to: "google.generate_content" },
       ],
     });
+  });
+
+  it("keeps usage-based providers separate from coding plans and advertises only supported protocols", () => {
+    expect(payAsYouGoPresetIDs).toContain("opencode_zen");
+    expect(codingPlanPresetIDs).toContain("opencode_go");
+    expect(payAsYouGoPresetIDs.some((kind) => codingPlanPresetIDs.includes(kind))).toBe(false);
+    for (const [kind, baseURL, discovery] of [
+      ["deepseek", "https://api.deepseek.com/v1", true],
+      ["qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", false],
+      ["moonshot", "https://api.moonshot.cn/v1", true],
+      ["glm", "https://open.bigmodel.cn/api/paas/v4", false],
+      ["minimax", "https://api.minimax.cn/v1", true],
+      ["doubao", "https://ark.cn-beijing.volces.com/api/v3", false],
+      ["xai", "https://api.x.ai/v1", true],
+    ] as const) {
+      const preset = httpServicePreset(kind);
+      expect(payAsYouGoPresetIDs).toContain(kind);
+      expect(preset).toMatchObject({ kind, baseURL, authScheme: "bearer", advancedOnStart: false });
+      expect(preset.capabilities).toContainEqual({ protocol: "openai.chat", mode: "native", streaming: true });
+      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.models")).toBe(discovery);
+      expect(preset.capabilities).toContainEqual({ protocol: "anthropic.messages", mode: "native", streaming: true });
+      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.responses")).toBe(kind !== "glm");
+      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.responses.compact")).toBe(kind === "xai");
+      expect(preset.capabilities.some(({ protocol }) => protocol === "openai.completions")).toBe(kind === "xai");
+      expect(preset.capabilities.every(({ mode, convert_to }) => mode === "native" && convert_to === undefined)).toBe(true);
+    }
   });
 
   it("lists local conversion targets and enables only advertised edges", () => {

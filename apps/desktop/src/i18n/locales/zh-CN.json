@@ -98,7 +98,8 @@
   },
   "bridge": {
     "restartDesktopOnly": "网关重启仅在 AstrLink 桌面应用中可用。",
-    "desktopOnly": "该操作仅可在 AstrLink 桌面应用中使用。"
+    "desktopOnly": "该操作仅可在 AstrLink 桌面应用中使用。",
+    "desktopUnresponsive": "桌面程序长时间未响应，请完全退出 AstrLink 后重新打开。"
   },
   "settings": {
     "theme": "外观",
@@ -142,7 +143,7 @@
     "restarting": "重启中…",
     "portKicker": "网络入口",
     "portTitle": "推理入口",
-    "portHint": "修改后需保存；重启网关后才会切换到新端口、并发上限和响应头等待。",
+    "portHint": "修改后需保存；重启网关后推理入口设置生效。",
     "portField": "推理端口",
     "portActive": "正在使用",
     "portSaved": "已保存",
@@ -153,6 +154,9 @@
     "concurrencyField": "检查并发",
     "concurrencySaved": "已保存",
     "concurrencyHint": "同时解析与分类的请求路数，范围 4–128。并行调用排队时可调高。",
+    "requestBodyLimitField": "请求体大小上限（MiB）",
+    "requestBodyUnlimited": "不限制",
+    "requestBodyLimitHint": "默认为 0，不限制大小。填写正整数可限制每次请求体的大小，单位 MiB。",
     "responseStartTimeoutField": "响应头等待",
     "responseStartTimeoutSaved": "已保存",
     "responseStartTimeoutHint": "等待上游响应头的秒数（0 为不限制，最大 86400）。非流上游常在整段生成完才出头。",
@@ -532,7 +536,8 @@
     "reorderKeys": "拖拽排序；聚焦后按 ↑ / ↓ 移动",
     "orderSaving": "正在保存供应商顺序…",
     "orderFiltered": "拖动手柄调整匹配服务的全局优先级，其他服务保留原位置。",
-    "orderHint": "越靠上越优先。拖动左侧手柄排序，停用服务保留位置。"
+    "orderHint": "越靠上越优先。拖动左侧手柄排序，停用服务保留位置。",
+    "groupPayAsYouGo": "按量付费 API"
   },
   "models": {
     "deleteNamed": "删除 {{label}}",
@@ -625,7 +630,14 @@
     "anthropic": "Anthropic API",
     "gemini": "Gemini API",
     "openai_compatible": "OpenAI 兼容",
-    "custom": "自定义 API"
+    "custom": "自定义 API",
+    "deepseek": "DeepSeek API",
+    "qwen": "通义千问（百炼） API",
+    "moonshot": "Kimi（Moonshot） API",
+    "glm": "智谱 GLM API",
+    "minimax": "MiniMax API",
+    "doubao": "豆包（火山方舟） API",
+    "xai": "xAI（Grok） API"
   },
   "subscription": {
     "disconnected": "待登录",
@@ -652,10 +664,17 @@
     "anthropicOfficial": "Anthropic 官方 API",
     "anthropicOfficialDescription": "直连 Anthropic Messages API。",
     "geminiOfficial": "Google Gemini 官方 API",
-    "geminiOfficialDescription": "直连 Gemini Generate Content 与 Models API。",
+    "geminiOfficialDescription": "直连 Gemini Generate Content 与 Models API；OpenAI Chat 默认在本地转换为 Gemini 格式。",
     "custom": "自定义",
     "customDescription": "仅在服务不符合上述类型时使用；需要在高级配置中声明能力。",
-    "customName": "自定义服务"
+    "customName": "自定义服务",
+    "deepseekDescription": "DeepSeek 开放平台 API Key，按量付费；支持拉取模型列表。",
+    "qwenDescription": "阿里云百炼 API Key，按量付费。默认北京地域；其他地域或业务空间请修改地址并使用对应密钥，模型 ID 请从百炼控制台添加。",
+    "moonshotDescription": "Moonshot 开放平台 API Key，按量付费；国际账号可改为 api.moonshot.ai/v1。与 Kimi Coding 密钥独立。",
+    "glmDescription": "智谱开放平台 API Key，按量付费，使用通用 /api/paas/v4 接口；请添加已开通的模型 ID。",
+    "minimaxDescription": "MiniMax 开放平台 API Key，按量付费；国际账号可改为 api.minimax.io/v1。请使用开放平台密钥。",
+    "doubaoDescription": "火山方舟 API Key，按量付费。默认北京地域；请添加已开通的模型 ID 或推理接入点 ID（ep-…）。",
+    "xaiDescription": "xAI 开放平台 API Key，按量付费；支持 Grok Chat、Responses 与模型列表。"
   },
   "usage": {
     "hours5": "5 小时",

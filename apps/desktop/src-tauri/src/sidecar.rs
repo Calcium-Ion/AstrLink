@@ -225,6 +225,7 @@ fn sidecar_args(
     inference_port: u16,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
+    max_request_body_mib: u32,
     use_system_proxy: bool,
 ) -> Result<Vec<String>, String> {
     let data_directory = data_directory
@@ -245,6 +246,8 @@ fn sidecar_args(
         max_concurrent_inspections.to_string(),
         "--response-start-timeout-seconds".to_string(),
         response_start_timeout_seconds.to_string(),
+        "--max-request-body-mib".to_string(),
+        max_request_body_mib.to_string(),
         format!(
             "--outbound-proxy={}",
             if use_system_proxy { "system" } else { "direct" }
@@ -400,6 +403,7 @@ struct CoreInner {
     started_inference_port: Option<u16>,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
+    max_request_body_mib: u32,
     use_system_proxy: bool,
     locale: Locale,
     auto_recover: bool,
@@ -428,6 +432,7 @@ impl Default for CoreInner {
             started_inference_port: None,
             max_concurrent_inspections: 16,
             response_start_timeout_seconds: 0,
+            max_request_body_mib: 0,
             use_system_proxy: true,
             locale: Locale::En,
             auto_recover: true,
@@ -566,6 +571,7 @@ impl CoreManager {
                 inner.inference_port,
                 inner.max_concurrent_inspections,
                 inner.response_start_timeout_seconds,
+                inner.max_request_body_mib,
                 inner.use_system_proxy,
             ) {
                 Ok(arguments) => arguments,
@@ -705,23 +711,16 @@ impl CoreManager {
         Ok(())
     }
 
-    pub fn configure(
-        &self,
-        inference_port: u16,
-        max_concurrent_inspections: u16,
-        response_start_timeout_seconds: u32,
-        use_system_proxy: bool,
-        auto_recover: bool,
-        locale: Locale,
-    ) {
+    pub fn configure(&self, preferences: &crate::preferences::Preferences) {
         let mut inner = self.lock_inner();
-        inner.inference_port = inference_port;
-        inner.max_concurrent_inspections = max_concurrent_inspections;
-        inner.response_start_timeout_seconds = response_start_timeout_seconds;
-        inner.use_system_proxy = use_system_proxy;
-        inner.locale = locale;
-        inner.auto_recover = auto_recover;
-        if !auto_recover {
+        inner.inference_port = preferences.inference_port;
+        inner.max_concurrent_inspections = preferences.max_concurrent_inspections;
+        inner.response_start_timeout_seconds = preferences.response_start_timeout_seconds;
+        inner.max_request_body_mib = preferences.max_request_body_mib;
+        inner.use_system_proxy = preferences.use_system_proxy;
+        inner.locale = preferences.locale;
+        inner.auto_recover = preferences.core_auto_recover;
+        if !preferences.core_auto_recover {
             inner.recovery_scheduled_at = None;
             inner.recovery_attempt = 0;
         }
@@ -6344,7 +6343,7 @@ mod tests {
 
     #[test]
     fn sidecar_receives_pid_and_data_path_but_not_control_token_in_arguments() {
-        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0, true)
+        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0, 0, true)
             .expect("test path should be valid UTF-8");
         assert_eq!(
             arguments,
@@ -6363,11 +6362,24 @@ mod tests {
                 "16".to_string(),
                 "--response-start-timeout-seconds".to_string(),
                 "0".to_string(),
+                "--max-request-body-mib".to_string(),
+                "0".to_string(),
                 "--outbound-proxy=system".to_string(),
             ]
         );
-        let direct = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0, false)
-            .expect("valid path");
+        let direct = sidecar_args(
+            4242,
+            Path::new("/tmp/astrlink-data"),
+            8317,
+            16,
+            0,
+            64,
+            false,
+        )
+        .expect("valid path");
+        assert!(direct
+            .windows(2)
+            .any(|args| args == ["--max-request-body-mib", "64"]));
         assert!(direct.iter().any(|arg| arg == "--outbound-proxy=direct"));
         assert!(!direct.iter().any(|arg| arg == "--outbound-proxy=system"));
     }
@@ -6382,11 +6394,15 @@ mod tests {
                 Some(parse_ready_announcement(&ready_line("http://127.0.0.1:43210")).unwrap());
         }
         // Saving new preferences must not rewrite the reason for this run's fallback.
-        manager.configure(8317, 16, 0, true, true, Locale::En);
+        manager.configure(&crate::preferences::Preferences {
+            max_request_body_mib: 64,
+            ..Default::default()
+        });
         let fallback = manager.snapshot().inference_port_fallback.unwrap();
         assert_eq!(fallback.requested_port, 9000);
         assert_eq!(fallback.active_port, 8317);
         assert_eq!(manager.lock_inner().inference_port, 8317);
+        assert_eq!(manager.lock_inner().max_request_body_mib, 64);
         manager.lock_inner().clear_handshake();
         assert!(manager.snapshot().inference_port_fallback.is_none());
         {

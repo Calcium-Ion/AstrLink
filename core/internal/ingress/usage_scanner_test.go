@@ -217,7 +217,7 @@ func TestUsageScannerOverflowDisablesCapture(t *testing.T) {
 	scanner := newUsageScanner(contract.ProtocolOpenAIResponses, false)
 	writer := scanner.wrap(httptest.NewRecorder())
 	writer.WriteHeader(http.StatusOK)
-	huge := strings.Repeat("x", maxMetadataBytes+1)
+	huge := strings.Repeat("x", maxResponseInspectionBytes+1)
 	_, _ = writer.Write([]byte(huge))
 	if scanner.Usage() != nil {
 		t.Fatal("overflow should disable usage")
@@ -250,7 +250,7 @@ func TestUsageScannerGzipNonStreaming(t *testing.T) {
 
 	t.Run("over-cap decompressed payload yields null", func(t *testing.T) {
 		// Highly compressible payload expands past the metadata cap.
-		hugePlain := `{"pad":"` + strings.Repeat("a", maxMetadataBytes+1) + `","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+		hugePlain := `{"pad":"` + strings.Repeat("a", maxResponseInspectionBytes+1) + `","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
 		scanner := newUsageScanner(contract.ProtocolOpenAIResponses, false)
 		writer := scanner.wrap(httptest.NewRecorder())
 		writer.Header().Set("Content-Encoding", "gzip")

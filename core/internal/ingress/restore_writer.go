@@ -13,7 +13,7 @@ import (
 
 var errRestoreAborted = errors.New("response restore aborted")
 
-const maxRestoreBufferBytes = maxMetadataBytes
+const maxRestoreBufferBytes = maxResponseInspectionBytes
 
 type responseRestoreMode uint8
 

@@ -3,6 +3,7 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -417,4 +418,30 @@ func controlAPITestPort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return port
+}
+
+func TestPayAsYouGoServicesPersistAsHTTP(t *testing.T) {
+	for _, kind := range []contract.ServiceKind{"deepseek", "qwen", "moonshot", "glm", "minimax", "doubao", "xai"} {
+		t.Run(string(kind), func(t *testing.T) {
+			store, handler := newServiceHandler(t, "service_api")
+			service := createServiceForTest(t, handler, fmt.Sprintf(`{"name":"API","kind":%q,"models":["model-test"],"http":{"base_url":"https://api.example/v1","auth":{"scheme":"bearer"},"credential":{"secret":"api-secret"}},"capabilities":[{"protocol":"openai.chat","mode":"native","streaming":true}]}`, kind))
+			if service.Kind != kind || service.HTTP == nil || service.Subscription != nil {
+				t.Fatalf("wrong service: %#v", service)
+			}
+			response := serviceRequestForTest(t, handler, http.MethodGet, ServicesPath+"/"+string(service.ID), "", "", "")
+			if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "api-secret") {
+				t.Fatalf("get: %d %s", response.Code, response.Body.String())
+			}
+			var reloaded contract.Service
+			decode(t, response, &reloaded)
+			if reloaded.Kind != kind || reloaded.HTTP == nil {
+				t.Fatalf("wrong saved service: %#v", reloaded)
+			}
+			secret, err := store.Get(context.Background(), secretstore.Ref(service.HTTP.CredentialRef))
+			if err != nil || string(secret) != "api-secret" {
+				t.Fatal("credential was not stored separately")
+			}
+			clear(secret)
+		})
+	}
 }

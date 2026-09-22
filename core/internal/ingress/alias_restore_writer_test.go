@@ -161,7 +161,7 @@ func TestAliasRestoringWriterFailureModes(t *testing.T) {
 		)
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
-		chunk := bytes.Repeat([]byte("x"), maxMetadataBytes+1)
+		chunk := bytes.Repeat([]byte("x"), maxResponseInspectionBytes+1)
 		_, err := writer.Write(chunk)
 		if err != errRestoreAborted {
 			t.Fatalf("Write error = %v, want errRestoreAborted", err)

@@ -561,7 +561,7 @@ func TestModelDiscoveryKeepsResolveErrorContracts(t *testing.T) {
 }
 
 func TestModelDiscoveryEnforcesUpstreamResponseByteBound(t *testing.T) {
-	oversized := bytes.Repeat([]byte("x"), maxMetadataBytes+1)
+	oversized := bytes.Repeat([]byte("x"), maxResponseInspectionBytes+1)
 	protocol := contract.ProtocolOpenAIModels
 	tests := []struct {
 		name         string

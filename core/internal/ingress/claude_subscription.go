@@ -13,9 +13,9 @@ const claudeCodeBanner = "You are Claude Code, Anthropic's official CLI for Clau
 // Claude's subscription endpoint expects this compatibility banner. Existing
 // Claude Code requests keep their exact body; other system blocks remain intact.
 func prepareClaudeSubscriptionRequest(request *http.Request) error {
-	raw, err := io.ReadAll(io.LimitReader(request.Body, maxMetadataBytes+1))
+	raw, err := io.ReadAll(request.Body)
 	_ = request.Body.Close()
-	if err != nil || len(raw) > maxMetadataBytes {
+	if err != nil {
 		return fmt.Errorf("Claude subscription request could not be prepared")
 	}
 	var body map[string]json.RawMessage

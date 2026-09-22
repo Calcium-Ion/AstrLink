@@ -28,7 +28,7 @@ func TestClassifyExplicitReasoningEffortPreservesBody(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
-			got, err := classify(request)
+			got, err := classify(request, 0)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -89,6 +89,7 @@ import {
   codingPlanPresetIDs,
   httpServicePreset,
   httpServicePresetIDs,
+  payAsYouGoPresetIDs,
   localConversionPassthrough,
   localConversionTargets,
   protocolDescriptors,
@@ -1947,7 +1948,12 @@ export function ServiceManager({
           models: [],
         }))
       }
-      onDiscoverModels={() => void discoverModels()}
+      onDiscoverModels={
+        isSubscriptionKind(draft.kind) || draft.capabilities.some(({ protocol }) =>
+          protocol === "openai.models" || protocol === "google.models")
+          ? () => void discoverModels()
+          : undefined
+      }
       onModelEditorChange={setModelEditor}
       onRemoveModels={removeDraftModels}
     />
@@ -2125,7 +2131,7 @@ export function ServiceManager({
                       {serviceTypeOptionLabel("claude_subscription")}
                     </ServiceKindLabel>
                   </SelectItem>
-                  {codingPlanPresetIDs.filter((kind) => kind !== "opencode_zen").map((kind) => (
+                  {codingPlanPresetIDs.map((kind) => (
                     <SelectItem key={kind} value={kind} textValue={serviceTypeOptionLabel(kind)}>
                       <ServiceKindLabel kind={kind}>
                         {serviceTypeOptionLabel(kind)}
@@ -2140,16 +2146,21 @@ export function ServiceManager({
                       {serviceTypeOptionLabel("newapi")}
                     </ServiceKindLabel>
                   </SelectItem>
-                  <SelectItem value="opencode_zen" textValue={serviceTypeOptionLabel("opencode_zen")}>
-                    <ServiceKindLabel kind="opencode_zen">
-                      {serviceTypeOptionLabel("opencode_zen")}
-                    </ServiceKindLabel>
-                  </SelectItem>
+                </SelectGroup>
+                <SelectGroup>
+                  <SelectLabel>{t("services.groupPayAsYouGo")}</SelectLabel>
+                  {payAsYouGoPresetIDs.map((kind) => (
+                    <SelectItem key={kind} value={kind} textValue={serviceTypeOptionLabel(kind)}>
+                      <ServiceKindLabel kind={kind}>
+                        {serviceTypeOptionLabel(kind)}
+                      </ServiceKindLabel>
+                    </SelectItem>
+                  ))}
                 </SelectGroup>
                 <SelectGroup>
                   <SelectLabel>{t("services.groupAdvanced")}</SelectLabel>
                   {httpServicePresetIDs
-                    .filter((kind) => kind !== "newapi" && !codingPlanPresetIDs.includes(kind))
+                    .filter((kind) => kind !== "newapi" && !codingPlanPresetIDs.includes(kind) && !payAsYouGoPresetIDs.includes(kind))
                     .map((kind) => (
                       <SelectItem key={kind} value={kind} textValue={serviceTypeOptionLabel(kind)}>
                         <ServiceKindLabel kind={kind}>

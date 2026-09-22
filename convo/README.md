@@ -10,13 +10,19 @@ replayed history alone, so it needs no cooperation from the client.
 Status: pre-1.0. The public API may still change between minor versions; the
 fingerprint format is versioned separately through `NormalizationVersion`.
 
-## Install
+## Get the source
+
+The module is included in the [AstrLink repository](https://github.com/Calcium-Ion/AstrLink)
+and has not yet been published as a separately versioned package. Core uses it
+through a local Go module replacement. To run its checks from the repository root:
 
 ```sh
-go get github.com/QuantumNous/astrlink/convo@latest
+cd convo
+go test ./...
 ```
 
-Requires Go 1.24 or newer. No third-party dependencies.
+Requires Go 1.24 or newer. No third-party dependencies. See the repository's
+[development guide](../CONTRIBUTING.md) to build the complete application.
 
 ## What it detects
 

@@ -64,3 +64,12 @@ func TestOfficialProviderAndMonth(t *testing.T) {
 		t.Fatalf("%v %v", start, end)
 	}
 }
+
+func TestPayAsYouGoDefaultPricingProviders(t *testing.T) {
+	for kind, provider := range map[contract.ServiceKind]string{"deepseek": "deepseek", "qwen": "alibaba", "moonshot": "moonshotai", "glm": "zai", "minimax": "minimax", "xai": "xai", "doubao": ""} {
+		config := DefaultConfig(kind)
+		if config.Provider != provider || config.Validate() != nil {
+			t.Fatalf("%s: %#v", kind, config)
+		}
+	}
+}

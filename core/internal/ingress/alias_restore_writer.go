@@ -98,7 +98,7 @@ func (writer *aliasRestoringWriter) Write(chunk []byte) (int, error) {
 	if writer.streaming {
 		return writer.writeStreaming(chunk)
 	}
-	if writer.buffer.Len()+len(chunk) > maxMetadataBytes {
+	if writer.buffer.Len()+len(chunk) > maxResponseInspectionBytes {
 		writer.writeRestoreFailure(http.StatusBadGateway, "upstream_response_too_large", "upstream response exceeds the restore buffer")
 		return 0, errRestoreAborted
 	}
@@ -108,7 +108,7 @@ func (writer *aliasRestoringWriter) Write(chunk []byte) (int, error) {
 
 func (writer *aliasRestoringWriter) writeStreaming(chunk []byte) (int, error) {
 	writer.carry = append(writer.carry, chunk...)
-	if len(writer.carry) > maxMetadataBytes {
+	if len(writer.carry) > maxResponseInspectionBytes {
 		writer.writeRestoreFailure(http.StatusBadGateway, "upstream_response_too_large", "upstream response exceeds the restore buffer")
 		return 0, errRestoreAborted
 	}

@@ -68,6 +68,8 @@ pub struct Preferences {
     pub max_concurrent_inspections: u16,
     #[serde(default = "default_response_start_timeout_seconds")]
     pub response_start_timeout_seconds: u32,
+    /// Maximum inference request body size in MiB; zero means unlimited.
+    pub max_request_body_mib: u32,
     pub locale: Locale,
     pub theme: ThemePreference,
 }
@@ -83,6 +85,7 @@ impl Default for Preferences {
             inference_port: DEFAULT_INFERENCE_PORT,
             max_concurrent_inspections: DEFAULT_MAX_CONCURRENT_INSPECTIONS,
             response_start_timeout_seconds: DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
+            max_request_body_mib: 0,
             locale: Locale::En,
             theme: ThemePreference::System,
         }
@@ -337,6 +340,7 @@ mod tests {
         assert_eq!(snapshot.values.locale, Locale::En);
         assert_eq!(snapshot.values.theme, ThemePreference::System);
         assert!(snapshot.values.use_system_proxy);
+        assert_eq!(snapshot.values.max_request_body_mib, 0);
         assert_eq!(snapshot.load_warning, None);
     }
 
@@ -361,6 +365,7 @@ mod tests {
             snapshot.values.response_start_timeout_seconds,
             DEFAULT_RESPONSE_START_TIMEOUT_SECONDS
         );
+        assert_eq!(snapshot.values.max_request_body_mib, 0);
         assert_eq!(snapshot.load_warning, None);
         let _ = fs::remove_dir_all(directory);
     }
@@ -390,6 +395,7 @@ mod tests {
         let store = PreferencesStore::load(&directory);
         let values = Preferences {
             inference_port: 9123,
+            max_request_body_mib: 64,
             use_system_proxy: false,
             theme: ThemePreference::Dark,
             ..Preferences::default()

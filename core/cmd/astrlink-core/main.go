@@ -46,6 +46,7 @@ func main() {
 	controlTokenStdin := false
 	outboundProxy := "environment"
 	maxConcurrentInspections := ingress.DefaultMaxConcurrentInspections
+	var maxRequestBodyMiB uint64
 	responseStartTimeoutSeconds := ingress.DefaultResponseStartTimeoutSeconds
 	flag.StringVar(&config.InferenceListen, "inference-listen", config.InferenceListen, "loopback inference listen address")
 	flag.BoolVar(&config.InferencePortFallback, "inference-port-fallback", false, "use an ephemeral loopback port when the inference port is occupied")
@@ -56,6 +57,7 @@ func main() {
 	flag.StringVar(&classifierWorkerPath, "classifier-worker", "", "optional bundled classifier worker executable")
 	flag.BoolVar(&controlTokenStdin, "control-token-stdin", false, "read the per-start control token from stdin")
 	flag.IntVar(&maxConcurrentInspections, "max-concurrent-inspections", maxConcurrentInspections, "maximum requests that may parse and classify at once")
+	flag.Uint64Var(&maxRequestBodyMiB, "max-request-body-mib", 0, "maximum inference request body size in MiB; 0 means unlimited")
 	flag.IntVar(&responseStartTimeoutSeconds, "response-start-timeout-seconds", responseStartTimeoutSeconds, "seconds to wait for upstream response headers before failing over; 0 waits indefinitely")
 	flag.StringVar(&outboundProxy, "outbound-proxy", outboundProxy, "outbound proxy mode: environment, system, or direct")
 	flag.CommandLine.SetOutput(os.Stderr)
@@ -68,6 +70,10 @@ func main() {
 	}
 	if err := ingress.ValidateResponseStartTimeoutSeconds(responseStartTimeoutSeconds); err != nil {
 		logger.Printf("%v", err)
+		os.Exit(2)
+	}
+	if maxRequestBodyMiB > 1<<32-1 {
+		logger.Printf("max-request-body-mib must be at most 4294967295 (0 means unlimited)")
 		os.Exit(2)
 	}
 	proxy, err := networkproxy.New(outboundProxy)
@@ -90,7 +96,11 @@ func main() {
 	}
 	defer stopParentWatch()
 
-	dependencies := coreapp.Dependencies{}
+	dependencies := coreapp.Dependencies{
+		InferenceHandler: ingress.NewWithDependencies(ingress.Dependencies{
+			MaxRequestBodyMiB: uint32(maxRequestBodyMiB),
+		}),
+	}
 	var closeStore func() error
 	if dataDirectory != "" || controlTokenStdin {
 		if dataDirectory == "" || !controlTokenStdin {
@@ -264,6 +274,7 @@ func main() {
 				AllowedHost:              address,
 				ConversionEngine:         conversionEngine,
 				MaxConcurrentInspections: maxConcurrentInspections,
+				MaxRequestBodyMiB:        uint32(maxRequestBodyMiB),
 				ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
 			})
 		}

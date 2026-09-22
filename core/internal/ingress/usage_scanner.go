@@ -145,11 +145,11 @@ func (scanner *usageScanner) decodeNonStreamingBody(body []byte) ([]byte, bool) 
 			return nil, false
 		}
 		defer reader.Close()
-		decompressed, err := io.ReadAll(io.LimitReader(reader, int64(maxMetadataBytes)+1))
+		decompressed, err := io.ReadAll(io.LimitReader(reader, int64(maxResponseInspectionBytes)+1))
 		if err != nil {
 			return nil, false
 		}
-		if len(decompressed) > maxMetadataBytes {
+		if len(decompressed) > maxResponseInspectionBytes {
 			return nil, false
 		}
 		return decompressed, true
@@ -166,7 +166,7 @@ func (scanner *usageScanner) observe(chunk []byte) {
 		scanner.observeStreaming(chunk)
 		return
 	}
-	if scanner.buffer.Len()+len(chunk) > maxMetadataBytes {
+	if scanner.buffer.Len()+len(chunk) > maxResponseInspectionBytes {
 		scanner.disabled = true
 		scanner.buffer.Reset()
 		return
@@ -176,7 +176,7 @@ func (scanner *usageScanner) observe(chunk []byte) {
 
 func (scanner *usageScanner) observeStreaming(chunk []byte) {
 	scanner.carry = append(scanner.carry, chunk...)
-	if len(scanner.carry) > maxMetadataBytes {
+	if len(scanner.carry) > maxResponseInspectionBytes {
 		scanner.disabled = true
 		scanner.carry = nil
 		return

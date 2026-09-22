@@ -1,209 +1,48 @@
-# AstrLink Desktop
+# AstrLink 桌面设置
 
-Tauri 2 owns the desktop process boundary; `astrlink-core` remains a standalone
-Go sidecar. React invokes only fixed Core lifecycle, Service, local
-access-token, singleton privacy-policy, and privacy-model catalog commands; it
-never receives shell execution capability or the per-start control token.
+[返回首页](../../README.md) · [从源码构建](../../CONTRIBUTING.md)
 
-## Local development
+初次接入服务和客户端，请先阅读首页的「开始使用」。本文介绍日常使用中的桌面与网关设置。
 
-Prerequisites: Bun 1.3.14+, Go, Rust, and the platform dependencies required by
-Tauri. Bun manages dependencies, scripts, and the JavaScript tool runtime.
+## 网关与网络
 
-From the repository root, one-shot local desktop:
+- **启动和停止**：可以让网关随应用自动启动，也可以手动启动、停止或重启。网关停止后，客户端无法调用本机接口。
+- **API 地址**：默认使用 `127.0.0.1:8317`。如果端口被占用，会改用空闲端口；请复制界面显示的实际地址。
+- **修改端口**：保存新端口后重启网关，客户端也要更新地址。
+- **系统代理**：默认启用。切换设置或更改系统代理后，重启网关以应用。当前支持手动 HTTP/HTTPS 和 SOCKS5 代理，不支持 PAC/WPAD 自动代理脚本。
+- **请求体大小限制**：以 MiB 为单位，`0` 表示不设本地上限。保存并重启网关后生效；服务商自身的限制仍然适用。
 
-```sh
-make dev
-```
+## 外观与窗口
 
-Or from this directory:
+可选择跟随系统、浅色或深色外观，修改后立即生效。
 
-```sh
-bun install --frozen-lockfile
-bun run typecheck
-bun run test
-bun run desktop:dev
-```
+关闭主窗口时，可以选择隐藏到托盘或退出应用。隐藏到托盘会保留运行中的网关；托盘菜单中的「退出」会退出应用并停止网关。再次启动已运行的 AstrLink 会显示原窗口。
 
-Type checking uses the stable TypeScript 7 native Go compiler. Its preview
-command was named `tsgo`; the final TypeScript 7 package publishes it as `tsc`.
-Rsbuild provides the development server and production bundle. Vitest remains
-the test runner and is not the application bundler.
-Local `bunfig.toml` forces Node-shebang CLIs such as Rsbuild, Vitest, and the
-Tauri JavaScript wrapper to execute with Bun on every platform.
+可以在设置中启用登录系统后自动启动。
 
-`desktop:dev` builds the native Go Core for the Rust host target before Tauri
-starts. `desktop:build` performs the equivalent production build.
-`bun run dev` does not typecheck; use `bun run typecheck` or
-`bun run dev:typecheck` for a watch checker. Frontend file changes are
-rebuilt by Rsbuild. The debug Rust host polls `/__astrlink_build` and
-reloads the WebView; look for
-`[astrlink dev] frontend rebuild #N -> reloading webview` on the
-`make dev` terminal. A debug tray item **重新加载界面** forces the same
-reload. Failures of that poller also go to stderr so a silent stall is
-visible.
-Core operational diagnostics are written to stderr and forwarded to the
-terminal running `desktop:dev`; they are not sent to the WebView console.
-Privacy-model download messages contain only the model ID, catalog asset path,
-attempt number, and a sanitized reason such as `dns`, `http_503`, `body_read`,
-or `sha256`.
+## 隐私模型
 
-## Packaged model runtime dependencies
+规则检测无需下载模型。如果希望使用本地隐私模型，在 **安全策略** 中选择模型和量化版本，完成下载后再启用。
 
-`bun run desktop:build` stages the native dependencies before packaging. Model
-weights are still downloaded or imported separately.
+- **暂停与继续**：暂停会保留已下载内容；恢复或重试会尽量续传。重启应用后可继续未完成的下载。
+- **取消与删除**：会删除该次安装的记录和下载文件。正在被策略使用的模型需要先取消选用才能删除。
+- **本地导入**：可选择已准备好的模型目录或支持的 `.onnx` 文件。网络共享需要先挂载为本地路径。应用会校验并复制所需文件到自己的模型目录。
+- **检测失败**：模型无法加载或运行时，请求会被拒绝；不会自动跳过隐私检测。
 
-- **Windows x64:** the supported installer is NSIS (`.exe`). It embeds Microsoft's
-  official Visual C++ 2015–2022 x64 Redistributable, currently 14.44.35211.0
-  (about 24.4 MiB), as well as `DirectML.dll`. The preinstall hook checks the
-  machine's x64 runtime version, skips an equal/newer version, and installs a
-  missing/older version without downloading it on the user's machine. Windows
-  may request administrator approval for this shared prerequisite. Installation
-  failure stops AstrLink setup; a required reboot is reported without forcing
-  one. Uninstalling AstrLink leaves the shared runtime installed. WebView2 keeps
-  Tauri's separate bootstrapper behavior and can still require network access.
-- **macOS arm64/x64:** ONNX Runtime is bundled in `Contents/Frameworks`. Its C++
-  runtime, CoreML, Metal, and other Apple frameworks come with the OS; no separate
-  runtime installer is needed. The app requires macOS 13.4 or newer.
-- **Linux x64:** CI ships a `.deb` with ONNX Runtime under the application resource
-  directory. It declares `libc6 >= 2.36`, `libstdc++6 >= 12`, and `libgcc-s1`, in
-  addition to Tauri's GTK/WebKit/tray dependencies. Use Debian 12 or a compatible
-  newer distribution and install via `apt install ./AstrLink_*.deb` so the package
-  manager resolves dependencies. glibc is supplied by the distribution, not copied
-  into the app. This package is not a portable binary for arbitrary Linux systems.
+模型权重需要额外磁盘空间和内存。启用前查看界面的资源估算，并使用试运行确认检测效果。
 
-The Windows redistributable is pinned by immutable Microsoft download URL, size,
-and SHA-256 in `scripts/windows-vc-runtime.json`; Windows builds also check its
-Microsoft Authenticode signature. Update the pin and version together when moving
-to a newer MSVC toolchain. Redistribution follows [Microsoft's Visual C++ runtime
-terms](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files).
-Generated installers and native libraries must not be committed.
+## 请求记录与诊断
 
-## Model download recovery
+请求记录可以帮助确认实际使用的服务、模型、协议、耗时和失败原因。正文捕获默认关闭；需要查看正文时按界面提示单独开启。
 
-In Safety policy → Models → Installed, **Pause download** keeps completed files
-and the current partial file; **Resume download** continues the same pinned
-revision. Retrying a failed download also reuses retained bytes. After a Core
-restart, interrupted remote downloads appear as paused and can be resumed.
-Cancel/Delete removes both the installation record and retained files.
+设置中的 Agent 诊断功能可为支持的工具安装 AstrLink 调试技能，用于读取请求记录和执行轨迹。分享诊断结果前，请检查是否包含私人信息。
 
-Core validates HTTP `Content-Range`, file lengths, and available SHA-256 hashes
-before publication. A server that ignores `Range` restarts only that asset.
-Local model imports retain their existing import/cancel behavior.
+## 安装依赖
 
-## Sidecar handshake
+| 平台 | 说明 |
+| --- | --- |
+| macOS | 需要 macOS 13.4 或更新版本；分别提供 Apple Silicon 和 Intel 构建 |
+| Windows x64 | 安装程序包含 Visual C++ 运行库，安装时可能请求管理员权限；WebView2 可能需要联网安装 |
+| Linux x64 | `.deb` 面向 Debian 12 或兼容的新版本发行版，使用 `sudo apt install ./安装包文件名.deb` 安装并解析依赖 |
 
-The Core binds inference to the saved `127.0.0.1:<port>` (`8317` by default)
-and always chooses a private ephemeral loopback control port. It writes exactly
-one `ready` JSON line to stdout. Rust
-validates that signal, only accepts loopback endpoint URLs, then reads:
-
-- `/control/v1/health`
-- `/control/v1/version`
-- `/control/v1/capabilities`
-
-Version fields are checked across all three handshake documents before the UI
-reports Core as ready. The settings page shows the saved and active inference
-ports separately because a saved change takes effect only after restart. When the saved port is occupied, Core atomically binds an ephemeral loopback
-port instead. Overview and Settings display a warning with the actual API
-address so clients can be updated. The saved port is preserved and tried again
-on the next start. Host validation uses the bound address. Other bind failures
-remain explicit startup errors, and the desktop stays available for Settings
-and manual retry.
-
-Core can start automatically with the desktop or be started, stopped, and
-restarted manually. Unexpected exits use bounded exponential recovery delays of
-1, 2, 4, 8, and 16 seconds. The attempt count and pending delay are visible;
-recovery stops after five attempts and resets only after 30 seconds of stable
-readiness. Manual stop and application exit cancel stale recovery generations.
-Stop, restart, and Quit first request token-authenticated Core shutdown so HTTP
-servers and SQLite drain cleanly; a bounded force-stop remains only as fallback.
-
-RelayKit is represented only by the Core capability response. Alpha uses native
-and delegated passthrough and does not perform local format conversion.
-
-## Desktop preferences and OS integration
-
-Desktop preferences are strict typed JSON in the platform application-config
-directory. Missing files use safe defaults. Malformed, invalid, and unreadable
-files are reported in Settings while safe defaults are used; failed writes do
-not mutate the in-memory saved state. Updates use a same-directory temporary
-file, file sync, atomic rename, and directory sync on Unix.
-
-Settings → Desktop behavior → **Appearance** offers **System**, **Light**, and
-**Dark**. System is the default for new and existing installations and follows
-OS appearance changes while the app is open. Changes save immediately and apply
-to all windows, including trajectory inspectors, without restarting the gateway.
-The native preference is authoritative; a local browser cache applies the theme
-before the frontend paints on subsequent launches.
-
-Settings → Gateway and network includes **Use system proxy**, enabled by
-default (including older preference files). The switch saves immediately;
-start or restart the gateway to apply it. Restart also refreshes a changed OS
-proxy configuration. macOS reads `scutil --proxy`; Windows uses
-`WinHttpGetIEProxyConfigForCurrentUser`; Linux uses `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`
-and `NO_PROXY` (or their lowercase forms). Manual HTTP/HTTPS proxies, SOCKS5
-fallbacks, and domain/IP bypass rules are supported. PAC/WPAD is not supported:
-external requests report an error instead of silently connecting directly.
-Disabled means direct even when proxy environment variables exist. This covers
-OAuth, subscription usage/models, upstream inference and model downloads.
-Loopback control/worker traffic and the restricted media-fetch transport remain
-direct; TLS certificate verification remains enabled. The core CLI retains its
-environment behavior unless `--outbound-proxy=system` or `direct` is supplied.
-
-The tray provides **显示 AstrLink** and **退出**. Closing the main window either
-hides it to the tray or exits according to the saved preference; explicit tray
-Quit always bypasses hide-on-close and performs bounded Core shutdown. A second
-application launch restores, unminimizes, and focuses the existing window.
-
-开机启动 uses Tauri's supported OS integration on macOS, Windows, and Linux.
-Settings reads the real registration state, reconciles it before persisting the
-requested value, and reports registration/query failures instead of claiming
-success. It does not use a shell command or a WebView-only preference.
-
-## Service UI boundary
-
-The ordinary-user path starts with new-api and separate OpenAI/Codex, Claude,
-and Gemini subscription presets. Selecting the product attached to the API key
-atomically supplies authentication and a conservative capability set, leaving
-only the name, API address, and API key in the main form. Optional
-cross-protocol bridges and other technical overrides are folded under advanced
-settings.
-
-Profiles are UI-only templates. Existing Service records are hydrated from the
-complete wire document, including unknown protocols, models, and duplicate
-protocol IDs with different modes. Secrets stay write-only and isolated per
-profile draft; blank edit fields keep the stored credential unless the service
-identity changes.
-
-## Local access tokens
-
-The desktop starts persistent Core with one per-start control token delivered
-over stdin. That value is used only by Rust for the control plane. Inference
-clients instead use independently managed persistent `astr_…` tokens from the
-访问令牌 page. React receives a token value only after an explicit create or
-reveal action, hides it on page/session changes, and never receives token hashes.
-The overview and token rows reserve usage-summary positions without issuing
-statistics requests until usage storage is implemented.
-
-## Local privacy models
-
-The safety page keeps Regex available without model assets and exposes a
-versioned built-in model catalog, an advanced public Hugging Face probe, and a
-local import flow for an already-mounted model package. Local import accepts an
-absolute native directory or `.onnx` file path rather than `smb://` or another
-URI; network shares must first be mounted by the operating system. Selecting a
-file probes only that model variant and its required companion assets.
-Users choose one CPU model/quantization installation for the global policy;
-several immutable installations may coexist. The WebView receives catalog,
-persisted source/license/language details, progress, compatibility, and
-sanitized error metadata only. Label mapping is handled in a bounded modal so
-large label sets do not expand the main workspace. The WebView never downloads
-weights directly and cannot pass arbitrary URLs or executable repository code
-to Core. Core returns no source-directory path and copies the selected,
-content-pinned assets into AstrLink's private model storage before execution.
-
-Enabling or switching to a model shows its disk/RAM estimate and requires an
-explicit confirmation. Model loading remains lazy in the trusted Rust worker.
-Frontend tests use mocked catalog/install snapshots and never access Hugging
-Face or execute model inference.
+隐私模型和自动路由模型需要另外下载或导入。

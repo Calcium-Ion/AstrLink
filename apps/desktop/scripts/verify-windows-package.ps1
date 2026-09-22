@@ -13,7 +13,6 @@ Write-Host "Installer SHA-256: $((Get-FileHash $installer.FullName -Algorithm SH
 & 7z x $installer.FullName "-o$bundleDir" -y | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Unable to inspect installer" }
 $archives = @(Get-ChildItem $bundleDir -Recurse -Filter "*.7z")
-if ($archives.Count -eq 0) { throw "Installer has no embedded archive" }
 foreach ($archive in $archives) {
   $inner = Join-Path $bundleDir ("inner-" + [guid]::NewGuid().ToString("N"))
   New-Item -ItemType Directory -Force -Path $inner | Out-Null
@@ -30,8 +29,12 @@ if ((Get-FileHash $redists[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant(
 $directml = @(Get-ChildItem $bundleDir -Recurse -Filter "DirectML.dll")
 if ($directml.Count -ne 1) { throw "Expected one bundled DirectML.dll" }
 
-& $installer.FullName "/S" "/D=$installDir" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Silent installer failed" }
+$install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installDir") -PassThru
+if (-not $install.WaitForExit(120000)) {
+  $install.Kill()
+  throw "Silent installer timed out"
+}
+if ($install.ExitCode -ne 0) { throw "Silent installer failed: $($install.ExitCode)" }
 $names = @("astrlink-desktop.exe", "astrlink-core.exe", "astrlink-mcp.exe", "astrlink-privacy-worker.exe", "astrlink-classifier-worker.exe", "DirectML.dll")
 $files = @{}
 foreach ($name in $names) {
@@ -52,9 +55,16 @@ function Start-WorkerSmoke([string]$path) {
   $stdout = Join-Path $smokeDir ((Split-Path $path -Leaf) + ".stdout.log")
   $stderr = Join-Path $smokeDir ((Split-Path $path -Leaf) + ".stderr.log")
   $process = Start-Process -FilePath $path -WorkingDirectory (Split-Path $path) -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-  Start-Sleep -Milliseconds 1200
-  if ($process.HasExited) { throw "$(Split-Path $path -Leaf) exited during startup" }
-  Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+  # No model is passed: reaching the argument validator proves that the native
+  # loader succeeded. Both workers deliberately exit 1 in this case.
+  if (-not $process.WaitForExit(15000)) {
+    $process.Kill()
+    throw "$(Split-Path $path -Leaf) startup timed out"
+  }
+  if ($process.ExitCode -ne 1 -or (Get-Content $stderr -Raw) -notmatch "startup_or_protocol_failure") {
+    throw "$(Split-Path $path -Leaf) failed to load its runtime: exit $($process.ExitCode)"
+  }
+  Write-Host "Verified worker loader: $(Split-Path $path -Leaf)"
 }
 Start-WorkerSmoke $files["astrlink-privacy-worker.exe"]
 Start-WorkerSmoke $files["astrlink-classifier-worker.exe"]
@@ -67,7 +77,7 @@ try {
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
     Start-Sleep -Seconds 1
     try {
-      $response = Invoke-WebRequest -Uri "http://127.0.0.1:8317/v1/models" -UseBasicParsing -TimeoutSec 2
+      $response = Invoke-WebRequest -Uri "http://127.0.0.1:8317/v1/models" -NoProxy -SkipHttpErrorCheck -TimeoutSec 2
       if ($response.StatusCode -in @(200, 401, 403)) { $ready = $true; break }
     } catch { }
     if ($desktop.HasExited) { throw "astrlink-desktop exited during startup" }

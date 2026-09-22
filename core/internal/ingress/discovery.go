@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
+	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
@@ -274,7 +275,7 @@ func (handler *Handler) fetchModelDiscovery(
 	fetchRequest.Header.Del("If-Modified-Since")
 	fetchRequest.Header.Del("Range")
 
-	recorder := newDiscoveryResponseRecorder(maxMetadataBytes)
+	recorder := newDiscoveryResponseRecorder(maxResponseInspectionBytes)
 	finishPrivacy, _, privacyErr := handler.applyPrivacy(
 		recorder,
 		fetchRequest,
@@ -312,6 +313,8 @@ func (handler *Handler) fetchModelDiscovery(
 			endpointID: candidate.Service.ID,
 		}}
 	}
+	baseURL = providerapi.BaseURL(candidate.Service.Kind, classified.Protocol, baseURL)
+	fetchRequest.URL = providerapi.RequestURL(candidate.Service.Kind, classified.Protocol, fetchRequest.URL)
 	if candidate.Service.Kind == contract.ServiceKindCodexSubscription {
 		fetchRequest.URL.Path = strings.TrimPrefix(fetchRequest.URL.Path, "/v1")
 		if fetchRequest.URL.RawPath != "" {

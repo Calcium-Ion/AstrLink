@@ -46,6 +46,7 @@ const settings = {
     inference_port: 9000,
     max_concurrent_inspections: 16,
     response_start_timeout_seconds: 0,
+    max_request_body_mib: 0,
     theme: "system" as const,
     locale: "zh-CN" as const,
   },
@@ -85,6 +86,19 @@ describe("SettingsCenter", () => {
     expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="routing-defaults-panel"]')).toBeNull();
     expect(container.textContent).not.toContain("默认失败处理");
+  });
+
+  it("replaces the loading screen with the desktop timeout error", async () => {
+    const message = "桌面程序长时间未响应，请完全退出 AstrLink 后重新打开。";
+    bridge.getPreferences.mockRejectedValueOnce(new Error(message));
+
+    await act(async () => root.render(
+      <SettingsCenter snapshot={snapshot} onCoreSnapshot={vi.fn()} onDirtyChange={vi.fn()} />,
+    ));
+
+    expect(container.textContent).toContain("无法加载设置");
+    expect(container.textContent).toContain(message);
+    expect(container.textContent).not.toContain("正在读取桌面与系统设置");
   });
 
   it("shows active and saved ports truthfully and saves a validated draft", async () => {
@@ -355,4 +369,41 @@ describe("SettingsCenter", () => {
       }),
     );
   });
+  it("saves a body limit, preserves the draft during instant changes, and restores unlimited", async () => {
+    const onDirtyChange = vi.fn();
+    bridge.updatePreferences.mockImplementation(async (values) => ({ ...settings, values }));
+    await act(async () => root.render(
+      <SettingsCenter snapshot={snapshot} onCoreSnapshot={vi.fn()} onDirtyChange={onDirtyChange} />,
+    ));
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="请求体大小上限（MiB）"]');
+    const save = [...container.querySelectorAll("button")].find((button) => button.textContent === "保存");
+    if (!input || !save) throw new Error("missing body limit controls");
+    expect(input.value).toBe("0");
+    expect(container.textContent).toContain("不限制");
+    const edit = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await edit("64");
+    expect(onDirtyChange).toHaveBeenCalledWith(true);
+    const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+    await act(async () => toggle.click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(expect.objectContaining({ max_request_body_mib: 0 }));
+    expect(input.value).toBe("64");
+    await act(async () => save.click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(expect.objectContaining({ max_request_body_mib: 64 }));
+    expect(container.textContent).toContain("64 MiB");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    for (const invalid of ["-1", "1.5", "4294967296"]) {
+      await edit(invalid);
+      expect(save.disabled).toBe(true);
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+    }
+    await edit("0");
+    await act(async () => save.click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(expect.objectContaining({ max_request_body_mib: 0 }));
+    expect(container.textContent).toContain("不限制");
+  });
+
 });

@@ -48,11 +48,13 @@ classifier-worker-check: desktop-sidecar
 
 # Dev-only: compare the local experimental bundle against the ORT 1.23.2 golden.
 # Not part of check; ASTRLINK_CI_SYNTHETIC_MODELS_ONLY refuses this target.
+# Set ASTRLINK_CLASSIFIER_GOLDEN_BUNDLE to the local bundle directory.
 classifier-ort-gate:
 	cargo run --locked --offline --bin golden_align --manifest-path apps/classifier-worker/Cargo.toml
 
 # Dev-only: score a holdout set against a local bundle. Insufficient sets print
 # 「评测集不足，不产出判定」instead of a gate verdict. Not part of check.
+# Set ASTRLINK_CLASSIFIER_GOLDEN_BUNDLE to the local bundle directory.
 classifier-bench:
 	cargo run --locked --offline --bin classifier_bench --manifest-path apps/classifier-worker/Cargo.toml
 

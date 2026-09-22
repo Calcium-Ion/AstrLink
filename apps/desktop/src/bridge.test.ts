@@ -25,6 +25,7 @@ import {
   deleteService,
   dryRunPrivacyPolicy,
   getCoreStatus,
+  getPreferences,
   getPrivacyModelCatalog,
   getPrivacyModelInstallation,
   getPrivacyPolicy,
@@ -123,7 +124,68 @@ describe("desktop bridge contract", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["core_status", getCoreStatus],
+    ["get_preferences", getPreferences],
+  ] as const)("times out a stuck %s and ignores its late reply", async (command, read) => {
+    vi.useFakeTimers();
+    let resolveNative!: (value: unknown) => void;
+    invokeMock.mockReturnValueOnce(new Promise((resolve) => { resolveNative = resolve; }));
+    const result = read();
+    const settled = vi.fn();
+    void result.then(settled, settled);
+    const failure = expect(result).rejects.toThrow("桌面程序长时间未响应");
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await failure;
+    expect(invokeMock).toHaveBeenCalledWith(command);
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+
+    resolveNative(validSnapshot());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toHaveBeenCalledTimes(1);
+    await expect(result).rejects.toThrow("桌面程序长时间未响应");
+  });
+
+  it.each([
+    ["core_status", getCoreStatus],
+    ["get_preferences", getPreferences],
+  ] as const)("preserves native %s errors and clears its deadline", async (_command, read) => {
+    vi.useFakeTimers();
+    invokeMock.mockRejectedValueOnce("native read failed");
+
+    await expect(read()).rejects.toThrow("native read failed");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("can read a fresh status after an earlier read timed out", async () => {
+    vi.useFakeTimers();
+    invokeMock.mockReturnValueOnce(new Promise(() => {}));
+    const failure = expect(getCoreStatus()).rejects.toThrow("桌面程序长时间未响应");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await failure;
+
+    invokeMock.mockResolvedValueOnce(validSnapshot());
+    await expect(getCoreStatus()).resolves.toMatchObject({ phase: "ready" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not apply local read deadlines to gateway restarts", async () => {
+    vi.useFakeTimers();
+    let resolveNative!: (value: unknown) => void;
+    invokeMock.mockReturnValueOnce(new Promise((resolve) => { resolveNative = resolve; }));
+    const result = restartCore();
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    resolveNative(validSnapshot());
+    await expect(result).resolves.toMatchObject({ phase: "ready" });
   });
 
   it("forwards session kind and cursor through the native bridge", async () => {

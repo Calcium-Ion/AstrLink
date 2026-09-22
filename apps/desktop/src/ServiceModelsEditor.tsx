@@ -26,7 +26,7 @@ export type ServiceModelsEditorProps = {
   probingModels: boolean;
   onModelEditorChange: (value: string) => void;
   onAddModels: () => void;
-  onDiscoverModels: () => void;
+  onDiscoverModels?: () => void;
   onRemoveModels: (models: string[]) => void;
   onClearModels: () => void;
 };
@@ -365,7 +365,7 @@ export function ServiceModelsEditor({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <Button
+        {onDiscoverModels ? <Button
           className="h-8 shrink-0"
           disabled={probingModels}
           onClick={onDiscoverModels}
@@ -373,7 +373,7 @@ export function ServiceModelsEditor({
           variant="outline"
         >
           {probingModels ? t("models.fetching") : t("models.fetchList")}
-        </Button>
+        </Button> : null}
         <Button
           aria-expanded={adding}
           aria-label={t("models.addModel")}

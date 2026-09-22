@@ -1,4 +1,4 @@
-import { Anthropic, Claude, Codex, Gemini, Kimi, Minimax, NewAPI, OpenAI, OpenCode, Zhipu } from "@lobehub/icons";
+import { DeepSeek, Doubao, Grok, Qwen, Anthropic, Claude, Codex, Gemini, Kimi, Minimax, NewAPI, OpenAI, OpenCode, Zhipu } from "@lobehub/icons";
 import { Connect as Cable } from "@/components/icons";
 import type { ReactNode } from "react";
 
@@ -26,10 +26,13 @@ function kindMark(kind: ServiceKind, size: number): ReactNode {
     case "opencode_go":
     case "opencode_zen":
       return <OpenCode size={size} />;
+    case "moonshot":
     case "kimi_coding":
       return <Kimi size={size} />;
+    case "glm":
     case "glm_coding":
       return <Zhipu.Color size={size} />;
+    case "minimax":
     case "minimax_coding":
       return <Minimax.Color size={size} />;
     case "openai":
@@ -39,6 +42,14 @@ function kindMark(kind: ServiceKind, size: number): ReactNode {
       return <Anthropic size={size} />;
     case "gemini":
       return <Gemini.Color size={size} />;
+    case "deepseek":
+      return <DeepSeek.Color size={size} />;
+    case "qwen":
+      return <Qwen.Color size={size} />;
+    case "doubao":
+      return <Doubao.Color size={size} />;
+    case "xai":
+      return <Grok size={size} />;
     case "custom":
       return <Cable aria-hidden="true" className="text-muted-foreground" size={size} />;
   }

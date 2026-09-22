@@ -74,3 +74,14 @@ flax_model*.msgpack
 
 # local planning docs
 /plans/
+
+# Local agent instructions and internal project documents
+/AGENTS.md
+/.cursor/
+/ARCHITECTURE.md
+/PROJECT_PLAN.md
+/PROJECT_ROADMAP.md
+/docs/decisions/
+/docs/notes/
+/docs/release-readiness.md
+/docs/color-scheme-plan*.md

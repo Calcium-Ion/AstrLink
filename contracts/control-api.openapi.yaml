@@ -3172,6 +3172,13 @@ components:
         - kimi_coding
         - glm_coding
         - minimax_coding
+        - deepseek
+        - qwen
+        - moonshot
+        - glm
+        - minimax
+        - doubao
+        - xai
         - newapi
         - openai
         - anthropic

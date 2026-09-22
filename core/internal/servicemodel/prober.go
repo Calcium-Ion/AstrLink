@@ -17,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
@@ -115,7 +116,12 @@ func (prober *Prober) ProbeHTTP(
 	if kind == contract.ServiceKindAnthropic || kind == contract.ServiceKindKimiCoding || kind == contract.ServiceKindMiniMaxCoding || kind == contract.ServiceKindGLMCoding {
 		headers.Set("Anthropic-Version", "2023-06-01")
 	}
-	return prober.probeHTTPPages(probeContext, connection.BaseURL, headers, protocol, kind == contract.ServiceKindAnthropic)
+	baseURL, err := url.Parse(connection.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid base URL", ErrUnsupported)
+	}
+	baseURL = providerapi.BaseURL(kind, protocol, baseURL)
+	return prober.probeHTTPPages(probeContext, baseURL.String(), headers, protocol, kind == contract.ServiceKindAnthropic)
 }
 
 func (prober *Prober) probeSubscription(
@@ -325,7 +331,8 @@ func kindSupportsDiscovery(kind contract.ServiceKind, protocol contract.Protocol
 		return protocol == contract.ProtocolGoogleModels
 	case contract.ServiceKindOpenAI, contract.ServiceKindOpenAICompatible, contract.ServiceKindAnthropic,
 		contract.ServiceKindOpenCodeGo, contract.ServiceKindOpenCodeZen, contract.ServiceKindKimiCoding,
-		contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding:
+		contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding,
+		contract.ServiceKindDeepSeek, contract.ServiceKindMoonshot, contract.ServiceKindMiniMax, contract.ServiceKindXAI:
 		return protocol == contract.ProtocolOpenAIModels
 	default:
 		return false

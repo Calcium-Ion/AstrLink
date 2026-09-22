@@ -821,7 +821,7 @@ func TestPrivacyReusesFourBufferedBodyPermitsForGemini(t *testing.T) {
 	}
 }
 
-func TestPrivacyUsesExistingEightMiBBodyLimit(t *testing.T) {
+func TestPrivacyUsesConfiguredBodyLimit(t *testing.T) {
 	filter := testPrivacyEngine(t, privacy.Policy{
 		Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionWarn,
 	}, nil)
@@ -829,12 +829,13 @@ func TestPrivacyUsesExistingEightMiBBodyLimit(t *testing.T) {
 		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
 			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolGoogleGenerateContent, false)}, nil
 		}),
-		PrivacyFilter: filter,
+		PrivacyFilter:     filter,
+		MaxRequestBodyMiB: 8,
 	})
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/v1beta/models/gemini:generateContent",
-		strings.NewReader(strings.Repeat("x", maxMetadataBytes+1)),
+		strings.NewReader(strings.Repeat("x", (8<<20)+1)),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()

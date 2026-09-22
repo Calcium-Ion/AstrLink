@@ -37,7 +37,7 @@ func TestClassifyAlphaProtocolRoutes(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
-			got, err := classify(request)
+			got, err := classify(request, 0)
 			if err != nil {
 				t.Fatalf("classify: %v", err)
 			}
@@ -85,13 +85,13 @@ func TestClassifyRejectsUnknownPathsAndWrongMethods(t *testing.T) {
 		"/v1beta/models/gemini:countTokens",
 	} {
 		request := httptest.NewRequest(http.MethodPost, path, nil)
-		if _, err := classify(request); err != errProtocolPathNotFound {
+		if _, err := classify(request, 0); err != errProtocolPathNotFound {
 			t.Fatalf("classify(%q) error = %v", path, err)
 		}
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
-	_, err := classify(request)
+	_, err := classify(request, 0)
 	methodErr, ok := err.(methodNotAllowedError)
 	if !ok || methodErr.allow != http.MethodPost {
 		t.Fatalf("wrong method error = %#v", err)
@@ -108,7 +108,7 @@ func TestClassifyRejectsMalformedMetadataAndPreservesItsBody(t *testing.T) {
 		`{"stream":null}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
-		if _, err := classify(request); err != errInvalidMetadata {
+		if _, err := classify(request, 0); err != errInvalidMetadata {
 			t.Fatalf("classify(%q) error = %v", body, err)
 		}
 		preserved, err := io.ReadAll(request.Body)
@@ -141,7 +141,7 @@ func TestClassifyUsesExactMetadataKeys(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(test.body))
-			got, err := classify(request)
+			got, err := classify(request, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +170,7 @@ func TestClassifyBoundsModelSelector(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
-			if _, err := classify(request); err != errInvalidMetadata {
+			if _, err := classify(request, 0); err != errInvalidMetadata {
 				t.Fatalf("classify error = %v", err)
 			}
 		})
@@ -191,7 +191,7 @@ func TestClassifyUsesGeminiActionMetadataWithoutInspectingOpaqueBody(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
 			request.Header.Set("Content-Encoding", "gzip")
-			got, err := classify(request)
+			got, err := classify(request, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -213,7 +213,7 @@ func TestClassifyRejectsEncodedBodyWithoutGuessingStreamingCapability(t *testing
 	const body = "compressed bytes"
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 	request.Header.Set("Content-Encoding", "gzip")
-	if _, err := classify(request); err != errUnsupportedContentEncoding {
+	if _, err := classify(request, 0); err != errUnsupportedContentEncoding {
 		t.Fatalf("classify error = %v", err)
 	}
 	preserved, err := io.ReadAll(request.Body)
@@ -229,7 +229,7 @@ func TestClassifyInspectsIdentityEncodedBody(t *testing.T) {
 	const body = `{"model":"gpt-5","stream":true}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 	request.Header.Set("Content-Encoding", "identity")
-	got, err := classify(request)
+	got, err := classify(request, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,10 +238,10 @@ func TestClassifyInspectsIdentityEncodedBody(t *testing.T) {
 	}
 }
 
-func TestClassifyBoundsMetadataInspection(t *testing.T) {
-	body := `{"input":"` + strings.Repeat("x", maxMetadataBytes) + `"}`
+func TestClassifyUsesConfiguredBodyLimit(t *testing.T) {
+	body := `{"input":"` + strings.Repeat("x", 8<<20) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
-	if _, err := classify(request); err != errMetadataTooLarge {
+	if _, err := classify(request, 8<<20); err != errMetadataTooLarge {
 		t.Fatalf("classify error = %v", err)
 	}
 }

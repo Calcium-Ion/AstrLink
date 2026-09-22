@@ -35,7 +35,8 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { ServiceManager } from "./ServiceManager";
-import type { Service } from "./service-model";
+import { parseService, type Service } from "./service-model";
+import { httpServicePreset } from "./service-presets";
 
 const timestamp = "2026-07-28T12:00:00Z";
 const etag = `"sha256:${"a".repeat(64)}"`;
@@ -705,6 +706,63 @@ describe("ServiceManager", () => {
     } finally {
       logged.mockRestore();
     }
+  });
+
+  it.each([
+    ["deepseek", "DeepSeek API"],
+    ["qwen", "通义千问（百炼） API"],
+    ["moonshot", "Kimi（Moonshot） API"],
+    ["glm", "智谱 GLM API"],
+    ["minimax", "MiniMax API"],
+    ["doubao", "豆包（火山方舟） API"],
+    ["xai", "xAI（Grok） API"],
+    ["gemini", "Gemini API"],
+  ] as const)("creates %s with API credentials and preserves its kind on reload", async (kind, label) => {
+    const preset = httpServicePreset(kind);
+    const service = parseService({
+      ...gatewayService, name: preset.defaultName, kind, models: [],
+      http: { base_url: preset.baseURL, auth: { scheme: preset.authScheme }, credential_ref: "local://service/service_gateway" },
+      capabilities: preset.capabilities,
+    });
+    bridgeMocks.createService.mockResolvedValue({ service, etag });
+    await act(async () => root.render(
+      <ServiceManager catalogError={null} catalogStatus="ready" isReady
+        onDirtyChange={() => {}} onRefresh={() => {}} onServiceRemoved={() => {}}
+        onServiceSaved={() => {}} onViewChange={() => {}} protocols={[]} services={[]}
+        view={{ kind: "create" }} />,
+    ));
+    await chooseOption("服务类型", label);
+    expect(container.querySelector<HTMLInputElement>("#service-name")?.value).toBe(preset.defaultName);
+    await openEditorTab("protocols");
+    const protocolRows = [...container.querySelectorAll('[data-testid="service-capability-row"]')];
+    const entryRow = protocolRows.find((row) => row.textContent?.includes(kind === "gemini" ? "OpenAI Chat Completions" : "Anthropic Messages"));
+    expect(entryRow?.querySelector('[role="checkbox"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(entryRow?.textContent).toContain(kind === "gemini" ? "Gemini Generate Content" : "原样转发");
+    await openEditorTab("connection");
+    const secret = container.querySelector<HTMLInputElement>('input[type="password"]');
+    if (!secret) throw new Error("missing API key input");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(secret, "test-api-key");
+      secret.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const submit = container.querySelector<HTMLButtonElement>('[data-testid="service-submit"]');
+    expect(submit?.disabled).toBe(false);
+    await act(async () => {
+      container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(bridgeMocks.createService).toHaveBeenCalledWith(expect.objectContaining({
+      kind, name: preset.defaultName, models: [], capabilities: preset.capabilities,
+      http: { base_url: preset.baseURL, auth: { scheme: preset.authScheme }, credential: { secret: "test-api-key" } },
+    }));
+    if (kind === "gemini") {
+      expect(bridgeMocks.createService.mock.calls[0]?.[0].capabilities).toContainEqual({
+        protocol: "openai.chat", mode: "native", streaming: true, convert_to: "google.generate_content",
+      });
+    }
+    expect(bridgeMocks.beginServiceAuthorization).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="service-editor-tab-models"]')!.click());
+    const fetchButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "获取模型列表");
+    expect(Boolean(fetchButton)).toBe(!["qwen", "glm", "doubao"].includes(kind));
   });
 
   it("creates a Codex service through the unified add form and targets its OAuth", async () => {

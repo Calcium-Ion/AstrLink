@@ -71,6 +71,8 @@ type Dependencies struct {
 	// MaxConcurrentInspections limits how many requests may parse and
 	// classify at once. Zero selects DefaultMaxConcurrentInspections.
 	MaxConcurrentInspections int
+	// MaxRequestBodyMiB limits incoming request bodies; zero means unlimited.
+	MaxRequestBodyMiB uint32
 }
 
 type Classifier interface {
@@ -112,6 +114,7 @@ type Handler struct {
 	allowedHost              string
 	responseStartTimeout     time.Duration
 	metadataSlots            chan struct{}
+	maxRequestBodyBytes      int64
 	conversionEngine         relaykitbridge.ConversionEngine
 	classifier               Classifier
 	sessionFingerprints      sessionFingerprints
@@ -212,6 +215,7 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		allowedHost:           dependencies.AllowedHost,
 		responseStartTimeout:  dependencies.ResponseStartTimeout,
 		metadataSlots:         make(chan struct{}, metadataInspectionLimit(dependencies.MaxConcurrentInspections)),
+		maxRequestBodyBytes:   int64(dependencies.MaxRequestBodyMiB) << 20,
 		conversionEngine:      dependencies.ConversionEngine,
 		classifier:            dependencies.Classifier,
 	}
@@ -240,7 +244,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if errors.Is(err, errMetadataTooLarge) {
-		handler.writeRecordedInferenceError(writer, request, http.StatusRequestEntityTooLarge, "request_too_large", "request metadata exceeds the inspection limit", false, nil)
+		handler.writeRecordedInferenceError(writer, request, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the configured size limit", false, nil)
 		return
 	}
 	if errors.Is(err, errUnsupportedContentEncoding) {
@@ -375,7 +379,7 @@ func (handler *Handler) applyPrivacy(
 		session.notePrivacyDecision("block", contract.RequestStatusBlocked)
 		return finish, privacyOutcome{}, errPrivacyBlocked
 	case privacy.DecisionRedact:
-		if buffered == nil || len(result.Body) > maxMetadataBytes {
+		if buffered == nil || (handler.maxRequestBodyBytes > 0 && int64(len(result.Body)) > handler.maxRequestBodyBytes) {
 			return finish, privacyOutcome{}, privacy.ErrUnsafeRewrite
 		}
 		buffered.Replace(result.Body)
@@ -414,9 +418,9 @@ func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *h
 	case errors.Is(err, context.Canceled):
 		return
 	case errors.Is(err, errMetadataTooLarge):
-		writeInferenceError(writer, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the inspection limit", false, nil)
+		writeInferenceError(writer, http.StatusRequestEntityTooLarge, "request_too_large", "request body exceeds the configured size limit", false, nil)
 		session.notePrivacyDecision("request_too_large", contract.RequestStatusFailed)
-		session.noteFailed(errorSummaryFromInference("request_too_large", "request body exceeds the inspection limit", false))
+		session.noteFailed(errorSummaryFromInference("request_too_large", "request body exceeds the configured size limit", false))
 	case errors.Is(err, errUnsupportedContentEncoding):
 		writeInferenceError(writer, http.StatusUnsupportedMediaType, "unsupported_content_encoding", "encoded inference request bodies cannot be inspected safely", false, nil)
 		session.notePrivacyDecision("unsupported_content_encoding", contract.RequestStatusFailed)
@@ -464,16 +468,16 @@ func (handler *Handler) bufferPrivacyBody(request *http.Request) ([]byte, *priva
 		}
 	}
 	original := request.Body
-	body, err := io.ReadAll(io.LimitReader(original, maxMetadataBytes+1))
+	body, err := readRequestBody(original, handler.maxRequestBodyBytes)
+	if errors.Is(err, errMetadataTooLarge) {
+		release()
+		_ = original.Close()
+		return nil, nil, errMetadataTooLarge
+	}
 	if err != nil {
 		release()
 		_ = original.Close()
 		return nil, nil, privacy.ErrUnsafeInput
-	}
-	if len(body) > maxMetadataBytes {
-		release()
-		_ = original.Close()
-		return nil, nil, errMetadataTooLarge
 	}
 	if err := original.Close(); err != nil {
 		release()
@@ -683,7 +687,7 @@ func (handler *Handler) classify(request *http.Request) (Request, func(), error)
 	if err != nil {
 		return Request{}, func() {}, err
 	}
-	classified, classifyErr := classify(request)
+	classified, classifyErr := classify(request, handler.maxRequestBodyBytes)
 	if classifyErr != nil {
 		if replay, buffered := request.Body.(*replayReadCloser); buffered {
 			_ = replay.Close()

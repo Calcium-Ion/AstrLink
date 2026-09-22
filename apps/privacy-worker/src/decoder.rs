@@ -1013,18 +1013,10 @@ mod tests {
         }
         let labels = labels.iter().map(String::as_str).collect::<Vec<_>>();
         let mapping = default_openai_mapping();
-        Decoder::from_sensitive_json(
-            &config(&labels),
-            &sensitive_calibration(1, false),
-            &mapping,
-        )
-        .expect("schema 1");
-        Decoder::from_sensitive_json(
-            &config(&labels),
-            &sensitive_calibration(2, true),
-            &mapping,
-        )
-        .expect("schema 2 with compatibility metadata");
+        Decoder::from_sensitive_json(&config(&labels), &sensitive_calibration(1, false), &mapping)
+            .expect("schema 1");
+        Decoder::from_sensitive_json(&config(&labels), &sensitive_calibration(2, true), &mapping)
+            .expect("schema 2 with compatibility metadata");
         assert_eq!(
             Decoder::from_sensitive_json(
                 &config(&labels),

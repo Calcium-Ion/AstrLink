@@ -1,7 +1,7 @@
 al.essio.dev/pkg/shellescape v1.5.1 h1:86HrALUujYS/h+GtqoB26SBEdkWfmMI6FubjXlsXyho=
 al.essio.dev/pkg/shellescape v1.5.1/go.mod h1:6sIqp7X2P6mThCQ7twERpZTuigpr6KbZWtls1U8I890=
-github.com/QuantumNous/new-api/relaykit v0.2.0 h1:8GtCZBU5KF/4PrhyIjrjUgv0AYJfXJQTXhAnc9fNsLk=
-github.com/QuantumNous/new-api/relaykit v0.2.0/go.mod h1:WOCRYw5GlldWf/cqoxE5DSVFb+XsAf50AvkEd35XPUY=
+github.com/QuantumNous/new-api/relaykit v0.2.1 h1:O5dNPWSAw2mwdDA/z6xUOJklYDMQMS8fPZgXskItImk=
+github.com/QuantumNous/new-api/relaykit v0.2.1/go.mod h1:WOCRYw5GlldWf/cqoxE5DSVFb+XsAf50AvkEd35XPUY=
 github.com/danieljoos/wincred v1.2.2 h1:774zMFJrqaeYCK2W57BgAem/MLi6mtSE47MB6BOJ0i0=
 github.com/danieljoos/wincred v1.2.2/go.mod h1:w7w4Utbrz8lqeMbDAK0lkNJUv5sAOkFi7nd/ogr0Uh8=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=

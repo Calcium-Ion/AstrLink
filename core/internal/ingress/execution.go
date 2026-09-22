@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
+	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
@@ -288,6 +289,7 @@ func (handler *Handler) executeCandidates(
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
 		if authorizeErr == nil {
+			authorizationEndpoint.Auth = providerapi.Auth(candidate.Service.Kind, plan.UpstreamProtocol, authorizationEndpoint.Auth)
 			var headersErr error
 			headers, headersErr = handler.authorizer.Headers(request.Context(), authorizationEndpoint)
 			authorizeErr = headersErr
@@ -322,6 +324,8 @@ func (handler *Handler) executeCandidates(
 			}
 			continue
 		}
+		baseURL = providerapi.BaseURL(candidate.Service.Kind, plan.UpstreamProtocol, baseURL)
+		attemptRequest.URL = providerapi.RequestURL(candidate.Service.Kind, plan.UpstreamProtocol, attemptRequest.URL)
 		if candidate.Service.Kind == contract.ServiceKindCodexSubscription {
 			attemptRequest.URL.Path = strings.TrimPrefix(attemptRequest.URL.Path, "/v1")
 			if attemptRequest.URL.RawPath != "" {
@@ -931,18 +935,11 @@ func captureRequestBody(request *http.Request, forceBuffer bool) (*requestBodySo
 	}
 
 	original := request.Body
-	buffered, err := io.ReadAll(io.LimitReader(original, maxMetadataBytes+1))
+	buffered, err := io.ReadAll(original)
 	if err != nil {
 		_ = original.Close()
 		source.Close()
 		return nil, err
-	}
-	if len(buffered) > maxMetadataBytes {
-		source.first = &joinedReadCloser{
-			Reader: io.MultiReader(bytes.NewReader(buffered), original),
-			closer: original,
-		}
-		return source, nil
 	}
 	if err := original.Close(); err != nil {
 		source.Close()

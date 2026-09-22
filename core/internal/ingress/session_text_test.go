@@ -77,7 +77,7 @@ func TestInputPreviewIsNewestVisibleUserText(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
-			metadata, err := inspectJSONMetadata(request, test.protocol)
+			metadata, err := inspectJSONMetadata(request, test.protocol, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,7 +148,7 @@ func TestConversationCursorFromExplicitCursors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
-			metadata, err := inspectJSONMetadata(request, contract.ProtocolOpenAIResponses)
+			metadata, err := inspectJSONMetadata(request, contract.ProtocolOpenAIResponses, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,7 +177,7 @@ func TestExtractProtocolCursors(t *testing.T) {
 
 func TestClassifyExtractsSessionFields(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4.1","previous_response_id":"resp_prev","input":"下一轮"}`))
-	got, err := classify(request)
+	got, err := classify(request, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestClassifyExtractsSessionFields(t *testing.T) {
 	}
 
 	messages := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-5","max_tokens":16,"metadata":{"user_id":"user_ab_account_acc_session_94460a08-ccc1-4a26-b7e0-fdeae8c82009"},"messages":[{"role":"user","content":"你能搜索吗"}]}`))
-	got, err = classify(messages)
+	got, err = classify(messages, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestClassifyExtractsSessionFields(t *testing.T) {
 	}
 
 	cherry := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","stream":true,"prompt_cache_key":"cherry-agent:cdd2c1c84409d105a4fe9c878d39a23d","input":[{"role":"user","content":"你能做什么"}]}`))
-	got, err = classify(cherry)
+	got, err = classify(cherry, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestClassifyExtractsSessionFields(t *testing.T) {
 	}
 
 	official := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4.1","previous_response_id":"resp_prev","prompt_cache_key":"cherry-agent:other","input":"下一轮"}`))
-	got, err = classify(official)
+	got, err = classify(official, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestClassifyExtractsSessionFields(t *testing.T) {
 	}
 
 	completions := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`{"model":"m","prompt":"hi"}`))
-	got, err = classify(completions)
+	got, err = classify(completions, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

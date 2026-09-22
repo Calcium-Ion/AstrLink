@@ -62,6 +62,7 @@ struct PreferencesInput {
     inference_port: u16,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
+    max_request_body_mib: u32,
     locale: Locale,
     theme: ThemePreference,
 }
@@ -77,6 +78,7 @@ impl From<PreferencesInput> for Preferences {
             inference_port: input.inference_port,
             max_concurrent_inspections: input.max_concurrent_inspections,
             response_start_timeout_seconds: input.response_start_timeout_seconds,
+            max_request_body_mib: input.max_request_body_mib,
             locale: input.locale,
             theme: input.theme,
         }
@@ -277,14 +279,7 @@ fn update_preferences(
         }
         return Err(persist_error);
     }
-    manager.configure(
-        values.inference_port,
-        values.max_concurrent_inspections,
-        values.response_start_timeout_seconds,
-        values.use_system_proxy,
-        values.core_auto_recover,
-        locale,
-    );
+    manager.configure(&values);
     if let Err(error) = rebuild_tray_menu(&app, locale) {
         eprintln!("unable to rebuild AstrLink tray menu: {error}");
     }
@@ -457,6 +452,12 @@ impl InspectorRegistry {
             .map(|entry| entry.label.clone())
             .collect()
     }
+
+    fn remove_unpinned(&mut self) -> Vec<String> {
+        let labels = self.unpinned_labels();
+        self.entries.retain(|entry| entry.pinned);
+        labels
+    }
 }
 
 /// What an inspector window pulls on mount, instead of waiting for the main
@@ -534,7 +535,7 @@ fn inspector_registry<'a>(
 /// Routes a selection to the newest unpinned window, opening one when every
 /// inspector is pinned or none is left. Returns the label it landed in.
 #[tauri::command]
-fn show_trajectory_inspector(
+async fn show_trajectory_inspector(
     app: tauri::AppHandle,
     registry: State<'_, Mutex<InspectorRegistry>>,
     selection: serde_json::Value,
@@ -559,10 +560,29 @@ fn show_trajectory_inspector(
     };
 
     if let Some(cascade) = cascade {
-        if let Err(error) = build_inspector_window(&app, &label, cascade) {
+        // WebView2 deadlocks when a synchronous IPC handler creates a webview.
+        // Keep native window creation off both the event loop and async workers.
+        let build_app = app.clone();
+        let build_label = label.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            build_inspector_window(&build_app, &build_label, cascade)
+        })
+        .await
+        .map_err(|error| format!("unable to create the inspector window: {error}"))
+        .and_then(|result| result);
+        if let Err(error) = result {
             let mut guard = inspector_registry(&registry)?;
             guard.remove(&label);
             return Err(error);
+        }
+
+        // Leaving the conversation can cancel a window before it exists.
+        // Release the registry lock before asking the event loop to close it.
+        let still_open = inspector_registry(&registry)?.find_mut(&label).is_some();
+        if !still_open {
+            if let Some(window) = app.get_webview_window(&label) {
+                window.close().map_err(|error| error.to_string())?;
+            }
         }
         // The webview is not listening yet; it pulls the stored selection from
         // `trajectory_inspector_state` once it mounts.
@@ -642,7 +662,7 @@ fn close_unpinned_inspectors(app: &tauri::AppHandle) {
         return;
     };
     let labels = match registry.lock() {
-        Ok(guard) => guard.unpinned_labels(),
+        Ok(mut guard) => guard.remove_unpinned(),
         Err(_) => {
             eprintln!("inspector window registry is poisoned; unpinned windows stay open");
             return;
@@ -1340,14 +1360,7 @@ pub fn run() {
                 }
                 window.show()?;
             }
-            setup_manager.configure(
-                values.inference_port,
-                values.max_concurrent_inspections,
-                values.response_start_timeout_seconds,
-                values.use_system_proxy,
-                values.core_auto_recover,
-                values.locale,
-            );
+            setup_manager.configure(&values);
             let autostart = app.autolaunch();
             let reconciliation = autostart
                 .is_enabled()
@@ -1697,6 +1710,54 @@ mod tests {
 
         assert_eq!(registry.target(), None);
         assert!(registry.unpinned_labels().is_empty());
+    }
+
+    #[test]
+    fn leaving_a_conversation_cancels_inspectors_still_being_created() {
+        let mut registry = InspectorRegistry::default();
+        let pending = registry.insert();
+        registry.store(&pending, serde_json::json!({"row": {"chip": "CLIENT"}}));
+
+        assert_eq!(registry.remove_unpinned(), vec![pending.clone()]);
+        assert!(registry.find_mut(&pending).is_none());
+        assert_eq!(registry.target(), None);
+
+        let next = registry.insert();
+        // A cancelled build finishing later must not close or remove its replacement.
+        registry.remove(&pending);
+        assert_ne!(next, pending);
+        assert_eq!(registry.target(), Some(next.as_str()));
+    }
+
+    #[test]
+    fn leaving_a_conversation_preserves_pinned_inspectors_and_their_selection() {
+        let mut registry = InspectorRegistry::default();
+        let pinned = registry.insert();
+        registry.store(&pinned, serde_json::json!({"row": {"chip": "UPSTREAM"}}));
+        registry.set_pinned(&pinned, true);
+        let following = registry.insert();
+
+        assert_eq!(registry.remove_unpinned(), vec![following]);
+        assert!(registry.remove_unpinned().is_empty());
+        let state = registry.state(&pinned);
+        assert!(state.pinned);
+        assert_eq!(state.selection.unwrap()["row"]["chip"], "UPSTREAM");
+    }
+
+    #[test]
+    fn an_inspector_mounts_with_the_latest_selection_received_during_creation() {
+        let mut registry = InspectorRegistry::default();
+        let pending = registry.insert();
+        registry.store(&pending, serde_json::json!({"row": {"chip": "CLIENT"}}));
+
+        let target = registry.target().unwrap().to_string();
+        registry.store(&target, serde_json::json!({"row": {"chip": "RESULT"}}));
+
+        assert_eq!(registry.entries.len(), 1);
+        assert_eq!(
+            registry.state(&pending).selection.unwrap()["row"]["chip"],
+            "RESULT"
+        );
     }
 
     #[test]

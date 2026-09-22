@@ -7,7 +7,11 @@ import type {
 
 export type HTTPServicePresetID = HTTPServiceKind;
 
-export const codingPlanPresetIDs: HTTPServicePresetID[] = ["opencode_go", "opencode_zen", "kimi_coding", "glm_coding", "minimax_coding"];
+export const codingPlanPresetIDs: HTTPServicePresetID[] = ["opencode_go", "kimi_coding", "glm_coding", "minimax_coding"];
+
+export const payAsYouGoPresetIDs: HTTPServicePresetID[] = [
+  "opencode_zen", "openai", "anthropic", "gemini", "deepseek", "qwen", "moonshot", "glm", "minimax", "doubao", "xai",
+];
 
 export interface ProtocolDescriptor {
   id: string;
@@ -179,6 +183,7 @@ const profileDefinitions: Readonly<
     HTTPServicePresetID,
     Omit<HTTPServicePreset, "capabilities"> & {
       capabilityIDs: readonly string[];
+      convertTo?: Readonly<Record<string, string>>;
     }
   >
 > = {
@@ -279,8 +284,51 @@ const profileDefinitions: Readonly<
     baseURLPlaceholder: "https://generativelanguage.googleapis.com",
     authScheme: "google_api_key",
     headerName: "",
-    capabilityIDs: ["google.generate_content", "google.models"],
+    capabilityIDs: ["google.generate_content", "google.models", "openai.chat"],
+    convertTo: { "openai.chat": "google.generate_content" },
     advancedOnStart: false,
+  },
+  deepseek: {
+    id: "deepseek", label: "DeepSeek", description: "", defaultName: "DeepSeek API",
+    kind: "deepseek", baseURL: "https://api.deepseek.com/v1", baseURLPlaceholder: "https://api.deepseek.com/v1",
+    authScheme: "bearer", headerName: "",
+    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat", "openai.models"], advancedOnStart: false,
+  },
+  qwen: {
+    id: "qwen", label: "通义千问（百炼）", description: "", defaultName: "通义千问（百炼） API",
+    kind: "qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", baseURLPlaceholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    authScheme: "bearer", headerName: "",
+    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat"], advancedOnStart: false,
+  },
+  moonshot: {
+    id: "moonshot", label: "Kimi（Moonshot）", description: "", defaultName: "Kimi（Moonshot） API",
+    kind: "moonshot", baseURL: "https://api.moonshot.cn/v1", baseURLPlaceholder: "https://api.moonshot.cn/v1",
+    authScheme: "bearer", headerName: "",
+    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat", "openai.models"], advancedOnStart: false,
+  },
+  glm: {
+    id: "glm", label: "智谱 GLM", description: "", defaultName: "智谱 GLM API",
+    kind: "glm", baseURL: "https://open.bigmodel.cn/api/paas/v4", baseURLPlaceholder: "https://open.bigmodel.cn/api/paas/v4",
+    authScheme: "bearer", headerName: "",
+    capabilityIDs: ["anthropic.messages", "openai.chat"], advancedOnStart: false,
+  },
+  minimax: {
+    id: "minimax", label: "MiniMax", description: "", defaultName: "MiniMax API",
+    kind: "minimax", baseURL: "https://api.minimax.cn/v1", baseURLPlaceholder: "https://api.minimax.cn/v1",
+    authScheme: "bearer", headerName: "",
+    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat", "openai.models"], advancedOnStart: false,
+  },
+  doubao: {
+    id: "doubao", label: "豆包（火山方舟）", description: "", defaultName: "豆包（火山方舟） API",
+    kind: "doubao", baseURL: "https://ark.cn-beijing.volces.com/api/v3", baseURLPlaceholder: "https://ark.cn-beijing.volces.com/api/v3",
+    authScheme: "bearer", headerName: "",
+    capabilityIDs: ["openai.responses", "anthropic.messages", "openai.chat"], advancedOnStart: false,
+  },
+  xai: {
+    id: "xai", label: "xAI（Grok）", description: "", defaultName: "xAI（Grok） API",
+    kind: "xai", baseURL: "https://api.x.ai/v1", baseURLPlaceholder: "https://api.x.ai/v1",
+    authScheme: "bearer", headerName: "",
+    capabilityIDs: ["openai.responses", "openai.responses.compact", "anthropic.messages", "openai.chat", "openai.completions", "openai.models"], advancedOnStart: false,
   },
   custom: {
     id: "custom",
@@ -327,8 +375,11 @@ export function httpServicePreset(
     protocol,
     mode: "native" as const,
     streaming: descriptors.get(protocol)?.streaming ?? false,
+    ...(definition.convertTo?.[protocol]
+      ? { convert_to: definition.convertTo[protocol] }
+      : {}),
   }));
-  const { capabilityIDs: _ids, ...preset } = definition;
+  const { capabilityIDs: _ids, convertTo: _conversions, ...preset } = definition;
   return localizeHttpPreset({
     ...preset,
     capabilities,
@@ -337,6 +388,14 @@ export function httpServicePreset(
 
 function localizeHttpPreset(preset: HTTPServicePreset): HTTPServicePreset {
   switch (preset.id) {
+    case "deepseek":
+    case "qwen":
+    case "moonshot":
+    case "glm":
+    case "minimax":
+    case "doubao":
+    case "xai":
+      return { ...preset, label: i18n.t(`kind.${preset.id}`), defaultName: i18n.t(`kind.${preset.id}`), description: i18n.t(`presets.${preset.id}Description`) };
     case "opencode_go":
     case "opencode_zen":
     case "kimi_coding":
@@ -396,6 +455,13 @@ export function httpServiceKindLabel(kind: HTTPServiceKind): string {
       openai: "OpenAI",
       anthropic: "Anthropic",
       gemini: "Gemini",
+      deepseek: i18n.t("kind.deepseek"),
+      qwen: i18n.t("kind.qwen"),
+      moonshot: i18n.t("kind.moonshot"),
+      glm: i18n.t("kind.glm"),
+      minimax: i18n.t("kind.minimax"),
+      doubao: i18n.t("kind.doubao"),
+      xai: i18n.t("kind.xai"),
       openai_compatible: i18n.t("kind.openai_compatible"),
       custom: i18n.t("kind.custom"),
       opencode_go: "OpenCode Go",

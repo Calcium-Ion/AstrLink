@@ -98,7 +98,8 @@
   },
   "bridge": {
     "restartDesktopOnly": "Restarting the gateway is only available in the AstrLink desktop app.",
-    "desktopOnly": "This action is only available in the AstrLink desktop app."
+    "desktopOnly": "This action is only available in the AstrLink desktop app.",
+    "desktopUnresponsive": "The desktop app is not responding. Fully quit AstrLink and reopen it."
   },
   "settings": {
     "theme": "Appearance",
@@ -142,7 +143,7 @@
     "restarting": "Restarting…",
     "portKicker": "Network entry",
     "portTitle": "Inference entry",
-    "portHint": "Save after changing. Restart the gateway to apply the new port, concurrency, and response-header wait.",
+    "portHint": "Save after changing. Restart the gateway to apply inference entry settings.",
     "portField": "Inference port",
     "portActive": "In use",
     "portSaved": "Saved",
@@ -153,6 +154,9 @@
     "concurrencyField": "Inspection concurrency",
     "concurrencySaved": "Saved",
     "concurrencyHint": "How many requests may parse and classify at once (4–128). Raise this if parallel calls queue up.",
+    "requestBodyLimitField": "Request body limit (MiB)",
+    "requestBodyUnlimited": "Unlimited",
+    "requestBodyLimitHint": "0 = unlimited (default). Set a positive whole number to limit each request body in MiB.",
     "responseStartTimeoutField": "Response header wait",
     "responseStartTimeoutSaved": "Saved",
     "responseStartTimeoutHint": "Seconds to wait for upstream response headers (0 = no limit, max 86400). Non-stream upstreams often withhold headers until generation finishes.",
@@ -532,7 +536,8 @@
     "reorderKeys": "Drag to reorder; use Arrow Up / Down when focused",
     "orderSaving": "Saving service order…",
     "orderFiltered": "Drag to change matching services’ global priority; other services keep their positions.",
-    "orderHint": "Top services take priority. Drag a handle to reorder; disabled services keep their position."
+    "orderHint": "Top services take priority. Drag a handle to reorder; disabled services keep their position.",
+    "groupPayAsYouGo": "Pay-as-you-go APIs"
   },
   "models": {
     "deleteNamed": "Delete {{label}}",
@@ -625,7 +630,14 @@
     "anthropic": "Anthropic API",
     "gemini": "Gemini API",
     "openai_compatible": "OpenAI compatible",
-    "custom": "Custom API"
+    "custom": "Custom API",
+    "deepseek": "DeepSeek API",
+    "qwen": "Qwen (Model Studio) API",
+    "moonshot": "Kimi (Moonshot) API",
+    "glm": "GLM (Zhipu) API",
+    "minimax": "MiniMax API",
+    "doubao": "Doubao (Volcengine Ark) API",
+    "xai": "xAI (Grok) API"
   },
   "subscription": {
     "disconnected": "Needs sign-in",
@@ -652,10 +664,17 @@
     "anthropicOfficial": "Anthropic official API",
     "anthropicOfficialDescription": "Talks to the Anthropic Messages API.",
     "geminiOfficial": "Google Gemini official API",
-    "geminiOfficialDescription": "Talks to Gemini Generate Content and Models APIs.",
+    "geminiOfficialDescription": "Talks to Gemini Generate Content and Models APIs; OpenAI Chat is converted locally to Gemini format by default.",
     "custom": "Custom",
     "customDescription": "Use only when the service does not match the types above. You must declare capabilities in advanced settings.",
-    "customName": "Custom service"
+    "customName": "Custom service",
+    "deepseekDescription": "DeepSeek platform API key with usage-based billing and model discovery.",
+    "qwenDescription": "Alibaba Cloud Model Studio API key with usage-based billing. Defaults to Beijing; match the URL and key to your region or workspace. Add model IDs from the console.",
+    "moonshotDescription": "Moonshot platform API key with usage-based billing. International accounts can use api.moonshot.ai/v1. Separate from Kimi Coding credentials.",
+    "glmDescription": "Zhipu platform API key with usage-based billing through /api/paas/v4. Add model IDs enabled for your account.",
+    "minimaxDescription": "MiniMax platform API key with usage-based billing. International accounts can use api.minimax.io/v1. Use your platform API key.",
+    "doubaoDescription": "Volcengine Ark API key with usage-based billing. Defaults to Beijing; add an enabled model ID or inference endpoint ID (ep-…).",
+    "xaiDescription": "xAI platform API key with usage-based billing; supports Grok Chat, Responses, and model discovery."
   },
   "usage": {
     "hours5": "5 hours",

@@ -17,7 +17,6 @@ env:
   ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache
 
 jobs:
   # Checks run alongside compilation. Only publish exposes a checked installer.
@@ -33,6 +32,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
+      - name: Configure Bun cache
+        run: '"BUN_INSTALL_CACHE_DIR=$env:RUNNER_TEMP/bun-cache" >> $env:GITHUB_ENV'
       - uses: actions/cache@v4
         with:
           path: ${{ env.BUN_INSTALL_CACHE_DIR }}
@@ -80,6 +81,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
+      - name: Configure Bun cache
+        run: '"BUN_INSTALL_CACHE_DIR=$env:RUNNER_TEMP/bun-cache" >> $env:GITHUB_ENV'
       - uses: actions/cache@v4
         with:
           path: ${{ env.BUN_INSTALL_CACHE_DIR }}

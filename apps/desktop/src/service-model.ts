@@ -16,6 +16,13 @@ export type HTTPServiceKind =
   | "openai"
   | "anthropic"
   | "gemini"
+  | "deepseek"
+  | "qwen"
+  | "moonshot"
+  | "glm"
+  | "minimax"
+  | "doubao"
+  | "xai"
   | "openai_compatible"
   | "custom";
 
@@ -168,6 +175,13 @@ const httpKinds = new Set<HTTPServiceKind>([
   "openai",
   "anthropic",
   "gemini",
+  "deepseek",
+  "qwen",
+  "moonshot",
+  "glm",
+  "minimax",
+  "doubao",
+  "xai",
   "openai_compatible",
   "custom",
 ]);
