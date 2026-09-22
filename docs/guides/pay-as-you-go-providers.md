@@ -82,4 +82,4 @@ Grok 订阅（SuperGrok / Grok Build）通过 xAI Device Code 登录，请求经
 | 协议不支持 | 客户端接口与提供商入口配置是否匹配，是否需要启用可用的协议转换 |
 | 连接失败 | 提供商地址、系统代理，以及请求记录中的具体失败原因 |
 
-客户端连接步骤见[首页](../../README.md#开始使用)，网关端口与代理设置见[桌面设置](../../apps/desktop/README.md)。
+客户端连接步骤见[首页](../../README.zh-CN.md#开始使用)，网关端口与代理设置见[桌面设置](../../apps/desktop/README.md)。

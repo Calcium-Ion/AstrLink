@@ -1,6 +1,6 @@
 # AstrLink 桌面设置
 
-[返回首页](../../README.md) · [从源码构建](../../CONTRIBUTING.md)
+[返回首页](../../README.zh-CN.md) · [从源码构建](../../CONTRIBUTING.md)
 
 初次接入API 提供商和客户端，请先阅读首页的「开始使用」。本文介绍日常使用中的桌面与网关设置。
 

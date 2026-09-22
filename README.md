@@ -4,118 +4,132 @@
 
 # AstrLink
 
-把你的 AI 订阅和 API 提供商接入一个本地网关，让 IDE、命令行工具和 AI Agent 共用模型、路由与隐私设置。
+**English** | [简体中文](README.zh-CN.md)
 
-AstrLink 是一款开源桌面应用。在界面中添加API 提供商、选择模型，再把客户端连接到本机 API 地址即可使用。支持 macOS、Windows 和 Linux。
+**A local AI gateway for AI agents, unifying your subscriptions and API providers with smart routing and on-device privacy protection.**
 
-[开始使用](#开始使用) · [使用指南](docs/guides/README.md) · [API 提供商接入指南](docs/guides/pay-as-you-go-providers.md) · [桌面设置](apps/desktop/README.md) · [参与开发](CONTRIBUTING.md)
+AstrLink is an open-source desktop app for macOS, Windows, and Linux. Connect your existing subscriptions or API providers, point your agent to the local API endpoint, and manage models, routing, privacy policies, and request records in one place.
 
-## 可以用它做什么
+[Getting started](#getting-started) · [On-device privacy protection](#on-device-privacy-protection) · [User guides (Chinese)](docs/guides/README.md) · [Contributing (Chinese)](CONTRIBUTING.md)
 
-- **集中管理API 提供商**：连接 Codex、Claude、Grok 订阅、New API 网关、主流厂商 API 和 Coding Plan，管理多个账号与密钥。
-- **统一客户端入口**：提供 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 接口；根据API 提供商能力配置协议转换。
-- **选择模型与路由**：使用模型别名、API 提供商优先级和失败重试；也可以安装本地分类模型，为自动路由选择目标模型。
-- **保护请求中的敏感信息**：通过本地规则或本地隐私模型识别敏感内容，选择提醒、拦截或脱敏，并配置响应中的占位符还原。
-- **排查调用问题**：查看请求记录、会话轨迹、上游尝试和错误原因，了解请求实际走向了哪个API 提供商和模型。
-- **查看使用情况**：按API 提供商、模型和客户端令牌查看用量及费用估算。估算结果不替代API 提供商账单。
+## Features
 
-网关和隐私检测运行在本机；推理请求仍会发送到你配置的上游API 提供商。模型是否可用、额度和计费取决于对应账号或 API 提供商。
+- **On-device privacy protection**: Detect sensitive content with local rules or a local privacy model. Warn, block, or redact according to your policies, and optionally restore placeholders in responses.
+- **Subscriptions and APIs in one place**: Connect Codex, Claude, and Grok subscriptions, major API providers, Coding Plans, and compatible gateways such as New API. Manage accounts and credentials centrally.
+- **Smart routing**: Configure model aliases, provider priorities, and retries. Install a local classification model to let `astrlink/auto` select a target model automatically.
+- **Multiple API protocols**: Expose OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini endpoints, with protocol conversion configurable according to upstream capabilities.
+- **Request records and usage tracking**: Inspect requests, session traces, upstream attempts, and errors. Track usage and estimated costs by provider, model, and access token.
 
-## 安装
+## On-device privacy protection
 
-项目处于早期开发阶段，目前尚未发布正式安装包。已发布版本会放在 [Releases](https://github.com/Calcium-Ion/AstrLink/releases)。
+With privacy policies enabled, AstrLink can detect sensitive content, redact requests, and restore responses locally:
 
-现在可以从源码运行，步骤见 [开发与构建](CONTRIBUTING.md)。也可以在 [Actions](https://github.com/Calcium-Ion/AstrLink/actions) 中下载成功运行产生的构建产物（需要登录 GitHub）；这些属于开发构建，可能尚未签名或公证。
+1. **Detect on your device**: Use built-in rules, custom rules, or a local privacy model to identify sensitive content such as secrets, email addresses, and phone numbers. Rule-based detection requires no model download.
+2. **Apply your policies**: Choose to warn, block, or redact. Redaction replaces detected sensitive content with placeholders. Configure detection categories and allowlists, then check the results with a dry run.
+3. **Restore responses when needed**: Enable response restoration to replace placeholders returned by the model with their original values, so your agent can continue using the results.
 
-| 平台 | 安装包与要求 |
+The gateway, privacy detection, and redaction run on your device. Inference requests are still sent to the upstream API providers you configure. What gets processed depends on your enabled policies and detection results. Request body capture is off by default and can be enabled separately for troubleshooting.
+
+Local privacy models must be downloaded or imported; see [Privacy model settings (Chinese)](apps/desktop/README.md#隐私模型). For thinking signatures and encrypted continuation data, see [Privacy detection and continuation compatibility (Chinese)](docs/guides/privacy-reasoning-continuation.md).
+
+## Installation
+
+AstrLink is in early development, with no official installer release yet. Published versions will be available on [Releases](https://github.com/Calcium-Ion/AstrLink/releases).
+
+You can run from source by following the [development and build instructions (Chinese)](CONTRIBUTING.md). You can also download build artifacts from successful [Actions](https://github.com/Calcium-Ion/AstrLink/actions) runs while signed in to GitHub. These are development builds and may not be signed or notarized.
+
+| Platform | Packages and requirements |
 | --- | --- |
-| macOS | Apple Silicon / Intel，macOS 13.4 或更新版本 |
-| Windows | x64 `.exe` 安装程序；安装过程中可能需要下载 WebView2 |
-| Linux | x64 `.deb`，Debian 12 或兼容的新版本发行版 |
+| macOS | Apple Silicon / Intel, macOS 13.4 or later |
+| Windows | x64 `.exe` installer; WebView2 may need to be downloaded during installation |
+| Linux | x64 `.deb`, Debian 12 or a compatible newer distribution |
 
-隐私模型和路由分类模型按需下载或导入，安装包不包含模型权重。
+Privacy and routing classification models are downloaded or imported separately. Model weights are not included in the app package.
 
-## 开始使用
+## Getting started
 
-### 1. 添加API 提供商
+### 1. Connect a subscription or API
 
-打开 AstrLink，确认网关已启动，然后进入 **API 提供商 → 添加API 提供商**。
+Open AstrLink, make sure the gateway is running, then go to **API providers** and add an existing subscription or API.
 
-| 你已有的API 提供商 | 接入方式 |
+| Subscription or API | How to connect |
 | --- | --- |
-| Codex、Claude、Grok 订阅 | 选择对应订阅类型，按界面提示完成账号授权；Grok 使用 Device Code 登录 |
-| New API 或其他兼容网关 | 填写API 提供商地址和该API 提供商的 API Key |
-| OpenAI、Anthropic、Gemini、DeepSeek、千问、Kimi、GLM、MiniMax、豆包、xAI | 在按量付费 API 中选择厂商，再填写开放平台密钥 |
-| OpenCode Go、Kimi Coding、GLM Coding Plan、MiniMax Coding Plan | 选择对应 Coding Plan，使用订阅专用凭据 |
+| Codex, Claude, or Grok subscription | Select the subscription type and follow the authorization steps; Grok uses device code login |
+| New API or another compatible gateway | Enter the gateway URL and its API key |
+| OpenAI, Anthropic, Gemini, DeepSeek, Qwen, Kimi, GLM, MiniMax, Doubao, or xAI | Select the provider under pay-as-you-go APIs and enter your API key |
+| OpenCode Go, Kimi Coding, GLM Coding Plan, or MiniMax Coding Plan | Select the Coding Plan and use its subscription-specific credentials |
 
-保存后检查API 提供商的模型列表，拉取或手动添加需要使用的模型。**模型列表为空的API 提供商不会处理推理请求。** API 和 Coding Plan 的密钥、地址可能不同，详细说明见 [API 提供商接入指南](docs/guides/pay-as-you-go-providers.md)。
+After saving, fetch or manually add the models you want to use. **Providers with an empty model list will not handle inference requests.** API and Coding Plan credentials and endpoints may differ; see the [provider setup guide (Chinese)](docs/guides/pay-as-you-go-providers.md).
 
-### 2. 创建客户端令牌
+Model availability, quotas, and billing depend on the account or provider. Cost estimates in AstrLink are for reference; your provider's bill is authoritative.
 
-在 **访问令牌** 中为客户端创建一个令牌。客户端填写的是 AstrLink 令牌；API 提供商的 API Key 保存在「API 提供商」中。
+### 2. Create an access token
 
-建议给不同工具分配不同令牌，方便查看用量和单独撤销访问。
+Go to **Access tokens** and create a token for your agent. Use this token when connecting the agent to the local gateway. Configure upstream API keys under **API providers**.
 
-### 3. 连接客户端
+Give each agent its own token to track usage and revoke access independently.
 
-从 AstrLink 的概览或设置中复制当前 API 地址。默认地址是 `http://127.0.0.1:8317`；端口被占用时可能变化，以界面显示为准。
+### 3. Connect your AI agent
 
-以使用 Chat Completions 的 OpenAI 兼容客户端为例：
+Copy the current API address from **Overview** or **Settings**. The default is `http://127.0.0.1:8317`, but the port may change if it is already in use. Use the address shown in the app.
 
-| 客户端设置 | 填写内容 |
+Enter the local API address, access token, and model in your agent's model configuration. For an OpenAI-compatible client using Chat Completions:
+
+| Setting | Value |
 | --- | --- |
-| Base URL | `http://127.0.0.1:8317/v1`，按当前实际端口调整 |
-| API Key | 刚创建的 AstrLink 访问令牌 |
-| Model | API 提供商模型列表中的模型 ID，或已配置的模型别名 |
+| Base URL | `http://127.0.0.1:8317/v1`, adjusted to the actual port |
+| API Key | The AstrLink access token you just created |
+| Model | A model ID from the provider's model list, or a configured model alias |
 
-不同客户端对 Base URL 的要求可能不同：有的自动追加 `/v1`，有的要求填写完整接口。常用请求路径如下：
+Base URL requirements vary by client: some append `/v1` automatically, while others expect a full endpoint URL. Common request paths are:
 
-| 接口格式 | 请求路径 |
+| API protocol | Request path |
 | --- | --- |
 | OpenAI Responses | `/v1/responses` |
 | OpenAI Chat Completions | `/v1/chat/completions` |
 | Anthropic Messages | `/v1/messages` |
 | Gemini | `/v1beta/models/{model}:generateContent` |
 
-API 提供商必须支持客户端使用的接口格式，或配置可用的协议转换。连接成功后，在 **请求记录** 中确认请求结果。
+The provider must support the client's API protocol, or you must configure an available protocol conversion.
 
-### 4. 按需设置路由和隐私策略
+### 4. Configure routing and privacy policies
 
-- 在 **路由** 中配置模型别名、目标API 提供商和重试行为。使用 `astrlink/auto` 前，先完成自动路由的分类模型和目标配置。
-- 在 **安全策略** 中选择检测方式和处理动作，先用试运行检查效果，再用于日常请求。本地模型需要先下载或导入。
-- 在 **路由** 中开启同一会话优先复用 API 提供商；可在请求记录中审计绑定或重新选择，详见 [会话复用与绑定审计](docs/guides/provider-stickiness.md)。
-- 请求正文捕获默认关闭；排查问题时可以按需开启，并留意正文中可能包含的敏感内容。
+- In **Routing**, configure model aliases, target providers, and retries. Before using `astrlink/auto`, configure the classification model and routing targets.
+- In **Safety policy**, choose the detection method and action. Check the results with a dry run before using the policy for everyday requests. Local models must be downloaded or imported first.
+- In **Routing**, enable provider reuse within a session. Inspect bindings or provider reselection in request records; see [Provider stickiness and binding audits (Chinese)](docs/guides/provider-stickiness.md).
 
-## 常见问题
+Once configured, send a request and check **Request records** to confirm the provider, model, and result.
 
-**客户端提示认证失败？**
+## FAQ
 
-确认填写的是仍然有效的 AstrLink 访问令牌。如果请求记录显示上游返回 401 或 403，再检查对应API 提供商的密钥或订阅登录状态。
+**Why does my client report an authentication error?**
 
-**找不到模型或没有可用API 提供商？**
+Make sure you are using a valid AstrLink access token. If request records show an upstream 401 or 403 response, check the provider's API key or subscription login status.
 
-检查API 提供商是否启用、模型列表是否包含该模型，以及入口协议是否匹配。使用模型别名时，还需检查路由目标。
+**Why is a model missing, or why are no API providers available?**
 
-**启动后无法连接原来的端口？**
+Check that the provider is enabled, its model list includes the requested model, and its enabled inbound protocols match the request. If you use a model alias, also check its routing targets.
 
-查看界面显示的当前 API 地址。默认端口被占用时，AstrLink 会改用空闲端口；修改设置中的端口后需要重启网关。
+**Why can I no longer connect to the previous port?**
 
-**开启隐私模型后请求被拒绝？**
+Check the current API address in the app. If the default port is in use, AstrLink chooses an available one. Restart the gateway after changing the port in settings.
 
-检查模型是否安装完成、策略是否配置正确，以及请求记录中的错误。模型不可用时，请求不会跳过检测继续发送。
+**Why are requests rejected after enabling a privacy model?**
 
-**关闭窗口后客户端还能用吗？**
+Check that the model is installed and the policy is configured correctly, then inspect the error in request records. If the model is unavailable, requests are rejected rather than forwarded without privacy detection.
 
-取决于关闭窗口的设置。隐藏到托盘时网关继续运行；退出应用会停止网关。更多说明见 [桌面设置](apps/desktop/README.md)。
+**Will my client still work after I close the window?**
 
-## 反馈与贡献
+It depends on your window-close setting. Hiding to the tray keeps the gateway running; quitting the app stops it. See [Desktop settings (Chinese)](apps/desktop/README.md).
 
-欢迎通过 [Issues](https://github.com/Calcium-Ion/AstrLink/issues) 反馈问题。请提供操作系统、应用版本、复现步骤和经过脱敏的错误信息，避免提交密钥、访问令牌或私人请求正文。
+## Feedback and contributing
 
-想修改代码或自行构建，请阅读 [参与开发](CONTRIBUTING.md)。
+Report problems through [Issues](https://github.com/Calcium-Ion/AstrLink/issues). Include your operating system, app version, steps to reproduce, and redacted error details. Keep API keys, access tokens, and private request bodies out of reports.
 
-## 许可证
+To contribute code or build from source, read the [contributing guide (Chinese)](CONTRIBUTING.md).
 
-AstrLink 的自有源码采用 [Apache-2.0](LICENSE) 许可证，第三方组件保留各自的许可证和署名。
+## License
 
-Core 使用的 [RelayKit](https://github.com/QuantumNous/new-api/tree/main/relaykit) 采用 AGPL-3.0。分发包含它的构建或通过网络提供相应服务时，还需遵守该依赖的许可条款。
+AstrLink's own source code is licensed under [Apache-2.0](LICENSE). Third-party components retain their respective licenses and attributions.
+
+Core uses [RelayKit](https://github.com/QuantumNous/new-api/tree/main/relaykit), which is licensed under AGPL-3.0. Distributing builds that include it or offering the corresponding functionality over a network also requires compliance with that dependency's license terms.
