@@ -5,6 +5,7 @@ export interface AgentToolStatus {
   detected: boolean;
   skill_installed: boolean;
   mcp_installed: boolean;
+  preview_paths: string[];
 }
 
 export interface AgentInstallStatus {
@@ -12,7 +13,7 @@ export interface AgentInstallStatus {
   mcp_binary: boolean;
   mcp_command: string | null;
   tools: AgentToolStatus[];
-  preview_paths: string[];
+  shared_paths: string[];
 }
 
 export interface AgentInstallReceipt {
@@ -70,7 +71,7 @@ function booleanAt(value: unknown, path: string): boolean {
 
 function parseTool(value: unknown, path: string): AgentToolStatus {
   const root = objectAt(value, path);
-  exactKeys(root, ["id", "detected", "skill_installed", "mcp_installed"], path);
+  exactKeys(root, ["id", "detected", "skill_installed", "mcp_installed", "preview_paths"], path);
   if (!TOOL_IDS.includes(root.id as AgentToolId)) {
     invalid(`${path}.id`, "unknown tool");
   }
@@ -79,28 +80,29 @@ function parseTool(value: unknown, path: string): AgentToolStatus {
     detected: booleanAt(root.detected, `${path}.detected`),
     skill_installed: booleanAt(root.skill_installed, `${path}.skill_installed`),
     mcp_installed: booleanAt(root.mcp_installed, `${path}.mcp_installed`),
+    preview_paths: parsePaths(root.preview_paths, `${path}.preview_paths`),
   };
+}
+
+function parsePaths(value: unknown, path: string): string[] {
+  if (!Array.isArray(value)) invalid(path, "expected an array");
+  return value.map((item, index) => boundedString(item, `${path}[${index}]`, 8192));
 }
 
 export function parseAgentInstallStatus(value: unknown): AgentInstallStatus {
   const root = objectAt(value, "$");
   exactKeys(
     root,
-    ["canonical_skill", "mcp_binary", "mcp_command", "tools", "preview_paths"],
+    ["canonical_skill", "mcp_binary", "mcp_command", "tools", "shared_paths"],
     "$",
   );
   if (!Array.isArray(root.tools)) invalid("$.tools", "expected an array");
-  if (!Array.isArray(root.preview_paths)) {
-    invalid("$.preview_paths", "expected an array");
-  }
   return {
     canonical_skill: booleanAt(root.canonical_skill, "$.canonical_skill"),
     mcp_binary: booleanAt(root.mcp_binary, "$.mcp_binary"),
     mcp_command: nullableString(root.mcp_command, "$.mcp_command"),
     tools: root.tools.map((tool, index) => parseTool(tool, `$.tools[${index}]`)),
-    preview_paths: root.preview_paths.map((path, index) =>
-      boundedString(path, `$.preview_paths[${index}]`, 8192),
-    ),
+    shared_paths: parsePaths(root.shared_paths, "$.shared_paths"),
   };
 }
 

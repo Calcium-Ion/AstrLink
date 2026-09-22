@@ -881,9 +881,10 @@ describe("desktop bridge contract", () => {
           detected: true,
           skill_installed: false,
           mcp_installed: false,
+          preview_paths: ["/tmp/.cursor/skills/astrlink-debug", "/tmp/.cursor/mcp.json"],
         },
       ],
-      preview_paths: ["/tmp/.agents/skills/astrlink-debug"],
+      shared_paths: ["/tmp/astrlink-mcp"],
     };
     invokeMock.mockResolvedValueOnce(status);
     await expect(getAgentDebugStatus()).resolves.toEqual(status);
@@ -898,8 +899,8 @@ describe("desktop bridge contract", () => {
       files: ["/tmp/a"],
     };
     invokeMock.mockResolvedValueOnce(receipt);
-    await expect(installAgentDebug()).resolves.toEqual(receipt);
-    expect(invokeMock).toHaveBeenLastCalledWith("install_agent_debug");
+    await expect(installAgentDebug(["grok"])).resolves.toEqual(receipt);
+    expect(invokeMock).toHaveBeenLastCalledWith("install_agent_debug", { toolIds: ["grok"] });
 
     invokeMock.mockResolvedValueOnce(undefined);
     await uninstallAgentDebug();

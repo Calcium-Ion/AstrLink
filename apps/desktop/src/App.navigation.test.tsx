@@ -342,21 +342,24 @@ describe("App workspace navigation", () => {
           detected: true,
           skill_installed: false,
           mcp_installed: false,
+          preview_paths: [],
         },
         {
           id: "claude",
           detected: false,
           skill_installed: false,
           mcp_installed: false,
+          preview_paths: [],
         },
         {
           id: "codex",
           detected: true,
           skill_installed: true,
           mcp_installed: true,
+          preview_paths: [],
         },
       ],
-      preview_paths: [],
+      shared_paths: [],
     });
     container = document.createElement("div");
     document.body.append(container);
