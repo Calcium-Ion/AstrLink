@@ -289,9 +289,11 @@ fn update_preferences(
         return Err(persist_error);
     }
     manager.configure(&values);
-    // Locale, pages and menubar text re-render from stored state; a new usage
-    // line needs numbers the last digest did not collect.
-    if values.tray.usage != previous_tray.usage {
+    // Locale and pages re-render from stored state; a new usage line or
+    // menubar figure needs numbers the last digest may not have collected.
+    if values.tray.usage != previous_tray.usage
+        || values.tray.menubar_text != previous_tray.menubar_text
+    {
         // Operator-initiated: fresh local numbers, and plan windows unless
         // they were fetched a moment ago.
         tray::request_usage_refresh(

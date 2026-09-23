@@ -678,6 +678,20 @@ pub enum PlanRefresh {
     Force,
 }
 
+/// The usage lines to collect: the enabled cards plus whatever the menu-bar
+/// text reads, so the menu bar does not go blank when its card is turned off.
+/// The popover gates each card on the preference, not on the data.
+fn collected_usage(tray: &TrayPreferences) -> TrayUsagePreferences {
+    let mut usage = tray.usage.clone();
+    match tray.menubar_text {
+        TrayMenubarText::Requests | TrayMenubarText::Tokens => usage.today = true,
+        TrayMenubarText::Cost => usage.cost = true,
+        TrayMenubarText::Subscription => usage.subscription_windows = true,
+        TrayMenubarText::None | TrayMenubarText::AlertOnly => {}
+    }
+    usage
+}
+
 /// Pulls only what the enabled cards need. Local numbers are always
 /// collected; plan windows follow `plans` against the cached `previous`.
 async fn collect_digest(
@@ -1143,8 +1157,11 @@ fn render(app: &AppHandle, model: &TrayModel) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     tray.set_tooltip(Some(&model.tooltip))
         .map_err(|error| error.to_string())?;
+    // tray-icon ignores a `None` title on macOS instead of clearing it, so
+    // "none", "alerts only" and a figure with no data yet would keep showing
+    // the previous choice's text. An empty title clears it.
     #[cfg(target_os = "macos")]
-    tray.set_title(model.title.as_deref())
+    tray.set_title(Some(model.title.as_deref().unwrap_or("")))
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -1481,7 +1498,7 @@ pub async fn refresh_usage(app: AppHandle, plans: PlanRefresh) {
     if manager.view().phase != CorePhase::Ready {
         return;
     }
-    let prefs = preferences_of(&app).tray.usage;
+    let prefs = collected_usage(&preferences_of(&app).tray);
     let previous = {
         let mut runtime = state.lock();
         if runtime.refresh_in_flight {
@@ -1846,6 +1863,30 @@ mod tests {
             tray_model(&ready_view(), &prefs, None, Locale::En).title,
             None
         );
+    }
+
+    #[test]
+    fn menubar_figure_is_collected_even_with_its_card_off() {
+        let off = TrayUsagePreferences {
+            today: false,
+            cost: false,
+            subscription_windows: false,
+            top_model: false,
+            ..TrayUsagePreferences::default()
+        };
+        let collect = |menubar_text| {
+            collected_usage(&TrayPreferences {
+                menubar_text,
+                usage: off.clone(),
+                ..TrayPreferences::default()
+            })
+        };
+        assert!(collect(TrayMenubarText::Requests).today);
+        assert!(collect(TrayMenubarText::Tokens).today);
+        assert!(collect(TrayMenubarText::Cost).cost);
+        assert!(collect(TrayMenubarText::Subscription).subscription_windows);
+        assert_eq!(collect(TrayMenubarText::None), off);
+        assert_eq!(collect(TrayMenubarText::AlertOnly), off);
     }
 
     #[test]
