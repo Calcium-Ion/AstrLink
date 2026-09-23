@@ -84,7 +84,7 @@ func upstreamError(raw []byte) string {
 	return message
 }
 
-func decodeResponse(body io.Reader, protocol contract.ProtocolID, stream bool, contentType string, onText func()) (string, error) {
+func decodeResponse(body io.Reader, protocol contract.ProtocolID, stream bool, _ string, onText func()) (string, error) {
 	limited := &io.LimitedReader{R: body, N: maxResponseBytes + 1}
 	if !stream {
 		raw, err := io.ReadAll(limited)
@@ -107,9 +107,10 @@ func decodeResponse(body io.Reader, protocol contract.ProtocolID, stream bool, c
 		}
 		return output, nil
 	}
-	if !strings.HasPrefix(strings.ToLower(contentType), "text/event-stream") {
-		return "", fmt.Errorf("Provider did not return an SSE stream for the streaming test.")
-	}
+	// Do not gate on Content-Type here. The official Codex client parses
+	// the response body as SSE without requiring text/event-stream, and some
+	// upstreams return a valid event stream with a missing or non-standard MIME
+	// type.
 	var output strings.Builder
 	appendText := func(text string) {
 		if text == "" {
