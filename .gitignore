@@ -58,10 +58,13 @@ logs/
 *.onnx
 *.onnx_data
 *.onnx_data_*
+*.onnx.data
 !**/testdata/*.onnx
 !**/testdata/**/*.onnx
 !**/testdata/*.onnx_data
 !**/testdata/**/*.onnx_data
+!**/testdata/*.onnx.data
+!**/testdata/**/*.onnx.data
 *.safetensors
 *.gguf
 *.ggml
