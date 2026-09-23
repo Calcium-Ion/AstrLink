@@ -186,11 +186,16 @@ func TestUsageSummaryExcludesModelDiscovery(t *testing.T) {
 		len(summary.ByHour) != 1 || summary.ByHour[0].Date != "2026-09-20" || *summary.ByHour[0].Hour != 0 || summary.ByHour[0].UsageTotals != want {
 		t.Fatalf("days=%+v hours=%+v", summary.ByDay, summary.ByHour)
 	}
-	for _, groups := range [][]storage.UsageGroup{summary.ByService, summary.ByModel} {
-		if len(groups) != 2 || groups[0].ID == nil || groups[0].Requests != 2 || groups[0].TotalTokens != 7 ||
-			groups[1].ID != nil || groups[1].Requests != 0 || groups[1].FailedRequests != 1 {
-			t.Fatalf("groups=%+v", groups)
-		}
+	// The pre-routing failure clears only the service, so it opens a null service
+	// bucket. The requested model is still set and stays on that model group.
+	if len(summary.ByService) != 2 || summary.ByService[0].ID == nil || summary.ByService[0].Requests != 2 ||
+		summary.ByService[0].FailedRequests != 0 || summary.ByService[0].TotalTokens != 7 ||
+		summary.ByService[1].ID != nil || summary.ByService[1].Requests != 0 || summary.ByService[1].FailedRequests != 1 {
+		t.Fatalf("services=%+v", summary.ByService)
+	}
+	if len(summary.ByModel) != 1 || summary.ByModel[0].ID == nil || *summary.ByModel[0].ID != "model_one" ||
+		summary.ByModel[0].Requests != 2 || summary.ByModel[0].FailedRequests != 1 || summary.ByModel[0].TotalTokens != 7 {
+		t.Fatalf("models=%+v", summary.ByModel)
 	}
 }
 
