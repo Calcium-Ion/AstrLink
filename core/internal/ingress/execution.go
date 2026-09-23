@@ -270,6 +270,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		if privacyErr != nil {
 			finishPrivacy()
 			_ = attemptRequest.Body.Close()
+			recordSessionFromContext(request.Context()).noteAttemptedService(candidate.Service.ID)
 			handler.writePrivacyError(downstream, request, privacyErr)
 			return
 		}
@@ -834,6 +835,7 @@ func (handler *Handler) executeCandidatesWithTest(
 	if lastNetworkFailure.kind != executionFailureNone {
 		last = lastNetworkFailure
 	}
+	recordSessionFromContext(request.Context()).noteAttemptedService(last.endpointID)
 	handler.writeExecutionFailure(downstream, request, classified, last)
 }
 

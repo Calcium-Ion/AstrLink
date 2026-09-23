@@ -581,6 +581,16 @@ func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan con
 	session.plan = &planCopy
 }
 
+// noteAttemptedService attributes a failure that never reached a RoundTrip to
+// the provider it was prepared for. A real network attempt already recorded on
+// the root wins, matching the failure reported to the client.
+func (session *recordSession) noteAttemptedService(id contract.ServiceID) {
+	if session == nil || id == "" || session.endpointID != nil {
+		return
+	}
+	session.endpointID = &id
+}
+
 // beginNetworkAttempt marks the start of a real RoundTrip. Candidate selection
 // that never reaches ObserveOutbound must not call this.
 func (session *recordSession) beginNetworkAttempt(

@@ -1,7 +1,9 @@
 package ingress
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
@@ -198,5 +201,94 @@ func TestExecuteCandidatesDemotesFailedAttemptsIntoIndependentChildren(t *testin
 		if got := string(plain[storage.AuditDirectionUpstreamResponse]); got != finalResponse {
 			t.Fatalf("final upstream response=%q, want %q", got, finalResponse)
 		}
+	}
+}
+
+func TestFailedRequestRecordsAttemptedServiceWithoutRoundTrip(t *testing.T) {
+	endpointA := validEndpoint(contract.ProtocolOpenAIChat, false)
+	endpointB := validEndpoint(contract.ProtocolOpenAIChat, false)
+	endpointA.ID = "endpoint_attempt_a"
+	endpointB.ID = "endpoint_attempt_b"
+	tests := []struct {
+		name        string
+		candidates  []contract.Endpoint
+		denied      string
+		policyErr   error
+		code        string
+		wantService string
+		wantTrips   int32
+	}{
+		{name: "credential", candidates: []contract.Endpoint{endpointA}, denied: "endpoint_attempt_a", code: "credential_unavailable", wantService: "endpoint_attempt_a"},
+		{name: "privacy", candidates: []contract.Endpoint{endpointA}, policyErr: errors.New("policy offline"), code: "privacy_policy_unavailable", wantService: "endpoint_attempt_a"},
+		// The client sees A's network failure, so the root keeps A.
+		{name: "network then credential", candidates: []contract.Endpoint{endpointA, endpointB}, denied: "endpoint_attempt_b", code: "upstream_unavailable", wantService: "endpoint_attempt_a", wantTrips: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidates := make([]endpoint.Resolved, 0, len(test.candidates))
+			for _, candidate := range test.candidates {
+				candidates = append(candidates, endpoint.Resolved{Endpoint: candidate})
+			}
+			var filter privacy.Filter
+			if test.policyErr != nil {
+				engine, err := privacy.New(
+					privacy.PolicyProviderFunc(func(context.Context, privacy.Scope) (privacy.Policy, error) {
+						return privacy.Policy{}, test.policyErr
+					}),
+					privacy.DetectorFunc(func(context.Context, privacy.DetectInput) ([]privacy.Finding, error) {
+						return nil, nil
+					}),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				filter = engine
+			}
+			var trips atomic.Int32
+			store := &memoryRequestRecordStore{}
+			handler := NewWithDependencies(Dependencies{
+				Resolver:       candidateResolver{candidates: candidates},
+				RequestRecords: store,
+				PrivacyFilter:  filter,
+				Authorizer: authorizerFunc(func(_ context.Context, candidate contract.Endpoint) (http.Header, error) {
+					if string(candidate.ID) == test.denied {
+						return nil, errors.New("credential missing")
+					}
+					return http.Header{}, nil
+				}),
+				Forwarder: transport.New(roundTripFunc(func(*http.Request) (*http.Response, error) {
+					trips.Add(1)
+					return nil, io.ErrUnexpectedEOF
+				})),
+			})
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/chat/completions",
+				strings.NewReader(`{"model":"public-alias","messages":[{"role":"user","content":"hi"}]}`),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if trips.Load() != test.wantTrips {
+				t.Fatalf("round trips=%d, want %d", trips.Load(), test.wantTrips)
+			}
+			var roots []contract.RequestRecord
+			for _, record := range store.records {
+				if record.ParentRequestID == nil {
+					roots = append(roots, record)
+				}
+			}
+			if len(roots) != 1 {
+				t.Fatalf("roots=%#v", roots)
+			}
+			root := roots[0]
+			if root.Status != contract.RequestStatusFailed || root.Error == nil || root.Error.Code != test.code {
+				t.Fatalf("root status=%s error=%#v, want failed %s; body=%s", root.Status, root.Error, test.code, response.Body.String())
+			}
+			if root.ServiceID == nil || string(*root.ServiceID) != test.wantService {
+				t.Fatalf("root service=%v, want %s", root.ServiceID, test.wantService)
+			}
+		})
 	}
 }
