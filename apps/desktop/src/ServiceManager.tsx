@@ -136,6 +136,7 @@ import {
   type SubscriptionServiceKind,
 } from "./service-model";
 import {
+  SubscriptionResetButton,
   SubscriptionUsageMeter,
   type SubscriptionUsageStatus,
 } from "./SubscriptionUsageMeter";
@@ -1595,6 +1596,7 @@ export function ServiceManager({
                     t("services.columnService"),
                     t("services.columnModels"),
                     t("services.columnUsage"),
+                    t("services.columnBilling"),
                     t("services.columnStatus"),
                     t("services.columnActions"),
                   ]}
@@ -1754,11 +1756,31 @@ export function ServiceManager({
                           </>
                         }
                         usage={
-                          <div className="grid gap-1">
+                          hasPlanUsage(service) ? (
+                            <SubscriptionUsageMeter
+                              error={usageByService[service.id]?.error}
+                              now={new Date()}
+                              status={
+                                usageByService[service.id]?.status ??
+                                "loading"
+                              }
+                              usage={usageByService[service.id]?.usage}
+                            />
+                          ) : undefined
+                        }
+                        billing={
+                          <div className="grid justify-items-start gap-1.5">
+                            <ServiceBillingMeter
+                              serviceId={service.id}
+                              ready={isReady}
+                              epoch={usageEpoch}
+                              observedAt={
+                                usageByService[service.id]?.usage?.fetched_at
+                              }
+                              onOpen={() => setBillingService(service.id)}
+                            />
                             {hasPlanUsage(service) ? (
-                              <SubscriptionUsageMeter
-                                error={usageByService[service.id]?.error}
-                                now={new Date()}
+                              <SubscriptionResetButton
                                 onReset={() =>
                                   setConfirmAction({
                                     kind: "reset-usage",
@@ -1770,22 +1792,9 @@ export function ServiceManager({
                                   })
                                 }
                                 resetting={actionID === service.id}
-                                status={
-                                  usageByService[service.id]?.status ??
-                                  "loading"
-                                }
                                 usage={usageByService[service.id]?.usage}
                               />
                             ) : null}
-                            <ServiceBillingMeter
-                              serviceId={service.id}
-                              ready={isReady}
-                              epoch={usageEpoch}
-                              observedAt={
-                                usageByService[service.id]?.usage?.fetched_at
-                              }
-                              onOpen={() => setBillingService(service.id)}
-                            />
                           </div>
                         }
                         status={

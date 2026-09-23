@@ -544,6 +544,7 @@
     "columnService": "API 提供商 / 连接",
     "columnModels": "模型 / API",
     "columnUsage": "订阅额度",
+    "columnBilling": "费用",
     "columnStatus": "状态",
     "columnActions": "操作",
     "apiCount": "{{count}} 项 API 能力",

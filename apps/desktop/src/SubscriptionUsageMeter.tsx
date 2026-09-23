@@ -20,15 +20,11 @@ export type SubscriptionUsageStatus = "loading" | "ready" | "error";
 export function SubscriptionUsageMeter({
   error,
   now,
-  onReset,
-  resetting = false,
   status,
   usage,
 }: {
   error?: string;
   now: Date;
-  onReset?: () => void;
-  resetting?: boolean;
   status: SubscriptionUsageStatus;
   usage?: SubscriptionUsage;
 }) {
@@ -71,7 +67,6 @@ export function SubscriptionUsageMeter({
   if (!usage) return null;
 
   const extras = usage.additional_rate_limits ?? [];
-  const resetCount = usage.rate_limit_reset_credits?.available_count ?? 0;
   return (
     <div className="grid min-w-0 gap-2" data-testid="subscription-usage">
       {usage.primary || usage.secondary ? (
@@ -104,28 +99,43 @@ export function SubscriptionUsageMeter({
           ))}
         </div>
       ) : null}
-      {resetCount > 0 && onReset ? (
-        <div className="pt-0.5">
-          <Button
-            data-testid="subscription-usage-reset"
-            disabled={resetting}
-            onClick={onReset}
-            size="xs"
-            type="button"
-            variant="outline"
-          >
-            <RotateCcw aria-hidden="true" />
-            {resetting
-              ? t("usage.resetting")
-              : t("usage.resetCount", { count: resetCount })}
-          </Button>
-        </div>
-      ) : resetCount > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {t("usage.resetAvailable", { count: resetCount })}
-        </p>
-      ) : null}
     </div>
+  );
+}
+
+export function SubscriptionResetButton({
+  onReset,
+  resetting = false,
+  usage,
+}: {
+  onReset?: () => void;
+  resetting?: boolean;
+  usage?: SubscriptionUsage;
+}) {
+  const t = useT();
+  const resetCount = usage?.rate_limit_reset_credits?.available_count ?? 0;
+  if (resetCount <= 0) return null;
+  if (!onReset) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {t("usage.resetAvailable", { count: resetCount })}
+      </p>
+    );
+  }
+  return (
+    <Button
+      data-testid="subscription-usage-reset"
+      disabled={resetting}
+      onClick={onReset}
+      size="xs"
+      type="button"
+      variant="outline"
+    >
+      <RotateCcw aria-hidden="true" />
+      {resetting
+        ? t("usage.resetting")
+        : t("usage.resetCount", { count: resetCount })}
+    </Button>
   );
 }
 

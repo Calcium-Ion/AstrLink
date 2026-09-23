@@ -544,6 +544,7 @@
     "columnService": "API provider / connection",
     "columnModels": "Models / APIs",
     "columnUsage": "Subscription usage",
+    "columnBilling": "Cost",
     "columnStatus": "Status",
     "columnActions": "Actions",
     "apiCount": "{{count}} API capabilities",

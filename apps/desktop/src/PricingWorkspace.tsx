@@ -137,20 +137,24 @@ export function ServiceBillingMeter({
     <Button
       size="xs"
       variant="ghost"
-      className="h-auto max-w-full justify-start whitespace-normal px-0 text-left text-xs tabular-nums"
+      className="h-auto max-w-full flex-col items-start gap-0.5 whitespace-normal px-0 text-left text-xs tabular-nums"
       disabled={!ready}
       onClick={onOpen}
       title={t("pricing.description")}
     >
-      {t(
-        period?.kind === "month"
-          ? "pricing.monthAmount"
-          : "pricing.cycleAmount",
-      )}{" "}
-      {billingAmount(period?.summary)}
-      {period && period.summary.unpriced > 0
-        ? ` · ${t("pricing.incomplete")}`
-        : ""}
+      <span>
+        {t(
+          period?.kind === "month"
+            ? "pricing.monthAmount"
+            : "pricing.cycleAmount",
+        )}{" "}
+        {billingAmount(period?.summary)}
+      </span>
+      {period && period.summary.unpriced > 0 ? (
+        <span className="text-micro font-normal text-muted-foreground">
+          {t("pricing.incomplete")}
+        </span>
+      ) : null}
     </Button>
   );
 }

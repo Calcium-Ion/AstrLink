@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 // Share spare width across the content columns and reserve all three actions.
 // Query the scroller itself, including the space taken by its scrollbar.
 const columns =
-  "@[860px]/service-list:grid-cols-[3.25rem_minmax(0,1.4fr)_minmax(6.5rem,0.55fr)_minmax(10rem,1fr)_3.75rem_6.25rem]";
+  "@[860px]/service-list:grid-cols-[3.25rem_minmax(0,1.25fr)_minmax(6rem,0.5fr)_minmax(9.5rem,0.95fr)_minmax(6.5rem,0.6fr)_3.75rem_6.25rem]";
 
 export function ServiceListHeader({ labels }: { labels: readonly string[] }) {
   return (
@@ -31,6 +31,7 @@ export function ServiceListRow({
   identity,
   inventory,
   usage,
+  billing,
   status,
   actions,
   sorting = false,
@@ -42,6 +43,7 @@ export function ServiceListRow({
   identity: ReactNode;
   inventory: ReactNode;
   usage?: ReactNode;
+  billing?: ReactNode;
   status: ReactNode;
   actions: ReactNode;
   sorting?: boolean;
@@ -87,18 +89,28 @@ export function ServiceListRow({
         <div className="col-start-2 row-start-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @[860px]/service-list:col-start-3 @[860px]/service-list:row-start-1 @[860px]/service-list:grid @[860px]/service-list:gap-1">
           {inventory}
         </div>
+        {/* Usage and billing stack in one cell until the table layout gives each its own column. */}
         <div
           className={cn(
-            "col-span-2 col-start-1 row-start-3 min-w-0 @[640px]/service-list:col-span-1 @[640px]/service-list:col-start-3 @[640px]/service-list:row-span-2 @[640px]/service-list:row-start-1 @[860px]/service-list:col-start-4 @[860px]/service-list:row-span-1",
-            !usage && "hidden @[860px]/service-list:block",
+            "col-span-2 col-start-1 row-start-3 grid min-w-0 gap-1 @[640px]/service-list:col-span-1 @[640px]/service-list:col-start-3 @[640px]/service-list:row-span-2 @[640px]/service-list:row-start-1 @[860px]/service-list:contents",
+            !usage && !billing && "hidden",
           )}
         >
-          {usage}
+          {usage ? (
+            <div className="min-w-0 @[860px]/service-list:col-start-4 @[860px]/service-list:row-start-1 @[860px]/service-list:pr-6">
+              {usage}
+            </div>
+          ) : null}
+          {billing ? (
+            <div className="min-w-0 @[860px]/service-list:col-start-5 @[860px]/service-list:row-start-1">
+              {billing}
+            </div>
+          ) : null}
         </div>
-        <div className="col-start-1 row-start-4 flex items-center gap-2.5 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-2 @[640px]/service-list:justify-end @[860px]/service-list:col-start-5 @[860px]/service-list:row-start-1 @[860px]/service-list:justify-between">
+        <div className="col-start-1 row-start-4 flex items-center gap-2.5 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-2 @[640px]/service-list:justify-end @[860px]/service-list:col-start-6 @[860px]/service-list:row-start-1 @[860px]/service-list:justify-between">
           {status}
         </div>
-        <div className="col-start-2 row-start-4 flex shrink-0 items-center justify-end gap-1 @max-[640px]/service-list:[&>button]:size-9 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-1 @[860px]/service-list:col-start-6">
+        <div className="col-start-2 row-start-4 flex shrink-0 items-center justify-end gap-1 @max-[640px]/service-list:[&>button]:size-9 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-1 @[860px]/service-list:col-start-7">
           {actions}
         </div>
       </article>
