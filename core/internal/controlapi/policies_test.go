@@ -224,6 +224,13 @@ func TestPolicyChangeHookRunsSynchronously(t *testing.T) {
 
 func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 	_, handler, model := newPolicyHandler(t)
+	before, err := handler.policyStore.GetPolicy(context.Background(), contract.DefaultPrivacyPolicyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Policy.Enabled {
+		t.Fatal("live privacy protection must start disabled")
+	}
 	provider, err := privacy.NewStorePolicyProvider(handler.policyStore)
 	if err != nil {
 		t.Fatal(err)
@@ -278,6 +285,13 @@ func TestPolicyDryRunPreviewsRegexRedactAndRespectsOverrides(t *testing.T) {
 	}
 	if !strings.Contains(*result.RedactedBody, placeholder) {
 		t.Fatalf("redacted body does not contain generated placeholder: %s", *result.RedactedBody)
+	}
+	after, err := handler.policyStore.GetPolicy(context.Background(), contract.DefaultPrivacyPolicyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("dry-run changed live policy: before=%#v after=%#v", before, after)
 	}
 
 	response = policyRequest(
