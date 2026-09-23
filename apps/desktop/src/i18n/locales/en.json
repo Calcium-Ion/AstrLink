@@ -1027,6 +1027,7 @@
     "localOnlyShort": "Local model only",
     "fixedStyle": "Fixed placeholder format",
     "responseHandling": "Response restoration",
+    "requestAndResponse": "Request & response",
     "responseRestoreDetail": "Restore original values before returning the response.",
     "restoreToolsShort": "Restore original values before tools execute locally.",
     "redactTypesHint": "Choose which sensitive values to replace and how they appear upstream.",

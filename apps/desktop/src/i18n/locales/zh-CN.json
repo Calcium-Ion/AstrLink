@@ -1024,6 +1024,7 @@
     "localOnlyShort": "仅本地模型",
     "fixedStyle": "固定占位符形态",
     "responseHandling": "响应还原",
+    "requestAndResponse": "请求与响应",
     "responseRestoreDetail": "响应返回客户端前，将占位符还原为原始内容。",
     "restoreToolsShort": "本地工具执行前，将参数还原为原始值。",
     "redactTypesHint": "选择需要脱敏的信息类型，以及发送给上游的替换形态。",

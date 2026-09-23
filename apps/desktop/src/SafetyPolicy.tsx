@@ -12,7 +12,7 @@ import {
   SlidersHorizontal,
   type AnimatedIcon,
 } from "@/components/icons";
-import { Panel, PanelFooter, PanelHeader } from "@/components/Panel";
+import { Panel, PanelBody, PanelFooter, PanelHeader } from "@/components/Panel";
 import { ChoiceCard } from "@/components/ChoiceCard";
 import { Field } from "@/components/Field";
 import { ListToolbar } from "@/components/ListToolbar";
@@ -1050,10 +1050,15 @@ function PolicySection({
   children: ReactNode;
 }) {
   return (
-    <Panel className={cn("@container", className)}>
+    <Panel
+      className={cn(
+        "@container flex min-h-0 flex-col @[720px]/privacy:max-h-full",
+        className,
+      )}
+    >
       <PanelHeader
         actions={actions}
-        className="shrink-0 flex-wrap items-center [&>div:first-child]:basis-48 [&>div:first-child]:flex-1"
+        className="shrink-0 flex-wrap items-center gap-2 px-4 py-3"
       >
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <Icon aria-hidden="true" className="size-4 shrink-0 text-primary" />
@@ -1065,7 +1070,9 @@ function PolicySection({
           </p>
         ) : null}
       </PanelHeader>
-      <div className="grid min-w-0 gap-4 p-4">{children}</div>
+      <PanelBody className="flex flex-col gap-4 overflow-visible @[720px]/privacy:overflow-y-auto [&>fieldset]:shrink-0 [&>div]:shrink-0">
+        {children}
+      </PanelBody>
     </Panel>
   );
 }
@@ -2356,12 +2363,12 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
 
   return (
     <div
-      className="@container flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden"
+      className="@container/privacy flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden"
       data-testid="safety-policy"
     >
       <PageHeader
         variant="compact"
-        className="@max-[520px]:flex-col @max-[520px]:items-start @max-[520px]:gap-3"
+        className="flex-wrap gap-y-2"
         actions={
           <>
             {record !== null && saving && unloadingModel ? (
@@ -2501,13 +2508,12 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
           </TabsList>
 
           <TabsContent
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
-            data-tab-scroller
+            className="min-h-0 min-w-0 flex-1 overflow-hidden"
             forceMount
             hidden={workspace !== "detection"}
             value="detection"
           >
-            <div className="grid w-full min-w-0 items-start gap-4 pb-4 pr-1 @[880px]:grid-cols-2">
+            <SplitWorkspace className="auto-rows-max items-start @[720px]:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
               <PolicySection
                 title={t("safety.detector")}
                 description={t("safety.description")}
@@ -2615,7 +2621,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
 
                     {policy.regex_source === "builtin" ? (
                       <div className="mt-3">
-                        <HelpDisclosure title={t("safety.ruleCoverage")}>
+                        <HelpDisclosure title={t("safety.ruleCoverage")} open>
                           <p className="text-xs leading-relaxed">
                             {t("safety.builtinCoverage", {
                               kinds: regexKindOptions()
@@ -2666,7 +2672,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                           <ul className="grid min-w-0 gap-2">
                             {policy.custom_regex_rules.map((rule, index) => (
                               <li
-                                className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[640px]:grid-cols-[8.5rem_minmax(0,1fr)_auto] @[640px]:items-start"
+                                className="grid min-w-0 gap-2 rounded-md border bg-card p-2.5 @[400px]:grid-cols-[7rem_minmax(0,1fr)_auto] @[400px]:items-start"
                                 key={`regex-rule-${index}`}
                               >
                                 <Select
@@ -2749,48 +2755,8 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                   </fieldset>
                 ) : null}
 
-                <div className="border-t pt-4">
-                  <Field
-                    htmlFor="privacy-request-action"
-                    label={t("safety.requestAction")}
-                  >
-                    <Select
-                      disabled={saving}
-                      onValueChange={changeAction}
-                      value={policy.request_action}
-                    >
-                      <SelectTrigger
-                        aria-label={t("safety.requestAction")}
-                        className="h-9 w-full px-3 text-sm"
-                        id="privacy-request-action"
-                        size="sm"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {policy.request_action === "allow" ? (
-                          <SelectItem disabled value="allow">
-                            {t("safety.allowCompat")}
-                          </SelectItem>
-                        ) : null}
-                        <SelectItem value="redact">
-                          {actionLabel("redact")}
-                        </SelectItem>
-                        <SelectItem value="block">
-                          {actionLabel("block")}
-                        </SelectItem>
-                        <SelectItem value="warn">
-                          {actionLabel("warn")}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </div>
                 <div className="border-t pt-3">
-                  <HelpDisclosure
-                    title={t("safety.advancedDetection")}
-                    open={policy.detector === "local_model"}
-                  >
+                  <HelpDisclosure title={t("safety.advancedDetection")} open>
                     <Field
                       htmlFor="privacy-min-confidence"
                       label={t("safety.minConfidence")}
@@ -2827,15 +2793,64 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
               </PolicySection>
 
               <PolicySection
-                title={t("safety.responseHandling")}
+                title={t("safety.requestAndResponse")}
                 icon={RotateCcw}
+                actions={
+                  <Button
+                    className="h-auto w-fit gap-1 px-0 py-0 text-xs font-medium"
+                    onClick={() => setStreamingDemoOpen(true)}
+                    size="sm"
+                    type="button"
+                    variant="link"
+                  >
+                    {t("safety.viewStreamingDemo")}
+                    <ArrowUpRight aria-hidden="true" className="size-3.5" />
+                  </Button>
+                }
               >
+                <div className="border-b pb-3">
+                  <Field
+                    htmlFor="privacy-request-action"
+                    label={t("safety.requestAction")}
+                  >
+                    <Select
+                      disabled={saving}
+                      onValueChange={changeAction}
+                      value={policy.request_action}
+                    >
+                      <SelectTrigger
+                        aria-label={t("safety.requestAction")}
+                        className="h-9 w-full px-3 text-sm"
+                        id="privacy-request-action"
+                        size="sm"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {policy.request_action === "allow" ? (
+                          <SelectItem disabled value="allow">
+                            {t("safety.allowCompat")}
+                          </SelectItem>
+                        ) : null}
+                        <SelectItem value="redact">
+                          {actionLabel("redact")}
+                        </SelectItem>
+                        <SelectItem value="block">
+                          {actionLabel("block")}
+                        </SelectItem>
+                        <SelectItem value="warn">
+                          {actionLabel("warn")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
                 <fieldset className="min-w-0 border-0 p-0" disabled={saving}>
                   <legend className="sr-only">
                     {t("safety.restoreScope")}
                   </legend>
                   <div className="grid min-w-0 divide-y">
-                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 pb-3 font-normal">
+                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-4 font-normal first:pt-0">
                       <span className="flex min-w-0 flex-col gap-1">
                         <strong className="text-sm font-medium">
                           {t("safety.restore")}
@@ -2862,7 +2877,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                         }
                       />
                     </Label>
-                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-4 font-normal last:pb-0">
                       <span className="flex min-w-0 flex-col gap-0.5">
                         <strong className="text-sm font-medium leading-snug">
                           {t("safety.restoreTools")}
@@ -2894,7 +2909,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                         }
                       />
                     </Label>
-                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                    <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-4 font-normal last:pb-0">
                       <span className="flex min-w-0 flex-col gap-0.5">
                         <strong className="text-sm font-medium leading-snug">
                           {t("safety.injectNotice")}
@@ -2917,18 +2932,8 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                     </Label>
                   </div>
                 </fieldset>
-                <Button
-                  className="h-auto w-fit gap-1 px-0 py-0 text-xs font-medium"
-                  onClick={() => setStreamingDemoOpen(true)}
-                  size="sm"
-                  type="button"
-                  variant="link"
-                >
-                  {t("safety.viewStreamingDemo")}
-                  <ArrowUpRight aria-hidden="true" className="size-3.5" />
-                </Button>
                 <div className="grid min-w-0 divide-y border-t">
-                  <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                  <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-4 font-normal last:pb-0">
                     <span className="flex min-w-0 flex-col gap-0.5">
                       <strong className="text-sm font-medium leading-snug">
                         {t("safety.skipToolDeclarations")}
@@ -2953,7 +2958,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                       size="sm"
                     />
                   </Label>
-                  <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                  <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-4 font-normal last:pb-0">
                     <span className="flex min-w-0 flex-col gap-0.5">
                       <strong className="text-sm font-medium leading-snug">
                         {t("safety.skipAdditionalTools")}
@@ -2974,7 +2979,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                   </Label>
                 </div>
               </PolicySection>
-            </div>
+            </SplitWorkspace>
           </TabsContent>
           <TabsContent
             className="min-h-0 min-w-0 flex-1 overflow-hidden"

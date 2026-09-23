@@ -60,6 +60,24 @@ export function PanelHeader({
   );
 }
 
+/** Fill the panel and keep long content inside its own scrolling region. */
+export function PanelBody({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn(
+        "relative min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4",
+        className,
+      )}
+      data-slot="panel-body"
+      data-tab-scroller
+      {...props}
+    />
+  );
+}
+
 /** A wrapping footer keeps supporting details beside the panel's actions. */
 export function PanelFooter({
   actions,
