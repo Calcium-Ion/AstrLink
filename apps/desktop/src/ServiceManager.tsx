@@ -115,7 +115,8 @@ import { notify } from "./notify";
 import {
   invalidateResource,
   markResourceFetched,
-  useResourceRevision,
+  useResourceRevisions,
+  wasInvalidatedSinceFetch,
 } from "./resource-invalidation";
 import { PageHeader } from "./PageHeader";
 import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
@@ -703,7 +704,16 @@ export function ServiceManager({
     [services],
   );
 
-  const usageResourceRevision = useResourceRevision("service-usage");
+  const usageResourceKeys = useMemo(
+    () =>
+      connectedUsageIDs === ""
+        ? []
+        : connectedUsageIDs
+            .split("\0")
+            .map((id) => `service-usage:${id}`),
+    [connectedUsageIDs],
+  );
+  const usageResourceRevision = useResourceRevisions(usageResourceKeys);
 
   useEffect(() => {
     if (view.kind !== "list" || !isReady) return;
@@ -725,16 +735,19 @@ export function ServiceManager({
       return next;
     });
     if (ids.length === 0) return;
-    // Entering the page (epoch 0) is fine with Core's 30s snapshot; a bumped
-    // epoch is the operator pressing refresh or resetting a window, and they
-    // expect the provider's current numbers.
-    const fresh = usageEpoch > 0;
+    // Entering the page is fine with Core's 30s snapshot. Manual refresh and
+    // reset invalidate service-usage first; wasInvalidatedSinceFetch() is then
+    // a one-shot fresh-read signal for this run.
     void Promise.all(
       ids.map(async (id) => {
         try {
-          const usage = await getServiceUsage(id, { fresh });
+          const resourceKey = `service-usage:${id}`;
+          const invalidated = wasInvalidatedSinceFetch(resourceKey);
+          const usage = await getServiceUsage(id, {
+            fresh: invalidated,
+          });
           if (usageGeneration.current !== generation) return;
-          markResourceFetched(`service-usage:${id}`);
+          markResourceFetched(resourceKey);
           setUsageByService((current) => ({
             ...current,
             [id]: { status: "ready", usage },
@@ -758,7 +771,7 @@ export function ServiceManager({
         }
       }),
     );
-  }, [connectedUsageIDs, isReady, usageEpoch, usageResourceRevision, view.kind]);
+  }, [connectedUsageIDs, isReady, usageResourceRevision, view.kind]);
 
   const dirty =
     view.kind !== "list" &&

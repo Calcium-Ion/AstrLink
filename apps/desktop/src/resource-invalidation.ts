@@ -6,6 +6,7 @@ const DEFAULT_TTL_MS = 30_000;
 
 const revisions = new Map<string, number>();
 const fetchedAt = new Map<string, number>();
+const fetchedRevision = new Map<string, number>();
 const listeners = new Map<string, Set<Listener>>();
 
 function matches(resourceKey: string, invalidationKey: string): boolean {
@@ -55,7 +56,21 @@ export function invalidateResource(...keys: string[]): void {
 
 export function markResourceFetched(...keys: string[]): void {
   const now = Date.now();
-  for (const key of keys) fetchedAt.set(key, now);
+  for (const key of keys) {
+    fetchedAt.set(key, now);
+    fetchedRevision.set(key, revisions.get(key) ?? 0);
+  }
+}
+
+/**
+ * True when a resource was invalidated after its last successful fetch. This
+ * is the fresh-read signal for resources that also have a server-side cache.
+ */
+export function wasInvalidatedSinceFetch(key: string): boolean {
+  const current = revisions.get(key) ?? 0;
+  if (current === 0) return false;
+  const fetched = fetchedRevision.get(key);
+  return fetched === undefined || fetched !== current;
 }
 
 export function isResourceStale(
@@ -66,21 +81,45 @@ export function isResourceStale(
   return at === undefined || Date.now() - at >= ttlMs;
 }
 
+function subscribeResource(key: string, listener: Listener): () => void {
+  let set = listeners.get(key);
+  if (!set) {
+    set = new Set();
+    listeners.set(key, set);
+  }
+  set.add(listener);
+  return () => {
+    set.delete(listener);
+    if (set.size === 0) listeners.delete(key);
+  };
+}
+
+function revisionSnapshot(keys: readonly string[]): string {
+  return keys.map((key) => revisions.get(key) ?? 0).join(":");
+}
+
 export function useResourceRevision(key: string): number {
   return useSyncExternalStore(
+    (listener) => subscribeResource(key, listener),
+    () => revisions.get(key) ?? 0,
+    () => revisions.get(key) ?? 0,
+  );
+}
+
+/**
+ * Subscribe to a stable set of resource keys and return a fingerprint that
+ * changes only when one of those keys is invalidated. Mainly used by views
+ * that fan out over a dynamic list of per-service resources.
+ */
+export function useResourceRevisions(keys: readonly string[]): string {
+  return useSyncExternalStore(
     (listener) => {
-      let set = listeners.get(key);
-      if (!set) {
-        set = new Set();
-        listeners.set(key, set);
-      }
-      set.add(listener);
+      const unsubscribers = keys.map((key) => subscribeResource(key, listener));
       return () => {
-        set.delete(listener);
-        if (set.size === 0) listeners.delete(key);
+        for (const unsubscribe of unsubscribers) unsubscribe();
       };
     },
-    () => revisions.get(key) ?? 0,
-    () => revisions.get(key) ?? 0,
+    () => revisionSnapshot(keys),
+    () => revisionSnapshot(keys),
   );
 }
