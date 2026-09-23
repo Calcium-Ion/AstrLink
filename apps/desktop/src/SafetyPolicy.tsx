@@ -1157,7 +1157,11 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         if (!stillCurrent()) return;
         setInstallations((current) =>
           updates.reduce(
+            // A poll only merges whole records; anything else (a dropped
+            // response, a partial payload) must leave the row untouched rather
+            // than clear the download the user is watching.
             (items, update) =>
+              update && typeof update.id === "string" &&
               items.some((item) => item.id === update.id)
                 ? mergeInstallation(items, update)
                 : items,
