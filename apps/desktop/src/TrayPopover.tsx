@@ -15,6 +15,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  X,
   type AnimatedIcon,
 } from "@/components/icons";
 import { IconButton } from "@/components/IconButton";
@@ -25,10 +26,19 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { getTrayState, trayAction, trayPopoverHide, trayPopoverResize } from "./bridge";
+import {
+  getTrayState,
+  trayAction,
+  trayPopoverHide,
+  trayPopoverResize,
+} from "./bridge";
 import type { CorePhase } from "./core-model";
 import { i18n, useT } from "./i18n";
-import { TRAY_PAGES, type TrayPage, type TrayPreferences } from "./preferences-model";
+import {
+  TRAY_PAGES,
+  type TrayPage,
+  type TrayPreferences,
+} from "./preferences-model";
 import {
   formatResetCountdown,
   usageWindowTone,
@@ -108,7 +118,10 @@ function displayAddress(url: string): string {
 }
 
 export function formatAgo(from: Date, now: Date): string {
-  const seconds = Math.max(0, Math.floor((now.getTime() - from.getTime()) / 1000));
+  const seconds = Math.max(
+    0,
+    Math.floor((now.getTime() - from.getTime()) / 1000),
+  );
   if (seconds < 60) return i18n.t("tray.justNow");
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return i18n.t("tray.minutesAgo", { count: minutes });
@@ -133,10 +146,14 @@ function HourlySparkline({ tokens, now }: { tokens: number[]; now: Date }) {
       aria-label={t("tray.hourlyChart")}
       className="flex h-9 items-end gap-px"
       role="img"
-      title={t("tray.hourlyPeak", { hour: `${peakHour}`.padStart(2, "0"), tokens: formatCompactTokens(max) })}
+      title={t("tray.hourlyPeak", {
+        hour: `${peakHour}`.padStart(2, "0"),
+        tokens: formatCompactTokens(max),
+      })}
     >
       {tokens.map((value, hour) => {
-        const height = value <= 0 ? 2 : Math.max(3, Math.round((value / max) * 36));
+        const height =
+          value <= 0 ? 2 : Math.max(3, Math.round((value / max) * 36));
         return (
           <span
             key={hour}
@@ -159,7 +176,15 @@ function HourlySparkline({ tokens, now }: { tokens: number[]; now: Date }) {
   );
 }
 
-function Stat({ label, value, badge }: { label: string; value: string; badge?: string }) {
+function Stat({
+  label,
+  value,
+  badge,
+}: {
+  label: string;
+  value: string;
+  badge?: string;
+}) {
   return (
     <div className="min-w-0">
       <div className="truncate text-2xl leading-8 font-semibold tracking-tight tabular-nums">
@@ -168,7 +193,10 @@ function Stat({ label, value, badge }: { label: string; value: string; badge?: s
       <div className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
         <span className="truncate">{label}</span>
         {badge ? (
-          <Badge className="border-destructive/30 text-destructive" variant="outline">
+          <Badge
+            className="border-destructive/30 text-destructive"
+            variant="outline"
+          >
             {badge}
           </Badge>
         ) : null}
@@ -177,7 +205,15 @@ function Stat({ label, value, badge }: { label: string; value: string; badge?: s
   );
 }
 
-function Chip({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" | "muted" }) {
+function Chip({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "up" | "down" | "muted";
+}) {
   return (
     <span className="inline-flex max-w-full items-center gap-1 rounded-sm border bg-muted/60 px-1.5 py-0.5 text-micro">
       <span className="shrink-0 text-muted-foreground">{label}</span>
@@ -205,6 +241,7 @@ export function TrayPopoverPanel({
   now,
   copyFeedback,
   onAction,
+  onClose,
   preview = false,
   className,
 }: {
@@ -213,6 +250,7 @@ export function TrayPopoverPanel({
   now: Date;
   copyFeedback?: string | null;
   onAction: (action: TrayAction) => void;
+  onClose?: () => void;
   preview?: boolean;
   className?: string;
 }) {
@@ -225,14 +263,33 @@ export function TrayPopoverPanel({
   const usage = tray.usage;
   const wantsUsage = Object.values(usage).some(Boolean);
   const pages = TRAY_PAGES.filter((page) => tray.pages.includes(page));
-  const address = view?.inference_url ? displayAddress(view.inference_url) : null;
-  const canStart = phase === "stopped" || phase === "exited" || phase === "error";
-  const busy = phase === "spawning" || phase === "waiting_for_ready" || phase === "handshaking" || phase === "stopping";
+  const address = view?.inference_url
+    ? displayAddress(view.inference_url)
+    : null;
+  const canStart =
+    phase === "stopped" || phase === "exited" || phase === "error";
+  const busy =
+    phase === "spawning" ||
+    phase === "waiting_for_ready" ||
+    phase === "handshaking" ||
+    phase === "stopping";
 
-  const chips: Array<{ key: string; label: string; value: string; tone?: "up" | "down" | "muted" }> = [];
+  const chips: Array<{
+    key: string;
+    label: string;
+    value: string;
+    tone?: "up" | "down" | "muted";
+  }> = [];
   if (digest) {
-    if (usage.compare_yesterday && digest.today && digest.yesterday_tokens !== null) {
-      const change = percentChange(digest.today.total_tokens, digest.yesterday_tokens);
+    if (
+      usage.compare_yesterday &&
+      digest.today &&
+      digest.yesterday_tokens !== null
+    ) {
+      const change = percentChange(
+        digest.today.total_tokens,
+        digest.yesterday_tokens,
+      );
       chips.push({
         key: "compare",
         label: t("tray.vsYesterday"),
@@ -244,13 +301,22 @@ export function TrayPopoverPanel({
               : change > 0
                 ? t("tray.up", { percent: change })
                 : t("tray.down", { percent: Math.abs(change) }),
-        tone: change === null || change === 0 ? "muted" : change > 0 ? "up" : "down",
+        tone:
+          change === null || change === 0
+            ? "muted"
+            : change > 0
+              ? "up"
+              : "down",
       });
     }
     if (usage.cache_hit && digest.today) {
       const percent = cacheHitPercent(digest.today);
       if (percent !== null) {
-        chips.push({ key: "cache", label: t("tray.cacheHit"), value: `${percent}%` });
+        chips.push({
+          key: "cache",
+          label: t("tray.cacheHit"),
+          value: `${percent}%`,
+        });
       }
     }
     if (usage.top_model && digest.top_model) {
@@ -273,7 +339,11 @@ export function TrayPopoverPanel({
       if (last.model) parts.push(last.model);
       if (last.latency_ms !== null) parts.push(formatLatency(last.latency_ms));
       if (last.failed) parts.push(t("tray.lastFailed"));
-      chips.push({ key: "last", label: t("tray.lastRequest"), value: parts.join(" · ") });
+      chips.push({
+        key: "last",
+        label: t("tray.lastRequest"),
+        value: parts.join(" · "),
+      });
     }
     if (usage.month_total && digest.month_tokens !== null) {
       chips.push({
@@ -295,12 +365,16 @@ export function TrayPopoverPanel({
           })),
         )
       : [];
-  const subscriptionsFoldable = subscriptionRows.length > SUBSCRIPTION_FOLD_LIMIT;
+  const subscriptionsFoldable =
+    subscriptionRows.length > SUBSCRIPTION_FOLD_LIMIT;
   const visibleSubscriptionRows =
     subscriptionsFoldable && !subscriptionsExpanded
       ? subscriptionRows.slice(0, SUBSCRIPTION_FOLD_LIMIT)
       : subscriptionRows;
-  const digestAt = state?.digest_age_ms != null ? new Date(now.getTime() - state.digest_age_ms) : null;
+  const digestAt =
+    state?.digest_age_ms != null
+      ? new Date(now.getTime() - state.digest_age_ms)
+      : null;
 
   return (
     <section
@@ -317,7 +391,9 @@ export function TrayPopoverPanel({
         <StatusDot className="mt-[7px] size-2" tone={phaseTone(phase)} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <strong className="truncate text-sm font-semibold">{t(phaseKey(phase))}</strong>
+            <strong className="truncate text-sm font-semibold">
+              {t(phaseKey(phase))}
+            </strong>
             {view?.recovery_scheduled ? (
               <span className="truncate text-micro text-warning-foreground">
                 {t("tray.status.recovery", { attempt: view.recovery_attempt })}
@@ -336,9 +412,13 @@ export function TrayPopoverPanel({
           </div>
           {address ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-              <code className="truncate font-mono text-xs text-text-secondary">{address}</code>
+              <code className="truncate font-mono text-xs text-text-secondary">
+                {address}
+              </code>
               {copyFeedback ? (
-                <span className="shrink-0 text-micro text-success-foreground">{copyFeedback}</span>
+                <span className="shrink-0 text-micro text-success-foreground">
+                  {copyFeedback}
+                </span>
               ) : null}
             </div>
           ) : null}
@@ -366,8 +446,14 @@ export function TrayPopoverPanel({
               <Copy aria-hidden="true" />
             </IconButton>
           ) : null}
-          <IconButton label={t("tray.settings")} onClick={() => onAction({ kind: "navigate", page: "settings" })}>
+          <IconButton
+            label={t("tray.settings")}
+            onClick={() => onAction({ kind: "navigate", page: "settings" })}
+          >
             <Settings aria-hidden="true" />
+          </IconButton>
+          <IconButton label={t("common.close")} onClick={onClose}>
+            <X aria-hidden="true" />
           </IconButton>
         </div>
       </header>
@@ -380,7 +466,11 @@ export function TrayPopoverPanel({
               <div className="flex items-center justify-between gap-2">
                 <SectionKicker>{t("tray.today")}</SectionKicker>
                 <div className="flex items-center gap-1 text-micro text-muted-foreground">
-                  {digestAt ? <span>{t("tray.updatedAgo", { ago: formatAgo(digestAt, now) })}</span> : null}
+                  {digestAt ? (
+                    <span>
+                      {t("tray.updatedAgo", { ago: formatAgo(digestAt, now) })}
+                    </span>
+                  ) : null}
                   <IconButton
                     label={t("tray.refresh")}
                     onClick={() => onAction({ kind: "refresh" })}
@@ -391,39 +481,64 @@ export function TrayPopoverPanel({
                 </div>
               </div>
               {digest === null ? (
-                <p className="text-xs text-muted-foreground">{t("tray.loading")}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t("tray.loading")}
+                </p>
               ) : digest.today === null && digest.cost_today === null ? (
-                <p className="text-xs text-muted-foreground">{t("tray.noCallsToday")}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t("tray.noCallsToday")}
+                </p>
               ) : (
                 <div
                   className={cn(
                     "grid gap-3",
-                    usage.today && usage.cost && digest.cost_today ? "grid-cols-3" : "grid-cols-2",
+                    usage.today && usage.cost && digest.cost_today
+                      ? "grid-cols-3"
+                      : "grid-cols-2",
                   )}
                 >
                   {usage.today && digest.today ? (
                     <>
                       <Stat
-                        badge={digest.today.failed > 0 ? t("tray.failedCount", { count: digest.today.failed }) : undefined}
+                        badge={
+                          digest.today.failed > 0
+                            ? t("tray.failedCount", {
+                                count: digest.today.failed,
+                              })
+                            : undefined
+                        }
                         label={t("tray.requests")}
                         value={digest.today.requests.toLocaleString()}
                       />
-                      <Stat label={t("tray.tokens")} value={formatCompactTokens(digest.today.total_tokens)} />
+                      <Stat
+                        label={t("tray.tokens")}
+                        value={formatCompactTokens(digest.today.total_tokens)}
+                      />
                     </>
                   ) : null}
                   {usage.cost && digest.cost_today ? (
-                    <Stat label={t("tray.cost")} value={`$${formatUsd(digest.cost_today.amount_usd)}`} />
+                    <Stat
+                      label={t("tray.cost")}
+                      value={`$${formatUsd(digest.cost_today.amount_usd)}`}
+                    />
                   ) : null}
                 </div>
               )}
-              {usage.today && digest ? <HourlySparkline now={now} tokens={digest.hourly_tokens} /> : null}
+              {usage.today && digest ? (
+                <HourlySparkline now={now} tokens={digest.hourly_tokens} />
+              ) : null}
             </div>
           ) : null}
 
           {chips.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {chips.map((chip) => (
-                <Chip key={chip.key} label={chip.label} tone={chip.tone} value={chip.value} />
+                <Chip
+                  key={chip.key}
+                  label={chip.label}
+                  tone={chip.tone}
+                  value={chip.value}
+                />
               ))}
             </div>
           ) : null}
@@ -443,7 +558,9 @@ export function TrayPopoverPanel({
                   "grid gap-2.5",
                   // Expanded lists scroll inside the panel so the popover never
                   // outgrows the screen it is anchored to.
-                  subscriptionsFoldable && subscriptionsExpanded && "max-h-72 overflow-y-auto overscroll-contain pr-1",
+                  subscriptionsFoldable &&
+                    subscriptionsExpanded &&
+                    "max-h-72 overflow-y-auto overscroll-contain pr-1",
                 )}
                 data-slot="tray-subscriptions"
               >
@@ -466,7 +583,9 @@ export function TrayPopoverPanel({
                           : "success"
                     }
                     value={window.used_percent}
-                    valueLabel={t("usage.usedPercent", { percent: Math.round(window.used_percent) })}
+                    valueLabel={t("usage.usedPercent", {
+                      percent: Math.round(window.used_percent),
+                    })}
                   />
                 ))}
               </div>
@@ -474,7 +593,9 @@ export function TrayPopoverPanel({
                 <Button
                   aria-expanded={subscriptionsExpanded}
                   className="h-6 justify-self-start px-1.5 text-micro text-muted-foreground"
-                  onClick={() => setSubscriptionsExpanded((expanded) => !expanded)}
+                  onClick={() =>
+                    setSubscriptionsExpanded((expanded) => !expanded)
+                  }
                   size="xs"
                   type="button"
                   variant="ghost"
@@ -482,7 +603,8 @@ export function TrayPopoverPanel({
                   {subscriptionsExpanded
                     ? t("tray.showLessSubscriptions")
                     : t("tray.showMoreSubscriptions", {
-                        count: subscriptionRows.length - SUBSCRIPTION_FOLD_LIMIT,
+                        count:
+                          subscriptionRows.length - SUBSCRIPTION_FOLD_LIMIT,
                       })}
                 </Button>
               ) : null}
@@ -491,16 +613,34 @@ export function TrayPopoverPanel({
         </div>
       ) : !ready ? (
         <div className="flex items-center justify-between gap-3 border-t bg-muted/40 px-4 py-3">
-          <p className="min-w-0 text-xs text-muted-foreground">{t("tray.notReadyHint")}</p>
+          <p className="min-w-0 text-xs text-muted-foreground">
+            {t("tray.notReadyHint")}
+          </p>
           {tray.gateway_controls ? (
             <Button
               className="shrink-0"
               disabled={busy}
-              onClick={() => onAction({ kind: "core", op: phase === "stopped" ? "start" : canStart ? "start" : "restart" })}
+              onClick={() =>
+                onAction({
+                  kind: "core",
+                  op:
+                    phase === "stopped"
+                      ? "start"
+                      : canStart
+                        ? "start"
+                        : "restart",
+                })
+              }
               size="sm"
               type="button"
             >
-              {t(phase === "stopped" ? "tray.core.start" : canStart ? "tray.core.start" : "tray.core.restart")}
+              {t(
+                phase === "stopped"
+                  ? "tray.core.start"
+                  : canStart
+                    ? "tray.core.start"
+                    : "tray.core.restart",
+              )}
             </Button>
           ) : null}
         </div>
@@ -511,7 +651,11 @@ export function TrayPopoverPanel({
         <div
           className={cn(
             "grid gap-1 border-t px-2 py-2",
-            pages.length === 1 ? "grid-cols-1" : pages.length === 2 || pages.length === 4 ? "grid-cols-2" : "grid-cols-3",
+            pages.length === 1
+              ? "grid-cols-1"
+              : pages.length === 2 || pages.length === 4
+                ? "grid-cols-2"
+                : "grid-cols-3",
           )}
         >
           {pages.map((page) => {
@@ -520,12 +664,18 @@ export function TrayPopoverPanel({
               <Button
                 key={page}
                 className="h-8 justify-start px-2 text-xs font-normal"
-                onClick={() => onAction({ kind: "navigate", page: pageKinds[page] })}
+                onClick={() =>
+                  onAction({ kind: "navigate", page: pageKinds[page] })
+                }
                 size="sm"
                 type="button"
                 variant="ghost"
               >
-                <Icon aria-hidden="true" className="size-3.5 text-muted-foreground" strokeWidth={1.6} />
+                <Icon
+                  aria-hidden="true"
+                  className="size-3.5 text-muted-foreground"
+                  strokeWidth={1.6}
+                />
                 <span className="truncate">{t(pageLabelKeys[page])}</span>
               </Button>
             );
@@ -570,7 +720,12 @@ export function TrayPopoverPanel({
           >
             {t("tray.quit")}
           </Button>
-          <Button className="h-7" onClick={() => onAction({ kind: "open" })} size="sm" type="button">
+          <Button
+            className="h-7"
+            onClick={() => onAction({ kind: "open" })}
+            size="sm"
+            type="button"
+          >
             {t("tray.open")}
             <ArrowUpRight aria-hidden="true" />
           </Button>
@@ -591,6 +746,11 @@ export function TrayPopoverWindow() {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const close = useCallback(() => {
+    void trayPopoverHide().catch((error) =>
+      console.error("Unable to hide the AstrLink tray popover", error),
+    );
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -598,7 +758,9 @@ export function TrayPopoverWindow() {
       .then((next) => {
         if (!cancelled) setState(next);
       })
-      .catch((error) => console.error("Unable to read the AstrLink tray state", error));
+      .catch((error) =>
+        console.error("Unable to read the AstrLink tray state", error),
+      );
     const unlisten = listen<unknown>(TRAY_STATE_EVENT, ({ payload }) => {
       try {
         setState(parseTrayState(payload));
@@ -643,11 +805,11 @@ export function TrayPopoverWindow() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") void trayPopoverHide().catch(() => {});
+      if (event.key === "Escape") close();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [close]);
 
   useEffect(
     () => () => {
@@ -661,12 +823,17 @@ export function TrayPopoverWindow() {
       .then(() => {
         if (action.kind === "copy_address") {
           setCopyFeedback(i18n.t("tray.copied"));
-          if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
-          feedbackTimer.current = setTimeout(() => setCopyFeedback(null), COPY_FEEDBACK_MS);
+          if (feedbackTimer.current !== null)
+            clearTimeout(feedbackTimer.current);
+          feedbackTimer.current = setTimeout(
+            () => setCopyFeedback(null),
+            COPY_FEEDBACK_MS,
+          );
         }
       })
       .catch((error) => {
-        if (action.kind === "copy_address") setCopyFeedback(i18n.t("tray.copyFailed"));
+        if (action.kind === "copy_address")
+          setCopyFeedback(i18n.t("tray.copyFailed"));
         console.error("AstrLink tray action failed", error);
       });
   }, []);
@@ -679,6 +846,9 @@ export function TrayPopoverWindow() {
     <div
       ref={rootRef}
       className={cn("px-3", below ? "pt-1 pb-5" : "pt-5 pb-1")}
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) close();
+      }}
       style={{ width: TRAY_POPOVER_WIDTH }}
     >
       {tray ? (
@@ -686,6 +856,7 @@ export function TrayPopoverWindow() {
           copyFeedback={copyFeedback}
           now={now}
           onAction={handleAction}
+          onClose={close}
           state={state}
           tray={tray}
         />

@@ -11,18 +11,22 @@ const bridge = vi.hoisted(() => ({
   trayPopoverResize: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
+}));
 
 import { applyLocale } from "./i18n";
 import { defaultTrayPreferences } from "./preferences-model";
 import { parseTrayState, type TrayAction } from "./tray-model";
 import { readyTrayState } from "./tray-model.test";
-import { TrayPopoverPanel } from "./TrayPopover";
+import { TrayPopoverPanel, TrayPopoverWindow } from "./TrayPopover";
 
 const now = new Date("2026-09-22T10:00:20Z");
 
 function buttons(): string[] {
   return [...document.querySelectorAll("button")].map(
-    (button) => button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "",
+    (button) =>
+      button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "",
   );
 }
 
@@ -32,7 +36,9 @@ describe("TrayPopoverPanel", () => {
   let actions: TrayAction[];
 
   beforeEach(async () => {
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
     await applyLocale("zh-CN");
     container = document.createElement("div");
     document.body.append(container);
@@ -45,14 +51,51 @@ describe("TrayPopoverPanel", () => {
     container.remove();
   });
 
-  async function render(state: Parameters<typeof parseTrayState>[0], tray = defaultTrayPreferences()) {
+  async function render(
+    state: Parameters<typeof parseTrayState>[0],
+    tray = defaultTrayPreferences(),
+  ) {
     const parsed = parseTrayState(state);
     await act(async () => {
       root.render(
-        <TrayPopoverPanel now={now} onAction={(action) => actions.push(action)} state={parsed} tray={tray} />,
+        <TrayPopoverPanel
+          now={now}
+          onAction={(action) => actions.push(action)}
+          state={parsed}
+          tray={tray}
+        />,
       );
     });
   }
+
+  it("hides without quitting through Close, Escape, or the transparent margin", async () => {
+    bridge.getTrayState.mockResolvedValue(parseTrayState(readyTrayState));
+    bridge.trayPopoverHide.mockReset().mockResolvedValue(undefined);
+    bridge.trayAction.mockClear();
+    await act(async () => root.render(<TrayPopoverWindow />));
+
+    const panel = container.querySelector('[data-slot="tray-panel"]')!;
+    await act(async () => {
+      panel.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(bridge.trayPopoverHide).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!
+        .click();
+    });
+    expect(bridge.trayPopoverHide).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      panel.parentElement!.dispatchEvent(
+        new Event("pointerdown", { bubbles: true }),
+      );
+    });
+    expect(bridge.trayPopoverHide).toHaveBeenCalledTimes(3);
+    expect(bridge.trayAction).not.toHaveBeenCalled();
+  });
 
   it("shows the gateway, today's numbers and subscription windows by default", async () => {
     await render(readyTrayState);
@@ -69,16 +112,36 @@ describe("TrayPopoverPanel", () => {
     // Off by default.
     expect(text).not.toContain("Cursor");
     expect(text).not.toContain("比昨天");
-    expect(document.querySelector('[role="img"][aria-label="今日各小时 tokens"]')).not.toBeNull();
+    expect(
+      document.querySelector('[role="img"][aria-label="今日各小时 tokens"]'),
+    ).not.toBeNull();
     expect(buttons()).toEqual(
-      expect.arrayContaining(["复制 API 地址", "设置", "请求记录", "API 提供商", "访问令牌", "重启网关", "停止网关", "退出", "打开 AstrLink"]),
+      expect.arrayContaining([
+        "复制 API 地址",
+        "设置",
+        "请求记录",
+        "API 提供商",
+        "访问令牌",
+        "重启网关",
+        "停止网关",
+        "退出",
+        "打开 AstrLink",
+      ]),
     );
   });
 
   it("renders every optional card when enabled", async () => {
     const tray = defaultTrayPreferences();
-    for (const key of Object.keys(tray.usage) as Array<keyof typeof tray.usage>) tray.usage[key] = true;
-    tray.pages = ["records", "services", "tokens", "safety", "routing", "agent_tools"];
+    for (const key of Object.keys(tray.usage) as Array<keyof typeof tray.usage>)
+      tray.usage[key] = true;
+    tray.pages = [
+      "records",
+      "services",
+      "tokens",
+      "safety",
+      "routing",
+      "agent_tools",
+    ];
     await render(readyTrayState, tray);
     const text = container.textContent ?? "";
     expect(text).toContain("比昨天↑ 23%");
@@ -86,14 +149,18 @@ describe("TrayPopoverPanel", () => {
     expect(text).toContain("活跃客户端Cursor · 71%");
     expect(text).toContain("上次请求刚刚 · gpt-5 · 2.1 s");
     expect(text).toContain("本月48M tokens");
-    expect(buttons()).toEqual(expect.arrayContaining(["安全策略", "路由", "Agent 工具"]));
+    expect(buttons()).toEqual(
+      expect.arrayContaining(["安全策略", "路由", "Agent 工具"]),
+    );
   });
 
   it("routes clicks to host actions", async () => {
     await render(readyTrayState);
     const click = (label: string) => {
       const button = [...document.querySelectorAll("button")].find(
-        (candidate) => (candidate.getAttribute("aria-label") ?? candidate.textContent?.trim()) === label,
+        (candidate) =>
+          (candidate.getAttribute("aria-label") ??
+            candidate.textContent?.trim()) === label,
       );
       if (!button) throw new Error(`Missing button: ${label}`);
       act(() => button.click());
@@ -137,7 +204,9 @@ describe("TrayPopoverPanel", () => {
     expect(text).not.toContain("订阅额度");
     expect(buttons()).toContain("启动网关");
     expect(buttons()).not.toContain("停止网关");
-    const copy = [...document.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "复制 API 地址");
+    const copy = [...document.querySelectorAll("button")].find(
+      (button) => button.getAttribute("aria-label") === "复制 API 地址",
+    );
     expect(copy?.disabled).toBe(true);
   });
 
@@ -145,12 +214,30 @@ describe("TrayPopoverPanel", () => {
     const subscriptions = Array.from({ length: 6 }, (_, index) => ({
       name: `Plan ${index + 1}`,
       windows: [
-        { label: null, limit_window_seconds: 18_000, secondary: false, used_percent: 10 * index, reset_at: null },
-        { label: null, limit_window_seconds: 604_800, secondary: true, used_percent: 5 * index, reset_at: null },
+        {
+          label: null,
+          limit_window_seconds: 18_000,
+          secondary: false,
+          used_percent: 10 * index,
+          reset_at: null,
+        },
+        {
+          label: null,
+          limit_window_seconds: 604_800,
+          secondary: true,
+          used_percent: 5 * index,
+          reset_at: null,
+        },
       ],
     }));
-    await render({ ...readyTrayState, digest: { ...readyTrayState.digest, subscriptions } });
-    const rows = () => document.querySelectorAll('[data-slot="tray-subscriptions"] [data-slot="progress"]').length;
+    await render({
+      ...readyTrayState,
+      digest: { ...readyTrayState.digest, subscriptions },
+    });
+    const rows = () =>
+      document.querySelectorAll(
+        '[data-slot="tray-subscriptions"] [data-slot="progress"]',
+      ).length;
     expect(rows()).toBe(10);
     expect(container.textContent).toContain("10/12");
     const toggle = [...document.querySelectorAll("button")].find(
@@ -161,13 +248,21 @@ describe("TrayPopoverPanel", () => {
     act(() => toggle?.click());
     expect(rows()).toBe(12);
     expect(container.textContent).toContain("12/12");
-    const collapse = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "收起");
+    const collapse = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "收起",
+    );
     expect(collapse?.getAttribute("aria-expanded")).toBe("true");
     act(() => collapse?.click());
     expect(rows()).toBe(10);
 
     // Ten rows or fewer never show the toggle.
-    await render({ ...readyTrayState, digest: { ...readyTrayState.digest, subscriptions: subscriptions.slice(0, 5) } });
+    await render({
+      ...readyTrayState,
+      digest: {
+        ...readyTrayState.digest,
+        subscriptions: subscriptions.slice(0, 5),
+      },
+    });
     expect(rows()).toBe(10);
     expect(container.textContent).not.toContain("展开其余");
     expect(container.textContent).not.toContain("10/10");
@@ -181,7 +276,15 @@ describe("TrayPopoverPanel", () => {
         subscriptions: [
           {
             name: "Kimi",
-            windows: [{ label: "Monthly", limit_window_seconds: 2_592_000, secondary: false, used_percent: 41.5, reset_at: null }],
+            windows: [
+              {
+                label: "Monthly",
+                limit_window_seconds: 2_592_000,
+                secondary: false,
+                used_percent: 41.5,
+                reset_at: null,
+              },
+            ],
           },
         ],
       },
@@ -191,7 +294,10 @@ describe("TrayPopoverPanel", () => {
   });
 
   it("flags an agent reading records through MCP", async () => {
-    await render({ ...readyTrayState, view: { ...readyTrayState.view, observer_active: true } });
+    await render({
+      ...readyTrayState,
+      view: { ...readyTrayState.view, observer_active: true },
+    });
     const badge = document.querySelector('[data-slot="tray-observed"]');
     expect(badge?.textContent).toBe("Agent 正在通过 MCP 读取");
     // Cost is shown without an unpriced caveat.
@@ -200,12 +306,19 @@ describe("TrayPopoverPanel", () => {
   });
 
   it("hides what the preferences switch off", async () => {
-    const tray = { ...defaultTrayPreferences(), copy_address: false, gateway_controls: false, pages: [] as never[] };
+    const tray = {
+      ...defaultTrayPreferences(),
+      copy_address: false,
+      gateway_controls: false,
+      pages: [] as never[],
+    };
     await render(readyTrayState, tray);
     const labels = buttons();
     expect(labels).not.toContain("复制 API 地址");
     expect(labels).not.toContain("重启网关");
     expect(labels).not.toContain("请求记录");
-    expect(labels).toEqual(expect.arrayContaining(["设置", "退出", "打开 AstrLink"]));
+    expect(labels).toEqual(
+      expect.arrayContaining(["设置", "退出", "打开 AstrLink"]),
+    );
   });
 });
