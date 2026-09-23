@@ -47,6 +47,7 @@ import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Combobox } from "@/components/ui/combobox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -647,6 +648,13 @@ export function ServiceManager({
   );
   const [query, setQuery] = useState("");
   const [modelQuery, setModelQuery] = useState("");
+  const modelSuggestions = useMemo(
+    () =>
+      [...new Set(services.flatMap((service) => service.models))].sort(
+        (left, right) => left.localeCompare(right),
+      ),
+    [services],
+  );
   const [serviceFilter, setServiceFilter] = useState<ServiceFilter>("all");
   const [draft, setDraft] = useState<Draft>(() =>
     draftForKind("codex_subscription", protocols),
@@ -1507,12 +1515,13 @@ export function ServiceManager({
             placeholder={t("services.searchServicesPlaceholder")}
             clearLabel={t("common.clearSearch")}
             secondaryFilters={
-              <Input
+              <Combobox
                 aria-label={t("services.filterModel")}
-                className="h-8 w-full"
-                onChange={(event) => setModelQuery(event.currentTarget.value)}
+                clearLabel={t("common.clearSearch")}
+                emptyMessage={t("services.noModelSuggestions")}
+                onValueChange={setModelQuery}
+                options={modelSuggestions}
                 placeholder={t("services.filterModelPlaceholder")}
-                type="search"
                 value={modelQuery}
               />
             }

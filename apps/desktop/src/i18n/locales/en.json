@@ -562,6 +562,7 @@
     "noSearchResults": "Try another API provider name, type, API address, or model name.",
     "filterModel": "Filter API providers by model name",
     "filterModelPlaceholder": "Filter by model name…",
+    "noModelSuggestions": "No matching models",
     "basicInformation": "Basic information",
     "basicInformationHint": "Choose an API provider type and a recognizable connection name.",
     "accountAuthorization": "Account authorization",

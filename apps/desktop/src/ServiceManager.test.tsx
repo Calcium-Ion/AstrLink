@@ -1384,6 +1384,78 @@ describe("ServiceManager", () => {
     ]);
   });
 
+  it("suggests configured model names for the model filter", async () => {
+    const services: Service[] = [
+      { ...gatewayService, id: "service_first", name: "First gateway" },
+      {
+        ...gatewayService,
+        id: "service_second",
+        name: "Second gateway",
+        models: ["gpt-5.4", "claude-sonnet-4-5"],
+      },
+      codexService,
+    ];
+    bridgeMocks.getServiceOrder.mockResolvedValueOnce({
+      service_ids: services.map((service) => service.id),
+      etag,
+    });
+    await act(async () =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          services={services}
+          protocols={[]}
+          view={{ kind: "list" }}
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+        />,
+      ),
+    );
+    const modelSearch = container.querySelector<HTMLInputElement>(
+      'input[aria-label="按模型名筛选 API 提供商"]',
+    )!;
+    const suggestions = () =>
+      [...document.querySelectorAll<HTMLElement>('[role="option"]')].map(
+        (option) => option.textContent,
+      );
+    await act(async () => modelSearch.click());
+    expect(suggestions()).toEqual(["claude-sonnet-4-5", "gpt-5", "gpt-5.4"]);
+
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    await act(async () => {
+      setter.call(modelSearch, " GPT-5.");
+      modelSearch.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(suggestions()).toEqual(["gpt-5.4"]);
+    await act(async () =>
+      document.querySelector<HTMLElement>('[role="option"]')!.click(),
+    );
+    expect(modelSearch.value).toBe("gpt-5.4");
+    expect(
+      [...container.querySelectorAll('[data-testid="service-card"]')].map(
+        (row) => row.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Second gateway"]);
+
+    // The service search is empty, so the only clear-search button belongs to the model filter.
+    const clear = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="清除搜索"]',
+    )!;
+    await act(async () => clear.click());
+    expect(modelSearch.value).toBe("");
+    expect(
+      container.querySelectorAll('[data-testid="service-card"]'),
+    ).toHaveLength(3);
+  });
+
   it.each(["ready", "error"] as const)(
     "renders the list while quotas load independently, including %s, and preserves settled data on refresh",
     async (outcome) => {

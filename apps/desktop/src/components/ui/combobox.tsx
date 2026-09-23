@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-import { Check, ChevronDown } from "@/components/icons";
+import { Check, ChevronDown, X } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -20,6 +20,7 @@ export function Combobox({
   placeholder,
   maxLength,
   emptyMessage,
+  clearLabel,
   "aria-label": ariaLabel,
 }: {
   id?: string;
@@ -30,6 +31,8 @@ export function Combobox({
   placeholder?: string;
   maxLength?: number;
   emptyMessage: string;
+  /** Shows a clear button while the field has a value. */
+  clearLabel?: string;
   "aria-label": string;
 }) {
   const generatedId = useId();
@@ -41,9 +44,10 @@ export function Combobox({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
   const filtered = options.filter((option) =>
-    option.toLowerCase().includes(query.toLowerCase()),
+    option.toLowerCase().includes(query.trim().toLowerCase()),
   );
   const expanded = open && !disabled;
+  const clearable = !!clearLabel && !!value && !disabled;
 
   function showOptions() {
     if (disabled) return;
@@ -95,7 +99,7 @@ export function Combobox({
                 : undefined
             }
             autoComplete="off"
-            className="pr-9"
+            className={clearable ? "pr-14" : "pr-9"}
             value={value}
             disabled={disabled}
             placeholder={placeholder}
@@ -138,6 +142,24 @@ export function Combobox({
               }
             }}
           />
+          {clearable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute top-1/2 right-7.5 -translate-y-1/2 text-muted-foreground"
+              aria-label={clearLabel}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onValueChange("");
+                setQuery("");
+                setActiveIndex(-1);
+                inputRef.current?.focus({ preventScroll: true });
+              }}
+            >
+              <X aria-hidden="true" />
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
