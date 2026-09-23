@@ -1051,8 +1051,10 @@ paths:
         Returns successful request counts and tokens, failed request counts,
         and sparse calendar, service and model buckets in one response.
         Retry children, pending, blocked and cancelled requests are excluded.
-        Legacy succeeded requests with HTTP errors count as failed. Service and
-        model buckets contain successful requests only. No pagination cap applies.
+        Legacy succeeded requests with HTTP errors count as failed. Service,
+        model and local access-token buckets contain successful and failed request
+        counts; token usage is accumulated only for successful requests. No
+        pagination cap applies.
         Calendar buckets use the supplied IANA zone, including DST transitions.
       parameters:
         - name: from
@@ -2212,9 +2214,15 @@ paths:
             $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         - name: local_access_token_id
           in: query
-          description: Restrict to root records attributed to this local access token.
+          description: Restrict to root records attributed to any of these local access tokens. Repeat the parameter for multiple token IDs.
+          style: form
+          explode: true
           schema:
-            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            type: array
+            maxItems: 100
+            uniqueItems: true
+            items:
+              $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         - name: status
           in: query
           schema:
@@ -2379,8 +2387,15 @@ paths:
             $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         - name: local_access_token_id
           in: query
+          description: Restrict to sessions containing root records attributed to any of these local access tokens. Repeat the parameter for multiple token IDs.
+          style: form
+          explode: true
           schema:
-            $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+            type: array
+            maxItems: 100
+            uniqueItems: true
+            items:
+              $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         - name: status
           in: query
           description: >
@@ -2752,11 +2767,19 @@ components:
             minimum: 0,
             description: Distinct logical root requests; attempts are deduplicated separately.,
           }
+    BillingTokenGroup:
+      allOf:
+        - { $ref: "#/components/schemas/BillingAmounts" }
+        - type: object
+          required: [token_id]
+          properties:
+            token_id:
+              $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
     BillingSummary:
       allOf:
         - { $ref: "#/components/schemas/BillingAmounts" }
         - type: object
-          required: [from, to, by_model]
+          required: [from, to, by_model, by_token]
           properties:
             from: { type: string, format: date-time }
             to: { type: string, format: date-time }
@@ -2770,6 +2793,10 @@ components:
                     properties:
                       model: { type: string }
                       provider: { type: string }
+            by_token:
+              type: array
+              items:
+                $ref: "#/components/schemas/BillingTokenGroup"
     BillingPeriod:
       type: object
       required:
@@ -2901,7 +2928,7 @@ components:
     UsageSummary:
       type: object
       additionalProperties: false
-      required: [totals, by_day, by_hour, by_service, by_model, scanned_records]
+      required: [totals, by_day, by_hour, by_service, by_model, by_token, scanned_records]
       properties:
         totals:
           $ref: "#/components/schemas/UsageTotals"
@@ -2916,6 +2943,9 @@ components:
           type: array
           items: { $ref: "#/components/schemas/UsageGroup" }
         by_model:
+          type: array
+          items: { $ref: "#/components/schemas/UsageGroup" }
+        by_token:
           type: array
           items: { $ref: "#/components/schemas/UsageGroup" }
         scanned_records: { type: integer, minimum: 0 }

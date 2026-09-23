@@ -19,7 +19,7 @@ type PricingStore interface {
 	SavePricingConfig(context.Context, contract.ServiceID, pricing.Config) error
 	ServiceBilling(context.Context, contract.ServiceID) (pricing.ServiceReport, error)
 	BackfillPricing(context.Context, contract.ServiceID) (int, error)
-	BillingSummary(context.Context, contract.ServiceID, string, time.Time, time.Time) (pricing.Summary, error)
+	BillingSummary(context.Context, contract.ServiceID, string, time.Time, time.Time, pricing.BillingSummaryOptions) (pricing.Summary, error)
 }
 
 func (h *Handler) pricingResource(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +85,7 @@ func (h *Handler) pricingResource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid_query", "from and to are required")
 			return
 		}
-		value, err := h.pricingStore.BillingSummary(r.Context(), "", "", from, to)
+		value, err := h.pricingStore.BillingSummary(r.Context(), "", "", from, to, pricing.BillingSummaryOptions{IncludeTokenBreakdown: true})
 		if err != nil {
 			h.writeStoreError(w, err)
 			return

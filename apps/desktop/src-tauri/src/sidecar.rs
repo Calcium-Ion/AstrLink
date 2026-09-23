@@ -4659,7 +4659,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     let mut to: Option<&str> = None;
     let mut protocol: Option<&str> = None;
     let mut service_id: Option<&str> = None;
-    let mut local_access_token_id: Option<&str> = None;
+    let mut local_access_token_ids: Vec<&str> = Vec::new();
     let mut status: Option<&str> = None;
 
     for (key, value) in object {
@@ -4729,12 +4729,19 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
                 validate_resource_id(text)?;
                 service_id = Some(text);
             }
-            "local_access_token_id" => {
-                let text = value.as_str().ok_or_else(|| {
-                    "request record query local_access_token_id must be a string".to_string()
+            "local_access_token_ids" => {
+                let values = value.as_array().ok_or_else(|| {
+                    "request record query local_access_token_ids must be an array of strings"
+                        .to_string()
                 })?;
-                validate_resource_id(text)?;
-                local_access_token_id = Some(text);
+                for value in values {
+                    let text = value.as_str().ok_or_else(|| {
+                        "request record query local_access_token_ids must be an array of strings"
+                            .to_string()
+                    })?;
+                    validate_resource_id(text)?;
+                    local_access_token_ids.push(text);
+                }
             }
             "status" => {
                 let text = value
@@ -4772,7 +4779,7 @@ fn build_request_record_query(query: &serde_json::Value) -> Result<String, Strin
     if let Some(value) = service_id {
         pairs.push(format!("service_id={}", percent_encode_query(value)));
     }
-    if let Some(value) = local_access_token_id {
+    for value in local_access_token_ids {
         pairs.push(format!(
             "local_access_token_id={}",
             percent_encode_query(value)
@@ -5542,6 +5549,16 @@ mod tests {
             "?cursor=a%2Bb&kind=discovery"
         );
         assert_eq!(
+            build_request_session_query(&serde_json::json!({
+                "kind": "inference",
+                "service_id": "service_01",
+                "local_access_token_ids": ["token_01", "token_02"],
+                "status": "succeeded"
+            }))
+            .unwrap(),
+            "?service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded&kind=inference"
+        );
+        assert_eq!(
             build_request_session_query(&serde_json::json!({})).unwrap(),
             ""
         );
@@ -5565,7 +5582,7 @@ mod tests {
             build_request_record_query(&serde_json::json!({
                 "status": "succeeded",
                 "service_id": "service_01",
-                "local_access_token_id": "token_01",
+                "local_access_token_ids": ["token_01", "token_02"],
                 "protocol": "openai_responses",
                 "to": "2026-07-25T12:00:00Z",
                 "from": "2026-07-24T00:00:00Z",
@@ -5573,13 +5590,26 @@ mod tests {
                 "limit": 50
             }))
             .unwrap(),
-            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&status=succeeded"
+            "?limit=50&cursor=a%2Bb%3Dc%26d%2Fe&from=2026-07-24T00%3A00%3A00Z&to=2026-07-25T12%3A00%3A00Z&protocol=openai_responses&service_id=service_01&local_access_token_id=token_01&local_access_token_id=token_02&status=succeeded"
         );
         assert!(
             build_request_record_query(&serde_json::json!({"unknown": 1}))
                 .unwrap_err()
                 .contains("unknown")
         );
+        assert!(build_request_record_query(&serde_json::json!({
+            "local_access_token_id": "token_01"
+        }))
+        .unwrap_err()
+        .contains("unknown key local_access_token_id"));
+        assert!(build_request_record_query(&serde_json::json!({
+            "local_access_token_ids": "token_01"
+        }))
+        .is_err());
+        assert!(build_request_record_query(&serde_json::json!({
+            "local_access_token_ids": ["token_01", 2]
+        }))
+        .is_err());
         assert!(build_request_record_query(&serde_json::json!({"limit": 0})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"limit": 201})).is_err());
         assert!(build_request_record_query(&serde_json::json!({"status": "ok"})).is_err());

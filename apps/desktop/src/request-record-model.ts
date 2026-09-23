@@ -203,7 +203,7 @@ export interface RequestSessionListQuery {
   to?: string;
   protocol?: string;
   service_id?: string;
-  local_access_token_id?: string;
+  local_access_token_ids?: string[];
   // Filters on record status, not on the aggregated session outcome, so it
   // cannot name a session-only status such as interrupted.
   status?: RequestStatus;
@@ -221,7 +221,7 @@ export interface RequestRecordListQuery {
   to?: string;
   protocol?: string;
   service_id?: string;
-  local_access_token_id?: string;
+  local_access_token_ids?: string[];
   status?: RequestStatus;
 }
 

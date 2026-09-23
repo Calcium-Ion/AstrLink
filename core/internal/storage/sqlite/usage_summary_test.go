@@ -186,10 +186,16 @@ func TestUsageSummaryExcludesModelDiscovery(t *testing.T) {
 		len(summary.ByHour) != 1 || summary.ByHour[0].Date != "2026-09-20" || *summary.ByHour[0].Hour != 0 || summary.ByHour[0].UsageTotals != want {
 		t.Fatalf("days=%+v hours=%+v", summary.ByDay, summary.ByHour)
 	}
-	for _, groups := range [][]storage.UsageGroup{summary.ByService, summary.ByModel} {
-		if len(groups) != 1 || groups[0].ID == nil || groups[0].Requests != 2 || groups[0].TotalTokens != 7 {
-			t.Fatalf("groups=%+v", groups)
-		}
+	// The pre-routing failure clears only the service, so it opens a null service
+	// bucket. The requested model is still set and stays on that model group.
+	if len(summary.ByService) != 2 || summary.ByService[0].ID == nil || summary.ByService[0].Requests != 2 ||
+		summary.ByService[0].FailedRequests != 0 || summary.ByService[0].TotalTokens != 7 ||
+		summary.ByService[1].ID != nil || summary.ByService[1].Requests != 0 || summary.ByService[1].FailedRequests != 1 {
+		t.Fatalf("services=%+v", summary.ByService)
+	}
+	if len(summary.ByModel) != 1 || summary.ByModel[0].ID == nil || *summary.ByModel[0].ID != "model_one" ||
+		summary.ByModel[0].Requests != 2 || summary.ByModel[0].FailedRequests != 1 || summary.ByModel[0].TotalTokens != 7 {
+		t.Fatalf("models=%+v", summary.ByModel)
 	}
 }
 
@@ -237,5 +243,77 @@ func TestSessionSummaryMatchesDetailAcrossFiltersAndRetries(t *testing.T) {
 	next, err := store.ListRequestSessions(ctx, storage.RequestSessionListOptions{Limit: 2, From: &from, Cursor: page.NextCursor})
 	if err != nil || len(next.Items) != 1 || next.NextCursor != "" {
 		t.Fatalf("next=%+v err=%v", next, err)
+	}
+}
+
+func TestUsageSummaryGroupsFailuresAndCurrentAccessTokens(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "usage-token-groups.db"))
+	defer store.Close()
+	ctx := t.Context()
+	metadata, err := store.ListAccessTokens(ctx)
+	if err != nil || len(metadata) == 0 {
+		t.Fatalf("ListAccessTokens: %v", err)
+	}
+	currentToken := metadata[0].ID
+	deletedToken := contract.AccessTokenID("token_deleted")
+	service := contract.ServiceID("service_usage")
+	model := "model_usage"
+	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	insert := func(record contract.RequestRecord) {
+		t.Helper()
+		if err := store.InsertRequestRecord(ctx, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(contract.RequestRecord{ID: "usage_token_success", StartedAt: start, Status: contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		ServiceID: &service, RequestedModel: &model, LocalAccessTokenID: &currentToken,
+		Usage: &contract.Usage{InputTokens: 7, OutputTokens: 3, TotalTokens: 10}})
+	insert(contract.RequestRecord{ID: "usage_token_failed", StartedAt: start.Add(time.Minute), Status: contract.RequestStatusFailed,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		ServiceID: &service, RequestedModel: &model, LocalAccessTokenID: &currentToken,
+		Error: &contract.ErrorSummary{Category: "upstream", Code: "failed", Message: "failed"}})
+	insert(contract.RequestRecord{ID: "usage_deleted_token", StartedAt: start.Add(2 * time.Minute), Status: contract.RequestStatusSucceeded,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		ServiceID: &service, RequestedModel: &model, LocalAccessTokenID: &deletedToken,
+		Usage: &contract.Usage{TotalTokens: 20}})
+	insert(contract.RequestRecord{ID: "usage_unassigned_failed", StartedAt: start.Add(3 * time.Minute), Status: contract.RequestStatusFailed,
+		InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(),
+		Error: &contract.ErrorSummary{Category: "upstream", Code: "failed", Message: "failed"}})
+
+	summary, err := store.GetUsageSummary(ctx, storage.UsageSummaryOptions{
+		From: start.Add(-time.Second), To: start.Add(time.Hour), TimeZone: "UTC", Bucket: "hour",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.ByToken) != 1 || summary.ByToken[0].ID == nil || *summary.ByToken[0].ID != string(currentToken) {
+		t.Fatalf("by_token=%+v", summary.ByToken)
+	}
+	if summary.ByToken[0].Requests != 1 || summary.ByToken[0].FailedRequests != 1 || summary.ByToken[0].TotalTokens != 10 {
+		t.Fatalf("token totals=%+v", summary.ByToken[0])
+	}
+	// Deleted-token requests still contribute to service/model usage. Only the
+	// token breakdown is intersected with the current-token directory.
+	for _, test := range []struct {
+		name   string
+		id     string
+		groups []storage.UsageGroup
+	}{
+		{name: "service", id: string(service), groups: summary.ByService},
+		{name: "model", id: model, groups: summary.ByModel},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if len(test.groups) != 2 {
+				t.Fatalf("groups=%+v", test.groups)
+			}
+			assigned, unassigned := test.groups[0], test.groups[1]
+			if assigned.ID == nil || *assigned.ID != test.id || assigned.Requests != 2 || assigned.FailedRequests != 1 || assigned.TotalTokens != 30 {
+				t.Fatalf("assigned group=%+v", assigned)
+			}
+			if unassigned.ID != nil || unassigned.Requests != 0 || unassigned.FailedRequests != 1 || unassigned.TotalTokens != 0 {
+				t.Fatalf("unassigned group=%+v", unassigned)
+			}
+		})
 	}
 }

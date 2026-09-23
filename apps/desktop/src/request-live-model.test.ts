@@ -104,6 +104,7 @@ describe("request live merge model", () => {
         status: "failed",
         serviceId: "service_01",
         protocol: "openai.responses",
+        localAccessTokenIds: [],
       }),
     ).toBe(true);
     expect(
@@ -111,8 +112,22 @@ describe("request live merge model", () => {
         status: "pending",
         serviceId: "",
         protocol: "",
+        localAccessTokenIds: [],
       }),
     ).toBe(false);
+  });
+
+  it("matches queued records by the selected access tokens", () => {
+    const tokenRecord = { ...record("request_token", "2026-07-25T10:00:00Z"), local_access_token_id: "token_a" };
+    const filters = {
+      status: "" as const,
+      serviceId: "",
+      protocol: "",
+      localAccessTokenIds: ["token_a"],
+    };
+    expect(recordMatchesFilters(tokenRecord, filters)).toBe(true);
+    expect(recordMatchesFilters({ ...tokenRecord, local_access_token_id: "token_b" }, filters)).toBe(false);
+    expect(recordMatchesFilters({ ...tokenRecord, local_access_token_id: null }, filters)).toBe(false);
   });
 
   it("computes live elapsed time without replacing a terminal latency", () => {

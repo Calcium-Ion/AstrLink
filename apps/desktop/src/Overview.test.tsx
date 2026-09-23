@@ -205,6 +205,7 @@ describe("Overview", () => {
           onManageServices={onManageServices}
           onManageTokens={onManageTokens}
           onOpenService={onOpenService}
+          onOpenTokenRecords={() => undefined}
           onRefreshServices={() => undefined}
           onRefreshUsage={() => undefined}
           onRestart={onRestart}
@@ -417,6 +418,113 @@ describe("Overview", () => {
     expect(container.textContent).not.toContain("上游服务");
     expect(container.textContent).not.toContain("连接 AstrLink");
   });
+
+  it("supports single-condition token sorting with icon controls", async () => {
+    const tokenCatalog: AccessTokenCatalog = {
+      ...readyTokens,
+      items: [
+        readyTokens.items[0],
+        {
+          id: "token_02",
+          name: "Terminal",
+          hint: "astr_…T2",
+          created_at: "2026-07-25T10:30:00Z",
+        },
+        {
+          id: "token_03",
+          name: "CI",
+          hint: "astr_…C3",
+          created_at: "2026-07-26T10:30:00Z",
+        },
+      ],
+    };
+    const summary = readySummary({
+      by_token: [
+        group("token_01", { total_tokens: 100, requests: 1 }),
+        group("token_02", { total_tokens: 100, requests: 3 }),
+        group("token_03", { total_tokens: 50, requests: 5 }),
+      ],
+    });
+    await renderOverview({
+      tokenCatalog,
+      usage: { status: "ready", summary, error: null },
+    });
+
+    const panel = container.querySelector<HTMLElement>(
+      "[data-testid='token-usage-panel']",
+    )!;
+    const control = (key: string) =>
+      panel.querySelector<HTMLButtonElement>(
+        `[data-testid='token-sort-${key}']`,
+      )!;
+    const rowNames = () =>
+      [
+        ...panel.querySelectorAll<HTMLElement>(
+          "[data-slot='paginated-list-items'] > div > button [title]",
+        ),
+      ].map((node) => node.getAttribute("title"));
+
+    expect(control("tokens").dataset.active).toBe("true");
+    expect(control("tokens").getAttribute("aria-pressed")).toBe("true");
+    expect(control("fee").dataset.active).toBe("false");
+    expect(control("requests").dataset.active).toBe("false");
+    expect(rowNames()).toEqual(["Terminal", "VS Code", "CI"]);
+
+    await act(async () => control("requests").click());
+    expect(control("tokens").dataset.active).toBe("false");
+    expect(control("requests").dataset.active).toBe("true");
+    expect(rowNames()).toEqual(["CI", "Terminal", "VS Code"]);
+
+    await act(async () => control("fee").click());
+    expect(control("requests").dataset.active).toBe("false");
+    expect(control("fee").dataset.active).toBe("true");
+    expect(rowNames()).toEqual(["Terminal", "VS Code", "CI"]);
+
+    await act(async () => control("tokens").click());
+    expect(control("tokens").dataset.active).toBe("true");
+    expect(control("fee").dataset.active).toBe("false");
+  });
+
+  it("reports an unread token catalog as unknown instead of empty", async () => {
+    await renderOverview({
+      tokenCatalog: { status: "blocked", items: [], error: null, stale: false },
+      usage: {
+        status: "ready",
+        summary: readySummary({
+          by_token: [group("token_01", { total_tokens: 100, requests: 1 })],
+        }),
+        error: null,
+      },
+    });
+
+    const panel = container.querySelector<HTMLElement>(
+      "[data-testid='token-usage-panel']",
+    )!;
+    expect(panel.textContent).toContain("网关就绪后显示访问令牌用量。");
+    expect(panel.textContent).toContain("当前没有可用的访问令牌目录数据。");
+    expect(panel.textContent).not.toContain("该区间没有访问令牌用量");
+  });
+
+  it("suppresses retained token figures after a failed refresh", async () => {
+    await renderOverview({
+      usage: {
+        status: "error",
+        summary: readySummary({
+          by_token: [group("token_01", { total_tokens: 100, requests: 2 })],
+        }),
+        error: "boom",
+      },
+    });
+
+    const panel = container.querySelector<HTMLElement>(
+      "[data-testid='token-usage-panel']",
+    )!;
+    expect(panel.textContent).toContain("等待刷新");
+    expect(panel.textContent).toContain("—");
+    expect(panel.textContent).not.toContain("100");
+    expect(panel.textContent).not.toContain("2 次请求");
+  });
+
 
   it("defaults to a yearly heatmap and reports range switches", async () => {
     const { onUsagePresetChange } = await renderOverview();

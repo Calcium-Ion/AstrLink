@@ -20,6 +20,8 @@ const (
 	RequestsPath        = "/control/v1/requests"
 	RequestsPurgePath   = RequestsPath + "/purge"
 	RequestSessionsPath = "/control/v1/request-sessions"
+
+	maxLocalAccessTokenFilters = 100
 )
 
 type requestRecordPageResponse struct {
@@ -111,15 +113,15 @@ func parseRequestSessionListOptions(request *http.Request) (storage.RequestSessi
 		return storage.RequestSessionListOptions{}, err
 	}
 	return storage.RequestSessionListOptions{
-		Kind:               kind,
-		Limit:              recordOptions.Limit,
-		Cursor:             recordOptions.Cursor,
-		From:               recordOptions.From,
-		To:                 recordOptions.To,
-		Protocol:           recordOptions.Protocol,
-		ServiceID:          recordOptions.ServiceID,
-		LocalAccessTokenID: recordOptions.LocalAccessTokenID,
-		Status:             recordOptions.Status,
+		Kind:                kind,
+		Limit:               recordOptions.Limit,
+		Cursor:              recordOptions.Cursor,
+		From:                recordOptions.From,
+		To:                  recordOptions.To,
+		Protocol:            recordOptions.Protocol,
+		ServiceID:           recordOptions.ServiceID,
+		LocalAccessTokenIDs: recordOptions.LocalAccessTokenIDs,
+		Status:              recordOptions.Status,
 	}, nil
 }
 
@@ -377,14 +379,18 @@ func parseRequestRecordListOptions(request *http.Request) (storage.RequestRecord
 }
 
 func parseRequestRecordQuery(query url.Values) (storage.RequestRecordListOptions, error) {
-	for name := range query {
+	for name, values := range query {
 		switch name {
-		case "limit", "cursor", "from", "to", "protocol", "service_id", "local_access_token_id", "status":
+		case "limit", "cursor", "from", "to", "protocol", "service_id", "status":
+			if len(values) != 1 {
+				return storage.RequestRecordListOptions{}, fmt.Errorf("query parameter must occur once")
+			}
+		case "local_access_token_id":
+			if len(values) > maxLocalAccessTokenFilters {
+				return storage.RequestRecordListOptions{}, fmt.Errorf("too many local_access_token_id filters")
+			}
 		default:
 			return storage.RequestRecordListOptions{}, fmt.Errorf("unknown query parameter")
-		}
-		if len(query[name]) != 1 {
-			return storage.RequestRecordListOptions{}, fmt.Errorf("query parameter must occur once")
 		}
 	}
 	options := storage.RequestRecordListOptions{Cursor: query.Get("cursor")}
@@ -434,12 +440,20 @@ func parseRequestRecordQuery(query url.Values) (storage.RequestRecordListOptions
 		}
 		options.ServiceID = &serviceID
 	}
-	if value := query.Get("local_access_token_id"); value != "" {
-		tokenID := contract.AccessTokenID(value)
-		if err := tokenID.Validate(); err != nil {
-			return options, fmt.Errorf("invalid local_access_token_id filter")
+	if values, ok := query["local_access_token_id"]; ok {
+		options.LocalAccessTokenIDs = make([]contract.AccessTokenID, 0, len(values))
+		seen := make(map[contract.AccessTokenID]struct{}, len(values))
+		for _, value := range values {
+			tokenID := contract.AccessTokenID(value)
+			if err := tokenID.Validate(); err != nil {
+				return options, fmt.Errorf("invalid local_access_token_id filter")
+			}
+			if _, exists := seen[tokenID]; exists {
+				return options, fmt.Errorf("duplicate local_access_token_id filter")
+			}
+			seen[tokenID] = struct{}{}
+			options.LocalAccessTokenIDs = append(options.LocalAccessTokenIDs, tokenID)
 		}
-		options.LocalAccessTokenID = &tokenID
 	}
 	if value := query.Get("status"); value != "" {
 		status := contract.RequestStatus(value)

@@ -15,6 +15,7 @@ const response = {
   by_hour: [{ date, hour: 9, ...totals }],
   by_service: [{ id: null, ...totals }],
   by_model: [{ id: "model_a", ...totals }],
+  by_token: [{ id: "token_a", ...totals }],
   scanned_records: 5001,
 };
 
@@ -34,6 +35,7 @@ describe("usage summary contract", () => {
     const summary = parseUsageSummary(response, window);
     expect(summary.totals.total_tokens).toBe(10002);
     expect(summary.scanned_records).toBe(5001);
+    expect(summary.by_token).toEqual(response.by_token);
     expect(summary.capped).toBe(false);
     expect(summary.by_hour).toHaveLength(24);
     expect(summary.by_hour[9].total_tokens).toBe(10002);

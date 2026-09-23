@@ -69,6 +69,7 @@ export function parseUsageSummary(
     "by_hour",
     "by_service",
     "by_model",
+    "by_token",
     "scanned_records",
   ]);
   const summary = emptyUsageSummary(window);
@@ -82,6 +83,7 @@ export function parseUsageSummary(
   }
   summary.by_service = groupsAt(object.by_service);
   summary.by_model = groupsAt(object.by_model);
+  summary.by_token = groupsAt(object.by_token);
   const fill = (raw: unknown, hourly: boolean) => {
     const buckets = hourly ? summary.by_hour : summary.by_day;
     const keyOf = (date: unknown, hour: unknown) =>

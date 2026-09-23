@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
@@ -59,7 +61,7 @@ func TestBillingPinnedPricesRetryDedupAndRetention(t *testing.T) {
 	}
 	check := func() {
 		t.Helper()
-		summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
+		summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
 		if err != nil || summary.AmountUSD != "15.400000000" || summary.Priced != 2 || summary.Requests != 1 {
 			t.Fatalf("summary=%+v err=%v", summary, err)
 		}
@@ -74,7 +76,7 @@ func TestBillingPinnedPricesRetryDedupAndRetention(t *testing.T) {
 	}
 	check()
 	// Exclusive upper boundary must not include a request exactly at the end.
-	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(2*time.Second))
+	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(2*time.Second), pricing.BillingSummaryOptions{})
 	if err != nil || summary.Priced != 1 || summary.AmountUSD != "1.400000000" {
 		t.Fatalf("boundary=%+v %v", summary, err)
 	}
@@ -93,7 +95,7 @@ func TestBillingUnmatchedBackfillAndAccountIsolation(t *testing.T) {
 	if err := s.InsertRequestRecord(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
+	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
 	if err != nil || summary.Unpriced != 1 {
 		t.Fatalf("%+v %v", summary, err)
 	}
@@ -113,11 +115,11 @@ func TestBillingUnmatchedBackfillAndAccountIsolation(t *testing.T) {
 	if _, err := s.BackfillPricing(ctx, service.ID); err != nil {
 		t.Fatal(err)
 	}
-	summary, err = s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
+	summary, err = s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
 	if err != nil || summary.AmountUSD != "0.900000000" || summary.Revalued != 1 {
 		t.Fatalf("%+v %v", summary, err)
 	}
-	summary, err = s.BillingSummary(ctx, service.ID, "a_different_account", start, start.Add(time.Hour))
+	summary, err = s.BillingSummary(ctx, service.ID, "a_different_account", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
 	if err != nil || summary.Requests != 0 {
 		t.Fatalf("account mix: %+v %v", summary, err)
 	}
@@ -210,7 +212,7 @@ func TestMissingPricesFillAutomaticallyOncePerCatalog(t *testing.T) {
 	if n, err := s.PriceUnpriced(ctx); err != nil || n != 1 {
 		t.Fatalf("new price fill=%d %v", n, err)
 	}
-	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
+	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
 	if err != nil || summary.AmountUSD != "3.000000000" || summary.Unpriced != 0 || summary.Priced != 2 {
 		t.Fatalf("%+v %v", summary, err)
 	}
@@ -240,7 +242,7 @@ func TestInterruptedBillingBecomesUnpricedAndCannotBeBackfilledAsComplete(t *tes
 	if _, err := s.BackfillPricing(ctx, service.ID); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
+	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
 	if err != nil || summary.Unpriced != 1 || summary.Pending != 0 || summary.Priced != 0 {
 		t.Fatalf("%+v %v", summary, err)
 	}
@@ -317,7 +319,7 @@ func TestAudioPricingRepairPreservesSnapshotsAndUnknownUsage(t *testing.T) {
 			if n, err := s.PriceUnpriced(ctx); err != nil || n != 0 {
 				t.Fatalf("repeat repair count=%d error=%v", n, err)
 			}
-			summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour))
+			summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
 			if err != nil || summary.AmountUSD != "8.550000000" || summary.Priced != 10 || summary.Unpriced != 102 || summary.Revalued != 9 {
 				t.Fatalf("summary=%+v error=%v", summary, err)
 			}
@@ -330,5 +332,69 @@ func TestAudioPricingRepairPreservesSnapshotsAndUnknownUsage(t *testing.T) {
 				t.Fatalf("snapshot changed: version=%s account=%s audio=%v", version, account, audio)
 			}
 		})
+	}
+}
+
+func TestBillingSummaryTokenAmountsSortNumericallyAndUseCurrentTokens(t *testing.T) {
+	ctx := t.Context()
+	s := openTestStore(t, filepath.Join(t.TempDir(), "token-order.db"))
+	defer s.Close()
+	manager, err := accesstoken.NewManager(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 4)
+	for i := range ids {
+		token, err := manager.Create(ctx, fmt.Sprintf("Sort token %d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = string(token.Token.ID)
+	}
+	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	for i, row := range []struct {
+		tokenID any
+		amount  string
+	}{
+		{ids[0], "10"},
+		{ids[1], "9"},
+		{ids[2], "4"},
+		{ids[2], "5"},
+		{ids[3], "9.000000000"},
+		{"token_deleted", "20"},
+		{nil, "20"},
+	} {
+		_, err := s.db.ExecContext(ctx, `INSERT INTO billing_ledger
+(root_id,attempt,service_id,account_key,model,started_at,terminal,amount_usd,reason,local_access_token_id)
+VALUES (?,1,'service_sort','','model_sort',?,1,?,'priced',?)`,
+			fmt.Sprintf("request_sort_%d", i), billingTime(start), row.amount, row.tokenID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, err := s.BillingSummary(ctx, "", "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{IncludeTokenBreakdown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.AmountUSD != "77.000000000" || summary.Requests != 7 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	// Numeric cost first (10 > 9), then root count, then token ID for ties.
+	ties := []string{ids[1], ids[3]}
+	slices.Sort(ties)
+	want := []string{ids[0], ids[2], ties[0], ties[1]}
+	got := make([]string, len(summary.ByToken))
+	for i, group := range summary.ByToken {
+		got[i] = group.TokenID
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("token order=%v, want=%v", got, want)
+	}
+	if summary.ByToken[0].AmountUSD != "10.000000000" || summary.ByToken[1].AmountUSD != "9.000000000" || summary.ByToken[1].Requests != 2 {
+		t.Fatalf("token amounts=%+v", summary.ByToken)
+	}
+	withoutTokens, err := s.BillingSummary(ctx, "", "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
+	if err != nil || withoutTokens.ByToken == nil || len(withoutTokens.ByToken) != 0 || withoutTokens.Amounts != summary.Amounts {
+		t.Fatalf("without token breakdown=%+v error=%v", withoutTokens, err)
 	}
 }

@@ -15,6 +15,7 @@ export { ChevronDown } from "./chevron-down";
 export { ChevronRight } from "./chevron-right";
 export { ChevronUp } from "./chevron-up";
 export { CircleCheck } from "./circle-check";
+export { CircleDollarSign } from "./circle-dollar-sign";
 export { CircleHelp } from "./circle-help";
 export { Connect } from "./connect";
 export { Copy } from "./copy";

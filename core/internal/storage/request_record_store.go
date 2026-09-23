@@ -8,14 +8,14 @@ import (
 )
 
 type RequestRecordListOptions struct {
-	Limit              int
-	Cursor             string
-	From               *time.Time
-	To                 *time.Time
-	Protocol           *contract.ProtocolID
-	ServiceID          *contract.ServiceID
-	LocalAccessTokenID *contract.AccessTokenID
-	Status             *contract.RequestStatus
+	Limit               int
+	Cursor              string
+	From                *time.Time
+	To                  *time.Time
+	Protocol            *contract.ProtocolID
+	ServiceID           *contract.ServiceID
+	LocalAccessTokenIDs []contract.AccessTokenID
+	Status              *contract.RequestStatus
 }
 
 type RequestRecordPage struct {
@@ -35,15 +35,15 @@ type AccessTokenUsage struct {
 // Implementations must validate every row on read so corrupt history fails closed.
 type RequestSessionListOptions struct {
 	// Kind is empty for all, inference for calls, or discovery for model listings.
-	Kind               string
-	Limit              int
-	Cursor             string
-	From               *time.Time
-	To                 *time.Time
-	Protocol           *contract.ProtocolID
-	ServiceID          *contract.ServiceID
-	LocalAccessTokenID *contract.AccessTokenID
-	Status             *contract.RequestStatus
+	Kind                string
+	Limit               int
+	Cursor              string
+	From                *time.Time
+	To                  *time.Time
+	Protocol            *contract.ProtocolID
+	ServiceID           *contract.ServiceID
+	LocalAccessTokenIDs []contract.AccessTokenID
+	Status              *contract.RequestStatus
 }
 
 type RequestSessionPage struct {

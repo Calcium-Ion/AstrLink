@@ -335,8 +335,13 @@ describe("RequestRecords", () => {
   const renderRecords = async (session = "session-1", services = [service]) => {
     await act(async () => {
       reactRoot.render(
-        <RequestRecords coreSessionKey={session} services={services} isReady />,
-      );
+        <RequestRecords
+          accessTokens={[]}
+          accessTokensReady
+          coreSessionKey={session}
+          services={services}
+          isReady
+        />,      );
       await Promise.resolve();
     });
     await act(async () => {
@@ -2268,6 +2273,8 @@ describe("RequestRecords", () => {
     await act(async () => {
       reactRoot.render(
         <RequestRecords
+          accessTokens={[]}
+          accessTokensReady
           coreSessionKey="session-1"
           services={[service]}
           isReady
