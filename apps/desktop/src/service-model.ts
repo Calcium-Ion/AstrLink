@@ -32,11 +32,7 @@ export type HTTPServiceKind =
   | "custom";
 
 export type ServiceAuthScheme =
-  | "none"
-  | "bearer"
-  | "anthropic_api_key"
-  | "google_api_key"
-  | "custom_header";
+  "none" | "bearer" | "anthropic_api_key" | "google_api_key" | "custom_header";
 
 export interface ServiceAuth {
   scheme: ServiceAuthScheme;
@@ -53,9 +49,7 @@ export interface ServiceCapability {
 export type ModelDiscoveryProtocol = "openai.models" | "google.models";
 
 export type SubscriptionServiceKind =
-  | "codex_subscription"
-  | "claude_subscription"
-  | "grok_subscription";
+  "codex_subscription" | "claude_subscription" | "grok_subscription";
 export type ServiceKind = SubscriptionServiceKind | HTTPServiceKind;
 
 /** Provider owning each subscription kind; mirrors contract.ServiceKind.SubscriptionProvider. */
@@ -81,8 +75,9 @@ export function isSubscriptionKind(
 }
 
 /**
- * API-key coding plans whose provider publishes a first-party quota route
- * (mirrors core codingplan.Supports). OpenCode Zen is pay-as-you-go and has
+ * API-key services whose provider publishes a first-party quota route
+ * (mirrors core codingplan.Supports): the coding plans, plus New API, whose
+ * keys carry their own prepaid quota. OpenCode Zen is pay-as-you-go and has
  * no usage API, so it is deliberately absent.
  */
 export const codingPlanUsageKinds: ReadonlySet<ServiceKind> =
@@ -91,6 +86,7 @@ export const codingPlanUsageKinds: ReadonlySet<ServiceKind> =
     "kimi_coding",
     "glm_coding",
     "minimax_coding",
+    "newapi",
   ]);
 
 /** True when the service row can show a live plan quota meter. */
@@ -179,8 +175,7 @@ export type HTTPServiceCreateInput = {
 };
 
 export type ServiceCreateInput =
-  | SubscriptionServiceCreateInput
-  | HTTPServiceCreateInput;
+  SubscriptionServiceCreateInput | HTTPServiceCreateInput;
 
 export type ServicePatchInput = {
   proxy?: ServiceProxyInput | null;

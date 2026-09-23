@@ -1104,10 +1104,9 @@ describe("ServiceManager", () => {
       ),
     ).toHaveLength(2);
     expect(container.textContent).not.toContain("Logout is local-only");
-    expect(bridgeMocks.getServiceUsage).not.toHaveBeenCalled();
-    expect(
-      container.querySelector('[data-testid="subscription-usage"]'),
-    ).toBeNull();
+    // Only the New API key has a quota to read; both Codex rows are disconnected.
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(gatewayService.id, { fresh: false });
   });
 
   it("combines status and search filters and clears both from an empty result", async () => {
@@ -1380,7 +1379,7 @@ describe("ServiceManager", () => {
     ]);
   });
 
-  it("shows the provider plan quota on a Kimi coding plan row", async () => {
+  it("shows the provider plan quota on Kimi and New API key rows", async () => {
     const kimi: Service = {
       id: "service_kimi_plan",
       name: "Kimi Coding",
@@ -1398,21 +1397,35 @@ describe("ServiceManager", () => {
       created_at: timestamp,
       updated_at: timestamp,
     };
-    bridgeMocks.getServiceUsage.mockResolvedValue({
-      service_id: kimi.id,
-      fetched_at: "2026-09-22T11:00:00Z",
-      limit_reached: false,
-      primary: {
-        used_percent: 25,
-        limit_window_seconds: 18_000,
-        reset_at: "2026-09-22T15:00:00Z",
-      },
-      secondary: {
-        used_percent: 10,
-        limit_window_seconds: 604_800,
-        reset_at: "2026-09-25T00:00:00Z",
-      },
-    });
+    bridgeMocks.getServiceUsage.mockImplementation(async (id: string) =>
+      id === kimi.id
+        ? {
+            service_id: kimi.id,
+            fetched_at: "2026-09-22T11:00:00Z",
+            limit_reached: false,
+            primary: {
+              used_percent: 25,
+              limit_window_seconds: 18_000,
+              reset_at: "2026-09-22T15:00:00Z",
+            },
+            secondary: {
+              used_percent: 10,
+              limit_window_seconds: 604_800,
+              reset_at: "2026-09-25T00:00:00Z",
+            },
+          }
+        : {
+            service_id: gatewayService.id,
+            fetched_at: "2026-09-22T11:00:00Z",
+            limit_reached: false,
+            quota: {
+              unlimited: false,
+              used_usd: "7.5",
+              remaining_usd: "2.5",
+              total_usd: "10",
+            },
+          },
+    );
 
     await act(async () => {
       root.render(
@@ -1436,13 +1449,24 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
 
-    // Only the coding plan row queries usage: the gateway has no quota API and
-    // the Codex row is disconnected.
-    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
+    // The coding plan and the New API key query usage; the Codex row is
+    // disconnected.
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(2);
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(kimi.id, { fresh: false });
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(gatewayService.id, { fresh: false });
     expect(
       container.querySelectorAll('[data-testid="subscription-usage"]'),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
+    const keyQuota = container.querySelector(
+      '[data-testid="subscription-usage-quota"]',
+    );
+    expect(keyQuota?.getAttribute("data-tone")).toBe("ok");
+    expect(
+      keyQuota
+        ?.querySelector('[role="progressbar"][aria-label="密钥额度"]')
+        ?.getAttribute("aria-valuetext"),
+    ).toBe("已用 75%");
+    expect(keyQuota?.textContent).toContain("剩余 $2.50 / $10.00");
     const rollingQuota = container.querySelector(
       '[role="progressbar"][aria-label="5 小时"]',
     );
@@ -1556,7 +1580,15 @@ describe("ServiceManager", () => {
           onServiceSaved={() => {}}
           onViewChange={() => {}}
           protocols={[]}
-          services={[connected, gatewayService]}
+          services={[
+            connected,
+            {
+              ...gatewayService,
+              id: "service_compatible",
+              name: "compatible",
+              kind: "openai_compatible",
+            },
+          ]}
           view={{ kind: "list" }}
         />,
       );

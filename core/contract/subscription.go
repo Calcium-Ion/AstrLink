@@ -11,6 +11,7 @@ import (
 
 var (
 	subscriptionErrorCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
+	usageAmountPattern           = regexp.MustCompile(`^[0-9]{1,15}(\.[0-9]{1,6})?$`)
 	credentialLeakPattern        = regexp.MustCompile(
 		`(?i)(Bearer\s+[A-Za-z0-9._~+/=-]{12,}|` +
 			`(access_token|refresh_token|id_token|device_auth_id|code_verifier|authorization_code)["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}|` +
@@ -440,6 +441,7 @@ type SubscriptionUsage struct {
 	AdditionalRateLimits  []AdditionalRateLimit  `json:"additional_rate_limits,omitempty"`
 	Credits               *UsageCredits          `json:"credits,omitempty"`
 	RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits,omitempty"`
+	Quota                 *UsageQuota            `json:"quota,omitempty"`
 }
 
 func (usage SubscriptionUsage) Validate() error {
@@ -480,6 +482,11 @@ func (usage SubscriptionUsage) Validate() error {
 		if usage.RateLimitResetCredits.AvailableCount < 0 ||
 			usage.RateLimitResetCredits.AvailableCount > maxUsageResetCredits {
 			return fmt.Errorf("rate_limit_reset_credits.available_count is out of range")
+		}
+	}
+	if usage.Quota != nil {
+		if err := usage.Quota.Validate(); err != nil {
+			return fmt.Errorf("quota: %w", err)
 		}
 	}
 	return nil
@@ -561,6 +568,36 @@ func (credits UsageCredits) Validate() error {
 	}
 	if containsCredentialLeak(credits.Balance) {
 		return fmt.Errorf("balance must not contain credential material")
+	}
+	return nil
+}
+
+// UsageQuota is a prepaid API-key allowance valued in USD (a New API token).
+// Amounts are non-negative decimal strings like billing amounts. An unlimited
+// key only reports what it has spent.
+type UsageQuota struct {
+	Unlimited    bool       `json:"unlimited"`
+	UsedUSD      string     `json:"used_usd"`
+	RemainingUSD string     `json:"remaining_usd,omitempty"`
+	TotalUSD     string     `json:"total_usd,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
+func (quota UsageQuota) Validate() error {
+	if !usageAmountPattern.MatchString(quota.UsedUSD) {
+		return fmt.Errorf("used_usd must be a non-negative decimal")
+	}
+	if quota.Unlimited {
+		if quota.RemainingUSD != "" || quota.TotalUSD != "" {
+			return fmt.Errorf("unlimited quota must not report remaining_usd or total_usd")
+		}
+		return nil
+	}
+	if !usageAmountPattern.MatchString(quota.RemainingUSD) {
+		return fmt.Errorf("remaining_usd must be a non-negative decimal")
+	}
+	if !usageAmountPattern.MatchString(quota.TotalUSD) {
+		return fmt.Errorf("total_usd must be a non-negative decimal")
 	}
 	return nil
 }

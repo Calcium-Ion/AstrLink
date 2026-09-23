@@ -247,7 +247,7 @@ describe("service model", () => {
 });
 
 describe("hasPlanUsage", () => {
-  it("covers connected subscriptions and API-key coding plans with a quota route", () => {
+  it("covers connected subscriptions and API-key services with a quota route", () => {
     const http = {
       base_url: "https://api.kimi.com/coding",
       auth: { scheme: "bearer" as const },
@@ -257,7 +257,8 @@ describe("hasPlanUsage", () => {
     expect(hasPlanUsage({ kind: "minimax_coding", http })).toBe(true);
     expect(hasPlanUsage({ kind: "opencode_go", http })).toBe(true);
     expect(hasPlanUsage({ kind: "opencode_zen", http })).toBe(false);
-    expect(hasPlanUsage({ kind: "newapi", http })).toBe(false);
+    expect(hasPlanUsage({ kind: "newapi", http })).toBe(true);
+    expect(hasPlanUsage({ kind: "openai_compatible", http })).toBe(false);
     expect(hasPlanUsage({ kind: "kimi_coding" })).toBe(false);
     expect(
       hasPlanUsage({

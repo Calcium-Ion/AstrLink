@@ -1,10 +1,10 @@
 // Package codingplan reads the plan quota that API-key "coding plan"
 // providers expose next to their inference endpoints (Kimi For Coding, GLM
-// Coding Plan, MiniMax Coding Plan, OpenCode Go). Each provider has its own
-// first-party usage route and payload; this package maps every one of them
-// onto the same public SubscriptionUsage snapshot the subscription meters
-// already render, so a Kimi quota is never fetched or labelled as another
-// provider's.
+// Coding Plan, MiniMax Coding Plan, OpenCode Go), plus the prepaid quota of a
+// New API key. Each provider has its own first-party usage route and payload;
+// this package maps every one of them onto the same public SubscriptionUsage
+// snapshot the subscription meters already render, so a Kimi quota is never
+// fetched or labelled as another provider's.
 package codingplan
 
 import (
@@ -45,14 +45,22 @@ const (
 	requestTimeout        = 20 * time.Second
 	cacheTTL              = 30 * time.Second
 	maxBodyBytes          = 1 << 20
+	// New API rate-limits /api/usage to 20 requests per 20 minutes per IP by
+	// default, shared by every key on the site.
+	newAPICacheTTL = 5 * time.Minute
+	// defaultNewAPIQuotaPerUnit is New API's stock quota per USD. A site can
+	// change it and publishes the live value on /api/status.
+	defaultNewAPIQuotaPerUnit = 500_000
 )
 
 // Supports reports whether kind exposes a plan quota endpoint AstrLink knows.
-// OpenCode Zen (pay-as-you-go) and API gateways deliberately return false.
+// OpenCode Zen (pay-as-you-go) and other API gateways deliberately return
+// false; New API is the exception because its keys carry their own quota.
 func Supports(kind contract.ServiceKind) bool {
 	switch kind {
 	case contract.ServiceKindKimiCoding, contract.ServiceKindGLMCoding,
-		contract.ServiceKindMiniMaxCoding, contract.ServiceKindOpenCodeGo:
+		contract.ServiceKindMiniMaxCoding, contract.ServiceKindOpenCodeGo,
+		contract.ServiceKindNewAPI:
 		return true
 	default:
 		return false
@@ -70,6 +78,8 @@ func Label(kind contract.ServiceKind) string {
 		return "minimax"
 	case contract.ServiceKindOpenCodeGo:
 		return "opencode-go"
+	case contract.ServiceKindNewAPI:
+		return "new-api"
 	default:
 		return string(kind)
 	}
@@ -141,8 +151,12 @@ func (fetcher *Fetcher) Usage(ctx context.Context, service contract.Service) (co
 	if err := usage.Validate(); err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%s %w: invalid payload", Label(service.Kind), ErrUsageUnavailable)
 	}
+	ttl := cacheTTL
+	if service.Kind == contract.ServiceKindNewAPI {
+		ttl = newAPICacheTTL
+	}
 	fetcher.mu.Lock()
-	fetcher.cache[service.ID] = cacheEntry{usage: usage, until: now.Add(cacheTTL)}
+	fetcher.cache[service.ID] = cacheEntry{usage: usage, until: now.Add(ttl)}
 	fetcher.mu.Unlock()
 	return usage, nil
 }
@@ -184,26 +198,70 @@ func (fetcher *Fetcher) fetch(ctx context.Context, kind contract.ServiceKind, ba
 		request.Header.Set("Authorization", apiKey)
 		request.Header.Set("Accept-Language", "en-US,en")
 	default:
-		// Kimi, MiniMax and OpenCode Go all take Bearer here even where the
-		// inference side uses x-api-key.
+		// Kimi, MiniMax, OpenCode Go and New API all take Bearer here even
+		// where the inference side uses x-api-key.
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
+	status, body, err := fetcher.read(request)
+	if err != nil {
+		return contract.SubscriptionUsage{}, err
+	}
+	if status != http.StatusOK {
+		if kind == contract.ServiceKindOpenCodeGo && status == http.StatusForbidden {
+			return contract.SubscriptionUsage{}, fmt.Errorf("%w: key has no OpenCode Go subscription (status 403)", ErrUsageUnavailable)
+		}
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: status %d", ErrUsageUnavailable, status)
+	}
+	quotaPerUnit := float64(defaultNewAPIQuotaPerUnit)
+	if kind == contract.ServiceKindNewAPI {
+		quotaPerUnit = fetcher.newAPIQuotaPerUnit(ctx, baseURL)
+	}
+	return decode(kind, body, fetcher.now().UTC(), quotaPerUnit)
+}
+
+func (fetcher *Fetcher) read(request *http.Request) (int, []byte, error) {
 	response, err := fetcher.client.Do(request)
 	if err != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
+		return 0, nil, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxBodyBytes))
 	if err != nil {
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
+		return 0, nil, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
-	if response.StatusCode != http.StatusOK {
-		if kind == contract.ServiceKindOpenCodeGo && response.StatusCode == http.StatusForbidden {
-			return contract.SubscriptionUsage{}, fmt.Errorf("%w: key has no OpenCode Go subscription (status 403)", ErrUsageUnavailable)
-		}
-		return contract.SubscriptionUsage{}, fmt.Errorf("%w: status %d", ErrUsageUnavailable, response.StatusCode)
+	return response.StatusCode, body, nil
+}
+
+// newAPIQuotaPerUnit reads the site's quota per USD from the public
+// /api/status, which takes no key. The stock value covers a site that hides or
+// fails it.
+func (fetcher *Fetcher) newAPIQuotaPerUnit(ctx context.Context, baseURL string) float64 {
+	base, err := baseOrigin(baseURL)
+	if err != nil {
+		return defaultNewAPIQuotaPerUnit
 	}
-	return Decode(kind, body, fetcher.now().UTC())
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String()+"/api/status", nil)
+	if err != nil {
+		return defaultNewAPIQuotaPerUnit
+	}
+	request.Header.Set("Accept", "application/json")
+	status, body, err := fetcher.read(request)
+	if err != nil || status != http.StatusOK {
+		return defaultNewAPIQuotaPerUnit
+	}
+	var document struct {
+		Data struct {
+			QuotaPerUnit json.RawMessage `json:"quota_per_unit"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &document) != nil {
+		return defaultNewAPIQuotaPerUnit
+	}
+	value, ok := flexibleNumber(document.Data.QuotaPerUnit)
+	if !ok || value <= 0 || math.IsInf(value, 0) {
+		return defaultNewAPIQuotaPerUnit
+	}
+	return value
 }
 
 // UsageURL derives the provider quota route from the configured inference
@@ -213,19 +271,20 @@ func (fetcher *Fetcher) fetch(ctx context.Context, kind contract.ServiceKind, ba
 //	glm_coding      {origin}/api/monitor/usage/quota/limit
 //	minimax_coding  https://api.minimaxi.com|api.minimax.io/v1/api/openplatform/coding_plan/remains
 //	opencode_go     {origin}/zen/go/v1/usage
+//	newapi          {origin}/api/usage/token/
 func UsageURL(kind contract.ServiceKind, baseURL string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", fmt.Errorf("%w: invalid base URL", ErrUsageUnavailable)
+	base, err := baseOrigin(baseURL)
+	if err != nil {
+		return "", err
 	}
-	origin := parsed.Scheme + "://" + parsed.Host
+	origin := base.String()
 	switch kind {
 	case contract.ServiceKindKimiCoding:
 		return origin + "/coding/v1/usages", nil
 	case contract.ServiceKindGLMCoding:
 		return origin + "/api/monitor/usage/quota/limit", nil
 	case contract.ServiceKindMiniMaxCoding:
-		host := strings.ToLower(parsed.Hostname())
+		host := strings.ToLower(base.Hostname())
 		switch {
 		case host == "minimax.io" || strings.HasSuffix(host, ".minimax.io"):
 			origin = "https://api.minimax.io"
@@ -238,13 +297,31 @@ func UsageURL(kind contract.ServiceKind, baseURL string) (string, error) {
 		return origin + "/v1/api/openplatform/coding_plan/remains", nil
 	case contract.ServiceKindOpenCodeGo:
 		return origin + "/zen/go/v1/usage", nil
+	case contract.ServiceKindNewAPI:
+		// The trailing slash is the registered route; without it Gin answers
+		// with a redirect.
+		return origin + "/api/usage/token/", nil
 	default:
 		return "", ErrUnsupported
 	}
 }
 
-// Decode maps a provider payload onto the public snapshot.
+// baseOrigin trims a configured base URL down to its scheme and host.
+func baseOrigin(baseURL string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, fmt.Errorf("%w: invalid base URL", ErrUsageUnavailable)
+	}
+	return &url.URL{Scheme: parsed.Scheme, Host: parsed.Host}, nil
+}
+
+// Decode maps a provider payload onto the public snapshot. New API amounts use
+// the stock quota per USD; Fetcher reads the site's own value.
 func Decode(kind contract.ServiceKind, body []byte, now time.Time) (contract.SubscriptionUsage, error) {
+	return decode(kind, body, now, defaultNewAPIQuotaPerUnit)
+}
+
+func decode(kind contract.ServiceKind, body []byte, now time.Time, quotaPerUnit float64) (contract.SubscriptionUsage, error) {
 	document, err := decodeObject(body)
 	if err != nil {
 		return contract.SubscriptionUsage{}, err
@@ -259,6 +336,9 @@ func Decode(kind contract.ServiceKind, body []byte, now time.Time) (contract.Sub
 		usage, err = decodeMiniMax(document)
 	case contract.ServiceKindOpenCodeGo:
 		usage, err = decodeOpenCodeGo(document, now)
+	case contract.ServiceKindNewAPI:
+		// A key quota has no windows; decodeNewAPI sets limit_reached itself.
+		return decodeNewAPI(document, quotaPerUnit)
 	default:
 		return contract.SubscriptionUsage{}, ErrUnsupported
 	}
@@ -482,6 +562,52 @@ func decodeOpenCodeGo(document map[string]json.RawMessage, now time.Time) (contr
 		usage.AdditionalRateLimits = []contract.AdditionalRateLimit{{LimitName: "Monthly", MeteredFeature: "monthly", Primary: monthly}}
 	}
 	return usage, nil
+}
+
+// decodeNewAPI reads New API GET /api/usage/token/:
+//
+//	{"code":true,"message":"ok","data":{"total_granted":…,"total_used":…,
+//	  "total_available":…,"unlimited_quota":false,"expires_at":<unix s, 0 = never>}}
+//
+// Amounts are raw quota; quotaPerUnit converts them to USD. An unlimited key
+// still counts total_available down, so only its spend is reported.
+func decodeNewAPI(document map[string]json.RawMessage, quotaPerUnit float64) (contract.SubscriptionUsage, error) {
+	var ok bool
+	if json.Unmarshal(document["code"], &ok) != nil || !ok {
+		var message string
+		_ = json.Unmarshal(document["message"], &message)
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %s", ErrUsageUnavailable, sanitizeMessage(message, "provider error"))
+	}
+	var data map[string]json.RawMessage
+	if raw := document["data"]; !jsonObject(raw) || json.Unmarshal(raw, &data) != nil {
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+	}
+	used, ok := flexibleNumber(data["total_used"])
+	if !ok {
+		return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+	}
+	used = math.Max(used, 0)
+	var unlimited bool
+	_ = json.Unmarshal(data["unlimited_quota"], &unlimited)
+	quota := &contract.UsageQuota{Unlimited: unlimited, UsedUSD: usdAmount(used, quotaPerUnit), ExpiresAt: flexibleTime(data["expires_at"])}
+	reached := false
+	if !unlimited {
+		remaining, ok := flexibleNumber(data["total_available"])
+		if !ok {
+			return contract.SubscriptionUsage{}, fmt.Errorf("%w: invalid payload", ErrUsageUnavailable)
+		}
+		// An overdrawn key reports negative availability; it is simply empty.
+		remaining = math.Max(remaining, 0)
+		quota.RemainingUSD = usdAmount(remaining, quotaPerUnit)
+		quota.TotalUSD = usdAmount(used+remaining, quotaPerUnit)
+		reached = remaining <= 0
+	}
+	return contract.SubscriptionUsage{LimitReached: &reached, Quota: quota}, nil
+}
+
+// usdAmount renders raw quota as a USD decimal with at most six places.
+func usdAmount(quota, quotaPerUnit float64) string {
+	return strconv.FormatFloat(math.Round(quota/quotaPerUnit*1e6)/1e6, 'f', -1, 64)
 }
 
 func newWindow(percent float64, seconds int64, reset *time.Time) *contract.RateLimitWindow {

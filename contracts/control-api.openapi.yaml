@@ -975,10 +975,13 @@ paths:
       description: |
         Fetches the official ChatGPT `/wham/usage` snapshot for a connected
         `codex_subscription` service, Claude's `/api/oauth/usage` windows, or the
-        Grok CLI proxy `/v1/billing?format=credits` snapshot. The response is
-        sanitized: email, user_id, account_id, and credential material never
-        appear. This lookup does not consume quota and does not redeem reset
-        credits.
+        Grok CLI proxy `/v1/billing?format=credits` snapshot. API-key coding
+        plans (Kimi, GLM, MiniMax, OpenCode Go) report their plan windows with
+        the service key, and a `newapi` service reports its key's prepaid
+        `quota` from New API `/api/usage/token/`, valued at the site's
+        `/api/status` quota per USD. The response is sanitized: email, user_id,
+        account_id, key names, and credential material never appear. This
+        lookup does not consume quota and does not redeem reset credits.
       responses:
         "200":
           description: Sanitized live usage snapshot.
@@ -6292,6 +6295,30 @@ components:
         balance:
           type: string
           maxLength: 32
+    UsageQuota:
+      description: |
+        Prepaid API-key allowance valued in USD, reported by a New API key. An
+        unlimited key only reports what it has spent.
+      type: object
+      required: [unlimited, used_usd]
+      additionalProperties: false
+      properties:
+        unlimited:
+          type: boolean
+        used_usd:
+          type: string
+          pattern: '^[0-9]{1,15}(\.[0-9]{1,6})?$'
+        remaining_usd:
+          description: Present only for a limited key.
+          type: string
+          pattern: '^[0-9]{1,15}(\.[0-9]{1,6})?$'
+        total_usd:
+          description: Present only for a limited key; used plus remaining.
+          type: string
+          pattern: '^[0-9]{1,15}(\.[0-9]{1,6})?$'
+        expires_at:
+          type: string
+          format: date-time
     RateLimitResetCredits:
       type: object
       required: [available_count]
@@ -6329,6 +6356,8 @@ components:
             $ref: "#/components/schemas/AdditionalRateLimit"
         credits:
           $ref: "#/components/schemas/UsageCredits"
+        quota:
+          $ref: "#/components/schemas/UsageQuota"
         rate_limit_reset_credits:
           $ref: "#/components/schemas/RateLimitResetCredits"
     SubscriptionUsageReset:

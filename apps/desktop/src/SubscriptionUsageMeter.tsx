@@ -5,14 +5,19 @@ import { Button } from "@/components/ui/button";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { UsageMeter } from "@/components/UsageMeter";
 
+import { formatUSD } from "./pricing-model";
 import {
+  formatQuotaExpiry,
   formatResetCountdown,
+  quotaUsedPercent,
   usageWindowTone,
   usageBarPercent,
   windowLabel,
   type AdditionalRateLimit,
   type RateLimitWindow,
   type SubscriptionUsage,
+  type UsageQuota,
+  type UsageWindowTone,
 } from "./subscription-usage-model";
 
 export type SubscriptionUsageStatus = "loading" | "ready" | "error";
@@ -84,6 +89,12 @@ export function SubscriptionUsageMeter({
             isSecondary
           />
         </div>
+      ) : usage.quota ? (
+        <QuotaRow
+          limitReached={usage.limit_reached}
+          now={now}
+          quota={usage.quota}
+        />
       ) : usage.limit_reached ? (
         <p className="text-micro text-destructive">{t("usage.limitReached")}</p>
       ) : null}
@@ -157,6 +168,77 @@ function AdditionalLimitRows({
   );
 }
 
+function QuotaRow({
+  limitReached,
+  now,
+  quota,
+}: {
+  limitReached?: boolean;
+  now: Date;
+  quota: UsageQuota;
+}) {
+  const t = useT();
+  const label = t("usage.keyQuota");
+  const expiry = formatQuotaExpiry(quota, now);
+  if (quota.unlimited) {
+    // An unlimited key has nothing to fill a bar against; show its spend only.
+    return (
+      <div
+        className="grid min-w-0 gap-1.5"
+        data-testid="subscription-usage-quota"
+      >
+        <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
+          <span className="min-w-0 truncate" title={label}>
+            {label}
+          </span>
+          <span className="shrink-0 font-medium">
+            {t("usage.quotaUnlimited")}
+          </span>
+        </div>
+        <p className="text-micro text-muted-foreground">
+          {[t("usage.quotaUsed", { amount: formatUSD(quota.used_usd) }), expiry]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      </div>
+    );
+  }
+  const usedPercent = usageBarPercent(quotaUsedPercent(quota));
+  const tone = usageWindowTone(usedPercent, limitReached);
+  return (
+    <div data-testid="subscription-usage-quota" data-tone={tone}>
+      <UsageMeter
+        caption={[
+          t("usage.quotaRemaining", {
+            remaining: formatUSD(quota.remaining_usd),
+            total: formatUSD(quota.total_usd),
+          }),
+          expiry,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+        label={label}
+        valueLabel={t("usage.usedPercent", {
+          percent: Math.round(usedPercent),
+        })}
+        warning={
+          limitReached || usedPercent >= 100
+            ? t("usage.limitReached")
+            : undefined
+        }
+        tone={meterTone(tone)}
+        value={usedPercent}
+      />
+    </div>
+  );
+}
+
+function meterTone(tone: UsageWindowTone) {
+  if (tone === "ok") return "success";
+  if (tone === "critical") return "destructive";
+  return "warning";
+}
+
 function UsageWindowRow({
   isSecondary,
   limitReached,
@@ -187,13 +269,7 @@ function UsageWindowRow({
             ? t("usage.limitReached")
             : undefined
         }
-        tone={
-          tone === "ok"
-            ? "success"
-            : tone === "critical"
-              ? "destructive"
-              : "warning"
-        }
+        tone={meterTone(tone)}
         value={usedPercent}
       />
     </div>

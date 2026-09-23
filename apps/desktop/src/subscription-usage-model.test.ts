@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatQuotaExpiry,
   formatResetCountdown,
   formatSubscriptionUsageError,
   parseSubscriptionUsage,
   parseSubscriptionUsageReset,
   planTypeLabel,
+  quotaUsedPercent,
   resetOutcomeMessage,
   usageBarFillClass,
   usageBarPercent,
@@ -88,6 +90,67 @@ describe("subscription usage contract", () => {
     expect(() =>
       parseSubscriptionUsage({ ...snapshot, plan_type: "user@example.com" }),
     ).toThrow(/credential/);
+  });
+
+  it("parses a New API key quota and rejects a limited one without totals", () => {
+    const keyQuota = {
+      service_id: "service_newapi",
+      fetched_at: "2026-09-22T11:00:00Z",
+      limit_reached: false,
+      quota: {
+        unlimited: false,
+        used_usd: "2.5",
+        remaining_usd: "7.5",
+        total_usd: "10",
+        expires_at: "2026-09-25T11:00:00Z",
+      },
+    };
+    const parsed = parseSubscriptionUsage(keyQuota);
+    expect(parsed).toEqual(keyQuota);
+    expect(quotaUsedPercent(parsed.quota!)).toBe(25);
+    expect(
+      quotaUsedPercent({ unlimited: false, used_usd: "0", total_usd: "0" }),
+    ).toBe(100);
+
+    const now = new Date("2026-09-22T11:00:00Z");
+    expect(formatQuotaExpiry(parsed.quota!, now)).toBe("3 天后到期");
+    expect(
+      formatQuotaExpiry(
+        { ...parsed.quota!, expires_at: "2026-09-22T16:30:00Z" },
+        now,
+      ),
+    ).toBe("5 小时后到期");
+    expect(
+      formatQuotaExpiry(
+        { ...parsed.quota!, expires_at: "2026-09-22T10:00:00Z" },
+        now,
+      ),
+    ).toBe("已过期");
+
+    expect(
+      parseSubscriptionUsage({
+        ...keyQuota,
+        quota: { unlimited: true, used_usd: "12.345678" },
+      }).quota,
+    ).toEqual({ unlimited: true, used_usd: "12.345678" });
+    expect(() =>
+      parseSubscriptionUsage({
+        ...keyQuota,
+        quota: { unlimited: false, used_usd: "1" },
+      }),
+    ).toThrow(/limited quota/);
+    expect(() =>
+      parseSubscriptionUsage({
+        ...keyQuota,
+        quota: { ...keyQuota.quota, used_usd: "-1" },
+      }),
+    ).toThrow(/USD decimal/);
+    expect(() =>
+      parseSubscriptionUsage({
+        ...keyQuota,
+        quota: { ...keyQuota.quota, name: "desk" },
+      }),
+    ).toThrow(/unexpected field/);
   });
 
   it("formats reset countdown from reset_at", () => {

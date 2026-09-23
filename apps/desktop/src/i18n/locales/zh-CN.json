@@ -896,7 +896,15 @@
     "extraPeriod": "{{name}} · 周期",
     "limitReached": "额度已用尽",
     "resetAvailable": "可重置 ×{{count}}",
-    "usedPercent": "已用 {{percent}}%"
+    "usedPercent": "已用 {{percent}}%",
+    "keyQuota": "密钥额度",
+    "quotaUnlimited": "不限额度",
+    "quotaUsed": "已用 {{amount}}",
+    "quotaRemaining": "剩余 {{remaining}} / {{total}}",
+    "quotaExpired": "已过期",
+    "expiresSoon": "即将到期",
+    "expiresInHours": "{{count}} 小时后到期",
+    "expiresInDays": "{{count}} 天后到期"
   },
   "privacy": {
     "name": "隐私保护",

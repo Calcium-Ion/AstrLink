@@ -133,7 +133,7 @@ func TestGetServiceUsageRejectsDisconnectedAndHTTPServices(t *testing.T) {
 	_, handler := newServiceHandler(t, "service_codex_disconnected", "service_http_usage")
 	codex := createServiceForTest(t, handler, `{"name":"Codex","kind":"codex_subscription"}`)
 	gateway := createServiceForTest(t, handler, `{
-		"name":"new-api","kind":"newapi",
+		"name":"gateway","kind":"openai_compatible",
 		"http":{"base_url":"https://gateway.example/v1","auth":{"scheme":"none"}},
 		"capabilities":[{"protocol":"openai.responses","mode":"delegated","streaming":true}]
 	}`)
@@ -319,6 +319,45 @@ func connectSubscriptionForTest(
 	record.Service.Subscription.TokenExpiresAt = &expires
 	if _, err := store.UpdateService(context.Background(), record.Service, storage.CredentialMutation{}, record.ETag); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGetServiceUsageReadsNewAPIKeyQuota(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/usage/token/":
+			if request.Header.Get("Authorization") != "Bearer sk-gateway-secret" {
+				http.Error(writer, `{"success":false,"message":"invalid token"}`, http.StatusUnauthorized)
+				return
+			}
+			_, _ = writer.Write([]byte(`{"code":true,"message":"ok","data":{"object":"token_usage","name":"desk","total_granted":1500000,"total_used":500000,"total_available":1000000,"unlimited_quota":false,"expires_at":0}}`))
+		case "/api/status":
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	_, _, handler := newUsageHandler(t, upstream, "service_newapi_usage")
+	service := createServiceForTest(t, handler, `{
+		"name":"new-api","kind":"newapi",
+		"http":{"base_url":"`+upstream.URL+`/v1","auth":{"scheme":"bearer"},"credential":{"secret":"sk-gateway-secret"}},
+		"capabilities":[{"protocol":"openai.responses","mode":"delegated","streaming":true}]
+	}`)
+
+	response := serviceRequestForTest(t, handler, http.MethodGet, ServicesPath+"/"+string(service.ID)+"/usage", "", "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var usage contract.SubscriptionUsage
+	decode(t, response, &usage)
+	if usage.ServiceID != service.ID || usage.Primary != nil || usage.Quota == nil || usage.Quota.Unlimited ||
+		usage.Quota.UsedUSD != "1" || usage.Quota.RemainingUSD != "2" || usage.Quota.TotalUSD != "3" {
+		t.Fatalf("usage = %#v quota=%#v", usage, usage.Quota)
+	}
+	if strings.Contains(response.Body.String(), "sk-gateway-secret") || strings.Contains(response.Body.String(), "desk") {
+		t.Fatalf("usage leaked key material: %s", response.Body.String())
 	}
 }
 

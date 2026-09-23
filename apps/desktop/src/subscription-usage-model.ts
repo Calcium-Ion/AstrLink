@@ -4,6 +4,7 @@ import type { SubscriptionProvider } from "./subscription-model";
 const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
 const rfc3339Pattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const usdAmountPattern = /^[0-9]{1,15}(?:\.[0-9]{1,6})?$/;
 const credentialLeakPattern =
   /(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:access_token|refresh_token|id_token|device_auth_id|code_verifier|authorization_code)["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})/i;
 
@@ -29,6 +30,15 @@ export interface UsageCredits {
   balance?: string;
 }
 
+/** Prepaid USD allowance of an API key (New API); unlimited keys only report spend. */
+export interface UsageQuota {
+  unlimited: boolean;
+  used_usd: string;
+  remaining_usd?: string;
+  total_usd?: string;
+  expires_at?: string;
+}
+
 export interface RateLimitResetCredits {
   available_count: number;
 }
@@ -43,14 +53,12 @@ export interface SubscriptionUsage {
   secondary?: RateLimitWindow;
   additional_rate_limits?: AdditionalRateLimit[];
   credits?: UsageCredits;
+  quota?: UsageQuota;
   rate_limit_reset_credits?: RateLimitResetCredits;
 }
 
 export type UsageResetOutcome =
-  | "reset"
-  | "nothing_to_reset"
-  | "no_credit"
-  | "already_redeemed";
+  "reset" | "nothing_to_reset" | "no_credit" | "already_redeemed";
 
 export interface SubscriptionUsageReset {
   service_id: string;
@@ -134,6 +142,46 @@ function intAt(value: unknown, path: string, min: number, max: number): number {
   return number;
 }
 
+function usdAt(value: unknown, path: string): string {
+  if (typeof value !== "string" || !usdAmountPattern.test(value)) {
+    return invalid(path, "expected a USD decimal");
+  }
+  return value;
+}
+
+function parseQuota(value: unknown, path: string): UsageQuota {
+  const quota = objectAt(value, path);
+  keysAt(
+    quota,
+    ["unlimited", "used_usd"],
+    ["remaining_usd", "total_usd", "expires_at"],
+    path,
+  );
+  if (typeof quota.unlimited !== "boolean") {
+    invalid(`${path}.unlimited`, "expected a boolean");
+  }
+  const parsed: UsageQuota = {
+    unlimited: quota.unlimited,
+    used_usd: usdAt(quota.used_usd, `${path}.used_usd`),
+  };
+  if (Object.hasOwn(quota, "remaining_usd")) {
+    parsed.remaining_usd = usdAt(quota.remaining_usd, `${path}.remaining_usd`);
+  }
+  if (Object.hasOwn(quota, "total_usd")) {
+    parsed.total_usd = usdAt(quota.total_usd, `${path}.total_usd`);
+  }
+  if (
+    !parsed.unlimited &&
+    (parsed.remaining_usd == null || parsed.total_usd == null)
+  ) {
+    invalid(path, "a limited quota needs remaining_usd and total_usd");
+  }
+  if (Object.hasOwn(quota, "expires_at")) {
+    parsed.expires_at = timestampAt(quota.expires_at, `${path}.expires_at`);
+  }
+  return parsed;
+}
+
 function parseWindow(value: unknown, path: string): RateLimitWindow {
   const window = objectAt(value, path);
   keysAt(
@@ -213,6 +261,7 @@ export function parseSubscriptionUsage(value: unknown): SubscriptionUsage {
       "secondary",
       "additional_rate_limits",
       "credits",
+      "quota",
       "rate_limit_reset_credits",
     ],
     "$",
@@ -281,6 +330,9 @@ export function parseSubscriptionUsage(value: unknown): SubscriptionUsage {
         32,
       );
     }
+  }
+  if (Object.hasOwn(usage, "quota")) {
+    parsed.quota = parseQuota(usage.quota, "$.quota");
   }
   if (Object.hasOwn(usage, "rate_limit_reset_credits")) {
     const resets = objectAt(
@@ -418,6 +470,24 @@ export function formatResetCountdown(
   if (hours < 24) return i18n.t("usage.resetInHours", { count: hours });
   const days = Math.round(hours / 24);
   return i18n.t("usage.resetInDays", { count: days });
+}
+
+export function formatQuotaExpiry(quota: UsageQuota, now: Date): string | null {
+  if (!quota.expires_at) return null;
+  const deltaMs = Date.parse(quota.expires_at) - now.getTime();
+  if (Number.isNaN(deltaMs)) return null;
+  if (deltaMs <= 0) return i18n.t("usage.quotaExpired");
+  const hours = Math.floor(deltaMs / 3_600_000);
+  if (hours < 1) return i18n.t("usage.expiresSoon");
+  if (hours < 24) return i18n.t("usage.expiresInHours", { count: hours });
+  return i18n.t("usage.expiresInDays", { count: Math.floor(hours / 24) });
+}
+
+/** Share of a limited key quota already spent; an empty grant reads as used up. */
+export function quotaUsedPercent(quota: UsageQuota): number {
+  const total = Number(quota.total_usd);
+  if (!(total > 0)) return 100;
+  return (Number(quota.used_usd) / total) * 100;
 }
 
 export function usageBarPercent(usedPercent: number): number {

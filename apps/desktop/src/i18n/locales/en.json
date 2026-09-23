@@ -896,7 +896,15 @@
     "extraPeriod": "{{name}} · period",
     "limitReached": "Usage limit reached",
     "resetAvailable": "Resets left ×{{count}}",
-    "usedPercent": "{{percent}}% used"
+    "usedPercent": "{{percent}}% used",
+    "keyQuota": "Key quota",
+    "quotaUnlimited": "Unlimited",
+    "quotaUsed": "{{amount}} used",
+    "quotaRemaining": "{{remaining}} of {{total}} left",
+    "quotaExpired": "Expired",
+    "expiresSoon": "Expires soon",
+    "expiresInHours": "Expires in {{count}} hours",
+    "expiresInDays": "Expires in {{count}} days"
   },
   "privacy": {
     "name": "Privacy protection",

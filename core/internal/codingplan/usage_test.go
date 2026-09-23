@@ -33,6 +33,7 @@ func TestUsageURLDerivesProviderRoutesFromConfiguredOrigin(t *testing.T) {
 		{contract.ServiceKindMiniMaxCoding, "http://127.0.0.1:9/anthropic", "http://127.0.0.1:9/v1/api/openplatform/coding_plan/remains"},
 		{contract.ServiceKindOpenCodeGo, "https://opencode.ai/zen/go/v1", "https://opencode.ai/zen/go/v1/usage"},
 		{contract.ServiceKindOpenCodeGo, "https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1/usage"},
+		{contract.ServiceKindNewAPI, "https://gateway.example.com/v1", "https://gateway.example.com/api/usage/token/"},
 	}
 	for _, tc := range cases {
 		got, err := codingplan.UsageURL(tc.kind, tc.base)
@@ -46,12 +47,12 @@ func TestUsageURLDerivesProviderRoutesFromConfiguredOrigin(t *testing.T) {
 	if _, err := codingplan.UsageURL(contract.ServiceKindKimiCoding, "not a url"); !errors.Is(err, codingplan.ErrUsageUnavailable) {
 		t.Fatalf("invalid base err = %v", err)
 	}
-	for _, kind := range []contract.ServiceKind{contract.ServiceKindKimiCoding, contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding, contract.ServiceKindOpenCodeGo} {
+	for _, kind := range []contract.ServiceKind{contract.ServiceKindKimiCoding, contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding, contract.ServiceKindOpenCodeGo, contract.ServiceKindNewAPI} {
 		if !codingplan.Supports(kind) {
 			t.Errorf("Supports(%s) = false", kind)
 		}
 	}
-	for _, kind := range []contract.ServiceKind{contract.ServiceKindOpenCodeZen, contract.ServiceKindNewAPI, contract.ServiceKindGLM, contract.ServiceKindClaudeSubscription} {
+	for _, kind := range []contract.ServiceKind{contract.ServiceKindOpenCodeZen, contract.ServiceKindGLM, contract.ServiceKindClaudeSubscription} {
 		if codingplan.Supports(kind) {
 			t.Errorf("Supports(%s) = true", kind)
 		}
@@ -165,8 +166,48 @@ func TestDecodeOpenCodeGoMapsThreeWindows(t *testing.T) {
 	}
 }
 
+func TestDecodeNewAPIConvertsKeyQuotaToUSD(t *testing.T) {
+	usage, err := codingplan.Decode(contract.ServiceKindNewAPI, []byte(`{"code":true,"message":"ok","data":{
+		"object":"token_usage","name":"desk","total_granted":5000000,"total_used":1250000,"total_available":3750000,
+		"unlimited_quota":false,"model_limits":{},"model_limits_enabled":false,"expires_at":1790000000
+	}}`), now)
+	if err != nil {
+		t.Fatalf("Decode() = %v", err)
+	}
+	quota := usage.Quota
+	if quota == nil || quota.Unlimited || quota.UsedUSD != "2.5" || quota.RemainingUSD != "7.5" || quota.TotalUSD != "10" ||
+		quota.ExpiresAt == nil || !quota.ExpiresAt.Equal(time.Unix(1790000000, 0).UTC()) {
+		t.Fatalf("quota = %#v", quota)
+	}
+	if usage.Primary != nil || usage.LimitReached == nil || *usage.LimitReached {
+		t.Fatalf("usage = %#v", usage)
+	}
+
+	// An unlimited key still counts availability down, so only its spend is kept.
+	unlimited, err := codingplan.Decode(contract.ServiceKindNewAPI, []byte(`{"code":true,"data":{"total_granted":0,"total_used":1234567,"total_available":-1234567,"unlimited_quota":true,"expires_at":0}}`), now)
+	if err != nil || unlimited.Quota == nil || !unlimited.Quota.Unlimited || unlimited.Quota.UsedUSD != "2.469134" ||
+		unlimited.Quota.RemainingUSD != "" || unlimited.Quota.TotalUSD != "" || unlimited.Quota.ExpiresAt != nil ||
+		unlimited.LimitReached == nil || *unlimited.LimitReached {
+		t.Fatalf("unlimited = %#v quota=%#v err=%v", unlimited, unlimited.Quota, err)
+	}
+
+	// An overdrawn key reads as empty, not negative.
+	exhausted, err := codingplan.Decode(contract.ServiceKindNewAPI, []byte(`{"code":true,"data":{"total_used":600000,"total_available":-100000,"unlimited_quota":false}}`), now)
+	if err != nil || exhausted.Quota == nil || exhausted.Quota.RemainingUSD != "0" || exhausted.Quota.TotalUSD != "1.2" ||
+		exhausted.LimitReached == nil || !*exhausted.LimitReached {
+		t.Fatalf("exhausted = %#v quota=%#v err=%v", exhausted, exhausted.Quota, err)
+	}
+
+	if _, err := codingplan.Decode(contract.ServiceKindNewAPI, []byte(`{"success":false,"message":"令牌已过期 owner@example.com"}`), now); !errors.Is(err, codingplan.ErrUsageUnavailable) || strings.Contains(err.Error(), "@") {
+		t.Fatalf("business error = %v", err)
+	}
+	if _, err := codingplan.Decode(contract.ServiceKindNewAPI, []byte(`{"code":true,"data":{"total_available":1}}`), now); !errors.Is(err, codingplan.ErrUsageUnavailable) {
+		t.Fatalf("missing total_used err = %v", err)
+	}
+}
+
 func TestDecodeRejectsMalformedPayloads(t *testing.T) {
-	for _, kind := range []contract.ServiceKind{contract.ServiceKindKimiCoding, contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding, contract.ServiceKindOpenCodeGo} {
+	for _, kind := range []contract.ServiceKind{contract.ServiceKindKimiCoding, contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding, contract.ServiceKindOpenCodeGo, contract.ServiceKindNewAPI} {
 		for _, body := range []string{``, `[]`, `null`, `nope`, `{}`} {
 			if _, err := codingplan.Decode(kind, []byte(body), now); !errors.Is(err, codingplan.ErrUsageUnavailable) {
 				t.Errorf("Decode(%s, %q) err = %v", kind, body, err)
@@ -214,6 +255,52 @@ func codingPlanService(id contract.ServiceID, kind contract.ServiceKind, baseURL
 			CredentialRef: "local://service/" + string(id),
 		},
 		CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func TestFetcherReadsNewAPIKeyQuotaAtTheSiteRate(t *testing.T) {
+	var usageCalls, statusCalls, badHeaders int
+	var mu sync.Mutex
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch request.URL.Path {
+		case "/api/usage/token/":
+			usageCalls++
+			if request.Header.Get("Authorization") != "Bearer sk-newapi" {
+				badHeaders++
+			}
+			_, _ = writer.Write([]byte(`{"code":true,"message":"ok","data":{"total_granted":300,"total_used":100,"total_available":200,"unlimited_quota":false,"expires_at":0}}`))
+		case "/api/status":
+			statusCalls++
+			// The site rate is public; the key must not leak to it.
+			if request.Header.Get("Authorization") != "" {
+				badHeaders++
+			}
+			_, _ = writer.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+
+	secrets := &memorySecrets{items: map[secretstore.Ref][]byte{"local://service/service_newapi": []byte("sk-newapi")}}
+	fetcher := codingplan.New(secrets, upstream.Client())
+	service := codingPlanService("service_newapi", contract.ServiceKindNewAPI, upstream.URL+"/v1")
+	for range 2 {
+		usage, err := fetcher.Usage(context.Background(), service)
+		if err != nil || usage.Quota == nil || usage.Quota.UsedUSD != "1" || usage.Quota.RemainingUSD != "2" || usage.Quota.TotalUSD != "3" {
+			t.Fatalf("Usage() = %#v err=%v", usage, err)
+		}
+		if err := usage.Validate(); err != nil {
+			t.Fatalf("Validate() = %v", err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if usageCalls != 1 || statusCalls != 1 || badHeaders != 0 {
+		t.Fatalf("usage calls=%d status calls=%d bad headers=%d; want one of each, cached", usageCalls, statusCalls, badHeaders)
 	}
 }
 
