@@ -54,6 +54,10 @@ impl PrivacyEngine {
         tokenizer.with_padding(None);
         let config = fs::read(manifest.resolve(model_directory, &manifest.config_path))?;
         let (decoder, sensitive) = match manifest.adapter {
+            Adapter::PplxBioesViterbi => (
+                Decoder::from_pplx_json(&config, &manifest.label_mapping),
+                None,
+            ),
             Adapter::OpenaiBioesViterbi => {
                 let calibration_path = manifest
                     .calibration_path
@@ -171,6 +175,7 @@ impl PrivacyEngine {
 
         let label_count = self.decoder.label_count();
         let mut scores = LogProbabilityAccumulator::new(ids.len(), label_count);
+        scores.preserve_logits = self.decoder.uses_raw_logits();
         for (start, end) in
             chunk_ranges_with(ids.len(), self.content_window_tokens, self.overlap_tokens)
         {
@@ -224,13 +229,18 @@ impl PrivacyEngine {
                 .map_err(io::Error::other)?;
         }
         let scores = scores.finish().map_err(io::Error::other)?;
-        let model_spans = if self.sensitive.is_some() {
+        let mut model_spans = if self.decoder.uses_raw_logits() {
+            self.decoder.decode_pplx(text_id, &scores, offsets, text)
+        } else if self.sensitive.is_some() {
             self.decoder
                 .decode_sensitive(text_id, &scores, offsets, text)
         } else {
             self.decoder.decode(text_id, &scores, offsets)
         }
         .map_err(io::Error::other)?;
+        if self.decoder.uses_raw_logits() {
+            crate::pplx::normalize_boundaries(text, &mut model_spans);
+        }
         let Some(guard) = self.sensitive.as_ref() else {
             return Ok(model_spans);
         };
@@ -474,6 +484,7 @@ struct LogProbabilityAccumulator {
     sums: Vec<f64>,
     coverage: Vec<u32>,
     label_count: usize,
+    preserve_logits: bool,
 }
 
 impl LogProbabilityAccumulator {
@@ -482,6 +493,7 @@ impl LogProbabilityAccumulator {
             sums: vec![0.0; token_count * label_count],
             coverage: vec![0; token_count],
             label_count,
+            preserve_logits: false,
         }
     }
 
@@ -515,10 +527,15 @@ impl LogProbabilityAccumulator {
                 return Err("invalid_logits");
             }
             let log_denominator = denominator.ln();
+            let normalizer = if self.preserve_logits {
+                0.0
+            } else {
+                maximum + log_denominator
+            };
             let destination = &mut self.sums
                 [global_token * self.label_count..(global_token + 1) * self.label_count];
             for (sum, value) in destination.iter_mut().zip(row) {
-                *sum += f64::from(*value) - maximum - log_denominator;
+                *sum += f64::from(*value) - normalizer;
             }
             self.coverage[global_token] = self.coverage[global_token]
                 .checked_add(1)
@@ -625,6 +642,22 @@ mod tests {
         18, 26, 10, 24, 8, 1, 18, 20, 10, 2, 8, 1, 10, 10, 18, 8, 115, 101, 113, 117, 101, 110, 99,
         101, 10, 2, 8, 33, 66, 4, 10, 0, 16, 13,
     ];
+
+    #[test]
+    fn preserves_raw_logits_for_pplx_confidence_across_windows() {
+        let mut accumulator = LogProbabilityAccumulator::new(3, 2);
+        accumulator.preserve_logits = true;
+        accumulator
+            .add_window(0, &[1.0, 3.0, 4.0, 6.0])
+            .expect("first");
+        accumulator
+            .add_window(1, &[2.0, 4.0, 7.0, 9.0])
+            .expect("second");
+        assert_eq!(
+            accumulator.finish().expect("scores"),
+            vec![1.0, 3.0, 3.0, 5.0, 7.0, 9.0]
+        );
+    }
 
     #[test]
     fn averages_log_softmax_scores_for_overlapping_tokens() {

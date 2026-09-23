@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 
 use crate::{
-    manifest::{TagScheme, canonical_kind},
+    manifest::{PPLX_ENTITY_LABELS, TagScheme, canonical_kind},
     protocol::DetectedSpan,
 };
 
@@ -58,6 +58,7 @@ pub struct Decoder {
     scheme: TagScheme,
     biases: TransitionBiases,
     sensitive: Option<SensitiveCalibration>,
+    pplx_biases: Option<(f32, f32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +142,7 @@ impl Decoder {
             scheme: TagScheme::Bioes,
             biases,
             sensitive: None,
+            pplx_biases: None,
         })
     }
 
@@ -158,6 +160,7 @@ impl Decoder {
             scheme,
             biases: TransitionBiases::default(),
             sensitive: None,
+            pplx_biases: None,
         })
     }
 
@@ -174,6 +177,60 @@ impl Decoder {
         }
         decoder.sensitive = Some(parse_sensitive_calibration(calibration)?);
         Ok(decoder)
+    }
+
+    pub fn from_pplx_json(
+        config: &[u8],
+        mapping: &BTreeMap<String, Option<String>>,
+    ) -> Result<Self, &'static str> {
+        let config: serde_json::Value =
+            serde_json::from_slice(config).map_err(|_| "invalid_model_config")?;
+        let b = config["viterbi_b_bias"]
+            .as_f64()
+            .ok_or("invalid_calibration")? as f32;
+        let e = config["viterbi_e_bias"]
+            .as_f64()
+            .ok_or("invalid_calibration")? as f32;
+        let backbone = &config["backbone"];
+        if config["model_type"] != "pii_masking"
+            || config["architectures"] != serde_json::json!(["PiiMaskingModel"])
+            || config["num_token_labels"] != 37
+            || config["max_seq_len"] != 4096
+            || !b.is_finite()
+            || !e.is_finite()
+            || (backbone["use_bidirectional_attention"] != true && backbone["is_causal"] != false)
+            || backbone["is_causal"] == true
+        {
+            return Err("invalid_model_config");
+        }
+        let mut id2label = BTreeMap::from([("0".to_owned(), "O".to_owned())]);
+        for entity in PPLX_ENTITY_LABELS {
+            for prefix in ["B", "I", "E", "S"] {
+                id2label.insert(id2label.len().to_string(), format!("{prefix}-{entity}"));
+            }
+        }
+        let labels = serde_json::to_vec(&serde_json::json!({"id2label": id2label}))
+            .map_err(|_| "invalid_model_config")?;
+        let mut decoder = Self::from_hf_json(&labels, TagScheme::Bioes, mapping)?;
+        decoder.pplx_biases = Some((b, e));
+        Ok(decoder)
+    }
+
+    pub fn uses_raw_logits(&self) -> bool {
+        self.pplx_biases.is_some()
+    }
+
+    pub fn decode_pplx(
+        &self,
+        text_id: u32,
+        logits: &[f32],
+        offsets: &[(usize, usize)],
+        text: &str,
+    ) -> Result<Vec<DetectedSpan>, &'static str> {
+        if self.pplx_biases.is_none() {
+            return Err("invalid_calibration");
+        }
+        self.decode_internal(text_id, logits, offsets, Some(text))
     }
 
     pub fn label_count(&self) -> usize {
@@ -240,6 +297,9 @@ impl Decoder {
             logits
         };
         let path = self.viterbi(logits, offsets.len())?;
+        if self.pplx_biases.is_some() {
+            return self.pplx_spans(text_id, logits, offsets, &path, text);
+        }
         let probabilities = path
             .iter()
             .enumerate()
@@ -280,6 +340,68 @@ impl Decoder {
         }
     }
 
+    fn pplx_spans(
+        &self,
+        text_id: u32,
+        logits: &[f32],
+        offsets: &[(usize, usize)],
+        path: &[usize],
+        text: Option<&str>,
+    ) -> Result<Vec<DetectedSpan>, &'static str> {
+        let mut spans = Vec::new();
+        let mut index = 0;
+        while index < path.len() {
+            let first = index;
+            let entity = match &self.labels[path[index]] {
+                Tag::Single(entity) => entity,
+                Tag::Begin(entity) => {
+                    index += 1;
+                    while index < path.len()
+                        && matches!(&self.labels[path[index]], Tag::Inside(next) if next.source == entity.source)
+                    {
+                        index += 1;
+                    }
+                    if index == path.len()
+                        || !matches!(&self.labels[path[index]], Tag::End(next) if next.source == entity.source)
+                    {
+                        return Err("invalid_decoded_path");
+                    }
+                    entity
+                }
+                Tag::Outside => {
+                    index += 1;
+                    continue;
+                }
+                _ => return Err("invalid_decoded_path"),
+            };
+            let mut start = offsets[first].0;
+            let mut end = offsets[index].1;
+            let score = (first..=index)
+                .map(|token| logits[token * self.label_count() + path[token]])
+                .sum::<f32>()
+                / (index - first + 1) as f32;
+            if let Some(text) = text {
+                let value = text.get(start..end).ok_or("invalid_tokenizer_output")?;
+                let trimmed = value.trim_matches([' ', '\t', '\n']);
+                start += value.len() - value.trim_start_matches([' ', '\t', '\n']).len();
+                end = start + trimmed.len();
+            }
+            if let Some(canonical) = &entity.canonical
+                && start < end
+            {
+                spans.push(DetectedSpan {
+                    text_id,
+                    label: canonical.clone(),
+                    start,
+                    end,
+                    score: 1.0 / (1.0 + (-score).exp()),
+                });
+            }
+            index += 1;
+        }
+        Ok(spans)
+    }
+
     fn viterbi(&self, logits: &[f32], token_count: usize) -> Result<Vec<usize>, &'static str> {
         let label_count = self.label_count();
         let negative_infinity = f32::NEG_INFINITY;
@@ -313,7 +435,15 @@ impl Decoder {
             .iter()
             .enumerate()
             .filter(|(state, _)| valid_end(self.scheme, &self.labels[*state]))
-            .max_by(|(_, left), (_, right)| left.total_cmp(right))
+            .max_by(|(left_id, left), (right_id, right)| {
+                left.total_cmp(right).then_with(|| {
+                    if self.pplx_biases.is_some() {
+                        right_id.cmp(left_id)
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+            })
             .ok_or("invalid_logits")?;
         if !score.is_finite() {
             return Err("invalid_logits");
@@ -329,6 +459,9 @@ impl Decoder {
     }
 
     fn start_bias(&self, next: &Tag) -> f32 {
+        if self.pplx_biases.is_some() {
+            return 0.0;
+        }
         match next {
             Tag::Outside => self.biases.transition_bias_background_stay,
             Tag::Begin(_) | Tag::Single(_) => self.biases.transition_bias_background_to_start,
@@ -337,6 +470,20 @@ impl Decoder {
     }
 
     fn transition_bias(&self, previous: &Tag, next: &Tag) -> Option<f32> {
+        if let Some((b_bias, e_bias)) = self.pplx_biases {
+            self.bioes_transition_bias(previous, next)?;
+            return Some(
+                if matches!(next, Tag::Begin(_)) {
+                    b_bias
+                } else {
+                    0.0
+                } + if matches!(previous, Tag::End(_)) {
+                    e_bias
+                } else {
+                    0.0
+                },
+            );
+        }
         match self.scheme {
             TagScheme::Bio => self.bio_transition_bias(previous, next),
             TagScheme::Bioes => self.bioes_transition_bias(previous, next),
@@ -809,6 +956,78 @@ fn calibrated_probability(score: f32, calibrator: &SpanCalibrator) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pplx_decoder(b_bias: f32, e_bias: f32) -> Decoder {
+        let config = serde_json::to_vec(&serde_json::json!({
+            "model_type":"pii_masking", "architectures":["PiiMaskingModel"],
+            "num_token_labels":37, "max_seq_len":4096,
+            "viterbi_b_bias":b_bias, "viterbi_e_bias":e_bias,
+            "backbone":{"use_bidirectional_attention":true}
+        }))
+        .expect("PPLX config");
+        let mapping = PPLX_ENTITY_LABELS
+            .into_iter()
+            .map(|source| {
+                (
+                    source.to_owned(),
+                    match source {
+                        "private_person" => Some("private_person".to_owned()),
+                        "private_email" => Some("email".to_owned()),
+                        _ => None,
+                    },
+                )
+            })
+            .collect();
+        Decoder::from_pplx_json(&config, &mapping).expect("PPLX decoder")
+    }
+
+    #[test]
+    fn pplx_uses_sigmoid_of_mean_raw_logits_and_trims_utf8_spans() {
+        let decoder = pplx_decoder(0.0, 0.0);
+        let text = " 张伟\n";
+        let mut logits = vec![-20.0; 2 * 37];
+        logits[1] = 2.0; // B-private_person
+        logits[37 + 3] = 4.0; // E-private_person
+        let spans = decoder
+            .decode_pplx(7, &logits, &[(0, 4), (4, 8)], text)
+            .expect("spans");
+        assert_eq!(spans.len(), 1);
+        assert_eq!((spans[0].text_id, spans[0].start, spans[0].end), (7, 1, 7));
+        assert!((spans[0].score - 0.95257413).abs() < 1e-6);
+        assert_eq!(&text[spans[0].start..spans[0].end], "张伟");
+    }
+
+    #[test]
+    fn pplx_biases_only_enter_begin_and_leave_end_and_ties_choose_first() {
+        let decoder = pplx_decoder(2.0, 3.0);
+        assert_eq!(decoder.start_bias(&decoder.labels[1]), 0.0);
+        assert_eq!(
+            decoder.transition_bias(&decoder.labels[0], &decoder.labels[1]),
+            Some(2.0)
+        );
+        assert_eq!(
+            decoder.transition_bias(&decoder.labels[0], &decoder.labels[4]),
+            Some(0.0)
+        );
+        assert_eq!(
+            decoder.transition_bias(&decoder.labels[3], &decoder.labels[1]),
+            Some(5.0)
+        );
+        assert_eq!(
+            decoder.transition_bias(&decoder.labels[4], &decoder.labels[1]),
+            Some(2.0)
+        );
+        assert_eq!(
+            decoder.transition_bias(&decoder.labels[1], &decoder.labels[0]),
+            None
+        );
+        assert!(
+            pplx_decoder(0.0, 0.0)
+                .decode(0, &[0.0; 37], &[(0, 1)])
+                .expect("tie")
+                .is_empty()
+        );
+    }
 
     fn config(labels: &[&str]) -> Vec<u8> {
         let id2label = labels

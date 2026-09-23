@@ -25,11 +25,24 @@ const OPENAI_ENTITY_LABELS: [&str; 8] = [
     "secret",
 ];
 
+pub const PPLX_ENTITY_LABELS: [&str; 9] = [
+    "private_person",
+    "private_email",
+    "private_phone",
+    "private_address",
+    "private_url",
+    "private_date",
+    "account_number",
+    "secret",
+    "other_pii",
+];
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Adapter {
     OpenaiBioesViterbi,
     HfTokenClassification,
+    PplxBioesViterbi,
     AstrlinkSensitiveGuard,
 }
 
@@ -149,6 +162,21 @@ impl ModelManifest {
         }
 
         match self.adapter {
+            Adapter::PplxBioesViterbi => {
+                if self.tag_scheme != TagScheme::Bioes
+                    || self.window > 4096
+                    || self.input_names.token_type_ids.is_some()
+                    || self.calibration_path.is_some()
+                    || self.secret_rules_path.is_some()
+                    || self.secret_calibration_path.is_some()
+                    || self.label_mapping.len() != PPLX_ENTITY_LABELS.len()
+                    || PPLX_ENTITY_LABELS
+                        .iter()
+                        .any(|label| !self.label_mapping.contains_key(*label))
+                {
+                    return Err(io::Error::other("invalid_model_manifest"));
+                }
+            }
             Adapter::OpenaiBioesViterbi => {
                 if self.tag_scheme != TagScheme::Bioes
                     || self.calibration_path.is_none()
