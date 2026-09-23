@@ -171,33 +171,23 @@ export function RoutingSettingsPanel({
                       {t("routing.orderHint")}
                     </p>
                   </PanelHeader>
-                  <div className="p-4">
+                  <div className="grid gap-4 p-4">
+                    <div className="grid gap-2">
+                      <FailoverToggle
+                        checked={draft.allow_unmatched_failover}
+                        label={t("failure.globalSwitch")}
+                        onCheckedChange={(allow_unmatched_failover) =>
+                          setDraft({ ...draft, allow_unmatched_failover })
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t("failure.globalOffHint")}
+                      </p>
+                    </div>
                     <RecoveryOrderControls
                       value={draft}
                       onChange={(order) => setDraft({ ...draft, ...order })}
                     />
-                  </div>
-                </Panel>
-                <Panel>
-                  <PanelHeader>
-                    <h2 className="text-sm font-semibold">
-                      {t("failure.globalTitle")}
-                    </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t("failure.globalHint")}
-                    </p>
-                  </PanelHeader>
-                  <div className="grid gap-4 p-4">
-                    <FailoverToggle
-                      checked={draft.allow_unmatched_failover}
-                      label={t("failure.globalSwitch")}
-                      onCheckedChange={(allow_unmatched_failover) =>
-                        setDraft({ ...draft, allow_unmatched_failover })
-                      }
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {t("failure.globalOffHint")}
-                    </p>
                   </div>
                 </Panel>
                 {(["retry", "repair"] as const).map((section) => (

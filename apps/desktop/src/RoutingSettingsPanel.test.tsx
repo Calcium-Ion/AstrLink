@@ -248,8 +248,7 @@ describe("shared global recovery settings", () => {
         (element) => element.textContent,
       ),
     ).toEqual([
-      "默认恢复顺序与总次数",
-      "API 提供商切换",
+      "失败恢复与切换",
       "重试次数与等待时间",
       "推理内容修复",
     ]);

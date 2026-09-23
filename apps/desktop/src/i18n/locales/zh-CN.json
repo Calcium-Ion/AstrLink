@@ -1926,8 +1926,6 @@
     "failoverFirstSummary": "先尝试尚未访问的备用目标，再重试仍有机会的目标；整次请求最多尝试 {{count}} 次。",
     "noFailoverSummary": "只使用选中的目标，不切换；整次请求最多尝试 {{count}} 次。",
     "rulesPrecedence": "错误规则决定普通重试和切换；请求修复由独立开关控制。次数上限不会强制重试。",
-    "globalTitle": "API 提供商切换",
-    "globalHint": "按 API 提供商列表顺序选择支持同名模型和请求协议的 API 提供商。",
     "globalSwitch": "失败后允许自动换 API 提供商",
     "globalOffHint": "关闭自动切换时，选定的 API 提供商失败后不会再尝试其他 API 提供商。",
     "loadFailed": "无法加载默认策略。",
@@ -2089,8 +2087,8 @@
     },
     "discardTitle": "放弃未保存的路由修改？",
     "discardHint": "切换页签后，当前页签的修改不会保存。",
-    "orderTitle": "默认恢复顺序与总次数",
-    "orderHint": "API 提供商优先级由列表顺序决定；此处设置普通失败后直接切换，或先重试再切换。请求修复独立执行，计入总尝试次数。",
+    "orderTitle": "失败恢复与切换",
+    "orderHint": "按 API 提供商列表顺序选择支持同名模型和请求协议的 API 提供商；普通失败后可直接切换，或先重试再切换。请求修复独立执行，计入总尝试次数。",
     "saveFailed": "无法保存默认策略，请重试。"
   },
   "pricing": {

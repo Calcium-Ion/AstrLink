@@ -1926,8 +1926,6 @@
     "failoverFirstSummary": "Try unvisited backups first, then revisit targets with retries remaining; at most {{count}} total attempts.",
     "noFailoverSummary": "Use only the selected target, without switching; at most {{count}} total attempts.",
     "rulesPrecedence": "Error rules control ordinary retries and switching; separate switches control request repair. An attempt limit does not force retries.",
-    "globalTitle": "API provider switching",
-    "globalHint": "Use the API provider order, selecting API providers that support the same model and request protocol.",
     "globalSwitch": "Allow switching API providers after failure",
     "globalOffHint": "When automatic switching is off, a failed request does not try another API provider.",
     "loadFailed": "Could not load the default policy.",
@@ -2089,8 +2087,8 @@
     },
     "discardTitle": "Discard unsaved routing changes?",
     "discardHint": "Switching tabs will discard changes in the current tab.",
-    "orderTitle": "Default recovery order and attempt limit",
-    "orderHint": "API provider order determines priority. After ordinary failures, switch immediately or retry before switching. Request repair runs independently and counts toward the total attempt limit.",
+    "orderTitle": "Failure recovery and switching",
+    "orderHint": "Switching follows the API provider order, selecting API providers that support the same model and request protocol. After ordinary failures, switch immediately or retry before switching. Request repair runs independently and counts toward the total attempt limit.",
     "saveFailed": "Could not save the default policy. Please try again."
   },
   "pricing": {
