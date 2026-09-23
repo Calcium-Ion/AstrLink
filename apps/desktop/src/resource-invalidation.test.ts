@@ -13,7 +13,7 @@ describe("resource invalidation", () => {
 
   it("expires fetched resources after their TTL", () => {
     vi.useFakeTimers();
-    const key = "service-billing:service_test";
+    const key = "billing-ttl:resource";
     expect(isResourceStale(key, 1_000)).toBe(true);
 
     markResourceFetched(key);
@@ -24,16 +24,16 @@ describe("resource invalidation", () => {
   });
 
   it("invalidates a resource namespace and its children", () => {
-    const key = "service-billing:service_test";
+    const key = "billing-ns:child";
     markResourceFetched(key);
 
-    invalidateResource("service-billing");
+    invalidateResource("billing-ns");
 
     expect(isResourceStale(key)).toBe(true);
   });
 
   it("reports invalidation after the last successful fetch", () => {
-    const key = "service-usage:grok";
+    const key = "usage-report:grok";
     markResourceFetched(key);
     expect(wasInvalidatedSinceFetch(key)).toBe(false);
 
@@ -45,27 +45,36 @@ describe("resource invalidation", () => {
   });
 
   it("child invalidation wakes a parent namespace subscriber", () => {
-    markResourceFetched("service-usage");
-    invalidateResource("service-usage:grok");
-    expect(wasInvalidatedSinceFetch("service-usage")).toBe(true);
+    markResourceFetched("usage-parent");
+    invalidateResource("usage-parent:grok");
+    expect(wasInvalidatedSinceFetch("usage-parent")).toBe(true);
   });
 
   it("invalidates only the addressed child", () => {
-    markResourceFetched("service-usage:grok");
-    markResourceFetched("service-usage:codex");
+    markResourceFetched("usage-children:grok");
+    markResourceFetched("usage-children:codex");
 
-    invalidateResource("service-usage:grok");
+    invalidateResource("usage-children:grok");
 
-    expect(wasInvalidatedSinceFetch("service-usage:grok")).toBe(true);
-    expect(wasInvalidatedSinceFetch("service-usage:codex")).toBe(false);
+    expect(wasInvalidatedSinceFetch("usage-children:grok")).toBe(true);
+    expect(wasInvalidatedSinceFetch("usage-children:codex")).toBe(false);
   });
 
   it("treats invalidation before the first fetch as fresh", () => {
-    const key = "service-usage:new";
+    const key = "usage-new:child";
     invalidateResource(key);
     expect(wasInvalidatedSinceFetch(key)).toBe(true);
 
     markResourceFetched(key);
     expect(wasInvalidatedSinceFetch(key)).toBe(false);
+  });
+
+  it("keeps parent invalidation fresh for children created later", () => {
+    invalidateResource("usage-late-parent");
+
+    expect(wasInvalidatedSinceFetch("usage-late-parent:new")).toBe(true);
+
+    markResourceFetched("usage-late-parent:new");
+    expect(wasInvalidatedSinceFetch("usage-late-parent:new")).toBe(false);
   });
 });

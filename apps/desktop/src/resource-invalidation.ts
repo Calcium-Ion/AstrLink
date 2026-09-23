@@ -6,7 +6,7 @@ const DEFAULT_TTL_MS = 30_000;
 
 const revisions = new Map<string, number>();
 const fetchedAt = new Map<string, number>();
-const fetchedRevision = new Map<string, number>();
+const fetchedRevision = new Map<string, string>();
 const listeners = new Map<string, Set<Listener>>();
 
 function matches(resourceKey: string, invalidationKey: string): boolean {
@@ -54,11 +54,19 @@ export function invalidateResource(...keys: string[]): void {
   }
 }
 
+function resourceRevisionSnapshot(key: string): string {
+  return [...revisions.entries()]
+    .filter(([resourceKey]) => matches(resourceKey, key))
+    .map(([resourceKey, revision]) => `${resourceKey}=${revision}`)
+    .sort()
+    .join("\0");
+}
+
 export function markResourceFetched(...keys: string[]): void {
   const now = Date.now();
   for (const key of keys) {
     fetchedAt.set(key, now);
-    fetchedRevision.set(key, revisions.get(key) ?? 0);
+    fetchedRevision.set(key, resourceRevisionSnapshot(key));
   }
 }
 
@@ -67,8 +75,8 @@ export function markResourceFetched(...keys: string[]): void {
  * is the fresh-read signal for resources that also have a server-side cache.
  */
 export function wasInvalidatedSinceFetch(key: string): boolean {
-  const current = revisions.get(key) ?? 0;
-  if (current === 0) return false;
+  const current = resourceRevisionSnapshot(key);
+  if (current === "") return false;
   const fetched = fetchedRevision.get(key);
   return fetched === undefined || fetched !== current;
 }
