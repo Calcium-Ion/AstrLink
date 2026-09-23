@@ -7,6 +7,11 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
+// Output that arrives in one burst after TTFT leaves a near-zero window that
+// turns a handful of tokens into thousands of tok/s, so generation time is
+// floored at minGenerationMs.
+const minGenerationMs = 500
+
 type sessionPerformance struct {
 	ttftSum, ttftCount         int64
 	outputTokens, generationMs int64
@@ -47,11 +52,11 @@ func (stats *sessionPerformance) observe(rootID string, turn int, record contrac
 	stats.ttftSum += first
 	stats.ttftCount++
 	if record.LatencyMs == nil || record.Usage == nil || record.Usage.BillingIncomplete ||
-		record.Usage.OutputTokens <= 0 || int64(*record.LatencyMs) <= first {
+		record.Usage.OutputTokens <= 0 {
 		return
 	}
 	stats.outputTokens += int64(record.Usage.OutputTokens)
-	stats.generationMs += int64(*record.LatencyMs) - first
+	stats.generationMs += max(int64(*record.LatencyMs)-first, minGenerationMs)
 }
 
 func (stats *sessionPerformance) apply(session *contract.RequestSession) {
