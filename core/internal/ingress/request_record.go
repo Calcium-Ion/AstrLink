@@ -524,6 +524,21 @@ func (session *recordSession) attachRequestCapture(request *http.Request) {
 	request.Body = &requestCaptureBody{ReadCloser: request.Body, session: session}
 }
 
+// captureUnreadRequestBody feeds the client body to the audit capture when the
+// request fails before any attempt reads it, e.g. every provider's circuit is
+// open. Reading stops one byte past the capture limit so truncation is marked.
+func (session *recordSession) captureUnreadRequestBody(request *http.Request) {
+	if session == nil || request == nil || session.requestCapture.complete {
+		return
+	}
+	body, ok := request.Body.(*requestCaptureBody)
+	if !ok {
+		return
+	}
+	limit := int64(session.requestCapture.maxBytes) + 1
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, limit))
+}
+
 type requestCaptureBody struct {
 	io.ReadCloser
 	session *recordSession

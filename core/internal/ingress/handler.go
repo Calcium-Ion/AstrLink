@@ -277,6 +277,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}()
 
 	if classified.Model == contract.AstrLinkAutoModelID {
+		session.captureUnreadRequestBody(request)
 		writeInferenceError(outWriter, http.StatusGone, "routing_feature_retired", "astrlink/auto is retired; request an explicit model", false, nil)
 		session.noteFailed(errorSummaryFromInference("routing_feature_retired", "automatic routing is retired", false))
 		return
@@ -292,6 +293,8 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil,
 	})
 	if err != nil {
+		// No attempt will read the body, so capture it for the audit now.
+		session.captureUnreadRequestBody(request)
 		var unhealthy *endpoint.UnhealthyCandidatesError
 		if errors.As(err, &unhealthy) {
 			for _, id := range unhealthy.Services {

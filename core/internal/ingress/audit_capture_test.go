@@ -661,3 +661,83 @@ func TestIngressAuditCaptureFailureDoesNotAlterClientResponse(t *testing.T) {
 		t.Fatalf("client response altered: %d %q", response.Code, response.Body.String())
 	}
 }
+
+func TestIngressAuditCapturesClientBodyWhenNoAttemptReadsIt(t *testing.T) {
+	const requestBody = `{"model":"public-alias","messages":[{"role":"user","content":"hi"}]}`
+	tests := []struct {
+		name          string
+		body          string
+		resolverErr   error
+		maxBytes      int
+		code          string
+		wantTruncated bool
+		wantRejected  []string
+	}{
+		{
+			name:         "all circuits open",
+			body:         requestBody,
+			resolverErr:  &endpoint.UnhealthyCandidatesError{Services: []contract.ServiceID{"endpoint_open_a", "endpoint_open_b"}},
+			maxBytes:     1024,
+			code:         "upstream_unavailable",
+			wantRejected: []string{"endpoint_open_a · circuit_open", "endpoint_open_b · circuit_open"},
+		},
+		{name: "no capable provider", body: requestBody, resolverErr: endpoint.ErrNoEndpoint, maxBytes: 1024, code: "missing_protocol_capability"},
+		{name: "retired auto model", body: `{"model":"` + contract.AstrLinkAutoModelID + `","messages":[]}`, maxBytes: 1024, code: "routing_feature_retired"},
+		{name: "capture limit", body: requestBody, resolverErr: endpoint.ErrNoHealthyEndpoint, maxBytes: 16, code: "upstream_unavailable", wantTruncated: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			records := &memoryRequestRecordStore{}
+			blobs := &memoryAuditBlobs{records: records}
+			settings := &memoryAuditSettings{settings: contract.AuditSettings{
+				RequestBodyEnabled: true, ResponseContentEnabled: true,
+				RequestBodyMaxBytes: test.maxBytes, ResponseContentMaxBytes: 1024,
+				MetadataRetentionDays: 30, ContentRetentionDays: 7,
+			}}
+			handler := NewWithDependencies(Dependencies{
+				Resolver:       candidateResolver{err: test.resolverErr},
+				RequestRecords: records,
+				AuditSettings:  settings,
+				AuditBlobs:     blobs,
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if len(records.records) != 1 {
+				t.Fatalf("records=%#v", records.records)
+			}
+			record := records.records[0]
+			if record.Status != contract.RequestStatusFailed || record.Error == nil || record.Error.Code != test.code {
+				t.Fatalf("status=%s error=%#v, want failed %s; body=%s", record.Status, record.Error, test.code, response.Body.String())
+			}
+			if !record.Audit.RequestBodyCaptured || record.Audit.RequestBodyTruncated != test.wantTruncated {
+				t.Fatalf("audit=%#v, want captured request body truncated=%v", record.Audit, test.wantTruncated)
+			}
+			var requestBlob *storage.AuditBlob
+			for index := range blobs.blobs {
+				if blobs.blobs[index].RequestID == record.ID && blobs.blobs[index].Direction == storage.AuditDirectionRequest {
+					requestBlob = &blobs.blobs[index]
+				}
+			}
+			if requestBlob == nil {
+				t.Fatalf("no client request blob in %#v", blobs.blobs)
+			}
+			plain, err := storage.OpenAuditBlob(blobs.key, requestBlob.Nonce, requestBlob.Ciphertext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := test.body
+			if test.wantTruncated {
+				want = want[:test.maxBytes]
+			}
+			if string(plain) != want || requestBlob.Truncated != test.wantTruncated {
+				t.Fatalf("request blob=%q truncated=%v, want %q", plain, requestBlob.Truncated, want)
+			}
+			if got := rejectedCandidates(record); strings.Join(got, "\n") != strings.Join(test.wantRejected, "\n") {
+				t.Fatalf("rejected candidates=%q, want %q", got, test.wantRejected)
+			}
+		})
+	}
+}
