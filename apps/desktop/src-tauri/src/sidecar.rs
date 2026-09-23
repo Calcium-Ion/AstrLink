@@ -3625,8 +3625,12 @@ fn parse_privacy_model_probe(body: &[u8]) -> Result<serde_json::Value, String> {
     let mut seen = HashSet::new();
     let mut requires_label_mapping = false;
     for label in labels {
-        validate_exact_object_keys(
+        let label = label
+            .as_object()
+            .ok_or_else(|| "privacy model probe label must be an object".to_string())?;
+        validate_allowed_object_keys(
             label,
+            &["label", "suggested_kind", "suggested_ignore"],
             &["label", "suggested_kind"],
             "privacy model probe label",
         )?;
@@ -3634,9 +3638,20 @@ fn parse_privacy_model_probe(body: &[u8]) -> Result<serde_json::Value, String> {
         if !seen.insert(source_label) {
             return Err("privacy model probe contains duplicate labels".to_string());
         }
+        let suggested_ignore = match label.get("suggested_ignore") {
+            None => false,
+            Some(value) => value.as_bool().ok_or_else(|| {
+                "privacy model probe label suggested_ignore must be boolean".to_string()
+            })?,
+        };
         if label["suggested_kind"].is_null() {
-            requires_label_mapping = true;
+            requires_label_mapping |= !suggested_ignore;
         } else {
+            if suggested_ignore {
+                return Err(
+                    "privacy model probe label suggestion cannot map and ignore".to_string()
+                );
+            }
             validate_canonical_privacy_kind(&label["suggested_kind"])?;
         }
     }
@@ -4014,9 +4029,12 @@ fn validate_canonical_privacy_kind(value: &serde_json::Value) -> Result<(), Stri
 
 fn validate_privacy_model_adapter(value: &serde_json::Value) -> Result<(), String> {
     match value.as_str() {
-        Some("openai_bioes_viterbi" | "hf_token_classification" | "astrlink_sensitive_guard") => {
-            Ok(())
-        }
+        Some(
+            "openai_bioes_viterbi"
+            | "hf_token_classification"
+            | "pplx_bioes_viterbi"
+            | "astrlink_sensitive_guard",
+        ) => Ok(()),
         _ => Err("privacy model adapter is invalid".to_string()),
     }
 }
@@ -6328,6 +6346,7 @@ mod tests {
 
     #[test]
     fn strictly_parses_privacy_model_catalog_probe_and_installations() {
+        assert!(validate_privacy_model_adapter(&serde_json::json!("pplx_bioes_viterbi")).is_ok());
         let catalog = serde_json::to_vec(&serde_json::json!({
             "items": [{
                 "id": "catalog_example_privacy",
@@ -6376,6 +6395,61 @@ mod tests {
         let mut leaked_path = installation;
         leaked_path["path"] = serde_json::json!("/private/model");
         assert!(validate_privacy_model_installation(&leaked_path).is_err());
+    }
+
+    #[test]
+    fn parses_privacy_model_default_ignore_without_requiring_manual_mapping() {
+        let probe = serde_json::json!({
+            "repo_id": "example/pii-tracer",
+            "requested_revision": "main",
+            "revision": "53d55aa8dbb28efaa4e9cf6b4b6015d00e43c088",
+            "name": "PII-Tracer",
+            "license": "mit",
+            "languages": ["en"],
+            "adapter": "pplx_bioes_viterbi",
+            "variants": [privacy_variant_value()],
+            "labels": [
+                {"label": "private_email", "suggested_kind": "email", "suggested_ignore": false},
+                {"label": "other_pii", "suggested_kind": null, "suggested_ignore": true}
+            ],
+            "requires_label_mapping": false
+        });
+        let parse = |value: &serde_json::Value| {
+            parse_privacy_model_probe(&serde_json::to_vec(value).unwrap())
+        };
+        assert_eq!(parse(&probe).unwrap(), probe);
+
+        for invalid_ignore in [
+            serde_json::json!("true"),
+            serde_json::Value::Null,
+            serde_json::json!(1),
+        ] {
+            let mut invalid = probe.clone();
+            invalid["labels"][1]["suggested_ignore"] = invalid_ignore;
+            assert!(parse(&invalid).is_err());
+        }
+        let mut conflicting = probe.clone();
+        conflicting["labels"][0]["suggested_ignore"] = serde_json::json!(true);
+        assert!(parse(&conflicting).is_err());
+
+        let mut unexpected = probe.clone();
+        unexpected["labels"][0]["unexpected"] = serde_json::json!(false);
+        assert!(parse(&unexpected).is_err());
+
+        let mut unmapped = probe.clone();
+        unmapped["labels"][1]["suggested_ignore"] = serde_json::json!(false);
+        assert!(parse(&unmapped).is_err());
+        unmapped["requires_label_mapping"] = serde_json::json!(true);
+        assert!(parse(&unmapped).is_ok());
+        unmapped["labels"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("suggested_ignore");
+        assert!(parse(&unmapped).is_ok());
+
+        let mut inconsistent = probe;
+        inconsistent["requires_label_mapping"] = serde_json::json!(true);
+        assert!(parse(&inconsistent).is_err());
     }
 
     #[test]

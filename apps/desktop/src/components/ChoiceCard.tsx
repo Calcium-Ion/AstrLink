@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { Label } from "@/components/ui/label";
 import { RadioGroupItem } from "@/components/ui/radio-group";
@@ -12,6 +12,7 @@ export function ChoiceCard({
   label,
   selected,
   value,
+  ...radioProps
 }: {
   className?: string;
   description?: ReactNode;
@@ -20,7 +21,10 @@ export function ChoiceCard({
   label: string;
   selected: boolean;
   value: string;
-}) {
+} & Pick<
+  ComponentProps<typeof RadioGroupItem>,
+  "onClick" | "aria-haspopup" | "aria-expanded"
+>) {
   return (
     <Label
       className={cn(
@@ -37,6 +41,7 @@ export function ChoiceCard({
         disabled={disabled}
         id={id}
         value={value}
+        {...radioProps}
       />
       <span className="grid min-w-0 gap-0.5">
         <strong className="text-sm font-medium">{label}</strong>

@@ -6,6 +6,7 @@ export type PrivacyAction = "allow" | "warn" | "block" | "redact";
 export type PrivacyModelAdapter =
   | "openai_bioes_viterbi"
   | "hf_token_classification"
+  | "pplx_bioes_viterbi"
   | "astrlink_sensitive_guard";
 export type CanonicalPrivacyKind =
   | "email"
@@ -244,6 +245,7 @@ export interface PrivacyModelCatalog {
 export interface PrivacyModelProbeLabel {
   label: string;
   suggested_kind: CanonicalPrivacyKind | null;
+  suggested_ignore?: boolean;
 }
 
 export interface PrivacyModelProbe {
@@ -333,6 +335,7 @@ const actions = new Set<PrivacyAction>(["allow", "warn", "block", "redact"]);
 const adapters = new Set<PrivacyModelAdapter>([
   "openai_bioes_viterbi",
   "hf_token_classification",
+  "pplx_bioes_viterbi",
   "astrlink_sensitive_guard",
 ]);
 const canonicalKinds = new Set<CanonicalPrivacyKind>([
@@ -813,6 +816,31 @@ export function defaultPrivacyKindRules(): PrivacyKindRule[] {
     enabled: kind !== "url" && kind !== "ip_address",
     style: PLACEHOLDER_STYLE_LOCKED_KINDS.has(kind) ? "token" : "natural",
   }));
+}
+
+/**
+ * Mirrors privacyworker.Client.ApplyPolicy: Core keeps the local model worker
+ * only while the policy can route requests through it.
+ */
+export function localModelActive(policy: PrivacyPolicy): boolean {
+  return (
+    policy.enabled &&
+    policy.detector === "local_model" &&
+    policy.local_model_id !== null &&
+    policy.request_action !== "allow"
+  );
+}
+
+/** Reports whether Core will stop the running local model for this patch. */
+export function patchUnloadsLocalModel(
+  policy: PrivacyPolicy,
+  patch: PrivacyPolicyPatch,
+): boolean {
+  if (!localModelActive(policy)) return false;
+  const next = { ...policy, ...patch };
+  return (
+    !localModelActive(next) || next.local_model_id !== policy.local_model_id
+  );
 }
 
 export function parsePrivacyRegexBuiltinRules(
@@ -1328,7 +1356,14 @@ export function parsePrivacyModelProbe(value: unknown): PrivacyModelProbe {
   const labels = probe.labels.map((item, index) => {
     const path = `$.labels[${index}]`;
     const label = objectAt(item, path);
-    keysAt(label, ["label", "suggested_kind"], [], path);
+    keysAt(label, ["label", "suggested_kind"], ["suggested_ignore"], path);
+    const suggestedIgnore =
+      label.suggested_ignore === undefined
+        ? false
+        : booleanAt(label.suggested_ignore, `${path}.suggested_ignore`);
+    if (suggestedIgnore && label.suggested_kind !== null) {
+      invalid(path, "label suggestion cannot map and ignore");
+    }
     return {
       label: (() => {
         const sourceLabel = stringAt(label.label, `${path}.label`, 1, 128);
@@ -1341,6 +1376,9 @@ export function parsePrivacyModelProbe(value: unknown): PrivacyModelProbe {
         label.suggested_kind === null
           ? null
           : canonicalKindAt(label.suggested_kind, `${path}.suggested_kind`),
+      ...(label.suggested_ignore === undefined
+        ? {}
+        : { suggested_ignore: suggestedIgnore }),
     };
   });
   if (new Set(labels.map((item) => item.label)).size !== labels.length) {
@@ -1352,7 +1390,9 @@ export function parsePrivacyModelProbe(value: unknown): PrivacyModelProbe {
   );
   if (
     requiresLabelMapping !==
-    labels.some((label) => label.suggested_kind === null)
+    labels.some(
+      (label) => label.suggested_kind === null && !label.suggested_ignore,
+    )
   ) {
     invalid("$.requires_label_mapping", "inconsistent with label suggestions");
   }

@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   Boxes,
   Flask as FlaskConical,
+  LoaderCircle,
   LockKeyhole,
   Plus,
   RotateCcw,
@@ -72,16 +73,19 @@ import { i18n, useT } from "./i18n";
 import { notify } from "./notify";
 import {
   isResourceHeavyVariant,
+  localModelActive,
   MAX_PRIVACY_ALLOWLIST_RULES,
   MAX_PRIVACY_ALLOWLIST_VALUE_CHARS,
   MAX_PRIVACY_CUSTOM_REGEX_RULES,
   MAX_PRIVACY_DRY_RUN_SAMPLE_BYTES,
   MAX_PRIVACY_REGEX_PATTERN_CHARS,
+  patchUnloadsLocalModel,
   PLACEHOLDER_STYLE_LOCKED_KINDS,
   PRIVACY_KINDS,
   PRIVACY_REGEX_DETECTOR_KINDS,
   utf8ByteLength,
   validateLocalProbeInput,
+  validatePrivacyModelProbeInput,
   type CanonicalPrivacyKind,
   type PlaceholderStyle,
   type PrivacyAction,
@@ -104,6 +108,10 @@ import {
 } from "./privacy-policy-model";
 import { PageHeader } from "./PageHeader";
 import {
+  privacyModelOperationError,
+  type PrivacyModelOperationError,
+} from "./privacy-model-errors";
+import {
   PrivacyDryRunResult,
   type CompletedPrivacyDryRun,
 } from "./PrivacyDryRunResult";
@@ -113,6 +121,10 @@ type SafetyPolicyStatus = "blocked" | "loading" | "ready" | "error";
 type WorkspaceView = "detection" | "redaction" | "dryRun" | "models";
 type ModelView = "catalog" | "installed" | "custom" | "local";
 type ProbeView = Extract<ModelView, "custom" | "local">;
+
+// Core replies once the worker has exited, which is usually instant; keep the
+// unload notice up long enough to read.
+const MODEL_UNLOAD_MIN_VISIBLE_MS = 800;
 
 interface CatalogPreparation {
   catalogID: string;
@@ -303,10 +315,15 @@ function installationStatusLabel(
 
 function installationErrorLabel(
   error: NonNullable<PrivacyModelInstallation["error"]>,
+  source: PrivacyModelInstallation["source"],
 ): string {
   switch (error) {
     case "download_failed":
-      return i18n.t("safety.downloadFailed");
+      return i18n.t(
+        source === "local"
+          ? "safety.localImportFailed"
+          : "safety.downloadFailed",
+      );
     case "integrity_failed":
       return i18n.t("safety.integrityFailed");
     case "incompatible_model":
@@ -518,6 +535,7 @@ function LabelMappingDialog({
           {labels.map((label, index) => {
             const unresolved =
               label.suggested_kind === null &&
+              !label.suggested_ignore &&
               !touchedLabels.includes(label.label);
             const selectID = `privacy-label-mapping-${index}`;
             return (
@@ -682,6 +700,124 @@ function ModelActionDialog({
       open
       title={title}
     />
+  );
+}
+
+function InstalledModelPicker({
+  installations,
+  currentID,
+  saving,
+  error,
+  onClose,
+  onConfirm,
+  onManage,
+}: {
+  installations: PrivacyModelInstallation[];
+  currentID: string | null;
+  saving: boolean;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: (installation: PrivacyModelInstallation) => void;
+  onManage: () => void;
+}) {
+  const t = useT();
+  const [selection, setSelection] = useState(currentID ?? "");
+  const ready = installations.filter((item) => item.status === "ready");
+  const selected = ready.find((item) => item.id === selection);
+  const heavy = selected !== undefined && isResourceHeavyVariant(selected);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
+      <DialogContent
+        className="flex max-h-[calc(100dvh-4rem)] flex-col gap-3 overflow-hidden p-4 sm:max-w-xl"
+        showCloseButton={!saving}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          document
+            .getElementById("privacy-detector-local-model")
+            ?.focus({ preventScroll: true });
+        }}
+      >
+        <DialogHeader className="shrink-0 gap-1 pr-6">
+          <DialogTitle>{t("safety.selectInstalledModel")}</DialogTitle>
+          <DialogDescription className="text-xs">
+            {t("safety.selectInstalledHint")}
+          </DialogDescription>
+        </DialogHeader>
+        <div
+          className="min-h-0 flex-1 overflow-y-auto"
+          data-testid="installed-model-options"
+        >
+          {ready.length > 0 ? (
+            <RadioGroup
+              aria-label={t("safety.selectInstalledModel")}
+              className="gap-2 p-1"
+              disabled={saving}
+              value={selection}
+              onValueChange={setSelection}
+            >
+              {ready.map((item) => (
+                <ChoiceCard
+                  className="break-words"
+                  key={item.id}
+                  id={`privacy-model-choice-${item.id}`}
+                  label={item.name}
+                  disabled={saving}
+                  selected={selection === item.id}
+                  value={item.id}
+                  description={
+                    <>
+                      <span className="block">
+                        {item.variant_name}
+                        {item.id === currentID
+                          ? ` · ${t("safety.currentModel")}`
+                          : ""}
+                      </span>
+                      <span className="block">
+                        {t("safety.diskAndRam", {
+                          disk: formatBytes(item.bytes_total),
+                          ram: formatBytes(item.estimated_ram_bytes),
+                        })}
+                      </span>
+                    </>
+                  }
+                />
+              ))}
+            </RadioGroup>
+          ) : (
+            <EmptyState
+              title={t("safety.noReadyModels")}
+              description={t("safety.noReadyModelsHint")}
+            />
+          )}
+        </div>
+        {selected ? (
+          <FormMessage tone={heavy ? "warning" : "notice"}>
+            {t(heavy ? "safety.heavyConfirm" : "safety.normalConfirm")}
+          </FormMessage>
+        ) : null}
+        {error ? <FormMessage tone="error">{error}</FormMessage> : null}
+        <DialogFooter className="shrink-0 flex-row flex-wrap items-center">
+          <Button
+            className="mr-auto"
+            disabled={saving}
+            onClick={onManage}
+            variant="ghost"
+          >
+            {t("safety.goToModels")}
+          </Button>
+          <Button disabled={saving} onClick={onClose} variant="outline">
+            {t("common.cancel")}
+          </Button>
+          <Button
+            disabled={saving || !selected}
+            onClick={() => selected && onConfirm(selected)}
+          >
+            {t(saving ? "common.saving" : "safety.useSelectedModel")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -958,8 +1094,11 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   const [labelMappingTouched, setLabelMappingTouched] = useState<string[]>([]);
   const [catalogPreparation, setCatalogPreparation] =
     useState<CatalogPreparation | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<
+    string | PrivacyModelOperationError | null
+  >(null);
   const [saving, setSaving] = useState(false);
+  const [unloadingModel, setUnloadingModel] = useState(false);
   const [operationBusy, setOperationBusy] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
   const [catalogProbeBusy, setCatalogProbeBusy] = useState<string | null>(null);
@@ -973,6 +1112,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   const [minConfidenceDraft, setMinConfidenceDraft] = useState("");
   const [pendingModelAction, setPendingModelAction] =
     useState<PendingModelAction | null>(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [confirmFillBuiltinRules, setConfirmFillBuiltinRules] = useState(false);
   const [regexPatternDrafts, setRegexPatternDrafts] = useState<string[]>([]);
   const [allowlistDrafts, setAllowlistDrafts] = useState<string[]>([]);
@@ -1064,7 +1204,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     } catch (loadError) {
       if (generationRef.current !== generation) return;
       setStatus("error");
-      setError(messageOf(loadError, t("safety.readFailed")));
+      setError(privacyModelOperationError(loadError, t("safety.readFailed")));
     }
   };
 
@@ -1077,6 +1217,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     dryRunRequestRef.current += 1;
     setError(null);
     setSaving(false);
+    setUnloadingModel(false);
     setOperationBusy(null);
     setProbing(false);
     setCatalogProbeBusy(null);
@@ -1084,6 +1225,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     setDryRunError(null);
     setDryRunResult(null);
     setPendingModelAction(null);
+    setModelPickerOpen(false);
     setPendingInstallation(null);
     setStreamingDemoOpen(false);
     setWorkspace("detection");
@@ -1166,7 +1308,9 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         );
       } catch (pollError) {
         if (!stillCurrent()) return;
-        setError(messageOf(pollError, t("safety.progressFailed")));
+        setError(
+          privacyModelOperationError(pollError, t("safety.progressFailed")),
+        );
       } finally {
         schedule();
       }
@@ -1214,6 +1358,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     if (record === null || saving || status !== "ready") return false;
     const generation = generationRef.current;
     const previous = record;
+    const unloadsModel = patchUnloadsLocalModel(record.policy, patch);
     setRecord({
       ...record,
       policy: {
@@ -1222,15 +1367,27 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       },
     });
     setSaving(true);
+    setUnloadingModel(unloadsModel);
     setError(null);
     setDryRunResult(null);
     setDryRunError(null);
 
     try {
-      const next = await updatePrivacyPolicy(record.etag, patch);
+      const [next] = await Promise.all([
+        updatePrivacyPolicy(record.etag, patch),
+        unloadsModel
+          ? new Promise((resolve) =>
+              window.setTimeout(resolve, MODEL_UNLOAD_MIN_VISIBLE_MS),
+            )
+          : null,
+      ]);
       if (generationRef.current !== generation) return false;
       setRecord(next);
-      notify.success(successNotice);
+      notify.success(
+        unloadsModel && !localModelActive(next.policy)
+          ? t("safety.modelClosed")
+          : successNotice,
+      );
       return true;
     } catch (patchError) {
       if (generationRef.current !== generation) return false;
@@ -1252,7 +1409,10 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       );
       return false;
     } finally {
-      if (generationRef.current === generation) setSaving(false);
+      if (generationRef.current === generation) {
+        setSaving(false);
+        setUnloadingModel(false);
+      }
     }
   };
 
@@ -1579,12 +1739,6 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     ) {
       return;
     }
-    if (!record.policy.enabled) {
-      const message = t("safety.dryRunOff");
-      setDryRunResult(null);
-      setDryRunError(message);
-      return;
-    }
     const sample = dryRunSample;
     if (sample.trim() === "") {
       setDryRunError(t("privacy.sampleRequired"));
@@ -1597,11 +1751,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       setDryRunError(message);
       return;
     }
-    if (
-      record.policy.enabled &&
-      record.policy.detector === "local_model" &&
-      !selectedModelReady
-    ) {
+    if (record.policy.detector === "local_model" && !selectedModelReady) {
       setDryRunError(t("safety.dryRunModelNotReady"));
       return;
     }
@@ -1616,7 +1766,8 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         protocol: dryRunProtocol,
         sample_text: sample,
         policy: {
-          enabled: record.policy.enabled,
+          // Enable detection for this preview without changing the live policy.
+          enabled: true,
           detector: record.policy.detector,
           local_model_id: record.policy.local_model_id,
           min_confidence: record.policy.min_confidence,
@@ -1699,7 +1850,9 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       ) {
         return;
       }
-      setError(messageOf(installError, t("safety.installFailed")));
+      setError(
+        privacyModelOperationError(installError, t("safety.installFailed")),
+      );
     } finally {
       if (
         generationRef.current === generation &&
@@ -1736,6 +1889,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   const prepareCatalogInstallation = async (
     model: PrivacyCatalogModel,
     variant: PrivacyModelVariant,
+    configureLabels = false,
   ) => {
     if (
       probing ||
@@ -1767,13 +1921,24 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         result.requested_revision !== model.revision ||
         result.revision !== model.revision
       ) {
-        throw new Error(t("safety.probeMismatch"));
+        setError(t("safety.probeMismatch"));
+        return;
       }
       const probedVariant = result.variants.find(
         (candidate) => candidate.id === variant.id && candidate.supported,
       );
       if (probedVariant === undefined) {
-        throw new Error(t("safety.variantIncompatible"));
+        setError(t("safety.variantIncompatible"));
+        return;
+      }
+      if (!configureLabels && !result.requires_label_mapping) {
+        startInstallation(model.id, model.name, probedVariant, {
+          repo_id: result.repo_id,
+          revision: result.revision,
+          variant_id: probedVariant.id,
+          label_mapping: initialLabelMapping(result),
+        });
+        return;
       }
       setCatalogPreparation({
         catalogID: model.id,
@@ -1790,7 +1955,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       ) {
         return;
       }
-      setError(messageOf(probeError, t("safety.probeFailed")));
+      setError(privacyModelOperationError(probeError, t("safety.probeFailed")));
     } finally {
       if (
         generationRef.current === generation &&
@@ -1829,7 +1994,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       )
         return;
       setError(
-        messageOf(
+        privacyModelOperationError(
           actionError,
           t(pausing ? "safety.pauseFailed" : "safety.resumeFailed"),
         ),
@@ -1922,7 +2087,9 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       ) {
         return;
       }
-      setError(messageOf(removeError, t("safety.cancelDeleteFailed")));
+      setError(
+        privacyModelOperationError(removeError, t("safety.cancelDeleteFailed")),
+      );
     } finally {
       if (
         generationRef.current === generation &&
@@ -1946,10 +2113,19 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     if (probing || catalogProbeBusy !== null || operationBusy !== null) {
       return;
     }
-    const generation = generationRef.current;
-    const request = probeRequestRef.current + 1;
     const requestedRepoID = customRepoID.trim();
     const requestedRevision = customRevision.trim();
+    try {
+      validatePrivacyModelProbeInput({
+        repo_id: requestedRepoID,
+        revision: requestedRevision,
+      });
+    } catch {
+      setError(t("safety.modelErrors.source"));
+      return;
+    }
+    const generation = generationRef.current;
+    const request = probeRequestRef.current + 1;
     probeRequestRef.current = request;
     setProbing(true);
     resetProbedModel();
@@ -1969,7 +2145,8 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         result.repo_id !== requestedRepoID ||
         result.requested_revision !== requestedRevision
       ) {
-        throw new Error(t("safety.customProbeMismatch"));
+        setError(t("safety.customProbeMismatch"));
+        return;
       }
       setProbe(result);
       setProbeView("custom");
@@ -1985,7 +2162,9 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       ) {
         return;
       }
-      setError(messageOf(probeError, t("safety.customProbeFailed")));
+      setError(
+        privacyModelOperationError(probeError, t("safety.customProbeFailed")),
+      );
     } finally {
       if (
         generationRef.current === generation &&
@@ -2008,7 +2187,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         validationError instanceof Error &&
           validationError.message.includes("not a URI")
           ? t("safety.localNoUri")
-          : messageOf(validationError, t("safety.localPathRequired")),
+          : t("safety.localPathRequired"),
       );
       return;
     }
@@ -2040,7 +2219,9 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       ) {
         return;
       }
-      setError(messageOf(probeError, t("safety.localProbeFailed")));
+      setError(
+        privacyModelOperationError(probeError, t("safety.localProbeFailed")),
+      );
     } finally {
       if (
         generationRef.current === generation &&
@@ -2098,6 +2279,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     probe?.labels.filter(
       (label) =>
         label.suggested_kind === null &&
+        !label.suggested_ignore &&
         !labelMappingTouched.includes(label.label),
     ) ?? [];
   const catalogPreparationModel =
@@ -2109,6 +2291,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     catalogPreparation?.probe.labels.filter(
       (label) =>
         label.suggested_kind === null &&
+        !label.suggested_ignore &&
         !catalogPreparation.touchedLabels.includes(label.label),
     ) ?? [];
   const pendingActionInstallation =
@@ -2129,7 +2312,21 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         className="@max-[520px]:flex-col @max-[520px]:items-start @max-[520px]:gap-3"
         actions={
           <>
-            {record !== null && saving ? (
+            {record !== null && saving && unloadingModel ? (
+              <span
+                aria-busy="true"
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                data-testid="privacy-model-unloading"
+                role="status"
+              >
+                <LoaderCircle
+                  animateOnHover={false}
+                  aria-hidden="true"
+                  className="size-3.5 animate-spin motion-reduce:animate-none"
+                />
+                {t("safety.closingModel")}
+              </span>
+            ) : record !== null && saving ? (
               <span className="text-xs text-muted-foreground">
                 {t("common.saving")}
               </span>
@@ -2179,8 +2376,20 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       />
 
       {error ? (
-        <FormMessage className="mb-2.5 shrink-0" tone="error">
-          {error}
+        <FormMessage
+          className="mb-2.5 flex shrink-0 items-center gap-2"
+          tone="error"
+        >
+          <span className="min-w-0 flex-1">
+            {typeof error === "string" ? error : error.message}
+          </span>
+          {typeof error !== "string" && error.details ? (
+            <HelpPopover label={t("safety.modelErrorDetails")}>
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
+                {error.details}
+              </pre>
+            </HelpPopover>
+          ) : null}
         </FormMessage>
       ) : null}
 
@@ -2279,8 +2488,6 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                     onValueChange={(value) => {
                       if (value === "regex") {
                         useRegex();
-                      } else if (selectedInstallation !== null) {
-                        chooseInstallation(selectedInstallation);
                       }
                     }}
                     value={policy.detector}
@@ -2297,6 +2504,12 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                     <ChoiceCard
                       className="items-center"
                       id="privacy-detector-local-model"
+                      aria-haspopup="dialog"
+                      aria-expanded={modelPickerOpen}
+                      onClick={() => {
+                        setError(null);
+                        setModelPickerOpen(true);
+                      }}
                       label={t("safety.localModels")}
                       description={
                         selectedInstallation === null
@@ -2304,7 +2517,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                           : `${selectedInstallation.name} · ${selectedInstallation.variant_name}`
                       }
                       selected={policy.detector === "local_model"}
-                      disabled={saving || !selectedModelReady}
+                      disabled={saving}
                       value="local_model"
                     />
                   </RadioGroup>
@@ -3089,8 +3302,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                           saving ||
                           dryRunSample.trim() === "" ||
                           dryRunSampleOverLimit ||
-                          (policy.enabled &&
-                            policy.detector === "local_model" &&
+                          (policy.detector === "local_model" &&
                             !selectedModelReady)
                         }
                         onClick={() => void runDryRun()}
@@ -3249,19 +3461,15 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                       title={t(
                         dryRunSampleOverLimit
                           ? "safety.sampleTooLongTitle"
-                          : !policy.enabled
-                            ? "safety.testOffTitle"
-                            : "safety.notYetRun",
+                          : "safety.notYetRun",
                       )}
                       description={t(
                         dryRunSampleOverLimit
                           ? "safety.sampleTooLongHint"
-                          : !policy.enabled
-                            ? "safety.dryRunOffHint"
-                            : policy.detector === "local_model" &&
-                                !selectedModelReady
-                              ? "safety.needReadyModelHint"
-                              : "safety.testEmptyHint",
+                          : policy.detector === "local_model" &&
+                              !selectedModelReady
+                            ? "safety.needReadyModelHint"
+                            : "safety.testEmptyHint",
                       )}
                     />
                   )}
@@ -3276,47 +3484,50 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
             hidden={workspace !== "models"}
             value="models"
           >
-            <div className="flex min-w-0 shrink-0 items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold tracking-tight">
-                  {t("safety.localPrivacyModels")}
-                </h3>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {t("safety.modelsStayLocal")}
-                </p>
-              </div>
-              <StatusBadge tone={readyCount > 0 ? "positive" : "neutral"}>
-                {t("safety.readyCount", { count: readyCount })}
-              </StatusBadge>
-            </div>
-
+            <h3 className="sr-only">{t("safety.localPrivacyModels")}</h3>
             <Tabs
-              className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden"
+              className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden"
               onValueChange={(value) => setView(value as ModelView)}
               value={view}
             >
-              <TabsList
-                className="w-full shrink-0 justify-start border-b"
-                aria-label={t("safety.modelView")}
-                scrollable
-                variant="line"
-              >
-                <TabsTrigger onClick={() => setView("catalog")} value="catalog">
-                  {t("safety.builtin")}
-                </TabsTrigger>
-                <TabsTrigger
-                  onClick={() => setView("installed")}
-                  value="installed"
+              <div className="flex min-w-0 shrink-0 items-center gap-2 border-b">
+                <TabsList
+                  className="min-w-0 flex-1 justify-start"
+                  aria-label={t("safety.modelView")}
+                  scrollable
+                  variant="line"
                 >
-                  {t("safety.installedCount", { count: installations.length })}
-                </TabsTrigger>
-                <TabsTrigger onClick={() => setView("local")} value="local">
-                  {t("safety.localImport")}
-                </TabsTrigger>
-                <TabsTrigger onClick={() => setView("custom")} value="custom">
-                  {t("safety.custom")}
-                </TabsTrigger>
-              </TabsList>
+                  <TabsTrigger
+                    onClick={() => setView("catalog")}
+                    value="catalog"
+                  >
+                    {t("safety.builtin")}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    onClick={() => setView("installed")}
+                    value="installed"
+                  >
+                    {t("safety.installedCount", {
+                      count: installations.length,
+                    })}
+                  </TabsTrigger>
+                  <TabsTrigger onClick={() => setView("local")} value="local">
+                    {t("safety.localImport")}
+                  </TabsTrigger>
+                  <TabsTrigger onClick={() => setView("custom")} value="custom">
+                    {t("safety.custom")}
+                  </TabsTrigger>
+                </TabsList>
+                <StatusBadge
+                  className="shrink-0"
+                  tone={readyCount > 0 ? "positive" : "neutral"}
+                >
+                  {t("safety.readyCount", { count: readyCount })}
+                </StatusBadge>
+                <HelpPopover label={t("safety.localPrivacyModels")}>
+                  {t("safety.modelsStayLocal")}
+                </HelpPopover>
+              </div>
               <TabsContent
                 className="min-h-0 min-w-0 flex-1 overflow-y-auto"
                 value="catalog"
@@ -3411,27 +3622,53 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                           <PanelFooter
                             actions={
                               existing === null ? (
-                                <Button
-                                  disabled={
-                                    variant === null ||
-                                    operationBusy !== null ||
-                                    catalogProbeBusy !== null ||
-                                    probing
-                                  }
-                                  onClick={() => {
-                                    if (variant === null) return;
-                                    void prepareCatalogInstallation(
-                                      model,
-                                      variant,
-                                    );
-                                  }}
-                                  size="sm"
-                                  type="button"
-                                >
-                                  {catalogProbeBusy === model.id
-                                    ? t("common.checking")
-                                    : t("safety.checkAndInstall")}
-                                </Button>
+                                <>
+                                  <Button
+                                    aria-label={t("safety.configureLabels", {
+                                      name: model.name,
+                                    })}
+                                    disabled={
+                                      variant === null ||
+                                      operationBusy !== null ||
+                                      catalogProbeBusy !== null ||
+                                      probing
+                                    }
+                                    onClick={() => {
+                                      if (variant === null) return;
+                                      void prepareCatalogInstallation(
+                                        model,
+                                        variant,
+                                        true,
+                                      );
+                                    }}
+                                    size="sm"
+                                    type="button"
+                                    variant="ghost"
+                                  >
+                                    {t("safety.configureLabelsShort")}
+                                  </Button>
+                                  <Button
+                                    disabled={
+                                      variant === null ||
+                                      operationBusy !== null ||
+                                      catalogProbeBusy !== null ||
+                                      probing
+                                    }
+                                    onClick={() => {
+                                      if (variant === null) return;
+                                      void prepareCatalogInstallation(
+                                        model,
+                                        variant,
+                                      );
+                                    }}
+                                    size="sm"
+                                    type="button"
+                                  >
+                                    {catalogProbeBusy === model.id
+                                      ? t("common.checking")
+                                      : t("safety.checkAndInstall")}
+                                  </Button>
+                                </>
                               ) : (
                                 <Button
                                   onClick={() => setView("installed")}
@@ -3600,7 +3837,10 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                                         installation.estimated_ram_bytes,
                                       ),
                                     })
-                                  : installationErrorLabel(installation.error)}
+                                  : installationErrorLabel(
+                                      installation.error,
+                                      installation.source,
+                                    )}
                               </p>
                             )}
                             {Object.keys(installation.label_mapping).length >
@@ -4119,6 +4359,36 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
           }`}
           title={t("safety.configureLabels", { name: probe.name })}
           touchedLabels={labelMappingTouched}
+        />
+      ) : null}
+      {modelPickerOpen ? (
+        <InstalledModelPicker
+          installations={installations}
+          currentID={record?.policy.local_model_id ?? null}
+          saving={saving}
+          error={typeof error === "string" ? error : (error?.message ?? null)}
+          onClose={() => setModelPickerOpen(false)}
+          onManage={() => {
+            setModelPickerOpen(false);
+            setWorkspace("models");
+            setView(installations.length > 0 ? "installed" : "catalog");
+          }}
+          onConfirm={(installation) => {
+            if (saving) return;
+            if (record?.policy.local_model_id === installation.id) {
+              setModelPickerOpen(false);
+              return;
+            }
+            void (async () => {
+              if (
+                await patchPolicy({
+                  detector: "local_model",
+                  local_model_id: installation.id,
+                })
+              )
+                setModelPickerOpen(false);
+            })();
+          }}
         />
       ) : null}
       {confirmFillBuiltinRules ? (
