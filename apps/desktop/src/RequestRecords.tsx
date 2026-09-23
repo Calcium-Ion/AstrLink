@@ -73,6 +73,7 @@ import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
 import { i18n, useT } from "./i18n";
 import { useLiveClock } from "./live-clock";
 import { notify } from "./notify";
+import { invalidateResource } from "./resource-invalidation";
 import { PageHeader } from "./PageHeader";
 import type { RoutableService } from "./service-model";
 import {
@@ -535,6 +536,7 @@ export function RequestRecords({
     };
     const timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
     manualPollRef.current = () => {
+      invalidateResource("service-usage", "service-billing");
       setError(null);
       void poll(true);
     };

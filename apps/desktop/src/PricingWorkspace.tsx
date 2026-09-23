@@ -20,6 +20,10 @@ import { useT } from "./i18n";
 import type { Service } from "./service-model";
 import { getServiceBilling } from "./pricing-bridge";
 import {
+  markResourceFetched,
+  useResourceRevision,
+} from "./resource-invalidation";
+import {
   billingAmount,
   currentBillingPeriod,
   OFFICIAL_PROVIDERS,
@@ -72,6 +76,8 @@ function useBillingReport(
   ready: boolean,
   revision = "",
 ) {
+  const resourceKey = serviceId ? `service-billing:${serviceId}` : "";
+  const resourceRevision = useResourceRevision(resourceKey);
   const [report, setReport] = useState<ServiceBilling | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -88,6 +94,7 @@ function useBillingReport(
       try {
         const value = await getServiceBilling(serviceId);
         if (!cancelled) {
+          if (resourceKey) markResourceFetched(resourceKey);
           setReport(value);
           setError(false);
         }
@@ -109,7 +116,7 @@ function useBillingReport(
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [serviceId, ready, revision]);
+  }, [serviceId, ready, revision, resourceRevision, resourceKey]);
   return { report, loading, error };
 }
 

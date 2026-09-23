@@ -112,6 +112,11 @@ import {
   type ProtocolDescriptor,
 } from "./service-presets";
 import { notify } from "./notify";
+import {
+  invalidateResource,
+  markResourceFetched,
+  useResourceRevision,
+} from "./resource-invalidation";
 import { PageHeader } from "./PageHeader";
 import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 import { filterModels } from "./model-groups";
@@ -698,6 +703,8 @@ export function ServiceManager({
     [services],
   );
 
+  const usageResourceRevision = useResourceRevision("service-usage");
+
   useEffect(() => {
     if (view.kind !== "list" || !isReady) return;
     const ids = connectedUsageIDs === "" ? [] : connectedUsageIDs.split("\0");
@@ -727,6 +734,7 @@ export function ServiceManager({
         try {
           const usage = await getServiceUsage(id, { fresh });
           if (usageGeneration.current !== generation) return;
+          markResourceFetched(`service-usage:${id}`);
           setUsageByService((current) => ({
             ...current,
             [id]: { status: "ready", usage },
@@ -750,7 +758,7 @@ export function ServiceManager({
         }
       }),
     );
-  }, [connectedUsageIDs, isReady, usageEpoch, view.kind]);
+  }, [connectedUsageIDs, isReady, usageEpoch, usageResourceRevision, view.kind]);
 
   const dirty =
     view.kind !== "list" &&
@@ -1230,6 +1238,12 @@ export function ServiceManager({
           notify.success(t("services.addedKey"));
         }
       }
+      invalidateResource(
+        "service-list",
+        `service:${record.service.id}`,
+        `service-usage:${record.service.id}`,
+        `service-billing:${record.service.id}`,
+      );
       onServiceSaved(record.service);
       setEditing(null);
       setBaseline(null);
@@ -1347,6 +1361,7 @@ export function ServiceManager({
       if (confirmAction.kind === "reset-usage") {
         const result = await resetServiceUsage(service.id);
         notify.success(resetOutcomeMessage(result.outcome));
+        invalidateResource("service-usage", "service-billing");
         setUsageEpoch((current) => current + 1);
         return;
       }
@@ -1442,6 +1457,7 @@ export function ServiceManager({
                 }
                 disabled={!isReady || busy}
                 onClick={() => {
+                  invalidateResource("service-usage", "service-billing");
                   setUsageEpoch((value) => value + 1);
                   void onRefresh();
                 }}
