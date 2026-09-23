@@ -379,6 +379,7 @@ func (handler *Handler) applyPrivacy(
 	if buffered != nil {
 		finish = buffered.Close
 	}
+	session.beginPrivacyInspection(request.Context(), privacyInspectionSummary(policy.Mode, len(body)))
 	result, err := handler.privacyFilter.Inspect(
 		request.Context(),
 		policy,
@@ -439,6 +440,39 @@ func (handler *Handler) applyPrivacy(
 	}
 }
 
+// privacyInspectionSummary names the detector and input size, never content.
+func privacyInspectionSummary(mode privacy.Mode, size int) string {
+	summary := "inspecting · " + formatBodySize(size)
+	if mode != "" {
+		summary = string(mode) + " · " + summary
+	}
+	return summary
+}
+
+func formatBodySize(size int) string {
+	if size < 1024 {
+		return fmt.Sprintf("%d B", size)
+	}
+	if size < 1024*1024 {
+		return fmt.Sprintf("%.1f KiB", float64(size)/1024)
+	}
+	return fmt.Sprintf("%.1f MiB", float64(size)/(1024*1024))
+}
+
+// detectorFailure names how the detector failed for the local record only;
+// the client reply stays generic. A timeout on a long agent transcript and a
+// worker that never started need different fixes.
+func detectorFailure(err error) (detail, message string) {
+	switch {
+	case errors.Is(err, privacy.ErrDetectorTimeout):
+		return "detector_timeout", "local privacy detector timed out"
+	case errors.Is(err, privacy.ErrDetectorLimit):
+		return "detector_limit", "local privacy detector input limit exceeded"
+	default:
+		return "detector_unavailable", "local privacy detector is unavailable"
+	}
+}
+
 func privacyDecisionSummary(mappingCount int, noticeInjected bool) string {
 	if noticeInjected {
 		return fmt.Sprintf("redact · %d · notice", mappingCount)
@@ -466,9 +500,10 @@ func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *h
 	case errors.Is(err, privacy.ErrDetectorUnavailable),
 		errors.Is(err, privacy.ErrDetectorLimit),
 		errors.Is(err, privacy.ErrDetectorTimeout):
+		detail, message := detectorFailure(err)
 		writeInferenceError(writer, http.StatusServiceUnavailable, "safety_engine_unavailable", "local safety engine is unavailable", true, nil)
-		session.notePrivacyDecision("safety_engine_unavailable", contract.RequestStatusFailed)
-		session.noteFailed(errorSummaryFromInference("safety_engine_unavailable", "local safety engine is unavailable", true))
+		session.notePrivacyDecision("safety_engine_unavailable · "+detail, contract.RequestStatusFailed)
+		session.noteFailed(errorSummaryFromInference("safety_engine_unavailable", message, true))
 	case errors.Is(err, privacy.ErrUnsafeInput):
 		// These content-dependent processing failures are non-retryable, but
 		// are not policy decisions. Only an explicit block is reported as 403.
