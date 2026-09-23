@@ -103,10 +103,10 @@ func DecodeGrokUsage(body []byte, now time.Time) (contract.SubscriptionUsage, er
 	} else if config.MonthlyLimit != nil && config.MonthlyLimit.Val > 0 && config.Used != nil {
 		value := float64(config.Used.Val) / float64(config.MonthlyLimit.Val) * 100
 		used = &value
-	} else if config.CurrentPeriod != nil || config.BillingPeriodStart != "" || config.BillingPeriodEnd != "" {
-		// proto3 JSON omits zero-valued scalars. A missing creditUsagePercent
-		// means 0% here, not "usage unavailable"; the period metadata still
-		// describes the active quota window.
+	} else if activeGrokPeriod(config.CurrentPeriod, now) {
+		// proto3 JSON omits zero-valued scalars. Only a complete, recognised and
+		// currently active period may turn an omitted creditUsagePercent into
+		// 0%; legacy or stale period metadata must not fabricate certainty.
 		zero := 0.0
 		used = &zero
 	}
@@ -147,6 +147,30 @@ func DecodeGrokUsage(body []byte, now time.Time) (contract.SubscriptionUsage, er
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: no usage windows", ErrUsageUnavailable)
 	}
 	return usage, nil
+}
+
+func activeGrokPeriod(period *grokUsagePeriod, now time.Time) bool {
+	if period == nil || !knownGrokPeriodType(period.Type) {
+		return false
+	}
+	start, ok := parseRFC3339(period.Start)
+	if !ok {
+		return false
+	}
+	end, ok := parseRFC3339(period.End)
+	if !ok || !end.After(start) {
+		return false
+	}
+	return !now.Before(start) && now.Before(end)
+}
+
+func knownGrokPeriodType(periodType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(periodType)) {
+	case "USAGE_PERIOD_TYPE_WEEKLY", "WEEKLY", "USAGE_PERIOD_TYPE_MONTHLY", "MONTHLY":
+		return true
+	default:
+		return false
+	}
 }
 
 func grokWindowSeconds(periodType, start, end string) int64 {

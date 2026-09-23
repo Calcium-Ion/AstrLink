@@ -86,11 +86,27 @@ func TestDecodeGrokUsageTreatsOmittedZeroPercentAsZero(t *testing.T) {
 	}
 }
 
-func TestDecodeGrokUsageTreatsOmittedZeroPercentWithLegacyPeriodAsZero(t *testing.T) {
-	now := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+func TestDecodeGrokUsageRejectsOmittedZeroPercentWithoutActivePeriod(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	for _, body := range []string{
+		`{"config":{"billingPeriodStart":"2026-09-01T00:00:00Z","billingPeriodEnd":"2026-10-01T00:00:00Z"}}`,
+		`{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-09-01T00:00:00Z","end":"2026-09-08T00:00:00Z"}}}`,
+		`{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-09-15T00:00:00Z"}}}`,
+		`{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_UNKNOWN","start":"2026-09-15T00:00:00Z","end":"2026-09-22T00:00:00Z"}}}`,
+	} {
+		if _, err := subscription.DecodeGrokUsage([]byte(body), now); err == nil {
+			t.Fatalf("accepted %s", body)
+		}
+	}
+}
+
+func TestDecodeGrokUsageAcceptsExplicitLegacyZeroUsed(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	usage, err := subscription.DecodeGrokUsage([]byte(`{"config": {
-"billingPeriodStart": "2026-04-01T00:00:00Z",
-"billingPeriodEnd": "2026-05-01T00:00:00Z"
+"monthlyLimit": {"val": 2000},
+"used": {},
+"billingPeriodStart": "2026-09-01T00:00:00Z",
+"billingPeriodEnd": "2026-10-01T00:00:00Z"
 }}`), now)
 	if err != nil {
 		t.Fatalf("DecodeGrokUsage() = %v", err)
