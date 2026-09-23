@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{IsMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem},
     tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Rect, WebviewUrl,
-    WebviewWindowBuilder, Wry,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Monitor, PhysicalPosition, Rect,
+    WebviewUrl, WebviewWindowBuilder, Wry,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -845,11 +845,8 @@ fn anchor_from_click(
     position: PhysicalPosition<f64>,
     rect: Rect,
 ) -> Option<PopoverAnchor> {
-    let monitor = app
-        .monitor_from_point(position.x, position.y)
-        .ok()
-        .flatten()
-        .or_else(|| app.primary_monitor().ok().flatten())?;
+    let monitor =
+        monitor_at_click(app, position).or_else(|| app.primary_monitor().ok().flatten())?;
     let scale = monitor.scale_factor();
     let icon_position = rect.position.to_logical::<f64>(scale);
     let icon_size = rect.size.to_logical::<f64>(scale);
@@ -870,6 +867,30 @@ fn anchor_from_click(
             height: work_size.height,
         },
     })
+}
+
+/// The monitor under a tray click. On macOS tray-icon reports the click in
+/// points scaled by the clicked screen's backing factor, but the monitor
+/// lookup takes raw points (`CGDisplayBounds`): on a Retina screen the scaled
+/// click lands on the neighbouring display, or on none at all, so a dual
+/// screen setup opened the popover on the other screen. tao's cursor position
+/// is points scaled by the primary display instead, which divides back
+/// exactly.
+#[cfg(target_os = "macos")]
+fn monitor_at_click(app: &AppHandle, _position: PhysicalPosition<f64>) -> Option<Monitor> {
+    let primary = app.primary_monitor().ok().flatten()?;
+    let cursor = app
+        .cursor_position()
+        .ok()?
+        .to_logical::<f64>(primary.scale_factor());
+    app.monitor_from_point(cursor.x, cursor.y).ok().flatten()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn monitor_at_click(app: &AppHandle, position: PhysicalPosition<f64>) -> Option<Monitor> {
+    app.monitor_from_point(position.x, position.y)
+        .ok()
+        .flatten()
 }
 
 // ---------------------------------------------------------------------------
