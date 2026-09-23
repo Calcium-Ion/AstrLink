@@ -1,6 +1,6 @@
-import { BillingOverview } from "./BillingOverview";
+import { BillingOverview, useBillingSummary } from "./BillingOverview";
 import {
-  useEffect,
+  memo,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -28,7 +28,10 @@ import { CompactCount } from "@/components/CompactCount";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
 import { ExternalLink } from "@/components/ExternalLink";
-import { ActivityHeatmap } from "@/components/ActivityHeatmap";
+import {
+  ActivityHeatmap,
+  type ActivityCell,
+} from "@/components/ActivityHeatmap";
 import { HelpPopover } from "@/components/HelpPopover";
 import { IconButton } from "@/components/IconButton";
 import { SegmentedControl } from "@/components/SegmentedControl";
@@ -63,14 +66,13 @@ import type { BarShapeProps, TooltipContentProps } from "recharts";
 
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
-import { getBillingSummary } from "./pricing-bridge";
 import { billingAmount, type BillingSummary } from "./pricing-model";
 import {
   formatCompactNumber,
   formatExactNumber,
 } from "./format-compact-number";
 import astrlinkLogo from "./assets/astrlink-logo.svg";
-import { i18n } from "./i18n";
+import { i18n, useT } from "./i18n";
 import { PageHeader } from "./PageHeader";
 import { ActionGroup } from "@/components/ActionGroup";
 import { ScrollWorkspace } from "@/components/ScrollWorkspace";
@@ -170,37 +172,12 @@ export function Overview({
   const tokensUnknown =
     tokenCatalog.status === "blocked" && tokenCatalog.items.length === 0;
   const summary = usage.summary;
-  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
-  const [billingStatus, setBillingStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const billingFrom = summary?.window.from;
-  const billingTo = summary?.window.to;
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!isReady || usage.status !== "ready" || !billingFrom || !billingTo) {
-      setBillingSummary(null);
-      setBillingStatus("idle");
-      return () => {
-        cancelled = true;
-      };
-    }
-    setBillingSummary(null);
-    setBillingStatus("loading");
-    void getBillingSummary(billingFrom, billingTo)
-      .then((next) => {
-        if (cancelled) return;
-        setBillingSummary(next);
-        setBillingStatus("ready");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setBillingSummary(null);
-        setBillingStatus("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [billingFrom, billingTo, isReady, summary, usage.status]);
+  const { status: billingStatus, summary: billingSummary } = useBillingSummary({
+    from: summary?.window.from,
+    to: summary?.window.to,
+    ready: isReady && usage.status !== "blocked" && usage.status !== "error",
+    revision: summary,
+  });
 
   // A disconnected catalog is unknown, not empty. Use the same compact surface
   // with connection-specific content, and keep any retained activity visible.
@@ -1347,37 +1324,77 @@ function UsagePanelSkeleton() {
   );
 }
 
-function UsageHeatmap({
+type HeatmapPoint = UsageTotals & { date: string; hour?: number };
+const heatmapCells = new WeakMap<HeatmapPoint[], Map<string, ActivityCell[]>>();
+
+function prepareHeatmapCells(
+  points: HeatmapPoint[],
+  metric: "tokens" | "requests",
+  locale: string,
+): ActivityCell[] {
+  let variants = heatmapCells.get(points);
+  if (!variants) {
+    variants = new Map();
+    heatmapCells.set(points, variants);
+  }
+  const key = `${locale}:${metric}`;
+  const cached = variants.get(key);
+  if (cached) return cached;
+  const t = i18n.getFixedT(locale);
+  const cells = points.map((point) => {
+    const dateLabel = chartPointLabel(point);
+    return {
+      key: point.date,
+      date: point.date,
+      label: `${dateLabel}, ${formatExactNumber(point.total_tokens)} Token, ${t("overview.dayRequests", { count: formatExactNumber(point.requests) })}, ${t("overview.dayFailed", { count: formatExactNumber(point.failed_requests) })}`,
+      value:
+        metric === "tokens"
+          ? point.total_tokens
+          : point.requests + point.failed_requests,
+      detail: () => (
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 tabular-nums">
+          <strong className="font-medium">{dateLabel}</strong>
+          <span>{formatCompactNumber(point.total_tokens)} Token</span>
+          <span>
+            {t("overview.dayRequests", {
+              count: formatExactNumber(point.requests),
+            })}
+          </span>
+          {point.failed_requests > 0 ? (
+            <span>
+              {t("overview.dayFailed", {
+                count: formatExactNumber(point.failed_requests),
+              })}
+            </span>
+          ) : null}
+        </span>
+      ),
+    };
+  });
+  variants.set(key, cells);
+  return cells;
+}
+
+const UsageHeatmap = memo(function UsageHeatmap({
   points,
   status,
 }: {
   points: Array<UsageTotals & { date: string; hour?: number }>;
   status: UsageStatus;
 }) {
-  const t = i18n.t.bind(i18n);
+  const t = useT();
+  const locale = i18n.language;
   const [metric, setMetric] = useState<"tokens" | "requests">("tokens");
   const unavailable = status === "blocked" || status === "error";
   const active = points.filter(
     (point) =>
       point.requests + point.failed_requests > 0 || point.total_tokens > 0,
   ).length;
-  const detail = (point: UsageTotals & { date: string; hour?: number }) => (
-    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 tabular-nums">
-      <strong className="font-medium">{chartPointLabel(point)}</strong>
-      <span>{formatCompactNumber(point.total_tokens)} Token</span>
-      <span>
-        {t("overview.dayRequests", {
-          count: formatExactNumber(point.requests),
-        })}
-      </span>
-      {point.failed_requests > 0 ? (
-        <span>
-          {t("overview.dayFailed", {
-            count: formatExactNumber(point.failed_requests),
-          })}
-        </span>
-      ) : null}
-    </span>
+  // The summary is retained while navigating. Its immutable day buckets can
+  // reuse their labels on return; replacing the summary releases this cache.
+  const cells = useMemo(
+    () => prepareHeatmapCells(points, metric, locale),
+    [points, metric, locale],
   );
   return (
     <div className="px-4 py-3.5">
@@ -1422,16 +1439,7 @@ function UsageHeatmap({
           />
         ) : (
           <ActivityHeatmap
-            cells={points.map((point) => ({
-              key: point.date,
-              date: point.date,
-              label: `${chartPointLabel(point)}, ${formatExactNumber(point.total_tokens)} Token, ${t("overview.dayRequests", { count: formatExactNumber(point.requests) })}, ${t("overview.dayFailed", { count: formatExactNumber(point.failed_requests) })}`,
-              value:
-                metric === "tokens"
-                  ? point.total_tokens
-                  : point.requests + point.failed_requests,
-              detail: detail(point),
-            }))}
+            cells={cells}
             emptyLabel={
               active === 0
                 ? t("overview.noUsage")
@@ -1451,9 +1459,9 @@ function UsageHeatmap({
       </div>
     </div>
   );
-}
+});
 
-function UsageDayChart({
+const UsageDayChart = memo(function UsageDayChart({
   grain,
   points,
   status,
@@ -1462,7 +1470,7 @@ function UsageDayChart({
   points: Array<UsageTotals & { date: string; hour?: number }>;
   status: UsageStatus;
 }) {
-  const t = i18n.t.bind(i18n);
+  const t = useT();
   const unavailable = status === "blocked" || status === "error";
   const chartRef = useRef<HTMLDivElement>(null);
   const stackedPoints = points.map((point) => {
@@ -1581,7 +1589,7 @@ function UsageDayChart({
       </div>
     </div>
   );
-}
+});
 
 function dayBarShape(series: DayTokenStackSeries) {
   return function DayBarShape(props: BarShapeProps) {
@@ -2090,15 +2098,24 @@ function cacheHitMetric(
   return formatCacheHitPercent(totals);
 }
 
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+
 /** Renders a `YYYY-MM-DD` bucket key in the active locale. */
 function dayLabel(date: string, width: "long" | "short"): string {
   const [year, month, day] = date.split("-").map(Number);
   if (!year || !month || !day) return date;
-  return new Intl.DateTimeFormat(i18n.language === "zh-CN" ? "zh-CN" : "en", {
-    ...(width === "long" ? { year: "numeric" } : {}),
-    month: "short",
-    day: "numeric",
-  }).format(new Date(year, month - 1, day));
+  const locale = i18n.language === "zh-CN" ? "zh-CN" : "en";
+  const key = `${locale}:${width}`;
+  let format = dayFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, {
+      ...(width === "long" ? { year: "numeric" } : {}),
+      month: "short",
+      day: "numeric",
+    });
+    dayFormats.set(key, format);
+  }
+  return format.format(new Date(year, month - 1, day));
 }
 
 function chartPointLabel(point: { date: string; hour?: number }): string {

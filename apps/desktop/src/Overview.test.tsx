@@ -29,6 +29,7 @@ vi.mock("recharts", async (importOriginal) => {
   };
 });
 
+import { applyLocale } from "./i18n";
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { browserSnapshot, type AppSnapshot } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
@@ -723,6 +724,38 @@ describe("Overview", () => {
       ),
     ).toHaveLength(30);
     expect(onUsagePresetChange).not.toHaveBeenCalled();
+  });
+
+  it("refreshes cached calendar labels when language or summary data changes", async () => {
+    const summary = emptyUsageSummary(resolveUsageWindow("1y", now));
+    const usage = { status: "ready" as const, summary, error: null };
+    await renderOverview({ usage, usagePreset: "1y" });
+    const firstLabel = () =>
+      container
+        .querySelector('[data-slot="activity-cell"]')
+        ?.getAttribute("aria-label");
+    expect(firstLabel()).toContain("2025年9月5日");
+    try {
+      await act(async () => applyLocale("en"));
+      expect(firstLabel()).toContain("Sep 5, 2025");
+      await renderOverview({
+        usage: {
+          ...usage,
+          summary: {
+            ...summary,
+            by_day: summary.by_day.map((day, index) =>
+              index === 0 ? { ...day, total_tokens: 999 } : day,
+            ),
+          },
+        },
+        usagePreset: "1y",
+      });
+      expect(firstLabel()).toContain("999 Token");
+    } finally {
+      await act(async () => applyLocale("zh-CN"));
+    }
+    expect(firstLabel()).toContain("2025年9月5日");
+    expect(firstLabel()).toContain("999 Token");
   });
 
   it("aligns a full year by weekday and supports keyboard navigation across weeks", async () => {

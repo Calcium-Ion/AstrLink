@@ -16,7 +16,9 @@ import {
 import { Panel } from "@/components/Panel";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
+import { ValueTransition } from "@/components/ValueTransition";
 import { useT } from "./i18n";
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import type { Service } from "./service-model";
 import { getServiceBilling } from "./pricing-bridge";
 import {
@@ -72,16 +74,23 @@ function useBillingReport(
   ready: boolean,
   revision = "",
 ) {
-  const [report, setReport] = useState<ServiceBilling | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [report, setReport] = useWorkspaceSnapshot<ServiceBilling | null>(
+    `billing-report:${serviceId ?? "none"}`,
+    null,
+  );
+  const [loading, setLoading] = useState(
+    report === null && !!serviceId && ready,
+  );
   const [error, setError] = useState(false);
   useEffect(() => {
     let cancelled = false;
     let running = false;
-    setReport(null);
     setError(false);
-    setLoading(!!serviceId && ready);
-    if (!serviceId || !ready) return;
+    setLoading(report === null && !!serviceId && ready);
+    if (!serviceId || !ready) {
+      setReport(null);
+      return;
+    }
     const refresh = async () => {
       if (running || cancelled) return;
       running = true;
@@ -109,8 +118,8 @@ function useBillingReport(
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [serviceId, ready, revision]);
-  return { report, loading, error };
+  }, [serviceId, ready, revision, setReport]);
+  return { report, loading: loading && report === null, error };
 }
 
 export function ServiceBillingMeter({
@@ -133,6 +142,11 @@ export function ServiceBillingMeter({
     `${epoch}/${observedAt ?? ""}`,
   );
   const period = currentBillingPeriod(report?.periods ?? []);
+  const label = t(
+    period?.kind === "month" ? "pricing.monthAmount" : "pricing.cycleAmount",
+  );
+  const amount = billingAmount(period?.summary);
+  const incomplete = !!period && period.summary.unpriced > 0;
   return (
     <Button
       size="xs"
@@ -142,19 +156,19 @@ export function ServiceBillingMeter({
       onClick={onOpen}
       title={t("pricing.description")}
     >
-      <span>
-        {t(
-          period?.kind === "month"
-            ? "pricing.monthAmount"
-            : "pricing.cycleAmount",
-        )}{" "}
-        {billingAmount(period?.summary)}
-      </span>
-      {period && period.summary.unpriced > 0 ? (
-        <span className="text-micro font-normal text-muted-foreground">
-          {t("pricing.incomplete")}
+      <ValueTransition
+        valueKey={`${label}/${amount}/${incomplete}`}
+        className="grid justify-items-start gap-0.5"
+      >
+        <span>
+          {label} {amount}
         </span>
-      ) : null}
+        {incomplete ? (
+          <span className="text-micro font-normal text-muted-foreground">
+            {t("pricing.incomplete")}
+          </span>
+        ) : null}
+      </ValueTransition>
     </Button>
   );
 }

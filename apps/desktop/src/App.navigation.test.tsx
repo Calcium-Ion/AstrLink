@@ -17,7 +17,9 @@ const bridgeMocks = vi.hoisted(() => ({
   getAuditSettings: vi.fn(),
   getCoreStatus: vi.fn(),
   getPreferences: vi.fn(),
-  getTrayState: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
+  getTrayState: vi
+    .fn()
+    .mockRejectedValue(new Error("tray unavailable in tests")),
   trayAction: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
   getRoutingSettings: vi.fn(),
   getServiceOrder: vi
@@ -414,6 +416,128 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
   }
+
+  it("keeps loaded page content visible while revisits revalidate slowly", async () => {
+    await renderApp();
+    const pages = [
+      {
+        nav: "API 提供商",
+        read: bridgeMocks.getServiceOrder,
+        content: "Primary gateway",
+      },
+      {
+        nav: "路由",
+        read: bridgeMocks.getRoutingSettings,
+        content: "最多重试几次",
+      },
+      {
+        nav: "安全策略",
+        read: bridgeMocks.getPrivacyPolicy,
+        content: "Regex 覆盖邮箱",
+      },
+      {
+        nav: "Agent 工具",
+        read: bridgeMocks.getAgentDebugStatus,
+        content: "Cursor",
+      },
+    ];
+    for (const page of pages) {
+      await act(async () => button(page.nav).click());
+      expect(
+        container.querySelector('[data-slot="workspace"]')?.textContent,
+      ).toContain(page.content);
+      const calls = page.read.mock.calls.length;
+      await act(async () => button("概览").click());
+      page.read.mockReturnValueOnce(new Promise(() => {}));
+      await act(async () => button(page.nav).click());
+      expect(page.read).toHaveBeenCalledTimes(calls + 1);
+      expect(
+        container.querySelector('[data-slot="workspace"]')?.textContent,
+      ).toContain(page.content);
+      expect(
+        container.querySelector('[data-slot="workspace"]')?.textContent,
+      ).not.toContain("加载中");
+      await act(async () => button("概览").click());
+    }
+  });
+
+  it("keeps a cached empty records list stable and stops polling when away", async () => {
+    vi.useFakeTimers();
+    await renderApp();
+    await act(async () => button("请求记录").click());
+    const before = container.querySelector(
+      '[data-slot="workspace"]',
+    )?.textContent;
+    await act(async () => button("概览").click());
+    const calls = bridgeMocks.listRequestSessions.mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(bridgeMocks.listRequestSessions).toHaveBeenCalledTimes(calls);
+    bridgeMocks.listRequestSessions.mockReturnValueOnce(new Promise(() => {}));
+    await act(async () => button("请求记录").click());
+    expect(
+      container.querySelector('[data-slot="workspace"]')?.textContent,
+    ).toBe(before);
+    expect(bridgeMocks.listRequestSessions).toHaveBeenCalledTimes(calls + 1);
+  });
+
+  it("restores saved preferences, discards abandoned drafts, and protects edits during revalidation", async () => {
+    const preferences = {
+      values: {
+        close_behavior: "hide_to_tray",
+        autostart: false,
+        core_auto_start: true,
+        core_auto_recover: true,
+        use_system_proxy: true,
+        inference_port: 8317,
+        max_concurrent_inspections: 16,
+        response_start_timeout_seconds: 0,
+        max_request_body_mib: 0,
+        locale: "zh-CN",
+        theme: "system",
+        tray: defaultTrayPreferences(),
+      },
+      load_warning: null,
+      autostart_actual: false,
+      autostart_error: null,
+    };
+    bridgeMocks.getPreferences.mockResolvedValue(preferences);
+    await renderApp();
+    await act(async () => button("设置").click());
+    await setInput('input[type="number"]', "9123");
+    await act(async () => button("概览").click());
+    await act(async () => button("放弃修改并离开").click());
+    let finishRefresh!: (value: typeof preferences) => void;
+    bridgeMocks.getPreferences.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishRefresh = resolve;
+      }),
+    );
+    await act(async () => button("设置").click());
+    const port = container.querySelector<HTMLInputElement>(
+      'input[type="number"]',
+    );
+    expect(port?.value).toBe("8317");
+    await setInput('input[type="number"]', "9000");
+    await act(async () => finishRefresh(preferences));
+    expect(port?.value).toBe("9000");
+    await act(async () => button("概览").click());
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+  });
+
+  it("invalidates page snapshots when Core changes sessions", async () => {
+    vi.useFakeTimers();
+    await renderApp();
+    await act(async () => button("API 提供商").click());
+    expect(container.textContent).toContain("Primary gateway");
+    await act(async () => button("概览").click());
+    bridgeMocks.getCoreStatus.mockResolvedValue({ ...readySnapshot, pid: 84 });
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    bridgeMocks.getServiceOrder.mockReturnValueOnce(new Promise(() => {}));
+    await act(async () => button("API 提供商").click());
+    expect(
+      container.querySelector('[data-testid="service-list-scroller"]'),
+    ).toBeNull();
+  });
 
   it("switches between overview, token manager, safety, service list, and create pages", async () => {
     await renderApp();

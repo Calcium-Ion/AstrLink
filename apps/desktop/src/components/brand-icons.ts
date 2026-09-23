@@ -4,8 +4,10 @@
 // `antd-style`, which nearly doubles the production bundle.
 export { default as AnthropicMono } from "@lobehub/icons/es/Anthropic/components/Mono";
 export { default as ByteDanceColor } from "@lobehub/icons/es/ByteDance/components/Color";
+export { default as ClaudeCodeColor } from "@lobehub/icons/es/ClaudeCode/components/Color";
 export { default as ClaudeColor } from "@lobehub/icons/es/Claude/components/Color";
 export { default as CodexColor } from "@lobehub/icons/es/Codex/components/Color";
+export { default as CursorMono } from "@lobehub/icons/es/Cursor/components/Mono";
 export { default as DeepSeekColor } from "@lobehub/icons/es/DeepSeek/components/Color";
 export { default as DoubaoColor } from "@lobehub/icons/es/Doubao/components/Color";
 export { default as GeminiColor } from "@lobehub/icons/es/Gemini/components/Color";

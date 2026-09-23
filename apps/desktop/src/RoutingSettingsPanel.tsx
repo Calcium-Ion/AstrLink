@@ -1,3 +1,4 @@
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useRef, useState } from "react";
 import { getRoutingSettings, updateRoutingSettings } from "./bridge";
 import { ChannelStickinessEditor } from "./components/ChannelStickinessEditor";
@@ -28,13 +29,20 @@ export function RoutingSettingsPanel({
 }) {
   const t = useT();
   const [tab, setTab] = useState("recovery");
-  const [draft, setDraft] = useState<RoutingSettings | null>(null);
-  const [baseline, setBaseline] = useState("");
+  const [settings, setSettings] = useWorkspaceSnapshot<RoutingSettings | null>(
+    "routing-settings",
+    null,
+  );
+  const [draft, setDraft] = useState<RoutingSettings | null>(settings);
+  const [baseline, setBaseline] = useState(() =>
+    settings ? JSON.stringify(settings) : "",
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
   const dirty = draft !== null && JSON.stringify(draft) !== baseline;
+  const mutationVersion = useRef(0);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   useEffect(() => {
@@ -44,9 +52,11 @@ export function RoutingSettingsPanel({
   useEffect(() => {
     if (!ready) return;
     let active = true;
+    const version = mutationVersion.current;
     void getRoutingSettings()
       .then((settings) => {
-        if (!active) return;
+        if (!active || mutationVersion.current !== version) return;
+        setSettings(settings);
         // Reconnection and retry must never replace an unsaved draft.
         if (!dirtyRef.current) {
           setDraft(settings);
@@ -55,7 +65,7 @@ export function RoutingSettingsPanel({
         setLoadError(null);
       })
       .catch((error) => {
-        if (active)
+        if (active && mutationVersion.current === version)
           setLoadError(
             error instanceof Error ? error.message : t("failure.loadFailed"),
           );
@@ -63,7 +73,7 @@ export function RoutingSettingsPanel({
     return () => {
       active = false;
     };
-  }, [ready, reload, t]);
+  }, [ready, reload, t, setSettings]);
 
   const save = async () => {
     if (!draft || !ready || saving) return;
@@ -73,6 +83,7 @@ export function RoutingSettingsPanel({
       setError(t("failure.invalid"));
       return;
     }
+    mutationVersion.current += 1;
     setSaving(true);
     setError(null);
     try {
@@ -90,6 +101,7 @@ export function RoutingSettingsPanel({
           Object.assign(patch, { [key]: draft[key] });
       }
       const saved = await updateRoutingSettings(patch);
+      setSettings(saved);
       setDraft(saved);
       setBaseline(JSON.stringify(saved));
       notify.success(t("failure.saved"));

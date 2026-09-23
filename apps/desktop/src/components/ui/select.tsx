@@ -10,10 +10,58 @@ import { Select as SelectPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
 
+const SelectedLabel = React.createContext<React.ReactNode>(undefined);
+
+function selectedLabel(
+  children: React.ReactNode,
+  value: string | undefined,
+): React.ReactNode {
+  if (!value) return undefined;
+  for (const child of React.Children.toArray(children)) {
+    if (
+      !React.isValidElement<{ value?: string; children?: React.ReactNode }>(
+        child,
+      )
+    )
+      continue;
+    if (child.type === SelectItem && child.props.value === value)
+      return child.props.children;
+    // Opaque option components still use Radix's normal ItemText portal.
+    if (child.type === Select) continue;
+    const nested = selectedLabel(child.props.children, value);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
 function Select({
+  children,
+  value,
+  defaultValue,
+  onValueChange,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />;
+  const [uncontrolledValue, setUncontrolledValue] =
+    React.useState(defaultValue);
+  // Radix discovers ItemText in an effect after mounting its detached content.
+  // Supply known labels immediately so the trigger never paints empty/shrinks.
+  const label = selectedLabel(children, value ?? uncontrolledValue);
+  return (
+    <SelectedLabel value={label}>
+      <SelectPrimitive.Root
+        data-slot="select"
+        {...props}
+        value={value}
+        defaultValue={defaultValue}
+        onValueChange={(next) => {
+          setUncontrolledValue(next);
+          onValueChange?.(next);
+        }}
+      >
+        {children}
+      </SelectPrimitive.Root>
+    </SelectedLabel>
+  );
 }
 
 function SelectGroup({
@@ -23,9 +71,15 @@ function SelectGroup({
 }
 
 function SelectValue({
+  children,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Value>) {
-  return <SelectPrimitive.Value data-slot="select-value" {...props} />;
+  const label = React.useContext(SelectedLabel);
+  return (
+    <SelectPrimitive.Value data-slot="select-value" {...props}>
+      {children === undefined ? label : children}
+    </SelectPrimitive.Value>
+  );
 }
 
 function SelectTrigger({

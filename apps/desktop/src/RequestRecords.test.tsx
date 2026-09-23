@@ -7,9 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridgeMocks = vi.hoisted(() => ({
   deleteRequestRecord: vi.fn(),
   getAuditSettings: vi.fn(),
+  getCoreStatus: vi.fn(),
+  getPreferences: vi.fn(),
+  getPrivacyPolicy: vi.fn(),
   getRequestAuditContent: vi.fn(),
   getRequestRecord: vi.fn(),
   getRequestSession: vi.fn(),
+  getRoutingSettings: vi.fn(),
+  listPrivacyModelInstallations: vi.fn(),
   listRequestRecordChildren: vi.fn(),
   listRequestRecords: vi.fn(),
   listRequestSessions: vi.fn(),
@@ -262,6 +267,34 @@ describe("RequestRecords", () => {
       response_content_max_bytes: 8192,
       metadata_retention_days: 30,
       content_retention_days: 7,
+    });
+    bridgeMocks.getCoreStatus.mockResolvedValue({
+      app_version: "0.9.0",
+      version: { core_version: "0.9.0", build_commit: "abc1234" },
+    });
+    bridgeMocks.getPrivacyPolicy.mockResolvedValue({
+      policy: {
+        enabled: true,
+        detector: "local_model",
+        local_model_id: "model_01",
+        request_action: "redact",
+        response_restore: true,
+        restore_tool_arguments: true,
+      },
+    });
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValue({
+      items: [{ id: "model_01", name: "Privacy Filter", variant_name: "Q4" }],
+    });
+    bridgeMocks.getPreferences.mockResolvedValue({
+      values: {
+        response_start_timeout_seconds: 120,
+        max_concurrent_inspections: 1,
+        max_request_body_mib: 32,
+      },
+    });
+    bridgeMocks.getRoutingSettings.mockResolvedValue({
+      strategy: "priority",
+      max_attempts: 3,
     });
     bridgeMocks.updateAuditSettings.mockImplementation(async (patch) => ({
       request_body_enabled: false,
@@ -2178,6 +2211,16 @@ describe("RequestRecords", () => {
     expect(content).toContain('{"prompt":"secret"}');
     expect(content).toContain("hello");
     expect(content).toContain("已截断");
+    // The file alone has to carry what a diagnosis needs.
+    expect(content).toContain("版本: 应用 0.9.0 · 核心 0.9.0 · 提交 abc1234");
+    expect(content).toContain("执行轨迹");
+    expect(content).toContain("同会话请求");
+    expect(content).toContain(
+      "隐私保护: 已开启 · 检测方式: local_model · 本地模型: Privacy Filter · Q4",
+    );
+    expect(content).toContain("响应开始超时: 120 秒 · 并发检测数: 1");
+    expect(content).toContain("内容捕获: 请求体 已关闭");
+    expect(content).toContain("机器可读诊断（JSON）");
     expect(content).not.toContain("# AstrLink");
     expect(content).not.toContain("## ");
     expect(content).not.toContain("```");

@@ -1,3 +1,4 @@
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useRef, useState } from "react";
 import {
   getServiceOrder,
@@ -11,7 +12,9 @@ export function useServiceOrder(
   ready: boolean,
   onRefresh: () => void | Promise<void>,
 ) {
-  const [record, setRecord] = useState<ServiceOrderRecord | null>(null);
+  const [savedRecord, cacheRecord] =
+    useWorkspaceSnapshot<ServiceOrderRecord | null>("service-order", null);
+  const [record, setRecord] = useState(savedRecord);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -25,10 +28,12 @@ export function useServiceOrder(
   useEffect(() => {
     const current = ++generation.current;
     setLoaded(false);
+    setRecord(savedRecord);
     if (!ready) return;
     void getServiceOrder()
       .then((value) => {
         if (current === generation.current) {
+          cacheRecord(value);
           setRecord(value);
           setLoaded(true);
         }
@@ -39,7 +44,7 @@ export function useServiceOrder(
     return () => {
       generation.current++;
     };
-  }, [ready, identities, revision]);
+  }, [ready, identities, revision, cacheRecord]);
   const positions = new Map(
     record?.service_ids.map((id, index) => [id, index]),
   );
@@ -77,7 +82,10 @@ export function useServiceOrder(
     setRecord({ ...record, service_ids });
     try {
       const saved = await updateServiceOrder(service_ids, record.etag);
-      if (current === generation.current) setRecord(saved);
+      if (current === generation.current) {
+        cacheRecord(saved);
+        setRecord(saved);
+      }
     } catch (cause) {
       if (current === generation.current) {
         setRecord(original);
@@ -85,7 +93,10 @@ export function useServiceOrder(
         // A fresh order/ETag is necessary after concurrent creates/deletes.
         try {
           const fresh = await getServiceOrder();
-          if (current === generation.current) setRecord(fresh);
+          if (current === generation.current) {
+            cacheRecord(fresh);
+            setRecord(fresh);
+          }
         } catch {
           /* keep rollback and error */
         }

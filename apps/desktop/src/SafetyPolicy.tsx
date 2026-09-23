@@ -1,3 +1,4 @@
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowUpRight,
@@ -1071,12 +1072,23 @@ function PolicySection({
 
 export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   const t = useT();
-  const [status, setStatus] = useState<SafetyPolicyStatus>("blocked");
-  const [record, setRecord] = useState<PrivacyPolicyRecord | null>(null);
-  const [catalog, setCatalog] = useState<PrivacyCatalogModel[]>([]);
-  const [installations, setInstallations] = useState<
+  const [savedRecord, cacheRecord] =
+    useWorkspaceSnapshot<PrivacyPolicyRecord | null>(
+      `privacy-policy:${coreSessionKey}`,
+      null,
+    );
+  const [record, setRecord] = useState(savedRecord);
+  const policyMutationVersion = useRef(0);
+  const [catalog, setCatalog] = useWorkspaceSnapshot<PrivacyCatalogModel[]>(
+    `privacy-catalog:${coreSessionKey}`,
+    [],
+  );
+  const [installations, setInstallations] = useWorkspaceSnapshot<
     PrivacyModelInstallation[]
-  >([]);
+  >(`privacy-installations:${coreSessionKey}`, []);
+  const [status, setStatus] = useState<SafetyPolicyStatus>(
+    record ? "ready" : "blocked",
+  );
   const [workspace, setWorkspace] = useState<WorkspaceView>("detection");
   const [allowlistQuery, setAllowlistQuery] = useState("");
   const [view, setView] = useState<ModelView>("catalog");
@@ -1109,13 +1121,19 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [dryRunResult, setDryRunResult] =
     useState<CompletedPrivacyDryRun | null>(null);
-  const [minConfidenceDraft, setMinConfidenceDraft] = useState("");
+  const [minConfidenceDraft, setMinConfidenceDraft] = useState(
+    () => record?.policy.min_confidence.toFixed(2) ?? "",
+  );
   const [pendingModelAction, setPendingModelAction] =
     useState<PendingModelAction | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [confirmFillBuiltinRules, setConfirmFillBuiltinRules] = useState(false);
-  const [regexPatternDrafts, setRegexPatternDrafts] = useState<string[]>([]);
-  const [allowlistDrafts, setAllowlistDrafts] = useState<string[]>([]);
+  const [regexPatternDrafts, setRegexPatternDrafts] = useState<string[]>(
+    () => record?.policy.custom_regex_rules.map((rule) => rule.pattern) ?? [],
+  );
+  const [allowlistDrafts, setAllowlistDrafts] = useState<string[]>(
+    () => record?.policy.allowlist_rules.map((rule) => rule.value) ?? [],
+  );
   // A new allowlist row is held locally until it has a value, because an empty
   // value would be rejected by the contract.
   const [allowlistPending, setAllowlistPending] = useState(false);
@@ -1136,6 +1154,20 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   const persistedMinConfidence = record?.policy.min_confidence;
   const persistedCustomRegexRules = record?.policy.custom_regex_rules;
   const persistedAllowlistRules = record?.policy.allowlist_rules;
+
+  const policyDraftDirtyRef = useRef(false);
+  policyDraftDirtyRef.current =
+    record !== null &&
+    (minConfidenceDraft !== record.policy.min_confidence.toFixed(2) ||
+      JSON.stringify(regexPatternDrafts) !==
+        JSON.stringify(
+          record.policy.custom_regex_rules.map((rule) => rule.pattern),
+        ) ||
+      JSON.stringify(allowlistDrafts) !==
+        JSON.stringify(
+          record.policy.allowlist_rules.map((rule) => rule.value),
+        ) ||
+      allowlistPending);
 
   useEffect(() => {
     setMinConfidenceDraft(
@@ -1182,6 +1214,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
   }, [dryRunResult]);
 
   const load = async (generation: number) => {
+    const version = policyMutationVersion.current;
     try {
       const [nextRecord, nextCatalog, nextInstallations] = await Promise.all([
         getPrivacyPolicy(),
@@ -1189,7 +1222,16 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         listPrivacyModelInstallations(),
       ]);
       if (generationRef.current !== generation) return;
-      setRecord(nextRecord);
+      if (policyMutationVersion.current === version) {
+        cacheRecord(nextRecord);
+        if (!policyDraftDirtyRef.current) {
+          setRecord((current) =>
+            JSON.stringify(current) === JSON.stringify(nextRecord)
+              ? current
+              : nextRecord,
+          );
+        }
+      }
       setCatalog(nextCatalog.items);
       setInstallations(nextInstallations.items);
       setSelectedVariants(
@@ -1202,7 +1244,11 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       );
       setStatus("ready");
     } catch (loadError) {
-      if (generationRef.current !== generation) return;
+      if (
+        generationRef.current !== generation ||
+        policyMutationVersion.current !== version
+      )
+        return;
       setStatus("error");
       setError(privacyModelOperationError(loadError, t("safety.readFailed")));
     }
@@ -1249,10 +1295,8 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       };
     }
 
-    setStatus("loading");
-    setRecord(null);
-    setCatalog([]);
-    setInstallations([]);
+    setRecord(savedRecord);
+    setStatus(savedRecord ? "ready" : "loading");
     void load(generation);
 
     return () => {
@@ -1362,6 +1406,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     if (record === null || saving || status !== "ready") return false;
     const generation = generationRef.current;
     const previous = record;
+    policyMutationVersion.current += 1;
     const unloadsModel = patchUnloadsLocalModel(record.policy, patch);
     setRecord({
       ...record,
@@ -1386,6 +1431,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
           : null,
       ]);
       if (generationRef.current !== generation) return false;
+      cacheRecord(next);
       setRecord(next);
       notify.success(
         unloadsModel && !localModelActive(next.policy)
@@ -1404,6 +1450,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         // Keep the last known-good record when Core cannot be queried.
       }
       if (generationRef.current !== generation) return false;
+      if (reconciled) cacheRecord(authoritative);
       setRecord(authoritative);
       const failure = messageOf(patchError, t("safety.saveFailed"));
       setError(

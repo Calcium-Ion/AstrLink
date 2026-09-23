@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
+import { useEffect, useRef, useState } from "react";
 
+import { AgentToolIcon } from "@/components/AgentToolIcon";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CopyableValue } from "@/components/CopyableValue";
 import { DataRow } from "@/components/DataRow";
@@ -9,6 +11,7 @@ import { HelpPopover } from "@/components/HelpPopover";
 import { RefreshCw, ShieldCheck } from "@/components/icons";
 import { Panel, PanelFooter, PanelHeader } from "@/components/Panel";
 import { StatusBadge } from "@/components/StatusBadge";
+import { StatusDot } from "@/components/StatusDot";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -39,33 +42,51 @@ function messageOf(error: unknown): string {
 
 export function AgentDebugSettings() {
   const t = useT();
-  const [status, setStatus] = useState<AgentInstallStatus | null>(null);
+  const [status, setStatus] = useWorkspaceSnapshot<AgentInstallStatus | null>(
+    "agent-tools",
+    null,
+    "desktop",
+  );
   const [error, setError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(true);
+  const [checking, setChecking] = useState(status === null);
   const [busy, setBusy] = useState<"install" | "uninstall" | null>(null);
   const [confirm, setConfirm] = useState<"install" | "uninstall" | null>(null);
   const [selectedTools, setSelectedTools] = useState<AgentToolId[]>([]);
 
-  const refresh = async (): Promise<boolean> => {
-    setChecking(true);
+  const refreshGeneration = useRef(0);
+  const refresh = async (
+    background = false,
+    isCurrent = () => true,
+  ): Promise<boolean> => {
+    const generation = ++refreshGeneration.current;
+    const current = () =>
+      isCurrent() && refreshGeneration.current === generation;
+    if (!background || status === null) setChecking(true);
     try {
-      setStatus(await getAgentDebugStatus());
+      const next = await getAgentDebugStatus();
+      if (!current()) return false;
+      setStatus(next);
       setError(null);
       return true;
     } catch (next) {
-      setError(messageOf(next));
+      if (current()) setError(messageOf(next));
       return false;
     } finally {
-      setChecking(false);
+      if (current()) setChecking(false);
     }
   };
 
   useEffect(() => {
-    void refresh();
+    let active = true;
+    void refresh(true, () => active);
+    return () => {
+      active = false;
+    };
   }, []);
 
   const run = async (operation: "install" | "uninstall"): Promise<void> => {
     if (operation === "install" && selectedTools.length === 0) return;
+    refreshGeneration.current += 1;
     setBusy(operation);
     setConfirm(null);
     setError(null);
@@ -211,21 +232,33 @@ export function AgentDebugSettings() {
                     return (
                       <TableRow key={id}>
                         <TableCell className="py-3 pl-4">
-                          <span className="font-medium">
-                            {t(`agentDebug.tools.${id}`)}
-                          </span>
-                          <span className="mt-0.5 block text-xs text-muted-foreground">
-                            {!status
-                              ? t(
-                                  checking
-                                    ? "common.checking"
-                                    : "agentDebug.unavailable",
-                                )
-                              : t(
-                                  tool?.detected
-                                    ? "agentDebug.detected"
-                                    : "agentDebug.notDetected",
+                          <span className="flex items-center gap-2.5">
+                            <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background">
+                              <AgentToolIcon id={id} />
+                            </span>
+                            <span className="flex min-w-0 items-center gap-0.5">
+                              <span className="font-medium">
+                                {t(`agentDebug.tools.${id}`)}
+                              </span>
+                              <StatusDot
+                                label={t(
+                                  !status
+                                    ? checking
+                                      ? "common.checking"
+                                      : "agentDebug.unavailable"
+                                    : tool?.detected
+                                      ? "agentDebug.detected"
+                                      : "agentDebug.notDetected",
                                 )}
+                                tone={
+                                  tool?.detected
+                                    ? "positive"
+                                    : !status && checking
+                                      ? "pending"
+                                      : "neutral"
+                                }
+                              />
+                            </span>
                           </span>
                         </TableCell>
                         {(["skill_installed", "mcp_installed"] as const).map(

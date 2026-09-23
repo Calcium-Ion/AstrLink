@@ -107,7 +107,12 @@ describe("AgentDebugSettings", () => {
     expect(container.querySelector("h1")?.textContent).toBe("Agent 工具");
     expect(container.textContent).toContain("工具接入");
     expect(container.textContent).toContain("Cursor");
-    expect(container.textContent).toContain("已检测到");
+    expect(
+      container.querySelector("[role='img'][aria-label='已检测到']"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector("[role='img'][aria-label='未检测到']"),
+    ).not.toBeNull();
     expect(container.textContent).toContain("Codex");
     expect(container.textContent).toContain("已安装");
     expect(container.textContent).toContain("Grok Build");

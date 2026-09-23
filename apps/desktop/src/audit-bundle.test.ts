@@ -6,10 +6,12 @@ import {
   bundleFilename,
   fence,
 } from "./audit-bundle";
+import type { ExportEnvironment } from "./export-environment";
 import {
   emptyTrajectoryFields,
   type AuditContent,
   type RequestRecord,
+  type RequestSession,
 } from "./request-record-model";
 
 const record: RequestRecord = {
@@ -231,6 +233,213 @@ describe("buildRecordBundle", () => {
     expect(bundle).toContain("POST /v1/responses?stream=true HTTP/1.1");
     expect(bundle).toContain('{"model":"gpt-4.1"}');
     expect(bundle).toContain("已截断");
+  });
+});
+
+describe("buildRecordBundle diagnosis context", () => {
+  // A call stuck in local-model privacy inspection, after an earlier turn of
+  // the same session timed out in the detector.
+  const failedTurn: RequestRecord = {
+    ...record,
+    id: "req_detector_timeout",
+    attempt_index: 0,
+    started_at: "2026-09-20T09:55:00Z",
+    completed_at: "2026-09-20T09:57:00Z",
+    status: "failed",
+    service_id: null,
+    route_id: null,
+    http_status: 503,
+    latency_ms: 120_000,
+    usage: null,
+    privacy_restore: null,
+    error: {
+      category: "privacy",
+      code: "safety_engine_unavailable",
+      message: "local privacy detector timed out",
+      retryable: true,
+    },
+    turn_index: 2,
+  };
+  const liveTurn: RequestRecord = {
+    ...record,
+    id: "req_live_inspection",
+    attempt_index: 0,
+    started_at: "2026-09-20T10:00:00Z",
+    completed_at: null,
+    status: "pending",
+    service_id: null,
+    route_id: null,
+    http_status: null,
+    latency_ms: null,
+    usage: null,
+    privacy_restore: null,
+    turn_index: 3,
+    events: [
+      {
+        kind: "accepted",
+        started_at: "2026-09-20T10:00:00Z",
+        ended_at: "2026-09-20T10:00:00.200Z",
+        status: "succeeded",
+        summary: "gpt-5.5 · openai.responses",
+        attempt_index: 0,
+      },
+      {
+        kind: "privacy",
+        started_at: "2026-09-20T10:00:00.200Z",
+        ended_at: null,
+        status: "pending",
+        summary: "local_model · inspecting · 96.6 KiB",
+        attempt_index: 0,
+      },
+    ],
+  };
+  const session: RequestSession = {
+    id: "session_live",
+    title: "Fix the build",
+    started_at: failedTurn.started_at,
+    last_started_at: liveTurn.started_at,
+    completed_at: null,
+    duration_ms: 520_000,
+    active_request_starts: [liveTurn.started_at],
+    turn_count: 2,
+    call_count: 2,
+    status: "pending",
+    requested_model: "gpt-5.5",
+    input_protocol: "openai.responses",
+    service_id: null,
+    local_access_token_id: "token_01",
+  };
+  const environment: ExportEnvironment = {
+    version: { app: "0.9.0", core: "0.9.0", build_commit: "abc1234" },
+    privacy: {
+      enabled: true,
+      detector: "local_model",
+      local_model_id: "model_01",
+      local_model_name: "Privacy Filter · Q4",
+      request_action: "redact",
+      response_restore: true,
+      restore_tool_arguments: true,
+    },
+    limits: {
+      response_start_timeout_seconds: 120,
+      max_concurrent_inspections: 1,
+      max_request_body_mib: 32,
+    },
+    routing: { strategy: "priority", max_attempts: 3 },
+    capture: {
+      request_body_enabled: true,
+      response_content_enabled: false,
+      http_meta_enabled: true,
+    },
+  };
+  const exportedAt = new Date("2026-09-20T10:06:40.200Z");
+  const liveContent: AuditContent = {
+    ...content,
+    request_id: liveTurn.id,
+    upstream_http_meta: null,
+  };
+
+  const bundleFor = (format: "markdown" | "txt") =>
+    buildRecordBundle(liveTurn, liveContent, {
+      format,
+      exportedAt,
+      session,
+      turns: [failedTurn, liveTurn],
+      childrenByRoot: {},
+      serviceNames: {},
+      environment,
+    });
+
+  it("says where a pending call is stuck and for how long", () => {
+    const bundle = bundleFor("txt");
+
+    expect(bundle).toContain(
+      "导出时间: 2026-09-20T10:06:40.200Z · 已进行 6m 40s",
+    );
+    expect(bundle).toContain("版本: 应用 0.9.0 · 核心 0.9.0 · 提交 abc1234");
+    expect(bundle).toContain("API 提供商: 正在选择 API 提供商");
+    expect(bundle).not.toContain("未路由");
+    expect(bundle).toContain(
+      "当前阶段: 隐私检测 · 已等待 6m 40s · local_model · inspecting · 96.6 KiB",
+    );
+    expect(bundle).toContain(
+      "+0 ms · 客户端 · 成功 · 200 ms · gpt-5.5 · openai.responses",
+    );
+    expect(bundle).toContain(
+      "+200 ms · 策略 · 进行中 · 已 6m 40s（未结束） · local_model · inspecting · 96.6 KiB",
+    );
+    // The gateway never sent it upstream; the metadata was not lost.
+    expect(bundle).toContain("上游 HTTP\n（未发出上游请求）");
+  });
+
+  it("lists the session calls and the gateway settings", () => {
+    const bundle = bundleFor("txt");
+
+    expect(bundle).toContain("同会话请求（第 1–2 条，共 2 条）");
+    expect(bundle).toContain(
+      "  第 2 轮 · 2026-09-20T09:55:00Z · 失败 · 尝试 0 · 重试 0 · 所有 API 提供商均失败 · 2m 00s · privacy · safety_engine_unavailable · req_detector_timeout",
+    );
+    expect(bundle).toContain(
+      "▶ 第 3 轮 · 2026-09-20T10:00:00Z · 进行中 · 尝试 0 · 重试 0 · 正在选择 API 提供商 · 6m 40s · req_live_inspection",
+    );
+    expect(bundle).toContain(
+      "隐私保护: 已开启 · 检测方式: local_model · 本地模型: Privacy Filter · Q4 · 请求动作: redact · 响应还原: 已开启",
+    );
+    expect(bundle).toContain(
+      "响应开始超时: 120 秒 · 并发检测数: 1 · 请求体上限: 32 MiB",
+    );
+    expect(bundle).toContain("路由策略: priority · 最大尝试次数: 3");
+    expect(bundle).toContain(
+      "内容捕获: 请求体 已开启 · 响应内容 已关闭 · HTTP 元数据 已开启",
+    );
+  });
+
+  it("ends with a machine-readable diagnostic, raw in txt", () => {
+    const bundle = bundleFor("txt");
+    expect(bundle).not.toContain("# AstrLink");
+    expect(bundle).not.toContain("## ");
+    expect(bundle).not.toContain("```");
+
+    const heading = "机器可读诊断（JSON）\n";
+    const payload = JSON.parse(
+      bundle.slice(bundle.indexOf(heading) + heading.length),
+    );
+    expect(payload.selected_request_id).toBe("req_live_inspection");
+    expect(payload.exported_at).toBe("2026-09-20T10:06:40.200Z");
+    expect(payload.environment.privacy.detector).toBe("local_model");
+    expect(
+      payload.records.map((item: { id: string }) => item.id),
+    ).toStrictEqual(["req_detector_timeout", "req_live_inspection"]);
+    expect(payload.records[1].events[1]).toMatchObject({
+      kind: "privacy",
+      status: "pending",
+      ended_at: null,
+    });
+  });
+
+  it("fences the diagnostic in markdown", () => {
+    const bundle = bundleFor("markdown");
+    expect(bundle).toContain("## 机器可读诊断（JSON）\n```json\n{");
+    expect(bundle).toContain("## 执行轨迹");
+    expect(bundle).toContain("- ▶ 第 3 轮");
+  });
+
+  it("marks settings it could not read instead of dropping them", () => {
+    const bundle = buildRecordBundle(liveTurn, liveContent, {
+      format: "txt",
+      exportedAt,
+      environment: {
+        version: null,
+        privacy: null,
+        limits: null,
+        routing: null,
+        capture: null,
+      },
+    });
+    expect(bundle).toContain("隐私保护: （未能读取）");
+    expect(bundle).not.toContain("版本:");
+    // Without a session there is nothing to anchor the diagnostic to.
+    expect(bundle).not.toContain("机器可读诊断");
   });
 });
 

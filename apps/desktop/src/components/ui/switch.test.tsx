@@ -22,33 +22,33 @@ describe("Switch", () => {
     container.remove();
   });
 
-  it("skips transitions on the first paint and arms them after rAF", async () => {
-    const frames: FrameRequestCallback[] = [];
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      frames.push(callback);
-      return 1;
-    });
-
-    await act(async () => {
-      root.render(<Switch aria-label="demo" checked />);
-    });
-
+  it("does not animate initial or asynchronously loaded values", async () => {
+    await act(async () =>
+      root.render(<Switch aria-label="demo" checked={false} />),
+    );
+    await act(async () => root.render(<Switch aria-label="demo" checked />));
     const control = container.querySelector("[data-slot='switch']");
     const thumb = container.querySelector("[data-slot='switch-thumb']");
+    expect(control?.getAttribute("data-state")).toBe("checked");
     expect(control?.className.split(/\s+/)).toContain("transition-none");
-    expect(control?.className.split(/\s+/)).not.toContain("transition-all");
     expect(thumb?.className.split(/\s+/)).toContain("transition-none");
-    expect(thumb?.className.split(/\s+/)).not.toContain("transition-transform");
+  });
 
-    await act(async () => {
-      for (const frame of frames) {
-        frame(0);
-      }
-    });
-
-    expect(control?.className.split(/\s+/)).toContain("transition-all");
-    expect(control?.className.split(/\s+/)).not.toContain("transition-none");
+  it("animates an intentional toggle and honors reduced motion", async () => {
+    const onChange = vi.fn();
+    await act(async () =>
+      root.render(<Switch aria-label="demo" onCheckedChange={onChange} />),
+    );
+    const control = container.querySelector<HTMLButtonElement>(
+      "[data-slot='switch']",
+    )!;
+    await act(async () => control.click());
+    expect(onChange).toHaveBeenCalledWith(true);
+    expect(control.className.split(/\s+/)).toContain("transition-colors");
+    const thumb = container.querySelector("[data-slot='switch-thumb']");
     expect(thumb?.className.split(/\s+/)).toContain("transition-transform");
-    expect(thumb?.className.split(/\s+/)).not.toContain("transition-none");
+    expect(thumb?.className.split(/\s+/)).toContain(
+      "motion-reduce:transition-none",
+    );
   });
 });

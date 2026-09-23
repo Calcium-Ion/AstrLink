@@ -1,3 +1,4 @@
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useCallback, useEffect, useState } from "react";
 import { getRoutingSettings } from "./bridge";
 import {
@@ -10,26 +11,24 @@ export function useRoutingDefaults(
 ): RoutingSettings & { loaded: boolean; reload: () => void } {
   const [revision, setRevision] = useState(0);
   const reload = useCallback(() => setRevision((value) => value + 1), []);
-  const [loaded, setLoaded] = useState(false);
-  const [settings, setSettings] = useState<RoutingSettings>(() => ({
+  const [settings, setSettings] = useWorkspaceSnapshot<RoutingSettings | null>(
+    "routing-settings",
+    null,
+  );
+  const fallback: RoutingSettings = {
     default_failure_policy: defaultFailurePolicy(),
     allow_unmatched_failover: false,
     strategy: "failover_only",
     max_attempts: 6,
-  }));
+  };
   useEffect(() => {
-    if (!ready) {
-      setLoaded(false);
-      return;
-    }
+    if (!ready) return;
     let active = true;
-    setLoaded(false);
     void (async () => {
       try {
         const loaded = await getRoutingSettings();
         if (active && loaded) {
           setSettings(loaded);
-          setLoaded(true);
         }
       } catch {
         /* Editing explicit overrides remains possible while Core reconnects. */
@@ -38,6 +37,10 @@ export function useRoutingDefaults(
     return () => {
       active = false;
     };
-  }, [ready, revision]);
-  return { ...settings, loaded, reload };
+  }, [ready, revision, setSettings]);
+  return {
+    ...(settings ?? fallback),
+    loaded: ready && settings !== null,
+    reload,
+  };
 }

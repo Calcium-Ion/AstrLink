@@ -1,3 +1,4 @@
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { ActionGroup } from "@/components/ActionGroup";
 import {
   type FormEvent,
@@ -123,9 +124,9 @@ export function AccessTokenManager({
   const [copyingID, setCopyingID] = useState<string | null>(null);
   const [copiedID, setCopiedID] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [usageByToken, setUsageByToken] = useState<
+  const [usageByToken, setUsageByToken] = useWorkspaceSnapshot<
     Record<string, TokenUsageStats>
-  >({});
+  >(`token-usage:${coreSessionKey}`, {});
   const sessionGeneration = useRef(0);
   const revealGeneration = useRef(0);
   const usageGeneration = useRef(0);
@@ -144,7 +145,6 @@ export function AccessTokenManager({
     setCopyingID(null);
     setCopiedID(null);
     setError(null);
-    setUsageByToken({});
   }, [coreSessionKey]);
 
   useEffect(() => {
@@ -202,7 +202,7 @@ export function AccessTokenManager({
         return next;
       });
     }
-  }, [catalog.items, catalog.status, isReady]);
+  }, [catalog.items, catalog.status, isReady, setUsageByToken]);
 
   useEffect(() => {
     void refreshTokenUsage();

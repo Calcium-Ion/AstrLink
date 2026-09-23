@@ -1,3 +1,4 @@
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { SessionChannelBindings } from "./SessionChannelBindings";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -59,6 +60,7 @@ import {
 } from "./audit-bundle";
 import { buildSkillDiagnostic } from "./skill-diagnostic";
 import type { AuditSettings, AuditSettingsPatch } from "./audit-settings-model";
+import { useExportEnvironment } from "./export-environment";
 import {
   deleteRequestRecord,
   getAuditSettings,
@@ -231,20 +233,32 @@ export function RequestRecords({
   );
   const [view, setView] = useState<RecordsView>("monitor");
   const [kind, setKind] = useState<RecordsKind>("inference");
-  const [live, setLive] = useState<LiveState>({
-    items: [],
-    queued: [],
-    nextCursor: null,
-  });
-  const [filters, setFilters] = useState<RecordFilters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<RecordFilters>(() => ({
+    ...EMPTY_FILTERS,
+    localAccessTokenIds: initialLocalAccessTokenId
+      ? [initialLocalAccessTokenId]
+      : [],
+  }));
   const tokenFilter = () =>
     filters.localAccessTokenIds.length
       ? filters.localAccessTokenIds
       : undefined;
   const localAccessTokenFilterKey = filters.localAccessTokenIds.join("\u0000");
-  const [listStatus, setListStatus] = useState<
+  // Core applies the token filter, so each selection retains its own list.
+  const [live, setLive] = useWorkspaceSnapshot<LiveState>(
+    `request-list:${coreSessionKey}:${kind}:${localAccessTokenFilterKey}`,
+    {
+      items: [],
+      queued: [],
+      nextCursor: null,
+    },
+  );
+  const [listStatus, setListStatus] = useWorkspaceSnapshot<
     "blocked" | "loading" | "ready" | "error"
-  >("blocked");
+  >(
+    `request-list-status:${coreSessionKey}:${kind}:${localAccessTokenFilterKey}`,
+    "blocked",
+  );
   const [listError, setListError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
@@ -473,11 +487,13 @@ export function RequestRecords({
     pollFailureRef.current = 0;
     atTopRef.current = true;
     if (monitorScrollRef.current) monitorScrollRef.current.scrollTop = 0;
-    setLive({ items: [], queued: [], nextCursor: null });
+    if (!isReady) setLive({ items: [], queued: [], nextCursor: null });
     setLoadingMore(false);
     setListError(null);
     setSyncWarning(null);
-    setListStatus(isReady ? "loading" : "blocked");
+    setListStatus((current) =>
+      isReady ? (current === "ready" ? "ready" : "loading") : "blocked",
+    );
     if (!isReady) return;
     pollInFlightRef.current = true;
     void listRequestSessions({
@@ -1255,6 +1271,7 @@ export function RequestRecords({
             auditContent={auditContent}
             auditError={auditError}
             auditLoading={auditLoading}
+            auditSettings={settings}
             deleting={deleting}
             onBack={returnToMonitor}
             onClearDecrypted={clearDecrypted}
@@ -1600,7 +1617,7 @@ function SessionRow({
           model={session.requested_model}
           reasoningEffort={session.reasoning_effort}
         />
-        <span className="col-span-2 col-start-2 row-start-3 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs leading-5 text-muted-foreground @[680px]:row-start-2 @[680px]:grid-cols-[7rem_minmax(0,1fr)_12rem_4.5rem]">
+        <span className="col-span-2 col-start-2 row-start-3 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs leading-5 text-muted-foreground @[680px]:row-start-2 @[680px]:grid-cols-[7rem_minmax(0,1fr)_minmax(max-content,1fr)_4.5rem]">
           <code
             className="col-start-1 row-start-2 min-w-0 truncate font-mono text-xs @[680px]:row-start-1"
             title={protocolEntryPath(session.input_protocol)}
@@ -1626,6 +1643,11 @@ function SessionRow({
                 duration: formatDuration(sessionRuntimeMs(session, nowMs)),
               },
             )}
+            {session.output_tokens_per_second != null ? (
+              <span title={t("records.outputSpeed")}>
+                {` · ${session.output_tokens_per_second.toFixed(1)} tok/s`}
+              </span>
+            ) : null}
           </span>
           <time
             className="col-start-2 row-start-2 text-right tabular-nums @[680px]:col-start-4 @[680px]:row-start-1"
@@ -1652,6 +1674,7 @@ function RecordDetail({
   auditContent,
   auditLoading,
   auditError,
+  auditSettings,
   deleting,
   onBack,
   onDelete,
@@ -1668,6 +1691,7 @@ function RecordDetail({
   auditContent: AuditContent | null;
   auditLoading: boolean;
   auditError: string | null;
+  auditSettings: AuditSettings | null;
   deleting: boolean;
   onBack: () => void;
   onDelete: () => void;
@@ -1739,10 +1763,22 @@ function RecordDetail({
     };
   }, [childRoots]);
 
+  const exportEnvironment = useExportEnvironment(auditSettings);
+  // The same diagnosis context for copy and export: a record alone cannot
+  // show the session failures or settings that explain it.
+  const bundleContext = {
+    serviceLabel: serviceName,
+    session,
+    turns,
+    childrenByRoot,
+    serviceNames,
+    environment: exportEnvironment,
+  };
+
   const copyBundle = (includeBodies: boolean) => {
     const bundle = buildRecordBundle(record, auditContent, {
+      ...bundleContext,
       includeBodies,
-      serviceLabel: serviceName,
     });
     setBundleSize(includeBodies ? bundle.length : null);
     copyFeedback.copy(includeBodies ? "bundle" : "bundle-meta", bundle);
@@ -1763,8 +1799,8 @@ function RecordDetail({
 
   const exportBundle = (format: BundleFormat) => {
     const bundle = buildRecordBundle(record, auditContent, {
+      ...bundleContext,
       includeBodies: true,
-      serviceLabel: serviceName,
       format,
     });
     const filename = bundleFilename(record.id, format);

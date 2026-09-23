@@ -434,7 +434,7 @@ export function trajectoryRows(
       rows.push(turnHeaderRow(group));
     }
     for (const turn of group.records) {
-      rows.push(...recordRows(turn, childrenByRoot));
+      rows.push(...recordTrajectoryRows(turn, childrenByRoot));
     }
   }
   return rows;
@@ -524,7 +524,8 @@ function uniqueRowIds(rows: TrajectoryRow[]): TrajectoryRow[] {
   return rows;
 }
 
-function recordRows(
+/** One call's chain followed by its retry children, as the timeline draws it. */
+export function recordTrajectoryRows(
   turn: RequestRecord,
   childrenByRoot: Record<string, RequestRecord[]>,
 ): TrajectoryRow[] {

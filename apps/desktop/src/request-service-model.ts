@@ -57,7 +57,7 @@ export function routeServices(
 
 // Failures tied to one provider carry its id; a failure without one means no
 // provider could serve the request.
-function missingServiceLabel(
+export function missingServiceLabel(
   status: RequestRecord["status"] | RequestSession["status"],
 ) {
   switch (status) {
