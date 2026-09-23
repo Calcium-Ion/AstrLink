@@ -33,6 +33,11 @@ describe("ModelBrandIcon", () => {
     "kimi-k2",
     "glm-4.5",
     "minimax-m2",
+    "deepseek-v3.1",
+    "qwen3-coder-plus",
+    "doubao-seed-1.6",
+    "grok-4",
+    "o3-mini",
   ])("preserves the original brand artwork for %s", async (model) => {
     await act(async () => {
       root.render(<ModelBrandIcon model={model} />);
@@ -44,8 +49,13 @@ describe("ModelBrandIcon", () => {
     );
     const rendered = document.createElement("div");
     rendered.innerHTML = renderToStaticMarkup(<ModelBrandIcon model={model} />);
-    expect(rendered.querySelector("svg")?.outerHTML).toBe(
-      original.querySelector("svg")?.outerHTML,
+    // ModelIcon also spreads its avatar color `type` onto the SVG as an inert
+    // attribute; the artwork itself must match.
+    expect(rendered.querySelector("svg")?.innerHTML).toBe(
+      original.querySelector("svg")?.innerHTML,
+    );
+    expect(rendered.querySelector("svg")?.getAttribute("viewBox")).toBe(
+      original.querySelector("svg")?.getAttribute("viewBox"),
     );
     expect(container.querySelector("[data-animated-icon]")).toBeNull();
   });

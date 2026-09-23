@@ -37,7 +37,9 @@ explicit import aliases for these semantic replacements:
 | TriangleAlert         | BadgeAlert        |
 | Loader2               | LoaderCircle      |
 
-AI provider/model marks continue to use `@lobehub/icons` and its public model
-mapping. Unknown models use the animated `Brain` instead of that package's
-static fallback. AstrLink branding
+AI provider/model marks use `@lobehub/icons` artwork, deep-imported one SVG
+component at a time through `@/components/brand-icons`; its barrel and model
+mapping pull in every brand plus `@lobehub/ui`. `ModelBrandIcon` keeps its own
+keyword table for the brands it shows, and unknown models use the animated
+`Brain` instead of that package's static fallback. AstrLink branding
 and SVG data visualizations are separate from the UI icon library.

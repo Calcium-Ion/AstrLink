@@ -1,18 +1,18 @@
 import {
-  DeepSeek,
-  Doubao,
-  Grok,
-  Qwen,
-  Anthropic,
-  Claude,
-  Codex,
-  Gemini,
-  Kimi,
-  Minimax,
-  OpenAI,
-  OpenCode,
-  Zhipu,
-} from "@lobehub/icons";
+  AnthropicMono,
+  ClaudeColor,
+  CodexColor,
+  DeepSeekColor,
+  DoubaoColor,
+  GeminiColor,
+  GrokMono,
+  KimiMono,
+  MinimaxColor,
+  OpenAIMono,
+  OpenCodeMono,
+  QwenColor,
+  ZhipuColor,
+} from "@/components/brand-icons";
 import { Connect as Cable } from "@/components/icons";
 import type { ReactNode } from "react";
 
@@ -34,38 +34,38 @@ function kindMark(kind: ServiceKind, size: number): ReactNode {
         />
       );
     case "codex_subscription":
-      return <Codex.Color size={size} />;
+      return <CodexColor size={size} />;
     case "claude_subscription":
-      return <Claude.Color size={size} />;
+      return <ClaudeColor size={size} />;
     case "grok_subscription":
-      return <Grok size={size} />;
+      return <GrokMono size={size} />;
     case "opencode_go":
     case "opencode_zen":
-      return <OpenCode size={size} />;
+      return <OpenCodeMono size={size} />;
     case "moonshot":
     case "kimi_coding":
-      return <Kimi size={size} />;
+      return <KimiMono size={size} />;
     case "glm":
     case "glm_coding":
-      return <Zhipu.Color size={size} />;
+      return <ZhipuColor size={size} />;
     case "minimax":
     case "minimax_coding":
-      return <Minimax.Color size={size} />;
+      return <MinimaxColor size={size} />;
     case "openai":
     case "openai_compatible":
-      return <OpenAI size={size} />;
+      return <OpenAIMono size={size} />;
     case "anthropic":
-      return <Anthropic size={size} />;
+      return <AnthropicMono size={size} />;
     case "gemini":
-      return <Gemini.Color size={size} />;
+      return <GeminiColor size={size} />;
     case "deepseek":
-      return <DeepSeek.Color size={size} />;
+      return <DeepSeekColor size={size} />;
     case "qwen":
-      return <Qwen.Color size={size} />;
+      return <QwenColor size={size} />;
     case "doubao":
-      return <Doubao.Color size={size} />;
+      return <DoubaoColor size={size} />;
     case "xai":
-      return <Grok size={size} />;
+      return <GrokMono size={size} />;
     case "custom":
       return (
         <Cable
