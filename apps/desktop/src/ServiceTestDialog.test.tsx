@@ -167,6 +167,87 @@ it("filters only while typing, preserves custom IDs, and clears the filter when 
   });
 });
 
+it.each([0, 1, 2])(
+  "allows native model-list scrolling with wheel delta mode %i while keeping the background locked",
+  async (deltaMode) => {
+    await act(async () =>
+      root.render(
+        <ServiceTestDialog
+          service={{
+            ...service,
+            models: Array.from({ length: 100 }, (_, i) => `model-${i}`),
+          }}
+          onClose={() => {}}
+        />,
+      ),
+    );
+    await act(async () => modelInput().click());
+    const list = document.querySelector<HTMLElement>(
+      '[role="listbox"][aria-label="测试模型"]',
+    )!;
+    // Portaled options sit outside the dialog's DOM scroll-lock boundary.
+    expect(
+      document.querySelector('[data-slot="dialog-content"]')!.contains(list),
+    ).toBe(false);
+    list.style.overflowY = "auto";
+    Object.defineProperties(list, {
+      clientHeight: { value: 256, configurable: true },
+      scrollHeight: { value: 3200, configurable: true },
+    });
+    const wheel = () =>
+      new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: deltaMode === 0 ? 120 : 3,
+        deltaMode,
+      });
+    const backgroundWheel = wheel();
+    document.body.dispatchEvent(backgroundWheel);
+    expect(backgroundWheel.defaultPrevented).toBe(true);
+
+    const listWheel = wheel();
+    modelOptions()[0].querySelector("span")!.dispatchEvent(listWheel);
+    expect(listWheel.defaultPrevented).toBe(false);
+    expect(modelInput().value).toBe("model-0");
+    expect(modelInput().getAttribute("aria-expanded")).toBe("true");
+  },
+);
+
+it("allows wheel and touch scrolling in nested settings and model popovers", async () => {
+  await act(async () =>
+    root.render(<ServiceTestDialog service={service} onClose={() => {}} />),
+  );
+  await act(async () => button("测试配置").click());
+  const settings = document.querySelector<HTMLElement>(
+    '[data-slot="popover-content"]',
+  )!;
+  const input = settings.querySelector<HTMLInputElement>(
+    'input[aria-label="测试模型"]',
+  )!;
+  await act(async () => input.click());
+
+  for (const target of [settings, modelOptions()[0]]) {
+    const touch = new Touch({ identifier: 1, target, clientY: 120 });
+    for (const event of [
+      new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: 120,
+      }),
+      new TouchEvent("touchmove", {
+        bubbles: true,
+        cancelable: true,
+        touches: [touch],
+        changedTouches: [touch],
+      }),
+    ]) {
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+  }
+  expect(input.getAttribute("aria-expanded")).toBe("true");
+});
+
 it("supports keyboard selection and dismisses the model list without closing the containing dialog", async () => {
   const onClose = vi.fn();
   await act(async () =>
