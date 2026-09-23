@@ -57,7 +57,7 @@ export function UsageMeter({
               </Tooltip>
             </TooltipProvider>
           ) : null}
-          <span aria-hidden="true">{Math.round(percent)}%</span>
+          <span aria-hidden="true">{valueLabel}</span>
         </span>
       </div>
       <Progress

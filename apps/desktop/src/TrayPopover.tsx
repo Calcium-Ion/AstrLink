@@ -466,7 +466,7 @@ export function TrayPopoverPanel({
                           : "success"
                     }
                     value={window.used_percent}
-                    valueLabel={`${Math.round(window.used_percent)}%`}
+                    valueLabel={t("usage.usedPercent", { percent: Math.round(window.used_percent) })}
                   />
                 ))}
               </div>

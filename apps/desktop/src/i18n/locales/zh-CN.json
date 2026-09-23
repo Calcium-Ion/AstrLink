@@ -895,6 +895,7 @@
     "extraPeriod": "{{name}} · 周期",
     "limitReached": "额度已用尽",
     "resetAvailable": "可重置 ×{{count}}",
+    "usedPercent": "已用 {{percent}}%",
     "remainingPercent": "剩余 {{percent}}%"
   },
   "privacy": {

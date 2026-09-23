@@ -187,7 +187,7 @@ describe("TrayPopoverPanel", () => {
       },
     });
     expect(container.textContent).toContain("Kimi · Monthly");
-    expect(container.textContent).toContain("42%");
+    expect(container.textContent).toContain("已用 42%");
   });
 
   it("flags an agent reading records through MCP", async () => {
