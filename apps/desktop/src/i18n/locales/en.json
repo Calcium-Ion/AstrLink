@@ -895,8 +895,7 @@
     "extraPeriod": "{{name}} · period",
     "limitReached": "Usage limit reached",
     "resetAvailable": "Resets left ×{{count}}",
-    "usedPercent": "{{percent}}% used",
-    "remainingPercent": "{{percent}}% remaining"
+    "usedPercent": "{{percent}}% used"
   },
   "privacy": {
     "name": "Privacy protection",

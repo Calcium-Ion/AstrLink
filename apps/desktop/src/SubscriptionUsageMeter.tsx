@@ -163,17 +163,17 @@ function UsageWindowRow({
   const label = windowLabel(window.limit_window_seconds, isSecondary);
   const reset = formatResetCountdown(window, now);
   const tone = usageWindowTone(window.used_percent, limitReached);
-  const remainingPercent = 100 - usageBarPercent(window.used_percent);
+  const usedPercent = usageBarPercent(window.used_percent);
   return (
     <div data-tone={tone}>
       <UsageMeter
         caption={reset}
         label={label}
-        valueLabel={t("usage.remainingPercent", {
-          percent: Math.round(remainingPercent),
+        valueLabel={t("usage.usedPercent", {
+          percent: Math.round(usedPercent),
         })}
         warning={
-          limitReached || usageBarPercent(window.used_percent) >= 100
+          limitReached || usedPercent >= 100
             ? t("usage.limitReached")
             : undefined
         }
@@ -184,7 +184,7 @@ function UsageWindowRow({
               ? "destructive"
               : "warning"
         }
-        value={remainingPercent}
+        value={usedPercent}
       />
     </div>
   );
