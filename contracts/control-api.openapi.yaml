@@ -2713,7 +2713,8 @@ components:
           required: [token_id]
           properties:
             token_id:
-              $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId    BillingSummary:
+              $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+    BillingSummary:
       allOf:
         - { $ref: "#/components/schemas/BillingAmounts" }
         - type: object
