@@ -18,6 +18,7 @@ body:
       value: |
         - Docs: https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides
         - Development and verification: https://github.com/Calcium-Ion/AstrLink/blob/main/CONTRIBUTING.md
+        - New subscription or Coding Plan providers must support direct integration; providers requiring additional protocol conversion, such as Kiro, Antigravity, or Cursor, are not accepted at this time.
         - State facts and evidence concisely. Do not paste unfiltered AI-generated text in the issue body or in later comments.
         - Warning: issues with this template removed, section headings deleted, or content cleared may be closed directly. Repeated submissions of unfiltered AI-generated text, or repeated abusive submissions, may result in a block. Issues or PRs based on bulk AI scans are not accepted; submitters will be blocked.
         - Redact API keys, OAuth tokens, cookies, private prompts, and personal data from requests, logs, and screenshots.

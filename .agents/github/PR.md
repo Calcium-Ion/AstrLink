@@ -70,6 +70,9 @@ it into a PR description.
 If the change matches any item below, tell the user this repository does not
 accept it and **do not open a PR**.
 
+- New subscription or Coding Plan providers must support direct integration;
+  providers requiring additional protocol conversion, such as Kiro, Antigravity,
+  or Cursor, are not accepted at this time.
 - Usage, configuration, or integration (answer from docs and code instead)
 
 - Matched: yes/no

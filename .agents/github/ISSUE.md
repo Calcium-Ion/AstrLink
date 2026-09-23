@@ -53,6 +53,9 @@ it into an issue description.
 If the request matches any item below, tell the user this repository does not
 accept it, point them to the right place when there is one, and **do not file**.
 
+- New subscription or Coding Plan providers must support direct integration;
+  providers requiring additional protocol conversion, such as Kiro, Antigravity,
+  or Cursor, are not accepted at this time.
 - Usage, configuration, or integration questions (answer from docs and code
   instead)
 
