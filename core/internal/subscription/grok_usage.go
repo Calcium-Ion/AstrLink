@@ -103,6 +103,12 @@ func DecodeGrokUsage(body []byte, now time.Time) (contract.SubscriptionUsage, er
 	} else if config.MonthlyLimit != nil && config.MonthlyLimit.Val > 0 && config.Used != nil {
 		value := float64(config.Used.Val) / float64(config.MonthlyLimit.Val) * 100
 		used = &value
+	} else if config.CurrentPeriod != nil || config.BillingPeriodStart != "" || config.BillingPeriodEnd != "" {
+		// proto3 JSON omits zero-valued scalars. A missing creditUsagePercent
+		// means 0% here, not "usage unavailable"; the period metadata still
+		// describes the active quota window.
+		zero := 0.0
+		used = &zero
 	}
 	start, end := "", ""
 	periodType := ""

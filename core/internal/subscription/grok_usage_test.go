@@ -62,3 +62,42 @@ func TestDecodeGrokUsageRejectsEmptyOrPersonalPayloads(t *testing.T) {
 		t.Fatalf("usage = %#v err=%v", usage, err)
 	}
 }
+
+func TestDecodeGrokUsageTreatsOmittedZeroPercentAsZero(t *testing.T) {
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	usage, err := subscription.DecodeGrokUsage([]byte(`{
+"config": {
+"currentPeriod": {
+"type": "USAGE_PERIOD_TYPE_WEEKLY",
+"start": "2026-09-15T00:00:00Z",
+"end": "2026-09-22T00:00:00Z"
+},
+"isUnifiedBillingUser": true
+}
+}`), now)
+	if err != nil {
+		t.Fatalf("DecodeGrokUsage() = %v", err)
+	}
+	if usage.Primary == nil || usage.Primary.UsedPercent != 0 ||
+		usage.Primary.LimitWindowSeconds == nil || *usage.Primary.LimitWindowSeconds != 7*24*3600 ||
+		usage.Primary.ResetAt == nil || !usage.Primary.ResetAt.Equal(time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)) ||
+		usage.LimitReached == nil || *usage.LimitReached || usage.Credits != nil {
+		t.Fatalf("usage = %#v primary=%#v", usage, usage.Primary)
+	}
+}
+
+func TestDecodeGrokUsageTreatsOmittedZeroPercentWithLegacyPeriodAsZero(t *testing.T) {
+	now := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+	usage, err := subscription.DecodeGrokUsage([]byte(`{"config": {
+"billingPeriodStart": "2026-04-01T00:00:00Z",
+"billingPeriodEnd": "2026-05-01T00:00:00Z"
+}}`), now)
+	if err != nil {
+		t.Fatalf("DecodeGrokUsage() = %v", err)
+	}
+	if usage.Primary == nil || usage.Primary.UsedPercent != 0 ||
+		usage.Primary.LimitWindowSeconds == nil || *usage.Primary.LimitWindowSeconds != 30*24*3600 ||
+		usage.LimitReached == nil || *usage.LimitReached {
+		t.Fatalf("usage = %#v primary=%#v", usage, usage.Primary)
+	}
+}
