@@ -1573,13 +1573,20 @@ describe("SafetyPolicy", () => {
     ).not.toBeNull();
   });
 
-  it("prompts that privacy protection is disabled instead of showing no findings", async () => {
+  it("previews a disabled policy as enabled without saving the override", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({ enabled: false, detector: "regex" }),
+    );
+    bridgeMocks.dryRunPrivacyPolicy.mockResolvedValueOnce({
+      decision: "redact",
+      findings_summary: "email=1",
+      findings: [],
+      suppressed_findings: [],
+      redactions: [],
+      inspected_body: '{"messages":[{"content":"alice@example.com","role":"user"}]}',
+    });
     await renderPolicy();
     await openDryRun();
-
-    expect(container.textContent).toContain(
-      "隐私保护未开启，请先开启后再试运行",
-    );
 
     await act(async () => {
       actionButton("开始检测").click();
@@ -1587,18 +1594,26 @@ describe("SafetyPolicy", () => {
     });
     await flush();
 
-    expect(bridgeMocks.dryRunPrivacyPolicy).not.toHaveBeenCalled();
-    expect(container.textContent).toContain(
-      "隐私保护未开启，请先开启后再试运行。",
-    );
+    expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenCalledWith({
+      protocol: "openai.chat",
+      sample_text: expect.any(String),
+      policy: {
+        enabled: true,
+        detector: "regex",
+        local_model_id: null,
+        min_confidence: 0.6,
+        request_action: "redact",
+      },
+    });
+    expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
     expect(
       container.querySelector('[data-testid="safety-dry-run-result"]'),
-    ).toBeNull();
+    ).not.toBeNull();
     expect(
-      document
-        .querySelector('[role="tab"][aria-label="试运行"]')
-        ?.getAttribute("data-state"),
-    ).toBe("active");
+      container
+        .querySelector('[role="switch"][aria-label="启用隐私保护"]')
+        ?.getAttribute("aria-checked"),
+    ).toBe("false");
   });
 
   it("switches regex source and can seed custom rules from the builtin catalog", async () => {

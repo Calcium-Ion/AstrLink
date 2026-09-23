@@ -1579,12 +1579,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
     ) {
       return;
     }
-    if (!record.policy.enabled) {
-      const message = t("safety.dryRunOff");
-      setDryRunResult(null);
-      setDryRunError(message);
-      return;
-    }
+
     const sample = dryRunSample;
     if (sample.trim() === "") {
       setDryRunError(t("privacy.sampleRequired"));
@@ -1598,7 +1593,6 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
       return;
     }
     if (
-      record.policy.enabled &&
       record.policy.detector === "local_model" &&
       !selectedModelReady
     ) {
@@ -1616,7 +1610,8 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
         protocol: dryRunProtocol,
         sample_text: sample,
         policy: {
-          enabled: record.policy.enabled,
+          // Dry run previews the policy as enabled; this override is never saved.
+          enabled: true,
           detector: record.policy.detector,
           local_model_id: record.policy.local_model_id,
           min_confidence: record.policy.min_confidence,
@@ -3089,8 +3084,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                           saving ||
                           dryRunSample.trim() === "" ||
                           dryRunSampleOverLimit ||
-                          (policy.enabled &&
-                            policy.detector === "local_model" &&
+                          (policy.detector === "local_model" &&
                             !selectedModelReady)
                         }
                         onClick={() => void runDryRun()}
@@ -3249,19 +3243,15 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                       title={t(
                         dryRunSampleOverLimit
                           ? "safety.sampleTooLongTitle"
-                          : !policy.enabled
-                            ? "safety.testOffTitle"
-                            : "safety.notYetRun",
+                          : "safety.notYetRun",
                       )}
                       description={t(
                         dryRunSampleOverLimit
                           ? "safety.sampleTooLongHint"
-                          : !policy.enabled
-                            ? "safety.dryRunOffHint"
-                            : policy.detector === "local_model" &&
-                                !selectedModelReady
-                              ? "safety.needReadyModelHint"
-                              : "safety.testEmptyHint",
+                          : policy.detector === "local_model" &&
+                              !selectedModelReady
+                            ? "safety.needReadyModelHint"
+                            : "safety.testEmptyHint",
                       )}
                     />
                   )}
