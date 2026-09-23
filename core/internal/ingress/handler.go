@@ -380,8 +380,20 @@ func (handler *Handler) applyPrivacy(
 		finish = buffered.Close
 	}
 	session.beginPrivacyInspection(request.Context(), privacyInspectionSummary(policy.Mode, len(body)))
+	inspectCtx := privacy.WithInspectionProgress(request.Context(), func(progress privacy.InspectionProgress) {
+		// A request served from cache is decided at once; rewriting its
+		// record first would only cost a write.
+		if progress.Batches == 0 {
+			return
+		}
+		session.updatePrivacyInspection(
+			request.Context(),
+			privacyProgressSummary(policy.Mode, len(body), progress),
+			privacyBatchProgress(progress),
+		)
+	})
 	result, err := handler.privacyFilter.Inspect(
-		request.Context(),
+		inspectCtx,
 		policy,
 		classified.Protocol,
 		body,
@@ -449,6 +461,22 @@ func privacyInspectionSummary(mode privacy.Mode, size int) string {
 	return summary
 }
 
+// privacyProgressSummary adds how far the model has come. Cached text never
+// reaches the model, so it is counted apart from the model's share.
+func privacyProgressSummary(mode privacy.Mode, size int, progress privacy.InspectionProgress) string {
+	summary := privacyInspectionSummary(mode, size) + " · model " +
+		formatBodySize(progress.InspectedBytes) + " of " +
+		formatBodySize(progress.Bytes-progress.CachedBytes)
+	if progress.CachedBytes > 0 {
+		summary += " · cached " + formatBodySize(progress.CachedBytes)
+	}
+	return summary + " · " + privacyBatchProgress(progress)
+}
+
+func privacyBatchProgress(progress privacy.InspectionProgress) string {
+	return fmt.Sprintf("batch %d/%d", progress.CompletedBatches, progress.Batches)
+}
+
 func formatBodySize(size int) string {
 	if size < 1024 {
 		return fmt.Sprintf("%d B", size)
@@ -501,6 +529,11 @@ func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *h
 		errors.Is(err, privacy.ErrDetectorLimit),
 		errors.Is(err, privacy.ErrDetectorTimeout):
 		detail, message := detectorFailure(err)
+		// A stuck frame stops at the same batch on every retry; an inspection
+		// that ran out of time stops further along each time.
+		if batch := session.privacyInspectionBatch(); batch != "" {
+			detail += " · " + batch
+		}
 		writeInferenceError(writer, http.StatusServiceUnavailable, "safety_engine_unavailable", "local safety engine is unavailable", true, nil)
 		session.notePrivacyDecision("safety_engine_unavailable · "+detail, contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("safety_engine_unavailable", message, true))

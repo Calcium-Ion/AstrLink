@@ -132,6 +132,7 @@ type recordSession struct {
 	plan                     *contract.ExecutionPlan
 	errorSummary             *contract.ErrorSummary
 	privacyRestore           *contract.PrivacyRestoreSummary
+	privacyBatch             string
 	attemptIndex             int
 	childCount               int
 	networkAttemptOpen       bool
@@ -752,6 +753,7 @@ func (session *recordSession) beginPrivacyAttempt() {
 		return
 	}
 	session.privacyRestore = nil
+	session.privacyBatch = ""
 }
 
 // beginPrivacyInspection opens the privacy phase before the detector runs. A
@@ -764,6 +766,32 @@ func (session *recordSession) beginPrivacyInspection(ctx context.Context, summar
 	}
 	session.addEvent(contract.RequestEventPrivacy, contract.RequestStatusPending, summary)
 	session.persistLiveMetadata(ctx)
+}
+
+// updatePrivacyInspection rewrites the open privacy phase as the detector
+// works through its batches. batch is kept so a detector failure can record
+// where the inspection stopped.
+func (session *recordSession) updatePrivacyInspection(ctx context.Context, summary, batch string) {
+	if session == nil {
+		return
+	}
+	session.privacyBatch = batch
+	for index := len(session.events) - 1; index >= 0; index-- {
+		event := &session.events[index]
+		if event.Kind != contract.RequestEventPrivacy || event.EndedAt != nil {
+			continue
+		}
+		event.Summary = sanitizeSummary(summary)
+		session.persistLiveMetadata(ctx)
+		return
+	}
+}
+
+func (session *recordSession) privacyInspectionBatch() string {
+	if session == nil {
+		return ""
+	}
+	return session.privacyBatch
 }
 
 // persistLiveMetadata refreshes the pending row without touching audit blobs.

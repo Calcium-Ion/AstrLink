@@ -110,7 +110,7 @@ func TestClientSerializesConcurrentRequests(t *testing.T) {
 			defer wait.Done()
 			findings, err := client.Detect(
 				context.Background(),
-				testDetectInput(testInstallationID),
+				testDetectValue(testInstallationID, fmt.Sprintf("person%d@example.test", index)),
 			)
 			if err == nil && len(findings) != 1 {
 				err = errors.New("unexpected finding count")
@@ -231,7 +231,10 @@ func TestClientRecoversWhenHotWorkerCrashesAfterSuccessfulRequest(t *testing.T) 
 	first := client.process
 	client.mu.Unlock()
 
-	if _, err := client.Detect(context.Background(), input); err != nil {
+	if _, err := client.Detect(
+		context.Background(),
+		testDetectValue(testInstallationID, "second@example.test"),
+	); err != nil {
 		t.Fatalf("Detect after hot worker crash: %v", err)
 	}
 	client.mu.Lock()
@@ -827,7 +830,10 @@ func TestClientReusesHotWorkerWithoutRehashingInstallation(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Remove manifest: %v", err)
 	}
-	if _, err := client.Detect(context.Background(), input); err != nil {
+	if _, err := client.Detect(
+		context.Background(),
+		testDetectValue(testInstallationID, "second@example.test"),
+	); err != nil {
 		t.Fatalf("hot Detect: %v", err)
 	}
 	client.mu.Lock()
@@ -864,7 +870,10 @@ func TestClientReusesSuccessfulValidationAfterWorkerRestart(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Remove manifest: %v", err)
 	}
-	if _, err := client.Detect(context.Background(), input); err != nil {
+	if _, err := client.Detect(
+		context.Background(),
+		testDetectValue(testInstallationID, "second@example.test"),
+	); err != nil {
 		t.Fatalf("Detect after worker restart: %v", err)
 	}
 	client.mu.Lock()
@@ -1007,9 +1016,15 @@ func localModelPolicy(id contract.PrivacyModelID) contract.Policy {
 }
 
 func testDetectInput(id contract.PrivacyModelID) privacy.DetectInput {
+	return testDetectValue(id, "person@example.test")
+}
+
+// testDetectValue gives a call text of its own, so the cache cannot answer
+// for the worker.
+func testDetectValue(id contract.PrivacyModelID, value string) privacy.DetectInput {
 	return privacy.DetectInput{
 		ExpectedLocalModelID: id,
-		Segments:             []privacy.Segment{{Value: "person@example.test"}},
+		Segments:             []privacy.Segment{{Value: value}},
 	}
 }
 
@@ -1174,6 +1189,29 @@ func TestPrivacyWorkerHelper(t *testing.T) {
 				os.Exit(9)
 			}
 		}
+		if mode == "per_text" || mode == "hang_on_marker" {
+			if logTestFrame(modelDirectory, request) != nil {
+				os.Exit(3)
+			}
+			score := 0.99
+			spans := make([]workerSpan, 0, len(request.Texts))
+			for _, text := range request.Texts {
+				if mode == "hang_on_marker" && strings.Contains(text.Text, "HANG") {
+					_, _ = readFrame(os.Stdin)
+					os.Exit(0)
+				}
+				if strings.Contains(text.Text, "@") {
+					spans = append(spans, workerSpan{
+						TextID: text.ID, Label: "email", Start: 0, End: len(text.Text), Score: &score,
+					})
+				}
+			}
+			payload, err := json.Marshal(workerResponse{Version: protocolVersion, ID: request.ID, Spans: &spans})
+			if err != nil || writeFrame(os.Stdout, payload) != nil {
+				os.Exit(4)
+			}
+			continue
+		}
 		label := "email"
 		if mode == "invalid_label" {
 			label = "not_official"
@@ -1249,6 +1287,28 @@ func TestPrivacyWorkerHelper(t *testing.T) {
 			os.Exit(4)
 		}
 	}
+}
+
+// logTestFrame appends the texts of one frame, so a test can see exactly what
+// reached the model.
+func logTestFrame(modelDirectory string, request workerRequest) error {
+	texts := make([]string, len(request.Texts))
+	for index, text := range request.Texts {
+		texts[index] = text.Text
+	}
+	line, err := json.Marshal(texts)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(filepath.Join(modelDirectory, testFrameLog), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(append(line, '\n'))
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func helperModelDirectory(arguments []string) string {

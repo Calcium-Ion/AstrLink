@@ -43,6 +43,12 @@ const (
 	maxModelFiles                = 128
 	maxModelLabels               = 256
 	maxModelRequestTokens        = 128 * 1024
+
+	defaultBatchBytes = 8 << 10
+	// A whole inspection may take this long per batch of pending text, which
+	// is generous for the slowest supported model.
+	inspectionBudgetBase     = 30 * time.Second
+	inspectionBudgetPerBatch = 15 * time.Second
 )
 
 var tensorNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,127}$`)
@@ -72,8 +78,11 @@ type Client struct {
 	model          ReadyInstallationProvider
 	timeout        time.Duration
 	command        func(string, ...string) *exec.Cmd
+	now            func() time.Time
 	slot           chan struct{}
 	nextRequestID  atomic.Uint64
+	cache          *detectionCache
+	batchBytes     int
 
 	mu                    sync.Mutex
 	active                bool
@@ -124,7 +133,10 @@ func New(config Config) (*Client, error) {
 		model:          config.Model,
 		timeout:        config.Timeout,
 		command:        exec.Command,
+		now:            time.Now,
 		slot:           make(chan struct{}, 1),
+		cache:          newDetectionCache(),
+		batchBytes:     defaultBatchBytes,
 		change:         make(chan struct{}),
 	}, nil
 }
@@ -177,9 +189,19 @@ func (client *Client) Detect(ctx context.Context, input privacy.DetectInput) ([]
 	if len(input.Segments) == 0 {
 		return nil, nil
 	}
+	started := client.now()
 	expectedModelID := input.ExpectedLocalModelID
 	if expectedModelID.Validate() != nil || !client.expectedModelActive(expectedModelID) {
 		return nil, privacy.ErrDetectorUnavailable
+	}
+	inspection := client.planInspection(input.Segments)
+	// Cached spans are the model's own earlier judgement, so a request served
+	// entirely from cache passes without the slot, even while the worker is
+	// latched as failed.
+	client.lookupCached(inspection, expectedModelID)
+	if len(inspection.pending) == 0 {
+		privacy.ReportInspectionProgress(ctx, inspection.progress)
+		return inspection.findings, nil
 	}
 	select {
 	case client.slot <- struct{}{}:
@@ -188,23 +210,54 @@ func (client *Client) Detect(ctx context.Context, input privacy.DetectInput) ([]
 		return nil, ctx.Err()
 	}
 
+	// The previous slot holder may have inspected the same segments.
+	client.lookupCached(inspection, expectedModelID)
+	budget := client.inspectionBudget(inspection.pendingBytes())
+	batches := inspection.batches(client.batchBytes)
+	inspection.progress.Batches = len(batches)
+	privacy.ReportInspectionProgress(ctx, inspection.progress)
+	for index, batch := range batches {
+		if index > 0 && client.now().Sub(started) > budget {
+			return nil, privacy.ErrDetectorTimeout
+		}
+		segments := make([]privacy.Segment, len(batch))
+		for position, segment := range batch {
+			segments[position] = inspection.segments[segment]
+		}
+		findings, key, err := client.detectBatch(ctx, expectedModelID, segments)
+		if err != nil {
+			return nil, err
+		}
+		inspection.complete(client.cache, key, batch, findings)
+		privacy.ReportInspectionProgress(ctx, inspection.progress)
+	}
+	return inspection.findings, nil
+}
+
+// detectBatch sends one frame. Each batch has its own timeout and startup
+// retry, so a stuck frame loses only itself: finished batches are cached.
+func (client *Client) detectBatch(
+	ctx context.Context,
+	expectedModelID contract.PrivacyModelID,
+	segments []privacy.Segment,
+) ([]privacy.Finding, modelKey, error) {
 	requestID := client.nextRequestID.Add(1)
 	for attempt := 0; attempt <= maxStartupRetries; attempt++ {
 		process, err := client.ensureProcess(ctx, expectedModelID)
 		if err != nil {
 			if errors.Is(err, context.Canceled) ||
 				errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+				return nil, modelKey{}, err
 			}
-			return nil, privacy.ErrDetectorUnavailable
+			return nil, modelKey{}, privacy.ErrDetectorUnavailable
 		}
-		request, modelSegments, prefixLengths, err := contextualWorkerRequest(requestID, input.Segments, process.inputContract)
+		request, modelSegments, prefixLengths, err := contextualWorkerRequest(requestID, segments, process.inputContract)
 		if err != nil {
-			return nil, err
+			return nil, modelKey{}, err
 		}
 		payload, err := json.Marshal(request)
 		if err != nil || len(payload) == 0 || len(payload) > maxFrameBytes {
-			return nil, privacy.ErrDetectorLimit
+			return nil, modelKey{}, privacy.ErrDetectorLimit
 		}
 		response, err := client.exchange(ctx, process, payload)
 		if err == nil {
@@ -217,15 +270,16 @@ func (client *Client) Detect(ctx context.Context, input privacy.DetectInput) ([]
 				client.failProcess(process)
 			}
 			if responseErr != nil {
-				return nil, responseErr
+				return nil, modelKey{}, responseErr
 			}
-			return projectContextFindings(findings, prefixLengths)
+			projected, err := projectContextFindings(findings, prefixLengths)
+			return projected, process.key(), err
 		}
 		if errors.Is(err, context.Canceled) ||
 			errors.Is(err, context.DeadlineExceeded) ||
 			errors.Is(err, privacy.ErrDetectorTimeout) {
 			client.stopProcess(process)
-			return nil, err
+			return nil, modelKey{}, err
 		}
 		if attempt == maxStartupRetries {
 			client.failProcess(process)
@@ -233,7 +287,124 @@ func (client *Client) Detect(ctx context.Context, input privacy.DetectInput) ([]
 		}
 		client.stopProcess(process)
 	}
-	return nil, privacy.ErrDetectorUnavailable
+	return nil, modelKey{}, privacy.ErrDetectorUnavailable
+}
+
+// inspectionBudget bounds a whole Detect for clients that never give up. It
+// is checked only between batches, so it never kills the worker, a request
+// always finishes at least one batch, and the retry reuses what finished.
+func (client *Client) inspectionBudget(pendingBytes int) time.Duration {
+	batches := (pendingBytes + client.batchBytes - 1) / client.batchBytes
+	return max(client.timeout, inspectionBudgetBase+time.Duration(batches)*inspectionBudgetPerBatch)
+}
+
+// lookupCached serves pending segments from the cache of the installation
+// that would inspect them now, with the readiness checks ensureProcess
+// applies. An installation that is not ready is left to ensureProcess.
+func (client *Client) lookupCached(inspection *inspection, modelID contract.PrivacyModelID) {
+	installation, ready := client.model.ReadyInstallation(modelID)
+	if !ready || installation.Directory == "" || installation.Identity == "" ||
+		!validSHA256(installation.ManifestSHA256) {
+		return
+	}
+	inspection.lookup(client.cache, installationKey(modelID, installation))
+}
+
+// inspection tracks one Detect: findings so far, indexed by request segment,
+// and the segments the model has yet to see.
+type inspection struct {
+	segments []privacy.Segment
+	digests  []segmentDigest
+	sizes    []int
+	pending  []int
+	findings []privacy.Finding
+	progress privacy.InspectionProgress
+}
+
+func (client *Client) planInspection(segments []privacy.Segment) *inspection {
+	plan := &inspection{
+		segments: segments,
+		digests:  make([]segmentDigest, len(segments)),
+		sizes:    make([]int, len(segments)),
+	}
+	for index, segment := range segments {
+		// The model cannot find anything in an empty value; a finding inside
+		// the context prefix alone is discarded.
+		if segment.Value == "" {
+			continue
+		}
+		plan.digests[index] = client.cache.digest(segment)
+		plan.sizes[index] = len(segment.ContextPrefix) + len(segment.Value)
+		plan.pending = append(plan.pending, index)
+		plan.progress.Segments++
+		plan.progress.Bytes += plan.sizes[index]
+	}
+	return plan
+}
+
+func (plan *inspection) lookup(cache *detectionCache, key modelKey) {
+	remaining := plan.pending[:0]
+	for _, index := range plan.pending {
+		findings, hit := cache.lookup(key, plan.digests[index], plan.segments[index].Value)
+		if !hit {
+			remaining = append(remaining, index)
+			continue
+		}
+		plan.add(index, findings)
+		plan.progress.CachedSegments++
+		plan.progress.CachedBytes += plan.sizes[index]
+	}
+	plan.pending = remaining
+}
+
+func (plan *inspection) pendingBytes() int {
+	total := 0
+	for _, index := range plan.pending {
+		total += plan.sizes[index]
+	}
+	return total
+}
+
+// batches splits the pending segments by model bytes, in request order. A
+// segment larger than the limit travels alone.
+func (plan *inspection) batches(limit int) [][]int {
+	var batches [][]int
+	var current []int
+	size := 0
+	for _, index := range plan.pending {
+		if len(current) > 0 && size+plan.sizes[index] > limit {
+			batches = append(batches, current)
+			current, size = nil, 0
+		}
+		current = append(current, index)
+		size += plan.sizes[index]
+	}
+	if len(current) > 0 {
+		batches = append(batches, current)
+	}
+	return batches
+}
+
+// complete caches a finished batch per segment, including segments without
+// findings: most text holds none, and those are the most valuable hits.
+func (plan *inspection) complete(cache *detectionCache, key modelKey, batch []int, findings []privacy.Finding) {
+	bySegment := make([][]privacy.Finding, len(batch))
+	for _, finding := range findings {
+		bySegment[finding.Segment] = append(bySegment[finding.Segment], finding)
+	}
+	for position, index := range batch {
+		cache.store(key, plan.digests[index], bySegment[position])
+		plan.add(index, bySegment[position])
+		plan.progress.InspectedBytes += plan.sizes[index]
+	}
+	plan.progress.CompletedBatches++
+}
+
+func (plan *inspection) add(index int, findings []privacy.Finding) {
+	for _, finding := range findings {
+		finding.Segment = index
+		plan.findings = append(plan.findings, finding)
+	}
 }
 
 func (client *Client) expectedModelActive(expected contract.PrivacyModelID) bool {
@@ -419,6 +590,7 @@ func (client *Client) invalidateLocked() {
 	client.verified = nil
 	client.verifiedInputContract = ""
 	client.failed = nil
+	client.cache.clear()
 }
 
 func (client *Client) resetCachedKeyLocked(key modelKey) {
