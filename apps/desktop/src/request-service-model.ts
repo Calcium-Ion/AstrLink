@@ -19,15 +19,23 @@ export function requestServiceIdentity(
 ): RequestServiceIdentity {
   const id = record.service_id;
   if (!id) {
-    return {
-      id: null,
-      name: i18n.t(
-        record.status === "pending"
-          ? "records.selectingService"
-          : "records.noService",
-      ),
-    };
+    return { id: null, name: i18n.t(missingServiceLabel(record.status)) };
   }
   const service = services[id];
   return { id, name: service?.name ?? id, kind: service?.kind };
+}
+
+// Failures tied to one provider carry its id; a failure without one means no
+// provider could serve the request.
+function missingServiceLabel(
+  status: RequestRecord["status"] | RequestSession["status"],
+) {
+  switch (status) {
+    case "pending":
+      return "records.selectingService";
+    case "failed":
+      return "records.allServicesFailed";
+    default:
+      return "records.noService";
+  }
 }

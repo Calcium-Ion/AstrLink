@@ -1365,6 +1365,7 @@
     "provider": "API provider",
     "latestProvider": "Latest API provider",
     "noService": "No API provider selected",
+    "allServicesFailed": "All API providers failed",
     "exported": "Exported {{path}}",
     "exportFailed": "Export failed",
     "live": "Live",

@@ -387,7 +387,7 @@ describe("RequestRecords", () => {
     expect(provider?.getAttribute("title")).toContain(service.id);
   });
 
-  it("distinguishes pending selection, an unrouted result and a removed provider", async () => {
+  it("distinguishes pending selection, an unrouted result, exhausted providers and a removed provider", async () => {
     bridgeMocks.listRequestSessions.mockResolvedValue({
       items: [
         sessionFromRecord(firstRecord, {
@@ -399,6 +399,11 @@ describe("RequestRecords", () => {
           id: "blocked",
           service_id: null,
           status: "blocked",
+        }),
+        sessionFromRecord(firstRecord, {
+          id: "failed",
+          service_id: null,
+          status: "failed",
         }),
         sessionFromRecord(firstRecord, {
           id: "removed",
@@ -416,6 +421,7 @@ describe("RequestRecords", () => {
     expect(labels).toEqual([
       `${i18n.t("records.provider")}${i18n.t("records.selectingService")}`,
       `${i18n.t("records.provider")}${i18n.t("records.noService")}`,
+      `${i18n.t("records.provider")}${i18n.t("records.allServicesFailed")}`,
       `${i18n.t("records.provider")}service_removed`,
     ]);
   });

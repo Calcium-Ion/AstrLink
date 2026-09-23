@@ -1365,6 +1365,7 @@
     "provider": "API 提供商",
     "latestProvider": "最近 API 提供商",
     "noService": "未选择 API 提供商",
+    "allServicesFailed": "所有 API 提供商均失败",
     "exported": "已导出 {{path}}",
     "exportFailed": "导出失败",
     "live": "实时监控",
