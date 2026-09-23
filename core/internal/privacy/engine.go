@@ -99,6 +99,9 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 		return Result{}, normalizeDetectorError(ctx, err)
 	}
 	findings, err = normalizeFindings(findings, segments)
+	if err == nil {
+		findings, err = alignStructuredFindings(extracted, findings)
+	}
 	if err != nil {
 		if errors.Is(err, ErrDetectorLimit) {
 			return Result{}, ErrDetectorLimit
@@ -244,13 +247,6 @@ func normalizeFindings(findings []Finding, segments []Segment) ([]Finding, error
 	if len(findings) > maxDetectorFindings {
 		return nil, ErrDetectorLimit
 	}
-	type findingIdentity struct {
-		Segment int
-		Start   int
-		End     int
-		Kind    Kind
-	}
-	unique := make(map[findingIdentity]Finding, len(findings))
 	for _, finding := range findings {
 		if finding.Segment < 0 || finding.Segment >= len(segments) ||
 			finding.Start < 0 || finding.End <= finding.Start ||
@@ -261,6 +257,21 @@ func normalizeFindings(findings []Finding, segments []Segment) ([]Finding, error
 			!utf8.ValidString(segments[finding.Segment].Value[:finding.End]) {
 			return nil, ErrDetectorUnavailable
 		}
+	}
+	return uniqueFindings(findings), nil
+}
+
+// uniqueFindings keeps the most confident report of each span and kind, in
+// segment and offset order.
+func uniqueFindings(findings []Finding) []Finding {
+	type findingIdentity struct {
+		Segment int
+		Start   int
+		End     int
+		Kind    Kind
+	}
+	unique := make(map[findingIdentity]Finding, len(findings))
+	for _, finding := range findings {
 		identity := findingIdentity{
 			Segment: finding.Segment,
 			Start:   finding.Start,
@@ -289,7 +300,7 @@ func normalizeFindings(findings []Finding, segments []Segment) ([]Finding, error
 		}
 		return a.Kind < b.Kind
 	})
-	return normalized, nil
+	return normalized
 }
 
 func validMinConfidence(value float64) bool {

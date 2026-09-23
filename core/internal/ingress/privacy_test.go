@@ -521,16 +521,23 @@ func TestPrivacyBlockRunsBeforeCredentialLoadingAndDoesNotLeakMatch(t *testing.T
 	}
 }
 
+// unsafeRewriteFilter stands in for any redaction the engine cannot rewrite
+// safely; which inputs reach that state is covered by the privacy package.
+type unsafeRewriteFilter struct{ privacy.Filter }
+
+func (unsafeRewriteFilter) Inspect(context.Context, privacy.Policy, contract.ProtocolID, []byte) (privacy.Result, error) {
+	return privacy.Result{}, privacy.ErrUnsafeRewrite
+}
+
 func TestPrivacyUnsafeRewriteStopsBeforeCredentialLoadingAndForwarding(t *testing.T) {
-	// A detector can mistakenly include JSON structure in a sensitive span.
 	// The original request is valid; only the redaction attempt fails.
 	const body = `{"model":"gpt-5","input":[{"type":"function_call","name":"lookup","arguments":"{\"email\":\"alice@example.com\"}"}]}`
-	filter := testPrivacyEngine(t, privacy.Policy{
+	filter := unsafeRewriteFilter{testPrivacyEngine(t, privacy.Policy{
 		Enabled: true, Mode: privacy.ModeLocalModel, Action: privacy.ActionRedact,
 		LocalModelID: "model_00000000000000000000000000000001",
 	}, privacy.DetectorFunc(func(context.Context, privacy.DetectInput) ([]privacy.Finding, error) {
-		return []privacy.Finding{{Segment: 0, Start: 0, End: 1, Kind: privacy.KindEmail, Confidence: 1}}, nil
-	}))
+		return nil, nil
+	}))}
 	authorized := false
 	forwarded := false
 	records := &memoryRequestRecordStore{}

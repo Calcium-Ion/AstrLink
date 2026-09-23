@@ -472,6 +472,9 @@ type placedFinding struct {
 	Finding
 	Value       string
 	Placeholder string
+	// quoted marks a JSON number inside a structured tool payload; the
+	// placeholder is written as a string so the payload stays valid JSON.
+	quoted bool
 }
 
 type rewriteOutcome struct {
@@ -557,6 +560,13 @@ func assignPlaceholders(
 			return nil, nil, ErrUnsafeRewrite
 		}
 		value := extracted[segmentIndex].Value
+		// Findings in a structured payload were aligned by the engine; the
+		// scan only tells a number, which needs quotes, from string contents.
+		structured := extracted[segmentIndex].validateStructuredJSON
+		var literals structuredJSONLiterals
+		if structured {
+			literals = scanStructuredJSONLiterals(value)
+		}
 		chosen, err := selectNonOverlappingFindings(value, segmentFindings)
 		if err != nil {
 			return nil, nil, err
@@ -565,6 +575,7 @@ func assignPlaceholders(
 			selected = append(selected, placedFinding{
 				Finding: finding,
 				Value:   value[finding.Start:finding.End],
+				quoted:  structured && literals.isNumber(finding.Start, finding.End),
 			})
 		}
 	}
@@ -672,7 +683,11 @@ func redactStringWithPlaceholders(value string, findings []placedFinding) (strin
 			finding.Start < 0 || finding.End > len(value) || finding.End <= finding.Start {
 			return "", ErrUnsafeRewrite
 		}
-		value = value[:finding.Start] + finding.Placeholder + value[finding.End:]
+		replacement := finding.Placeholder
+		if finding.quoted {
+			replacement = `"` + replacement + `"`
+		}
+		value = value[:finding.Start] + replacement + value[finding.End:]
 	}
 	return value, nil
 }

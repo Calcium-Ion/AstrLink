@@ -470,7 +470,9 @@ func TestEngineRevalidatesStructuredToolArgumentStringsAfterRedaction(t *testing
 		t.Fatalf("structured arguments were not preserved: %#v", rewritten)
 	}
 
-	unsafeModel := DetectorFunc(func(_ context.Context, input DetectInput) ([]Finding, error) {
+	// A model span on the opening brace alone covers no JSON literal, so it is
+	// discarded instead of rewriting syntax and rejecting the request.
+	syntaxModel := DetectorFunc(func(_ context.Context, input DetectInput) ([]Finding, error) {
 		if len(input.Segments) != 1 {
 			t.Fatalf("model input = %#v", input)
 		}
@@ -481,11 +483,11 @@ func TestEngineRevalidatesStructuredToolArgumentStringsAfterRedaction(t *testing
 			Kind:    KindEmail,
 		}}, nil
 	})
-	result, err := newTestEngine(t, unsafeModel).Inspect(context.Background(), Policy{
+	result, err := newTestEngine(t, syntaxModel).Inspect(context.Background(), Policy{
 		Enabled: true, Mode: ModeModel, LocalModelID: testLocalModelID, Action: ActionRedact,
 	}, contract.ProtocolOpenAIResponses, []byte(body))
-	if !errors.Is(err, ErrUnsafeRewrite) || result.Decision != "" {
-		t.Fatalf("unsafe structured rewrite result = %#v, error = %v", result, err)
+	if err != nil || result.Decision != DecisionAllow || len(result.Findings) != 0 {
+		t.Fatalf("syntax-only structured finding result = %#v, error = %v", result, err)
 	}
 }
 
