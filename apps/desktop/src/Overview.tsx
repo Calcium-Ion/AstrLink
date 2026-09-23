@@ -1005,6 +1005,7 @@ function TokenUsagePanel({
         actions={
           <div className="flex min-w-0 items-center gap-2">
             <HelpPopover label={t("overview.tokenCostCoverageLabel")}>
+              <p>{t("overview.tokenFailureExplanation")}</p>
               <p>{t("overview.tokenCostCoverage")}</p>
             </HelpPopover>
             <div
@@ -1137,7 +1138,7 @@ function TokenUsagePanel({
                       : t("pricing.unavailable");
                 return (
                   <Button
-                    className="grid min-h-16 w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded-none border-b bg-transparent px-4 py-2.5 text-left font-normal text-foreground hover:bg-muted @[680px]:grid-cols-[minmax(0,1.2fr)_auto_auto_auto]"
+                    className="grid h-auto min-h-14 w-full grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1 rounded-none border-b bg-transparent px-4 py-2.5 text-left font-normal text-foreground hover:bg-muted"
                     key={row.id}
                     onClick={() => onOpenTokenRecords(row.id)}
                     type="button"
@@ -1154,25 +1155,35 @@ function TokenUsagePanel({
                         ? placeholder
                         : formatCompactNumber(row.usage.total_tokens)}
                     </span>
-                    <span className="text-micro text-muted-foreground tabular-nums">
-                      {t("overview.tokenRequests", {
-                        count: stale
-                          ? placeholder
-                          : formatExactNumber(requests),
-                      })}
-                    </span>
-                    <span className="text-right text-micro tabular-nums">
-                      {amount}
-                    </span>
-                    {!stale &&
-                    failureRate !== null &&
-                    row.usage.failed_requests > 0 ? (
-                      <span className="col-span-2 text-micro text-danger-foreground @[680px]:col-span-4">
-                        {t("overview.tokenFailureRate", {
-                          rate: `${(failureRate * 100).toFixed(1)}%`,
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-muted-foreground tabular-nums">
+                      <span>
+                        {t("overview.tokenRequests", {
+                          count: stale
+                            ? placeholder
+                            : formatExactNumber(requests),
                         })}
                       </span>
-                    ) : null}
+                      {!stale &&
+                      failureRate !== null &&
+                      row.usage.failed_requests > 0 ? (
+                        <span
+                          title={t("overview.tokenFailureDetail", {
+                            count: formatExactNumber(row.usage.failed_requests),
+                            total: formatExactNumber(requests),
+                          })}
+                        >
+                          <span aria-hidden="true" className="mr-2">
+                            ·
+                          </span>
+                          {t("overview.tokenFailureRate", {
+                            rate: `${(failureRate * 100).toFixed(1)}%`,
+                          })}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="self-start text-right text-micro text-muted-foreground tabular-nums">
+                      {amount}
+                    </span>
                   </Button>
                 );
               })}
