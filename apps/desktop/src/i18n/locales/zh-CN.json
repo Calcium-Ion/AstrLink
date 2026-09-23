@@ -1620,6 +1620,7 @@
     "pendingCaptureHint": "进行中，结束后可查看",
     "unrestoredPlaceholders": "仍留在响应中的替换值（未还原）",
     "restoreRatio": "restore · {{restored}}/{{mapped}}",
+    "tokenUsage": "输入 {{input}} Token · 输出 {{output}} Token",
     "turnHeader": "第 {{index}} 轮",
     "turnHeaderUnnumbered": "未标注轮次",
     "turnCalls": "{{count}} 次调用",

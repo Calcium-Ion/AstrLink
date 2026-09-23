@@ -1,3 +1,4 @@
+import { formatExactNumber } from "./format-compact-number";
 import { i18n } from "./i18n";
 import {
   statusLabel,
@@ -565,6 +566,24 @@ function settledEvent(
   return { ...event, status: "succeeded" };
 }
 
+// Core writes call usage into upstream and result summaries as "in → out".
+const USAGE_SEGMENT = /^(\d+) → (\d+)$/;
+
+/** Spell out the bare "in → out" token segment with input/output labels. */
+export function readableUsageSummary(summary: string): string {
+  return summary
+    .split(" · ")
+    .map((part) => {
+      const match = USAGE_SEGMENT.exec(part);
+      if (!match) return part;
+      return i18n.t("trajectory.tokenUsage", {
+        input: formatExactNumber(Number(match[1])),
+        output: formatExactNumber(Number(match[2])),
+      });
+    })
+    .join(" · ");
+}
+
 function rowFromEvent(
   record: RequestRecord,
   rawEvent: RequestEvent,
@@ -573,11 +592,15 @@ function rowFromEvent(
   const event = settledEvent(record, rawEvent);
   const chip =
     child && event.kind === "upstream" ? "RETRY" : chipByKind[event.kind];
+  const summary =
+    event.kind === "upstream" || event.kind === "completed"
+      ? readableUsageSummary(event.summary)
+      : event.summary;
   return {
     id: `${record.id}:${event.kind}:${event.started_at}:${event.attempt_index}`,
     requestId: record.id,
     chip,
-    summary: event.summary || chip,
+    summary: summary || chip,
     result: eventResult(record, event),
     status: event.status,
     tone: eventTone(record, event),

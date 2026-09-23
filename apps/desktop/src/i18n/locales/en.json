@@ -1621,6 +1621,7 @@
     "pendingCaptureHint": "In progress. This content is stored when the request finishes.",
     "unrestoredPlaceholders": "Replacement values still in the response (not restored)",
     "restoreRatio": "restore · {{restored}}/{{mapped}}",
+    "tokenUsage": "Input {{input}} tokens · Output {{output}} tokens",
     "turnHeader": "Turn {{index}}",
     "turnHeaderUnnumbered": "Unnumbered turn",
     "turnCalls": "{{count}} calls",

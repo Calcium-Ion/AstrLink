@@ -261,8 +261,8 @@ describe("request trajectory model", () => {
       ["UPSTREAM", "upstream", "ok", "HTTP 200"],
       ["RESULT", "client", "cancelled", "客户端断开"],
     ]);
-    expect(rows.find((row) => row.chip === "RESULT")?.summary).toContain(
-      "HTTP 200",
+    expect(rows.find((row) => row.chip === "RESULT")?.summary).toBe(
+      "HTTP 200 · 输入 23,973 Token · 输出 151 Token",
     );
     const phases = timelinePhases(
       trajectoryTimeline(rows, Date.parse(aborted.completed_at ?? "")),
