@@ -1,0 +1,180 @@
+[
+  {
+    "id": "rust_option",
+    "text": "let credential = std::env::var(\"SERVICE_TOKEN\").ok();\nlet mail = profile.email.as_deref();",
+    "entities": []
+  },
+  {
+    "id": "python_dataclass",
+    "text": "@dataclass\nclass Contact:\n    email: str\n    phone: str | None\n    postal_address: str = ''",
+    "entities": []
+  },
+  {
+    "id": "go_env",
+    "text": "credential, found := os.LookupEnv(\"DATABASE_CREDENTIAL\")\nif !found { return ErrMissingConfig }",
+    "entities": []
+  },
+  {
+    "id": "ts_validation",
+    "text": "const schema = z.object({ email: z.string().email(), password: z.string().min(12) });",
+    "entities": []
+  },
+  {
+    "id": "sql_parameters",
+    "text": "INSERT INTO contacts (full_name, email, phone_number) VALUES ($1, $2, $3);",
+    "entities": []
+  },
+  {
+    "id": "redacted_log",
+    "text": "{\"severity\":\"debug\",\"authorization\":\"[REDACTED]\",\"customer_email\":\"***\"}",
+    "entities": []
+  },
+  {
+    "id": "http_headers",
+    "text": "headers.set('Authorization', `Bearer ${session.accessToken}`);\nheaders.set('Content-Type', 'application/json');",
+    "entities": []
+  },
+  {
+    "id": "chinese_review",
+    "text": "审查 UserRepository.findByEmail 的分页逻辑，email 是字段名，调用参数来自输入框。不要把变量名当成实际邮箱。",
+    "entities": []
+  },
+  {
+    "id": "kotlin_nullable",
+    "text": "data class UserProfile(val name: String?, val email: String?, val birthDate: LocalDate?)",
+    "entities": []
+  },
+  {
+    "id": "css_dimensions",
+    "text": "@media (max-width: 1024px) { .profile { grid-template-columns: 1fr; padding: 16px 24px; } }",
+    "entities": []
+  },
+  {
+    "id": "unit_assert",
+    "text": "expect(result.customerId).toBe(expectedId);\nexpect(result.email).toBeUndefined();",
+    "entities": []
+  },
+  {
+    "id": "shell_env",
+    "text": "export ACCESS_KEY=\"${CI_ACCESS_KEY}\"\nexec service --credentials-file \"${CONFIG_PATH}\"",
+    "entities": []
+  },
+  {
+    "id": "migration_types",
+    "text": "ALTER TABLE billing ADD COLUMN account_reference VARCHAR(64);\nCREATE INDEX billing_account_idx ON billing(account_reference);",
+    "entities": []
+  },
+  {
+    "id": "public_api_path",
+    "text": "router.get('/v2/customers/:customerId/addresses', requireLogin, listAddresses);",
+    "entities": []
+  },
+  {
+    "id": "redaction_instructions",
+    "text": "Replace actual phone numbers and private email addresses with placeholders, but preserve schema keys, imports, and enum names.",
+    "entities": []
+  },
+  {
+    "id": "stack_trace_generic",
+    "text": "RangeError: Invalid array length\n    at decodePayload (lib/decoder.js:108:12)\n    at runTest (test/unit.js:24:3)",
+    "entities": []
+  },
+  {
+    "id": "yaml_email",
+    "text": "notification:\n  recipient: maria.ortiz@cedar-mail.net\n  retries: 4",
+    "entities": [{ "label": "email", "value": "maria.ortiz@cedar-mail.net" }]
+  },
+  {
+    "id": "python_email",
+    "text": "recipient = 'lee.jun@brookhaven-mail.net'\nsend_invoice(recipient)",
+    "entities": [{ "label": "email", "value": "lee.jun@brookhaven-mail.net" }]
+  },
+  {
+    "id": "json_phone",
+    "text": "{\"delivery_contact\": {\"phone\": \"+1-202-555-0176\"}}",
+    "entities": [{ "label": "phone", "value": "+1-202-555-0176" }]
+  },
+  {
+    "id": "zh_phone",
+    "text": "回访客户的联系电话：18623456789，请在周五下午联系。",
+    "entities": [{ "label": "phone", "value": "18623456789" }]
+  },
+  {
+    "id": "env_password",
+    "text": "MYSQL_PASSWORD='D4z!P8x#W2q@F6n'",
+    "entities": [{ "label": "common_secret", "value": "D4z!P8x#W2q@F6n" }]
+  },
+  {
+    "id": "json_password",
+    "text": "{\"database\": {\"password\": \"V5c!R8y#M3p@T9s\"}}",
+    "entities": [{ "label": "common_secret", "value": "V5c!R8y#M3p@T9s" }]
+  },
+  {
+    "id": "env_api_key",
+    "text": "PAYMENTS_API_KEY=\"sk-live-9aB2cD4eF6gH8jK0mN3pQ5rS7tV1wX\"",
+    "entities": [
+      {
+        "label": "common_secret",
+        "value": "sk-live-9aB2cD4eF6gH8jK0mN3pQ5rS7tV1wX"
+      }
+    ]
+  },
+  {
+    "id": "py_github",
+    "text": "github_token = 'ghp_2aB4cD6eF8gH0jK3mN5pQ7rS9tV1wX4yZ6aB'",
+    "entities": [
+      {
+        "label": "common_secret",
+        "value": "ghp_2aB4cD6eF8gH0jK3mN5pQ7rS9tV1wX4yZ6aB"
+      }
+    ]
+  },
+  {
+    "id": "customer_name",
+    "text": "// This customer's legal name is Eleanor Prescott.",
+    "entities": [{ "label": "private_person", "value": "Eleanor Prescott" }]
+  },
+  {
+    "id": "zh_contact",
+    "text": "客户资料：姓名李明，邮箱 li.ming@cedar-mail.net。",
+    "entities": [
+      { "label": "private_person", "value": "李明" },
+      { "label": "email", "value": "li.ming@cedar-mail.net" }
+    ]
+  },
+  {
+    "id": "date_json",
+    "text": "{\"date_of_birth\": \"1979-11-24\"}",
+    "entities": [{ "label": "private_date", "value": "1979-11-24" }]
+  },
+  {
+    "id": "date_comment",
+    "text": "// Customer DOB: 1994-02-17",
+    "entities": [{ "label": "private_date", "value": "1994-02-17" }]
+  },
+  {
+    "id": "account_config",
+    "text": "bank_account_number = \"483920175628\"",
+    "entities": [{ "label": "account", "value": "483920175628" }]
+  },
+  {
+    "id": "account_json",
+    "text": "{\"customer_bank_account\": \"573819204657\"}",
+    "entities": [{ "label": "account", "value": "573819204657" }]
+  },
+  {
+    "id": "mail_in_log",
+    "text": "WARN delivery failed for recipient peter.novak@silverpine-mail.net status=550",
+    "entities": [
+      { "label": "email", "value": "peter.novak@silverpine-mail.net" }
+    ]
+  },
+  {
+    "id": "name_in_record",
+    "text": "Customer record:\nFull name: Olivia Hartwell\nEmail: olivia.h@cedar-mail.net",
+    "entities": [
+      { "label": "private_person", "value": "Olivia Hartwell" },
+      { "label": "email", "value": "olivia.h@cedar-mail.net" }
+    ]
+  }
+]

@@ -1,0 +1,6 @@
+# Offline build tooling only; not a desktop/runtime dependency.
+numpy==2.4.6
+onnx==1.19.1
+onnxruntime==1.23.2
+tokenizers==0.23.1
+torch==2.8.0

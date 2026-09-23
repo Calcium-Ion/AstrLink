@@ -1,0 +1,214 @@
+[
+  {
+    "id": "variable_refs",
+    "text": "password = settings.password\nsecret = config.secret_value\napi_key = os.getenv(\"API_KEY\")",
+    "entities": []
+  },
+  {
+    "id": "imports",
+    "text": "import React from \"react\";\nimport { createRoot } from \"react-dom/client\";",
+    "entities": []
+  },
+  {
+    "id": "types",
+    "text": "type User struct { Name string; Email string; PasswordHash string }",
+    "entities": []
+  },
+  {
+    "id": "hashes",
+    "text": "const checksum = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\";",
+    "entities": []
+  },
+  {
+    "id": "uuid",
+    "text": "const requestId = \"550e8400-e29b-41d4-a716-446655440000\";",
+    "entities": []
+  },
+  {
+    "id": "package_versions",
+    "text": "\"@tanstack/react-query\": \"5.90.2\", \"typescript\": \"5.9.3\"",
+    "entities": []
+  },
+  {
+    "id": "public_docs",
+    "text": "See https://docs.python.org/3/library/json.html for the JSON API.",
+    "entities": []
+  },
+  {
+    "id": "placeholder",
+    "text": "API_KEY=YOUR_API_KEY_HERE\nDB_PASSWORD=${DB_PASSWORD}\nTOKEN=<REDACTED>",
+    "entities": []
+  },
+  {
+    "id": "env_get",
+    "text": "const token = process.env.ACCESS_TOKEN;\nconst apiKey = config.apiKey;",
+    "entities": []
+  },
+  {
+    "id": "enum",
+    "text": "enum Role { Admin, User, Guest }\nconst Status = { Pending: 0, Ready: 1 };",
+    "entities": []
+  },
+  {
+    "id": "chinese_code_question",
+    "text": "请检查 getUserById 的空指针问题，返回类型是 Promise<User | null>。",
+    "entities": []
+  },
+  {
+    "id": "go_error",
+    "text": "if err != nil { return fmt.Errorf(\"load configuration: %w\", err) }",
+    "entities": []
+  },
+  {
+    "id": "sql_schema",
+    "text": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT);",
+    "entities": []
+  },
+  {
+    "id": "error_stack",
+    "text": "TypeError: Cannot read properties of undefined\n    at parseConfig (src/config.ts:42:7)",
+    "entities": []
+  },
+  {
+    "id": "json_keys",
+    "text": "{\"email\": null, \"phone\": \"\", \"password\": null, \"address\": {}}",
+    "entities": []
+  },
+  {
+    "id": "semantic_version",
+    "text": "Version 1.2.3.4: updated retry count from 100 to 200.",
+    "entities": []
+  },
+  {
+    "id": "css",
+    "text": ".container { display: flex; color: #aabbcc; border-radius: 12px; }",
+    "entities": []
+  },
+  {
+    "id": "regex_source",
+    "text": "const emailPattern = /^[a-z0-9]+@[a-z]+\\.[a-z]{2,}$/i;",
+    "entities": []
+  },
+  {
+    "id": "git_sha",
+    "text": "commit 9e107d9d372bb6826bd81d3542a419d6f1b582cd\nAuthor format: name <email>",
+    "entities": []
+  },
+  {
+    "id": "test_public_email",
+    "text": "const exampleEmail = \"test@example.com\"; // documentation placeholder",
+    "entities": []
+  },
+  {
+    "id": "email_config",
+    "text": "SMTP_USER=\"alice.martin@northwind-mail.net\"",
+    "entities": [
+      {
+        "label": "email",
+        "value": "alice.martin@northwind-mail.net"
+      }
+    ]
+  },
+  {
+    "id": "password_config",
+    "text": "DATABASE_PASSWORD=\"r7Q!m2V#k9L@x4T\"",
+    "entities": [
+      {
+        "label": "common_secret",
+        "value": "r7Q!m2V#k9L@x4T"
+      }
+    ]
+  },
+  {
+    "id": "api_token",
+    "text": "const apiKey = \"sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG\";",
+    "entities": [
+      {
+        "label": "common_secret",
+        "value": "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+      }
+    ]
+  },
+  {
+    "id": "github_token",
+    "text": "GITHUB_TOKEN=\"ghp_a7B9c2D4e6F8g0H1i3J5k7L9m2N4o6P8q0R2\"",
+    "entities": [
+      {
+        "label": "common_secret",
+        "value": "ghp_a7B9c2D4e6F8g0H1i3J5k7L9m2N4o6P8q0R2"
+      }
+    ]
+  },
+  {
+    "id": "person_comment",
+    "text": "// Customer: Daniel Whitfield; contact daniels@meridiancap.com",
+    "entities": [
+      {
+        "label": "private_person",
+        "value": "Daniel Whitfield"
+      },
+      {
+        "label": "email",
+        "value": "daniels@meridiancap.com"
+      }
+    ]
+  },
+  {
+    "id": "phone_json",
+    "text": "{\"customer_phone\": \"+1-415-555-0198\"}",
+    "entities": [
+      {
+        "label": "phone",
+        "value": "+1-415-555-0198"
+      }
+    ]
+  },
+  {
+    "id": "zh_pii",
+    "text": "客户张伟的邮箱是 zhang.wei@northwind-mail.net，手机号是13812345678。",
+    "entities": [
+      {
+        "label": "private_person",
+        "value": "张伟"
+      },
+      {
+        "label": "email",
+        "value": "zhang.wei@northwind-mail.net"
+      },
+      {
+        "label": "phone",
+        "value": "13812345678"
+      }
+    ]
+  },
+  {
+    "id": "address_json",
+    "text": "{\"shipping_address\": \"742 Evergreen Terrace, Springfield, IL 62704\"}",
+    "entities": [
+      {
+        "label": "private_address",
+        "value": "742 Evergreen Terrace, Springfield, IL 62704"
+      }
+    ]
+  },
+  {
+    "id": "birthdate",
+    "text": "Customer date of birth: 1987-06-15",
+    "entities": [
+      {
+        "label": "private_date",
+        "value": "1987-06-15"
+      }
+    ]
+  },
+  {
+    "id": "bank",
+    "text": "Bank account number: 123456789012",
+    "entities": [
+      {
+        "label": "account",
+        "value": "123456789012"
+      }
+    ]
+  }
+]

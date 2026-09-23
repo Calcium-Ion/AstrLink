@@ -24,6 +24,7 @@ const modelPatterns = [
   /\.ggml$/i,
   /\.onnx$/i,
   /\.onnx_data(?:_\d+)?$/i,
+  /\.onnx\.data$/i,
   /\.pt$/i,
   /\.pth$/i,
   /\.safetensors$/i,
