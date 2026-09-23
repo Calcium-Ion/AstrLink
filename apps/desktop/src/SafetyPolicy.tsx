@@ -2927,6 +2927,52 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
                   {t("safety.viewStreamingDemo")}
                   <ArrowUpRight aria-hidden="true" className="size-3.5" />
                 </Button>
+                <div className="grid min-w-0 divide-y border-t">
+                  <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <strong className="text-sm font-medium leading-snug">
+                        {t("safety.skipToolDeclarations")}
+                      </strong>
+                      <small
+                        className="text-xs leading-relaxed text-muted-foreground"
+                        title={t("safety.skipToolDeclarationsDetail")}
+                      >
+                        {t("safety.skipToolDeclarationsShort")}
+                        <span className="sr-only">
+                          {t("safety.skipToolDeclarationsDetail")}
+                        </span>
+                      </small>
+                    </span>
+                    <Switch
+                      aria-label={t("safety.skipToolDeclarations")}
+                      checked={policy.skip_tool_declarations}
+                      disabled={saving}
+                      onCheckedChange={(checked) =>
+                        void patchPolicy({ skip_tool_declarations: checked })
+                      }
+                      size="sm"
+                    />
+                  </Label>
+                  <Label className="flex min-w-0 cursor-pointer items-center justify-between gap-3 py-3 font-normal last:pb-0">
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <strong className="text-sm font-medium leading-snug">
+                        {t("safety.skipAdditionalTools")}
+                      </strong>
+                      <small className="text-xs leading-relaxed text-muted-foreground">
+                        {t("safety.skipAdditionalToolsHint")}
+                      </small>
+                    </span>
+                    <Switch
+                      aria-label={t("safety.skipAdditionalTools")}
+                      checked={!policy.inspect_additional_tools}
+                      disabled={saving}
+                      onCheckedChange={(checked) =>
+                        void patchPolicy({ inspect_additional_tools: !checked })
+                      }
+                      size="sm"
+                    />
+                  </Label>
+                </div>
               </PolicySection>
             </div>
           </TabsContent>

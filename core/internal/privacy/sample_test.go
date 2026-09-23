@@ -22,7 +22,7 @@ func TestWrapSampleTextBuildsInspectableBodies(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", protocol, err)
 		}
-		_, extracted, err := extractDocument(protocol, body)
+		_, extracted, err := extractDocument(protocol, body, InspectionOptions{})
 		if err != nil || len(extracted) == 0 {
 			t.Fatalf("%s extract=%#v err=%v body=%s", protocol, extracted, err, body)
 		}
@@ -60,7 +60,7 @@ func TestLocateFindingsMapsPathsWithoutPlaintext(t *testing.T) {
 		Segment: 0, Start: 0, End: len("alice@example.com"),
 		Kind: KindEmail, Confidence: 0.91,
 	}}
-	locations, err := LocateFindings(contract.ProtocolOpenAIChat, body, findings)
+	locations, err := LocateFindings(contract.ProtocolOpenAIChat, body, findings, InspectionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

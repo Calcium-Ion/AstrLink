@@ -36,7 +36,11 @@ const (
 	jsonToolPayloadContext
 )
 
-func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, []extractedSegment, error) {
+func extractDocument(
+	protocol contract.ProtocolID,
+	body []byte,
+	options InspectionOptions,
+) (jsonDocument, []extractedSegment, error) {
 	roots, supported := protocolRoots(protocol)
 	if !supported || len(bytes.TrimSpace(body)) == 0 {
 		return jsonDocument{}, nil, nil
@@ -62,6 +66,12 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 
 	document := jsonDocument{body: body, duplicateKeys: duplicateKeys}
 	protected := continuationPaths(protocol, root)
+	if options.InspectToolDeclarations {
+		roots = append(roots, toolDeclarationRoots(protocol)...)
+	}
+	if options.SkipAdditionalTools {
+		addAdditionalToolsPaths(protocol, root, protected)
+	}
 	toolPayloads := structuredToolPayloadPaths(protocol, root)
 	extracted := make([]extractedSegment, 0)
 	overflow := false
@@ -81,13 +91,13 @@ func extractDocument(protocol contract.ProtocolID, body []byte) (jsonDocument, [
 
 // protocolRoots lists the request fields whose strings are inspected.
 //
-// Tool declarations are deliberately excluded. A tools array carries schemas and
-// author-written descriptions belonging to the agent harness, not text the
-// operator typed, yet it is dense with documentation links and sample addresses
-// that the detectors match. Redacting it inflated placeholder counts by an order
-// of magnitude while protecting nothing. Real user data travelling through tools
-// lives in call arguments and results, which remain covered under the input and
-// messages roots.
+// Tool declarations are excluded unless the policy opts in. A tools array
+// carries schemas and author-written descriptions belonging to the agent
+// harness, not text the operator typed, yet it is dense with documentation links
+// and sample addresses that the detectors match. Redacting it inflated
+// placeholder counts by an order of magnitude while protecting nothing. Real
+// user data travelling through tools lives in call arguments and results, which
+// remain covered under the input and messages roots.
 func protocolRoots(protocol contract.ProtocolID) ([]string, bool) {
 	switch protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:

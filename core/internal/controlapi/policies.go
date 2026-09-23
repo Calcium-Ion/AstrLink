@@ -209,7 +209,7 @@ func (handler *Handler) policyDryRun(writer http.ResponseWriter, request *http.R
 	if findings == nil {
 		findings = []privacy.Finding{}
 	}
-	locations, err := privacy.LocateFindings(input.Protocol, body, findings)
+	locations, err := privacy.LocateFindings(input.Protocol, body, findings, runtimePolicy.InspectionOptions())
 	if err != nil {
 		handler.writePrivacyDryRunError(writer, err)
 		return
@@ -221,7 +221,8 @@ func (handler *Handler) policyDryRun(writer http.ResponseWriter, request *http.R
 	if suppressed == nil {
 		suppressed = []privacy.Finding{}
 	}
-	suppressedLocations, err := privacy.LocateFindings(input.Protocol, body, suppressed)
+	suppressedLocations, err := privacy.LocateFindings(
+		input.Protocol, body, suppressed, runtimePolicy.InspectionOptions())
 	if err != nil {
 		handler.writePrivacyDryRunError(writer, err)
 		return
@@ -271,18 +272,20 @@ func (handler *Handler) requireReadyLocalModel(writer http.ResponseWriter, polic
 // accepts for the singleton privacy policy. Everything else, including identity
 // and match scope, is fixed by ValidatePrivacyDefault.
 var patchablePolicyFields = map[string]bool{
-	"enabled":                true,
-	"detector":               true,
-	"local_model_id":         true,
-	"min_confidence":         true,
-	"regex_source":           true,
-	"custom_regex_rules":     true,
-	"kind_rules":             true,
-	"allowlist_rules":        true,
-	"request_action":         true,
-	"response_restore":       true,
-	"restore_tool_arguments": true,
-	"placeholder_notice":     true,
+	"enabled":                  true,
+	"detector":                 true,
+	"local_model_id":           true,
+	"min_confidence":           true,
+	"regex_source":             true,
+	"custom_regex_rules":       true,
+	"kind_rules":               true,
+	"allowlist_rules":          true,
+	"request_action":           true,
+	"response_restore":         true,
+	"restore_tool_arguments":   true,
+	"placeholder_notice":       true,
+	"skip_tool_declarations":   true,
+	"inspect_additional_tools": true,
 }
 
 func applyPolicyPatch(policy contract.Policy, patch map[string]json.RawMessage) (contract.Policy, error) {
@@ -346,6 +349,14 @@ func applyPolicyPatch(policy contract.Policy, patch map[string]json.RawMessage) 
 			}
 		case "placeholder_notice":
 			if err := strictUnmarshal(raw, &policy.PlaceholderNotice); err != nil {
+				return policy, err
+			}
+		case "skip_tool_declarations":
+			if err := strictUnmarshal(raw, &policy.SkipToolDeclarations); err != nil {
+				return policy, err
+			}
+		case "inspect_additional_tools":
+			if err := strictUnmarshal(raw, &policy.InspectAdditionalTools); err != nil {
 				return policy, err
 			}
 		}

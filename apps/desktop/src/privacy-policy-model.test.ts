@@ -36,6 +36,8 @@ const policy = {
   allowlist_rules: [{ type: "domain_suffix", value: "github.com" }],
   restore_tool_arguments: true,
   placeholder_notice: true,
+  skip_tool_declarations: false,
+  inspect_additional_tools: false,
   match: {},
 } as const;
 const variant = {
@@ -317,6 +319,64 @@ describe("privacy-policy IPC contract", () => {
         },
       }),
     ).toThrow("token placeholder style");
+  });
+
+  it("defaults the tool declaration switches and validates them", () => {
+    const {
+      skip_tool_declarations: _skip,
+      inspect_additional_tools: _inspect,
+      ...legacy
+    } = policy;
+    expect(
+      parsePrivacyPolicyPage({ items: [legacy], next_cursor: null }).items[0],
+    ).toMatchObject({
+      skip_tool_declarations: false,
+      inspect_additional_tools: false,
+    });
+    expect(
+      parsePrivacyPolicyPage({
+        items: [
+          {
+            ...policy,
+            skip_tool_declarations: true,
+            inspect_additional_tools: true,
+          },
+        ],
+        next_cursor: null,
+      }).items[0],
+    ).toMatchObject({
+      skip_tool_declarations: true,
+      inspect_additional_tools: true,
+    });
+    for (const key of ["skip_tool_declarations", "inspect_additional_tools"]) {
+      expect(() =>
+        parsePrivacyPolicyPage({
+          items: [{ ...policy, [key]: "yes" }],
+          next_cursor: null,
+        }),
+      ).toThrow(key);
+    }
+
+    const patch = {
+      skip_tool_declarations: true,
+      inspect_additional_tools: true,
+    };
+    expect(
+      validatePrivacyDryRunInput({
+        protocol: "openai.chat",
+        sample_text: "hello",
+        policy: patch,
+      }).policy,
+    ).toEqual(patch);
+    expect(() =>
+      validatePrivacyDryRunInput({
+        protocol: "openai.chat",
+        sample_text: "hello",
+        policy: {
+          inspect_additional_tools: null as unknown as boolean,
+        },
+      }),
+    ).toThrow("inspect_additional_tools");
   });
 
   it("rejects policy drift and unknown detectors", () => {

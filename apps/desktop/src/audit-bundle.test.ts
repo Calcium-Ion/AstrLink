@@ -319,6 +319,8 @@ describe("buildRecordBundle diagnosis context", () => {
       request_action: "redact",
       response_restore: true,
       restore_tool_arguments: true,
+      skip_tool_declarations: false,
+      inspect_additional_tools: false,
     },
     limits: {
       response_start_timeout_seconds: 120,
@@ -386,11 +388,32 @@ describe("buildRecordBundle diagnosis context", () => {
       "隐私保护: 已开启 · 检测方式: local_model · 本地模型: Privacy Filter · Q4 · 请求动作: redact · 响应还原: 已开启",
     );
     expect(bundle).toContain(
+      "跳过函数调用检查: 已关闭 · 跳过 additional_tools 检查: 已开启",
+    );
+    expect(bundle).toContain(
       "响应开始超时: 120 秒 · 并发检测数: 1 · 请求体上限: 32 MiB",
     );
     expect(bundle).toContain("路由策略: priority · 最大尝试次数: 3");
     expect(bundle).toContain(
       "内容捕获: 请求体 已开启 · 响应内容 已关闭 · HTTP 元数据 已开启",
+    );
+  });
+
+  it("reports each tool declaration switch on its own", () => {
+    const bundle = buildRecordBundle(liveTurn, liveContent, {
+      format: "txt",
+      exportedAt,
+      environment: {
+        ...environment,
+        privacy: {
+          ...environment.privacy!,
+          skip_tool_declarations: true,
+          inspect_additional_tools: true,
+        },
+      },
+    });
+    expect(bundle).toContain(
+      "跳过函数调用检查: 已开启 · 跳过 additional_tools 检查: 已关闭",
     );
   });
 
@@ -407,6 +430,7 @@ describe("buildRecordBundle diagnosis context", () => {
     expect(payload.selected_request_id).toBe("req_live_inspection");
     expect(payload.exported_at).toBe("2026-09-20T10:06:40.200Z");
     expect(payload.environment.privacy.detector).toBe("local_model");
+    expect(payload.environment.privacy.inspect_additional_tools).toBe(false);
     expect(
       payload.records.map((item: { id: string }) => item.id),
     ).toStrictEqual(["req_detector_timeout", "req_live_inspection"]);
@@ -437,6 +461,9 @@ describe("buildRecordBundle diagnosis context", () => {
       },
     });
     expect(bundle).toContain("隐私保护: （未能读取）");
+    expect(bundle).toContain(
+      "跳过函数调用检查: （未能读取） · 跳过 additional_tools 检查: （未能读取）",
+    );
     expect(bundle).not.toContain("版本:");
     // Without a session there is nothing to anchor the diagnostic to.
     expect(bundle).not.toContain("机器可读诊断");

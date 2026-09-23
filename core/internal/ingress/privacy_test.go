@@ -1054,6 +1054,60 @@ func TestPrivacyDetectorTimeoutKeepsLastProgressInRecord(t *testing.T) {
 		"safety_engine_unavailable · detector_timeout · batch 5/11", recorded)
 }
 
+func TestPrivacyToolDeclarationSwitches(t *testing.T) {
+	stored := contract.DefaultPrivacyPolicy()
+	stored.Enabled = true
+	stored.Detector = contract.PolicyDetectorLocalModel
+	modelID := contract.PrivacyModelID("model_00000000000000000000000000000001")
+	stored.LocalModelID = &modelID
+	var inspected []string
+	filter, err := privacy.New(privacy.PolicyProviderFunc(func(context.Context, privacy.Scope) (privacy.Policy, error) {
+		return privacy.FromContractPolicy(stored)
+	}), privacy.DetectorFunc(func(_ context.Context, input privacy.DetectInput) ([]privacy.Finding, error) {
+		for _, segment := range input.Segments {
+			inspected = append(inspected, segment.Value)
+		}
+		return nil, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithDependencies(Dependencies{
+		Resolver: resolverFunc(func(context.Context, endpoint.ResolveRequest) (endpoint.Resolved, error) {
+			return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}, nil
+		}),
+		PrivacyFilter: filter,
+		Forwarder: forwarderFunc(func(writer http.ResponseWriter, _ *http.Request, _ transport.Target) error {
+			writer.WriteHeader(http.StatusOK)
+			return nil
+		}),
+	})
+	body := `{"model":"gpt-5","input":[` +
+		`{"type":"additional_tools","role":"developer","tools":[{"type":"function","name":"f","description":"extra docs"}]},` +
+		`{"role":"user","content":"hello"}],` +
+		`"tools":[{"type":"function","name":"g","description":"top docs"}]}`
+	for _, test := range []struct {
+		name                  string
+		skipTools, inspectAdd bool
+		want                  []string
+	}{
+		{"defaults", false, false, []string{"hello", "top docs"}},
+		{"skip top-level tools", true, false, []string{"hello"}},
+		{"inspect additional_tools", false, true, []string{"extra docs", "hello", "top docs"}},
+	} {
+		stored.SkipToolDeclarations, stored.InspectAdditionalTools = test.skipTools, test.inspectAdd
+		inspected = nil
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s: status=%d body=%s", test.name, response.Code, response.Body.String())
+		}
+		if !slices.Equal(inspected, test.want) {
+			t.Fatalf("%s: inspected=%q, want %q", test.name, inspected, test.want)
+		}
+	}
+}
+
 func privacyEvents(events []contract.RequestEvent) []contract.RequestEvent {
 	var matched []contract.RequestEvent
 	for _, event := range events {

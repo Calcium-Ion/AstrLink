@@ -29,6 +29,8 @@ export interface ExportEnvironment {
     request_action: PrivacyAction;
     response_restore: boolean;
     restore_tool_arguments: boolean;
+    skip_tool_declarations: boolean;
+    inspect_additional_tools: boolean;
   } | null;
   limits: {
     response_start_timeout_seconds: number;
@@ -93,6 +95,8 @@ export async function loadExportEnvironment(): Promise<
         request_action: policy.request_action,
         response_restore: policy.response_restore,
         restore_tool_arguments: policy.restore_tool_arguments,
+        skip_tool_declarations: policy.skip_tool_declarations,
+        inspect_additional_tools: policy.inspect_additional_tools,
       };
     }),
     settle(async () => {

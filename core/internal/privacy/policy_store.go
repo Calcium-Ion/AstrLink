@@ -40,15 +40,17 @@ func FromContractPolicy(policy contract.Policy) (Policy, error) {
 		}
 	}
 	result := Policy{
-		Enabled:              policy.Enabled,
-		MinConfidence:        policy.MinConfidence,
-		RegexSource:          policy.RegexSource.Effective(),
-		CustomRegexRules:     append([]contract.PolicyRegexRule(nil), policy.CustomRegexRules...),
-		KindRules:            kindRules,
-		Allowlist:            append([]contract.PolicyAllowlistRule(nil), policy.AllowlistRules...),
-		ResponseRestore:      policy.ResponseRestore,
-		RestoreToolArguments: policy.RestoreToolArguments,
-		PlaceholderNotice:    policy.PlaceholderNotice,
+		Enabled:                 policy.Enabled,
+		MinConfidence:           policy.MinConfidence,
+		RegexSource:             policy.RegexSource.Effective(),
+		CustomRegexRules:        append([]contract.PolicyRegexRule(nil), policy.CustomRegexRules...),
+		KindRules:               kindRules,
+		Allowlist:               append([]contract.PolicyAllowlistRule(nil), policy.AllowlistRules...),
+		ResponseRestore:         policy.ResponseRestore,
+		RestoreToolArguments:    policy.RestoreToolArguments,
+		PlaceholderNotice:       policy.PlaceholderNotice,
+		InspectToolDeclarations: !policy.SkipToolDeclarations,
+		SkipAdditionalTools:     !policy.InspectAdditionalTools,
 	}
 	if policy.LocalModelID != nil {
 		result.LocalModelID = *policy.LocalModelID

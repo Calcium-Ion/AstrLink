@@ -277,7 +277,7 @@ func TestProtocolExtractionExcludesStructuralStringsButKeepsArgumentValues(t *te
 			}
 		}]
 	}`)
-	_, extracted, err := extractDocument(contract.ProtocolOpenAIChat, body)
+	_, extracted, err := extractDocument(contract.ProtocolOpenAIChat, body, InspectionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestProtocolExtractionScansOfficialObjectToolPayloads(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, extracted, err := extractDocument(test.protocol, []byte(test.body))
+			_, extracted, err := extractDocument(test.protocol, []byte(test.body), InspectionOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

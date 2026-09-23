@@ -290,6 +290,8 @@ describe("App workspace navigation", () => {
         allowlist_rules: [],
         restore_tool_arguments: true,
         placeholder_notice: true,
+        skip_tool_declarations: false,
+        inspect_additional_tools: false,
         match: {},
       },
       etag: `"sha256:${"a".repeat(64)}"`,

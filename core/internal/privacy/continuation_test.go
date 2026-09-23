@@ -84,7 +84,7 @@ func TestContinuationExtractionAndRewritePreserveMetadata(t *testing.T) {
 					protected[path] = true
 				}
 				body := strings.NewReplacer("HOLD", cipher+`\u003d`, "SCAN", cipher).Replace(fixture.body)
-				_, segments, err := extractDocument(fixture.protocol, []byte(body))
+				_, segments, err := extractDocument(fixture.protocol, []byte(body), InspectionOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}

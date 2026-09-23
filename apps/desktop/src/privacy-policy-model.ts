@@ -132,6 +132,14 @@ export interface PrivacyPolicy {
   response_restore: boolean;
   restore_tool_arguments: boolean;
   placeholder_notice: boolean;
+  /** True keeps top-level tool declarations out of inspection; off by default. */
+  skip_tool_declarations: boolean;
+  /**
+   * True inspects Codex additional_tools input items; off by default.
+   * Independent of skip_tool_declarations: those items sit in the conversation
+   * input.
+   */
+  inspect_additional_tools: boolean;
   match: PrivacyPolicyMatch;
 }
 
@@ -160,6 +168,8 @@ export type PrivacyPolicyPatch = Partial<
     | "response_restore"
     | "restore_tool_arguments"
     | "placeholder_notice"
+    | "skip_tool_declarations"
+    | "inspect_additional_tools"
   >
 >;
 
@@ -688,6 +698,8 @@ export function parsePrivacyPolicy(value: unknown, path = "$"): PrivacyPolicy {
       "allowlist_rules",
       "restore_tool_arguments",
       "placeholder_notice",
+      "skip_tool_declarations",
+      "inspect_additional_tools",
     ],
     path,
   );
@@ -801,6 +813,18 @@ export function parsePrivacyPolicy(value: unknown, path = "$"): PrivacyPolicy {
     placeholder_notice: Object.hasOwn(policy, "placeholder_notice")
       ? booleanAt(policy.placeholder_notice, `${path}.placeholder_notice`)
       : true,
+    skip_tool_declarations: Object.hasOwn(policy, "skip_tool_declarations")
+      ? booleanAt(
+          policy.skip_tool_declarations,
+          `${path}.skip_tool_declarations`,
+        )
+      : false,
+    inspect_additional_tools: Object.hasOwn(policy, "inspect_additional_tools")
+      ? booleanAt(
+          policy.inspect_additional_tools,
+          `${path}.inspect_additional_tools`,
+        )
+      : false,
     match: parseMatch(policy.match, `${path}.match`),
   };
 }
@@ -1191,6 +1215,8 @@ function validatePrivacyPolicyPatch(
       "response_restore",
       "restore_tool_arguments",
       "placeholder_notice",
+      "skip_tool_declarations",
+      "inspect_additional_tools",
     ],
     "$.policy",
   );
@@ -1274,6 +1300,18 @@ function validatePrivacyPolicyPatch(
     validated.placeholder_notice = booleanAt(
       object.placeholder_notice,
       "$.policy.placeholder_notice",
+    );
+  }
+  if (Object.hasOwn(object, "skip_tool_declarations")) {
+    validated.skip_tool_declarations = booleanAt(
+      object.skip_tool_declarations,
+      "$.policy.skip_tool_declarations",
+    );
+  }
+  if (Object.hasOwn(object, "inspect_additional_tools")) {
+    validated.inspect_additional_tools = booleanAt(
+      object.inspect_additional_tools,
+      "$.policy.inspect_additional_tools",
     );
   }
   return validated;

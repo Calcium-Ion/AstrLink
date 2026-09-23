@@ -21,7 +21,7 @@ func TestStructuredToolLeavesRetainOnlyFieldContext(t *testing.T) {
 		{contract.ProtocolGoogleGenerateContent, `{"contents":[{"role":"model","parts":[{"thoughtSignature":"opaque-signature","functionCall":{"args":{"value":"leaf","other":"neighbor"}}}]},{"role":"user","parts":[{"text":"prose"},{"functionResponse":{"response":{"value":"leaf"}}}]}]}`, []string{"/contents/0/parts/0/functionCall/args/value", "/contents/1/parts/1/functionResponse/response/value"}},
 	} {
 		t.Run(string(fixture.protocol), func(t *testing.T) {
-			_, segments, err := extractDocument(fixture.protocol, []byte(fixture.body))
+			_, segments, err := extractDocument(fixture.protocol, []byte(fixture.body), InspectionOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +75,7 @@ func TestUserJSONCannotOptIntoToolContext(t *testing.T) {
 		`{"messages":[{"role":"user","tool_calls":[{"type":"function","function":{"arguments":{"password":"value"}}}]}]}`,
 		`{"messages":[{"role":"assistant","tool_calls":{"0":{"type":"function","function":{"arguments":{"password":"value"}}}}}]}`,
 	} {
-		_, segments, err := extractDocument(contract.ProtocolOpenAIChat, []byte(body))
+		_, segments, err := extractDocument(contract.ProtocolOpenAIChat, []byte(body), InspectionOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func TestCompleteToolTextKeepsOriginalModelInput(t *testing.T) {
 		{contract.ProtocolOpenAIResponses, `{"input":[{"type":"function_call_output","output":[{"type":"text","text":"complete tool output"}]},{"type":"function_call_output","output":"complete tool output"},{"type":"function_call","arguments":"{\"field\":\"complete payload\"}"}]}`},
 		{contract.ProtocolAnthropicMessages, `{"messages":[{"role":"user","content":[{"type":"tool_result","content":[{"type":"text","text":"complete tool output"}]}]}]}`},
 	} {
-		_, segments, err := extractDocument(test.protocol, []byte(test.body))
+		_, segments, err := extractDocument(test.protocol, []byte(test.body), InspectionOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}

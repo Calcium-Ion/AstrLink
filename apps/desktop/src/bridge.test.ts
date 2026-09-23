@@ -616,6 +616,8 @@ describe("desktop bridge contract", () => {
       allowlist_rules: [{ type: "domain_suffix", value: "github.com" }],
       restore_tool_arguments: true,
       placeholder_notice: true,
+      skip_tool_declarations: false,
+      inspect_additional_tools: false,
       match: {},
     };
     const etag = `"sha256:${"b".repeat(64)}"`;

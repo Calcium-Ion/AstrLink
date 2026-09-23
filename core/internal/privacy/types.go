@@ -63,6 +63,10 @@ type Policy struct {
 	ResponseRestore      bool
 	RestoreToolArguments bool
 	PlaceholderNotice    bool
+	// InspectToolDeclarations and SkipAdditionalTools select which tool
+	// declarations are inspected; see InspectionOptions.
+	InspectToolDeclarations bool
+	SkipAdditionalTools     bool
 }
 
 // KindRule resolves the effective rule for a kind. See Policy.KindRules for why

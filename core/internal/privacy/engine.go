@@ -65,7 +65,7 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 	if policy.Mode == ModeLocalModel && policy.LocalModelID.Validate() != nil {
 		return Result{}, ErrPolicyUnavailable
 	}
-	document, extracted, err := extractDocument(protocol, body)
+	document, extracted, err := extractDocument(protocol, body, policy.InspectionOptions())
 	if err != nil {
 		return Result{}, err
 	}

@@ -122,6 +122,8 @@ func TestPolicyPatchRequiresETagAndRejectsMutableOrInvalidFields(t *testing.T) {
 		{name: "negative confidence", contentType: "application/merge-patch+json", body: `{"min_confidence":-0.01}`, etag: etag, status: http.StatusUnprocessableEntity},
 		{name: "confidence above one", contentType: "application/merge-patch+json", body: `{"min_confidence":1.01}`, etag: etag, status: http.StatusUnprocessableEntity},
 		{name: "string confidence", contentType: "application/merge-patch+json", body: `{"min_confidence":"0.8"}`, etag: etag, status: http.StatusUnprocessableEntity},
+		{name: "string skip tool declarations", contentType: "application/merge-patch+json", body: `{"skip_tool_declarations":"true"}`, etag: etag, status: http.StatusUnprocessableEntity},
+		{name: "null inspect additional tools", contentType: "application/merge-patch+json", body: `{"inspect_additional_tools":null}`, etag: etag, status: http.StatusUnprocessableEntity},
 		{name: "response restore off", contentType: "application/merge-patch+json", body: `{"response_restore":false}`, etag: etag, status: http.StatusOK},
 	}
 	for _, test := range tests {
@@ -156,6 +158,35 @@ func TestPolicyPatchRequiresETagAndRejectsMutableOrInvalidFields(t *testing.T) {
 		if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != operation.allow {
 			t.Fatalf("%s status=%d allow=%q", operation.method, response.Code, response.Header().Get("Allow"))
 		}
+	}
+}
+
+func TestPolicyPatchesToolDeclarationSettings(t *testing.T) {
+	_, handler, _ := newPolicyHandler(t)
+	path := PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID)
+	get := policyRequest(t, handler, http.MethodGet, path, "", "", "")
+	var initial contract.Policy
+	decode(t, get, &initial)
+	if initial.SkipToolDeclarations || initial.InspectAdditionalTools {
+		t.Fatalf("initial tool declaration settings = %#v", initial)
+	}
+
+	response := policyRequest(t, handler, http.MethodPatch, path, "application/merge-patch+json",
+		`{"inspect_additional_tools":true}`, get.Header().Get("ETag"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", response.Code, response.Body.String())
+	}
+	response = policyRequest(t, handler, http.MethodPatch, path, "application/merge-patch+json",
+		`{"skip_tool_declarations":true}`, response.Header().Get("ETag"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", response.Code, response.Body.String())
+	}
+	get = policyRequest(t, handler, http.MethodGet, path, "", "", "")
+	var patched contract.Policy
+	decode(t, get, &patched)
+	// Each switch keeps its value when the other one is patched.
+	if !patched.SkipToolDeclarations || !patched.InspectAdditionalTools {
+		t.Fatalf("patched tool declaration settings = %#v", patched)
 	}
 }
 

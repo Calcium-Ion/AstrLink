@@ -89,6 +89,8 @@ function policyRecord(
       allowlist_rules: [{ type: "domain_suffix", value: "github.com" }],
       restore_tool_arguments: true,
       placeholder_notice: true,
+      skip_tool_declarations: false,
+      inspect_additional_tools: false,
       match: {},
       ...overrides,
     },
@@ -1590,6 +1592,53 @@ describe("SafetyPolicy", () => {
     expect(container.textContent).toContain(
       "工具在本机执行；关闭后 Agent 会拿着假值去请求或写入文件",
     );
+  });
+
+  it("keeps the two tool declaration switches independent", async () => {
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(policyRecord());
+    bridgeMocks.updatePrivacyPolicy
+      .mockResolvedValueOnce(policyRecord({ skip_tool_declarations: true }))
+      .mockResolvedValueOnce(
+        policyRecord({
+          skip_tool_declarations: true,
+          inspect_additional_tools: true,
+        }),
+      );
+    await renderPolicy();
+
+    const switchFor = (label: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `[role="switch"][aria-label="${label}"]`,
+      );
+    const toggle = async (label: string) => {
+      await act(async () => {
+        switchFor(label)?.click();
+        await Promise.resolve();
+      });
+      await flush();
+    };
+    const skipTools = () => switchFor("跳过函数调用检查");
+    const skipAdditional = () => switchFor("跳过 additional_tools 检查");
+    // Declarations are inspected and additional_tools skipped by default.
+    expect(skipTools()?.getAttribute("aria-checked")).toBe("false");
+    expect(skipAdditional()?.getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).toContain(
+      "替换后还会改动函数定义，影响模型调用这些工具，所以默认跳过",
+    );
+
+    await toggle("跳过函数调用检查");
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenLastCalledWith(etag, {
+      skip_tool_declarations: true,
+    });
+    expect(skipTools()?.getAttribute("aria-checked")).toBe("true");
+    expect(skipAdditional()?.getAttribute("aria-checked")).toBe("true");
+
+    await toggle("跳过 additional_tools 检查");
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenLastCalledWith(etag, {
+      inspect_additional_tools: true,
+    });
+    expect(skipTools()?.getAttribute("aria-checked")).toBe("true");
+    expect(skipAdditional()?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("opens a local streaming restore demo without mutating policy", async () => {

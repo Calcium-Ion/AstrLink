@@ -401,6 +401,16 @@ type Policy struct {
 	// PlaceholderNotice prepends a short convention note to the upstream system
 	// prompt when the request emitted at least one token-shaped placeholder.
 	PlaceholderNotice bool `json:"placeholder_notice"`
+	// SkipToolDeclarations keeps the request's top-level tool declarations out
+	// of inspection: the function names, descriptions and schemas the client
+	// offers the model. They are inspected by default; function call arguments
+	// and results are inspected either way.
+	SkipToolDeclarations bool `json:"skip_tool_declarations"`
+	// InspectAdditionalTools extends inspection into the tool declarations
+	// Codex carries in additional_tools input items. They are skipped by
+	// default. Those items sit in the conversation input, not the top-level
+	// tools, so this is independent of SkipToolDeclarations.
+	InspectAdditionalTools bool `json:"inspect_additional_tools"`
 }
 
 func (policy Policy) Validate() error {
@@ -529,6 +539,9 @@ func DefaultPrivacyPolicy() Policy {
 		ResponseRestore:      true,
 		RestoreToolArguments: true,
 		PlaceholderNotice:    true,
+		// Tool declarations are inspected; additional_tools are skipped.
+		SkipToolDeclarations:   false,
+		InspectAdditionalTools: false,
 	}
 }
 
@@ -544,7 +557,8 @@ type PolicyDryRunRequest struct {
 	// Keys match PolicyPatch: enabled, detector, local_model_id,
 	// min_confidence, regex_source, custom_regex_rules, kind_rules,
 	// allowlist_rules, request_action, response_restore,
-	// restore_tool_arguments, placeholder_notice.
+	// restore_tool_arguments, placeholder_notice, skip_tool_declarations,
+	// inspect_additional_tools.
 	Policy map[string]json.RawMessage `json:"policy,omitempty"`
 }
 

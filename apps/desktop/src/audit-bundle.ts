@@ -309,6 +309,18 @@ function environmentSection(
       format,
     ),
     bullet(
+      privacy
+        ? i18n.t("audit.toolDeclarationsLine", {
+            tools: onOff(privacy.skip_tool_declarations),
+            additionalTools: onOff(!privacy.inspect_additional_tools),
+          })
+        : i18n.t("audit.toolDeclarationsLine", {
+            tools: unavailable,
+            additionalTools: unavailable,
+          }),
+      format,
+    ),
+    bullet(
       limits
         ? i18n.t("audit.limitsLine", {
             timeout: limits.response_start_timeout_seconds,

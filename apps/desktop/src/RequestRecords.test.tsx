@@ -280,6 +280,8 @@ describe("RequestRecords", () => {
         request_action: "redact",
         response_restore: true,
         restore_tool_arguments: true,
+        skip_tool_declarations: false,
+        inspect_additional_tools: false,
       },
     });
     bridgeMocks.listPrivacyModelInstallations.mockResolvedValue({
@@ -2217,6 +2219,9 @@ describe("RequestRecords", () => {
     expect(content).toContain("同会话请求");
     expect(content).toContain(
       "隐私保护: 已开启 · 检测方式: local_model · 本地模型: Privacy Filter · Q4",
+    );
+    expect(content).toContain(
+      "跳过函数调用检查: 已关闭 · 跳过 additional_tools 检查: 已开启",
     );
     expect(content).toContain("响应开始超时: 120 秒 · 并发检测数: 1");
     expect(content).toContain("内容捕获: 请求体 已关闭");

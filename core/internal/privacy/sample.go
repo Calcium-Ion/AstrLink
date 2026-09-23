@@ -58,9 +58,14 @@ func WrapSampleText(protocol contract.ProtocolID, sample string) ([]byte, error)
 }
 
 // LocateFindings maps detector findings onto JSON paths without retaining
-// matched plaintext.
-func LocateFindings(protocol contract.ProtocolID, body []byte, findings []Finding) ([]contract.PolicyDryRunFinding, error) {
-	_, extracted, err := extractDocument(protocol, body)
+// matched plaintext. options must be the ones the findings were detected with.
+func LocateFindings(
+	protocol contract.ProtocolID,
+	body []byte,
+	findings []Finding,
+	options InspectionOptions,
+) ([]contract.PolicyDryRunFinding, error) {
+	_, extracted, err := extractDocument(protocol, body, options)
 	if err != nil {
 		return nil, err
 	}

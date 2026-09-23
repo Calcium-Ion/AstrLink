@@ -286,3 +286,29 @@ func TestNormalizeFillsKindRulesForLegacyPolicies(t *testing.T) {
 		t.Fatalf("empty kind rules were not seeded: %#v", policy.KindRules)
 	}
 }
+
+func TestPolicyToolDeclarationDefaults(t *testing.T) {
+	policy := DefaultPrivacyPolicy()
+	if policy.SkipToolDeclarations || policy.InspectAdditionalTools {
+		t.Fatalf("default tool declaration settings = %t %t",
+			policy.SkipToolDeclarations, policy.InspectAdditionalTools)
+	}
+	document, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(document), `"skip_tool_declarations":false`) ||
+		!strings.Contains(string(document), `"inspect_additional_tools":false`) {
+		t.Fatalf("default policy wire shape = %s", document)
+	}
+
+	// A row written before the fields existed decodes to the defaults.
+	var legacy Policy
+	if err := json.Unmarshal([]byte(`{"id":"policy_privacy_default"}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.SkipToolDeclarations || legacy.InspectAdditionalTools {
+		t.Fatalf("legacy tool declaration settings = %t %t",
+			legacy.SkipToolDeclarations, legacy.InspectAdditionalTools)
+	}
+}
