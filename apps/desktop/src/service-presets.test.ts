@@ -136,7 +136,7 @@ describe("HTTP service product presets", () => {
       payAsYouGoPresetIDs.some((kind) => codingPlanPresetIDs.includes(kind)),
     ).toBe(false);
     for (const [kind, baseURL, discovery] of [
-      ["deepseek", "https://api.deepseek.com/v1", true],
+      ["deepseek", "https://api.deepseek.com", true],
       ["qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", false],
       ["moonshot", "https://api.moonshot.cn/v1", true],
       ["glm", "https://open.bigmodel.cn/api/paas/v4", false],

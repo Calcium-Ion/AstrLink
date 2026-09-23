@@ -360,8 +360,8 @@ const profileDefinitions: Readonly<
     description: "",
     defaultName: "DeepSeek API",
     kind: "deepseek",
-    baseURL: "https://api.deepseek.com/v1",
-    baseURLPlaceholder: "https://api.deepseek.com/v1",
+    baseURL: "https://api.deepseek.com",
+    baseURLPlaceholder: "https://api.deepseek.com",
     authScheme: "bearer",
     headerName: "",
     capabilityIDs: [

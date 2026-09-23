@@ -20,7 +20,7 @@ func TestAPIProviderForwarding(t *testing.T) {
 		protocol   contract.ProtocolID
 		apiKey     bool
 	}{
-		{contract.ServiceKindDeepSeek, "/v1", "/v1/chat/completions", contract.ProtocolOpenAIChat, false},
+		{contract.ServiceKindDeepSeek, "/v1", "/chat/completions", contract.ProtocolOpenAIChat, false},
 		{contract.ServiceKindQwen, "/compatible-mode/v1", "/compatible-mode/v1/chat/completions", contract.ProtocolOpenAIChat, false},
 		{contract.ServiceKindMoonshot, "/v1", "/v1/chat/completions", contract.ProtocolOpenAIChat, false},
 		{contract.ServiceKindGLM, "/api/paas/v4", "/api/paas/v4/chat/completions", contract.ProtocolOpenAIChat, false},

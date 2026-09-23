@@ -43,7 +43,7 @@ Key 仅供 AstrLink 连接 API 提供商使用。
 | OpenAI           | `https://api.openai.com/v1`                         | 拉取或手动添加                                 |
 | Anthropic        | `https://api.anthropic.com`                         | 拉取或手动添加                                 |
 | Gemini           | `https://generativelanguage.googleapis.com`         | 拉取或手动添加                                 |
-| DeepSeek         | `https://api.deepseek.com/v1`                       | 拉取或手动添加                                 |
+| DeepSeek         | `https://api.deepseek.com`                          | 拉取或手动添加                                 |
 | 千问（百炼）     | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 手动添加                                       |
 | Kimi（Moonshot） | `https://api.moonshot.cn/v1`                        | 拉取或手动添加                                 |
 | 智谱 GLM         | `https://open.bigmodel.cn/api/paas/v4`              | 手动添加                                       |

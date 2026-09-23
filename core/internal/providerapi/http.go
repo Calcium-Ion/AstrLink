@@ -21,12 +21,10 @@ func BaseURL(kind contract.ServiceKind, protocol contract.ProtocolID, base *url.
 		switch protocol {
 		case contract.ProtocolAnthropicMessages:
 			target = "/anthropic"
-		case contract.ProtocolOpenAIResponses:
+		case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIChat, contract.ProtocolOpenAIModels:
 			if kind != contract.ServiceKindDeepSeek {
 				target = "/v1"
 			}
-		case contract.ProtocolOpenAIChat, contract.ProtocolOpenAIModels:
-			target = "/v1"
 		default:
 			return base
 		}
@@ -83,7 +81,11 @@ func BaseURL(kind contract.ServiceKind, protocol contract.ProtocolID, base *url.
 // RequestURL strips AstrLink's local version only where the provider uses a
 // different version/root. Anthropic's /v1/messages must retain its version.
 func RequestURL(kind contract.ServiceKind, protocol contract.ProtocolID, incoming *url.URL) *url.URL {
-	stripVersion := (kind == contract.ServiceKindDeepSeek && protocol == contract.ProtocolOpenAIResponses) ||
+	deepSeekOpenAI := kind == contract.ServiceKindDeepSeek &&
+		(protocol == contract.ProtocolOpenAIResponses ||
+			protocol == contract.ProtocolOpenAIChat ||
+			protocol == contract.ProtocolOpenAIModels)
+	stripVersion := deepSeekOpenAI ||
 		((kind == contract.ServiceKindGLM || kind == contract.ServiceKindDoubao) && protocol != contract.ProtocolAnthropicMessages)
 	if !stripVersion || !strings.HasPrefix(incoming.Path, "/v1/") {
 		return incoming

@@ -268,6 +268,49 @@ function mergeDiscoveredServiceModels(
   return models;
 }
 
+async function discoverModelsAfterSave(
+  record: ServiceRecord,
+): Promise<ServiceRecord> {
+  if (record.service.models.length > 0) return record;
+
+  const protocols: ModelDiscoveryProtocol[] = [];
+  if (
+    record.service.capabilities.some(
+      (capability) => capability.protocol === "openai.models",
+    )
+  ) {
+    protocols.push("openai.models");
+  }
+  if (
+    record.service.capabilities.some(
+      (capability) => capability.protocol === "google.models",
+    )
+  ) {
+    protocols.push("google.models");
+  }
+  if (protocols.length === 0) return record;
+
+  const attempts = await Promise.allSettled(
+    protocols.map((protocol) => probeServiceModels(record.service.id, protocol)),
+  );
+  const discovered: string[] = [];
+  for (const attempt of attempts) {
+    if (attempt.status === "fulfilled") {
+      discovered.push(...(attempt.value?.model_ids ?? []));
+    }
+  }
+  if (discovered.length === 0) return record;
+
+  const models = mergeDiscoveredServiceModels(record.service, discovered);
+  if (!models) return record;
+
+  try {
+    return await updateService(record.service.id, record.etag, { models });
+  } catch {
+    return record;
+  }
+}
+
 // Applying the preview replaces the whole allowlist, so a service that already
 // has models must open with only those checked — never the fresh discoveries.
 function initialModelPreviewSelection(
@@ -1229,6 +1272,9 @@ export function ServiceManager({
         } else {
           notify.success(t("services.addedKey"));
         }
+      }
+      if (!isSubscriptionKind(record.service.kind)) {
+        record = await discoverModelsAfterSave(record);
       }
       onServiceSaved(record.service);
       setEditing(null);

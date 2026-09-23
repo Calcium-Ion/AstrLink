@@ -90,7 +90,7 @@ func (prober *Prober) ProbeHTTP(
 ) ([]string, error) {
 	probeContext, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	if !kind.IsHTTP() || !kindSupportsDiscovery(kind, protocol) {
+	if !kind.IsHTTP() {
 		return nil, ErrUnsupported
 	}
 	if err := connection.Validate(serviceID); err != nil {
@@ -126,7 +126,7 @@ func (prober *Prober) ProbeHTTP(
 		return nil, fmt.Errorf("%w: invalid base URL", ErrUnsupported)
 	}
 	baseURL = providerapi.BaseURL(kind, protocol, baseURL)
-	return prober.probeHTTPPages(probeContext, baseURL.String(), headers, protocol, kind == contract.ServiceKindAnthropic)
+	return prober.probeHTTPPages(probeContext, baseURL.String(), headers, protocol, kind == contract.ServiceKindAnthropic, kind)
 }
 
 func (prober *Prober) probeSubscription(
@@ -157,12 +157,12 @@ func (prober *Prober) probeSubscription(
 	if account.Provider == contract.SubscriptionProviderClaudeCode {
 		headers := make(http.Header)
 		accountauth.ApplyClaudeAPIHeaders(headers, tokens)
-		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, true)
+		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, true, "")
 	}
 	if account.Provider == contract.SubscriptionProviderXAIGrok {
 		headers := make(http.Header)
 		accountauth.ApplyGrokAPIHeaders(headers, tokens, prober.subscriptions.GrokClientVersion())
-		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, false)
+		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, false, "")
 	}
 	models, err := prober.subscriptions.Provider().ListModels(probeContext, tokens)
 	if err != nil {
@@ -184,6 +184,7 @@ func (prober *Prober) probeHTTPPages(
 	headers http.Header,
 	protocol contract.ProtocolID,
 	anthropic bool,
+	kind contract.ServiceKind,
 ) ([]string, error) {
 	base, err := url.Parse(baseURL)
 	if err != nil {
@@ -201,6 +202,7 @@ func (prober *Prober) probeHTTPPages(
 	totalBytes := 0
 	for page := 0; page < maxProbePages; page++ {
 		incoming := &url.URL{Path: path}
+		incoming = providerapi.RequestURL(kind, protocol, incoming)
 		query := incoming.Query()
 		if anthropic {
 			query.Set("limit", fmt.Sprint(providerPageLimit))
@@ -333,22 +335,6 @@ func serviceSupportsDiscovery(service contract.Service, protocol contract.Protoc
 		}
 	}
 	return false
-}
-
-func kindSupportsDiscovery(kind contract.ServiceKind, protocol contract.ProtocolID) bool {
-	switch kind {
-	case contract.ServiceKindNewAPI, contract.ServiceKindCustom:
-		return protocol == contract.ProtocolOpenAIModels || protocol == contract.ProtocolGoogleModels
-	case contract.ServiceKindGemini:
-		return protocol == contract.ProtocolGoogleModels
-	case contract.ServiceKindOpenAI, contract.ServiceKindOpenAICompatible, contract.ServiceKindAnthropic,
-		contract.ServiceKindOpenCodeGo, contract.ServiceKindOpenCodeZen, contract.ServiceKindKimiCoding,
-		contract.ServiceKindGLMCoding, contract.ServiceKindMiniMaxCoding,
-		contract.ServiceKindDeepSeek, contract.ServiceKindMoonshot, contract.ServiceKindMiniMax, contract.ServiceKindXAI:
-		return protocol == contract.ProtocolOpenAIModels
-	default:
-		return false
-	}
 }
 
 func authorizationHeaders(auth contract.ServiceAuth, secret []byte) (http.Header, error) {

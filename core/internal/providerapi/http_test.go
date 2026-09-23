@@ -37,6 +37,59 @@ func TestProviderSurfacePreservesOriginPrefixAndInput(t *testing.T) {
 	}
 }
 
+func TestDeepSeekOpenAISurfaceUsesVendorRoot(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		base     string
+		protocol contract.ProtocolID
+		incoming string
+		want     string
+	}{
+		{
+			name:     "chat from SDK base",
+			base:     "https://api.deepseek.com/v1",
+			protocol: contract.ProtocolOpenAIChat,
+			incoming: "/v1/chat/completions?trace=a%2Fb",
+			want:     "https://api.deepseek.com/chat/completions?trace=a%2Fb",
+		},
+		{
+			name:     "models from SDK base",
+			base:     "https://api.deepseek.com/v1",
+			protocol: contract.ProtocolOpenAIModels,
+			incoming: "/v1/models?limit=2",
+			want:     "https://api.deepseek.com/models?limit=2",
+		},
+		{
+			name:     "responses from escaped proxy prefix",
+			base:     "https://proxy.example/tenant%2Fone/v1/",
+			protocol: contract.ProtocolOpenAIResponses,
+			incoming: "/v1/responses",
+			want:     "https://proxy.example/tenant%2Fone/responses",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base, err := url.Parse(test.base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			incoming, err := url.Parse(test.incoming)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := transport.JoinTargetURL(
+				BaseURL(contract.ServiceKindDeepSeek, test.protocol, base),
+				RequestURL(contract.ServiceKindDeepSeek, test.protocol, incoming),
+			)
+			if target.String() != test.want {
+				t.Fatalf("target = %s, want %s", target, test.want)
+			}
+			if base.String() != test.base || incoming.String() != test.incoming {
+				t.Fatal("mutated a shared URL")
+			}
+		})
+	}
+}
+
 func TestProviderAuthPreservesExplicitOverridesAndOtherProtocols(t *testing.T) {
 	for _, kind := range []contract.ServiceKind{contract.ServiceKindDeepSeek, contract.ServiceKindGLM, contract.ServiceKindDoubao} {
 		for _, configured := range []contract.ServiceAuth{
