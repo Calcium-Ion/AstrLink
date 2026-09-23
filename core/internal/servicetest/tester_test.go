@@ -127,6 +127,24 @@ func TestResponseValidation(t *testing.T) {
 	}
 }
 
+func TestResponseValidationIgnoresContentTypeForSSE(t *testing.T) {
+	raw := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+	for _, contentType := range []string{"", "application/json", "text/html; charset=utf-8"} {
+		t.Run(contentType, func(t *testing.T) {
+			output, err := decodeResponse(
+				strings.NewReader(raw),
+				contract.ProtocolOpenAIResponses,
+				true,
+				contentType,
+				nil,
+			)
+			if err != nil || output != "OK" {
+				t.Fatalf("output=%q err=%v, want OK", output, err)
+			}
+		})
+	}
+}
+
 func TestCompatibleReasoningModelsUseCompletionTokenLimit(t *testing.T) {
 	for _, model := range []string{"gpt-5", "gpt-5.4", "o1", "o3-mini", "o4-mini"} {
 		_, body := testPayload(contract.ServiceKindOpenAICompatible, contract.ServiceTestRequest{Protocol: contract.ProtocolOpenAIChat, Model: model})
