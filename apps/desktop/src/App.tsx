@@ -674,9 +674,7 @@ export default function App() {
         >
           <main
             className={cn(
-              // One measure for every page: content stops at 1080px and stays
-              // centred, so a single row of data never spans the whole window.
-              "@container/workspace-surface mx-auto h-full min-h-0 w-full max-w-[1080px] min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
+              "@container/workspace-surface h-full min-h-0 w-full min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
               "flex flex-col",
               [
                 "overview",

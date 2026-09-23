@@ -33,6 +33,10 @@ import { applyLocale } from "./i18n";
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { browserSnapshot, type AppSnapshot } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
+import {
+  DEFAULT_OVERVIEW_LAYOUT,
+  OVERVIEW_LAYOUT_STORAGE_KEY,
+} from "./overview-layout";
 import type { Service } from "./service-model";
 import {
   aggregateUsage,
@@ -155,6 +159,7 @@ describe("Overview", () => {
   let root: Root;
 
   beforeEach(() => {
+    localStorage.removeItem(OVERVIEW_LAYOUT_STORAGE_KEY);
     (
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -170,6 +175,9 @@ describe("Overview", () => {
       root.unmount();
     });
     container.remove();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    localStorage.removeItem(OVERVIEW_LAYOUT_STORAGE_KEY);
   });
 
   async function renderOverview(
@@ -251,6 +259,400 @@ describe("Overview", () => {
     stale: false,
   };
 
+  const moduleOrder = () =>
+    [...container.querySelectorAll<HTMLElement>("[data-ordered-item]")].map(
+      (item) => item.dataset.orderedItem,
+    );
+  const layoutButton = (label: string) =>
+    container.querySelector<HTMLButtonElement>(
+      `button[aria-label="${label}"]`,
+    )!;
+
+  it("keeps the default layout free of reorder controls and moves providers and models together", async () => {
+    await renderOverview();
+    expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+    expect(layoutButton("API 提供商与模型")).toBeNull();
+    const providerPanel = container.querySelector(
+      "[aria-labelledby='usage-by-service-heading']",
+    );
+    const modelPanel = container.querySelector(
+      "[aria-labelledby='usage-by-model-heading']",
+    );
+    expect(providerPanel?.closest("[data-ordered-item]")).toBe(
+      modelPanel?.closest("[data-ordered-item]"),
+    );
+    await act(async () => layoutButton("自定义布局").click());
+    await act(async () =>
+      layoutButton("API 提供商与模型").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    expect(moduleOrder()).toEqual([
+      "usage",
+      "tokens",
+      "providers-models",
+      "access",
+      "system",
+    ]);
+    expect(
+      container.querySelector("[aria-labelledby='usage-by-service-heading']"),
+    ).toBe(providerPanel);
+    expect(
+      container.querySelector("[aria-labelledby='usage-by-model-heading']"),
+    ).toBe(modelPanel);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(
+      JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
+    ).toEqual({ order: moduleOrder(), hidden: [] });
+    await act(async () => layoutButton("完成布局").click());
+    expect(layoutButton("API 提供商与模型")).toBeNull();
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await renderOverview();
+    expect(moduleOrder()[1]).toBe("tokens");
+    await act(async () => layoutButton("自定义布局").click());
+    await act(async () => layoutButton("恢复默认布局").click());
+    expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+    expect(
+      JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
+    ).toEqual({ order: DEFAULT_OVERVIEW_LAYOUT, hidden: [] });
+  });
+
+  it("persists module visibility and preserves hidden modules in the editable order", async () => {
+    await renderOverview();
+    expect(container.querySelector('[role="switch"]')).toBeNull();
+    await act(async () => layoutButton("自定义布局").click());
+    await act(async () => layoutButton("显示API 提供商与模型").click());
+    expect(
+      layoutButton("显示API 提供商与模型").getAttribute("aria-checked"),
+    ).toBe("false");
+    expect(
+      container.querySelector("[aria-labelledby='usage-by-service-heading']"),
+    ).toBeNull();
+    expect(
+      container.querySelector("[aria-labelledby='usage-by-model-heading']"),
+    ).toBeNull();
+    expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+    await act(async () =>
+      layoutButton("API 提供商与模型").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    expect(
+      JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
+    ).toEqual({
+      order: ["usage", "tokens", "providers-models", "access", "system"],
+      hidden: ["providers-models"],
+    });
+    await act(async () => layoutButton("完成布局").click());
+    expect(moduleOrder()).toEqual(["usage", "tokens", "access", "system"]);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await renderOverview();
+    expect(moduleOrder()).toEqual(["usage", "tokens", "access", "system"]);
+    await act(async () => layoutButton("自定义布局").click());
+    expect(moduleOrder()[2]).toBe("providers-models");
+    await act(async () => layoutButton("显示API 提供商与模型").click());
+    expect(
+      container.querySelector("[aria-labelledby='usage-by-service-heading']"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector("[aria-labelledby='usage-by-model-heading']"),
+    ).not.toBeNull();
+    expect(moduleOrder()[2]).toBe("providers-models");
+  });
+
+  it("keeps customization reachable when every module is hidden and resets visibility with order", async () => {
+    await renderOverview();
+    await act(async () => layoutButton("自定义布局").click());
+    for (const toggle of container.querySelectorAll<HTMLButtonElement>(
+      '[role="switch"]',
+    )) {
+      await act(async () => toggle.click());
+    }
+    expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+    expect(
+      [...container.querySelectorAll('[role="switch"]')].every(
+        (toggle) => toggle.getAttribute("aria-checked") === "false",
+      ),
+    ).toBe(true);
+    await act(async () => layoutButton("完成布局").click());
+    expect(moduleOrder()).toEqual([]);
+    expect(container.textContent).toContain("所有模块已隐藏");
+    await act(async () => button("自定义布局").click());
+    expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+    expect(layoutButton("恢复默认布局").disabled).toBe(false);
+    await act(async () => layoutButton("恢复默认布局").click());
+    expect(
+      [...container.querySelectorAll('[role="switch"]')].every(
+        (toggle) => toggle.getAttribute("aria-checked") === "true",
+      ),
+    ).toBe(true);
+    expect(
+      JSON.parse(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)!),
+    ).toEqual({ order: DEFAULT_OVERVIEW_LAYOUT, hidden: [] });
+    await act(async () => layoutButton("完成布局").click());
+    expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+  });
+
+  it("loads legacy orders with every module visible", async () => {
+    const order = [...DEFAULT_OVERVIEW_LAYOUT].reverse();
+    localStorage.setItem(OVERVIEW_LAYOUT_STORAGE_KEY, JSON.stringify(order));
+    await renderOverview();
+    expect(moduleOrder()).toEqual(order);
+    await act(async () => layoutButton("自定义布局").click());
+    expect(
+      [...container.querySelectorAll('[role="switch"]')].every(
+        (toggle) => toggle.getAttribute("aria-checked") === "true",
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores unknown hidden modules and shows newly added modules", async () => {
+    localStorage.setItem(
+      OVERVIEW_LAYOUT_STORAGE_KEY,
+      JSON.stringify({
+        order: ["tokens", "tokens", "obsolete"],
+        hidden: ["tokens", "tokens", "obsolete", null],
+      }),
+    );
+    await renderOverview();
+    expect(moduleOrder()).toEqual([
+      "usage",
+      "providers-models",
+      "access",
+      "system",
+    ]);
+    await act(async () => layoutButton("自定义布局").click());
+    expect(moduleOrder()).toEqual([
+      "tokens",
+      "usage",
+      "providers-models",
+      "access",
+      "system",
+    ]);
+    expect(
+      container.querySelectorAll('[role="switch"][aria-checked="false"]'),
+    ).toHaveLength(1);
+  });
+
+  it("lets an empty workspace restore its hidden system module", async () => {
+    localStorage.setItem(
+      OVERVIEW_LAYOUT_STORAGE_KEY,
+      JSON.stringify({ order: DEFAULT_OVERVIEW_LAYOUT, hidden: ["system"] }),
+    );
+    await renderOverview({ catalog: emptyCatalog, tokenCatalog: emptyTokens });
+    expect(container.querySelector("#system-details-heading")).toBeNull();
+    await act(async () => layoutButton("自定义布局").click());
+    await act(async () => layoutButton("显示系统详情").click());
+    await act(async () => layoutButton("完成布局").click());
+    expect(container.querySelector("#system-details-heading")).not.toBeNull();
+    expect(container.querySelector("#welcome-heading")).not.toBeNull();
+  });
+
+  it.each(["not json", "{}", '["tokens","tokens","obsolete"]'])(
+    "recovers missing or invalid saved modules: %s",
+    async (saved) => {
+      localStorage.setItem(OVERVIEW_LAYOUT_STORAGE_KEY, saved);
+      await renderOverview();
+      expect(new Set(moduleOrder())).toEqual(new Set(DEFAULT_OVERVIEW_LAYOUT));
+      expect(moduleOrder()).toHaveLength(DEFAULT_OVERVIEW_LAYOUT.length);
+      expect(moduleOrder()[0]).toBe(
+        saved.includes("tokens") ? "tokens" : "usage",
+      );
+    },
+  );
+
+  it("keeps reordering usable and reports unavailable storage", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("storage unavailable");
+      },
+      setItem: () => {
+        throw new Error("storage unavailable");
+      },
+    });
+    await renderOverview();
+    expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+    await act(async () => layoutButton("自定义布局").click());
+    await act(async () =>
+      layoutButton("API 提供商与模型").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    expect(moduleOrder()[1]).toBe("tokens");
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(
+      "无法保存到本机",
+    );
+    await act(async () => layoutButton("显示API 提供商与模型").click());
+    expect(
+      container.querySelector("[aria-labelledby='usage-by-service-heading']"),
+    ).toBeNull();
+    expect(
+      layoutButton("显示API 提供商与模型").getAttribute("aria-checked"),
+    ).toBe("false");
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(
+      "无法保存到本机",
+    );
+  });
+
+  it.each(["drop", "drop-down", "Escape", "pointercancel"])(
+    "handles dragging modules of different heights: %s",
+    async (finish) => {
+      await renderOverview();
+      await act(async () => layoutButton("自定义布局").click());
+      const list = container.querySelector<HTMLOListElement>(
+        'ol[aria-label="自定义布局"]',
+      )!;
+      const rows = () => [
+        ...list.querySelectorAll<HTMLElement>("[data-ordered-item]"),
+      ];
+      const heights: Record<string, number> = {
+        usage: 380,
+        "providers-models": 440,
+        tokens: 240,
+        access: 80,
+        system: 200,
+      };
+      const scroller = container.querySelector<HTMLElement>(
+        '[data-slot="overview-content"]',
+      )!;
+      scroller.style.overflowY = "auto";
+      scroller.scrollTop = 400;
+      Object.defineProperty(scroller, "clientHeight", {
+        configurable: true,
+        value: 600,
+      });
+      vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(
+        new DOMRect(0, 100, 800, 600),
+      );
+      list.setPointerCapture = vi.fn();
+      list.hasPointerCapture = () => false;
+      vi.spyOn(list, "getBoundingClientRect").mockImplementation(
+        () => new DOMRect(0, 100 - scroller.scrollTop, 800, 1400),
+      );
+      for (const row of rows()) {
+        Object.defineProperty(row, "offsetHeight", {
+          configurable: true,
+          get: () =>
+            list.dataset.sorting === "true"
+              ? Math.min(154, heights[row.dataset.orderedItem!])
+              : heights[row.dataset.orderedItem!],
+        });
+        Object.defineProperty(row, "offsetTop", {
+          configurable: true,
+          get: () =>
+            (parseFloat(list.style.paddingTop) || 0) +
+            rows()
+              .slice(0, rows().indexOf(row))
+              .reduce((total, other) => total + other.offsetHeight + 12, 0),
+        });
+        vi.spyOn(row, "getBoundingClientRect").mockImplementation(
+          () =>
+            new DOMRect(
+              0,
+              100 - scroller.scrollTop + row.offsetTop,
+              800,
+              row.offsetHeight,
+            ),
+        );
+        vi.spyOn(
+          row.querySelector("button")!,
+          "getBoundingClientRect",
+        ).mockImplementation(
+          () =>
+            new DOMRect(0, 100 - scroller.scrollTop + row.offsetTop, 28, 28),
+        );
+      }
+      const handle = layoutButton("按访问令牌");
+      await act(async () =>
+        handle.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            pointerId: 1,
+            button: 0,
+            clientX: 15,
+            clientY: handle.getBoundingClientRect().top + 10,
+          }),
+        ),
+      );
+      const originalContent = container.querySelector(
+        "[data-testid='token-usage-panel']",
+      );
+      await act(async () =>
+        list.dispatchEvent(
+          new PointerEvent("pointermove", {
+            bubbles: true,
+            pointerId: 1,
+            clientX: 15,
+            clientY: handle.getBoundingClientRect().top + 16,
+          }),
+        ),
+      );
+      expect(moduleOrder()).toEqual(DEFAULT_OVERVIEW_LAYOUT);
+      expect(list.style.paddingTop).toBe("0px");
+      expect(scroller.scrollTop).toBe(0);
+      expect(
+        [
+          ...container.querySelectorAll<HTMLElement>(
+            '[data-slot="ordered-module-content"]',
+          ),
+        ].every((element) => element.classList.contains("max-h-28")),
+      ).toBe(true);
+      expect(container.querySelector("[data-testid='token-usage-panel']")).toBe(
+        originalContent,
+      );
+      await act(async () =>
+        list.dispatchEvent(
+          new PointerEvent("pointermove", {
+            bubbles: true,
+            pointerId: 1,
+            clientX: 15,
+            clientY:
+              finish === "drop-down"
+                ? rows().at(-1)!.getBoundingClientRect().bottom
+                : rows()[0].getBoundingClientRect().top + 5,
+          }),
+        ),
+      );
+      expect(
+        finish === "drop-down" ? moduleOrder().at(-1) : moduleOrder()[0],
+      ).toBe("tokens");
+      expect(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY)).toBeNull();
+      await act(async () => {
+        if (finish === "Escape") {
+          handle.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+          );
+        } else {
+          list.dispatchEvent(
+            new PointerEvent(
+              finish.startsWith("drop") ? "pointerup" : "pointercancel",
+              { bubbles: true, pointerId: 1 },
+            ),
+          );
+        }
+      });
+      expect(moduleOrder()[0]).toBe(finish === "drop" ? "tokens" : "usage");
+      if (finish === "drop-down") expect(moduleOrder().at(-1)).toBe("tokens");
+      expect(container.querySelector("[data-drop-slot]")).toBeNull();
+      if (!finish.startsWith("drop")) expect(scroller.scrollTop).toBe(400);
+      expect(
+        [
+          ...container.querySelectorAll<HTMLElement>(
+            '[data-slot="ordered-module-content"]',
+          ),
+        ].every((element) => !element.classList.contains("max-h-28")),
+      ).toBe(true);
+      expect(container.querySelector("[data-testid='token-usage-panel']")).toBe(
+        originalContent,
+      );
+      expect(localStorage.getItem(OVERVIEW_LAYOUT_STORAGE_KEY) !== null).toBe(
+        finish.startsWith("drop"),
+      );
+    },
+  );
+
   it("offers working setup actions for a confirmed empty workspace", async () => {
     const { onAddService, onManageTokens } = await renderOverview({
       catalog: emptyCatalog,
@@ -260,6 +662,7 @@ describe("Overview", () => {
       container.querySelector("[data-slot='overview-welcome']"),
     ).toBeTruthy();
     expect(container.querySelector("#usage-heading")).toBeNull();
+    expect(layoutButton("自定义布局")).not.toBeNull();
     expect(container.textContent).toContain("工作区已就绪");
     await act(async () => {
       button("添加 API 提供商").click();
@@ -525,7 +928,6 @@ describe("Overview", () => {
     expect(panel.textContent).not.toContain("100");
     expect(panel.textContent).not.toContain("2 次请求");
   });
-
 
   it("defaults to a yearly heatmap and reports range switches", async () => {
     const { onUsagePresetChange } = await renderOverview();

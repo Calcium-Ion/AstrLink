@@ -26,6 +26,11 @@ export function OrderedList<T extends { id: string }>({
   disabled = false,
   compact = false,
   positionOf,
+  variant = "default",
+  className,
+  itemLabel,
+  itemActions,
+  handleHint,
 }: {
   items: T[];
   onChange: (items: T[]) => void;
@@ -39,6 +44,12 @@ export function OrderedList<T extends { id: string }>({
   disabled?: boolean;
   compact?: boolean;
   positionOf?: (item: T) => number;
+  /** Bare modules keep their own surfaces and expose controls only when editing. */
+  variant?: "default" | "modules";
+  className?: string;
+  itemLabel?: (item: T) => string;
+  itemActions?: (item: T) => ReactNode;
+  handleHint?: string;
 }) {
   const list = useRef<HTMLOListElement>(null);
   const pointer = useRef<{
@@ -53,6 +64,8 @@ export function OrderedList<T extends { id: string }>({
     needsAnchor: boolean;
     needsTarget: boolean;
     moved: boolean;
+    scroller: HTMLElement | null;
+    scrollTop: number;
   } | null>(null);
   const frame = useRef<number | null>(null);
   const keyboardFocus = useRef<string | null>(null);
@@ -69,7 +82,14 @@ export function OrderedList<T extends { id: string }>({
     minHeight: number;
     paddingTop: number;
   } | null>(null);
-  const landing = useRef<{ id: string; top: number } | null>(null);
+  const landing = useRef<{
+    id: string;
+    top: number;
+    scroller?: HTMLElement;
+  } | null>(null);
+  const restoreScroll = useRef<{ element: HTMLElement; top: number } | null>(
+    null,
+  );
   const settling = useRef<ReturnType<typeof animate> | null>(null);
   const dragY = useMotionValue(0);
   const reduceMotion = useReducedMotion();
@@ -84,20 +104,56 @@ export function OrderedList<T extends { id: string }>({
     [...(list.current?.children ?? [])].find(
       (element) => (element as HTMLElement).dataset.orderedItem === id,
     ) as HTMLElement | undefined;
+  const scrollContainer = () => {
+    let scroller = list.current?.parentElement ?? null;
+    while (
+      scroller &&
+      !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
+    )
+      scroller = scroller.parentElement;
+    return scroller;
+  };
+  const moduleScrollBounds = (scroller: HTMLElement) => {
+    const start =
+      (list.current?.getBoundingClientRect().top ?? 0) -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop;
+    const rows = [...(list.current?.children ?? [])] as HTMLElement[];
+    const end = Math.max(
+      0,
+      ...rows
+        .filter((row) => row.dataset.orderedItem)
+        .map((row) => row.offsetTop + row.offsetHeight),
+    );
+    return {
+      min: Math.max(0, start),
+      max: Math.max(0, start, start + end - scroller.clientHeight),
+    };
+  };
   const stop = (commit = false) => {
     const point = pointer.current;
     if (!point) return;
     const row = rowFor(point.source);
+    const next = previewRef.current;
+    const changed = next?.some((item, index) => item.id !== items[index]?.id);
     if (point.moved && row) {
       landing.current = {
         id: point.source,
         top: row.getBoundingClientRect().top,
+        scroller:
+          variant === "modules" && commit && changed
+            ? (point.scroller ?? undefined)
+            : undefined,
       };
+      if (variant === "modules" && point.scroller && (!commit || !changed))
+        restoreScroll.current = {
+          element: point.scroller,
+          top: point.scrollTop,
+        };
     }
     if (frame.current !== null) cancelAnimationFrame(frame.current);
     frame.current = null;
     pointer.current = null;
-    const next = previewRef.current;
     previewRef.current = null;
     setPreview(null);
     setDragging(null);
@@ -106,12 +162,7 @@ export function OrderedList<T extends { id: string }>({
     if (point.moved) setAnimationEpoch((value) => value + 1);
     if (list.current?.hasPointerCapture(point.id))
       list.current.releasePointerCapture(point.id);
-    if (
-      commit &&
-      next &&
-      next.some((item, index) => item.id !== items[index]?.id)
-    )
-      onChange(next);
+    if (commit && next && changed) onChange(next);
   };
   useEffect(
     () => () => {
@@ -149,14 +200,28 @@ export function OrderedList<T extends { id: string }>({
           point.handleOffset;
         if (point.needsAnchor) {
           point.needsAnchor = false;
-          // Compact around the grabbed row without collapsing the scroll extent.
-          const paddingTop = Math.max(
-            0,
-            point.startAnchor - row.offsetTop - point.grabOffset,
-          );
-          if (paddingTop > 0) {
-            setDragLayout((current) => current && { ...current, paddingTop });
-            return;
+          if (variant === "modules") {
+            // Compact into the visible scrollport, never pad the entire dashboard
+            // down to the old handle position. The dragged row follows separately.
+            if (point.scroller && list.current) {
+              const bounds = moduleScrollBounds(point.scroller);
+              const delta =
+                row.getBoundingClientRect().top + point.grabOffset - point.y;
+              point.scroller.scrollTop = Math.max(
+                bounds.min,
+                Math.min(bounds.max, point.scroller.scrollTop + delta),
+              );
+            }
+          } else {
+            // Compact around the grabbed row without collapsing the scroll extent.
+            const paddingTop = Math.max(
+              0,
+              point.startAnchor - row.offsetTop - point.grabOffset,
+            );
+            if (paddingTop > 0) {
+              setDragLayout((current) => current && { ...current, paddingTop });
+              return;
+            }
           }
         }
       }
@@ -172,6 +237,14 @@ export function OrderedList<T extends { id: string }>({
       if (!row) {
         setLifted(null);
         return;
+      }
+      if (restoreScroll.current) {
+        restoreScroll.current.element.scrollTop = restoreScroll.current.top;
+        restoreScroll.current = null;
+      } else if (drop.scroller) {
+        // Keep the dropped module in view when the full cards expand again.
+        drop.scroller.scrollTop +=
+          list.current.getBoundingClientRect().top + row.offsetTop - drop.top;
       }
       dragY.set(
         drop.top - list.current.getBoundingClientRect().top - row.offsetTop,
@@ -244,12 +317,7 @@ export function OrderedList<T extends { id: string }>({
     const point = pointer.current;
     if (!point) return;
     if (point.moved) {
-      let scroller = list.current?.parentElement;
-      while (
-        scroller &&
-        !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
-      )
-        scroller = scroller.parentElement;
+      const scroller = point.scroller;
       if (scroller) {
         const bounds = scroller.getBoundingClientRect();
         if (point.x >= bounds.left && point.x <= bounds.right) {
@@ -260,8 +328,13 @@ export function OrderedList<T extends { id: string }>({
                 ? 8
                 : 0;
           if (delta) {
-            scroller.scrollTop += delta;
-            locateTarget();
+            const previous = scroller.scrollTop;
+            const range =
+              variant === "modules" ? moduleScrollBounds(scroller) : null;
+            scroller.scrollTop = range
+              ? Math.max(range.min, Math.min(range.max, previous + delta))
+              : previous + delta;
+            if (scroller.scrollTop !== previous) locateTarget();
           }
         }
       }
@@ -285,7 +358,9 @@ export function OrderedList<T extends { id: string }>({
       className={cn(
         "relative isolate min-w-0 list-none p-0",
         !compact && "grid gap-2",
+        variant === "modules" && "content-start",
         dragging && "select-none cursor-grabbing",
+        className,
       )}
       style={{ overflowAnchor: "none", ...dragLayout }}
       onPointerMove={(event) => {
@@ -333,8 +408,10 @@ export function OrderedList<T extends { id: string }>({
               size="icon"
               disabled={disabled}
               className="size-7 shrink-0 touch-none cursor-grab active:cursor-grabbing"
-              aria-label={`${t("services.reorder")} ${position}`}
-              title={t("services.reorderKeys")}
+              aria-label={
+                itemLabel?.(item) ?? `${t("services.reorder")} ${position}`
+              }
+              title={handleHint ?? t("services.reorderKeys")}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   stop();
@@ -362,6 +439,7 @@ export function OrderedList<T extends { id: string }>({
                 event.currentTarget.focus({ preventScroll: true });
                 settling.current?.stop();
                 dragY.set(0);
+                const scroller = scrollContainer();
                 pointer.current = {
                   id: event.pointerId,
                   source: item.id,
@@ -377,8 +455,10 @@ export function OrderedList<T extends { id: string }>({
                     event.clientY -
                     row.getBoundingClientRect().top,
                   needsAnchor: true,
-                  needsTarget: true,
+                  needsTarget: variant !== "modules",
                   moved: false,
+                  scroller,
+                  scrollTop: scroller?.scrollTop ?? 0,
                 };
                 list.current.setPointerCapture(event.pointerId);
                 frame.current = requestAnimationFrame(scrollWhileDragging);
@@ -386,31 +466,36 @@ export function OrderedList<T extends { id: string }>({
             >
               <GripVertical />
             </Button>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {position}
+            <span className="min-w-0 truncate text-xs tabular-nums text-muted-foreground">
+              {variant === "modules" ? itemLabel?.(item) : position}
             </span>
-            {!compact && (
-              <div className="ml-auto flex gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("failure.moveUp")}
-                  disabled={disabled || index === 0}
-                  onClick={() => move(index, index - 1)}
-                >
-                  <ArrowUp />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("failure.moveDown")}
-                  disabled={disabled || index === items.length - 1}
-                  onClick={() => move(index, index + 1)}
-                >
-                  <ArrowDown />
-                </Button>
+            {(!compact || itemActions) && (
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                {!compact && (
+                  <div className="flex gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("failure.moveUp")}
+                      disabled={disabled || index === 0}
+                      onClick={() => move(index, index - 1)}
+                    >
+                      <ArrowUp />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("failure.moveDown")}
+                      disabled={disabled || index === items.length - 1}
+                      onClick={() => move(index, index + 1)}
+                    >
+                      <ArrowDown />
+                    </Button>
+                  </div>
+                )}
+                {itemActions?.(item)}
               </div>
             )}
           </div>
@@ -427,13 +512,31 @@ export function OrderedList<T extends { id: string }>({
             style={lifted === item.id ? { y: dragY, zIndex: 20 } : undefined}
             className={cn(
               "relative",
-              compact && "border-b last:border-b-0",
+              compact && variant !== "modules" && "border-b last:border-b-0",
+              dragging &&
+                variant === "modules" &&
+                "rounded-md border bg-card px-2 py-1",
               lifted === item.id &&
                 "rounded-md bg-card shadow-lg ring-1 ring-inset ring-primary/60",
               dragging && "pointer-events-none",
             )}
           >
-            {compact ? (
+            {variant === "modules" ? (
+              <>
+                {!disabled && (
+                  <div className={cn(!dragging && "mb-1")}>{controls}</div>
+                )}
+                {/* Retain a bounded preview and preserve page/filter state while dragging. */}
+                <div
+                  className={cn(
+                    dragging && "pointer-events-none max-h-28 overflow-hidden",
+                  )}
+                  data-slot="ordered-module-content"
+                >
+                  {children(item, index, controls, !!dragging)}
+                </div>
+              </>
+            ) : compact ? (
               children(item, index, controls, !!dragging)
             ) : (
               <Panel tone="inset" className="grid gap-3 p-3">

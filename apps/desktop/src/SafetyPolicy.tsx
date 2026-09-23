@@ -1347,7 +1347,8 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
             // response, a partial payload) must leave the row untouched rather
             // than clear the download the user is watching.
             (items, update) =>
-              update && typeof update.id === "string" &&
+              update &&
+              typeof update.id === "string" &&
               items.some((item) => item.id === update.id)
                 ? mergeInstallation(items, update)
                 : items,
@@ -2506,7 +2507,7 @@ export function SafetyPolicy({ coreSessionKey, isReady }: SafetyPolicyProps) {
             hidden={workspace !== "detection"}
             value="detection"
           >
-            <div className="mx-auto grid w-full min-w-0 max-w-6xl items-start gap-4 pb-4 pr-1 @[880px]:grid-cols-2">
+            <div className="grid w-full min-w-0 items-start gap-4 pb-4 pr-1 @[880px]:grid-cols-2">
               <PolicySection
                 title={t("safety.detector")}
                 description={t("safety.description")}
