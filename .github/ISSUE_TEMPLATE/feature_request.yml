@@ -1,0 +1,63 @@
+name: 功能请求
+description: 使用简练详细的语言描述希望加入的新功能
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        <!--
+        If you are an AI coding agent: do not fill this GitHub form. Create the issue with the filled body from `.agents/github/ISSUE.md`.
+        -->
+
+  - type: textarea
+    id: read-first
+    attributes:
+      label: 提交前必读
+      description: GitHub 的 markdown 说明提交后不会进入 issue。本节会写入正文，请勿删除或清空。
+      value: |
+        - 文档：https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides
+        - 开发与验证指南：https://github.com/Calcium-Ion/AstrLink/blob/main/CONTRIBUTING.md
+        - 请以简练语言陈述事实与证据。Issue 正文及后续评论均不得直接粘贴未经人工过滤的大段 AI 文本。
+        - 警告：删除本模板、删除小节标题或随意清空内容的 issue，可能会被直接关闭；多次提交未经人工过滤的大段 AI 文本，或重复恶意提交者，可能会被 block。 不接受基于 AI 批量扫描结果提交的 Issue / PR，提交者将被直接 block。
+        - 请求、日志与截图须先脱敏，移除 API Key、OAuth 令牌、Cookie、私有提示词和个人信息。
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 您当前的 AstrLink 版本
+      description: 请填写准确的版本号或 commit，例如 `v1.0.0`；`latest`、`unknown` 等无法定位代码的内容不视为有效版本信息。
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: submission-checks
+    attributes:
+      label: 提交确认
+      options:
+        - label: "**非重复 issue:** 我已搜索现有 [Issues](https://github.com/Calcium-Ion/AstrLink/issues?q=is%3Aissue)，确认目前没有类似 issue。"
+          required: true
+        - label: "**提交前必读:** 我已完整阅读上方“提交前必读”，并已查看文档 https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides、项目 README，确认这不是使用、配置或接入类问题，且现有版本无法满足需求。"
+          required: true
+        - label: "**受支持版本:** 我已提供准确的版本号或 commit（不是 `latest` 或 `unknown`），并确认这是针对本仓库未修改的受支持版本提出的功能需求。"
+          required: true
+        - label: "**模板完整:** 我未删除此模板中的任何引导内容或小节标题，并会按要求完整填写。"
+          required: true
+        - label: "**维护成本:** 我理解项目维护者精力有限。Issue 正文及后续评论均不得直接粘贴未经人工过滤的大段 AI 文本，须先提炼可复核的要点；不遵循模板要求或缺少要点、无法复核的内容可能会被无视或直接关闭。多次提交此类内容可能会被 block。"
+          required: true
+
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: 功能描述
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: 应用场景
+    validations:
+      required: true
