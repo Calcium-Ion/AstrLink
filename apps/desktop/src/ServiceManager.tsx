@@ -1265,8 +1265,16 @@ export function ServiceManager({
         }
       }
       if (!isSubscriptionKind(record.service.kind)) {
-        record = await discoverModelsAfterSave(record);
+        const savedRecord = record;
+        void discoverModelsAfterSave(savedRecord)
+          .then((discoveredRecord) => {
+            if (discoveredRecord === savedRecord) return;
+            onServiceSaved(discoveredRecord.service);
+            return onRefresh();
+          })
+          .catch(() => {});
       }
+      
       onServiceSaved(record.service);
       setEditing(null);
       setBaseline(null);
