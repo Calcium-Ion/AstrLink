@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { UsageMeter } from "@/components/UsageMeter";
 
-import { formatUSD } from "./pricing-model";
 import {
   formatQuotaExpiry,
+  formatQuotaUSD,
   formatResetCountdown,
   quotaUsedPercent,
   usageWindowTone,
@@ -181,7 +181,8 @@ function QuotaRow({
   const label = t("usage.keyQuota");
   const expiry = formatQuotaExpiry(quota, now);
   if (quota.unlimited) {
-    // An unlimited key has nothing to fill a bar against; show its spend only.
+    // An unlimited key has nothing to fill a bar against; its spend takes the
+    // value slot a metered row gives its used share.
     return (
       <div
         className="grid min-w-0 gap-1.5"
@@ -191,14 +192,12 @@ function QuotaRow({
           <span className="min-w-0 truncate" title={label}>
             {label}
           </span>
-          <span className="shrink-0 font-medium">
-            {t("usage.quotaUnlimited")}
+          <span className="shrink-0 font-medium tabular-nums">
+            {t("usage.quotaUsed", { amount: formatQuotaUSD(quota.used_usd) })}
           </span>
         </div>
         <p className="text-micro text-muted-foreground">
-          {[t("usage.quotaUsed", { amount: formatUSD(quota.used_usd) }), expiry]
-            .filter(Boolean)
-            .join(" · ")}
+          {[t("usage.quotaUnlimited"), expiry].filter(Boolean).join(" · ")}
         </p>
       </div>
     );
@@ -210,8 +209,8 @@ function QuotaRow({
       <UsageMeter
         caption={[
           t("usage.quotaRemaining", {
-            remaining: formatUSD(quota.remaining_usd),
-            total: formatUSD(quota.total_usd),
+            remaining: formatQuotaUSD(quota.remaining_usd),
+            total: formatQuotaUSD(quota.total_usd),
           }),
           expiry,
         ]

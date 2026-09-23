@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatQuotaExpiry,
+  formatQuotaUSD,
   formatResetCountdown,
   formatSubscriptionUsageError,
   parseSubscriptionUsage,
@@ -126,6 +127,12 @@ describe("subscription usage contract", () => {
         now,
       ),
     ).toBe("已过期");
+
+    expect(formatQuotaUSD("4490.884098")).toBe("$4,490.88");
+    expect(formatQuotaUSD("0.697178")).toBe("$0.70");
+    expect(formatQuotaUSD("0.004")).toBe("<$0.01");
+    expect(formatQuotaUSD("0")).toBe("$0.00");
+    expect(formatQuotaUSD(undefined)).toBe("—");
 
     expect(
       parseSubscriptionUsage({

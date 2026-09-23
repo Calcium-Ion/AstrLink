@@ -483,6 +483,21 @@ export function formatQuotaExpiry(quota: UsageQuota, now: Date): string | null {
   return i18n.t("usage.expiresInDays", { count: Math.floor(hours / 24) });
 }
 
+const quotaUSDFormat = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** Cent-precision amount for the narrow usage column; dust reads as "<$0.01". */
+export function formatQuotaUSD(value: string | undefined): string {
+  if (value == null) return "—";
+  const amount = Number(value);
+  if (amount > 0 && amount < 0.005) return `<${quotaUSDFormat.format(0.01)}`;
+  return quotaUSDFormat.format(amount);
+}
+
 /** Share of a limited key quota already spent; an empty grant reads as used up. */
 export function quotaUsedPercent(quota: UsageQuota): number {
   const total = Number(quota.total_usd);
