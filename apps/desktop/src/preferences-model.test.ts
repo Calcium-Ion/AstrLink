@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultTrayPreferences, parseSettingsSnapshot } from "./preferences-model";
+import {
+  defaultTrayPreferences,
+  parseSettingsSnapshot,
+} from "./preferences-model";
 
 const valid = {
   values: {
@@ -14,6 +17,7 @@ const valid = {
     response_start_timeout_seconds: 0,
     max_request_body_mib: 0,
     theme: "system" as const,
+    quota_display_mode: "remaining" as const,
     locale: "zh-CN",
     tray: defaultTrayPreferences(),
   },
@@ -30,18 +34,38 @@ describe("preferences IPC contract", () => {
   it("validates the tray section", () => {
     const tray = defaultTrayPreferences();
     const withTray = (patch: Record<string, unknown>) =>
-      parseSettingsSnapshot({ ...valid, values: { ...valid.values, tray: { ...tray, ...patch } } });
-    expect(withTray({ menubar_text: "cost" }).values.tray.menubar_text).toBe("cost");
+      parseSettingsSnapshot({
+        ...valid,
+        values: { ...valid.values, tray: { ...tray, ...patch } },
+      });
+    expect(withTray({ menubar_text: "cost" }).values.tray.menubar_text).toBe(
+      "cost",
+    );
     expect(withTray({ pages: [] }).values.tray.pages).toEqual([]);
-    expect(withTray({ pages: ["agent_tools", "records"] }).values.tray.pages).toEqual(["agent_tools", "records"]);
-    expect(() => withTray({ menubar_text: "weather" })).toThrow("$.values.tray.menubar_text");
-    expect(() => withTray({ pages: ["records", "records"] })).toThrow("$.values.tray.pages[1]");
-    expect(() => withTray({ pages: ["overview"] })).toThrow("$.values.tray.pages[0]");
-    expect(() => withTray({ usage: { ...tray.usage, cost: "yes" } })).toThrow("$.values.tray.usage.cost");
-    expect(() => withTray({ usage: { ...tray.usage, streak: true } })).toThrow("$.values.tray.usage.streak");
+    expect(
+      withTray({ pages: ["agent_tools", "records"] }).values.tray.pages,
+    ).toEqual(["agent_tools", "records"]);
+    expect(() => withTray({ menubar_text: "weather" })).toThrow(
+      "$.values.tray.menubar_text",
+    );
+    expect(() => withTray({ pages: ["records", "records"] })).toThrow(
+      "$.values.tray.pages[1]",
+    );
+    expect(() => withTray({ pages: ["overview"] })).toThrow(
+      "$.values.tray.pages[0]",
+    );
+    expect(() => withTray({ usage: { ...tray.usage, cost: "yes" } })).toThrow(
+      "$.values.tray.usage.cost",
+    );
+    expect(() => withTray({ usage: { ...tray.usage, streak: true } })).toThrow(
+      "$.values.tray.usage.streak",
+    );
     expect(() => withTray({ extra: 1 })).toThrow("$.values.tray.extra");
     expect(() =>
-      parseSettingsSnapshot({ ...valid, values: { ...valid.values, tray: undefined } }),
+      parseSettingsSnapshot({
+        ...valid,
+        values: { ...valid.values, tray: undefined },
+      }),
     ).toThrow("$.values.tray");
   });
 
@@ -56,6 +80,25 @@ describe("preferences IPC contract", () => {
       expect(() =>
         parseSettingsSnapshot({ ...valid, values: { ...valid.values, theme } }),
       ).toThrow("$.values.theme");
+    }
+  });
+
+  it("accepts both quota display modes and rejects missing or invalid modes", () => {
+    for (const quota_display_mode of ["remaining", "used"]) {
+      expect(
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, quota_display_mode },
+        }).values.quota_display_mode,
+      ).toBe(quota_display_mode);
+    }
+    for (const quota_display_mode of [undefined, null, "available", true]) {
+      expect(() =>
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, quota_display_mode },
+        }),
+      ).toThrow("$.values.quota_display_mode");
     }
   });
 

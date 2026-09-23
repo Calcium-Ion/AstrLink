@@ -1,3 +1,4 @@
+import { isQuotaDisplayMode, type QuotaDisplayMode } from "./quota-display";
 import { isLocale, type Locale } from "./i18n/locale";
 import { isThemePreference, type ThemePreference } from "./theme-model";
 
@@ -87,6 +88,7 @@ export interface Preferences {
   max_request_body_mib: number;
   locale: Locale;
   theme: ThemePreference;
+  quota_display_mode: QuotaDisplayMode;
   tray: TrayPreferences;
 }
 
@@ -131,12 +133,22 @@ function nullableString(value: unknown, path: string): string | null {
 }
 
 export function isTrayPage(value: unknown): value is TrayPage {
-  return typeof value === "string" && (TRAY_PAGES as readonly string[]).includes(value);
+  return (
+    typeof value === "string" &&
+    (TRAY_PAGES as readonly string[]).includes(value)
+  );
 }
 
-export function parseTrayPreferences(value: unknown, path: string): TrayPreferences {
+export function parseTrayPreferences(
+  value: unknown,
+  path: string,
+): TrayPreferences {
   const tray = objectAt(value, path);
-  exactKeys(tray, ["menubar_text", "copy_address", "gateway_controls", "usage", "pages"], path);
+  exactKeys(
+    tray,
+    ["menubar_text", "copy_address", "gateway_controls", "usage", "pages"],
+    path,
+  );
   if (
     typeof tray.menubar_text !== "string" ||
     !(TRAY_MENUBAR_TEXTS as readonly string[]).includes(tray.menubar_text)
@@ -144,20 +156,24 @@ export function parseTrayPreferences(value: unknown, path: string): TrayPreferen
     invalid(`${path}.menubar_text`, "unknown menubar text");
   }
   for (const field of ["copy_address", "gateway_controls"] as const) {
-    if (typeof tray[field] !== "boolean") invalid(`${path}.${field}`, "expected boolean");
+    if (typeof tray[field] !== "boolean")
+      invalid(`${path}.${field}`, "expected boolean");
   }
   const usage = objectAt(tray.usage, `${path}.usage`);
   exactKeys(usage, TRAY_USAGE_KEYS, `${path}.usage`);
   for (const key of TRAY_USAGE_KEYS) {
-    if (typeof usage[key] !== "boolean") invalid(`${path}.usage.${key}`, "expected boolean");
+    if (typeof usage[key] !== "boolean")
+      invalid(`${path}.usage.${key}`, "expected boolean");
   }
   if (!Array.isArray(tray.pages) || tray.pages.length > TRAY_PAGES.length) {
     invalid(`${path}.pages`, "expected a bounded array");
   }
   const seen = new Set<string>();
   for (const [index, page] of (tray.pages as unknown[]).entries()) {
-    if (!isTrayPage(page)) invalid(`${path}.pages[${index}]`, "unknown tray page");
-    if (seen.has(page)) invalid(`${path}.pages[${index}]`, "duplicate tray page");
+    if (!isTrayPage(page))
+      invalid(`${path}.pages[${index}]`, "unknown tray page");
+    if (seen.has(page))
+      invalid(`${path}.pages[${index}]`, "duplicate tray page");
     seen.add(page);
   }
   return tray as unknown as TrayPreferences;
@@ -185,10 +201,14 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       "max_request_body_mib",
       "locale",
       "theme",
+      "quota_display_mode",
       "tray",
     ],
     "$.values",
   );
+  if (!isQuotaDisplayMode(values.quota_display_mode)) {
+    invalid("$.values.quota_display_mode", "unknown quota display mode");
+  }
   parseTrayPreferences(values.tray, "$.values.tray");
   if (
     values.close_behavior !== "hide_to_tray" &&

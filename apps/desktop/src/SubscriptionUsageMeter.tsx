@@ -2,8 +2,9 @@ import { RotateCcw } from "@/components/icons";
 import { useT } from "./i18n";
 
 import { Button } from "@/components/ui/button";
+import { SubscriptionQuotaMeter } from "@/components/SubscriptionQuotaMeter";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
-import { UsageMeter, UsageMeterPlaceholder } from "@/components/UsageMeter";
+import { UsageMeterPlaceholder } from "@/components/UsageMeter";
 
 import {
   formatQuotaExpiry,
@@ -17,7 +18,6 @@ import {
   type RateLimitWindow,
   type SubscriptionUsage,
   type UsageQuota,
-  type UsageWindowTone,
 } from "./subscription-usage-model";
 
 export type SubscriptionUsageStatus = "loading" | "ready" | "error";
@@ -174,7 +174,7 @@ function QuotaRow({
   const expiry = formatQuotaExpiry(quota, now);
   if (quota.unlimited) {
     // An unlimited key has nothing to fill a bar against; its spend takes the
-    // value slot a metered row gives its used share.
+    // value slot a metered row gives its percentage.
     return (
       <div
         className="grid min-w-0 gap-1.5"
@@ -198,7 +198,7 @@ function QuotaRow({
   const tone = usageWindowTone(usedPercent, limitReached);
   return (
     <div data-testid="subscription-usage-quota" data-tone={tone}>
-      <UsageMeter
+      <SubscriptionQuotaMeter
         caption={[
           t("usage.quotaRemaining", {
             remaining: formatQuotaUSD(quota.remaining_usd),
@@ -209,25 +209,11 @@ function QuotaRow({
           .filter(Boolean)
           .join(" · ")}
         label={label}
-        valueLabel={t("usage.usedPercent", {
-          percent: Math.round(usedPercent),
-        })}
-        warning={
-          limitReached || usedPercent >= 100
-            ? t("usage.limitReached")
-            : undefined
-        }
-        tone={meterTone(tone)}
-        value={usedPercent}
+        limitReached={limitReached}
+        usedPercent={usedPercent}
       />
     </div>
   );
-}
-
-function meterTone(tone: UsageWindowTone) {
-  if (tone === "ok") return "success";
-  if (tone === "critical") return "destructive";
-  return "warning";
 }
 
 function UsageWindowRow({
@@ -241,7 +227,6 @@ function UsageWindowRow({
   now: Date;
   window?: RateLimitWindow;
 }) {
-  const t = useT();
   if (!window) return null;
   const label = windowLabel(window.limit_window_seconds, isSecondary);
   const reset = formatResetCountdown(window, now);
@@ -249,19 +234,11 @@ function UsageWindowRow({
   const usedPercent = usageBarPercent(window.used_percent);
   return (
     <div data-tone={tone}>
-      <UsageMeter
+      <SubscriptionQuotaMeter
         caption={reset}
         label={label}
-        valueLabel={t("usage.usedPercent", {
-          percent: Math.round(usedPercent),
-        })}
-        warning={
-          limitReached || usedPercent >= 100
-            ? t("usage.limitReached")
-            : undefined
-        }
-        tone={meterTone(tone)}
-        value={usedPercent}
+        limitReached={limitReached}
+        usedPercent={usedPercent}
       />
     </div>
   );

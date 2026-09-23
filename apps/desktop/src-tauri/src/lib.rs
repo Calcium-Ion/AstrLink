@@ -68,6 +68,7 @@ struct PreferencesInput {
     max_request_body_mib: u32,
     locale: Locale,
     theme: ThemePreference,
+    quota_display_mode: preferences::QuotaDisplayMode,
     #[serde(default)]
     tray: TrayPreferences,
 }
@@ -86,6 +87,7 @@ impl From<PreferencesInput> for Preferences {
             max_request_body_mib: input.max_request_body_mib,
             locale: input.locale,
             theme: input.theme,
+            quota_display_mode: input.quota_display_mode,
             tray: input.tray,
         }
     }
@@ -303,6 +305,9 @@ fn update_preferences(
         );
     }
     tray::refresh(&app);
+    if let Err(error) = app.emit("quota-display-mode-changed", values.quota_display_mode) {
+        eprintln!("unable to broadcast quota display mode: {error}");
+    }
     apply_native_theme(&app, values.theme);
     if let Err(error) = app.emit("theme-preference-changed", values.theme) {
         eprintln!("unable to broadcast AstrLink theme: {error}");

@@ -55,6 +55,28 @@ impl ThemePreference {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaDisplayMode {
+    #[default]
+    Remaining,
+    Used,
+}
+
+impl QuotaDisplayMode {
+    pub fn percent(self, used_percent: f64) -> f64 {
+        let used = if used_percent.is_finite() {
+            used_percent.clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+        match self {
+            Self::Remaining => 100.0 - used,
+            Self::Used => used,
+        }
+    }
+}
+
 /// What the macOS status item shows next to the tray icon. Other platforms
 /// have no title slot, so the same text goes into the tooltip instead.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -183,6 +205,7 @@ pub struct Preferences {
     pub max_request_body_mib: u32,
     pub locale: Locale,
     pub theme: ThemePreference,
+    pub quota_display_mode: QuotaDisplayMode,
     pub tray: TrayPreferences,
 }
 
@@ -200,6 +223,7 @@ impl Default for Preferences {
             max_request_body_mib: 0,
             locale: Locale::En,
             theme: ThemePreference::System,
+            quota_display_mode: QuotaDisplayMode::Remaining,
             tray: TrayPreferences::default(),
         }
     }
@@ -466,6 +490,10 @@ mod tests {
         assert_eq!(snapshot.values, Preferences::default());
         assert_eq!(snapshot.values.locale, Locale::En);
         assert_eq!(snapshot.values.theme, ThemePreference::System);
+        assert_eq!(
+            snapshot.values.quota_display_mode,
+            QuotaDisplayMode::Remaining
+        );
         assert!(snapshot.values.use_system_proxy);
         assert_eq!(snapshot.values.max_request_body_mib, 0);
         assert_eq!(snapshot.load_warning, None);
@@ -483,6 +511,10 @@ mod tests {
         let snapshot = PreferencesStore::load(&directory).snapshot();
         assert_eq!(snapshot.values.locale, Locale::En);
         assert_eq!(snapshot.values.theme, ThemePreference::System);
+        assert_eq!(
+            snapshot.values.quota_display_mode,
+            QuotaDisplayMode::Remaining
+        );
         assert!(snapshot.values.use_system_proxy);
         assert_eq!(
             snapshot.values.max_concurrent_inspections,
@@ -525,6 +557,7 @@ mod tests {
             max_request_body_mib: 64,
             use_system_proxy: false,
             theme: ThemePreference::Dark,
+            quota_display_mode: QuotaDisplayMode::Used,
             ..Preferences::default()
         };
         store.replace(values.clone()).unwrap();

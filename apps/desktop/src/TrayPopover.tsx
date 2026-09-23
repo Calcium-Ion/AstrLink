@@ -21,7 +21,7 @@ import {
 import { IconButton } from "@/components/IconButton";
 import { SectionKicker } from "@/components/SectionKicker";
 import { StatusDot, type StatusTone } from "@/components/StatusDot";
-import { UsageMeter } from "@/components/UsageMeter";
+import { SubscriptionQuotaMeter } from "@/components/SubscriptionQuotaMeter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -39,11 +39,7 @@ import {
   type TrayPage,
   type TrayPreferences,
 } from "./preferences-model";
-import {
-  formatResetCountdown,
-  usageWindowTone,
-  windowLabel,
-} from "./subscription-usage-model";
+import { formatResetCountdown, windowLabel } from "./subscription-usage-model";
 import {
   cacheHitPercent,
   formatCompactTokens,
@@ -565,7 +561,7 @@ export function TrayPopoverPanel({
                 data-slot="tray-subscriptions"
               >
                 {visibleSubscriptionRows.map(({ key, name, window }) => (
-                  <UsageMeter
+                  <SubscriptionQuotaMeter
                     key={key}
                     caption={formatResetCountdown(
                       {
@@ -575,17 +571,7 @@ export function TrayPopoverPanel({
                       now,
                     )}
                     label={`${name} · ${window.label ?? windowLabel(window.limit_window_seconds ?? undefined, window.secondary)}`}
-                    tone={
-                      usageWindowTone(window.used_percent) === "critical"
-                        ? "destructive"
-                        : usageWindowTone(window.used_percent) === "warning"
-                          ? "warning"
-                          : "success"
-                    }
-                    value={window.used_percent}
-                    valueLabel={t("usage.usedPercent", {
-                      percent: Math.round(window.used_percent),
-                    })}
+                    usedPercent={window.used_percent}
                   />
                 ))}
               </div>

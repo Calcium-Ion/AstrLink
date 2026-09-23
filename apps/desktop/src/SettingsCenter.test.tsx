@@ -28,6 +28,8 @@ import { applyLocale } from "./i18n";
 import type { AppSnapshot } from "./core-model";
 import { defaultTrayPreferences } from "./preferences-model";
 import { SettingsCenter } from "./SettingsCenter";
+import { applyQuotaDisplayMode } from "./quota-display";
+import { SubscriptionQuotaMeter } from "./components/SubscriptionQuotaMeter";
 import { applyTheme } from "./theme";
 
 const snapshot = {
@@ -51,6 +53,7 @@ const settings = {
     response_start_timeout_seconds: 0,
     max_request_body_mib: 0,
     theme: "system" as const,
+    quota_display_mode: "remaining" as const,
     locale: "zh-CN" as const,
     tray: defaultTrayPreferences(),
   },
@@ -65,6 +68,7 @@ describe("SettingsCenter", () => {
 
   beforeEach(() => {
     applyTheme("system");
+    applyQuotaDisplayMode("remaining");
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -73,7 +77,9 @@ describe("SettingsCenter", () => {
       .mockResolvedValue({ codex_identity_enforcement: true });
     bridge.updateRoutingSettings.mockReset();
     bridge.getPreferences.mockReset().mockResolvedValue(settings);
-    bridge.getTrayState.mockReset().mockRejectedValue(new Error("tray unavailable in tests"));
+    bridge.getTrayState
+      .mockReset()
+      .mockRejectedValue(new Error("tray unavailable in tests"));
     bridge.updatePreferences.mockReset().mockResolvedValue(settings);
     notifyMocks.success.mockReset();
     notifyMocks.error.mockReset();
@@ -305,6 +311,46 @@ describe("SettingsCenter", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(input.value).toBe("9123");
     expect(bridge.restartCore).not.toHaveBeenCalled();
+  });
+
+  it("saves quota display mode and immediately updates meters, preserving the saved mode on failure", async () => {
+    bridge.updatePreferences.mockImplementation(async (values) => ({
+      ...settings,
+      values,
+    }));
+    await act(async () =>
+      root.render(
+        <>
+          <SettingsCenter
+            snapshot={snapshot}
+            onCoreSnapshot={vi.fn()}
+            onDirtyChange={vi.fn()}
+          />
+          <SubscriptionQuotaMeter label="Quota preview" usedPercent={85} />
+        </>,
+      ),
+    );
+    const radio = (label: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `[role="radio"][aria-label="${label}"]`,
+      )!;
+    const meter = () => container.querySelector('[role="progressbar"]')!;
+    expect(radio("剩余百分比").getAttribute("aria-checked")).toBe("true");
+    expect(meter().getAttribute("aria-valuetext")).toBe("剩余 15%");
+    await act(async () => radio("已用百分比").click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ quota_display_mode: "used" }),
+    );
+    expect(meter().getAttribute("aria-valuetext")).toBe("已用 85%");
+    bridge.updatePreferences.mockRejectedValueOnce(
+      new Error("无法保存额度显示设置"),
+    );
+    await act(async () => radio("剩余百分比").click());
+    expect(radio("已用百分比").getAttribute("aria-checked")).toBe("true");
+    expect(meter().getAttribute("aria-valuetext")).toBe("已用 85%");
+    expect(container.textContent).toContain("无法保存额度显示设置");
+    await act(async () => radio("剩余百分比").click());
+    expect(meter().getAttribute("aria-valuetext")).toBe("剩余 15%");
   });
 
   it("retains the active theme and selection if saving fails", async () => {

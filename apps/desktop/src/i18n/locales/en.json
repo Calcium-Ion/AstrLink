@@ -204,6 +204,12 @@
     "desktopUnresponsive": "The desktop app is not responding. Fully quit AstrLink and reopen it."
   },
   "settings": {
+    "quotaDisplayMode": "Subscription quota display",
+    "quotaDisplayHint": "Applies to the provider list, tray panel, and menu bar.",
+    "quotaDisplayOptions": {
+      "remaining": "Remaining percentage",
+      "used": "Used percentage"
+    },
     "theme": "Appearance",
     "themeOptions": {
       "system": "System",
@@ -912,6 +918,7 @@
     "extraPeriod": "{{name}} · period",
     "limitReached": "Usage limit reached",
     "resetAvailable": "Resets left ×{{count}}",
+    "remainingPercent": "{{percent}}% remaining",
     "usedPercent": "{{percent}}% used",
     "keyQuota": "Key quota",
     "quotaUnlimited": "Unlimited",

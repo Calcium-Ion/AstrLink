@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 
+import { applyQuotaDisplayMode } from "./quota-display";
 import { applyLocale } from "./i18n";
 import { defaultTrayPreferences } from "./preferences-model";
 import { parseTrayState, type TrayAction } from "./tray-model";
@@ -40,6 +41,7 @@ describe("TrayPopoverPanel", () => {
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     await applyLocale("zh-CN");
+    applyQuotaDisplayMode("remaining");
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -128,6 +130,19 @@ describe("TrayPopoverPanel", () => {
         "打开 AstrLink",
       ]),
     );
+  });
+
+  it("uses the shared quota mode for tray windows and updates already mounted meters", async () => {
+    await render(readyTrayState);
+    const meter = () =>
+      container.querySelector(
+        '[role="progressbar"][aria-label="Codex · 5 小时"]',
+      )!;
+    expect(meter().getAttribute("aria-valuenow")).toBe("38");
+    expect(meter().getAttribute("aria-valuetext")).toBe("剩余 38%");
+    await act(async () => applyQuotaDisplayMode("used"));
+    expect(meter().getAttribute("aria-valuenow")).toBe("62");
+    expect(meter().getAttribute("aria-valuetext")).toBe("已用 62%");
   });
 
   it("renders every optional card when enabled", async () => {
@@ -290,7 +305,7 @@ describe("TrayPopoverPanel", () => {
       },
     });
     expect(container.textContent).toContain("Kimi · Monthly");
-    expect(container.textContent).toContain("已用 42%");
+    expect(container.textContent).toContain("剩余 59%");
   });
 
   it("flags an agent reading records through MCP", async () => {

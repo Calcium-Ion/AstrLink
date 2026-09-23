@@ -204,6 +204,9 @@
     "desktopUnresponsive": "桌面程序长时间未响应，请完全退出 AstrLink 后重新打开。"
   },
   "settings": {
+    "quotaDisplayMode": "订阅额度显示",
+    "quotaDisplayHint": "应用于提供商列表、托盘面板和菜单栏。",
+    "quotaDisplayOptions": { "remaining": "剩余百分比", "used": "已用百分比" },
     "theme": "外观",
     "themeOptions": {
       "system": "跟随系统",
@@ -912,6 +915,7 @@
     "extraPeriod": "{{name}} · 周期",
     "limitReached": "额度已用尽",
     "resetAvailable": "可重置 ×{{count}}",
+    "remainingPercent": "剩余 {{percent}}%",
     "usedPercent": "已用 {{percent}}%",
     "keyQuota": "密钥额度",
     "quotaUnlimited": "不限额度",

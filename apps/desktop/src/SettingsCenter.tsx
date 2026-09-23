@@ -45,6 +45,11 @@ import {
 } from "./preferences-model";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
+import {
+  applyQuotaDisplayMode,
+  QUOTA_DISPLAY_MODES,
+  type QuotaDisplayMode,
+} from "./quota-display";
 import { applyTheme } from "./theme";
 import { THEME_PREFERENCES, type ThemePreference } from "./theme-model";
 import type { TrayState } from "./tray-model";
@@ -328,6 +333,8 @@ export function SettingsCenter({
       const next = await updatePreferences(values);
       cacheSettings(next);
       setSettings(next);
+      if (patch.quota_display_mode !== undefined)
+        applyQuotaDisplayMode(next.values.quota_display_mode);
       if (patch.theme !== undefined) applyTheme(next.values.theme);
       if (patch.use_system_proxy !== undefined) {
         notify.success(i18n.t("settings.notifyProxySaved"));
@@ -563,6 +570,36 @@ export function SettingsCenter({
                       />
                     ))}
                   </RadioGroup>
+                </div>
+
+                <div className="grid gap-2 border-b px-4 py-3">
+                  <span className="text-xs font-medium text-text-secondary">
+                    {t("settings.quotaDisplayMode")}
+                  </span>
+                  <RadioGroup
+                    className="grid grid-cols-2 gap-2 max-[560px]:grid-cols-1"
+                    aria-label={t("settings.quotaDisplayMode")}
+                    disabled={prefsBusy}
+                    onValueChange={(value) =>
+                      void applyInstant({
+                        quota_display_mode: value as QuotaDisplayMode,
+                      })
+                    }
+                    value={prefs.quota_display_mode}
+                  >
+                    {QUOTA_DISPLAY_MODES.map((mode) => (
+                      <ChoiceCard
+                        key={mode}
+                        disabled={prefsBusy}
+                        label={t(`settings.quotaDisplayOptions.${mode}`)}
+                        selected={prefs.quota_display_mode === mode}
+                        value={mode}
+                      />
+                    ))}
+                  </RadioGroup>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.quotaDisplayHint")}
+                  </p>
                 </div>
 
                 <div className="grid gap-2 border-b px-4 py-3">

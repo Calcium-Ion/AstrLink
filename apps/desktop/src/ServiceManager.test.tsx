@@ -1603,16 +1603,16 @@ describe("ServiceManager", () => {
       keyQuota
         ?.querySelector('[role="progressbar"][aria-label="密钥额度"]')
         ?.getAttribute("aria-valuetext"),
-    ).toBe("已用 75%");
+    ).toBe("剩余 25%");
     expect(keyQuota?.textContent).toContain("剩余 $2.50 / $10.00");
     const rollingQuota = container.querySelector(
       '[role="progressbar"][aria-label="5 小时"]',
     );
-    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("25");
+    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("75");
     const weeklyQuota = container.querySelector(
       '[role="progressbar"][aria-label="7 天"]',
     );
-    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("10");
+    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("90");
     expect(
       container.querySelector('[data-testid="subscription-plan"]'),
     ).toBeNull();
@@ -1749,14 +1749,14 @@ describe("ServiceManager", () => {
     const rollingQuota = container.querySelector(
       '[role="progressbar"][aria-label="5 小时"]',
     );
-    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("34");
-    expect(rollingQuota?.getAttribute("aria-valuetext")).toBe("已用 34%");
+    expect(rollingQuota?.getAttribute("aria-valuenow")).toBe("66");
+    expect(rollingQuota?.getAttribute("aria-valuetext")).toBe("剩余 66%");
     expect(container.textContent).toContain("7 天");
     const weeklyQuota = container.querySelector(
       '[role="progressbar"][aria-label="7 天"]',
     );
-    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("12");
-    expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("已用 12%");
+    expect(weeklyQuota?.getAttribute("aria-valuenow")).toBe("88");
+    expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("剩余 88%");
     expect(container.textContent).toMatch(/重置/);
     expect(container.textContent).toContain("重置 ×2");
     expect(container.textContent).toContain("GPT-5.3-Codex-Spark");
