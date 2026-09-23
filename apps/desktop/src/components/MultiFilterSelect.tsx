@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { ChevronDown } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,7 @@ export function MultiFilterSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const selected = useMemo(() => new Set(value), [value]);
   const filtered = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -100,13 +101,20 @@ export function MultiFilterSelect({
       <PopoverContent
         align="start"
         className="w-(--radix-popover-trigger-width) min-w-56 p-2"
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        // Keep focus inside the panel: Radix's default autofocus target is the
+        // content wrapper, so let it open unfocused and move focus to the search
+        // input instead. Otherwise Tab would walk out to the trigger's siblings.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          searchRef.current?.focus();
+        }}
       >
         <Input
           aria-label={`${ariaLabel} search`}
           autoComplete="off"
           onChange={(event) => setSearch(event.currentTarget.value)}
           placeholder={searchPlaceholder}
+          ref={searchRef}
           value={search}
         />
         <div className="mt-2 flex items-center justify-between gap-2 border-b pb-2">

@@ -485,6 +485,47 @@ describe("Overview", () => {
     expect(control("fee").dataset.active).toBe("false");
   });
 
+  it("reports an unread token catalog as unknown instead of empty", async () => {
+    await renderOverview({
+      tokenCatalog: { status: "blocked", items: [], error: null, stale: false },
+      usage: {
+        status: "ready",
+        summary: readySummary({
+          by_token: [group("token_01", { total_tokens: 100, requests: 1 })],
+        }),
+        error: null,
+      },
+    });
+
+    const panel = container.querySelector<HTMLElement>(
+      "[data-testid='token-usage-panel']",
+    )!;
+    expect(panel.textContent).toContain("网关就绪后显示访问令牌用量。");
+    expect(panel.textContent).toContain("当前没有可用的访问令牌目录数据。");
+    expect(panel.textContent).not.toContain("该区间没有访问令牌用量");
+  });
+
+  it("suppresses retained token figures after a failed refresh", async () => {
+    await renderOverview({
+      usage: {
+        status: "error",
+        summary: readySummary({
+          by_token: [group("token_01", { total_tokens: 100, requests: 2 })],
+        }),
+        error: "boom",
+      },
+    });
+
+    const panel = container.querySelector<HTMLElement>(
+      "[data-testid='token-usage-panel']",
+    )!;
+    expect(panel.textContent).toContain("等待刷新");
+    expect(panel.textContent).toContain("—");
+    expect(panel.textContent).not.toContain("100");
+    expect(panel.textContent).not.toContain("2 次请求");
+  });
+
+
   it("defaults to a yearly heatmap and reports range switches", async () => {
     const { onUsagePresetChange } = await renderOverview();
     expect(button("热力图").getAttribute("data-state")).toBe("on");

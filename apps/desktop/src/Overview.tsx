@@ -638,10 +638,14 @@ export function Overview({
             <TokenUsagePanel
               billingStatus={billingStatus}
               billingSummary={billingSummary}
+              isReady={isReady}
               onOpenTokenRecords={onOpenTokenRecords}
+              onRefreshUsage={onRefreshUsage}
               status={usage.status}
               tokenCatalog={tokenCatalog}
+              tokensUnknown={tokensUnknown}
               usage={summary}
+              usagePreset={usagePreset}
             />
             <Panel
               aria-labelledby="access-heading"
@@ -874,17 +878,25 @@ function compareTokenUsageRows(
 function TokenUsagePanel({
   billingStatus,
   billingSummary,
+  isReady,
   onOpenTokenRecords,
+  onRefreshUsage,
   status,
   tokenCatalog,
+  tokensUnknown,
   usage,
+  usagePreset,
 }: {
   billingStatus: "idle" | "loading" | "ready" | "error";
   billingSummary: BillingSummary | null;
+  isReady: boolean;
   onOpenTokenRecords: (tokenId: string) => void;
+  onRefreshUsage: () => void;
   status: UsageStatus;
   tokenCatalog: AccessTokenCatalog;
+  tokensUnknown: boolean;
   usage: UsageSummary | null;
+  usagePreset: UsageRangePreset;
 }) {
   const t = i18n.t.bind(i18n);
   const [sort, setSort] = useState<TokenSortKey>("tokens");
@@ -951,25 +963,71 @@ function TokenUsagePanel({
         </h2>
       </PanelHeader>
       <PaginatedList
+        key={usagePreset}
         items={sortedRows}
         itemsClassName="min-h-24"
         label={t("overview.byAccessToken")}
         footer={
           <span className="text-xs text-muted-foreground">
-            {t("overview.tokenCount", { count: sortedRows.length })}
+            {status === "ready"
+              ? t("overview.tokenUsageCount", { count: sortedRows.length })
+              : status === "loading"
+                ? t("overview.aggregatingTokens")
+                : t(
+                    status === "blocked"
+                      ? "overview.waitingGateway"
+                      : "overview.waitingRefresh",
+                  )}
           </span>
         }
       >
         {(visibleRows) => {
+          // A blocked catalog is unknown, not empty: the token list itself was
+          // never read, so "no usage" would misreport missing data as zero.
+          if (tokensUnknown) {
+            return (
+              <div className="flex flex-col items-center justify-center gap-1 border-b px-4 py-8 text-center">
+                <p className="text-sm text-text-secondary">
+                  {t("overview.tokensAfterReady")}
+                </p>
+                <span className="text-xs text-muted-foreground">
+                  {t("overview.noTokenCatalog")}
+                </span>
+              </div>
+            );
+          }
           if (status === "blocked" || (status === "error" && !usage)) {
             return <EmptyState className="border-0 py-8" title={t(status === "blocked" ? "overview.usageBlocked" : "overview.usageFailed")} />;
           }
           if (status === "loading" && !usage) {
-            return <div className="flex items-center justify-center px-4 py-8"><LoadingState label={t("overview.aggregating")} /></div>;
+            return <div className="flex items-center justify-center px-4 py-8"><LoadingState label={t("overview.aggregatingTokens")} /></div>;
           }
           if (visibleRows.length === 0) {
-            return <EmptyState className="border-0 py-8" title={t("overview.noAccessTokenUsage")} />;
+            return (
+              <EmptyState
+                action={
+                  tokenCatalog.status === "error" ? (
+                    <Button
+                      disabled={!isReady}
+                      onClick={onRefreshUsage}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      {t("common.retry")}
+                    </Button>
+                  ) : undefined
+                }
+                className="border-0 py-8"
+                title={t("overview.noAccessTokenUsage")}
+              />
+            );
           }
+          // A retained summary survives a failed refresh so the panel does not
+          // flash empty, but its numbers must not read as current. A blocked
+          // gateway already returned above, so only a failed refresh reaches here.
+          const stale = status === "error";
+          const placeholder = "—";
           return (
             <div>
               {visibleRows.map((row) => {
@@ -989,10 +1047,10 @@ function TokenUsagePanel({
                     variant="ghost"
                   >
                     <span className="min-w-0 truncate text-sm font-medium" title={row.name}>{row.name}</span>
-                    <span className="text-right text-sm font-semibold tabular-nums">{formatCompactNumber(row.usage.total_tokens)}</span>
-                    <span className="text-micro text-muted-foreground tabular-nums">{t("overview.tokenRequests", { count: formatExactNumber(requests) })}</span>
+                    <span className="text-right text-sm font-semibold tabular-nums">{stale ? placeholder : formatCompactNumber(row.usage.total_tokens)}</span>
+                    <span className="text-micro text-muted-foreground tabular-nums">{t("overview.tokenRequests", { count: stale ? placeholder : formatExactNumber(requests) })}</span>
                     <span className="text-right text-micro tabular-nums">{amount}</span>
-                    {failureRate !== null && row.usage.failed_requests > 0 ? (
+                    {!stale && failureRate !== null && row.usage.failed_requests > 0 ? (
                       <span className="col-span-2 text-micro text-danger-foreground @[680px]:col-span-4">
                         {t("overview.tokenFailureRate", { rate: `${(failureRate * 100).toFixed(1)}%` })}
                       </span>
