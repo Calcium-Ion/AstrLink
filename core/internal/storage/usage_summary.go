@@ -57,5 +57,6 @@ type UsageSummary struct {
 	ByHour         []UsageTimeBucket `json:"by_hour"`
 	ByService      []UsageGroup      `json:"by_service"`
 	ByModel        []UsageGroup      `json:"by_model"`
+	ByToken        []UsageGroup      `json:"by_token"`
 	ScannedRecords int64             `json:"scanned_records"`
 }

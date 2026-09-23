@@ -637,5 +637,9 @@ SET document_json = json_remove(document_json, '$.disabled_models')`,
 		{Version: 32, Name: "service_proxy_credentials", Statements: []string{
 			`CREATE TABLE service_proxy_credentials (service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE, credential_value BLOB NOT NULL)`,
 		}},
+		{Version: 33, Name: "access_token_usage_indexes", Statements: []string{
+			`ALTER TABLE billing_ledger ADD COLUMN local_access_token_id TEXT`,
+			`CREATE INDEX request_records_root_token_time_idx ON request_records(local_access_token_id, started_at DESC, id DESC) WHERE parent_request_id IS NULL`,
+		}},
 	}
 }

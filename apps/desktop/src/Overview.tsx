@@ -1,6 +1,8 @@
 import { BillingOverview } from "./BillingOverview";
 import {
+  useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -14,6 +16,7 @@ import {
   Boxes,
   Bot,
   Check,
+  CircleDollarSign,
   Copy,
   Key,
   Plus,
@@ -27,6 +30,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ExternalLink } from "@/components/ExternalLink";
 import { ActivityHeatmap } from "@/components/ActivityHeatmap";
 import { HelpPopover } from "@/components/HelpPopover";
+import { IconButton } from "@/components/IconButton";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { InferencePortNotice } from "@/components/InferencePortNotice";
 import { LoadingState } from "@/components/LoadingState";
@@ -59,6 +63,8 @@ import type { BarShapeProps, TooltipContentProps } from "recharts";
 
 import type { AccessTokenCatalog } from "./AccessTokenManager";
 import { phaseLabel, phaseTone, type AppSnapshot } from "./core-model";
+import { getBillingSummary } from "./pricing-bridge";
+import { billingAmount, type BillingSummary } from "./pricing-model";
 import {
   formatCompactNumber,
   formatExactNumber,
@@ -73,6 +79,7 @@ import type { Service } from "./service-model";
 import type { ServiceCatalogStatus } from "./ServiceManager";
 import {
   dayTokenStack,
+  emptyUsageTotals,
   formatCacheHitPercent,
   isUsageRangePreset,
   mergeCatalogServiceUsage,
@@ -86,6 +93,7 @@ import {
   type UsageRangePreset,
   type UsageState,
   type UsageStatus,
+  type UsageSummary,
   type UsageTotals,
 } from "./usage-range";
 
@@ -113,6 +121,7 @@ export function Overview({
   onManageServices,
   onManageTokens,
   onOpenService,
+  onOpenTokenRecords,
   onRefreshServices,
   onRefreshUsage,
   onRestart,
@@ -133,6 +142,7 @@ export function Overview({
   onManageServices: () => void;
   onManageTokens: () => void;
   onOpenService: (serviceId: string) => void;
+  onOpenTokenRecords: (tokenId: string) => void;
   onRefreshServices: () => void;
   onRefreshUsage: () => void;
   onRestart: () => void;
@@ -160,6 +170,38 @@ export function Overview({
   const tokensUnknown =
     tokenCatalog.status === "blocked" && tokenCatalog.items.length === 0;
   const summary = usage.summary;
+  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
+  const [billingStatus, setBillingStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const billingFrom = summary?.window.from;
+  const billingTo = summary?.window.to;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isReady || usage.status !== "ready" || !billingFrom || !billingTo) {
+      setBillingSummary(null);
+      setBillingStatus("idle");
+      return () => {
+        cancelled = true;
+      };
+    }
+    setBillingSummary(null);
+    setBillingStatus("loading");
+    void getBillingSummary(billingFrom, billingTo)
+      .then((next) => {
+        if (cancelled) return;
+        setBillingSummary(next);
+        setBillingStatus("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBillingSummary(null);
+        setBillingStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [billingFrom, billingTo, isReady, summary, usage.status]);
+
   // A disconnected catalog is unknown, not empty. Use the same compact surface
   // with connection-specific content, and keep any retained activity visible.
   const emptyWorkspace =
@@ -418,10 +460,8 @@ export function Overview({
                       />
                     )}
                     <BillingOverview
-                      from={summary?.window.from}
-                      to={summary?.window.to}
-                      ready={isReady && usage.status === "ready"}
-                      revision={summary}
+                      loading={billingStatus === "loading"}
+                      summary={billingSummary}
                     />
                   </Panel>
                   {usage.status === "loading" ? (
@@ -595,6 +635,14 @@ export function Overview({
                 </PaginatedList>
               </Panel>
             </div>
+            <TokenUsagePanel
+              billingStatus={billingStatus}
+              billingSummary={billingSummary}
+              onOpenTokenRecords={onOpenTokenRecords}
+              status={usage.status}
+              tokenCatalog={tokenCatalog}
+              usage={summary}
+            />
             <Panel
               aria-labelledby="access-heading"
               className={cn(
@@ -742,6 +790,221 @@ export function Overview({
         </section>
       </div>
     </ScrollWorkspace>
+  );
+}
+
+interface TokenUsageRow {
+  id: string;
+  name: string;
+  usage: UsageGroup;
+  billing: BillingSummary["by_token"][number];
+}
+
+type TokenSortKey = "tokens" | "fee" | "requests";
+
+function emptyTokenBilling(tokenId: string): TokenUsageRow["billing"] {
+  return {
+    token_id: tokenId,
+    amount_usd: "0",
+    priced: 0,
+    unpriced: 0,
+    pending: 0,
+    revalued: 0,
+    requests: 0,
+  };
+}
+
+function mergeTokenUsageRows(
+  catalog: AccessTokenCatalog,
+  usage: UsageSummary | null,
+  billing: BillingSummary | null,
+): TokenUsageRow[] {
+  const usageById = new Map(
+    (usage?.by_token ?? [])
+      .filter((group): group is UsageGroup & { id: string } => group.id !== null)
+      .map((group) => [group.id, group]),
+  );
+  const billingById = new Map(
+    (billing?.by_token ?? []).map((group) => [group.token_id, group]),
+  );
+  return catalog.items.map((token) => ({
+    id: token.id,
+    name: token.name,
+    usage: usageById.get(token.id) ?? { id: token.id, ...emptyUsageTotals() },
+    billing: billingById.get(token.id) ?? emptyTokenBilling(token.id),
+  }));
+}
+
+function tokenRequestCount(row: TokenUsageRow): number {
+  return row.usage.requests + row.usage.failed_requests;
+}
+
+function tokenFee(row: TokenUsageRow): number {
+  const value = Number(row.billing.amount_usd);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function compareTokenUsageRows(
+  left: TokenUsageRow,
+  right: TokenUsageRow,
+  sort: TokenSortKey,
+): number {
+  const primary = sort === "tokens"
+    ? right.usage.total_tokens - left.usage.total_tokens
+    : sort === "fee"
+      ? tokenFee(right) - tokenFee(left)
+      : tokenRequestCount(right) - tokenRequestCount(left);
+  if (primary !== 0) return primary;
+
+  // Keep ties deterministic without exposing a second active sort condition.
+  if (right.usage.total_tokens !== left.usage.total_tokens) {
+    return right.usage.total_tokens - left.usage.total_tokens;
+  }
+  if (tokenRequestCount(right) !== tokenRequestCount(left)) {
+    return tokenRequestCount(right) - tokenRequestCount(left);
+  }
+  if (tokenFee(right) !== tokenFee(left)) return tokenFee(right) - tokenFee(left);
+
+  return left.name.localeCompare(
+    right.name,
+    i18n.language === "zh-CN" ? "zh" : "en",
+  );
+}
+
+function TokenUsagePanel({
+  billingStatus,
+  billingSummary,
+  onOpenTokenRecords,
+  status,
+  tokenCatalog,
+  usage,
+}: {
+  billingStatus: "idle" | "loading" | "ready" | "error";
+  billingSummary: BillingSummary | null;
+  onOpenTokenRecords: (tokenId: string) => void;
+  status: UsageStatus;
+  tokenCatalog: AccessTokenCatalog;
+  usage: UsageSummary | null;
+}) {
+  const t = i18n.t.bind(i18n);
+  const [sort, setSort] = useState<TokenSortKey>("tokens");
+  const rows = useMemo(
+    () => mergeTokenUsageRows(tokenCatalog, usage, billingSummary),
+    [billingSummary, tokenCatalog, usage],
+  );
+  const sortedRows = useMemo(
+    () => [...rows].sort((left, right) =>
+      compareTokenUsageRows(left, right, sort),
+    ),
+    [rows, sort],
+  );
+  const sortOptions = [
+    { key: "tokens" as const, label: t("overview.sortTokens"), Icon: Boxes },
+    { key: "fee" as const, label: t("overview.sortFee"), Icon: CircleDollarSign },
+    { key: "requests" as const, label: t("overview.sortRequests"), Icon: Activity },
+  ];
+
+  return (
+    <Panel aria-labelledby="usage-by-token-heading" data-testid="token-usage-panel">
+      <PanelHeader
+        className={USAGE_BREAKDOWN_HEADER}
+        actions={
+          <div className="flex min-w-0 items-center gap-2">
+            <HelpPopover label={t("overview.tokenCostCoverageLabel")}>
+              <p>{t("overview.tokenCostCoverage")}</p>
+            </HelpPopover>
+            <div
+              aria-label={t("overview.tokenSortLabel")}
+              className="flex items-center gap-0.5"
+              data-testid="token-sort-controls"
+            >
+              {sortOptions.map(({ key, label, Icon }) => {
+                const active = sort === key;
+                const buttonLabel = active
+                  ? t("overview.tokenSortActive", { label })
+                  : t("overview.tokenSortBy", { label });
+                return (
+                  <IconButton
+                    aria-pressed={active}
+                    className={cn(
+                      "relative",
+                      active &&
+                        "bg-accent text-accent-foreground ring-1 ring-inset ring-ring/35",
+                    )}
+                    data-active={active ? "true" : "false"}
+                    data-testid={`token-sort-${key}`}
+                    key={key}
+                    label={buttonLabel}
+                    onClick={() => setSort(key)}
+                    type="button"
+                  >
+                    <Icon aria-hidden="true" />
+                  </IconButton>
+                );
+              })}
+            </div>
+          </div>
+        }
+      >
+        <h2 className="text-sm font-semibold" id="usage-by-token-heading">
+          {t("overview.byAccessToken")}
+        </h2>
+      </PanelHeader>
+      <PaginatedList
+        items={sortedRows}
+        itemsClassName="min-h-24"
+        label={t("overview.byAccessToken")}
+        footer={
+          <span className="text-xs text-muted-foreground">
+            {t("overview.tokenCount", { count: sortedRows.length })}
+          </span>
+        }
+      >
+        {(visibleRows) => {
+          if (status === "blocked" || (status === "error" && !usage)) {
+            return <EmptyState className="border-0 py-8" title={t(status === "blocked" ? "overview.usageBlocked" : "overview.usageFailed")} />;
+          }
+          if (status === "loading" && !usage) {
+            return <div className="flex items-center justify-center px-4 py-8"><LoadingState label={t("overview.aggregating")} /></div>;
+          }
+          if (visibleRows.length === 0) {
+            return <EmptyState className="border-0 py-8" title={t("overview.noAccessTokenUsage")} />;
+          }
+          return (
+            <div>
+              {visibleRows.map((row) => {
+                const requests = tokenRequestCount(row);
+                const failureRate = requests > 0 ? row.usage.failed_requests / requests : null;
+                const amount = billingStatus === "ready"
+                  ? billingAmount(row.billing)
+                  : billingStatus === "loading"
+                    ? t("common.loading")
+                    : t("pricing.unavailable");
+                return (
+                  <Button
+                    className="grid min-h-16 w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded-none border-b bg-transparent px-4 py-2.5 text-left font-normal text-foreground hover:bg-muted @[680px]:grid-cols-[minmax(0,1.2fr)_auto_auto_auto]"
+                    key={row.id}
+                    onClick={() => onOpenTokenRecords(row.id)}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <span className="min-w-0 truncate text-sm font-medium" title={row.name}>{row.name}</span>
+                    <span className="text-right text-sm font-semibold tabular-nums">{formatCompactNumber(row.usage.total_tokens)}</span>
+                    <span className="text-micro text-muted-foreground tabular-nums">{t("overview.tokenRequests", { count: formatExactNumber(requests) })}</span>
+                    <span className="text-right text-micro tabular-nums">{amount}</span>
+                    {failureRate !== null && row.usage.failed_requests > 0 ? (
+                      <span className="col-span-2 text-micro text-danger-foreground @[680px]:col-span-4">
+                        {t("overview.tokenFailureRate", { rate: `${(failureRate * 100).toFixed(1)}%` })}
+                      </span>
+                    ) : null}
+                  </Button>
+                );
+              })}
+            </div>
+          );
+        }}
+      </PaginatedList>
+    </Panel>
   );
 }
 

@@ -19,16 +19,20 @@ import (
 func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSummaryOptions) (storage.UsageSummary, error) {
 	result := storage.UsageSummary{
 		ByDay: []storage.UsageTimeBucket{}, ByHour: []storage.UsageTimeBucket{},
-		ByService: []storage.UsageGroup{}, ByModel: []storage.UsageGroup{},
+		ByService: []storage.UsageGroup{}, ByModel: []storage.UsageGroup{}, ByToken: []storage.UsageGroup{},
 	}
 	zone, err := options.Validate()
+	if err != nil {
+		return result, err
+	}
+	tokenWhitelist, err := store.currentAccessTokenIDs(ctx)
 	if err != nil {
 		return result, err
 	}
 	// A second prefix includes fractional timestamps at the inclusive boundary
 	// and excludes them at the exclusive boundary, including legacy exact seconds.
 	rows, err := store.db.QueryContext(ctx, `SELECT started_at, status, http_status,
-    service_id, requested_model, usage_json
+    service_id, requested_model, local_access_token_id, usage_json
 FROM request_records
 WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
   AND status IN ('succeeded', 'failed') AND input_protocol NOT IN (?, ?)`,
@@ -39,12 +43,12 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	}
 	defer rows.Close()
 	days, hours := map[string]*storage.UsageTimeBucket{}, map[string]*storage.UsageTimeBucket{}
-	services, models := map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}
+	services, models, tokens := map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}
 	for rows.Next() {
 		var startedAt, status string
 		var httpStatus sql.NullInt64
-		var service, model, usageJSON sql.NullString
-		if err := rows.Scan(&startedAt, &status, &httpStatus, &service, &model, &usageJSON); err != nil {
+		var service, model, localAccessTokenID, usageJSON sql.NullString
+		if err := rows.Scan(&startedAt, &status, &httpStatus, &service, &model, &localAccessTokenID, &usageJSON); err != nil {
 			return result, fmt.Errorf("scan usage summary: %w", err)
 		}
 		started, err := time.Parse(time.RFC3339Nano, startedAt)
@@ -68,6 +72,19 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 			}
 			targets = append(targets, &hours[key].UsageTotals)
 		}
+
+		// Service and model groups retain their historical null-ID bucket. Token
+		// groups use the current-token whitelist and never create id: null.
+		targets = append(targets,
+			usageGroupTotals(services, service.String),
+			usageGroupTotals(models, model.String),
+		)
+		if localAccessTokenID.Valid {
+			if _, ok := tokenWhitelist[localAccessTokenID.String]; ok {
+				targets = append(targets, usageGroupTotals(tokens, localAccessTokenID.String))
+			}
+		}
+
 		result.ScannedRecords++
 		if status == "failed" || (httpStatus.Valid && httpStatus.Int64 >= 400) {
 			for _, target := range targets {
@@ -81,7 +98,6 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 				return result, fmt.Errorf("%w: usage token counts", storage.ErrInvalidRecord)
 			}
 		}
-		targets = append(targets, usageGroupTotals(services, service.String), usageGroupTotals(models, model.String))
 		for _, target := range targets {
 			target.Requests++
 			target.InputTokens += int64(usage.InputTokens)
@@ -111,6 +127,7 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	})
 	result.ByService = sortedUsageGroups(services)
 	result.ByModel = sortedUsageGroups(models)
+	result.ByToken = sortedUsageGroups(tokens)
 	return result, nil
 }
 

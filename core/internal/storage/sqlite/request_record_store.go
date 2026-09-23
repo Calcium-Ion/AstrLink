@@ -300,6 +300,18 @@ func (store *Store) DeleteRequestRecord(ctx context.Context, id contract.Request
 	return nil
 }
 
+func appendAccessTokenFilter(query *strings.Builder, args *[]any, ids []contract.AccessTokenID) {
+	if len(ids) == 0 {
+		return
+	}
+	query.WriteString(` AND local_access_token_id IN (`)
+	query.WriteString(strings.TrimSuffix(strings.Repeat(`?,`, len(ids)), `,`))
+	query.WriteString(`)`)
+	for _, id := range ids {
+		*args = append(*args, string(id))
+	}
+}
+
 func (store *Store) ListRequestRecords(
 	ctx context.Context,
 	options storagecontract.RequestRecordListOptions,
@@ -332,10 +344,7 @@ FROM request_records WHERE parent_request_id IS NULL`)
 		query.WriteString(` AND started_at < ?`)
 		args = append(args, options.To.UTC().Format(time.RFC3339Nano))
 	}
-	if options.LocalAccessTokenID != nil {
-		query.WriteString(` AND local_access_token_id = ?`)
-		args = append(args, string(*options.LocalAccessTokenID))
-	}
+	appendAccessTokenFilter(&query, &args, options.LocalAccessTokenIDs)
 	if options.Protocol != nil || options.ServiceID != nil || options.Status != nil {
 		query.WriteString(` AND (`)
 		directParts := make([]string, 0, 3)

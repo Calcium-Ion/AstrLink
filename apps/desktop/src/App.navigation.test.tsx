@@ -339,6 +339,7 @@ describe("App workspace navigation", () => {
       by_hour: [],
       by_service: [],
       by_model: [],
+      by_token: [],
       scanned_records: 0,
       capped: false,
     }));

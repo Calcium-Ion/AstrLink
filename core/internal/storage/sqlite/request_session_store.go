@@ -194,10 +194,7 @@ FROM (
 		query.WriteString(` AND started_at < ?`)
 		args = append(args, options.To.UTC().Format(time.RFC3339Nano))
 	}
-	if options.LocalAccessTokenID != nil {
-		query.WriteString(` AND local_access_token_id = ?`)
-		args = append(args, string(*options.LocalAccessTokenID))
-	}
+	appendAccessTokenFilter(&query, &args, options.LocalAccessTokenIDs)
 	if options.Protocol != nil {
 		query.WriteString(` AND input_protocol = ?`)
 		args = append(args, string(*options.Protocol))

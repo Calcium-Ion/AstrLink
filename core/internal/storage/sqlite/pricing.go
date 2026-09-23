@@ -1,12 +1,14 @@
 package sqlite
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"sort"
 	"time"
 
@@ -118,6 +120,14 @@ func recordBilling(ctx context.Context, tx *sql.Tx, r contract.RequestRecord, re
 	if r.Recovery != nil && r.Recovery.UpstreamModel != "" {
 		model = r.Recovery.UpstreamModel
 	}
+	if revalue && r.LocalAccessTokenID != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE billing_ledger
+SET local_access_token_id = ?
+WHERE root_id = ? AND attempt = ? AND local_access_token_id IS NULL`,
+			string(*r.LocalAccessTokenID), root, attempt); err != nil {
+			return fmt.Errorf("backfill billing access token: %w", err)
+		}
+	}
 	var serviceJSON string
 	err := tx.QueryRowContext(ctx, `SELECT document_json FROM services WHERE id=?`, *r.ServiceID).Scan(&serviceJSON)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -225,8 +235,12 @@ func recordBilling(ctx context.Context, tx *sql.Tx, r contract.RequestRecord, re
 			}
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO billing_ledger(root_id,attempt,service_id,account_key,model,started_at,terminal,usage_json,price_json,price_version,amount_usd,tier,reason,revalued)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id,attempt) DO UPDATE SET terminal=excluded.terminal,usage_json=excluded.usage_json,price_json=excluded.price_json,price_version=excluded.price_version,amount_usd=excluded.amount_usd,tier=excluded.tier,reason=excluded.reason,revalued=excluded.revalued`, root, attempt, service.ID, accountKey, model, billingTime(r.StartedAt), terminal, string(usageJSON), priceJSON, version, amount, tier, reason, revalue)
+	var localAccessTokenID any
+	if r.LocalAccessTokenID != nil {
+		localAccessTokenID = string(*r.LocalAccessTokenID)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO billing_ledger(root_id,attempt,service_id,account_key,model,started_at,terminal,usage_json,price_json,price_version,amount_usd,tier,reason,revalued,local_access_token_id)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id,attempt) DO UPDATE SET terminal=excluded.terminal,usage_json=excluded.usage_json,price_json=excluded.price_json,price_version=excluded.price_version,amount_usd=excluded.amount_usd,tier=excluded.tier,reason=excluded.reason,revalued=excluded.revalued,local_access_token_id=COALESCE(billing_ledger.local_access_token_id, excluded.local_access_token_id)`, root, attempt, service.ID, accountKey, model, billingTime(r.StartedAt), terminal, string(usageJSON), priceJSON, version, amount, tier, reason, revalue, localAccessTokenID)
 	return err
 }
 
@@ -326,20 +340,24 @@ func (s *Store) BackfillPricing(ctx context.Context, id contract.ServiceID) (int
 	if _, err := s.GetService(ctx, id); err != nil {
 		return 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,parent_request_id,attempt_index,started_at,status,requested_model,recovery_json,usage_json FROM request_records WHERE service_id=? AND status NOT IN ('pending','blocked')`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,parent_request_id,attempt_index,started_at,status,requested_model,recovery_json,usage_json,local_access_token_id FROM request_records WHERE service_id=? AND status NOT IN ('pending','blocked')`, id)
 	if err != nil {
 		return 0, err
 	}
 	records := []contract.RequestRecord{}
 	for rows.Next() {
 		var r contract.RequestRecord
-		var parent, model, recovery, usage sql.NullString
+		var parent, model, recovery, usage, localAccessTokenID sql.NullString
 		var started string
-		if err = rows.Scan(&r.ID, &parent, &r.AttemptIndex, &started, &r.Status, &model, &recovery, &usage); err != nil {
+		if err = rows.Scan(&r.ID, &parent, &r.AttemptIndex, &started, &r.Status, &model, &recovery, &usage, &localAccessTokenID); err != nil {
 			rows.Close()
 			return 0, err
 		}
 		r.ServiceID = &id
+		if localAccessTokenID.Valid {
+			tokenID := contract.AccessTokenID(localAccessTokenID.String)
+			r.LocalAccessTokenID = &tokenID
+		}
 		r.StartedAt, err = time.Parse(time.RFC3339Nano, started)
 		if err != nil {
 			rows.Close()
@@ -419,12 +437,12 @@ func (s *Store) BackfillPricing(ctx context.Context, id contract.ServiceID) (int
 	return len(records), nil
 }
 
-func (s *Store) BillingSummary(ctx context.Context, id contract.ServiceID, account string, from, to time.Time) (pricing.Summary, error) {
-	result := pricing.Summary{From: from, To: to, Amounts: pricing.Amounts{AmountUSD: "0.000000000"}, ByModel: []pricing.Group{}}
+func (s *Store) BillingSummary(ctx context.Context, id contract.ServiceID, account string, from, to time.Time, options pricing.BillingSummaryOptions) (pricing.Summary, error) {
+	result := pricing.Summary{From: from, To: to, Amounts: pricing.Amounts{AmountUSD: "0.000000000"}, ByModel: []pricing.Group{}, ByToken: []pricing.TokenGroup{}}
 	if from.IsZero() || !to.After(from) || to.Sub(from) > 367*24*time.Hour {
 		return result, fmt.Errorf("%w: invalid billing range", storage.ErrInvalidArgument)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT root_id,model,COALESCE(json_extract(NULLIF(price_json,''),'$.provider'),''),amount_usd,reason,revalued FROM billing_ledger WHERE started_at>=? AND started_at<? AND (?='' OR service_id=?) AND (?='' OR account_key=?)`, billingTime(from), billingTime(to), id, id, account, account)
+	rows, err := s.db.QueryContext(ctx, `SELECT root_id,local_access_token_id,model,COALESCE(json_extract(NULLIF(price_json,''),'$.provider'),''),amount_usd,reason,revalued FROM billing_ledger WHERE started_at>=? AND started_at<? AND (?='' OR service_id=?) AND (?='' OR account_key=?)`, billingTime(from), billingTime(to), id, id, account, account)
 	if err != nil {
 		return result, err
 	}
@@ -434,10 +452,21 @@ func (s *Store) BillingSummary(ctx context.Context, id contract.ServiceID, accou
 	groupAmounts := map[string]*big.Rat{}
 	roots := map[string]bool{}
 	groupRoots := map[string]map[string]bool{}
+	currentTokenIDs := map[string]struct{}{}
+	if options.IncludeTokenBreakdown {
+		currentTokenIDs, err = s.currentAccessTokenIDs(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
+	tokenGroups := map[string]*pricing.TokenGroup{}
+	tokenAmounts := map[string]*big.Rat{}
+	tokenRoots := map[string]map[string]bool{}
 	for rows.Next() {
 		var root, model, provider, amount, reason string
+		var localAccessTokenID sql.NullString
 		var revalued bool
-		if err = rows.Scan(&root, &model, &provider, &amount, &reason, &revalued); err != nil {
+		if err = rows.Scan(&root, &localAccessTokenID, &model, &provider, &amount, &reason, &revalued); err != nil {
 			return result, err
 		}
 		key := provider + "/" + model
@@ -446,9 +475,25 @@ func (s *Store) BillingSummary(ctx context.Context, id contract.ServiceID, accou
 			groupAmounts[key] = new(big.Rat)
 			groupRoots[key] = map[string]bool{}
 		}
+		var tokenGroup *pricing.TokenGroup
+		if options.IncludeTokenBreakdown && localAccessTokenID.Valid {
+			if _, ok := currentTokenIDs[localAccessTokenID.String]; ok {
+				if tokenGroups[localAccessTokenID.String] == nil {
+					tokenGroups[localAccessTokenID.String] = &pricing.TokenGroup{TokenID: localAccessTokenID.String}
+					tokenAmounts[localAccessTokenID.String] = new(big.Rat)
+					tokenRoots[localAccessTokenID.String] = map[string]bool{}
+				}
+				tokenGroup = tokenGroups[localAccessTokenID.String]
+				tokenRoots[localAccessTokenID.String][root] = true
+			}
+		}
 		roots[root] = true
 		groupRoots[key][root] = true
-		for _, a := range []*pricing.Amounts{&result.Amounts, &groups[key].Amounts} {
+		amounts := []*pricing.Amounts{&result.Amounts, &groups[key].Amounts}
+		if tokenGroup != nil {
+			amounts = append(amounts, &tokenGroup.Amounts)
+		}
+		for _, a := range amounts {
 			switch reason {
 			case "priced":
 				a.Priced++
@@ -468,6 +513,9 @@ func (s *Store) BillingSummary(ctx context.Context, id contract.ServiceID, accou
 			}
 			totals.Add(totals, v)
 			groupAmounts[key].Add(groupAmounts[key], v)
+			if tokenGroup != nil {
+				tokenAmounts[tokenGroup.TokenID].Add(tokenAmounts[tokenGroup.TokenID], v)
+			}
 		}
 	}
 	if err = rows.Err(); err != nil {
@@ -479,6 +527,24 @@ func (s *Store) BillingSummary(ctx context.Context, id contract.ServiceID, accou
 		g.AmountUSD = groupAmounts[key].FloatString(9)
 		g.Requests = int64(len(groupRoots[key]))
 		result.ByModel = append(result.ByModel, *g)
+	}
+	if options.IncludeTokenBreakdown {
+		for tokenID, group := range tokenGroups {
+			group.AmountUSD = tokenAmounts[tokenID].FloatString(9)
+			group.Requests = int64(len(tokenRoots[tokenID]))
+			result.ByToken = append(result.ByToken, *group)
+		}
+		slices.SortFunc(result.ByToken, func(a, b pricing.TokenGroup) int {
+			av, _ := new(big.Rat).SetString(a.AmountUSD)
+			bv, _ := new(big.Rat).SetString(b.AmountUSD)
+			if amountOrder := bv.Cmp(av); amountOrder != 0 {
+				return amountOrder
+			}
+			if requestOrder := cmp.Compare(b.Requests, a.Requests); requestOrder != 0 {
+				return requestOrder
+			}
+			return cmp.Compare(a.TokenID, b.TokenID)
+		})
 	}
 	sort.Slice(result.ByModel, func(i, j int) bool {
 		a, _ := new(big.Rat).SetString(result.ByModel[i].AmountUSD)
@@ -598,7 +664,7 @@ func (s *Store) ServiceBilling(ctx context.Context, id contract.ServiceID) (pric
 	}
 	periods := result.Periods[:0]
 	for _, p := range result.Periods {
-		p.Summary, err = s.BillingSummary(ctx, id, key, p.Start, p.End)
+		p.Summary, err = s.BillingSummary(ctx, id, key, p.Start, p.End, pricing.BillingSummaryOptions{})
 		if err != nil {
 			return result, err
 		}

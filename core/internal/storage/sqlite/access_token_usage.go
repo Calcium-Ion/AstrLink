@@ -5,8 +5,36 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuantumNous/astrlink/core/contract"
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
 )
+
+// currentAccessTokenIDs returns the bounded set of currently persisted token IDs
+// used by usage and billing breakdowns. Historical request and billing rows may
+// mention deleted tokens; those IDs are intentionally excluded from current
+// token breakdowns.
+func (store *Store) currentAccessTokenIDs(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT id FROM local_access_tokens ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list current access token IDs: %w", err)
+	}
+	defer rows.Close()
+	ids := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan current access token ID: %w", err)
+		}
+		if contract.AccessTokenID(id).Validate() != nil {
+			return nil, fmt.Errorf("%w: invalid current access token ID", storagecontract.ErrInvalidRecord)
+		}
+		ids[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate current access token IDs: %w", err)
+	}
+	return ids, nil
+}
 
 // ListAccessTokenUsage aggregates both periods for every token in one scan,
 // without loading request details or applying the request-list pagination cap.

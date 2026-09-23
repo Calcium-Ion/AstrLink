@@ -205,6 +205,7 @@ describe("Overview", () => {
           onManageServices={onManageServices}
           onManageTokens={onManageTokens}
           onOpenService={onOpenService}
+          onOpenTokenRecords={() => undefined}
           onRefreshServices={() => undefined}
           onRefreshUsage={() => undefined}
           onRestart={onRestart}
@@ -416,6 +417,72 @@ describe("Overview", () => {
     expect(container.textContent).toContain("未知模型");
     expect(container.textContent).not.toContain("上游服务");
     expect(container.textContent).not.toContain("连接 AstrLink");
+  });
+
+  it("supports single-condition token sorting with icon controls", async () => {
+    const tokenCatalog: AccessTokenCatalog = {
+      ...readyTokens,
+      items: [
+        readyTokens.items[0],
+        {
+          id: "token_02",
+          name: "Terminal",
+          hint: "astr_…T2",
+          created_at: "2026-07-25T10:30:00Z",
+        },
+        {
+          id: "token_03",
+          name: "CI",
+          hint: "astr_…C3",
+          created_at: "2026-07-26T10:30:00Z",
+        },
+      ],
+    };
+    const summary = readySummary({
+      by_token: [
+        group("token_01", { total_tokens: 100, requests: 1 }),
+        group("token_02", { total_tokens: 100, requests: 3 }),
+        group("token_03", { total_tokens: 50, requests: 5 }),
+      ],
+    });
+    await renderOverview({
+      tokenCatalog,
+      usage: { status: "ready", summary, error: null },
+    });
+
+    const panel = container.querySelector<HTMLElement>(
+      "[data-testid='token-usage-panel']",
+    )!;
+    const control = (key: string) =>
+      panel.querySelector<HTMLButtonElement>(
+        `[data-testid='token-sort-${key}']`,
+      )!;
+    const rowNames = () =>
+      [
+        ...panel.querySelectorAll<HTMLElement>(
+          "[data-slot='paginated-list-items'] > div > button [title]",
+        ),
+      ].map((node) => node.getAttribute("title"));
+
+    expect(control("tokens").dataset.active).toBe("true");
+    expect(control("tokens").getAttribute("aria-pressed")).toBe("true");
+    expect(control("fee").dataset.active).toBe("false");
+    expect(control("requests").dataset.active).toBe("false");
+    expect(rowNames()).toEqual(["Terminal", "VS Code", "CI"]);
+
+    await act(async () => control("requests").click());
+    expect(control("tokens").dataset.active).toBe("false");
+    expect(control("requests").dataset.active).toBe("true");
+    expect(rowNames()).toEqual(["CI", "Terminal", "VS Code"]);
+
+    await act(async () => control("fee").click());
+    expect(control("requests").dataset.active).toBe("false");
+    expect(control("fee").dataset.active).toBe("true");
+    expect(rowNames()).toEqual(["Terminal", "VS Code", "CI"]);
+
+    await act(async () => control("tokens").click());
+    expect(control("tokens").dataset.active).toBe("true");
+    expect(control("fee").dataset.active).toBe("false");
   });
 
   it("defaults to a yearly heatmap and reports range switches", async () => {

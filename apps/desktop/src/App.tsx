@@ -61,7 +61,7 @@ type WorkspacePage =
   | { kind: "overview" }
   | { kind: "tokens" }
   | { kind: "safety" }
-  | { kind: "records" }
+  | { kind: "records"; tokenId?: string }
   | { kind: "routing" }
   | { kind: "agentTools" }
   | { kind: "settings" }
@@ -697,6 +697,7 @@ export default function App() {
             onManageServices={() => navigate({ kind: "list" })}
             onManageTokens={() => navigate({ kind: "tokens" })}
             onOpenService={(serviceId) => navigate({ kind: "edit", serviceId })}
+            onOpenTokenRecords={(tokenId) => navigate({ kind: "records", tokenId })}
             onRefreshServices={() => void refreshServices()}
             onRefreshUsage={() => void refreshUsage()}
             onRestart={() => void handleRestart()}
@@ -720,7 +721,10 @@ export default function App() {
           <SafetyPolicy coreSessionKey={coreSessionKey} isReady={isReady} />
         ) : page.kind === "records" ? (
           <RequestRecords
+            accessTokens={tokenCatalog.items}
+            accessTokensReady={tokenCatalog.status === "ready"}
             coreSessionKey={coreSessionKey}
+            initialLocalAccessTokenId={page.tokenId}
             services={catalog.items}
             isReady={isReady}
           />

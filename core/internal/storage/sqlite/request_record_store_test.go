@@ -101,10 +101,23 @@ func TestRequestRecordStoreInsertListFiltersAndPurge(t *testing.T) {
 		}
 	}
 	tokenFiltered, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{
-		LocalAccessTokenID: &tokenA,
+		LocalAccessTokenIDs: []contract.AccessTokenID{tokenA},
 	})
 	if err != nil || len(tokenFiltered.Items) != 1 || tokenFiltered.Items[0].ID != "request_token_a" {
 		t.Fatalf("token filtered = %#v err=%v", tokenFiltered, err)
+	}
+
+	multiTokenFiltered, err := store.ListRequestRecords(ctx, storagecontract.RequestRecordListOptions{
+		LocalAccessTokenIDs: []contract.AccessTokenID{tokenA, tokenB},
+	})
+	if err != nil || len(multiTokenFiltered.Items) != 2 || multiTokenFiltered.Items[0].ID != "request_token_b" || multiTokenFiltered.Items[1].ID != "request_token_a" {
+		t.Fatalf("multi-token records=%+v err=%v", multiTokenFiltered, err)
+	}
+	multiTokenSessions, err := store.ListRequestSessions(ctx, storagecontract.RequestSessionListOptions{
+		LocalAccessTokenIDs: []contract.AccessTokenID{tokenA, tokenB},
+	})
+	if err != nil || len(multiTokenSessions.Items) != 2 || multiTokenSessions.Items[0].ID != "request_token_b" || multiTokenSessions.Items[1].ID != "request_token_a" {
+		t.Fatalf("multi-token sessions=%+v err=%v", multiTokenSessions, err)
 	}
 
 	got, err := store.GetRequestRecord(ctx, "request_a")

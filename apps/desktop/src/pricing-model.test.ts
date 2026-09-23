@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseBillingSummary,
+  parseServiceBilling,
   parsePricingConfig,
   billingAmount,
   currentBillingPeriod,
@@ -59,6 +60,53 @@ describe("official pricing boundary", () => {
     expect(() => parseBillingSummary({ ...value, unpriced: -1 })).toThrow();
   });
 
+  it("requires the token billing breakdown field", () => {
+    expect(() =>
+      parseBillingSummary({
+        amount_usd: "0",
+        priced: 0,
+        unpriced: 0,
+        pending: 0,
+        revalued: 0,
+        requests: 0,
+        from: "2026-09-19T00:00:00Z",
+        to: "2026-09-20T00:00:00Z",
+        by_model: [],
+      }),
+    ).toThrow("Invalid pricing list");
+  });
+  it("requires an array for every service-period token breakdown", () => {
+    const summary = {
+      amount_usd: "0",
+      priced: 0,
+      unpriced: 0,
+      pending: 0,
+      revalued: 0,
+      requests: 0,
+      from: "2026-09-19T00:00:00Z",
+      to: "2026-09-20T00:00:00Z",
+      by_model: [],
+      by_token: [],
+    };
+    const period = {
+      id: "month",
+      kind: "month",
+      start: summary.from,
+      end: summary.to,
+      observed_at: null,
+      used_percent: null,
+      budget_usd: "",
+      remaining_usd: "",
+      coverage: "complete",
+      summary,
+    };
+    expect(parseServiceBilling({ config, periods: [period] }).periods[0].summary.by_token).toEqual([]);
+    for (const by_token of [undefined, null, {}]) {
+      const invalid = { ...summary, by_token };
+      expect(() => parseBillingSummary(invalid)).toThrow("Invalid pricing list");
+      expect(() => parseServiceBilling({ config, periods: [{ ...period, summary: invalid }] })).toThrow("Invalid pricing list");
+    }
+  });
   it("parses token billing groups with the stable token_id field", () => {
     const value = {
       amount_usd: "1.25",

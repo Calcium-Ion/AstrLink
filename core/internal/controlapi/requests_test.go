@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,56 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 )
+
+func TestParseRequestRecordQueryAllowsOnlyRepeatedTokenFilters(t *testing.T) {
+	options, err := parseRequestRecordQuery(url.Values{
+		"local_access_token_id": {"access_token_01", "access_token_02"},
+		"cursor":                {"cursor_01"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options.LocalAccessTokenIDs) != 2 || options.LocalAccessTokenIDs[0] != "access_token_01" || options.LocalAccessTokenIDs[1] != "access_token_02" {
+		t.Fatalf("token filters = %#v", options.LocalAccessTokenIDs)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, RequestSessionsPath+"?local_access_token_id=access_token_01&local_access_token_id=access_token_02", nil)
+	sessionOptions, err := parseRequestSessionListOptions(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessionOptions.LocalAccessTokenIDs) != 2 {
+		t.Fatalf("session token filters = %#v", sessionOptions.LocalAccessTokenIDs)
+	}
+
+	for _, query := range []url.Values{
+		{"cursor": {"cursor_01", "cursor_02"}},
+		{"limit": {"10", "20"}},
+		{"status": {"succeeded", "failed"}},
+	} {
+		if _, err := parseRequestRecordQuery(query); err == nil {
+			t.Fatalf("duplicate non-token query was accepted: %v", query)
+		}
+	}
+
+	if _, err := parseRequestRecordQuery(url.Values{
+		"local_access_token_id": {"access_token_01", "access_token_01"},
+	}); err == nil {
+		t.Fatal("duplicate token filter was accepted")
+	}
+	if _, err := parseRequestRecordQuery(url.Values{
+		"local_access_token_id": {""},
+	}); err == nil {
+		t.Fatal("empty token filter was accepted")
+	}
+	tooMany := make([]string, maxLocalAccessTokenFilters+1)
+	for i := range tooMany {
+		tooMany[i] = "access_token_" + strings.Repeat("a", i+1)
+	}
+	if _, err := parseRequestRecordQuery(url.Values{"local_access_token_id": tooMany}); err == nil {
+		t.Fatal("too many token filters were accepted")
+	}
+}
 
 func TestRequestRecordControlAPI(t *testing.T) {
 	store, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "astrlink.db"))
@@ -47,6 +98,16 @@ func TestRequestRecordControlAPI(t *testing.T) {
 	}
 	if err := store.InsertRequestRecord(context.Background(), record); err != nil {
 		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		RequestsPath + "?cursor=cursor_01&cursor=cursor_02",
+		RequestSessionsPath + "?cursor=cursor_01&cursor=cursor_02",
+	} {
+		response := requestRecordHTTP(t, handler, http.MethodGet, path, "", "")
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("duplicate cursor path=%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
 	}
 
 	response := requestRecordHTTP(t, handler, http.MethodGet, RequestsPath+"?status=succeeded&limit=10", "", "")

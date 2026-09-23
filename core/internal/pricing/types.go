@@ -131,6 +131,10 @@ func AccountKey(service contract.Service) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(id)))
 }
 
+type BillingSummaryOptions struct {
+	IncludeTokenBreakdown bool
+}
+
 type Amounts struct {
 	AmountUSD string `json:"amount_usd"`
 	Priced    int64  `json:"priced"`
@@ -144,11 +148,16 @@ type Group struct {
 	Provider string `json:"provider"`
 	Amounts
 }
+type TokenGroup struct {
+	TokenID string `json:"token_id"`
+	Amounts
+}
 type Summary struct {
 	From time.Time `json:"from"`
 	To   time.Time `json:"to"`
 	Amounts
-	ByModel []Group `json:"by_model"`
+	ByModel []Group      `json:"by_model"`
+	ByToken []TokenGroup `json:"by_token"`
 }
 type Period struct {
 	ID           string     `json:"id"`
