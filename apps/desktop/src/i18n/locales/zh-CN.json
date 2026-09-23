@@ -738,7 +738,6 @@
     "reorderKeys": "拖拽排序；聚焦后按 ↑ / ↓ 移动",
     "orderSaving": "正在保存 API 提供商顺序…",
     "orderFiltered": "拖动手柄调整匹配 API 提供商的全局优先级，其他 API 提供商保留原位置。",
-    "orderHint": "越靠上越优先。拖动左侧手柄排序，停用 API 提供商保留位置。",
     "orderGuide": {
       "title": "拖拽调整提供商优先级",
       "description": "同一模型有多个可用提供商时，越靠上越优先。",

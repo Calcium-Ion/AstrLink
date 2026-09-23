@@ -1438,16 +1438,7 @@ export function ServiceManager({
           className="@max-[360px]:gap-2"
           actions={
             <>
-              <ServiceOrderHelp ready={isReady && catalogStatus === "ready"}>
-                <p>{t("services.orderHint")}</p>
-                {filtered ? (
-                  <p className="mt-2">{t("services.orderFiltered")}</p>
-                ) : null}
-                {routingDefaults.loaded &&
-                !routingDefaults.allow_unmatched_failover ? (
-                  <p className="mt-2">{t("failure.globalOffHint")}</p>
-                ) : null}
-              </ServiceOrderHelp>
+              <ServiceOrderHelp ready={isReady && catalogStatus === "ready"} />
               <IconButton
                 label={
                   busy ? t("common.refreshing") : t("services.refreshList")

@@ -32,9 +32,7 @@ const render = (ready = true) =>
   act(async () =>
     root.render(
       <StrictMode>
-        <ServiceOrderHelp ready={ready}>
-          <p>排序帮助</p>
-        </ServiceOrderHelp>
+        <ServiceOrderHelp ready={ready} />
       </StrictMode>,
     ),
   );
@@ -72,22 +70,17 @@ it("waits for the catalog, remembers the first visit and survives StrictMode", a
   expect(dialog()).toBeNull();
 });
 
-it("preserves help on clicks one to four and replays on every fifth click", async () => {
+it("opens the demo from the first click on every visit without a help popover", async () => {
   localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
   await render();
-  for (let cycle = 0; cycle < 2; cycle++) {
-    for (let index = 0; index < 4; index++) {
-      await act(async () => help().click());
-      expect(dialog()).toBeNull();
-      expect(
-        document.querySelector('[data-slot="popover-content"]') !== null,
-      ).toBe(index % 2 === 0);
-    }
+  expect(dialog()).toBeNull();
+  for (let visit = 0; visit < 2; visit++) {
     await act(async () => help().click());
     expect(dialog()).not.toBeNull();
     expect(document.querySelector('[data-slot="popover-content"]')).toBeNull();
     expect(order()).toEqual(["codex", "openai", "newapi"]);
     await act(async () => button("知道了").click());
+    expect(dialog()).toBeNull();
   }
 });
 

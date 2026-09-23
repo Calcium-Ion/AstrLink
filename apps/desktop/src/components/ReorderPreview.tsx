@@ -23,10 +23,11 @@ export function ReorderPreview({
   const reducedMotion = useReducedMotion();
   return (
     <div className="relative min-w-0 py-2">
+      {/* Frame the first row (inset-x-2, 8px down, rowHeight - 8 tall) evenly. */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-2 rounded-md border border-dashed border-primary/60 bg-primary/5"
-        style={{ height: rowHeight - 4 }}
+        className="pointer-events-none absolute inset-x-1 top-1 rounded-lg border border-dashed border-primary/60 bg-primary/5"
+        style={{ height: rowHeight }}
       />
       <ol
         aria-label={label}
@@ -42,7 +43,6 @@ export function ReorderPreview({
               initial={false}
               animate={{
                 y: index * rowHeight,
-                x: dragging ? 8 : 0,
                 scale: dragging ? 1.015 : 1,
               }}
               transition={{

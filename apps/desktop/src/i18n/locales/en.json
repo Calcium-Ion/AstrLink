@@ -741,7 +741,6 @@
     "reorderKeys": "Drag to reorder; use Arrow Up / Down when focused",
     "orderSaving": "Saving API provider order…",
     "orderFiltered": "Drag to change matching API providers’ global priority; other API providers keep their positions.",
-    "orderHint": "Top API providers take priority. Drag a handle to reorder; disabled API providers keep their position.",
     "orderGuide": {
       "title": "Drag to set provider priority",
       "description": "When multiple providers support a model, those at the top take priority.",

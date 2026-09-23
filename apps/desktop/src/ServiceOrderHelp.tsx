@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
 
-import { HelpPopover } from "./components/HelpPopover";
 import { IconButton } from "./components/IconButton";
 import { ReorderPreview } from "./components/ReorderPreview";
 import { ServiceKindIcon } from "./components/ServiceKindIcon";
-import { RotateCcw } from "./components/icons";
+import { CircleHelp, RotateCcw } from "./components/icons";
 import { Button } from "./components/ui/button";
 import {
   Dialog,
@@ -98,18 +97,10 @@ function OrderAnimation() {
   );
 }
 
-export function ServiceOrderHelp({
-  ready,
-  children,
-}: {
-  ready: boolean;
-  children: ReactNode;
-}) {
+export function ServiceOrderHelp({ ready }: { ready: boolean }) {
   const t = useT();
-  const [helpOpen, setHelpOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [playback, setPlayback] = useState(0);
-  const clicks = useRef(0);
   const checked = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const dismiss = useRef<HTMLButtonElement>(null);
@@ -128,22 +119,17 @@ export function ServiceOrderHelp({
 
   return (
     <>
-      <HelpPopover
-        label={t("services.orderLabel")}
-        open={helpOpen}
-        onOpenChange={setHelpOpen}
-        triggerRef={trigger}
-        onTriggerClick={(event) => {
-          clicks.current += 1;
-          if (clicks.current < 5) return;
-          event.preventDefault();
-          clicks.current = 0;
-          setHelpOpen(false);
-          setGuideOpen(true);
-        }}
+      <Button
+        ref={trigger}
+        aria-label={t("services.orderLabel")}
+        aria-haspopup="dialog"
+        onClick={() => setGuideOpen(true)}
+        size="icon-xs"
+        type="button"
+        variant="ghost"
       >
-        {children}
-      </HelpPopover>
+        <CircleHelp aria-hidden="true" className="text-muted-foreground" />
+      </Button>
       <Dialog open={guideOpen} onOpenChange={setGuideOpen}>
         <DialogContent
           className="gap-3 sm:max-w-md"
