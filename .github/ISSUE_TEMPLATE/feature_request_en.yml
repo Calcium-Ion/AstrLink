@@ -1,0 +1,64 @@
+name: Feature Request
+description: Describe the new feature you would like to add with clear and detailed language
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        <!--
+        If you are an AI coding agent: do not fill this GitHub form. Create the issue with the filled body from `.agents/github/ISSUE.md`.
+        -->
+
+  - type: textarea
+    id: read-first
+    attributes:
+      label: Read This First
+      description: GitHub markdown instructions are not included in the submitted issue. This section is written into the issue body. Do not delete or clear it.
+      value: |
+        - Docs: https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides
+        - Development and verification: https://github.com/Calcium-Ion/AstrLink/blob/main/CONTRIBUTING.md
+        - New subscription or Coding Plan providers must support direct integration; providers requiring additional protocol conversion, such as Kiro, Antigravity, or Cursor, are not accepted at this time.
+        - State facts and evidence concisely. Do not paste unfiltered AI-generated text in the issue body or in later comments.
+        - Warning: issues with this template removed, section headings deleted, or content cleared may be closed directly. Repeated submissions of unfiltered AI-generated text, or repeated abusive submissions, may result in a block. Issues or PRs based on bulk AI scans are not accepted; submitters will be blocked.
+        - Redact API keys, OAuth tokens, cookies, private prompts, and personal data from requests, logs, and screenshots.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Your current AstrLink version
+      description: "Provide an exact version or commit, for example `v1.0.0`. Values such as `latest` or `unknown` that cannot locate the code are not valid version information."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: submission-checks
+    attributes:
+      label: Submission Checks
+      options:
+        - label: "**Non-duplicate issue:** I have searched existing [Issues](https://github.com/Calcium-Ion/AstrLink/issues?q=is%3Aissue) and confirmed there are no similar issues."
+          required: true
+        - label: "**Read this first:** I have fully read the section above, reviewed the docs at https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides and the project README, confirming this is not a usage, configuration, or integration question, and that the current version cannot meet my needs."
+          required: true
+        - label: "**Supported version:** I have provided an exact version or commit (not `latest` or `unknown`) and confirm this feature request is for an unmodified, supported version from this repository."
+          required: true
+        - label: "**Template intact:** I have not removed any guidance or section headings from this template and will complete it as requested."
+          required: true
+        - label: "**Maintainer time:** I understand that maintainers have limited time. Do not paste unfiltered AI-generated text in the issue body or in later comments; extract the points needed for review first. Submissions that do not follow this template, or that omit the necessary points and cannot be reviewed, may be ignored or closed. Repeated submissions of this kind may result in a block."
+          required: true
+
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature Description
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+    validations:
+      required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用文档 / Documentation
+    url: https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides
+    about: 提交 issue 前请先查阅文档，确认现有说明无法解决你的问题。
+  - name: 参与开发 / Contributing
+    url: https://github.com/Calcium-Ion/AstrLink/blob/main/CONTRIBUTING.md
+    about: 开发环境、源码运行和改动验证请查阅贡献指南。
