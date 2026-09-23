@@ -923,6 +923,45 @@ func TestOpenAIManifestMappingAllowsCompleteRemapAndIgnore(t *testing.T) {
 	}
 }
 
+func TestClientAcceptsPPLXManifestAndRequiresItsNinthLabel(t *testing.T) {
+	client := newTestClient(t, "success", 5*time.Second)
+	provider := client.model.(*testModelProvider)
+	installation, _ := provider.ReadyInstallation(testInstallationID)
+	filename := filepath.Join(installation.Directory, installationManifestName)
+	document, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest installationManifest
+	if err := json.Unmarshal(document, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Adapter = contract.PrivacyModelAdapterPPLXBIOES
+	manifest.CalibrationPath = nil
+	manifest.LabelMapping["other_pii"] = nil
+	document, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(document)
+	installation.ManifestSHA256 = hex.EncodeToString(digest[:])
+	provider.set(testInstallationID, installation)
+	if _, err := client.Detect(context.Background(), testDetectInput(testInstallationID)); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Window = 4097
+	if validateInstallationManifest(manifest, testInstallationID, testIdentity) == nil {
+		t.Fatal("accepted oversized PPLX window")
+	}
+	delete(manifest.LabelMapping, "other_pii")
+	if validateManifestMapping(manifest.Adapter, manifest.LabelMapping) == nil {
+		t.Fatal("accepted incomplete PPLX taxonomy")
+	}
+}
+
 func newTestClient(t *testing.T, mode string, timeout time.Duration) *Client {
 	t.Helper()
 	directory := t.TempDir()

@@ -223,6 +223,13 @@ func validateNormalizedManifest(manifest normalizedManifest) error {
 			manifest.SecretCalibrationPath != nil) {
 		return ErrInvalidConfig
 	}
+	if manifest.Adapter == contract.PrivacyModelAdapterPPLXBIOES &&
+		(manifest.TagScheme != "bioes" || manifest.Window > 4096 ||
+			manifest.InputNames.TokenTypeIDs != nil || manifest.CalibrationPath != nil ||
+			manifest.SecretRulesPath != nil || manifest.SecretCalibrationPath != nil ||
+			!sameLabelKeys(manifest.LabelMapping, defaultPPLXLabelMapping())) {
+		return ErrInvalidConfig
+	}
 	if manifest.Adapter == contract.PrivacyModelAdapterAstrLinkGuard &&
 		(manifest.TagScheme != "bioes" ||
 			manifest.CalibrationPath == nil ||

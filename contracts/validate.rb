@@ -506,7 +506,7 @@ catalog = openapi.dig("components", "schemas", "PrivacyModelCatalog")
 raise "privacy model catalog must expose items" unless catalog.fetch("required") == %w[items]
 
 adapter_values = openapi.dig("components", "schemas", "PrivacyModelAdapter", "enum")
-raise "privacy model adapter values drifted" unless adapter_values == %w[openai_bioes_viterbi hf_token_classification astrlink_sensitive_guard]
+raise "privacy model adapter values drifted" unless adapter_values == %w[openai_bioes_viterbi hf_token_classification pplx_bioes_viterbi astrlink_sensitive_guard]
 
 canonical_kinds = openapi.dig("components", "schemas", "PrivacyCanonicalKind", "enum")
 expected_kinds = %w[email phone account payment_card ip_address url common_secret private_address private_date private_person]

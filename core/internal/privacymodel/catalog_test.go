@@ -8,17 +8,33 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
-func TestBuiltinCatalogPinsThreeRepositoriesAndCPUVariants(t *testing.T) {
+func TestBuiltinCatalogOnlyAdvertisesPPLXAndRetainsLegacyProvenance(t *testing.T) {
 	catalog := BuiltinCatalog()
-	if len(catalog.Items) != 3 {
+	if len(catalog.Items) != 1 || catalog.Items[0].ID != CatalogPPLXPIITracer ||
+		catalog.Items[0].Adapter != contract.PrivacyModelAdapterPPLXBIOES ||
+		len(catalog.Items[0].Variants) != 1 || !catalog.Items[0].Variants[0].Recommended ||
+		catalog.Items[0].Variants[0].Quantization != "int4" {
 		t.Fatalf("catalog item count = %d", len(catalog.Items))
 	}
+	catalog.Items = append(catalog.Items, legacyCatalogEntries()...)
 	expected := []struct {
 		id       contract.PrivacyModelCatalogID
 		repoID   string
 		revision string
 		variants []string
 	}{
+		{
+			CatalogPPLXPIITracer,
+			"QuantumNous/astrlink-pii-tracer-int4",
+			"0f9a56fc32062ea5827f4d908e7afaa22b88c902",
+			[]string{"cpu_int4"},
+		},
+		{
+			CatalogPPLXPIITracer,
+			"lemonade-sdk/pplx-pii-masking-onnx",
+			"5ba4e413b78ff0f83d3c9cddee1bb5fdccbeee00",
+			[]string{"cpu_fp32"},
+		},
 		{
 			CatalogSheltronEttin32M,
 			"sheltron-ai/privacy-filter-ettin-32m",
@@ -75,8 +91,39 @@ func TestBuiltinCatalogPinsThreeRepositoriesAndCPUVariants(t *testing.T) {
 	}
 }
 
-func TestBuiltinPlansMatchCatalogTotalsAndSheltronWindow(t *testing.T) {
-	for _, item := range BuiltinCatalog().Items {
+func TestPPLXINT4ManifestIncludesLicenseAndDoesNotReplaceFP32Provenance(t *testing.T) {
+	item := BuiltinCatalog().Items[0]
+	plan, exists := builtinVariantPlan(item.RepoID, item.Revision, "cpu_int4")
+	if !exists {
+		t.Fatal("INT4 plan missing")
+	}
+	manifest := buildNormalizedManifest(contract.PrivacyModelInstallation{
+		ID:     InstallationID(item.RepoID, item.Revision, "cpu_int4"),
+		RepoID: item.RepoID, Revision: item.Revision, VariantID: "cpu_int4",
+		Adapter: item.Adapter, LabelMapping: defaultPPLXLabelMapping(),
+	}, plan.runtime, plan.assets)
+	if validateNormalizedManifest(manifest) != nil || !manifestMatchesBuiltinPlan(manifest, plan) {
+		t.Fatalf("INT4 manifest invalid: %#v", manifest)
+	}
+	licenseFound := false
+	for _, file := range manifest.Files {
+		licenseFound = licenseFound || file.Path == "LICENSE"
+	}
+	if !licenseFound {
+		t.Fatal("INT4 installation lost its upstream license")
+	}
+	legacy, exists := builtinVariantPlan(
+		"lemonade-sdk/pplx-pii-masking-onnx",
+		"5ba4e413b78ff0f83d3c9cddee1bb5fdccbeee00", "cpu_fp32",
+	)
+	if !exists || legacy.item.Name != "Perplexity PII-Tracer 0.6B" ||
+		legacy.variant.BytesTotal != 2_403_057_465 || manifestMatchesBuiltinPlan(manifest, legacy) {
+		t.Fatal("legacy FP32 provenance was replaced by the INT4 release")
+	}
+}
+
+func TestBuiltinPlansMatchCatalogTotalsAndModelWindows(t *testing.T) {
+	for _, item := range append(BuiltinCatalog().Items, legacyCatalogEntries()...) {
 		for _, variant := range item.Variants {
 			if !variant.Supported {
 				continue
@@ -102,6 +149,17 @@ func TestBuiltinPlansMatchCatalogTotalsAndSheltronWindow(t *testing.T) {
 			if item.ID == CatalogSheltronEttin32M &&
 				(plan.runtime.window != 512 || plan.runtime.stride != 128) {
 				t.Fatalf("Sheltron runtime=%#v", plan.runtime)
+			}
+			if item.ID == CatalogPPLXPIITracer {
+				window, modelPath := 4096, "model.onnx"
+				if variant.ID == "cpu_int4" {
+					window, modelPath = 1024, "model_int4.onnx"
+				}
+				if plan.runtime.window != window || plan.runtime.stride != 128 ||
+					plan.runtime.tagScheme != "bioes" || plan.runtime.modelPath != modelPath ||
+					len(plan.runtime.externalData) != 1 || plan.runtime.externalData[0] != modelPath+".data" {
+					t.Fatalf("PII-Tracer runtime=%#v", plan.runtime)
+				}
 			}
 		}
 	}

@@ -31,7 +31,7 @@ const (
 )
 
 var (
-	externalDataSuffixPattern = regexp.MustCompile(`^_data(?:_[0-9]+)?$`)
+	externalDataSuffixPattern = regexp.MustCompile(`^(?:_data(?:_[0-9]+)?|\.data)$`)
 	entityLabelPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 )
 
@@ -302,18 +302,18 @@ func (probe *hfProbe) inspect(
 	if len(configDocument) == 0 || len(configDocument) > maxConfigBytes {
 		return probeResult{}, ErrRemoteMetadata
 	}
-	var modelConfig hfModelConfig
-	if err := json.Unmarshal(configDocument, &modelConfig); err != nil {
+	modelConfig, adapter, err := parsePrivacyModelConfig(configDocument)
+	if err != nil {
 		return probeResult{}, ErrRemoteMetadata
 	}
 	if prohibitedModelConfig(modelConfig) {
 		return probeResult{}, ErrUnsupportedModel
 	}
-	if descriptor == nil &&
+	if descriptor == nil && adapter != contract.PrivacyModelAdapterPPLXBIOES &&
 		!hasTokenClassificationArchitecture(modelConfig.Architectures) {
 		return probeResult{}, ErrUnsupportedModel
 	}
-	labels, tagScheme, complete, validLabels := probeLabels(modelConfig.ID2Label)
+	labels, tagScheme, complete, validLabels := probeModelLabels(modelConfig.ID2Label, adapter)
 	if !validLabels {
 		return probeResult{}, ErrRemoteMetadata
 	}
@@ -343,12 +343,23 @@ func (probe *hfProbe) inspect(
 	if len(variants) == 0 {
 		return probeResult{}, ErrUnsupportedModel
 	}
+	if adapter == contract.PrivacyModelAdapterPPLXBIOES {
+		if descriptor != nil && descriptor.Adapter != adapter {
+			return probeResult{}, ErrUnsupportedModel
+		}
+		if descriptor == nil {
+			decoratePPLXPlans(variants, plans)
+		}
+	}
+	if descriptor != nil && descriptor.Adapter == contract.PrivacyModelAdapterPPLXBIOES && adapter != descriptor.Adapter {
+		return probeResult{}, ErrUnsupportedModel
+	}
 	name := path.Base(request.RepoID)
 	response := contract.PrivacyModelProbeResponse{
 		RepoID: request.RepoID, RequestedRevision: request.Revision,
 		Revision: metadata.SHA, Name: name, License: optionalNonEmpty(card.License),
 		Languages: parseLanguages(card.Language),
-		Adapter:   contract.PrivacyModelAdapterHFToken,
+		Adapter:   adapter,
 		Variants:  variants, Labels: labels,
 		RequiresLabelMapping: !complete,
 	}
@@ -440,6 +451,7 @@ func validateSourceDescriptor(descriptor sourceDescriptor) error {
 		if contract.ValidatePrivacyModelVariantID(variant.ID) != nil ||
 			!validProbeMetadataText(variant.Name, 64) ||
 			(variant.Quantization != "q4" &&
+				variant.Quantization != "int4" &&
 				variant.Quantization != "int8" &&
 				variant.Quantization != "fp32" &&
 				variant.Quantization != "f16" &&
@@ -494,6 +506,12 @@ func validateSourceDescriptor(descriptor sourceDescriptor) error {
 			(variant.CalibrationPath != nil ||
 				variant.SecretRulesPath != nil ||
 				variant.SecretCalibrationPath != nil) {
+			return ErrUnsupportedModel
+		}
+		if descriptor.Adapter == contract.PrivacyModelAdapterPPLXBIOES &&
+			(variant.TagScheme != "bioes" || variant.Window > 4096 ||
+				variant.CalibrationPath != nil || variant.SecretRulesPath != nil ||
+				variant.SecretCalibrationPath != nil || variant.InputNames.TokenTypeIDs != nil) {
 			return ErrUnsupportedModel
 		}
 		if descriptor.Adapter == contract.PrivacyModelAdapterAstrLinkGuard &&
@@ -891,6 +909,8 @@ func variantIdentity(modelPath string) (string, string) {
 		return "gpu_f16", "f16"
 	case strings.Contains(lower, "q4"):
 		return "cpu_q4", "q4"
+	case strings.Contains(lower, "int4"):
+		return "cpu_int4", "int4"
 	case strings.Contains(lower, "int8"), strings.Contains(lower, "quant"):
 		if strings.Contains(lower, "edge") {
 			return "edge_int8", "int8"

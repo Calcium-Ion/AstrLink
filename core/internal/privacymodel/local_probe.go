@@ -349,10 +349,10 @@ func inspectLocalModelAssets(
 	if json.Unmarshal(tokenizerDocument, &tokenizer) != nil || len(tokenizer) == 0 {
 		return contract.PrivacyModelProbeResponse{}, nil, ErrUnsupportedModel
 	}
-	var config hfModelConfig
-	if json.Unmarshal(configDocument, &config) != nil ||
+	config, adapter, err := parsePrivacyModelConfig(configDocument)
+	if err != nil ||
 		prohibitedModelConfig(config) ||
-		!hasTokenClassificationArchitecture(config.Architectures) {
+		(adapter != contract.PrivacyModelAdapterPPLXBIOES && !hasTokenClassificationArchitecture(config.Architectures)) {
 		return contract.PrivacyModelProbeResponse{}, nil, ErrUnsupportedModel
 	}
 	selectedModels := make(map[string]struct{}, len(modelPaths))
@@ -366,7 +366,7 @@ func inspectLocalModelAssets(
 			}
 		}
 	}
-	labels, tagScheme, complete, validLabels := probeLabels(config.ID2Label)
+	labels, tagScheme, complete, validLabels := probeModelLabels(config.ID2Label, adapter)
 	if !validLabels {
 		return contract.PrivacyModelProbeResponse{}, nil, ErrUnsupportedModel
 	}
@@ -378,10 +378,15 @@ func inspectLocalModelAssets(
 	if len(variants) == 0 || len(plans) == 0 {
 		return contract.PrivacyModelProbeResponse{}, nil, ErrUnsupportedModel
 	}
-	adapter := contract.PrivacyModelAdapterHFToken
 	name := ""
 	var license *string
 	languages := []string{}
+	if adapter == contract.PrivacyModelAdapterPPLXBIOES {
+		decoratePPLXPlans(variants, plans)
+		name = "Perplexity PII-Tracer 0.6B"
+		license = optionalNonEmpty("MIT")
+		languages = []string{"en", "multilingual"}
+	}
 	if _, sensitive := required[sensitiveGuardSecretRulesPath]; sensitive {
 		viterbiDocument, readErr := readLocalAsset(
 			ctx, directory, sensitiveGuardViterbiCalibrationPath, maxConfigBytes,

@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	CatalogPPLXPIITracer           contract.PrivacyModelCatalogID = "catalog_pplx_pii_tracer"
 	CatalogSheltronEttin32M        contract.PrivacyModelCatalogID = "catalog_sheltron_ettin_32m"
 	CatalogNymPIIMultilingualSmall contract.PrivacyModelCatalogID = "catalog_nym_pii_multilingual_small"
 	CatalogOpenAIPrivacyFilter     contract.PrivacyModelCatalogID = "catalog_openai_privacy_filter"
@@ -47,8 +48,45 @@ func BuiltinCatalog() contract.PrivacyModelCatalogResponse {
 }
 
 func builtinCatalogEntries() []contract.PrivacyModelCatalogItem {
+	return []contract.PrivacyModelCatalogItem{{
+		ID: CatalogPPLXPIITracer, Name: "AstrLink PII-Tracer 0.6B INT4",
+		Summary:  "PII-Tracer adapted by AstrLink with INT4 weights and calibrated error correction. Detects personal information and credentials locally.",
+		Source:   contract.PrivacyModelCatalogSourceCommunity,
+		RepoID:   "QuantumNous/astrlink-pii-tracer-int4",
+		Revision: "0f9a56fc32062ea5827f4d908e7afaa22b88c902",
+		License:  "MIT", Languages: []string{"en", "multilingual"},
+		Adapter: contract.PrivacyModelAdapterPPLXBIOES,
+		Variants: []contract.PrivacyModelVariant{{
+			ID: "cpu_int4", Name: "CPU INT4", Quantization: "int4",
+			BytesTotal: 471_931_100, EstimatedRAMBytes: 2_147_483_648,
+			Supported: true, Recommended: true,
+		}},
+	}}
+}
+
+func legacyPPLXFP32CatalogEntry() contract.PrivacyModelCatalogItem {
+	return contract.PrivacyModelCatalogItem{
+		ID: CatalogPPLXPIITracer, Name: "Perplexity PII-Tracer 0.6B",
+		Summary:  "Multilingual privacy span detector from Perplexity, using the Lemonade CPU export. Includes personal information and credentials.",
+		Source:   contract.PrivacyModelCatalogSourceCommunity,
+		RepoID:   "lemonade-sdk/pplx-pii-masking-onnx",
+		Revision: "5ba4e413b78ff0f83d3c9cddee1bb5fdccbeee00",
+		License:  "MIT", Languages: []string{"en", "multilingual"},
+		Adapter: contract.PrivacyModelAdapterPPLXBIOES,
+		Variants: []contract.PrivacyModelVariant{{
+			ID: "cpu_fp32", Name: "CPU FP32", Quantization: "fp32",
+			BytesTotal: 2_403_057_465, EstimatedRAMBytes: 6_442_450_944,
+			Supported: true, Recommended: true,
+		}},
+	}
+}
+
+// Retain pinned provenance for existing installations and legacy recovery.
+// These models are no longer advertised in the built-in catalog.
+func legacyCatalogEntries() []contract.PrivacyModelCatalogItem {
 	cpuOnly := "cpu_only"
 	return []contract.PrivacyModelCatalogItem{
+		legacyPPLXFP32CatalogEntry(),
 		{
 			ID: CatalogSheltronEttin32M, Name: "Privacy Filter Ettin 32M",
 			Summary:  "Compact English privacy token classifier for local CPU inference.",
@@ -128,7 +166,7 @@ func builtinCatalogEntries() []contract.PrivacyModelCatalogItem {
 }
 
 func builtinVariantPlan(repoID, revision, variantID string) (variantPlan, bool) {
-	for _, item := range builtinCatalogEntries() {
+	for _, item := range append(builtinCatalogEntries(), legacyCatalogEntries()...) {
 		if item.RepoID != repoID || item.Revision != revision {
 			continue
 		}
@@ -138,6 +176,9 @@ func builtinVariantPlan(repoID, revision, variantID string) (variantPlan, bool) 
 			}
 			plan := variantPlan{item: copyCatalogItem(item), variant: variant}
 			switch item.ID {
+			case CatalogPPLXPIITracer:
+				plan.assets = pplxAssets(variantID)
+				plan.runtime = pplxRuntime(variantID)
 			case CatalogSheltronEttin32M:
 				plan.assets = sheltronAssets(variantID)
 				calibration := "viterbi_calibration.json"
@@ -171,6 +212,39 @@ func builtinVariantPlan(repoID, revision, variantID string) (variantPlan, bool) 
 		}
 	}
 	return variantPlan{}, false
+}
+
+func pplxRuntime(variant string) runtimeSpec {
+	runtime := hfRuntime("model.onnx")
+	runtime.externalData = []string{"model.onnx.data"}
+	runtime.tagScheme = "bioes"
+	runtime.window = 4096
+	if variant == "cpu_int4" {
+		runtime.modelPath = "model_int4.onnx"
+		runtime.externalData = []string{"model_int4.onnx.data"}
+		runtime.window = 1024
+	}
+	return runtime
+}
+
+func pplxAssets(variant string) []Asset {
+	if variant == "cpu_int4" {
+		return []Asset{
+			{Path: "model_int4.onnx", Size: 6_884_480, SHA256: "8c609f9ce51ac8976910e55905fd9991d63224c0ff048a016676306209806e75"},
+			{Path: "model_int4.onnx.data", Size: 453_619_712, SHA256: "adaa552808510fb37b1502d051436da9e99ebbca5cd6b278cac9d89780aa48e8"},
+			{Path: "config.json", Size: 2_498, SHA256: "c57c3d8114ef302c51a35d5eb72a35e02c3e10bd17b8401bc660be593fc46dfc"},
+			{Path: "tokenizer.json", Size: 11_422_936, SHA256: "cae14d1c8dda080f23792355b0692b826bf1f1da3c86ebc1b37548a391cf6526"},
+			{Path: "tokenizer_config.json", Size: 398, SHA256: "aa9c1b0a1c9b48c2f70bacdf64f7dab25194be4ffea0c6a6e4da262360a91d0a"},
+			{Path: "LICENSE", Size: 1_076, SHA256: "7fbf88e9c951fe53eb614a46772d0b48ada6d50b351e5e11dcb64b4dc3fb8eb2"},
+		}
+	}
+	return []Asset{
+		{Path: "model.onnx", Size: 7_235_345, SHA256: "56309eabe1e3a646718de2b0e32b097dc2a9f3fb9cf54395cac1672a1a93a630"},
+		{Path: "model.onnx.data", Size: 2_384_396_288, SHA256: "65ac3f46cc6f3f5abeae2ba9bb0b35c7daebb185ff3c420a373bc9bb998a0b5e"},
+		{Path: "config.json", Size: 2_498, SHA256: "c57c3d8114ef302c51a35d5eb72a35e02c3e10bd17b8401bc660be593fc46dfc"},
+		{Path: "tokenizer.json", Size: 11_422_936, SHA256: "cae14d1c8dda080f23792355b0692b826bf1f1da3c86ebc1b37548a391cf6526"},
+		{Path: "tokenizer_config.json", Size: 398, SHA256: "aa9c1b0a1c9b48c2f70bacdf64f7dab25194be4ffea0c6a6e4da262360a91d0a"},
+	}
 }
 
 func openAIRuntime(model string, external []string, calibration *string) runtimeSpec {

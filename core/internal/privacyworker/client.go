@@ -951,6 +951,12 @@ func validateInstallationManifest(
 		return errors.New("invalid tag scheme")
 	}
 	switch manifest.Adapter {
+	case contract.PrivacyModelAdapterPPLXBIOES:
+		if manifest.TagScheme != "bioes" || manifest.Window > 4096 ||
+			manifest.InputNames.TokenTypeIDs != nil || manifest.CalibrationPath != nil ||
+			manifest.SecretRulesPath != nil || manifest.SecretCalibrationPath != nil {
+			return errors.New("invalid PII-Tracer adapter")
+		}
 	case contract.PrivacyModelAdapterOpenAIBIOES:
 		if manifest.TagScheme != "bioes" || manifest.CalibrationPath == nil ||
 			manifest.SecretRulesPath != nil ||
@@ -1062,6 +1068,9 @@ func validateManifestMapping(
 		"private_phone",
 		"private_url",
 		"secret",
+	}
+	if adapter == contract.PrivacyModelAdapterPPLXBIOES {
+		expected = append(expected, "other_pii")
 	}
 	if len(mapping) != len(expected) {
 		return errors.New("invalid OpenAI model mapping")

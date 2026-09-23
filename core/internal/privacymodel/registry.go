@@ -421,8 +421,12 @@ func (registry *Registry) prepareInstallation(
 		request.RepoID, request.Revision, request.VariantID,
 	); exists {
 		mapping := cloneLabelMapping(request.LabelMapping)
-		if catalogPlan.item.Adapter == contract.PrivacyModelAdapterOpenAIBIOES {
+		if catalogPlan.item.Adapter == contract.PrivacyModelAdapterOpenAIBIOES ||
+			catalogPlan.item.Adapter == contract.PrivacyModelAdapterPPLXBIOES {
 			fixedMapping := defaultOpenAILabelMapping()
+			if catalogPlan.item.Adapter == contract.PrivacyModelAdapterPPLXBIOES {
+				fixedMapping = defaultPPLXLabelMapping()
+			}
 			if len(mapping) == 0 {
 				mapping = fixedMapping
 			} else if !sameLabelKeys(mapping, fixedMapping) {
@@ -584,8 +588,9 @@ func validateStagedCompatibility(
 		len(tokenizerObject) == 0 {
 		return errModelIncompatible
 	}
-	var config hfModelConfig
-	if json.Unmarshal(configDocument, &config) != nil {
+	config, detectedAdapter, err := parsePrivacyModelConfig(configDocument)
+	if err != nil || (installation.Adapter == contract.PrivacyModelAdapterPPLXBIOES) !=
+		(detectedAdapter == contract.PrivacyModelAdapterPPLXBIOES) {
 		return errModelIncompatible
 	}
 	labels, tagScheme, _, validLabels := probeLabels(config.ID2Label)
@@ -594,6 +599,11 @@ func validateStagedCompatibility(
 		return errModelIncompatible
 	}
 	switch installation.Adapter {
+	case contract.PrivacyModelAdapterPPLXBIOES:
+		if runtime.window > 4096 || runtime.inputNames.TokenTypeIDs != nil ||
+			runtime.calibrationPath != nil || runtime.secretRulesPath != nil || runtime.secretCalibrationPath != nil {
+			return errModelIncompatible
+		}
 	case contract.PrivacyModelAdapterOpenAIBIOES:
 		if !validOpenAILabelOrder(config.ID2Label) ||
 			runtime.calibrationPath == nil ||

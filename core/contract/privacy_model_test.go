@@ -36,6 +36,20 @@ func TestValidatePrivacyModelInstallationDisplayMetadataProvenance(t *testing.T)
 	if err := ValidatePrivacyModelInstallation(base); err != nil {
 		t.Fatalf("valid catalog installation: %v", err)
 	}
+	pplx := base
+	pplx.Adapter = PrivacyModelAdapterPPLXBIOES
+	pplx.LabelMapping = map[string]*CanonicalKind{
+		"private_person": nil, "private_email": &email, "private_phone": nil,
+		"private_address": nil, "private_url": nil, "private_date": nil,
+		"account_number": nil, "secret": nil, "other_pii": nil,
+	}
+	if err := ValidatePrivacyModelInstallation(pplx); err != nil {
+		t.Fatalf("valid PII-Tracer installation: %v", err)
+	}
+	delete(pplx.LabelMapping, "other_pii")
+	if err := ValidatePrivacyModelInstallation(pplx); err == nil {
+		t.Fatal("accepted incomplete PII-Tracer mapping")
+	}
 	international := base
 	international.Name = strings.Repeat("隐", 50)
 	international.VariantName = strings.Repeat("量", 30)
@@ -156,6 +170,25 @@ func TestValidatePrivacyModelProbeResponseAllowsNullableLicense(t *testing.T) {
 	}
 	if err := ValidatePrivacyModelProbeResponse(response); err != nil {
 		t.Fatalf("valid nullable-license probe: %v", err)
+	}
+	response.Labels = append(response.Labels, PrivacyModelLabel{
+		Label: "other_pii", SuggestedIgnore: true,
+	})
+	if err := ValidatePrivacyModelProbeResponse(response); err != nil {
+		t.Fatalf("explicit ignore should complete the default mapping: %v", err)
+	}
+	response.Labels[1].SuggestedKind = canonicalKindPointer(CanonicalKindEmail)
+	if err := ValidatePrivacyModelProbeResponse(response); err == nil {
+		t.Fatal("accepted conflicting map and ignore suggestions")
+	}
+	response.Labels[1].SuggestedKind = nil
+	response.Labels[1].SuggestedIgnore = false
+	if err := ValidatePrivacyModelProbeResponse(response); err == nil {
+		t.Fatal("accepted unresolved label without requiring mapping")
+	}
+	response.RequiresLabelMapping = true
+	if err := ValidatePrivacyModelProbeResponse(response); err != nil {
+		t.Fatalf("unknown labels must still request mapping: %v", err)
 	}
 }
 

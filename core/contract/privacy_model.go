@@ -26,6 +26,7 @@ const (
 
 	PrivacyModelAdapterOpenAIBIOES   PrivacyModelAdapter = "openai_bioes_viterbi"
 	PrivacyModelAdapterHFToken       PrivacyModelAdapter = "hf_token_classification"
+	PrivacyModelAdapterPPLXBIOES     PrivacyModelAdapter = "pplx_bioes_viterbi"
 	PrivacyModelAdapterAstrLinkGuard PrivacyModelAdapter = "astrlink_sensitive_guard"
 
 	PrivacyModelSourceCatalog PrivacyModelSource = "catalog"
@@ -114,6 +115,7 @@ func ValidatePrivacyModelVariantID(value string) error {
 func (adapter PrivacyModelAdapter) Valid() bool {
 	return adapter == PrivacyModelAdapterOpenAIBIOES ||
 		adapter == PrivacyModelAdapterHFToken ||
+		adapter == PrivacyModelAdapterPPLXBIOES ||
 		adapter == PrivacyModelAdapterAstrLinkGuard
 }
 
@@ -182,8 +184,9 @@ type PrivacyModelCatalogResponse struct {
 }
 
 type PrivacyModelLabel struct {
-	Label         string         `json:"label"`
-	SuggestedKind *CanonicalKind `json:"suggested_kind"`
+	Label           string         `json:"label"`
+	SuggestedKind   *CanonicalKind `json:"suggested_kind"`
+	SuggestedIgnore bool           `json:"suggested_ignore,omitempty"`
 }
 
 type PrivacyModelProbeRequest struct {
@@ -332,9 +335,12 @@ func ValidatePrivacyModelProbeResponse(response PrivacyModelProbeResponse) error
 			return fmt.Errorf("privacy model label is duplicated")
 		}
 		labels[label.Label] = struct{}{}
-		if label.SuggestedKind == nil {
+		if label.SuggestedIgnore && label.SuggestedKind != nil {
+			return fmt.Errorf("privacy model label suggestion cannot map and ignore")
+		}
+		if label.SuggestedKind == nil && !label.SuggestedIgnore {
 			requiresMapping = true
-		} else if !label.SuggestedKind.Valid() {
+		} else if label.SuggestedKind != nil && !label.SuggestedKind.Valid() {
 			return fmt.Errorf("privacy model label suggestion is invalid")
 		}
 	}
@@ -512,7 +518,7 @@ func validateResolvedPrivacyModelLabelMapping(
 		}
 		return nil
 	}
-	required := [...]string{
+	required := []string{
 		"account_number",
 		"private_address",
 		"private_date",
@@ -521,6 +527,9 @@ func validateResolvedPrivacyModelLabelMapping(
 		"private_phone",
 		"private_url",
 		"secret",
+	}
+	if adapter == PrivacyModelAdapterPPLXBIOES {
+		required = append(required, "other_pii")
 	}
 	if len(mapping) != len(required) {
 		return fmt.Errorf("privacy model label_mapping is incomplete")

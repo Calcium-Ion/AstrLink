@@ -4632,6 +4632,7 @@ components:
         [
           openai_bioes_viterbi,
           hf_token_classification,
+          pplx_bioes_viterbi,
           astrlink_sensitive_guard,
         ]
     PrivacyModelInstallationId:
@@ -4797,6 +4798,10 @@ components:
           oneOf:
             - $ref: "#/components/schemas/PrivacyCanonicalKind"
             - type: "null"
+        suggested_ignore:
+          type: boolean
+          default: false
+          description: Explicit default to ignore this label. Only valid when suggested_kind is null; a null kind without this flag still requires user mapping.
       additionalProperties: false
     PrivacyModelProbe:
       type: object
@@ -4858,6 +4863,7 @@ components:
             $ref: "#/components/schemas/PrivacyModelProbeLabel"
         requires_label_mapping:
           type: boolean
+          description: True when at least one label has neither a suggested kind nor an explicit suggested_ignore default.
       additionalProperties: false
     PrivacyModelLabelMapping:
       type: object

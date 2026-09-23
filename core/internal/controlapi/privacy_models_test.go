@@ -214,7 +214,7 @@ func TestPrivacyModelCollectionRoutesAndSelectedDeleteGuard(t *testing.T) {
 	}
 	var catalog contract.PrivacyModelCatalogResponse
 	decode(t, response, &catalog)
-	if len(catalog.Items) != 3 {
+	if len(catalog.Items) != 1 || catalog.Items[0].ID != privacymodel.CatalogPPLXPIITracer {
 		t.Fatalf("catalog=%#v", catalog)
 	}
 
