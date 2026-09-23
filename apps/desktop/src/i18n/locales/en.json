@@ -1580,6 +1580,7 @@
     "entry": "Entry",
     "protocol": "Protocol",
     "service": "API provider",
+    "triedProviders": "API providers tried",
     "route": "Route",
     "redactedRequest": "Redacted request",
     "restoreCounts": "Visible text {{visible}} · tool arguments {{tools}}",

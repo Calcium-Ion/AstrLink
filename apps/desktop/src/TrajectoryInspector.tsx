@@ -15,8 +15,10 @@ import type { CopyFeedback } from "./copy-feedback";
 import { i18n, useT } from "./i18n";
 import type { AuditContent, RequestRecord } from "./request-record-model";
 import {
+  namedRouteSummary,
   requestServiceIdentity,
   type RequestServiceIdentity,
+  type RequestServiceMap,
 } from "./request-service-model";
 import {
   clientDisconnectNote,
@@ -45,6 +47,7 @@ export function TrajectoryInspector({
   row,
   record,
   service = requestServiceIdentity(record),
+  services,
   auditContent,
   auditLoading,
   auditError,
@@ -56,6 +59,7 @@ export function TrajectoryInspector({
   row: TrajectoryRow;
   record: RequestRecord;
   service?: RequestServiceIdentity;
+  services?: RequestServiceMap;
   auditContent: AuditContent | null;
   auditLoading: boolean;
   auditError: string | null;
@@ -66,20 +70,25 @@ export function TrajectoryInspector({
 }) {
   const t = useT();
   const chain = useMemo(() => inspectorChainRows(record), [record]);
+  const tabs = useMemo(() => inspectorTabs(chain), [chain]);
   const requestedTab = tabChip(row.chip);
   const [focusChip, setFocusChip] = useState(requestedTab);
   useEffect(() => {
     setFocusChip(
-      chain.some((item) => item.chip === requestedTab)
+      tabs.some((item) => item.chip === requestedTab)
         ? requestedTab
-        : (chain[0]?.chip ?? requestedTab),
+        : (tabs[0]?.chip ?? requestedTab),
     );
-  }, [chain, record.id, requestedTab]);
+  }, [tabs, record.id, requestedTab]);
   const focusRow =
-    chain.find((item) => item.chip === focusChip) ??
-    chain.find((item) => item.chip === requestedTab) ??
-    chain[0] ??
+    tabs.find((item) => item.chip === focusChip) ??
+    tabs.find((item) => item.chip === requestedTab) ??
+    tabs[0] ??
     null;
+  const routes = useMemo(
+    () => chain.filter((item) => item.chip === "ROUTE"),
+    [chain],
+  );
   const client = chain.find((item) => item.chip === "CLIENT");
   const result =
     chain.find((item) => item.chip === "RESULT") ?? chain[chain.length - 1];
@@ -150,7 +159,7 @@ export function TrajectoryInspector({
         data-testid="inspector-tabs"
         role="tablist"
       >
-        {chain.map((item) => {
+        {tabs.map((item) => {
           const selected = item.chip === focusChip;
           return (
             <Button
@@ -197,7 +206,9 @@ export function TrajectoryInspector({
             copyFeedback={copyFeedback}
             omitCapturedBody={focusRow.chip === "RESTORE" && hideRestoreBody}
             record={record}
+            routes={routes}
             service={service}
+            services={services}
             row={focusRow}
           />
         ) : null}
@@ -210,10 +221,24 @@ function tabChip(chip: TrajectoryChip): TrajectoryChip {
   return chip === "TURN" ? "CLIENT" : chip;
 }
 
+// One tab per phase. A repeated phase keeps its first position and shows its
+// last row, the one the record's outcome came from.
+function inspectorTabs(chain: TrajectoryRow[]): TrajectoryRow[] {
+  const tabs: TrajectoryRow[] = [];
+  for (const row of chain) {
+    const index = tabs.findIndex((tab) => tab.chip === row.chip);
+    if (index === -1) tabs.push(row);
+    else tabs[index] = row;
+  }
+  return tabs;
+}
+
 function InspectorSection({
   row,
   record,
+  routes,
   service,
+  services,
   auditContent,
   auditLoading,
   copyFeedback,
@@ -221,7 +246,9 @@ function InspectorSection({
 }: {
   row: TrajectoryRow;
   record: RequestRecord;
+  routes: TrajectoryRow[];
   service: RequestServiceIdentity;
+  services?: RequestServiceMap;
   auditContent: AuditContent | null;
   auditLoading: boolean;
   copyFeedback: CopyFeedback;
@@ -274,7 +301,13 @@ function InspectorSection({
       </header>
       {part === "route" ? (
         <>
-          <RouteInspector record={record} row={row} service={service} />
+          <RouteInspector
+            record={record}
+            routes={routes}
+            row={row}
+            service={service}
+            services={services}
+          />
           <RecoveryDetails value={record.recovery} />
         </>
       ) : (
@@ -299,24 +332,58 @@ function formatCapturedBytes(bytes: number): string {
 
 function RouteInspector({
   record,
+  routes,
   row,
   service,
+  services = {},
 }: {
   record: RequestRecord;
+  routes: TrajectoryRow[];
   row: TrajectoryRow;
   service: RequestServiceIdentity;
+  services?: RequestServiceMap;
 }) {
   const t = i18n.t.bind(i18n);
+  // The listed names win: an identity resolved without the list is just the ID.
+  const names: RequestServiceMap = service.id
+    ? { [service.id]: { id: service.id, name: service.name }, ...services }
+    : services;
+  // A single successful route is already the provider field below.
+  const tried =
+    routes.length > 1 || routes.some((route) => route.tone === "failed")
+      ? routes
+      : [];
   return (
     <dl className="grid gap-2 text-xs">
       <InspectorField
         label={t("trajectory.summary")}
-        value={
-          service.id
-            ? row.summary.replace(service.id, () => service.name)
-            : row.summary
-        }
+        value={namedRouteSummary(row.summary, names)}
       />
+      {tried.length > 0 ? (
+        <div>
+          <dt className="text-muted-foreground">
+            {t("trajectory.triedProviders")}
+          </dt>
+          <dd className="mt-0.5">
+            <ol className="grid gap-0.5" data-testid="route-attempts">
+              {tried.map((route) => (
+                <li
+                  className={cn(
+                    "font-mono",
+                    route.tone === "failed"
+                      ? "text-destructive"
+                      : "text-foreground",
+                  )}
+                  data-tone={route.tone}
+                  key={route.id}
+                >
+                  {namedRouteSummary(route.summary, names)}
+                </li>
+              ))}
+            </ol>
+          </dd>
+        </div>
+      ) : null}
       <InspectorField
         code
         label={t("trajectory.entry")}

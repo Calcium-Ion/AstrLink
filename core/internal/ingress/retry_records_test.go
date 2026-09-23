@@ -217,11 +217,14 @@ func TestFailedRequestRecordsAttemptedServiceWithoutRoundTrip(t *testing.T) {
 		code        string
 		wantService string
 		wantTrips   int32
+		// wantRejected lists the failed routed events left for providers that
+		// were chosen but never called.
+		wantRejected []string
 	}{
-		{name: "credential", candidates: []contract.Endpoint{endpointA}, denied: "endpoint_attempt_a", code: "credential_unavailable", wantService: "endpoint_attempt_a"},
+		{name: "credential", candidates: []contract.Endpoint{endpointA}, denied: "endpoint_attempt_a", code: "credential_unavailable", wantService: "endpoint_attempt_a", wantRejected: []string{"endpoint_attempt_a · credential_unavailable"}},
 		{name: "privacy", candidates: []contract.Endpoint{endpointA}, policyErr: errors.New("policy offline"), code: "privacy_policy_unavailable", wantService: "endpoint_attempt_a"},
 		// The client sees A's network failure, so the root keeps A.
-		{name: "network then credential", candidates: []contract.Endpoint{endpointA, endpointB}, denied: "endpoint_attempt_b", code: "upstream_unavailable", wantService: "endpoint_attempt_a", wantTrips: 1},
+		{name: "network then credential", candidates: []contract.Endpoint{endpointA, endpointB}, denied: "endpoint_attempt_b", code: "upstream_unavailable", wantService: "endpoint_attempt_a", wantTrips: 1, wantRejected: []string{"endpoint_attempt_b · credential_unavailable"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -289,6 +292,19 @@ func TestFailedRequestRecordsAttemptedServiceWithoutRoundTrip(t *testing.T) {
 			if root.ServiceID == nil || string(*root.ServiceID) != test.wantService {
 				t.Fatalf("root service=%v, want %s", root.ServiceID, test.wantService)
 			}
+			if got := rejectedCandidates(root); strings.Join(got, "\n") != strings.Join(test.wantRejected, "\n") {
+				t.Fatalf("rejected candidates=%q, want %q", got, test.wantRejected)
+			}
 		})
 	}
+}
+
+func rejectedCandidates(record contract.RequestRecord) []string {
+	var rejected []string
+	for _, event := range record.Events {
+		if event.Kind == contract.RequestEventRouted && event.Status == contract.RequestStatusFailed {
+			rejected = append(rejected, event.Summary)
+		}
+	}
+	return rejected
 }

@@ -324,6 +324,63 @@ describe("TrajectoryInspectorWindow", () => {
     expect(inspector(container)?.getAttribute("data-pinned")).toBe("false");
   });
 
+  it("lists every provider the call tried under one route tab, by name", async () => {
+    const serviceA = "service_aaaaaaaaaaaaaaaaaaaaaaaa";
+    const serviceB = "service_bbbbbbbbbbbbbbbbbbbbbbbb";
+    const at = (second: number) => `2026-07-25T10:00:0${second}Z`;
+    const failed: RequestRecord = {
+      ...record,
+      status: "failed",
+      service_id: serviceA,
+      http_status: null,
+      error: {
+        category: "upstream",
+        code: "upstream_unavailable",
+        message: "unexpected EOF",
+        retryable: true,
+      },
+      events: [
+        { kind: "accepted", started_at: at(0), ended_at: at(0), status: "succeeded", summary: "gpt-4.1 · openai.responses", attempt_index: 0 },
+        { kind: "routed", started_at: at(1), ended_at: at(1), status: "succeeded", summary: `native · ${serviceA}`, attempt_index: 1 },
+        { kind: "upstream", started_at: at(1), ended_at: at(2), status: "failed", summary: "upstream_unavailable", attempt_index: 1 },
+        { kind: "routed", started_at: at(2), ended_at: at(2), status: "failed", summary: `${serviceB} · credential_unavailable`, attempt_index: 1 },
+        { kind: "completed", started_at: at(3), ended_at: at(3), status: "failed", summary: "upstream_unavailable", attempt_index: 1 },
+      ],
+    };
+    await render();
+
+    await act(async () => {
+      pushSelection({
+        row: { ...row, id: `${failed.id}:routed`, chip: "ROUTE", lane: "gateway" },
+        record: failed,
+        services: {
+          [serviceA]: { id: serviceA, name: "Primary" },
+          [serviceB]: { id: serviceB, name: "Backup" },
+        },
+      });
+    });
+    await flush();
+
+    expect(
+      [
+        ...inspector(container)!.querySelectorAll(
+          '[data-testid="inspector-tab"]',
+        ),
+      ].map((tab) => tab.getAttribute("data-chip")),
+    ).toEqual(["CLIENT", "ROUTE", "UPSTREAM", "RESULT"]);
+    expect(
+      [
+        ...inspector(container)!.querySelectorAll(
+          '[data-testid="route-attempts"] li',
+        ),
+      ].map((item) => [item.textContent, item.getAttribute("data-tone")]),
+    ).toEqual([
+      ["native · Primary", "ok"],
+      ["Backup · credential_unavailable", "failed"],
+    ]);
+    expect(inspector(container)?.textContent).toContain("尝试过的 API 提供商");
+  });
+
   it("has no close button of its own, because the window frame owns that", async () => {
     await render();
     await act(async () => {

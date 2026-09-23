@@ -1580,6 +1580,7 @@
     "entry": "入口",
     "protocol": "协议",
     "service": "API 提供商",
+    "triedProviders": "尝试过的 API 提供商",
     "route": "路由",
     "redactedRequest": "脱敏后请求",
     "restoreCounts": "可见文本 {{visible}} · 工具参数 {{tools}}",

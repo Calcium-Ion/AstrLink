@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -177,7 +178,13 @@ func (resolver *StoreResolver) availableCandidates(candidates []Resolved) ([]Res
 		}
 	}
 	if len(available) == 0 {
-		return nil, ErrNoHealthyEndpoint
+		skipped := make([]contract.ServiceID, 0, len(candidates))
+		for _, candidate := range candidates {
+			if id := candidate.CanonicalService().ID; !slices.Contains(skipped, id) {
+				skipped = append(skipped, id)
+			}
+		}
+		return nil, &UnhealthyCandidatesError{Services: skipped}
 	}
 	return available, nil
 }

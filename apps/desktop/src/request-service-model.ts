@@ -25,6 +25,36 @@ export function requestServiceIdentity(
   return { id, name: service?.name ?? id, kind: service?.kind };
 }
 
+/**
+ * Route summaries name services by ID, one " · " segment each: the chosen one
+ * ("native · id") and any rejected on the way ("id · reason").
+ */
+export function namedRouteSummary(
+  summary: string,
+  services: RequestServiceMap = {},
+): string {
+  return summary
+    .split(" · ")
+    .map((part) => services[part]?.name ?? part)
+    .join(" · ");
+}
+
+/** The services a record's route events name, for a window without the list. */
+export function routeServices(
+  record: Pick<RequestRecord, "events">,
+  services: RequestServiceMap = {},
+): RequestServiceMap {
+  const named: Record<string, RequestService> = {};
+  for (const event of record.events) {
+    if (event.kind !== "routed") continue;
+    for (const part of event.summary.split(" · ")) {
+      const service = services[part];
+      if (service) named[part] = service;
+    }
+  }
+  return named;
+}
+
 // Failures tied to one provider carry its id; a failure without one means no
 // provider could serve the request.
 function missingServiceLabel(

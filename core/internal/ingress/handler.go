@@ -292,6 +292,12 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil,
 	})
 	if err != nil {
+		var unhealthy *endpoint.UnhealthyCandidatesError
+		if errors.As(err, &unhealthy) {
+			for _, id := range unhealthy.Services {
+				session.noteCandidateRejected(id, "circuit_open")
+			}
+		}
 		handler.writeResolveError(outWriter, request, classified, err)
 		return
 	}

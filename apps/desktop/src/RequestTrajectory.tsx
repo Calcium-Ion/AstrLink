@@ -29,7 +29,9 @@ import { useLiveClock } from "./live-clock";
 import { formatDuration } from "./request-live-model";
 import type { AuditContent, RequestRecord } from "./request-record-model";
 import {
+  namedRouteSummary,
   requestServiceIdentity,
+  routeServices,
   type RequestServiceIdentity,
   type RequestServiceMap,
 } from "./request-service-model";
@@ -131,17 +133,13 @@ export function RequestTrajectory({
   );
   const rows = useMemo(
     () =>
-      trajectoryRows(turns, childrenByRoot).map((row) => {
-        const service = serviceByRequest[row.requestId];
-        // Keep the original event metadata; translate only its service ID for display.
-        return row.chip === "ROUTE" && service?.id
-          ? {
-              ...row,
-              summary: row.summary.replace(service.id, () => service.name),
-            }
-          : row;
-      }),
-    [childrenByRoot, turns, serviceByRequest],
+      trajectoryRows(turns, childrenByRoot).map((row) =>
+        // Keep the original event metadata; translate only service IDs for display.
+        row.chip === "ROUTE"
+          ? { ...row, summary: namedRouteSummary(row.summary, services) }
+          : row,
+      ),
+    [childrenByRoot, turns, services],
   );
   // Resolving a row id by scanning `rows` costs nothing once, and used to cost
   // a full scan inside every phase mark of every lane: 1300 marks against 1400
@@ -206,9 +204,10 @@ export function RequestTrajectory({
             row: selectedRow,
             record: selectedRecord,
             service: serviceByRequest[selectedRecord.id],
+            services: routeServices(selectedRecord, services),
           }
         : null,
-    [selectedRecord, selectedRow, serviceByRequest],
+    [selectedRecord, selectedRow, serviceByRequest, services],
   );
   const inspectorWindow = useDetachedInspector(selection);
 
@@ -234,10 +233,18 @@ export function RequestTrajectory({
           row,
           record,
           service: serviceByRequest[record.id],
+          services: routeServices(record, services),
         });
       }
     },
-    [childrenByRoot, inspectorWindow, onSelectRequest, turns, serviceByRequest],
+    [
+      childrenByRoot,
+      inspectorWindow,
+      onSelectRequest,
+      turns,
+      serviceByRequest,
+      services,
+    ],
   );
   const selectListRow = useCallback(
     (row: TrajectoryRow) => {
@@ -573,6 +580,7 @@ export function RequestTrajectory({
               record={selection.record}
               row={selection.row}
               service={selection.service}
+              services={selection.services}
             />
           </aside>
         ) : null}

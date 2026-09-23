@@ -591,6 +591,18 @@ func (session *recordSession) noteAttemptedService(id contract.ServiceID) {
 	session.endpointID = &id
 }
 
+// noteCandidateRejected keeps a provider that was chosen but never called
+// visible on the root, e.g. a missing credential or an open circuit.
+func (session *recordSession) noteCandidateRejected(id contract.ServiceID, reason string) {
+	if session == nil || id == "" {
+		return
+	}
+	session.addEvent(contract.RequestEventRouted, contract.RequestStatusFailed, string(id)+" · "+reason)
+	event := &session.events[len(session.events)-1]
+	ended := event.StartedAt
+	event.EndedAt = &ended
+}
+
 // beginNetworkAttempt marks the start of a real RoundTrip. Candidate selection
 // that never reaches ObserveOutbound must not call this.
 func (session *recordSession) beginNetworkAttempt(

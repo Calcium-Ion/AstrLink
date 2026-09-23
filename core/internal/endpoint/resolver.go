@@ -48,6 +48,20 @@ func (err *CapabilityUnavailableError) Unwrap() error {
 	return ErrNoEndpoint
 }
 
+// UnhealthyCandidatesError names the services skipped because their circuits
+// are open. It unwraps to ErrNoHealthyEndpoint.
+type UnhealthyCandidatesError struct {
+	Services []contract.ServiceID
+}
+
+func (err *UnhealthyCandidatesError) Error() string {
+	return ErrNoHealthyEndpoint.Error()
+}
+
+func (err *UnhealthyCandidatesError) Unwrap() error {
+	return ErrNoHealthyEndpoint
+}
+
 type ResolveRequest struct {
 	// AllCandidates defers the failover limit until ingress applies session and transport constraints.
 	AllCandidates bool

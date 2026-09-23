@@ -508,6 +508,18 @@ export function inspectorChainRows(record: RequestRecord): TrajectoryRow[] {
     }
     rows.push(row);
   }
+  return uniqueRowIds(rows);
+}
+
+// Candidates rejected in one pass can share a timestamp, and a row id is
+// otherwise kind + time + attempt.
+function uniqueRowIds(rows: TrajectoryRow[]): TrajectoryRow[] {
+  const seen = new Map<string, number>();
+  for (const row of rows) {
+    const count = seen.get(row.id) ?? 0;
+    seen.set(row.id, count + 1);
+    if (count > 0) row.id = `${row.id}:${count}`;
+  }
   return rows;
 }
 
@@ -518,6 +530,7 @@ function recordRows(
   const rows = inspectorChainRows(turn);
   const children = childrenByRoot[turn.id] ?? [];
   children.forEach((child, index) => {
+    const childRows: TrajectoryRow[] = [];
     for (const event of synthesizeEvents(child)) {
       const row = rowFromEvent(child, event, true);
       if (event.kind === "upstream") {
@@ -527,8 +540,9 @@ function recordRows(
           summary: row.summary,
         });
       }
-      rows.push(row);
+      childRows.push(row);
     }
+    rows.push(...uniqueRowIds(childRows));
   });
   return rows;
 }

@@ -282,6 +282,10 @@ func TestStoreResolverExcludesOpenCandidatesIncludingRetiredPins(t *testing.T) {
 				if !errors.Is(err, ErrNoHealthyEndpoint) || len(candidates) != 0 {
 					t.Fatalf("open automatic candidates = %#v, %v", candidates, err)
 				}
+				var unhealthy *UnhealthyCandidatesError
+				if !errors.As(err, &unhealthy) || len(unhealthy.Services) != 1 || unhealthy.Services[0] != "endpoint_health" {
+					t.Fatalf("open candidates error = %#v, want the skipped service", err)
+				}
 				now = now.Add(30 * time.Second)
 				candidates, err = resolver.ResolveCandidates(context.Background(), request)
 				if err != nil || len(candidates) != 1 {

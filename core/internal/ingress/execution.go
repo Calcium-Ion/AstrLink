@@ -44,6 +44,27 @@ type executionFailure struct {
 	capability *planner.CapabilityUnavailableError
 }
 
+// code names a failure for the request record, matching writeExecutionFailure.
+func (failure executionFailure) code() string {
+	switch failure.kind {
+	case executionFailureCapability:
+		return "missing_protocol_capability"
+	case executionFailureCredential:
+		return "credential_unavailable"
+	case executionFailureConfiguration:
+		return "invalid_endpoint_configuration"
+	case executionFailureConversionUnsupported:
+		return "relaykit_conversion_unsupported"
+	case executionFailureConversionFailed:
+		return "relaykit_conversion_failed"
+	default:
+		if isUpstreamTimeout(failure.err) {
+			return "upstream_timeout"
+		}
+		return "upstream_unavailable"
+	}
+}
+
 func (handler *Handler) resolveCandidates(
 	ctx context.Context,
 	request endpoint.ResolveRequest,
@@ -124,6 +145,7 @@ func (handler *Handler) executeCandidatesWithTest(
 	var last executionFailure
 	var lastNetworkFailure executionFailure
 	var replayLastHTTP func()
+	records := recordSessionFromContext(request.Context())
 	for {
 		candidateIndex, hasNext := schedule.next(request.Context())
 		if !hasNext {
@@ -131,6 +153,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 		candidate := candidates[candidateIndex]
 		if candidate.Unavailable != "" {
+			records.noteCandidateRejected(candidate.CanonicalService().ID, candidate.Unavailable)
 			continue
 		}
 		candidate.Service = candidate.CanonicalService()
@@ -169,6 +192,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		} else if planType == contract.PlanTypeRelayKit || convertTo != "" {
 			if handler.conversionEngine == nil {
 				last = executionFailure{kind: executionFailureCapability, endpointID: candidate.Service.ID}
+				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
 			upstreamProtocol := candidate.UpstreamProtocol
@@ -202,6 +226,7 @@ func (handler *Handler) executeCandidatesWithTest(
 					endpointID: candidate.Service.ID,
 					capability: capabilityErr,
 				}
+				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
 			last = executionFailure{
@@ -209,6 +234,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				err:        planErr,
 				endpointID: candidate.Service.ID,
 			}
+			records.noteCandidateRejected(last.endpointID, last.code())
 			continue
 		}
 
@@ -248,6 +274,7 @@ func (handler *Handler) executeCandidatesWithTest(
 					err:        rewriteErr,
 					endpointID: candidate.Service.ID,
 				}
+				records.noteCandidateRejected(last.endpointID, last.code())
 				_ = attemptRequest.Body.Close()
 				continue
 			}
@@ -270,7 +297,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		if privacyErr != nil {
 			finishPrivacy()
 			_ = attemptRequest.Body.Close()
-			recordSessionFromContext(request.Context()).noteAttemptedService(candidate.Service.ID)
+			records.noteAttemptedService(candidate.Service.ID)
 			handler.writePrivacyError(downstream, request, privacyErr)
 			return
 		}
@@ -280,6 +307,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				finishPrivacy()
 				_ = attemptRequest.Body.Close()
 				last = executionFailure{kind: executionFailureConversionUnsupported, err: readErr, endpointID: candidate.Service.ID}
+				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
 			_ = attemptRequest.Body.Close()
@@ -294,6 +322,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			if convertErr != nil || adaptRelayKitRequest(attemptRequest, plan.UpstreamProtocol, classified.Streaming, upstreamModel, converted.Body) != nil {
 				finishPrivacy()
 				last = executionFailure{kind: executionFailureConversionUnsupported, err: convertErr, endpointID: candidate.Service.ID}
+				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
 		}
@@ -302,6 +331,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			if err := prepareClaudeSubscriptionRequest(attemptRequest); err != nil {
 				finishPrivacy()
 				last = executionFailure{kind: executionFailureConfiguration, endpointID: candidate.Service.ID, err: err}
+				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
 		}
@@ -329,6 +359,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				err:        authorizeErr,
 				endpointID: candidate.Service.ID,
 			}
+			records.noteCandidateRejected(last.endpointID, last.code())
 			if !body.Replayable() {
 				break
 			}
@@ -346,6 +377,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				err:        parseErr,
 				endpointID: candidate.Service.ID,
 			}
+			records.noteCandidateRejected(last.endpointID, last.code())
 			if !body.Replayable() {
 				break
 			}
@@ -361,6 +393,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 
 		if healthAware && !controller.BeginAttempt(candidate) {
+			records.noteCandidateRejected(candidate.Service.ID, "circuit_open")
 			finishPrivacy()
 			_ = attemptRequest.Body.Close()
 			if !body.Replayable() {
@@ -835,7 +868,7 @@ func (handler *Handler) executeCandidatesWithTest(
 	if lastNetworkFailure.kind != executionFailureNone {
 		last = lastNetworkFailure
 	}
-	recordSessionFromContext(request.Context()).noteAttemptedService(last.endpointID)
+	records.noteAttemptedService(last.endpointID)
 	handler.writeExecutionFailure(downstream, request, classified, last)
 }
 
