@@ -1,3 +1,4 @@
+import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { ServiceProxyFields } from "./components/ServiceProxyFields";
 import {
   proxyDraft,
@@ -672,7 +673,7 @@ export function ServiceManager({
   const [modelPreview, setModelPreview] = useState<ModelPreview | null>(null);
   const [modelPreviewQuery, setModelPreviewQuery] = useState("");
   const [editorTab, setEditorTab] = useState<EditorTab>("connection");
-  const [usageByService, setUsageByService] = useState<
+  const [usageByService, setUsageByService] = useWorkspaceSnapshot<
     Record<
       string,
       {
@@ -681,7 +682,7 @@ export function ServiceManager({
         error?: string;
       }
     >
-  >({});
+  >("service-usage", {});
   const [usageEpoch, setUsageEpoch] = useState(0);
   const [testingService, setTestingService] = useState<Service | null>(null);
   const [billingService, setBillingService] = useState<string | null>(null);
@@ -720,7 +721,8 @@ export function ServiceManager({
         }
       > = {};
       for (const id of ids) {
-        next[id] = { status: "loading", usage: current[id]?.usage };
+        // Keep both cached data and cached errors visible during revalidation.
+        next[id] = current[id] ?? { status: "loading" };
       }
       return next;
     });
@@ -757,7 +759,10 @@ export function ServiceManager({
         }
       }),
     );
-  }, [connectedUsageIDs, isReady, usageEpoch, view.kind]);
+    return () => {
+      usageGeneration.current += 1;
+    };
+  }, [connectedUsageIDs, isReady, usageEpoch, view.kind, setUsageByService]);
 
   const dirty =
     view.kind !== "list" &&
@@ -1761,8 +1766,7 @@ export function ServiceManager({
                               error={usageByService[service.id]?.error}
                               now={new Date()}
                               status={
-                                usageByService[service.id]?.status ??
-                                "loading"
+                                usageByService[service.id]?.status ?? "loading"
                               }
                               usage={usageByService[service.id]?.usage}
                             />

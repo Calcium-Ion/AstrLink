@@ -42,6 +42,8 @@ import { ServiceManager } from "./ServiceManager";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
 import { parseService, type Service } from "./service-model";
 import { httpServicePreset } from "./service-presets";
+import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
+import type { SubscriptionUsage } from "./subscription-usage-model";
 
 const timestamp = "2026-07-28T12:00:00Z";
 const etag = `"sha256:${"a".repeat(64)}"`;
@@ -1106,7 +1108,10 @@ describe("ServiceManager", () => {
     expect(container.textContent).not.toContain("Logout is local-only");
     // Only the New API key has a quota to read; both Codex rows are disconnected.
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
-    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(gatewayService.id, { fresh: false });
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(
+      gatewayService.id,
+      { fresh: false },
+    );
   });
 
   it("combines status and search filters and clears both from an empty result", async () => {
@@ -1379,6 +1384,134 @@ describe("ServiceManager", () => {
     ]);
   });
 
+  it.each(["ready", "error"] as const)(
+    "renders the list while quotas load independently, including %s, and preserves settled data on refresh",
+    async (outcome) => {
+      const connected = [codexService, secondCodexService].map((service) => ({
+        ...service,
+        subscription: {
+          ...service.subscription!,
+          status: "connected" as const,
+        },
+      }));
+      const requests = connected.map(() => {
+        let resolve!: (value: SubscriptionUsage) => void;
+        let reject!: (cause: Error) => void;
+        const promise = new Promise<SubscriptionUsage>((done, fail) => {
+          resolve = done;
+          reject = fail;
+        });
+        return { promise, resolve, reject };
+      });
+      for (const request of requests) {
+        bridgeMocks.getServiceUsage.mockImplementationOnce(
+          () => request.promise,
+        );
+      }
+      const renderList = async (show: boolean) =>
+        act(async () =>
+          root.render(
+            <WorkspaceSnapshotProvider sessionKey="quota-session">
+              {show ? (
+                <ServiceManager
+                  catalogError={null}
+                  catalogStatus="ready"
+                  isReady
+                  onDirtyChange={() => {}}
+                  onRefresh={() => {}}
+                  onServiceRemoved={() => {}}
+                  onServiceSaved={() => {}}
+                  onViewChange={() => {}}
+                  protocols={[]}
+                  services={connected}
+                  view={{ kind: "list" }}
+                />
+              ) : null}
+            </WorkspaceSnapshotProvider>,
+          ),
+        );
+      await renderList(true);
+      expect(
+        container.querySelectorAll('[data-testid="service-card"]'),
+      ).toHaveLength(2);
+      expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+      const usage = (index: number): SubscriptionUsage => ({
+        service_id: connected[index].id,
+        fetched_at: timestamp,
+        secondary: { used_percent: 86, limit_window_seconds: 604_800 },
+      });
+      const initialRows = [
+        ...container.querySelectorAll('[data-testid="service-card"]'),
+      ];
+      await act(async () => requests[0].resolve(usage(0)));
+      expect([
+        ...container.querySelectorAll('[data-testid="service-card"]'),
+      ]).toEqual(initialRows);
+      expect(
+        container.querySelectorAll(
+          '[data-testid="subscription-usage"][aria-busy]',
+        ),
+      ).toHaveLength(1);
+      // A slow quota request must not hold back either provider row.
+      expect(
+        container.querySelectorAll('[data-testid="service-card"]'),
+      ).toHaveLength(2);
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await act(async () => {
+          if (outcome === "ready") requests[1].resolve(usage(1));
+          else requests[1].reject(new Error("Quota temporarily unavailable"));
+        });
+        expect(
+          container.querySelectorAll('[data-testid="service-card"]'),
+        ).toHaveLength(2);
+        expect(
+          container.querySelector(
+            '[data-testid="subscription-usage"][aria-busy]',
+          ),
+        ).toBeNull();
+        expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(
+          outcome === "ready" ? 2 : 1,
+        );
+        if (outcome === "error")
+          expect(container.textContent).toContain("无法读取额度");
+
+        // Re-entry and manual refresh both keep the settled snapshot visible.
+        await renderList(false);
+        for (let index = 0; index < 4; index++) {
+          bridgeMocks.getServiceUsage.mockImplementationOnce(
+            () => new Promise(() => {}),
+          );
+        }
+        await renderList(true);
+        const row = container.querySelector('[data-testid="service-card"]');
+        expect(row).not.toBeNull();
+        expect(
+          container.querySelector(
+            '[data-testid="subscription-usage"][aria-busy]',
+          ),
+        ).toBeNull();
+        await act(async () =>
+          container
+            .querySelector<HTMLButtonElement>('button[aria-label="刷新列表"]')!
+            .click(),
+        );
+        expect(container.querySelector('[data-testid="service-card"]')).toBe(
+          row,
+        );
+        expect(
+          container.querySelector(
+            '[data-testid="subscription-usage"][aria-busy]',
+          ),
+        ).toBeNull();
+        if (outcome === "error")
+          expect(container.textContent).toContain("无法读取额度");
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
   it("shows the provider plan quota on Kimi and New API key rows", async () => {
     const kimi: Service = {
       id: "service_kimi_plan",
@@ -1452,8 +1585,13 @@ describe("ServiceManager", () => {
     // The coding plan and the New API key query usage; the Codex row is
     // disconnected.
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(2);
-    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(kimi.id, { fresh: false });
-    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(gatewayService.id, { fresh: false });
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(kimi.id, {
+      fresh: false,
+    });
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(
+      gatewayService.id,
+      { fresh: false },
+    );
     expect(
       container.querySelectorAll('[data-testid="subscription-usage"]'),
     ).toHaveLength(2);
@@ -1518,7 +1656,9 @@ describe("ServiceManager", () => {
           />,
         );
       });
-      expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id, { fresh: false });
+      expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id, {
+        fresh: false,
+      });
       expect(
         container.querySelector('[data-testid="subscription-plan"]')
           ?.textContent,
@@ -1599,7 +1739,9 @@ describe("ServiceManager", () => {
     });
 
     expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(1);
-    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id, { fresh: false });
+    expect(bridgeMocks.getServiceUsage).toHaveBeenCalledWith(connected.id, {
+      fresh: false,
+    });
     expect(
       container.querySelector('[data-testid="subscription-plan"]')?.textContent,
     ).toBe("Plus");
@@ -1711,7 +1853,9 @@ describe("ServiceManager", () => {
       await Promise.resolve();
     });
     expect(bridgeMocks.resetServiceUsage).toHaveBeenCalledWith(connected.id);
-    expect(bridgeMocks.getServiceUsage).toHaveBeenLastCalledWith(connected.id, { fresh: true });
+    expect(bridgeMocks.getServiceUsage).toHaveBeenLastCalledWith(connected.id, {
+      fresh: true,
+    });
     expect(notifyMocks.success).toHaveBeenCalledWith("额度已重置。");
   });
 

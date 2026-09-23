@@ -3,7 +3,7 @@ import { useT } from "./i18n";
 
 import { Button } from "@/components/ui/button";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
-import { UsageMeter } from "@/components/UsageMeter";
+import { UsageMeter, UsageMeterPlaceholder } from "@/components/UsageMeter";
 
 import {
   formatQuotaExpiry,
@@ -38,19 +38,11 @@ export function SubscriptionUsageMeter({
     return (
       <div
         aria-busy="true"
-        className="grid gap-2"
+        className="grid min-w-0 gap-2"
         data-testid="subscription-usage"
       >
-        {[0, 1].map((index) => (
-          <div aria-hidden="true" className="grid gap-1.5" key={index}>
-            <div className="flex items-center justify-between">
-              <span className="h-3 w-12 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
-              <span className="h-3 w-8 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
-            </div>
-            <span className="h-1 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
-            <span className="h-2.5 w-20 animate-pulse rounded-sm bg-muted motion-reduce:animate-none" />
-          </div>
-        ))}
+        <span className="sr-only">{t("common.loading")}</span>
+        <UsageMeterPlaceholder />
       </div>
     );
   }

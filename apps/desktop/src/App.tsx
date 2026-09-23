@@ -13,6 +13,8 @@ import {
   type AnimatedIcon,
 } from "@/components/icons";
 
+import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
+import { ValueTransition } from "./components/ValueTransition";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatusDot } from "@/components/StatusDot";
@@ -493,7 +495,9 @@ export default function App() {
         if (cancelled) unlisten();
         else stop = unlisten;
       })
-      .catch((error) => console.error("Unable to observe AstrLink tray navigation", error));
+      .catch((error) =>
+        console.error("Unable to observe AstrLink tray navigation", error),
+      );
     return () => {
       cancelled = true;
       stop?.();
@@ -660,108 +664,122 @@ export default function App() {
         </aside>
       }
     >
-      <main
-        className={cn(
-          // One measure for every page: content stops at 1080px and stays
-          // centred, so a single row of data never spans the whole window.
-          "@container/workspace-surface mx-auto h-full min-h-0 w-full max-w-[1080px] min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
-          "flex flex-col",
-          [
-            "overview",
-            "list",
-            "create",
-            "edit",
-            "tokens",
-            "records",
-            "safety",
-            "routing",
-            "agentTools",
-            "settings",
-          ].includes(page.kind)
-            ? "overflow-hidden"
-            : "overflow-y-auto overscroll-none",
-        )}
-        data-page={page.kind}
-        data-slot="workspace"
-      >
-        {page.kind === "overview" ? (
-          <Overview
-            catalog={catalog}
-            copyError={copyError}
-            copyFeedback={copyFeedback}
-            isNativeApp={isNativeApp}
-            isReady={isReady}
-            isRestarting={isRestarting}
-            onAddService={() => navigate({ kind: "create" })}
-            onCopy={(value, label) => void copyValue(value, label)}
-            onManageServices={() => navigate({ kind: "list" })}
-            onManageTokens={() => navigate({ kind: "tokens" })}
-            onOpenService={(serviceId) => navigate({ kind: "edit", serviceId })}
-            onOpenTokenRecords={(tokenId) => navigate({ kind: "records", tokenId })}
-            onRefreshServices={() => void refreshServices()}
-            onRefreshUsage={() => void refreshUsage()}
-            onRestart={() => void handleRestart()}
-            onUsagePresetChange={setUsagePreset}
-            snapshot={snapshot}
-            tokenCatalog={tokenCatalog}
-            usage={usage}
-            usagePreset={usagePreset}
-          />
-        ) : page.kind === "tokens" ? (
-          <AccessTokenManager
-            catalog={tokenCatalog}
-            coreSessionKey={coreSessionKey}
-            inferenceURL={snapshot?.ready?.inference_url ?? ""}
-            isReady={isReady}
-            onRefresh={() => void refreshAccessTokens()}
-            onTokenCreated={handleTokenCreated}
-            onTokenDeleted={handleTokenDeleted}
-          />
-        ) : page.kind === "safety" ? (
-          <SafetyPolicy coreSessionKey={coreSessionKey} isReady={isReady} />
-        ) : page.kind === "records" ? (
-          <RequestRecords
-            accessTokens={tokenCatalog.items}
-            accessTokensReady={tokenCatalog.status === "ready"}
-            coreSessionKey={coreSessionKey}
-            initialLocalAccessTokenId={page.tokenId}
-            services={catalog.items}
-            isReady={isReady}
-          />
-        ) : page.kind === "routing" ? (
-          <RouteManager
-            coreSessionKey={coreSessionKey}
-            services={catalog.items}
-            isReady={isReady}
-            onDirtyChange={handleEditorDirtyChange}
-            onManageServices={() => navigate({ kind: "list" })}
-            protocols={protocols}
-          />
-        ) : page.kind === "agentTools" ? (
-          <AgentDebugSettings />
-        ) : page.kind === "settings" ? (
-          <SettingsCenter
-            onCoreSnapshot={setSnapshot}
-            onDirtyChange={handleEditorDirtyChange}
-            snapshot={snapshot}
-          />
-        ) : (
-          <ServiceManager
-            catalogError={catalog.error}
-            catalogStatus={catalog.status}
-            conversionEngine={snapshot?.capabilities?.conversion_engine}
-            isReady={isReady}
-            onDirtyChange={handleEditorDirtyChange}
-            onRefresh={() => void refreshServices()}
-            onServiceRemoved={handleServiceRemoved}
-            onServiceSaved={handleServiceSaved}
-            onViewChange={(next) => navigate(next)}
-            protocols={protocols}
-            services={catalog.items}
-            view={page}
-          />
-        )}
-      </main>
+      <WorkspaceSnapshotProvider sessionKey={coreSessionKey}>
+        <ValueTransition
+          asChild
+          valueKey={page.kind === "edit" ? `edit:${page.serviceId}` : page.kind}
+          initialOpacity={0}
+          duration={280}
+          offsetY={8}
+        >
+          <main
+            className={cn(
+              // One measure for every page: content stops at 1080px and stays
+              // centred, so a single row of data never spans the whole window.
+              "@container/workspace-surface mx-auto h-full min-h-0 w-full max-w-[1080px] min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
+              "flex flex-col",
+              [
+                "overview",
+                "list",
+                "create",
+                "edit",
+                "tokens",
+                "records",
+                "safety",
+                "routing",
+                "agentTools",
+                "settings",
+              ].includes(page.kind)
+                ? "overflow-hidden"
+                : "overflow-y-auto overscroll-none",
+            )}
+            data-page={page.kind}
+            data-slot="workspace"
+          >
+            {page.kind === "overview" ? (
+              <Overview
+                catalog={catalog}
+                copyError={copyError}
+                copyFeedback={copyFeedback}
+                isNativeApp={isNativeApp}
+                isReady={isReady}
+                isRestarting={isRestarting}
+                onAddService={() => navigate({ kind: "create" })}
+                onCopy={(value, label) => void copyValue(value, label)}
+                onManageServices={() => navigate({ kind: "list" })}
+                onManageTokens={() => navigate({ kind: "tokens" })}
+                onOpenService={(serviceId) =>
+                  navigate({ kind: "edit", serviceId })
+                }
+                onOpenTokenRecords={(tokenId) =>
+                  navigate({ kind: "records", tokenId })
+                }
+                onRefreshServices={() => void refreshServices()}
+                onRefreshUsage={() => void refreshUsage()}
+                onRestart={() => void handleRestart()}
+                onUsagePresetChange={setUsagePreset}
+                snapshot={snapshot}
+                tokenCatalog={tokenCatalog}
+                usage={usage}
+                usagePreset={usagePreset}
+              />
+            ) : page.kind === "tokens" ? (
+              <AccessTokenManager
+                catalog={tokenCatalog}
+                coreSessionKey={coreSessionKey}
+                inferenceURL={snapshot?.ready?.inference_url ?? ""}
+                isReady={isReady}
+                onRefresh={() => void refreshAccessTokens()}
+                onTokenCreated={handleTokenCreated}
+                onTokenDeleted={handleTokenDeleted}
+              />
+            ) : page.kind === "safety" ? (
+              <SafetyPolicy coreSessionKey={coreSessionKey} isReady={isReady} />
+            ) : page.kind === "records" ? (
+              <RequestRecords
+                accessTokens={tokenCatalog.items}
+                accessTokensReady={tokenCatalog.status === "ready"}
+                coreSessionKey={coreSessionKey}
+                initialLocalAccessTokenId={page.tokenId}
+                services={catalog.items}
+                isReady={isReady}
+              />
+            ) : page.kind === "routing" ? (
+              <RouteManager
+                coreSessionKey={coreSessionKey}
+                services={catalog.items}
+                isReady={isReady}
+                onDirtyChange={handleEditorDirtyChange}
+                onManageServices={() => navigate({ kind: "list" })}
+                protocols={protocols}
+              />
+            ) : page.kind === "agentTools" ? (
+              <AgentDebugSettings />
+            ) : page.kind === "settings" ? (
+              <SettingsCenter
+                onCoreSnapshot={setSnapshot}
+                onDirtyChange={handleEditorDirtyChange}
+                snapshot={snapshot}
+              />
+            ) : (
+              <ServiceManager
+                catalogError={catalog.error}
+                catalogStatus={catalog.status}
+                conversionEngine={snapshot?.capabilities?.conversion_engine}
+                isReady={isReady}
+                onDirtyChange={handleEditorDirtyChange}
+                onRefresh={() => void refreshServices()}
+                onServiceRemoved={handleServiceRemoved}
+                onServiceSaved={handleServiceSaved}
+                onViewChange={(next) => navigate(next)}
+                protocols={protocols}
+                services={catalog.items}
+                view={page}
+              />
+            )}
+          </main>
+        </ValueTransition>
+      </WorkspaceSnapshotProvider>
       <ConfirmDialog
         cancelLabel={t("common.continueEditing")}
         confirmLabel={t("common.discardAndLeave")}

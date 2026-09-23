@@ -10,6 +10,22 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+/** Match one meter's line boxes without pulse or an invented window count. */
+export function UsageMeterPlaceholder() {
+  return (
+    <div aria-hidden="true" className="grid min-w-0 gap-1.5">
+      <div className="flex h-lh items-center justify-between text-xs">
+        <span className="h-3 w-12 rounded-sm bg-muted" />
+        <span className="h-3 w-8 rounded-sm bg-muted" />
+      </div>
+      <span className="h-1 rounded-full bg-muted" />
+      <div className="flex h-lh items-center text-micro">
+        <span className="h-2.5 w-20 rounded-sm bg-muted" />
+      </div>
+    </div>
+  );
+}
+
 export function UsageMeter({
   label,
   caption,

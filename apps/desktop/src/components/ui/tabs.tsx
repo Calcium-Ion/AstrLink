@@ -87,7 +87,7 @@ function TabsContent({
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn("flex-1 outline-none", className)}
+      className={cn("panel-transition flex-1 outline-none", className)}
       onFocus={(event) => {
         // Radix focuses the newly selected panel. The browser then
         // scrollIntoView's it, which jumps any ancestor overflow scroller.
