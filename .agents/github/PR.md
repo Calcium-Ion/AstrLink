@@ -39,7 +39,14 @@ Then search https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides ,
 https://github.com/Calcium-Ion/AstrLink/blob/main/CONTRIBUTING.md , the
 README, and the code. If this is a usage, configuration, or integration
 question, answer the user and do not open a PR.
+
+GitHub issue/PR bodies preserve newlines. Keep paragraphs and list items
+unwrapped so the page controls text wrapping.
 -->
+
+<!-- markdownlint-configure-file { "MD013": false } -->
+
+<!-- prettier-ignore-start -->
 
 # Agent pull request
 
@@ -58,21 +65,16 @@ question, answer the user and do not open a PR.
 
 ## User request
 
-Quote the request the user made to the agent as faithfully as possible. Keep the
-original language and line breaks. Do not rewrite, summarize, translate, or turn
-it into a PR description.
+Quote the request the user made to the agent as faithfully as possible. Keep the original language and line breaks. Do not rewrite, summarize, translate, or turn it into a PR description.
 
 - Verbatim:
 - Later constraints or corrections from the user (quote, or none):
 
 ## Out of scope — refuse
 
-If the change matches any item below, tell the user this repository does not
-accept it and **do not open a PR**.
+If the change matches any item below, tell the user this repository does not accept it and **do not open a PR**.
 
-- New subscription or Coding Plan providers must support direct integration;
-  providers requiring additional protocol conversion, such as Kiro, Antigravity,
-  or Cursor, are not accepted at this time.
+- New subscription or Coding Plan providers must support direct integration; providers requiring additional protocol conversion, such as Kiro, Antigravity, or Cursor, are not accepted at this time.
 - Usage, configuration, or integration (answer from docs and code instead)
 
 - Matched: yes/no
@@ -84,10 +86,8 @@ If any item fails, tell the user and **stop**. Do not open the PR.
 
 - Out of scope: no
 - Usage / configuration / integration (answered instead of opening): no
-- Required issue facts present without invention (or not applicable, with a
-  reason): yes
-- Verification is actual commands or steps and observed results, not only
-  `go build` or tests passed: yes
+- Required issue facts present without invention (or not applicable, with a reason): yes
+- Verification is actual commands or steps and observed results, not only `go build` or tests passed: yes
 - Body is short and factual; no unfiltered AI-generated text: yes
 - Open: yes/no
 - If no, what was told to the user (stop here):
@@ -102,19 +102,16 @@ If any item fails, tell the user and **stop**. Do not open the PR.
 
 ## Issue facts
 
-Take these from the linked issue. If a needed item is empty, ask the user that
-question.
+Take these from the linked issue. If a needed item is empty, ask the user that question.
 
 - Actual behavior:
 - Impact:
 - Frequency:
-- Applicable types and their fields (relay / cost and usage / desktop /
-  installation; write "not applicable" otherwise):
+- Applicable types and their fields (relay / cost and usage / desktop / installation; write "not applicable" otherwise):
 
 ## Change
 
-(what changed, why it works, grounded in the code actually touched. Short and
-factual; do not paste unfiltered AI-generated text.)
+(what changed, why it works, grounded in the code actually touched. Short and factual; do not paste unfiltered AI-generated text.)
 
 ## Research
 
@@ -152,8 +149,7 @@ Open them. Do not write "already checked" without sources.
 
 ## Verification
 
-Only what was actually run. Do not state only that `go build` or tests passed.
-Each item needs the command or steps and the observed result.
+Only what was actually run. Do not state only that `go build` or tests passed. Each item needs the command or steps and the observed result.
 
 - Commands and results:
 - Manual steps and observed result:
@@ -173,3 +169,5 @@ Each item needs the command or steps and the observed result.
 - Single focused change: yes/no (if no, why):
 - Secrets included: no
 - Out of scope: no
+
+<!-- prettier-ignore-end -->

@@ -27,7 +27,14 @@ scope, is a usage/configuration/integration question, is missing required
 facts, or the body would be unfiltered AI-generated text, tell the user and
 **stop**. Do not create the issue. Do not file a partial issue. Do not fill
 gaps with speculation.
+
+GitHub issue/PR bodies preserve newlines. Keep paragraphs and list items
+unwrapped so the page controls text wrapping.
 -->
+
+<!-- markdownlint-configure-file { "MD013": false } -->
+
+<!-- prettier-ignore-start -->
 
 # Agent issue
 
@@ -41,23 +48,17 @@ gaps with speculation.
 
 ## User request
 
-Quote the request the user made to the agent as faithfully as possible. Keep the
-original language and line breaks. Do not rewrite, summarize, translate, or turn
-it into an issue description.
+Quote the request the user made to the agent as faithfully as possible. Keep the original language and line breaks. Do not rewrite, summarize, translate, or turn it into an issue description.
 
 - Verbatim:
 - Later constraints or corrections from the user (quote, or none):
 
 ## Out of scope — refuse
 
-If the request matches any item below, tell the user this repository does not
-accept it, point them to the right place when there is one, and **do not file**.
+If the request matches any item below, tell the user this repository does not accept it, point them to the right place when there is one, and **do not file**.
 
-- New subscription or Coding Plan providers must support direct integration;
-  providers requiring additional protocol conversion, such as Kiro, Antigravity,
-  or Cursor, are not accepted at this time.
-- Usage, configuration, or integration questions (answer from docs and code
-  instead)
+- New subscription or Coding Plan providers must support direct integration; providers requiring additional protocol conversion, such as Kiro, Antigravity, or Cursor, are not accepted at this time.
+- Usage, configuration, or integration questions (answer from docs and code instead)
 
 - Matched: yes/no
 - If yes, what was told to the user (stop here; do not file):
@@ -68,9 +69,7 @@ If any item fails, tell the user and **stop**. Do not create the issue.
 
 - Out of scope: no
 - Usage / configuration / integration (answered instead of filing): no
-- Required facts present without invention (bugs: actual behavior, impact,
-  frequency and applicable type fields; features: current limitation and use
-  case): yes
+- Required facts present without invention (bugs: actual behavior, impact, frequency and applicable type fields; features: current limitation and use case): yes
 - Body is short and factual; no unfiltered AI-generated text: yes
 - File: yes/no
 - If no, what was told to the user (stop here):
@@ -84,14 +83,10 @@ If any item fails, tell the user and **stop**. Do not create the issue.
 
 ## Usage / configuration / integration check
 
-Search these yourself before filing. Do not send the user to "read the docs
-first". If this is usage, configuration, or integration: answer the user and do
-not file.
+Search these yourself before filing. Do not send the user to "read the docs first". If this is usage, configuration, or integration: answer the user and do not file.
 
-- <https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides> — what was
-  searched, conclusion:
-- <https://github.com/Calcium-Ion/AstrLink/blob/main/CONTRIBUTING.md> — what was
-  searched, conclusion:
+- <https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides> — what was searched, conclusion:
+- <https://github.com/Calcium-Ion/AstrLink/blob/main/CONTRIBUTING.md> — what was searched, conclusion:
 - README / repo docs:
 - Relevant code paths and conclusion:
 - Can the current version already do this? (required for feature requests):
@@ -100,16 +95,13 @@ not file.
 ## Environment
 
 - AstrLink version / commit (not `latest` / `unknown`):
-- Install source (repo release / GitHub Actions artifact / source build /
-  other):
+- Install source (repo release / GitHub Actions artifact / source build / other):
 - OS and architecture:
 - Runtime (desktop app / standalone core / browser preview):
 
 ## Problem facts
 
-For bug reports, record known facts and ask only for missing required facts. For
-feature requests, describe the current limitation and use case; mark bug-only
-fields not applicable with a reason. Do not paste unfiltered AI-generated text:
+For bug reports, record known facts and ask only for missing required facts. For feature requests, describe the current limitation and use case; mark bug-only fields not applicable with a reason. Do not paste unfiltered AI-generated text:
 
 - Actual behavior:
 - Impact:
@@ -117,8 +109,7 @@ fields not applicable with a reason. Do not paste unfiltered AI-generated text:
 
 ## Type-specific details
 
-Fill every applicable type. Write "not applicable" for the rest. Ask the user
-for missing items; do not invent them.
+Fill every applicable type. Write "not applicable" for the rest. Ask the user for missing items; do not invent them.
 
 ### Relay / API
 
@@ -173,8 +164,7 @@ for missing items; do not invent them.
 
 ## Research
 
-Open the docs and code. Do not write "already checked" without sources. Do not
-replace the fields below with unfiltered AI-generated text.
+Open the docs and code. Do not write "already checked" without sources. Do not replace the fields below with unfiltered AI-generated text.
 
 ### Docs
 
@@ -203,8 +193,7 @@ replace the fields below with unfiltered AI-generated text.
 
 - In scope for a later PR:
 - Out of scope / not this repo:
-- Large or directional feature? If yes, this issue is for maintainer alignment;
-  do not open a PR yet.
+- Large or directional feature? If yes, this issue is for maintainer alignment; do not open a PR yet.
 
 ## Proposed direction
 
@@ -217,3 +206,5 @@ replace the fields below with unfiltered AI-generated text.
 ## Related
 
 - Issues / PRs / upstream docs:
+
+<!-- prettier-ignore-end -->
