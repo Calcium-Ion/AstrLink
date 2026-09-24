@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -10,7 +11,89 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/astrlink/core/internal/storage/migrate"
 )
+
+func TestPrivacyToolDeclarationMigration(t *testing.T) {
+	for _, fields := range []string{
+		`{}`,
+		`{"skip_tool_declarations":true}`,
+		`{"inspect_additional_tools":true}`,
+		`{"skip_tool_declarations":false,"inspect_additional_tools":false}`,
+		`{"skip_tool_declarations":true,"inspect_additional_tools":true}`,
+	} {
+		t.Run(fields, func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "astrlink.db")
+			database, err := sql.Open(driverName, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			runner, err := migrate.New(migrate.SQLDatabase{DB: database}, migrate.DefaultMigrations()[:33])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := runner.Up(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(`UPDATE policies SET document_json = json_patch(
+json_set(document_json, '$.enabled', json('true'), '$.min_confidence', 0.85), ?)
+WHERE id = 'policy_privacy_default'`, fields); err != nil {
+				t.Fatal(err)
+			}
+			var original string
+			if err := database.QueryRow(`SELECT document_json FROM policies WHERE id = 'policy_privacy_default'`).Scan(&original); err != nil {
+				t.Fatal(err)
+			}
+			var want map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(original), &want); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"skip_tool_declarations", "inspect_additional_tools"} {
+				if _, exists := want[field]; !exists {
+					want[field] = json.RawMessage(`false`)
+				}
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			store := openTestStore(t, path)
+			defer store.Close()
+			var migrated string
+			if err := store.db.QueryRow(`SELECT document_json FROM policies WHERE id = 'policy_privacy_default'`).Scan(&migrated); err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(migrated), &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("migrated policy = %s, want original settings with missing tool fields defaulted to false", migrated)
+			}
+			record, err := store.GetPolicy(ctx, contract.DefaultPrivacyPolicyID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.Policy.SkipToolDeclarations = !record.Policy.SkipToolDeclarations
+			record.Policy.InspectAdditionalTools = !record.Policy.InspectAdditionalTools
+			updated, err := store.UpdatePolicy(ctx, record.Policy, record.ETag)
+			if err != nil {
+				t.Fatalf("save migrated policy: %v", err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store = openTestStore(t, path)
+			defer store.Close()
+			reloaded, err := store.GetPolicy(ctx, contract.DefaultPrivacyPolicyID)
+			if err != nil || !reflect.DeepEqual(reloaded, updated) {
+				t.Fatalf("policy after restart = %#v, %v, want %#v", reloaded, err, updated)
+			}
+		})
+	}
+}
 
 func TestDefaultPrivacyPolicyMigrationAndETagUpdate(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "astrlink.db")
