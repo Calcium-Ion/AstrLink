@@ -4,7 +4,14 @@ Paseo, Grok, or similar): read `AGENTS.md` before selecting a template. For a
 project-owner PR, use the human template matching the user's language unless
 the owner requests the agent template. For other agent-created PRs, fill
 `.agents/github/PR.md` as the entire PR body.
+
+GitHub issue/PR bodies preserve newlines. Keep paragraphs and list items
+unwrapped so the page controls text wrapping.
 -->
+
+<!-- markdownlint-configure-file { "MD013": false } -->
+
+<!-- prettier-ignore-start -->
 
 # ⚠️ 提交说明 / PR Notice
 
@@ -38,21 +45,16 @@ English template: `.github/PULL_REQUEST_TEMPLATE/en.md`
 
 ## 📸 运行证明 / Proof of Work
 
-(请写明如何验证：实际命令或步骤，以及观察结果。仅声明 `go build`
-通过或测试通过，不视为有效证明。UI 变更请附截图或录屏；Bug 修复请说明复现过程与修复后结果。)
+(请写明如何验证：实际命令或步骤，以及观察结果。仅声明 `go build` 通过或测试通过，不视为有效证明。UI 变更请附截图或录屏；Bug 修复请说明复现过程与修复后结果。)
 
 ## ✅ 提交前检查项 / Checklist
 
-- [ ] **人工确认:**
-      我已审阅并精炼全文，对其准确性与完整性负责；正文及后续评论均未粘贴未经人工过滤的大段 AI 文本。
-- [ ] **非重复提交:** 我已搜索现有的
-      [Issues](https://github.com/Calcium-Ion/AstrLink/issues) 与
-      [PRs](https://github.com/Calcium-Ion/AstrLink/pulls)，确认不是重复提交。
-- [ ] **新功能关联 Issue:** 若此 PR 标记为
-      `New feature`，我已关联对应 Issue；若尚无 Issue，我已先自行创建。
-- [ ] **事前沟通:**
-      若改动较大或涉及方向性变更，已在关联 Issue 中与维护者沟通并达成一致。
+- [ ] **人工确认:** 我已审阅并精炼全文，对其准确性与完整性负责；正文及后续评论均未粘贴未经人工过滤的大段 AI 文本。
+- [ ] **非重复提交:** 我已搜索现有的 [Issues](https://github.com/Calcium-Ion/AstrLink/issues) 与 [PRs](https://github.com/Calcium-Ion/AstrLink/pulls)，确认不是重复提交。
+- [ ] **新功能关联 Issue:** 若此 PR 标记为 `New feature`，我已关联对应 Issue；若尚无 Issue，我已先自行创建。
+- [ ] **事前沟通:** 若改动较大或涉及方向性变更，已在关联 Issue 中与维护者沟通并达成一致。
 - [ ] **范围聚焦:** 本 PR 为一项聚焦改动，未包含无关代码。
-- [ ] **本地验证:** 已按变更路径实际验证，并写明命令与观察结果。仅声明
-      `go build` 通过或测试通过，不视为有效证明。
+- [ ] **本地验证:** 已按变更路径实际验证，并写明命令与观察结果。仅声明 `go build` 通过或测试通过，不视为有效证明。
 - [ ] **安全合规:** 代码中无敏感凭据，且符合项目代码规范。
+
+<!-- prettier-ignore-end -->

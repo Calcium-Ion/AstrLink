@@ -40,7 +40,7 @@ body:
       options:
         - label: "**Non-duplicate issue:** I have searched existing [Issues](https://github.com/Calcium-Ion/AstrLink/issues?q=is%3Aissue) and confirmed there are no similar issues."
           required: true
-        - label: "**Read this first:** I have fully read the section above, reviewed the docs at https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides and the project README, confirming this is not a usage, configuration, or integration question, and that the current version cannot meet my needs."
+        - label: "**Read this first:** I have fully read the section above, reviewed the [docs](https://github.com/Calcium-Ion/AstrLink/tree/main/docs/guides) and the project README, confirming this is not a usage, configuration, or integration question, and that the current version cannot meet my needs."
           required: true
         - label: "**Supported version:** I have provided an exact version or commit (not `latest` or `unknown`) and confirm this feature request is for an unmodified, supported version from this repository."
           required: true
