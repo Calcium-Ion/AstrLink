@@ -4,6 +4,7 @@ import { FormMessage } from "@/components/FormMessage";
 import { HelpPopover } from "@/components/HelpPopover";
 import { IconButton } from "@/components/IconButton";
 import { ModelBrandIcon } from "@/components/ModelBrandIcon";
+import { ModelRedirectHelp } from "@/components/ModelRedirectHelp";
 import { ModelSelect } from "@/components/ModelSelect";
 import { ArrowRight, Plus, X } from "@/components/icons";
 import { Badge } from "@/components/ui/badge";
@@ -218,17 +219,7 @@ export function ModelRedirectEditor({
               ? t("modelRedirect.limit", { max: maxModelRedirects })
               : t("modelRedirect.count", { count: rows.length })}
           </Badge>
-          <HelpPopover label={t("modelRedirect.help")}>
-            <ul className="grid list-disc gap-1.5 pl-4">
-              <li>{t("modelRedirect.helpMatch")}</li>
-              <li>{t("modelRedirect.helpSingleHop")}</li>
-              <li>{t("modelRedirect.helpResponse")}</li>
-              <li>{t("modelRedirect.helpDisabled")}</li>
-              <li>
-                {t("modelRedirect.helpAuto", { model: astrlinkAutoModelId })}
-              </li>
-            </ul>
-          </HelpPopover>
+          <ModelRedirectHelp />
         </div>
         {addButton}
       </div>

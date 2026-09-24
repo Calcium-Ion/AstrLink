@@ -1,6 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Native scrollbar pseudo-elements cannot reliably transition their own paint.
+ * Animate this inherited value on the scrollport instead. */
+@property --native-scrollbar-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 /* Animate only opacity and transform, never panel dimensions or spacing.
  * No fill mode or persistent will-change, so layers can be released afterward.
  * Inactive Radix panels have no exit animation and can unmount immediately. */
@@ -479,6 +487,11 @@
   /* WebView2 uses classic scrollbars on Windows. Keep native scrolling while
      matching every scroll surface, including textareas and portaled dialogs. */
   @media (forced-colors: none) {
+    * {
+      /* Each nested scrollport has its own activity, even inside a dialog. */
+      --native-scrollbar-opacity: 0;
+    }
+
     @supports selector(::-webkit-scrollbar) {
       *::-webkit-scrollbar {
         width: 10px;
@@ -501,11 +514,16 @@
         min-height: 24px;
         border: 2px solid transparent;
         border-radius: 9999px;
-        background-color: var(--scrollbar-thumb);
+        background-color: color-mix(
+          in srgb,
+          var(--scrollbar-thumb) calc(var(--native-scrollbar-opacity) * 100%),
+          transparent
+        );
         background-clip: padding-box;
       }
 
-      *::-webkit-scrollbar-thumb:hover {
+      *::-webkit-scrollbar-thumb:hover,
+      *::-webkit-scrollbar-thumb:active {
         background-color: var(--scrollbar-thumb-hover);
       }
     }
@@ -515,7 +533,12 @@
     @supports not selector(::-webkit-scrollbar) {
       * {
         scrollbar-width: thin;
-        scrollbar-color: var(--scrollbar-thumb) transparent;
+        scrollbar-color: color-mix(
+            in srgb,
+            var(--scrollbar-thumb) calc(var(--native-scrollbar-opacity) * 100%),
+            transparent
+          )
+          transparent;
       }
     }
   }

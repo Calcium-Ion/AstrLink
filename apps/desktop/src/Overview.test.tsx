@@ -1174,9 +1174,9 @@ describe("Overview", () => {
     ];
     expect(cells).toHaveLength(365);
     expect(cells[0].style.gridRow).toBe("6"); // Friday, 2025-09-05; weeks start Monday.
-    expect(cells[0].style.gridColumn).toBe("2");
+    expect(cells[0].style.gridColumn).toBe("1");
     expect(cells[3].style.gridRow).toBe("2");
-    expect(cells[3].style.gridColumn).toBe("3");
+    expect(cells[3].style.gridColumn).toBe("2");
     await act(async () => {
       cells[0].focus();
       cells[0].dispatchEvent(
@@ -1187,46 +1187,55 @@ describe("Overview", () => {
     expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
   });
 
-  it("wraps a narrow year into complete weeks without losing dates or keyboard navigation", async () => {
-    const summary = emptyUsageSummary(resolveUsageWindow("1y", now));
-    const measure = vi
-      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 0, 320, 160));
-    try {
-      await renderOverview({
-        usagePreset: "1y",
-        usage: { status: "ready", summary, error: null },
-      });
-      await act(async () => button("热力图").click());
-    } finally {
-      measure.mockRestore();
-    }
-    const bands = [
-      ...container.querySelectorAll("[data-slot='activity-calendar']"),
-    ];
-    expect(bands).toHaveLength(3);
-    const cells = [
-      ...container.querySelectorAll<HTMLButtonElement>(
-        "[data-slot='activity-cell']",
-      ),
-    ];
-    expect(cells.map((cell) => cell.dataset.date)).toEqual(
-      summary.by_day.map((day) => day.date),
-    );
-    const secondBandStart = bands[1].querySelector<HTMLButtonElement>(
-      "[data-slot='activity-cell']",
-    )!;
-    expect(secondBandStart.style.gridRow).toBe("2");
-    const previousWeek = cells[cells.indexOf(secondBandStart) - 7];
-    await act(async () => {
-      previousWeek.focus();
-      previousWeek.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+  it.each([1600, 1000, 700, 320])(
+    "keeps one readable year calendar at %i px without losing dates or keyboard navigation",
+    async (width) => {
+      const summary = emptyUsageSummary(resolveUsageWindow("1y", now));
+      const measure = vi
+        .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+        .mockReturnValue(new DOMRect(0, 0, width, 160));
+      try {
+        await renderOverview({
+          usagePreset: "1y",
+          usage: { status: "ready", summary, error: null },
+        });
+        await act(async () => button("热力图").click());
+      } finally {
+        measure.mockRestore();
+      }
+      const bands = [
+        ...container.querySelectorAll<HTMLElement>(
+          "[data-slot='activity-calendar']",
+        ),
+      ];
+      expect(bands).toHaveLength(1);
+      for (const band of bands) {
+        const cellSize = Number(
+          band.style.gridTemplateRows.match(/repeat\(7, ([\d.]+)px\)/)?.[1],
+        );
+        expect(cellSize).toBeGreaterThanOrEqual(14);
+        expect(cellSize).toBeLessThanOrEqual(18);
+      }
+      const cells = [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          "[data-slot='activity-cell']",
+        ),
+      ];
+      expect(cells.map((cell) => cell.dataset.date)).toEqual(
+        summary.by_day.map((day) => day.date),
       );
-    });
-    expect(document.activeElement).toBe(secondBandStart);
-    expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
-  });
+      const target = cells[7];
+      const previousWeek = cells[cells.indexOf(target) - 7];
+      await act(async () => {
+        previousWeek.focus();
+        previousWeek.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+        );
+      });
+      expect(document.activeElement).toBe(target);
+      expect(cells.filter((cell) => cell.tabIndex === 0)).toHaveLength(1);
+    },
+  );
 
   it("switches hourly heatmaps to a yearly calendar and hides cells after failure", async () => {
     const { onUsagePresetChange } = await renderOverview({

@@ -71,27 +71,44 @@ function AnchoredTooltip({
   className,
   id,
   onDismiss,
+  scrollContainer,
 }: {
   anchor: HTMLElement;
   children: React.ReactNode;
   className?: string;
   id: string;
   onDismiss: () => void;
+  scrollContainer?: HTMLElement | null;
 }) {
   const [rect, setRect] = React.useState<DOMRect | null>(null);
   React.useLayoutEffect(() => {
     const measure = () => setRect(anchor.getBoundingClientRect());
+    const onScroll = (event: Event) => {
+      if (
+        scrollContainer &&
+        event.target === scrollContainer &&
+        document.activeElement === anchor
+      ) {
+        const cell = anchor.getBoundingClientRect();
+        const view = scrollContainer.getBoundingClientRect();
+        if (cell.left >= view.left && cell.right <= view.right) {
+          measure();
+          return;
+        }
+      }
+      onDismiss();
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(anchor);
     window.addEventListener("resize", measure);
-    window.addEventListener("scroll", onDismiss, true);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", onDismiss, true);
+      window.removeEventListener("scroll", onScroll, true);
     };
-  }, [anchor, onDismiss]);
+  }, [anchor, onDismiss, scrollContainer]);
 
   // Keep the existing Radix surface, arrow, collision handling and dismissal.
   // Only its invisible positioning anchor is shared; real grid buttons never

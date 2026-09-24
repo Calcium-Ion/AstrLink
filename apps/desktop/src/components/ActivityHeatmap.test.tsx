@@ -18,6 +18,8 @@ describe("ActivityHeatmap tooltip lifecycle", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -129,5 +131,101 @@ describe("ActivityHeatmap tooltip lifecycle", () => {
     await act(async () => vi.advanceTimersByTimeAsync(500));
     expect(document.querySelector('[role="tooltip"]')).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("starts at recent weeks and reveals keyboard targets without scrolling the page", async () => {
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(898);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);
+    const { buttons } = await render();
+    const viewport = container.querySelector<HTMLDivElement>(
+      '[data-slot="scroll-area-viewport"]',
+    )!;
+    expect(viewport.scrollLeft).toBe(598);
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 300, 160),
+    );
+    vi.spyOn(buttons[0], "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(-viewport.scrollLeft, 0, 14, 14),
+    );
+    vi.spyOn(buttons[364], "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(884 - viewport.scrollLeft, 0, 14, 14),
+    );
+    container.scrollTop = 80;
+    await act(async () => buttons[364].focus());
+    await act(async () =>
+      buttons[364].dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
+      ),
+    );
+    expect(document.activeElement).toBe(buttons[0]);
+    expect(viewport.scrollLeft).toBe(0);
+    await act(async () => viewport.dispatchEvent(new Event("scroll")));
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+      "2025-01-01",
+    );
+    expect(container.scrollTop).toBe(80);
+    await act(async () =>
+      buttons[0].dispatchEvent(
+        new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+      ),
+    );
+    expect(document.activeElement).toBe(buttons[364]);
+    expect(viewport.scrollLeft).toBe(598);
+    expect(container.scrollTop).toBe(80);
+    await act(async () => {
+      viewport.scrollLeft = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+  });
+
+  it("keeps the latest dates visible when the scrollport shrinks after layout", async () => {
+    const resize = new Map<Element, () => void>();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private callback: () => void) {}
+        observe(node: Element) {
+          resize.set(node, this.callback);
+        }
+        unobserve(node: Element) {
+          resize.delete(node);
+        }
+        disconnect() {}
+      },
+    );
+    let visibleWidth = 1000;
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(898);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
+      () => visibleWidth,
+    );
+    await render();
+    const viewport = container.querySelector<HTMLDivElement>(
+      '[data-slot="scroll-area-viewport"]',
+    )!;
+    const calendar = container.querySelector(
+      '[data-slot="activity-calendar"]',
+    )!;
+    expect(viewport.scrollLeft).toBe(0);
+    await act(async () => {
+      visibleWidth = 600;
+      resize.get(calendar)!();
+    });
+    expect(viewport.scrollLeft).toBe(298);
+    await act(async () => {
+      viewport.scrollLeft = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(viewport.scrollLeft).toBe(0);
+    await act(async () => {
+      visibleWidth = 300;
+      resize.get(calendar)!();
+    });
+    expect(viewport.scrollLeft).toBe(598);
+    await act(async () => {
+      visibleWidth = 1000;
+      resize.get(calendar)!();
+    });
+    expect(viewport.scrollLeft).toBe(0);
   });
 });

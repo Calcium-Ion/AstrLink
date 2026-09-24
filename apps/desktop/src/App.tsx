@@ -160,11 +160,11 @@ function NavButton({
       aria-label={disabled ? i18n.t("common.comingSoon", { label }) : label}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative h-9 w-full justify-start gap-2.5 rounded-md px-2 text-sm font-medium text-text-secondary hover:bg-accent hover:text-accent-foreground max-[900px]:justify-center max-[900px]:px-0",
+        "relative h-9 w-full justify-start gap-2.5 rounded-md px-2 text-sm font-medium text-text-secondary hover:bg-accent hover:text-accent-foreground max-[960px]:justify-center max-[960px]:px-0",
         // Active state is a tide-coloured left rule plus a flat wash. This bar
         // is the only place the logo's tide colour appears in the UI.
         active &&
-          "bg-accent font-semibold text-accent-foreground before:absolute before:inset-y-1 before:-left-2 before:w-0.5 before:rounded-full before:bg-tide max-[900px]:before:hidden",
+          "bg-accent font-semibold text-accent-foreground before:absolute before:inset-y-1 before:-left-2 before:w-0.5 before:rounded-full before:bg-tide max-[960px]:before:hidden",
       )}
       disabled={disabled}
       onClick={onClick}
@@ -173,11 +173,11 @@ function NavButton({
       variant="ghost"
     >
       <Icon className="size-5" name={icon} />
-      <span className="overflow-hidden text-ellipsis whitespace-nowrap max-[900px]:hidden">
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap max-[960px]:hidden">
         {label}
       </span>
       {disabled ? (
-        <Badge className="ml-auto max-[900px]:hidden" variant="secondary">
+        <Badge className="ml-auto max-[960px]:hidden" variant="secondary">
           {i18n.t("common.comingSoonBadge")}
         </Badge>
       ) : null}
@@ -569,8 +569,8 @@ export default function App() {
   return (
     <AppShell
       sidebar={
-        <aside className="flex h-full min-h-0 flex-col border-r bg-sidebar px-3 pt-[calc(var(--window-chrome-height)+16px)] pb-3 max-[900px]:px-2 max-[900px]:pb-2.5">
-          <div className="flex items-center gap-3 px-2 pb-5 max-[900px]:justify-center max-[900px]:px-0">
+        <aside className="flex h-full min-h-0 flex-col border-r bg-sidebar px-3 pt-[calc(var(--window-chrome-height)+16px)] pb-3 max-[960px]:px-2 max-[960px]:pb-2.5">
+          <div className="flex items-center gap-3 px-2 pb-5 max-[960px]:justify-center max-[960px]:px-0">
             <img
               className="block size-8 shrink-0"
               src={astrlinkLogo}
@@ -579,7 +579,7 @@ export default function App() {
               height={32}
               aria-hidden="true"
             />
-            <span className="overflow-hidden text-xl font-semibold tracking-tight whitespace-nowrap max-[900px]:hidden">
+            <span className="overflow-hidden text-xl font-semibold tracking-tight whitespace-nowrap max-[960px]:hidden">
               AstrLink
             </span>
           </div>
@@ -589,7 +589,7 @@ export default function App() {
             aria-label={t("nav.main")}
             data-slot="sidebar-navigation"
           >
-            <span className="px-2 pb-1.5 text-xs font-medium tracking-[0.08em] text-muted-foreground uppercase max-[900px]:hidden">
+            <span className="px-2 pb-1.5 text-xs font-medium tracking-[0.08em] text-muted-foreground uppercase max-[960px]:hidden">
               {t("nav.workspace")}
             </span>
             <NavButton
@@ -629,7 +629,7 @@ export default function App() {
               onClick={() => navigate({ kind: "routing" })}
             />
 
-            <span className="mt-4 px-2 pb-1.5 text-xs font-medium tracking-[0.08em] text-muted-foreground uppercase max-[900px]:mx-2 max-[900px]:mt-3 max-[900px]:mb-2 max-[900px]:h-px max-[900px]:bg-border max-[900px]:p-0 max-[900px]:text-transparent">
+            <span className="mt-4 px-2 pb-1.5 text-xs font-medium tracking-[0.08em] text-muted-foreground uppercase max-[960px]:mx-2 max-[960px]:mt-3 max-[960px]:mb-2 max-[960px]:h-px max-[960px]:bg-border max-[960px]:p-0 max-[960px]:text-transparent">
               {t("nav.system")}
             </span>
             <NavButton
@@ -648,11 +648,11 @@ export default function App() {
 
           <div
             aria-label={t("nav.gatewayStatus", { status: statusLabel })}
-            className="mt-3 flex items-center gap-2 border-t px-2 pt-3 text-text-secondary max-[900px]:justify-center max-[900px]:px-0"
+            className="mt-3 flex items-center gap-2 border-t px-2 pt-3 text-text-secondary max-[960px]:justify-center max-[960px]:px-0"
             title={t("nav.gatewayStatus", { status: statusLabel })}
           >
             <StatusDot tone={statusTone} />
-            <span className="flex min-w-0 items-baseline gap-1.5 max-[900px]:hidden">
+            <span className="flex min-w-0 items-baseline gap-1.5 max-[960px]:hidden">
               <strong className="text-sm font-medium text-foreground">
                 {t("nav.gateway")}
               </strong>
@@ -674,7 +674,7 @@ export default function App() {
         >
           <main
             className={cn(
-              "@container/workspace-surface h-full min-h-0 w-full min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[900px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
+              "@container/workspace-surface h-full min-h-0 w-full min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[960px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
               "flex flex-col",
               [
                 "overview",
