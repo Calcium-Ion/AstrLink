@@ -15,7 +15,10 @@ import {
   type FailurePolicy,
   type FailoverPolicy,
 } from "./failure-policy-model";
-import { RoutingSettingsPanel } from "./RoutingSettingsPanel";
+import {
+  RoutingSettingsPanel,
+  routingAutosaveDelay,
+} from "./RoutingSettingsPanel";
 import { FailoverEditor } from "./components/FailoverEditor";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
 import type { RequestRecord } from "./request-record-model";
@@ -31,6 +34,7 @@ describe("shared global recovery settings", () => {
   });
   beforeEach(async () => {
     await applyLocale("zh-CN");
+    vi.useFakeTimers();
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -46,7 +50,12 @@ describe("shared global recovery settings", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.useRealTimers();
   });
+
+  async function flushAutosave() {
+    await act(async () => vi.advanceTimersByTimeAsync(routingAutosaveDelay));
+  }
 
   async function selectTab(label: string) {
     const tab = [
@@ -93,14 +102,12 @@ describe("shared global recovery settings", () => {
           .querySelector(`[aria-label="统一 ${provider} 客户端身份"]`)
           ?.getAttribute("aria-checked"),
       ).toBe("false");
-      const save = [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "保存默认策略",
-      )!;
       bridge.updateRoutingSettings.mockRejectedValueOnce(new Error("保存失败"));
-      await act(async () => save.click());
+      await flushAutosave();
       expect(container.textContent).toContain("保存失败");
       expect(dirty).toHaveBeenLastCalledWith(true);
-      await act(async () => save.click());
+      await act(async () => button("重试").click());
+      await flushAutosave();
       expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
         [`${provider.toLowerCase()}_identity_enforcement`]: false,
       });
@@ -134,11 +141,7 @@ describe("shared global recovery settings", () => {
     expect(
       container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled,
     ).toBe(true);
-    expect(
-      [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "保存默认策略",
-      )?.disabled,
-    ).toBe(true);
+    expect(button("保存默认策略")).toBeUndefined();
   });
 
   it("loads and saves a single policy for all services", async () => {
@@ -160,10 +163,7 @@ describe("shared global recovery settings", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(dirty).toHaveBeenLastCalledWith(true);
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存默认策略",
-    )!;
-    await act(async () => save.click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
       default_failure_policy: {
         ...settings().default_failure_policy,
@@ -201,11 +201,7 @@ describe("shared global recovery settings", () => {
       expect(container.textContent?.includes("闲置过期时间（分钟）")).toBe(
         enabled === false,
       );
-      await act(async () =>
-        [...container.querySelectorAll("button")]
-          .find((b) => b.textContent === "保存默认策略")!
-          .click(),
-      );
+      await flushAutosave();
       expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
         channel_stickiness: { enabled: enabled === false, ttl_seconds: 3600 },
       });
@@ -245,11 +241,7 @@ describe("shared global recovery settings", () => {
     await render(true);
     expect(input.value).toBe("5");
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
-    await act(async () =>
-      [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "保存默认策略")!
-        .click(),
-    );
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         default_failure_policy: expect.objectContaining({ max_retries: 5 }),
@@ -276,11 +268,7 @@ describe("shared global recovery settings", () => {
         )!
         .click(),
     );
-    await act(async () =>
-      [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "保存默认策略")!
-        .click(),
-    );
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
       allow_unmatched_failover: true,
     });
@@ -298,10 +286,7 @@ describe("shared global recovery settings", () => {
     )!;
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     await act(async () => toggle.click());
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存默认策略",
-    )!;
-    await act(async () => save.click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
       default_failure_policy: {
         ...settings().default_failure_policy,
@@ -340,10 +325,7 @@ describe("shared global recovery settings", () => {
         .querySelector('[role="switch"][aria-label="思考签名修复重试"]')
         ?.getAttribute("aria-checked"),
     ).toBe("true");
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存默认策略",
-    )!;
-    await act(async () => save.click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
       default_failure_policy: {
         ...settings().default_failure_policy,
@@ -384,10 +366,7 @@ describe("shared global recovery settings", () => {
         ?.getAttribute("aria-checked"),
     ).toBe("true");
     await act(async () => toggle.click());
-    const save = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "保存默认策略",
-    )!;
-    await act(async () => save.click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
       default_failure_policy: {
         ...settings().default_failure_policy,
@@ -468,11 +447,7 @@ describe("shared global recovery settings", () => {
     expect(dirty).toHaveBeenLastCalledWith(true);
     expect(bridge.getRoutingSettings).toHaveBeenCalledTimes(1);
     expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
-    await act(async () =>
-      [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "保存默认策略")!
-        .click(),
-    );
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
       default_failure_policy: {
         ...defaultFailurePolicy(),
@@ -521,6 +496,9 @@ describe("shared global recovery settings", () => {
         "value",
       )!.set!.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
     });
   }
 
@@ -547,7 +525,7 @@ describe("shared global recovery settings", () => {
     expect(container.textContent).toContain("Codex 自动审查");
     // A document without model_redirects is not a pending change.
     expect(dirty).toHaveBeenLastCalledWith(false);
-    expect(button("保存默认策略").disabled).toBe(true);
+    expect(button("保存默认策略")).toBeUndefined();
 
     await act(async () => button("添加重定向").click());
     await act(async () => redirectField("第 1 条规则的请求模型").click());
@@ -565,14 +543,14 @@ describe("shared global recovery settings", () => {
     expect(container.textContent).not.toContain("已启用的 API 提供商都未列出");
     expect(dirty).toHaveBeenLastCalledWith(true);
 
-    await act(async () => button("保存默认策略").click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledExactlyOnceWith({
       model_redirects: [{ from: "gpt-4o", to: "gpt-5", enabled: true }],
     });
     expect(dirty).toHaveBeenLastCalledWith(false);
   });
 
-  it("persists the built-in rule only after it is configured and saved", async () => {
+  it("automatically persists built-in configuration and toggles", async () => {
     const dirty = vi.fn();
     await act(async () =>
       root.render(
@@ -592,7 +570,7 @@ describe("shared global recovery settings", () => {
     expect(toggle().getAttribute("aria-checked")).toBe("false");
     await typeRedirect("Codex 自动审查的目标模型", "gpt-5");
     await act(async () => toggle().click());
-    await act(async () => button("保存默认策略").click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
       model_redirects: [
         { from: "codex-auto-review", to: "gpt-5", enabled: true },
@@ -600,13 +578,121 @@ describe("shared global recovery settings", () => {
     });
     expect(dirty).toHaveBeenLastCalledWith(false);
     await act(async () => toggle().click());
-    await act(async () => button("保存默认策略").click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
       model_redirects: [
         { from: "codex-auto-review", to: "gpt-5", enabled: false },
       ],
     });
     expect(redirectField("Codex 自动审查的目标模型").value).toBe("gpt-5");
+  });
+
+  it("does not save a partial model name until the edit is committed", async () => {
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={vi.fn()}
+        />,
+      ),
+    );
+    const input = redirectField("Codex 自动审查的目标模型");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, "gpt-");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("输入完成后自动保存");
+    await typeRedirect("Codex 自动审查的目标模型", "gpt-5");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledExactlyOnceWith({
+      model_redirects: [
+        { from: "codex-auto-review", to: "gpt-5", enabled: false },
+      ],
+    });
+  });
+
+  it("serializes writes and keeps a newer edit when an older response arrives", async () => {
+    let finish!: (result: unknown) => void;
+    bridge.updateRoutingSettings.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const dirty = vi.fn();
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={dirty}
+        />,
+      ),
+    );
+    const toggle = () =>
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="启用 codex-auto-review 的重定向"]',
+      )!;
+    await act(async () => toggle().click());
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(1);
+    expect(toggle().disabled).toBe(false);
+    // Revert while the enable request is still in flight.
+    await act(async () => toggle().click());
+    await typeRedirect("Codex 自动审查的目标模型", "gpt-5");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(1);
+    await act(async () =>
+      finish({
+        ...settings(),
+        model_redirects: [
+          { from: "codex-auto-review", to: "gpt-5.6-luna", enabled: true },
+        ],
+      }),
+    );
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    expect(redirectField("Codex 自动审查的目标模型").value).toBe("gpt-5");
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(2);
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      model_redirects: [
+        { from: "codex-auto-review", to: "gpt-5", enabled: false },
+      ],
+    });
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(container.textContent).toContain("已自动保存");
+  });
+
+  it("keeps failed edits without retrying in a loop and retries after another edit", async () => {
+    bridge.updateRoutingSettings.mockRejectedValueOnce(
+      new Error("Core unavailable"),
+    );
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={vi.fn()}
+        />,
+      ),
+    );
+    await typeRedirect("Codex 自动审查的目标模型", "gpt-5");
+    await flushAutosave();
+    expect(container.textContent).toContain("自动保存失败，修改已保留。");
+    expect(redirectField("Codex 自动审查的目标模型").value).toBe("gpt-5");
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(1);
+    await typeRedirect("Codex 自动审查的目标模型", "claude-sonnet-4-5");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("自动保存失败");
   });
 
   it("blocks saving until every redirect is valid", async () => {
@@ -628,34 +714,33 @@ describe("shared global recovery settings", () => {
     await act(async () => button("添加重定向").click());
     expect(container.querySelector('[role="alert"]')).toBeNull();
     await selectTab("恢复与重试");
-    await act(async () => button("保存默认策略").click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
     expect(
       container.querySelector('[role="tab"][aria-selected="true"]')
         ?.textContent,
-    ).toBe("模型重定向");
+    ).toBe("恢复与重试");
+    await selectTab("模型重定向");
     expect(
       [...container.querySelectorAll('[role="alert"]')].map(
         (element) => element.textContent,
       ),
-    ).toEqual(["请先修正模型重定向中标出的问题，再保存。", "请填写请求模型。"]);
+    ).toEqual(["请填写请求模型。"]);
 
     await typeRedirect("第 2 条规则的请求模型", "claude-3-opus");
     await typeRedirect("第 2 条规则的目标模型", "gpt-4o");
+    await flushAutosave();
     expect(
       [...container.querySelectorAll('[role="alert"]')].map(
         (element) => element.textContent,
       ),
-    ).toEqual([
-      "请先修正模型重定向中标出的问题，再保存。",
-      "目标模型是另一条规则的请求模型；重定向只生效一次，不能串联。",
-    ]);
-    await act(async () => button("保存默认策略").click());
+    ).toEqual(["目标模型是另一条规则的请求模型；重定向只生效一次，不能串联。"]);
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
 
     await typeRedirect("第 2 条规则的目标模型", "claude-sonnet-4-5");
     expect(container.querySelector('[role="alert"]')).toBeNull();
-    await act(async () => button("保存默认策略").click());
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledExactlyOnceWith({
       model_redirects: [
         { from: "gpt-4o", to: "gpt-5", enabled: true },
@@ -682,11 +767,7 @@ describe("shared global recovery settings", () => {
         .click(),
     );
     expect(dirty).toHaveBeenLastCalledWith(false);
-    expect(
-      [...container.querySelectorAll("button")].find(
-        (button) => button.textContent === "保存默认策略",
-      )!.disabled,
-    ).toBe(true);
+    expect(button("保存默认策略")).toBeUndefined();
   });
 
   it("edits every error through one retry switch and preserves untouched legacy rules", async () => {
@@ -728,11 +809,7 @@ describe("shared global recovery settings", () => {
     await selectTab("恢复与重试");
     await selectTab("错误规则");
     expect(retrySwitch("HTTP 401").getAttribute("aria-checked")).toBe("false");
-    await act(async () =>
-      [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "保存默认策略")!
-        .click(),
-    );
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenCalledWith({
       default_failure_policy: {
         ...policy,
@@ -788,11 +865,7 @@ describe("shared global recovery settings", () => {
         .querySelector<HTMLButtonElement>('[aria-label="移除 HTTP 401 规则"]')!
         .click(),
     );
-    await act(async () =>
-      [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "保存默认策略")!
-        .click(),
-    );
+    await flushAutosave();
     const saved =
       bridge.updateRoutingSettings.mock.calls[0][0].default_failure_policy;
     expect(saved.http_status["418"]).toBe("retry_and_failover");
@@ -802,11 +875,7 @@ describe("shared global recovery settings", () => {
         .find((button) => button.textContent === "重置此组设置")!
         .click(),
     );
-    await act(async () =>
-      [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "保存默认策略")!
-        .click(),
-    );
+    await flushAutosave();
     expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
       default_failure_policy: settings().default_failure_policy,
     });

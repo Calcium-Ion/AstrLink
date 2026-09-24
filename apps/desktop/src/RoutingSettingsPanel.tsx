@@ -19,9 +19,20 @@ import {
   type RoutingSettings,
 } from "./failure-policy-model";
 import { useT } from "./i18n";
-import { notify } from "./notify";
 import type { RoutableService } from "./service-model";
 import { UpstreamIdentitySettings } from "./UpstreamIdentitySettings";
+
+export const routingAutosaveDelay = 500;
+
+const routingSettingKeys = [
+  "default_failure_policy",
+  "allow_unmatched_failover",
+  "strategy",
+  "max_attempts",
+  "channel_stickiness",
+  "model_redirects",
+  ...identitySettingKeys,
+] as const;
 
 const routingTabs = ["redirects", "recovery", "rules", "session", "identity"];
 
@@ -54,6 +65,11 @@ export function RoutingSettingsPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savedOnce, setSavedOnce] = useState(false);
+  const [validationError, setValidationError] = useState(false);
+  const [editingRedirect, setEditingRedirect] = useState(false);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [reload, setReload] = useState(0);
   const [showRedirectIssues, setShowRedirectIssues] = useState(false);
   const dirty = draft !== null && JSON.stringify(draft) !== baseline;
@@ -104,53 +120,75 @@ export function RoutingSettingsPanel({
     };
   }, [ready, reload, t, setSettings]);
 
-  const save = async () => {
-    if (!draft || !ready || saving) return;
-    if (redirectsInvalid) {
-      setShowRedirectIssues(true);
-      setTab("redirects");
-      return;
-    }
-    try {
-      parseRoutingSettings(draft);
-    } catch {
-      setError(t("failure.invalid"));
-      return;
-    }
-    mutationVersion.current += 1;
-    setSaving(true);
+  const changeDraft = (next: RoutingSettings) => {
     setError(null);
-    try {
+    setValidationError(false);
+    setShowRedirectIssues(false);
+    setDraft(next);
+  };
+
+  useEffect(() => {
+    if (!draft || !dirty || !ready || saving || error || editingRedirect)
+      return;
+    const submitted = draft;
+    const timer = setTimeout(() => {
+      try {
+        parseRoutingSettings(submitted);
+      } catch {
+        setValidationError(true);
+        setShowRedirectIssues(true);
+        return;
+      }
       const original = JSON.parse(baseline) as RoutingSettings;
       const patch: Partial<RoutingSettings> = {};
-      for (const key of [
-        "default_failure_policy",
-        "allow_unmatched_failover",
-        "strategy",
-        "max_attempts",
-        "channel_stickiness",
-        "model_redirects",
-        ...identitySettingKeys,
-      ] as const) {
-        const next = withRedirects(draft)[key];
-        if (
-          JSON.stringify(next) !== JSON.stringify(withRedirects(original)[key])
-        )
-          Object.assign(patch, { [key]: next });
+      for (const key of routingSettingKeys) {
+        if (JSON.stringify(submitted[key]) !== JSON.stringify(original[key]))
+          Object.assign(patch, { [key]: submitted[key] });
       }
-      const saved = await updateRoutingSettings(patch);
-      setSettings(saved);
-      setDraft(withRedirects(saved));
-      setBaseline(JSON.stringify(withRedirects(saved)));
-      notify.success(t("failure.saved"));
-    } catch (error) {
-      setError(
-        error instanceof Error ? error.message : t("routing.saveFailed"),
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
+      mutationVersion.current += 1;
+      setSaving(true);
+      void updateRoutingSettings(patch)
+        .then((result) => {
+          const saved = withRedirects(result);
+          setSettings(saved);
+          setBaseline(JSON.stringify(saved));
+          // A response acknowledges only its submitted version. Keep edits made
+          // while it was in flight, including a change back to the old value.
+          setDraft((current) => {
+            if (!current || current === submitted) return saved;
+            const merged = { ...saved };
+            for (const key of routingSettingKeys) {
+              if (
+                JSON.stringify(current[key]) !== JSON.stringify(submitted[key])
+              )
+                Object.assign(merged, { [key]: current[key] });
+            }
+            return merged;
+          });
+          setSavedOnce(true);
+        })
+        .catch((error: unknown) => {
+          // Newer edits get their own attempt; an unchanged failed draft pauses
+          // until the user edits it or retries, rather than looping requests.
+          if (draftRef.current === submitted)
+            setError(
+              error instanceof Error ? error.message : t("routing.saveFailed"),
+            );
+        })
+        .finally(() => setSaving(false));
+    }, routingAutosaveDelay);
+    return () => clearTimeout(timer);
+  }, [
+    draft,
+    dirty,
+    ready,
+    saving,
+    error,
+    editingRedirect,
+    baseline,
+    setSettings,
+    t,
+  ]);
 
   return (
     <div
@@ -169,9 +207,22 @@ export function RoutingSettingsPanel({
           </Button>
         </FormMessage>
       ) : null}
-      {error ? <FormMessage tone="error">{error}</FormMessage> : null}
-      {showRedirectIssues && redirectsInvalid ? (
-        <FormMessage tone="error">{t("routing.redirectsInvalid")}</FormMessage>
+      {error ? (
+        <FormMessage tone="error">
+          {t("routing.autosaveFailed")} {error}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={!ready}
+            onClick={() => setError(null)}
+          >
+            {t("common.retry")}
+          </Button>
+        </FormMessage>
+      ) : null}
+      {validationError && !redirectsInvalid ? (
+        <FormMessage tone="error">{t("routing.autosaveInvalid")}</FormMessage>
       ) : null}
       <Tabs
         value={tab}
@@ -194,15 +245,23 @@ export function RoutingSettingsPanel({
               </TabsTrigger>
             ))}
           </TabsList>
-          <Button
-            type="button"
-            size="sm"
-            className="shrink-0"
-            disabled={!dirty || !ready || saving}
-            onClick={() => void save()}
+          <span
+            role="status"
+            className="shrink-0 text-xs text-muted-foreground"
+            aria-live="polite"
           >
-            {saving ? t("common.saving") : t("failure.save")}
-          </Button>
+            {error || validationError
+              ? t("routing.notSaved")
+              : !ready && dirty
+                ? t("routing.waitingConnection")
+                : editingRedirect && dirty
+                  ? t("routing.editing")
+                  : saving || dirty
+                    ? t("common.saving")
+                    : savedOnce
+                      ? t("routing.autoSaved")
+                      : t("routing.autosave")}
+          </span>
         </div>
         {draft ? (
           <>
@@ -212,19 +271,18 @@ export function RoutingSettingsPanel({
               data-tab-scroller
             >
               <fieldset
-                disabled={!ready || saving}
+                disabled={!ready}
                 className="flex min-h-0 min-w-0 flex-1 flex-col"
               >
                 <ModelRedirectEditor
                   value={draft.model_redirects ?? []}
                   modelOptions={modelOptions}
-                  disabled={!ready || saving}
+                  disabled={!ready}
                   showAllIssues={showRedirectIssues}
-                  onChange={(model_redirects) => {
-                    setDraft({ ...draft, model_redirects });
-                    if (!modelRedirectIssues(model_redirects).some(Boolean))
-                      setShowRedirectIssues(false);
-                  }}
+                  onEditingChange={setEditingRedirect}
+                  onChange={(model_redirects) =>
+                    changeDraft({ ...draft, model_redirects })
+                  }
                 />
               </fieldset>
             </TabsContent>
@@ -233,10 +291,7 @@ export function RoutingSettingsPanel({
               className="min-h-0 flex-1 overflow-y-auto pb-1"
               data-tab-scroller
             >
-              <fieldset
-                disabled={!ready || saving}
-                className="grid min-w-0 gap-3"
-              >
+              <fieldset disabled={!ready} className="grid min-w-0 gap-3">
                 <Panel>
                   <PanelHeader>
                     <h2 className="text-sm font-semibold">
@@ -252,7 +307,7 @@ export function RoutingSettingsPanel({
                         checked={draft.allow_unmatched_failover}
                         label={t("failure.globalSwitch")}
                         onCheckedChange={(allow_unmatched_failover) =>
-                          setDraft({ ...draft, allow_unmatched_failover })
+                          changeDraft({ ...draft, allow_unmatched_failover })
                         }
                       />
                       <p className="text-xs text-muted-foreground">
@@ -261,7 +316,7 @@ export function RoutingSettingsPanel({
                     </div>
                     <RecoveryOrderControls
                       value={draft}
-                      onChange={(order) => setDraft({ ...draft, ...order })}
+                      onChange={(order) => changeDraft({ ...draft, ...order })}
                     />
                   </div>
                 </Panel>
@@ -280,7 +335,7 @@ export function RoutingSettingsPanel({
                     headingLevel={2}
                     value={draft.default_failure_policy}
                     onChange={(default_failure_policy) =>
-                      setDraft({ ...draft, default_failure_policy })
+                      changeDraft({ ...draft, default_failure_policy })
                     }
                   />
                 ))}
@@ -292,7 +347,7 @@ export function RoutingSettingsPanel({
               data-tab-scroller
             >
               <fieldset
-                disabled={!ready || saving}
+                disabled={!ready}
                 className="flex min-h-0 min-w-0 flex-1 flex-col"
               >
                 <FailurePolicyEditor
@@ -302,7 +357,7 @@ export function RoutingSettingsPanel({
                   headingLevel={2}
                   value={draft.default_failure_policy}
                   onChange={(default_failure_policy) =>
-                    setDraft({ ...draft, default_failure_policy })
+                    changeDraft({ ...draft, default_failure_policy })
                   }
                 />
               </fieldset>
@@ -312,7 +367,7 @@ export function RoutingSettingsPanel({
               className="min-h-0 flex-1 overflow-y-auto pb-1"
               data-tab-scroller
             >
-              <fieldset disabled={!ready || saving} className="min-w-0">
+              <fieldset disabled={!ready} className="min-w-0">
                 <ChannelStickinessEditor
                   value={
                     draft.channel_stickiness ?? {
@@ -321,7 +376,7 @@ export function RoutingSettingsPanel({
                     }
                   }
                   onChange={(channel_stickiness) =>
-                    setDraft({ ...draft, channel_stickiness })
+                    changeDraft({ ...draft, channel_stickiness })
                   }
                 />
               </fieldset>
@@ -331,8 +386,11 @@ export function RoutingSettingsPanel({
               className="min-h-0 flex-1 overflow-y-auto pb-1"
               data-tab-scroller
             >
-              <fieldset disabled={!ready || saving} className="min-w-0">
-                <UpstreamIdentitySettings value={draft} onChange={setDraft} />
+              <fieldset disabled={!ready} className="min-w-0">
+                <UpstreamIdentitySettings
+                  value={draft}
+                  onChange={changeDraft}
+                />
               </fieldset>
             </TabsContent>
           </>

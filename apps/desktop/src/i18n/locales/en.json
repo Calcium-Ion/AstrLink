@@ -2188,7 +2188,7 @@
   },
   "routing": {
     "identityTitle": "Subscription client identity",
-    "identityHint": "Enabled by default and controlled independently. Save to apply to new requests without restarting. When disabled, recognized client identities are preserved; unknown clients use the default identity. Authentication and required protocol headers still apply.",
+    "identityHint": "Enabled by default and controlled independently. Changes save automatically and apply to new requests without restarting. When disabled, recognized client identities are preserved; unknown clients use the default identity. Authentication and required protocol headers still apply.",
     "identityLabel": "Unify {{provider}} client identity",
     "codexIdentityHint": "Unify User-Agent, originator, and version. They remain paired when disabled.",
     "claudeIdentityHint": "Unify the Claude Code User-Agent. Preserve client feature betas and add required OAuth betas.",
@@ -2197,7 +2197,7 @@
     "repairTitle": "Reasoning content repair",
     "rulesTitle": "Retry rules",
     "rulesHint": "Applied to all API providers by default. Custom failure policies can override these rules.",
-    "redirectsInvalid": "Fix the highlighted model redirect issues before saving.",
+    "redirectsInvalid": "Complete the model redirects to save automatically.",
     "tabs": {
       "redirects": "Model redirects",
       "identity": "Forwarding identity",
@@ -2213,7 +2213,14 @@
     "discardHint": "Switching tabs will discard changes in the current tab.",
     "orderTitle": "Failure recovery and switching",
     "orderHint": "Switching follows the API provider order, selecting API providers that support the same model and request protocol. After ordinary failures, switch immediately or retry before switching. Request repair runs independently and counts toward the total attempt limit.",
-    "saveFailed": "Could not save the default policy. Please try again."
+    "saveFailed": "Could not save the default policy. Please try again.",
+    "autosave": "Autosave",
+    "autoSaved": "Saved automatically",
+    "notSaved": "Not saved",
+    "editing": "Saves when editing is complete",
+    "waitingConnection": "Waiting for connection to save",
+    "autosaveFailed": "Automatic saving failed. Your changes are kept.",
+    "autosaveInvalid": "Complete the settings to save automatically."
   },
   "modelRedirect": {
     "title": "Redirect rules",
@@ -2260,7 +2267,7 @@
         "name": "Codex auto-review",
         "help": "About Codex auto-review",
         "helpWhat": "This rule forwards {{from}} requests to your chosen model for Codex action reviews.",
-        "helpTarget": "Off by default. When enabled, forwards to {{model}} unless you choose another model that supports OpenAI Responses. Save to apply.",
+        "helpTarget": "Off by default. When enabled, forwards to {{model}} unless you choose another model that supports OpenAI Responses. Changes save and apply automatically.",
         "helpScope": "Only matches {{from}}. Requests that name another model are unaffected."
       }
     }

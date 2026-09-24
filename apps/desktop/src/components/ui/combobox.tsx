@@ -16,6 +16,7 @@ export function Combobox({
   value,
   options,
   onValueChange,
+  onValueCommit,
   disabled,
   placeholder,
   maxLength,
@@ -31,6 +32,8 @@ export function Combobox({
   value: string;
   options: readonly string[];
   onValueChange: (value: string) => void;
+  /** Selection, Enter, or blur completes a value edit for automatic saving. */
+  onValueCommit?: (value: string) => void;
   disabled?: boolean;
   placeholder?: string;
   maxLength?: number;
@@ -66,6 +69,7 @@ export function Combobox({
 
   function choose(option: string) {
     onValueChange(option);
+    onValueCommit?.(option);
     setOpen(false);
     inputRef.current?.focus({ preventScroll: true });
   }
@@ -131,10 +135,19 @@ export function Combobox({
               if (allowCustomValue) onValueChange(event.target.value);
               setQuery(event.target.value);
               setActiveIndex(-1);
-              setOpen(true);
+              // An IME repair can land as focus leaves; only typing opens the list.
+              if (
+                (event.nativeEvent as InputEvent).inputType !==
+                "insertReplacementText"
+              )
+                setOpen(true);
             }}
+            onBlur={(event) =>
+              onValueCommit?.(
+                allowCustomValue ? event.currentTarget.value : value,
+              )
+            }
             onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
                 if (!expanded) {
@@ -152,11 +165,16 @@ export function Combobox({
                         : Math.max(0, index - 1),
                   );
                 }
-              } else if (event.key === "Enter" && expanded) {
-                event.preventDefault();
-                if (filtered[activeIndex] !== undefined)
+              } else if (event.key === "Enter") {
+                if (expanded) event.preventDefault();
+                if (expanded && filtered[activeIndex] !== undefined)
                   choose(filtered[activeIndex]);
-                else setOpen(false);
+                else {
+                  setOpen(false);
+                  onValueCommit?.(
+                    allowCustomValue ? event.currentTarget.value : value,
+                  );
+                }
               } else if (event.key === "Tab") {
                 setOpen(false);
               }

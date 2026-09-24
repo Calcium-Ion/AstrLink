@@ -29,7 +29,7 @@ import {
 } from "@/failure-policy-model";
 import { useT } from "@/i18n";
 
-// Blank fields are incomplete rather than wrong; report them only on save.
+// Blank fields are incomplete rather than wrong; report them after editing is committed.
 const incompleteIssues: ReadonlySet<ModelRedirectIssue> = new Set([
   "empty_from",
   "empty_to",
@@ -46,14 +46,17 @@ export function ModelRedirectEditor({
   modelOptions,
   disabled = false,
   showAllIssues = false,
+  onEditingChange,
 }: {
   value: readonly ModelRedirect[];
   onChange: (value: ModelRedirect[]) => void;
   /** Models listed by enabled API providers. */
   modelOptions: readonly string[];
   disabled?: boolean;
-  /** Also report blank fields, after a save attempt. */
+  /** Also report blank fields, when automatic saving validates a committed edit. */
   showAllIssues?: boolean;
+  /** Suspend automatic persistence until a model name is committed. */
+  onEditingChange?: (editing: boolean) => void;
 }) {
   const t = useT();
   const id = useId();
@@ -312,9 +315,17 @@ export function ModelRedirectEditor({
                         placeholder={t("modelRedirect.fromPlaceholder")}
                         maxLength={maxRedirectModelLength}
                         disabled={disabled}
-                        onValueChange={(from) =>
-                          update(index, redirect, { from })
-                        }
+                        onValueChange={(from) => {
+                          // A recognized built-in replaces this input with its
+                          // fixed label, so there will be no later blur event.
+                          onEditingChange?.(
+                            !builtinModelRedirects.some(
+                              (builtin) => builtin.from === from,
+                            ),
+                          );
+                          update(index, redirect, { from });
+                        }}
+                        onValueCommit={() => onEditingChange?.(false)}
                       />
                     )}
                   </TableCell>
@@ -341,7 +352,11 @@ export function ModelRedirectEditor({
                       placeholder={t("modelRedirect.toPlaceholder")}
                       maxLength={maxRedirectModelLength}
                       disabled={rowDisabled}
-                      onValueChange={(to) => update(index, redirect, { to })}
+                      onValueChange={(to) => {
+                        onEditingChange?.(true);
+                        update(index, redirect, { to });
+                      }}
+                      onValueCommit={() => onEditingChange?.(false)}
                     />
                   </TableCell>
                   <TableCell className="py-1">

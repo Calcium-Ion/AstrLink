@@ -2188,7 +2188,7 @@
   },
   "routing": {
     "identityTitle": "订阅客户端身份",
-    "identityHint": "三个订阅渠道默认开启，互不影响。保存后对新请求生效，无需重启。关闭后保留可识别的对应客户端身份，无法识别时使用默认身份；认证和必要协议头仍会补齐。",
+    "identityHint": "三个订阅渠道默认开启，互不影响。修改自动保存，对新请求生效，无需重启。关闭后保留可识别的对应客户端身份，无法识别时使用默认身份；认证和必要协议头仍会补齐。",
     "identityLabel": "统一 {{provider}} 客户端身份",
     "codexIdentityHint": "统一 User-Agent、originator 与版本；关闭后仍保持三者配对。",
     "claudeIdentityHint": "统一 Claude Code User-Agent；保留客户端功能 Beta，并补齐 OAuth 必需项。",
@@ -2197,7 +2197,7 @@
     "repairTitle": "推理内容修复",
     "rulesTitle": "重试规则",
     "rulesHint": "默认应用于所有 API 提供商；单独配置的失败处理可覆盖这些规则。",
-    "redirectsInvalid": "请先修正模型重定向中标出的问题，再保存。",
+    "redirectsInvalid": "请完善模型重定向，完成后会自动保存。",
     "tabs": {
       "redirects": "模型重定向",
       "identity": "转发身份",
@@ -2213,7 +2213,14 @@
     "discardHint": "切换页签后，当前页签的修改不会保存。",
     "orderTitle": "失败恢复与切换",
     "orderHint": "按 API 提供商列表顺序选择支持同名模型和请求协议的 API 提供商；普通失败后可直接切换，或先重试再切换。请求修复独立执行，计入总尝试次数。",
-    "saveFailed": "无法保存默认策略，请重试。"
+    "saveFailed": "无法保存默认策略，请重试。",
+    "autosave": "自动保存",
+    "autoSaved": "已自动保存",
+    "notSaved": "未保存",
+    "editing": "输入完成后自动保存",
+    "waitingConnection": "等待连接后自动保存",
+    "autosaveFailed": "自动保存失败，修改已保留。",
+    "autosaveInvalid": "请完善设置，完成后会自动保存。"
   },
   "modelRedirect": {
     "title": "重定向规则",
@@ -2260,7 +2267,7 @@
         "name": "Codex 自动审查",
         "help": "Codex 自动审查说明",
         "helpWhat": "这条规则将 {{from}} 请求转发到你选择的模型，用于 Codex 的操作审批。",
-        "helpTarget": "默认关闭。开启后默认转发到 {{model}}，也可选择其他支持 OpenAI Responses 的模型。保存后生效。",
+        "helpTarget": "默认关闭。开启后默认转发到 {{model}}，也可选择其他支持 OpenAI Responses 的模型。修改会自动保存并生效。",
         "helpScope": "只匹配 {{from}}。客户端直接请求其他模型时，这条规则不会生效。"
       }
     }

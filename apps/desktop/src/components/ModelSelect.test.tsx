@@ -30,9 +30,11 @@ describe("ModelSelect", () => {
   function Harness({
     strict = false,
     change = () => {},
+    commit,
   }: {
     strict?: boolean;
     change?: (value: string) => void;
+    commit?: (value: string) => void;
   }) {
     const [value, setValue] = useState("");
     return (
@@ -41,6 +43,7 @@ describe("ModelSelect", () => {
         value={value}
         options={options}
         allowCustomValue={!strict}
+        onValueCommit={commit}
         onValueChange={(next) => {
           setValue(next);
           change(next);
@@ -117,5 +120,26 @@ describe("ModelSelect", () => {
     await act(async () => (suggestions()[0] as HTMLElement).click());
     expect(change).toHaveBeenCalledExactlyOnceWith("gpt-5");
     expect(input().value).toBe("gpt-5");
+  });
+  it("commits selections, Enter and blur without committing partial typing", async () => {
+    const commit = vi.fn();
+    await act(async () => root.render(<Harness commit={commit} />));
+    await type("custom-");
+    expect(commit).not.toHaveBeenCalled();
+    await type("custom-model");
+    await act(async () =>
+      input().dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      ),
+    );
+    expect(commit).toHaveBeenLastCalledWith("custom-model");
+    await type("gpt");
+    await act(async () => (suggestions()[0] as HTMLElement).click());
+    expect(commit).toHaveBeenLastCalledWith("gpt-5");
+    await type("another-model");
+    await act(async () =>
+      input().dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+    );
+    expect(commit).toHaveBeenLastCalledWith("another-model");
   });
 });
