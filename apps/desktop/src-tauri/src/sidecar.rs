@@ -3061,6 +3061,8 @@ fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), Strin
             "response_restore",
             "restore_tool_arguments",
             "placeholder_notice",
+            "skip_tool_declarations",
+            "inspect_additional_tools",
         ],
         &[
             "id",
@@ -3130,7 +3132,12 @@ fn validate_privacy_policy_value(policy: &serde_json::Value) -> Result<(), Strin
     if let Some(allowlist_rules) = object.get("allowlist_rules") {
         validate_privacy_allowlist_rules(allowlist_rules)?;
     }
-    for field in ["restore_tool_arguments", "placeholder_notice"] {
+    for field in [
+        "restore_tool_arguments",
+        "placeholder_notice",
+        "skip_tool_declarations",
+        "inspect_additional_tools",
+    ] {
         if let Some(value) = object.get(field) {
             if !value.is_boolean() {
                 return Err(format!("privacy policy {field} must be a boolean"));
@@ -3248,6 +3255,11 @@ fn validate_privacy_policy_patch(patch: serde_json::Value) -> Result<serde_json:
             "response_restore" if value.is_boolean() => {}
             "restore_tool_arguments" if value.is_boolean() => {}
             "placeholder_notice" if value.is_boolean() => {}
+            "skip_tool_declarations" | "inspect_additional_tools" => {
+                if !value.is_boolean() {
+                    return Err(format!("privacy policy {field} patch must be a boolean"));
+                }
+            }
             "enabled" => {
                 return Err("privacy policy enabled patch must be a boolean".to_string());
             }
@@ -5906,8 +5918,36 @@ mod tests {
             "response_action": "allow",
             "response_restore": true,
             "restore_tool_arguments": true,
-            "placeholder_notice": true
+            "placeholder_notice": true,
+            "skip_tool_declarations": false,
+            "inspect_additional_tools": false
         })
+    }
+
+    #[test]
+    fn privacy_policy_tool_declarations_require_booleans() {
+        for field in ["skip_tool_declarations", "inspect_additional_tools"] {
+            for value in [serde_json::json!(false), serde_json::json!(true)] {
+                let mut policy = privacy_policy_value();
+                policy[field] = value.clone();
+                assert_eq!(
+                    parse_privacy_policy(&serde_json::to_vec(&policy).unwrap()).unwrap()[field],
+                    value
+                );
+                let patch = serde_json::json!({field: value});
+                assert_eq!(validate_privacy_policy_patch(patch.clone()).unwrap(), patch);
+            }
+            for value in [
+                serde_json::Value::Null,
+                serde_json::json!("false"),
+                serde_json::json!(0),
+            ] {
+                let mut policy = privacy_policy_value();
+                policy[field] = value.clone();
+                assert!(parse_privacy_policy(&serde_json::to_vec(&policy).unwrap()).is_err());
+                assert!(validate_privacy_policy_patch(serde_json::json!({field: value})).is_err());
+            }
+        }
     }
 
     #[test]
