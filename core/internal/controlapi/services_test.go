@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
+	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
@@ -478,5 +479,70 @@ func TestServiceResponsesWebSocketDefaultsAndPersistence(t *testing.T) {
 		if response.Code != 422 {
 			t.Fatalf("accepted null: %d", response.Code)
 		}
+	}
+}
+
+func TestSubscriptionServicesAcceptOnlyProviderEgressConversions(t *testing.T) {
+	// Rejected creates still draw an ID, so reserve one per create attempt.
+	store, handler := newServiceHandler(t,
+		"service_codex_no_engine", "service_codex_bad_one", "service_codex_bad_two",
+		"service_codex_convert", "service_codex_default",
+	)
+	codex := `{"protocol":"openai.responses","mode":"native","streaming":true},` +
+		`{"protocol":"openai.responses.compact","mode":"native","streaming":false},` +
+		`{"protocol":"openai.models","mode":"native","streaming":false}`
+	chatToResponses := `{"protocol":"openai.chat","mode":"native","streaming":true,"convert_to":"openai.responses"}`
+	create := func(capabilities string) *httptest.ResponseRecorder {
+		return serviceRequestForTest(t, handler, http.MethodPost, ServicesPath, "application/json",
+			`{"name":"Codex","kind":"codex_subscription","capabilities":[`+capabilities+`]}`, "")
+	}
+
+	if response := create(codex + "," + chatToResponses); response.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(response.Body.String(), "local conversion is unavailable") {
+		t.Fatalf("engine unavailable: status=%d body=%s", response.Code, response.Body.String())
+	}
+	handler.capabilities.ConversionEngine = relaykitbridge.Descriptor(relaykitbridge.NewEngine())
+	for name, test := range map[string]struct{ capabilities, want string }{
+		"wrong egress": {
+			codex + `,{"protocol":"openai.chat","mode":"native","streaming":true,"convert_to":"anthropic.messages"}`,
+			"can only convert to openai.responses",
+		},
+		"missing native": {
+			`{"protocol":"openai.responses","mode":"native","streaming":true},` + chatToResponses,
+			"is required",
+		},
+	} {
+		if response := create(test.capabilities); response.Code != http.StatusUnprocessableEntity ||
+			!strings.Contains(response.Body.String(), test.want) {
+			t.Fatalf("%s: status=%d body=%s", name, response.Code, response.Body.String())
+		}
+	}
+
+	converted := createServiceForTest(t, handler,
+		`{"name":"Codex","kind":"codex_subscription","capabilities":[`+codex+","+chatToResponses+`]}`)
+	if len(converted.Capabilities) != 4 || converted.Capabilities[3].ConvertTo != contract.ProtocolOpenAIResponses {
+		t.Fatalf("created capabilities = %#v", converted.Capabilities)
+	}
+	defaulted := createServiceForTest(t, handler, `{"name":"Codex default","kind":"codex_subscription"}`)
+	record, err := store.GetService(context.Background(), defaulted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := func(capabilities, etag string) *httptest.ResponseRecorder {
+		return serviceRequestForTest(t, handler, http.MethodPatch, ServicesPath+"/"+string(defaulted.ID),
+			"application/merge-patch+json", `{"capabilities":[`+capabilities+`]}`, etag)
+	}
+	anthropicToChat := codex + `,{"protocol":"anthropic.messages","mode":"native","streaming":true,"convert_to":"openai.chat"}`
+	if response := patch(anthropicToChat, record.ETag); response.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(response.Body.String(), "can only convert to openai.responses") {
+		t.Fatalf("patch wrong egress: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := patch(codex+","+chatToResponses, record.ETag); response.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", response.Code, response.Body.String())
+	}
+	saved, err := store.GetService(context.Background(), defaulted.ID)
+	if err != nil || len(saved.Service.Capabilities) != 4 ||
+		saved.Service.Capabilities[3].Protocol != contract.ProtocolOpenAIChat {
+		t.Fatalf("persisted capabilities = %#v, %v", saved.Service.Capabilities, err)
 	}
 }

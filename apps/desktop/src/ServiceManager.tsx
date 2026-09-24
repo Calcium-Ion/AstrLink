@@ -10,6 +10,7 @@ import { ServiceTestDialog } from "./ServiceTestDialog";
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
 import { ServiceOrderHelp } from "./ServiceOrderHelp";
+import { ProtocolModeHelp } from "./ProtocolModeHelp";
 import { OrderedList } from "./components/OrderedList";
 import { useRoutingDefaults } from "./use-routing-defaults";
 import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
@@ -126,6 +127,8 @@ import {
   hasPlanUsage,
   isSubscriptionKind,
   serviceStatusLabel,
+  subscriptionConversionTargets,
+  subscriptionNativeCapabilities,
   type HTTPServiceKind,
   type ModelDiscoveryProtocol,
   type Service,
@@ -328,7 +331,9 @@ function draftForKind(
       removeCredential: false,
       proxy: proxyDraft(),
       models: [],
-      capabilities: [],
+      capabilities: subscriptionNativeCapabilities[kind].map((capability) => ({
+        ...capability,
+      })),
       authorizationFlow: defaultAuthorizationFlow(kind),
     };
   }
@@ -361,6 +366,9 @@ function draftFromRecord(record: ServiceRecord): Draft {
       enabled: service.enabled,
       responsesWebSocket: responsesWebSocketEnabled(service),
       models: [...service.models],
+      capabilities: service.capabilities.map((capability) => ({
+        ...capability,
+      })),
     };
   }
   if (!service.http) throw new Error(i18n.t("services.missingHttp"));
@@ -979,11 +987,6 @@ export function ServiceManager({
   const selectKind = (kind: ServiceKind) => {
     const next = draftForKind(kind, protocols);
     setDraft(next);
-    setEditorTab((current) =>
-      isSubscriptionKind(kind) && current === "protocols"
-        ? "connection"
-        : current,
-    );
     setError(null);
   };
 
@@ -1008,6 +1011,7 @@ export function ServiceManager({
   const toggleCapability = (
     descriptor: ProtocolDescriptor,
     checked: boolean,
+    convertTo?: string,
   ) => {
     setDraft((current) => {
       if (!checked) {
@@ -1033,6 +1037,7 @@ export function ServiceManager({
             protocol: descriptor.id,
             mode: "native",
             streaming: descriptor.streaming,
+            ...(convertTo ? { convert_to: convertTo } : {}),
           },
         ],
       };
@@ -1211,8 +1216,10 @@ export function ServiceManager({
                 ? { credential: null }
                 : {}),
           };
-          patch.capabilities = draft.capabilities.map(wireCapability);
         }
+        patch.capabilities = isSubscriptionKind(draft.kind)
+          ? draft.capabilities.map((capability) => ({ ...capability }))
+          : draft.capabilities.map(wireCapability);
         record = await updateService(editing.service.id, editing.etag, patch);
         notify.success(t("services.updated"));
       } else {
@@ -1229,6 +1236,14 @@ export function ServiceManager({
             models: draft.models,
             ...(draft.failurePolicy
               ? { failure_policy: draft.failurePolicy }
+              : {}),
+            // Omitted capabilities default to the provider's native set.
+            ...(draft.capabilities.some((capability) => capability.convert_to)
+              ? {
+                  capabilities: draft.capabilities.map((capability) => ({
+                    ...capability,
+                  })),
+                }
               : {}),
           };
         } else {
@@ -2326,14 +2341,40 @@ export function ServiceManager({
       onRemoveModels={removeDraftModels}
     />
   );
+  // Subscriptions keep their native protocols fixed; any other entry protocol
+  // must convert into one of the provider's egress formats.
+  const subscriptionKind = isSubscriptionKind(draft.kind) ? draft.kind : null;
+  const nativeProtocols = new Set(
+    subscriptionKind
+      ? subscriptionNativeCapabilities[subscriptionKind].map(
+          ({ protocol }) => protocol,
+        )
+      : [],
+  );
+  const egressTargets = subscriptionKind
+    ? subscriptionConversionTargets[subscriptionKind]
+    : null;
+  const protocolRows = subscriptionKind
+    ? descriptors.filter(
+        ({ id }) => nativeProtocols.has(id) || supportsLocalConversion(id),
+      )
+    : descriptors;
   const protocolEditor = (
     <Panel asChild>
       <section aria-labelledby="service-capabilities-heading">
         <PanelHeader
           actions={
-            <Badge className="mt-px shrink-0 tabular-nums" variant="secondary">
-              {t("services.enabledItems", { count: draft.capabilities.length })}
-            </Badge>
+            <>
+              <ProtocolModeHelp />
+              <Badge
+                className="mt-px shrink-0 tabular-nums"
+                variant="secondary"
+              >
+                {t("services.enabledItems", {
+                  count: draft.capabilities.length,
+                })}
+              </Badge>
+            </>
           }
         >
           <div className="grid min-w-0 gap-0.5">
@@ -2344,25 +2385,44 @@ export function ServiceManager({
               {t("services.capabilitiesTitle")}
             </strong>
             <p className="text-xs text-muted-foreground">
-              {conversionEngine?.available
-                ? t("services.capabilityHintConvert")
-                : t("services.capabilityHintPassthrough")}
+              {egressTargets
+                ? conversionEngine?.available
+                  ? t("services.capabilityHintSubscription", {
+                      targets: egressTargets
+                        .map((target) => protocolLabel(target))
+                        .join(" / "),
+                    })
+                  : t("services.capabilityHintSubscriptionUnavailable")
+                : conversionEngine?.available
+                  ? t("services.capabilityHintConvert")
+                  : t("services.capabilityHintPassthrough")}
             </p>
           </div>
         </PanelHeader>
 
         <div>
-          {descriptors.map((descriptor) => {
+          {protocolRows.map((descriptor) => {
             const capability = draft.capabilities.find(
               (item) => item.protocol === descriptor.id,
             );
-            const convertible = supportsLocalConversion(descriptor.id);
+            const native = nativeProtocols.has(descriptor.id);
+            const convertible =
+              !native && supportsLocalConversion(descriptor.id);
             const targets = convertible
-              ? localConversionTargets(descriptor.id, conversionEngine)
+              ? localConversionTargets(descriptor.id, conversionEngine).filter(
+                  (target) =>
+                    egressTargets === null || egressTargets.includes(target.id),
+                )
               : [];
             const selected = targets.find(
               (target) => target.id === capability?.convert_to,
             );
+            const defaultTarget = egressTargets
+              ? targets.find((target) => target.enabled)?.id
+              : undefined;
+            const locked =
+              native ||
+              (egressTargets !== null && !capability && !defaultTarget);
             return (
               <DataRow
                 className="grid grid-cols-1 gap-3 py-3 @[640px]:grid-cols-[minmax(0,1fr)_232px]"
@@ -2372,8 +2432,13 @@ export function ServiceManager({
                 <Label className="flex min-w-0 items-center gap-3 text-xs text-text-secondary">
                   <Checkbox
                     checked={Boolean(capability)}
+                    disabled={locked}
                     onCheckedChange={(checked) =>
-                      toggleCapability(descriptor, checked === true)
+                      toggleCapability(
+                        descriptor,
+                        checked === true,
+                        defaultTarget,
+                      )
                     }
                   />
                   <span className="grid min-w-0 gap-1">
@@ -2383,6 +2448,11 @@ export function ServiceManager({
                     <code className="min-w-0 truncate font-mono text-micro text-muted-foreground">
                       {protocolEntryPath(descriptor.id)}
                     </code>
+                    {selected ? (
+                      <span className="text-micro text-warning-foreground">
+                        {t("services.protocolModes.rowCaveat")}
+                      </span>
+                    ) : null}
                   </span>
                   {selected?.quality ? (
                     <Badge
@@ -2414,9 +2484,11 @@ export function ServiceManager({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={localConversionPassthrough}>
-                        {t("services.passthrough")}
-                      </SelectItem>
+                      {egressTargets ? null : (
+                        <SelectItem value={localConversionPassthrough}>
+                          {t("services.passthrough")}
+                        </SelectItem>
+                      )}
                       {targets.map((target) => (
                         <SelectItem
                           disabled={!target.enabled}
@@ -2437,7 +2509,11 @@ export function ServiceManager({
                   </Select>
                 ) : (
                   <span className="hidden text-xs text-muted-foreground @[640px]:block">
-                    {capability ? t("services.passthrough") : ""}
+                    {capability
+                      ? native
+                        ? t("services.subscriptionNative")
+                        : t("services.passthrough")
+                      : ""}
                   </span>
                 )}
               </DataRow>
@@ -2847,11 +2923,6 @@ export function ServiceManager({
       />
     </div>
   );
-  const visibleEditorTab: EditorTab =
-    isSubscriptionKind(draft.kind) && editorTab === "protocols"
-      ? "models"
-      : editorTab;
-
   return (
     <section
       className="@container flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
@@ -2899,7 +2970,7 @@ export function ServiceManager({
             <Tabs
               className="min-h-0 flex-1 gap-3"
               onValueChange={(value) => setEditorTab(value as EditorTab)}
-              value={visibleEditorTab}
+              value={editorTab}
             >
               <TabsList
                 aria-label={t("services.tabsAria")}
@@ -2932,25 +3003,23 @@ export function ServiceManager({
                     })}
                   </Badge>
                 </TabsTrigger>
-                {isSubscriptionKind(draft.kind) ? null : (
-                  <TabsTrigger
-                    data-testid="service-editor-tab-protocols"
-                    onClick={() => setEditorTab("protocols")}
-                    type="button"
-                    value="protocols"
+                <TabsTrigger
+                  data-testid="service-editor-tab-protocols"
+                  onClick={() => setEditorTab("protocols")}
+                  type="button"
+                  value="protocols"
+                >
+                  <SlidersHorizontal aria-hidden="true" />
+                  {t("services.tabProtocols")}
+                  <Badge
+                    className="px-1.5 py-0 text-micro tabular-nums"
+                    variant="secondary"
                   >
-                    <SlidersHorizontal aria-hidden="true" />
-                    {t("services.tabProtocols")}
-                    <Badge
-                      className="px-1.5 py-0 text-micro tabular-nums"
-                      variant="secondary"
-                    >
-                      {t("services.enabledItems", {
-                        count: draft.capabilities.length,
-                      })}
-                    </Badge>
-                  </TabsTrigger>
-                )}
+                    {t("services.enabledItems", {
+                      count: draft.capabilities.length,
+                    })}
+                  </Badge>
+                </TabsTrigger>
                 <TabsTrigger
                   data-testid="service-editor-tab-failure"
                   onClick={() => setEditorTab("failure")}
@@ -2976,16 +3045,14 @@ export function ServiceManager({
               >
                 {modelsEditor}
               </TabsContent>
-              {isSubscriptionKind(draft.kind) ? null : (
-                <TabsContent
-                  className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
-                  data-tab-scroller=""
-                  data-testid="service-editor-tab-panel"
-                  value="protocols"
-                >
-                  {protocolEditor}
-                </TabsContent>
-              )}
+              <TabsContent
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
+                data-tab-scroller=""
+                data-testid="service-editor-tab-panel"
+                value="protocols"
+              >
+                {protocolEditor}
+              </TabsContent>
               <TabsContent
                 className="min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
                 data-tab-scroller=""

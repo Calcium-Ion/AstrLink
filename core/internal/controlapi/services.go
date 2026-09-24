@@ -234,11 +234,23 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 			writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
 			return
 		}
-		if input.HTTP != nil || input.Capabilities != nil {
-			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "subscription services do not accept http or capabilities")
+		if input.HTTP != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "subscription services do not accept http")
 			return
 		}
 		service.Capabilities = input.Kind.SubscriptionProvider().Capabilities()
+		if input.Capabilities != nil {
+			capabilities, decodeErr := decodeServiceCapabilities(input.Capabilities)
+			if decodeErr != nil {
+				writeError(writer, http.StatusUnprocessableEntity, "invalid_service", "capabilities violate the service contract")
+				return
+			}
+			if err := handler.validateServiceCapabilities(*input.Kind, capabilities); err != nil {
+				writeError(writer, http.StatusUnprocessableEntity, "invalid_service", err.Error())
+				return
+			}
+			service.Capabilities = capabilities
+		}
 		service.Subscription = &contract.SubscriptionConnection{
 			Provider:              input.Kind.SubscriptionProvider(),
 			Status:                contract.SubscriptionStatusDisconnected,
@@ -251,7 +263,7 @@ func (handler *Handler) createService(writer http.ResponseWriter, request *http.
 			return
 		}
 		defer clear(mutation.Secret)
-		if err := handler.validateLocalConversions(capabilities); err != nil {
+		if err := handler.validateServiceCapabilities(*input.Kind, capabilities); err != nil {
 			writeError(writer, http.StatusUnprocessableEntity, "invalid_service", err.Error())
 			return
 		}
@@ -313,7 +325,7 @@ func (handler *Handler) patchService(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_patch", "service patch violates the contract")
 		return
 	}
-	if err := handler.validateLocalConversions(service.Capabilities); err != nil {
+	if err := handler.validateServiceCapabilities(service.Kind, service.Capabilities); err != nil {
 		writeError(writer, http.StatusUnprocessableEntity, "invalid_service_patch", err.Error())
 		return
 	}
@@ -823,6 +835,17 @@ type timeoutError interface {
 	Timeout() bool
 }
 
+// validateServiceCapabilities reports caller-correctable capability errors
+// before storage validation collapses them into a generic contract failure.
+func (handler *Handler) validateServiceCapabilities(kind contract.ServiceKind, capabilities []contract.Capability) error {
+	if kind.IsSubscription() {
+		if err := kind.SubscriptionProvider().ValidateCapabilities(capabilities); err != nil {
+			return err
+		}
+	}
+	return handler.validateLocalConversions(capabilities)
+}
+
 func (handler *Handler) validateLocalConversions(capabilities []contract.Capability) error {
 	engine := handler.capabilities.ConversionEngine
 	for index, capability := range capabilities {
@@ -894,10 +917,9 @@ func applyServicePatch(
 	if len(patch) == 0 {
 		return service, credential, fmt.Errorf("patch is empty")
 	}
-	allowed := map[string]bool{"proxy": true, "name": true, "enabled": true, "models": true, "failure_policy": true, "responses_websocket_enabled": true}
+	allowed := map[string]bool{"proxy": true, "name": true, "enabled": true, "models": true, "failure_policy": true, "responses_websocket_enabled": true, "capabilities": true}
 	if service.Kind.IsHTTP() {
 		allowed["http"] = true
-		allowed["capabilities"] = true
 	}
 	for name, raw := range patch {
 		if !allowed[name] || (isJSONNull(raw) && name != "failure_policy" && name != "proxy") {

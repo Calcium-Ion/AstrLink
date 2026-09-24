@@ -325,6 +325,14 @@ func (handler *Handler) executeCandidatesWithTest(
 				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
+			if candidate.Service.Kind == contract.ServiceKindCodexSubscription && plan.UpstreamProtocol == contract.ProtocolOpenAIResponses {
+				if err := prepareCodexConvertedRequest(attemptRequest); err != nil {
+					finishPrivacy()
+					last = executionFailure{kind: executionFailureConversionUnsupported, err: err, endpointID: candidate.Service.ID}
+					records.noteCandidateRejected(last.endpointID, last.code())
+					continue
+				}
+			}
 		}
 
 		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription && plan.UpstreamProtocol == contract.ProtocolAnthropicMessages {

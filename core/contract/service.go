@@ -221,8 +221,10 @@ func (service Service) Validate() error {
 	if err := validateServiceModels(service.Models); err != nil {
 		return err
 	}
-	if service.Kind.IsSubscription() && !equalCapabilities(service.Capabilities, service.Kind.SubscriptionProvider().Capabilities()) {
-		return fmt.Errorf("subscription capabilities are fixed by provider")
+	if service.Kind.IsSubscription() {
+		if err := service.Kind.SubscriptionProvider().ValidateCapabilities(service.Capabilities); err != nil {
+			return err
+		}
 	}
 	seen := make(map[string]struct{}, len(service.Capabilities))
 	for index, capability := range service.Capabilities {
@@ -239,19 +241,6 @@ func (service Service) Validate() error {
 		return fmt.Errorf("updated_at must not precede created_at")
 	}
 	return nil
-}
-
-func equalCapabilities(left, right []Capability) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		a, b := left[index], right[index]
-		if a.Protocol != b.Protocol || a.Mode != b.Mode || a.Streaming != b.Streaming || a.ConvertTo != b.ConvertTo {
-			return false
-		}
-	}
-	return true
 }
 
 // ServiceFromEndpoint converts the legacy HTTP-only view into the canonical

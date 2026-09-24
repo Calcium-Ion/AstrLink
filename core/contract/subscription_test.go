@@ -205,3 +205,114 @@ func TestSubscriptionUsageResetValidateAcceptsOfficialOutcomes(t *testing.T) {
 		t.Fatal("accepted unknown outcome")
 	}
 }
+
+func TestSubscriptionValidateCapabilitiesAcceptsProviderEgressConversions(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		provider contract.SubscriptionProvider
+		ingress  contract.ProtocolID
+		target   contract.ProtocolID
+	}{
+		{contract.SubscriptionProviderOpenAICodex, contract.ProtocolOpenAIChat, contract.ProtocolOpenAIResponses},
+		{contract.SubscriptionProviderOpenAICodex, contract.ProtocolAnthropicMessages, contract.ProtocolOpenAIResponses},
+		{contract.SubscriptionProviderClaudeCode, contract.ProtocolOpenAIChat, contract.ProtocolAnthropicMessages},
+		{contract.SubscriptionProviderXAIGrok, contract.ProtocolAnthropicMessages, contract.ProtocolOpenAIChat},
+	} {
+		native := test.provider.Capabilities()
+		reversed := make([]contract.Capability, 0, len(native)+1)
+		for index := len(native) - 1; index >= 0; index-- {
+			reversed = append(reversed, native[index])
+		}
+		capabilities := append(reversed, contract.Capability{
+			Protocol: test.ingress, Mode: contract.CapabilityModeNative, Streaming: true, ConvertTo: test.target,
+		})
+		if err := test.provider.ValidateCapabilities(capabilities); err != nil {
+			t.Fatalf("%s %s->%s: %v", test.provider, test.ingress, test.target, err)
+		}
+	}
+}
+
+func TestSubscriptionValidateCapabilitiesRestrictsEgress(t *testing.T) {
+	t.Parallel()
+	codex := contract.SubscriptionProviderOpenAICodex
+	withNative := func(provider contract.SubscriptionProvider, extra ...contract.Capability) []contract.Capability {
+		return append(provider.Capabilities(), extra...)
+	}
+	for name, test := range map[string]struct {
+		provider     contract.SubscriptionProvider
+		capabilities []contract.Capability
+		want         string
+	}{
+		"codex converts only to responses": {
+			provider: codex,
+			capabilities: withNative(codex, contract.Capability{
+				Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true,
+				ConvertTo: contract.ProtocolAnthropicMessages,
+			}),
+			want: "openai_codex subscriptions can only convert to openai.responses",
+		},
+		"claude converts only to messages": {
+			provider: contract.SubscriptionProviderClaudeCode,
+			capabilities: withNative(contract.SubscriptionProviderClaudeCode, contract.Capability{
+				Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true,
+				ConvertTo: contract.ProtocolOpenAIResponses,
+			}),
+			want: "can only convert to anthropic.messages",
+		},
+		"conversion must be native": {
+			provider: codex,
+			capabilities: withNative(codex, contract.Capability{
+				Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeDelegated, Streaming: true,
+				ConvertTo: contract.ProtocolOpenAIResponses,
+			}),
+			want: "must use native mode",
+		},
+		"native capability cannot be dropped": {
+			provider:     codex,
+			capabilities: codex.Capabilities()[:1],
+			want:         "is required",
+		},
+		"native capability cannot be altered": {
+			provider: codex,
+			capabilities: []contract.Capability{
+				{Protocol: contract.ProtocolOpenAIResponses, Mode: contract.CapabilityModeNative},
+				codex.Capabilities()[1], codex.Capabilities()[2],
+			},
+			want: "fixed by provider",
+		},
+		"extra native protocol is rejected": {
+			provider: codex,
+			capabilities: withNative(codex, contract.Capability{
+				Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true,
+			}),
+			want: "fixed by provider",
+		},
+	} {
+		err := test.provider.ValidateCapabilities(test.capabilities)
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("%s: error = %v, want %q", name, err, test.want)
+		}
+	}
+}
+
+func TestSubscriptionServiceRejectsConversionOfNativeProtocol(t *testing.T) {
+	t.Parallel()
+	service := contract.Service{
+		ID: "service_grok", Name: "Grok", Kind: contract.ServiceKindGrokSubscription, Enabled: true,
+		Capabilities: append(contract.DefaultXAIGrokCapabilities(), contract.Capability{
+			Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true,
+			ConvertTo: contract.ProtocolOpenAIResponses,
+		}),
+		Subscription: &contract.SubscriptionConnection{
+			Provider: contract.SubscriptionProviderXAIGrok, Status: contract.SubscriptionStatusConnected,
+			CredentialRef: "keyring://subscription/service_grok",
+		},
+	}
+	if err := service.Validate(); err == nil {
+		t.Fatal("Validate() accepted a conversion that duplicates a native protocol")
+	}
+	service.Capabilities[len(service.Capabilities)-1].Protocol = contract.ProtocolAnthropicMessages
+	if err := service.Validate(); err != nil {
+		t.Fatalf("Validate() rejected Grok anthropic conversion: %v", err)
+	}
+}

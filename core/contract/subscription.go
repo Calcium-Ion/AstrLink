@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -71,6 +72,62 @@ func (provider SubscriptionProvider) Capabilities() []Capability {
 	default:
 		return DefaultOpenAICodexCapabilities()
 	}
+}
+
+// ConversionTargets lists the only upstream protocols a local conversion may
+// emit for this provider. Subscription endpoints speak a fixed wire format, so
+// an extra ingress protocol is valid only when it converts into one of these.
+func (provider SubscriptionProvider) ConversionTargets() []ProtocolID {
+	switch provider {
+	case SubscriptionProviderClaudeCode:
+		return []ProtocolID{ProtocolAnthropicMessages}
+	case SubscriptionProviderXAIGrok:
+		return []ProtocolID{ProtocolOpenAIResponses, ProtocolOpenAIChat}
+	default:
+		return []ProtocolID{ProtocolOpenAIResponses}
+	}
+}
+
+// ValidateCapabilities accepts the provider's fixed native capabilities, in any
+// order, plus native-mode local conversions into ConversionTargets.
+func (provider SubscriptionProvider) ValidateCapabilities(capabilities []Capability) error {
+	native := provider.Capabilities()
+	matched := make([]bool, len(native))
+	targets := provider.ConversionTargets()
+	for index, capability := range capabilities {
+		if capability.ConvertTo == "" {
+			found := false
+			for nativeIndex, candidate := range native {
+				if !matched[nativeIndex] && candidate == capability {
+					matched[nativeIndex], found = true, true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("capabilities[%d]: subscription native capabilities are fixed by provider", index)
+			}
+			continue
+		}
+		if capability.Mode != CapabilityModeNative {
+			return fmt.Errorf("capabilities[%d]: subscription conversions must use native mode", index)
+		}
+		if !slices.Contains(targets, capability.ConvertTo) {
+			names := make([]string, 0, len(targets))
+			for _, target := range targets {
+				names = append(names, string(target))
+			}
+			return fmt.Errorf(
+				"capabilities[%d]: %s subscriptions can only convert to %s",
+				index, provider, strings.Join(names, ", "),
+			)
+		}
+	}
+	for nativeIndex, found := range matched {
+		if !found {
+			return fmt.Errorf("subscription native capability %q is required", native[nativeIndex].Protocol)
+		}
+	}
+	return nil
 }
 
 // DefaultXAIGrokCapabilities is the fixed native capability set for the Grok

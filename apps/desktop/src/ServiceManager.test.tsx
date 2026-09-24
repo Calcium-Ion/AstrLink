@@ -39,6 +39,7 @@ vi.mock("./notify", () => ({ notify: notifyMocks }));
 
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { ServiceManager } from "./ServiceManager";
+import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
 import { parseService, type Service } from "./service-model";
 import { httpServicePreset } from "./service-presets";
@@ -186,6 +187,7 @@ describe("ServiceManager", () => {
   beforeEach(() => {
     // Existing editor/action tests represent returning users.
     localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
+    localStorage.setItem(PROTOCOL_MODE_GUIDE_KEY, "seen");
     bridgeMocks.getRoutingSettings.mockResolvedValue({
       default_failure_policy: defaultFailurePolicy(),
       allow_unmatched_failover: false,
@@ -3543,13 +3545,43 @@ describe("ServiceManager", () => {
     ).toContain("overflow-y-auto");
   });
 
-  it("does not offer a protocol tab for Codex subscriptions", async () => {
-    bridgeMocks.getService.mockResolvedValue({ service: codexService, etag });
+  it("limits Codex subscription conversions to Responses egress", async () => {
+    const native: Service["capabilities"] = [
+      { protocol: "openai.responses", mode: "native", streaming: true },
+      {
+        protocol: "openai.responses.compact",
+        mode: "native",
+        streaming: false,
+      },
+      { protocol: "openai.models", mode: "native", streaming: false },
+    ];
+    const listed: Service = { ...codexService, capabilities: native };
+    bridgeMocks.getService.mockResolvedValue({ service: listed, etag });
+    bridgeMocks.updateService.mockResolvedValue({ service: listed, etag });
     await act(async () => {
       root.render(
         <ServiceManager
           catalogError={null}
           catalogStatus="ready"
+          conversionEngine={{
+            name: "relaykit",
+            version: "v0.1.1",
+            available: true,
+            edges: [
+              {
+                from: "openai.chat",
+                to: "openai.responses",
+                quality: "good",
+                streaming: true,
+              },
+              {
+                from: "openai.chat",
+                to: "anthropic.messages",
+                quality: "fair",
+                streaming: true,
+              },
+            ],
+          }}
           isReady
           onDirtyChange={() => {}}
           onRefresh={() => {}}
@@ -3557,29 +3589,89 @@ describe("ServiceManager", () => {
           onServiceSaved={() => {}}
           onViewChange={() => {}}
           protocols={[]}
-          services={[codexService]}
-          view={{ kind: "edit", serviceId: codexService.id }}
+          services={[listed]}
+          view={{ kind: "edit", serviceId: listed.id }}
         />,
       );
       await Promise.resolve();
     });
 
+    await openEditorTab("protocols");
+    const row = (label: string) =>
+      [
+        ...container.querySelectorAll<HTMLElement>(
+          '[data-testid="service-capability-row"]',
+        ),
+      ].find(
+        (candidate) =>
+          candidate.querySelector("span.font-medium")?.textContent === label,
+      );
+    expect(container.textContent).toContain(
+      "只能以 OpenAI Responses 格式发给上游",
+    );
+    const responses = row("OpenAI Responses")!;
+    const responsesCheckbox = responses.querySelector('[role="checkbox"]')!;
+    expect(responsesCheckbox.getAttribute("aria-checked")).toBe("true");
+    expect(responsesCheckbox.hasAttribute("disabled")).toBe(true);
+    expect(responses.textContent).toContain("订阅原生支持");
+    expect(row("OpenAI Legacy Completions")).toBeUndefined();
+    expect(row("Gemini Models")).toBeUndefined();
+    const anthropic = row("Anthropic Messages")!;
     expect(
-      container.querySelector('[data-testid="service-editor-tab-protocols"]'),
-    ).toBeNull();
-    expect(container.textContent).not.toContain("入口协议");
-    expect(
-      container.querySelector('[data-testid="service-editor-tab-connection"]'),
-    ).not.toBeNull();
-    expect(container.textContent).toContain("连接");
-    expect(
-      container.querySelector('input[aria-label="搜索已配置模型"]'),
-    ).toBeNull();
+      anthropic.querySelector('[role="checkbox"]')!.hasAttribute("disabled"),
+    ).toBe(true);
 
-    await openEditorTab("models");
+    await act(async () => {
+      row("OpenAI Chat Completions")!
+        .querySelector<HTMLButtonElement>('[role="checkbox"]')!
+        .click();
+      await Promise.resolve();
+    });
+    const trigger = document.querySelector<HTMLButtonElement>(
+      'button[role="combobox"][aria-label="OpenAI Chat Completions 本地转换"]',
+    )!;
+    await act(async () => {
+      trigger.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerType: "mouse",
+        }),
+      );
+      await Promise.resolve();
+    });
     expect(
-      container.querySelector('input[aria-label="搜索已配置模型"]'),
-    ).not.toBeNull();
+      [...document.querySelectorAll<HTMLElement>('[role="option"]')].map(
+        (option) => option.textContent?.trim(),
+      ),
+    ).toEqual(["转换为 OpenAI Responses · 转换质量好"]);
+    await act(async () => {
+      document.querySelector<HTMLElement>('[role="option"]')!.click();
+      await Promise.resolve();
+    });
+
+    await act(async () =>
+      container
+        .querySelector("form")!
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        ),
+    );
+    expect(bridgeMocks.updateService).toHaveBeenCalledWith(
+      listed.id,
+      etag,
+      expect.objectContaining({
+        capabilities: [
+          ...native,
+          {
+            protocol: "openai.chat",
+            mode: "native",
+            streaming: true,
+            convert_to: "openai.responses",
+          },
+        ],
+      }),
+    );
   });
 
   it("probes saved Codex models through the connected subscription", async () => {

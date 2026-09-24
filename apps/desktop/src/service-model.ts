@@ -32,7 +32,11 @@ export type HTTPServiceKind =
   | "custom";
 
 export type ServiceAuthScheme =
-  "none" | "bearer" | "anthropic_api_key" | "google_api_key" | "custom_header";
+  | "none"
+  | "bearer"
+  | "anthropic_api_key"
+  | "google_api_key"
+  | "custom_header";
 
 export interface ServiceAuth {
   scheme: ServiceAuthScheme;
@@ -49,7 +53,9 @@ export interface ServiceCapability {
 export type ModelDiscoveryProtocol = "openai.models" | "google.models";
 
 export type SubscriptionServiceKind =
-  "codex_subscription" | "claude_subscription" | "grok_subscription";
+  | "codex_subscription"
+  | "claude_subscription"
+  | "grok_subscription";
 export type ServiceKind = SubscriptionServiceKind | HTTPServiceKind;
 
 /** Provider owning each subscription kind; mirrors contract.ServiceKind.SubscriptionProvider. */
@@ -60,6 +66,40 @@ export const subscriptionKindProviders: Record<
   codex_subscription: "openai_codex",
   claude_subscription: "claude_code",
   grok_subscription: "xai_grok",
+};
+
+/** Fixed native capabilities; mirrors contract.SubscriptionProvider.Capabilities. */
+export const subscriptionNativeCapabilities: Record<
+  SubscriptionServiceKind,
+  readonly ServiceCapability[]
+> = {
+  codex_subscription: [
+    { protocol: "openai.responses", mode: "native", streaming: true },
+    { protocol: "openai.responses.compact", mode: "native", streaming: false },
+    { protocol: "openai.models", mode: "native", streaming: false },
+  ],
+  claude_subscription: [
+    { protocol: "anthropic.messages", mode: "native", streaming: true },
+    { protocol: "openai.models", mode: "native", streaming: false },
+  ],
+  grok_subscription: [
+    { protocol: "openai.responses", mode: "native", streaming: true },
+    { protocol: "openai.chat", mode: "native", streaming: true },
+    { protocol: "openai.models", mode: "native", streaming: false },
+  ],
+};
+
+/**
+ * The only upstream protocols a local conversion may emit for each
+ * subscription; mirrors contract.SubscriptionProvider.ConversionTargets.
+ */
+export const subscriptionConversionTargets: Record<
+  SubscriptionServiceKind,
+  readonly string[]
+> = {
+  codex_subscription: ["openai.responses"],
+  claude_subscription: ["anthropic.messages"],
+  grok_subscription: ["openai.responses", "openai.chat"],
 };
 
 export const subscriptionKinds = Object.keys(
@@ -156,6 +196,7 @@ export type SubscriptionServiceCreateInput = {
   kind: SubscriptionServiceKind;
   enabled?: boolean;
   models?: string[];
+  capabilities?: ServiceCapability[];
 };
 
 export type HTTPServiceCreateInput = {
@@ -175,7 +216,8 @@ export type HTTPServiceCreateInput = {
 };
 
 export type ServiceCreateInput =
-  SubscriptionServiceCreateInput | HTTPServiceCreateInput;
+  | SubscriptionServiceCreateInput
+  | HTTPServiceCreateInput;
 
 export type ServicePatchInput = {
   proxy?: ServiceProxyInput | null;

@@ -1,19 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useReducedMotion } from "motion/react";
 
-import { IconButton } from "./components/IconButton";
+import { GuideDialog, useFirstVisitGuide } from "./components/GuideDialog";
 import { ReorderPreview } from "./components/ReorderPreview";
 import { ServiceKindIcon } from "./components/ServiceKindIcon";
-import { CircleHelp, RotateCcw } from "./components/icons";
-import { Button } from "./components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./components/ui/dialog";
 import { useT } from "./i18n";
 
 export const SERVICE_ORDER_GUIDE_KEY = "astrlink.service-order-guide.v1";
@@ -99,73 +89,23 @@ function OrderAnimation() {
 
 export function ServiceOrderHelp({ ready }: { ready: boolean }) {
   const t = useT();
-  const [guideOpen, setGuideOpen] = useState(false);
-  const [playback, setPlayback] = useState(0);
-  const checked = useRef(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const dismiss = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!ready || checked.current) return;
-    checked.current = true;
-    try {
-      if (localStorage.getItem(SERVICE_ORDER_GUIDE_KEY) === "seen") return;
-      localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
-    } catch {
-      // Storage can be unavailable in a WebView; the guide must still work.
-    }
-    setGuideOpen(true);
-  }, [ready]);
+  const [guideOpen, setGuideOpen] = useFirstVisitGuide(
+    SERVICE_ORDER_GUIDE_KEY,
+    ready,
+  );
 
   return (
-    <>
-      <Button
-        ref={trigger}
-        aria-label={t("services.orderLabel")}
-        aria-haspopup="dialog"
-        onClick={() => setGuideOpen(true)}
-        size="icon-xs"
-        type="button"
-        variant="ghost"
-      >
-        <CircleHelp aria-hidden="true" className="text-muted-foreground" />
-      </Button>
-      <Dialog open={guideOpen} onOpenChange={setGuideOpen}>
-        <DialogContent
-          className="gap-3 sm:max-w-md"
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            dismiss.current?.focus({ preventScroll: true });
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            trigger.current?.focus({ preventScroll: true });
-          }}
-        >
-          <DialogHeader className="pr-6 text-left">
-            <DialogTitle>{t("services.orderGuide.title")}</DialogTitle>
-            <DialogDescription>
-              {t("services.orderGuide.description")}
-            </DialogDescription>
-          </DialogHeader>
-          {guideOpen ? <OrderAnimation key={playback} /> : null}
-          <p className="text-xs leading-5 text-muted-foreground">
-            {t("services.orderGuide.note")}
-          </p>
-          <DialogFooter className="flex-row items-center justify-between sm:justify-between">
-            <IconButton
-              label={t("services.orderGuide.replay")}
-              onClick={() => setPlayback((value) => value + 1)}
-              variant="ghost"
-            >
-              <RotateCcw aria-hidden="true" />
-            </IconButton>
-            <Button ref={dismiss} onClick={() => setGuideOpen(false)}>
-              {t("services.orderGuide.dismiss")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+    <GuideDialog
+      description={t("services.orderGuide.description")}
+      dismissLabel={t("services.orderGuide.dismiss")}
+      note={t("services.orderGuide.note")}
+      onOpenChange={setGuideOpen}
+      open={guideOpen}
+      replayLabel={t("services.orderGuide.replay")}
+      title={t("services.orderGuide.title")}
+      triggerLabel={t("services.orderLabel")}
+    >
+      <OrderAnimation />
+    </GuideDialog>
   );
 }

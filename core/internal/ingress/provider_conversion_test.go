@@ -86,3 +86,85 @@ func TestRelayKitUsesProviderSurfaceAfterConversion(t *testing.T) {
 		}
 	}
 }
+
+func TestRelayKitConvertsIntoSubscriptionEgress(t *testing.T) {
+	for _, test := range []struct {
+		kind              contract.ServiceKind
+		ingress, upstream contract.ProtocolID
+		wantPath          string
+		check             func(t *testing.T, payload map[string]any)
+	}{
+		{
+			kind: contract.ServiceKindCodexSubscription, ingress: contract.ProtocolAnthropicMessages,
+			upstream: contract.ProtocolOpenAIResponses, wantPath: "/backend-api/codex/responses",
+			check: func(t *testing.T, payload map[string]any) {
+				if payload["store"] != false || payload["instructions"] != "" || payload["input"] == nil {
+					t.Fatalf("Codex body not prepared: %#v", payload)
+				}
+				if _, ok := payload["max_output_tokens"]; ok {
+					t.Fatalf("Codex body kept max_output_tokens: %#v", payload)
+				}
+			},
+		},
+		{
+			kind: contract.ServiceKindClaudeSubscription, ingress: contract.ProtocolOpenAIChat,
+			upstream: contract.ProtocolAnthropicMessages, wantPath: "/v1/messages",
+			check: func(t *testing.T, payload map[string]any) {
+				system, _ := payload["system"].([]any)
+				if len(system) == 0 || !strings.Contains(fmt.Sprint(system[0]), claudeCodeBanner) || payload["messages"] == nil {
+					t.Fatalf("Claude body not prepared: %#v", payload)
+				}
+			},
+		},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			provider := test.kind.SubscriptionProvider()
+			service := contract.Service{
+				ID: "service_subscription", Name: "Subscription", Kind: test.kind, Enabled: true, Models: []string{"model-test"},
+				Capabilities: append(provider.Capabilities(), contract.Capability{
+					Protocol: test.ingress, Mode: contract.CapabilityModeNative, Streaming: true, ConvertTo: test.upstream,
+				}),
+				Subscription: &contract.SubscriptionConnection{
+					Provider: provider, Status: contract.SubscriptionStatusConnected,
+					CredentialRef: "keyring://subscription/service_subscription",
+				},
+			}
+			if err := service.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			base := "https://chatgpt.example/backend-api/codex"
+			if test.kind == contract.ServiceKindClaudeSubscription {
+				base = "https://claude.example"
+			}
+			called := false
+			handler := NewWithDependencies(Dependencies{
+				Resolver:         candidateResolver{candidates: []endpoint.Resolved{{Service: service, BaseURL: base, UpstreamProtocol: test.upstream}}},
+				Authorizer:       endpoint.NewServiceAuthorizer(codingPlanCredentials{}, codingPlanCredentials{}),
+				ConversionEngine: relaykitbridge.NewEngine(),
+				Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					called = true
+					if request.URL.Path != test.wantPath || request.Header.Get("Authorization") != "Bearer subscription-token" {
+						t.Fatalf("wrong converted target/auth: %s", request.URL)
+					}
+					body, _ := io.ReadAll(request.Body)
+					var payload map[string]any
+					if err := json.Unmarshal(body, &payload); err != nil {
+						t.Fatal(err)
+					}
+					test.check(t, payload)
+					_, _, responseBody := nativeProviderExchange(test.upstream, false)
+					return jsonResponse(http.StatusOK, responseBody), nil
+				})),
+			})
+			path, body, _ := nativeProviderExchange(test.ingress, false)
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer local-secret")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if !called || response.Code != http.StatusOK {
+				t.Fatalf("called=%t status=%d body=%s", called, response.Code, response.Body.String())
+			}
+		})
+	}
+}
