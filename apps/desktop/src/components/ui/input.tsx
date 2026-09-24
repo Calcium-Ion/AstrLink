@@ -3,6 +3,7 @@ import * as React from "react";
 import { Eye, EyeOff } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
+import { useImeTextControl } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
 function Input({ type, ...props }: React.ComponentProps<"input">) {
@@ -59,8 +60,18 @@ function PasswordInput({
 function InputControl({
   className,
   type,
+  onKeyDown,
+  onCompositionStart,
+  onCompositionUpdate,
+  onCompositionEnd,
   ...props
 }: React.ComponentProps<"input">) {
+  const imeHandlers = useImeTextControl({
+    onKeyDown,
+    onCompositionStart,
+    onCompositionUpdate,
+    onCompositionEnd,
+  });
   return (
     <input
       type={type}
@@ -72,6 +83,7 @@ function InputControl({
         className,
       )}
       {...props}
+      {...imeHandlers}
     />
   );
 }

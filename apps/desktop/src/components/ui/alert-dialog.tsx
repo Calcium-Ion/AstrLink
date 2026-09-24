@@ -1,6 +1,7 @@
 import * as React from "react";
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui";
 
+import { ignoreImeEscape } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -45,6 +46,7 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm";
@@ -60,6 +62,7 @@ function AlertDialogContent({
           className,
         )}
         {...props}
+        onEscapeKeyDown={ignoreImeEscape(onEscapeKeyDown)}
       />
     </AlertDialogPortal>
   );

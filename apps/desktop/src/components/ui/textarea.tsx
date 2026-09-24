@@ -1,8 +1,22 @@
 import * as React from "react";
 
+import { useImeTextControl } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
-function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
+function Textarea({
+  className,
+  onKeyDown,
+  onCompositionStart,
+  onCompositionUpdate,
+  onCompositionEnd,
+  ...props
+}: React.ComponentProps<"textarea">) {
+  const imeHandlers = useImeTextControl({
+    onKeyDown,
+    onCompositionStart,
+    onCompositionUpdate,
+    onCompositionEnd,
+  });
   return (
     <textarea
       data-slot="textarea"
@@ -11,6 +25,7 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
         className,
       )}
       {...props}
+      {...imeHandlers}
     />
   );
 }

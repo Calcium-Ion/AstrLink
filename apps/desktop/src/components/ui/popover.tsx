@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 
+import { ignoreImeEscape } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
 export function Popover(props: ComponentProps<typeof PopoverPrimitive.Root>) {
@@ -26,6 +27,7 @@ export function PopoverContent({
   collisionPadding = 12,
   onWheel,
   onTouchMove,
+  onEscapeKeyDown,
   ...props
 }: ComponentProps<typeof PopoverPrimitive.Content>) {
   return (
@@ -50,6 +52,7 @@ export function PopoverContent({
           event.stopPropagation();
           onTouchMove?.(event);
         }}
+        onEscapeKeyDown={ignoreImeEscape(onEscapeKeyDown)}
       />
     </PopoverPrimitive.Portal>
   );

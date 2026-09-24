@@ -5,6 +5,7 @@ import { X as XIcon } from "@/components/icons";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { i18n } from "@/i18n";
+import { ignoreImeEscape } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -53,6 +54,7 @@ function DialogContent({
   children,
   showCloseButton = true,
   variant = "default",
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
@@ -70,6 +72,7 @@ function DialogContent({
           className,
         )}
         {...props}
+        onEscapeKeyDown={ignoreImeEscape(onEscapeKeyDown)}
       >
         {children}
         {showCloseButton && (
