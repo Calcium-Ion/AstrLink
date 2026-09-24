@@ -44,9 +44,20 @@ func rewriteGeminiPathModel(request *http.Request, upstreamModel string) (*http.
 	if !strings.HasPrefix(prefix, modelsPrefix) {
 		return nil, fmt.Errorf("gemini path is missing models prefix")
 	}
-	request.URL.Path = modelsPrefix + url.PathEscape(upstreamModel) + ":" + action
-	request.URL.RawPath = ""
+	setGeminiModelPath(request.URL, upstreamModel, ":"+action)
 	return request, nil
+}
+
+// setGeminiModelPath stores the decoded model in Path and its escaped form in
+// RawPath. Assigning an escaped string to Path would escape it a second time
+// when the forwarder builds the target URL ("a/b" -> "a%252Fb").
+func setGeminiModelPath(target *url.URL, model, suffix string) {
+	const modelsPrefix = "/v1beta/models/"
+	target.Path = modelsPrefix + model + suffix
+	target.RawPath = modelsPrefix + url.PathEscape(model) + suffix
+	if target.RawPath == target.Path {
+		target.RawPath = ""
+	}
 }
 
 func rewriteJSONBodyModel(request *http.Request, upstreamModel string, replayable bool) (*http.Request, error) {

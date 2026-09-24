@@ -5,10 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
 func TestRewriteRequestModelJSONProtocolsPreserveUnrelatedBytes(t *testing.T) {
@@ -112,24 +114,34 @@ func TestRewriteRequestModelRequiresBufferedBody(t *testing.T) {
 
 func TestRewriteRequestModelGeminiPath(t *testing.T) {
 	tests := []struct {
-		name          string
-		path          string
-		rawQuery      string
-		upstreamModel string
-		wantPath      string
+		name            string
+		path            string
+		rawQuery        string
+		upstreamModel   string
+		wantPath        string
+		wantEscapedPath string
 	}{
 		{
-			name:          "space escaped in path segment",
-			path:          "/v1beta/models/gemini-pro:generateContent",
-			upstreamModel: "real model",
-			wantPath:      "/v1beta/models/real%20model:generateContent",
+			name:            "space escaped once in path segment",
+			path:            "/v1beta/models/gemini-pro:generateContent",
+			upstreamModel:   "real model",
+			wantPath:        "/v1beta/models/real model:generateContent",
+			wantEscapedPath: "/v1beta/models/real%20model:generateContent",
 		},
 		{
-			name:          "stream action and query preserved",
-			path:          "/v1beta/models/gemini-pro:streamGenerateContent",
-			rawQuery:      "alt=sse",
-			upstreamModel: "upstream-flash",
-			wantPath:      "/v1beta/models/upstream-flash:streamGenerateContent",
+			name:            "slash stays inside one path segment",
+			path:            "/v1beta/models/gemini-pro:generateContent",
+			upstreamModel:   "vendor/real model",
+			wantPath:        "/v1beta/models/vendor/real model:generateContent",
+			wantEscapedPath: "/v1beta/models/vendor%2Freal%20model:generateContent",
+		},
+		{
+			name:            "stream action and query preserved",
+			path:            "/v1beta/models/gemini-pro:streamGenerateContent",
+			rawQuery:        "alt=sse",
+			upstreamModel:   "upstream-flash",
+			wantPath:        "/v1beta/models/upstream-flash:streamGenerateContent",
+			wantEscapedPath: "/v1beta/models/upstream-flash:streamGenerateContent",
 		},
 	}
 	for _, test := range tests {
@@ -156,6 +168,14 @@ func TestRewriteRequestModelGeminiPath(t *testing.T) {
 			}
 			if got.URL.Path != test.wantPath {
 				t.Fatalf("Path = %q, want %q", got.URL.Path, test.wantPath)
+			}
+			if got.URL.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("EscapedPath = %q, want %q", got.URL.EscapedPath(), test.wantEscapedPath)
+			}
+			// The forwarder joins the escaped path; it must not escape it again.
+			base, _ := url.Parse("https://upstream.example")
+			if joined := transport.JoinTargetURL(base, got.URL); joined.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("joined path = %q, want %q", joined.EscapedPath(), test.wantEscapedPath)
 			}
 			if got.URL.RawQuery != test.rawQuery {
 				t.Fatalf("RawQuery = %q, want %q", got.URL.RawQuery, test.rawQuery)
@@ -282,5 +302,56 @@ func assertJSONModelSpliced(t *testing.T, original, rewritten, wantModel string)
 	if strings.Contains(original, `[{"model":"inside"}]`) &&
 		!strings.Contains(rewritten, `[{"model":"inside"}]`) {
 		t.Fatalf("array nested model was rewritten: %s", rewritten)
+	}
+}
+
+func TestAdaptRelayKitRequestEscapesGeminiModelOnce(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		model           string
+		streaming       bool
+		wantPath        string
+		wantEscapedPath string
+		wantQuery       string
+	}{
+		{
+			name:            "space and slash",
+			model:           "vendor/real model",
+			wantPath:        "/v1beta/models/vendor/real model:generateContent",
+			wantEscapedPath: "/v1beta/models/vendor%2Freal%20model:generateContent",
+		},
+		{
+			name:            "plain streaming model",
+			model:           "gemini-2.5-flash",
+			streaming:       true,
+			wantPath:        "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+			wantEscapedPath: "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+			wantQuery:       "alt=sse",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+			if err := adaptRelayKitRequest(request, contract.ProtocolGoogleGenerateContent, test.streaming, test.model, []byte(`{"contents":[]}`)); err != nil {
+				t.Fatal(err)
+			}
+			if request.URL.Path != test.wantPath || request.URL.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("path = %q escaped = %q, want %q / %q", request.URL.Path, request.URL.EscapedPath(), test.wantPath, test.wantEscapedPath)
+			}
+			if request.URL.RawQuery != test.wantQuery {
+				t.Fatalf("query = %q, want %q", request.URL.RawQuery, test.wantQuery)
+			}
+			base, _ := url.Parse("https://upstream.example/v1beta")
+			if joined := transport.JoinTargetURL(base, request.URL); joined.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("joined path = %q, want %q", joined.EscapedPath(), test.wantEscapedPath)
+			}
+		})
+	}
+	// Other protocols keep a plain path with no stale escaped form.
+	request := httptest.NewRequest(http.MethodPost, "/v1beta/models/a%2Fb:generateContent", strings.NewReader(`{}`))
+	if err := adaptRelayKitRequest(request, contract.ProtocolOpenAIChat, false, "vendor/model", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if request.URL.Path != "/v1/chat/completions" || request.URL.RawPath != "" {
+		t.Fatalf("chat path = %q raw = %q", request.URL.Path, request.URL.RawPath)
 	}
 }

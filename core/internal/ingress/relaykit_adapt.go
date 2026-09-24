@@ -21,7 +21,7 @@ func adaptRelayKitRequest(
 	if model == "" {
 		return fmt.Errorf("relaykit upstream model is required")
 	}
-	path := ""
+	path, geminiSuffix := "", ""
 	query := url.Values{}
 	switch protocol {
 	case contract.ProtocolOpenAIChat:
@@ -34,16 +34,20 @@ func adaptRelayKitRequest(
 			request.Header.Set("anthropic-version", "2023-06-01")
 		}
 	case contract.ProtocolGoogleGenerateContent:
-		suffix := ":generateContent"
+		geminiSuffix = ":generateContent"
 		if streaming {
-			suffix = ":streamGenerateContent"
+			geminiSuffix = ":streamGenerateContent"
 			query.Set("alt", "sse")
 		}
-		path = "/v1beta/models/" + url.PathEscape(model) + suffix
 	default:
 		return fmt.Errorf("unsupported relaykit upstream protocol %q", protocol)
 	}
-	request.URL.Path, request.URL.RawPath, request.URL.RawQuery = path, "", query.Encode()
+	if geminiSuffix != "" {
+		setGeminiModelPath(request.URL, model, geminiSuffix)
+	} else {
+		request.URL.Path, request.URL.RawPath = path, ""
+	}
+	request.URL.RawQuery = query.Encode()
 	request.Header.Del("Accept-Encoding")
 	request.Header.Del("Content-Length")
 	request.Header.Set("Content-Type", "application/json")
