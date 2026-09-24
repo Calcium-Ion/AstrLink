@@ -498,7 +498,10 @@ function compactQuery(
   if (query.to !== undefined) compact.to = query.to;
   if (query.protocol !== undefined) compact.protocol = query.protocol;
   if (query.service_id !== undefined) compact.service_id = query.service_id;
-  if (query.local_access_token_ids !== undefined && query.local_access_token_ids.length > 0) {
+  if (
+    query.local_access_token_ids !== undefined &&
+    query.local_access_token_ids.length > 0
+  ) {
     compact.local_access_token_ids = query.local_access_token_ids;
   }
   if (query.status !== undefined) compact.status = query.status;
@@ -666,6 +669,31 @@ export async function revealAccessToken(
 export async function deleteAccessToken(tokenId: string): Promise<void> {
   requireNativeBridge();
   await invoke("delete_access_token", { tokenId });
+}
+
+export type CCSwitchClient =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "openclaw";
+
+export interface CCSwitchModels {
+  model?: string;
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
+}
+
+export async function openCCSwitchImport(input: {
+  tokenId: string;
+  client: CCSwitchClient;
+  name: string;
+  models: CCSwitchModels;
+  inferenceUrl: string;
+}): Promise<void> {
+  requireNativeBridge();
+  await invoke("open_cc_switch_import", input);
 }
 
 export async function listPrivacyPolicies(): Promise<PrivacyPolicyPage> {

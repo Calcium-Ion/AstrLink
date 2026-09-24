@@ -1,4 +1,5 @@
 mod agent_install;
+mod cc_switch;
 mod control_session;
 #[cfg(debug_assertions)]
 mod dev_reload;
@@ -1239,6 +1240,18 @@ async fn reveal_access_token(
 }
 
 #[tauri::command]
+async fn open_cc_switch_import(
+    token_id: String,
+    client: cc_switch::Client,
+    name: String,
+    models: cc_switch::Models,
+    inference_url: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<(), String> {
+    cc_switch::open_import(&manager, &token_id, client, &name, &models, &inference_url).await
+}
+
+#[tauri::command]
 async fn delete_access_token(
     token_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -1467,6 +1480,7 @@ pub fn run() {
             get_usage_summary,
             create_access_token,
             reveal_access_token,
+            open_cc_switch_import,
             delete_access_token,
             list_privacy_policies,
             get_privacy_policy,

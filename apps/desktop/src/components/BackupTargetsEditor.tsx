@@ -1,3 +1,4 @@
+import { ModelSelect } from "./ModelSelect";
 import { useT } from "../i18n";
 import type { RouteTarget } from "../route-model";
 import type { RoutableService } from "../service-model";
@@ -100,23 +101,15 @@ export function BackupTargetsEditor({
               </Select>
             </Field>
             <Field label={t("routes.upstreamModel")}>
-              <Select
+              <ModelSelect
+                aria-label={`${t("routes.upstreamModel")} ${index + 1}`}
                 value={target.upstream_model ?? ""}
+                options={service?.models ?? []}
+                allowCustomValue={false}
                 onValueChange={(upstream_model) =>
                   update(index, { upstream_model })
                 }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {service?.models.map((model) => (
-                    <SelectItem value={model} key={model}>
-                      {model}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              />
             </Field>
             <Field label={t("routes.planType")}>
               <Select

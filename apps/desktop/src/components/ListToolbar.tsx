@@ -21,6 +21,7 @@ export function ListToolbar({
   secondaryFilters,
   actions,
   help,
+  searchControl,
 }: {
   title: string;
   count: string | number;
@@ -34,6 +35,8 @@ export function ListToolbar({
   secondaryFilters?: ReactNode;
   actions?: ReactNode;
   help?: { label: string; content: ReactNode };
+  /** A domain-specific search control, such as the shared model picker. */
+  searchControl?: ReactNode;
 }) {
   return (
     <div
@@ -79,30 +82,34 @@ export function ListToolbar({
               : "flex-1 basis-48 @[560px]:max-w-72",
         )}
       >
-        <Search
-          aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
-        />
-        <Input
-          aria-label={searchLabel}
-          className="h-8 pr-8 pl-8 [&::-webkit-search-cancel-button]:appearance-none"
-          onChange={(event) => onQueryChange(event.currentTarget.value)}
-          placeholder={placeholder}
-          type="search"
-          value={query}
-        />
-        {query ? (
-          <Button
-            aria-label={clearLabel}
-            className="absolute top-1/2 right-1 -translate-y-1/2 text-muted-foreground"
-            onClick={() => onQueryChange("")}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <X aria-hidden="true" />
-          </Button>
-        ) : null}
+        {searchControl ?? (
+          <>
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              aria-label={searchLabel}
+              className="h-8 pr-8 pl-8 [&::-webkit-search-cancel-button]:appearance-none"
+              onChange={(event) => onQueryChange(event.currentTarget.value)}
+              placeholder={placeholder}
+              type="search"
+              value={query}
+            />
+            {query ? (
+              <Button
+                aria-label={clearLabel}
+                className="absolute top-1/2 right-1 -translate-y-1/2 text-muted-foreground"
+                onClick={() => onQueryChange("")}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                <X aria-hidden="true" />
+              </Button>
+            ) : null}
+          </>
+        )}
       </div>
       {secondaryFilters ? (
         <div className="min-w-0">{secondaryFilters}</div>

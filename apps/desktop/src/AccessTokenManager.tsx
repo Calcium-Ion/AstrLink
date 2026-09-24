@@ -48,6 +48,8 @@ import { i18n } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 import { startOfTodayIso } from "./usage-range";
+import { CCSwitchImportDialog } from "./CCSwitchImportDialog";
+import { CCSwitchIcon } from "@/components/CCSwitchIcon";
 
 export type AccessTokenCatalogStatus =
   | "blocked"
@@ -123,6 +125,9 @@ export function AccessTokenManager({
   );
   const [copyingID, setCopyingID] = useState<string | null>(null);
   const [copiedID, setCopiedID] = useState<string | null>(null);
+  const [importToken, setImportToken] = useState<AccessTokenSummary | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [usageByToken, setUsageByToken] = useWorkspaceSnapshot<
     Record<string, TokenUsageStats>
@@ -144,6 +149,7 @@ export function AccessTokenManager({
     setPendingDelete(null);
     setCopyingID(null);
     setCopiedID(null);
+    setImportToken(null);
     setError(null);
   }, [coreSessionKey]);
 
@@ -545,7 +551,26 @@ export function AccessTokenManager({
                         }
                       />
                     </div>
-                    <ActionGroup className="shrink-0 gap-1">
+                    <ActionGroup className="col-span-2 shrink-0 gap-1 @[560px]:col-span-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={
+                          !isReady ||
+                          catalog.status !== "ready" ||
+                          catalog.stale ||
+                          deletingID !== null ||
+                          !inferenceURL
+                        }
+                        onClick={() => setImportToken(token)}
+                        type="button"
+                        aria-label={t("ccSwitch.importToken", {
+                          name: token.name,
+                        })}
+                      >
+                        <CCSwitchIcon size={16} />
+                        CC Switch
+                      </Button>
                       <Button
                         className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
                         disabled={!isReady || deletingID !== null}
@@ -649,6 +674,18 @@ export function AccessTokenManager({
           </form>
         </DialogContent>
       </Dialog>
+      {importToken &&
+        isReady &&
+        catalog.status === "ready" &&
+        !catalog.stale &&
+        catalog.items.some((token) => token.id === importToken.id) && (
+          <CCSwitchImportDialog
+            key={`${coreSessionKey}:${inferenceURL}:${importToken.id}`}
+            token={importToken}
+            inferenceURL={inferenceURL}
+            onClose={() => setImportToken(null)}
+          />
+        )}
       <ConfirmDialog
         cancelLabel={t("common.cancel")}
         confirmLabel={

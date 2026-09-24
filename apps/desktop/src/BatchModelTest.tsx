@@ -1,3 +1,5 @@
+import { ModelSelect } from "./components/ModelSelect";
+import { ModelLabel } from "./components/ModelLabel";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { testService } from "./bridge";
 import { useT } from "./i18n";
@@ -192,6 +194,15 @@ export function BatchModelTest({
               count={models.length}
               query={query}
               onQueryChange={setQuery}
+              searchControl={
+                <ModelSelect
+                  aria-label={t("batchTest.search")}
+                  value={query}
+                  options={models}
+                  onValueChange={setQuery}
+                  placeholder={t("batchTest.search")}
+                />
+              }
               searchLabel={t("batchTest.search")}
               placeholder={t("batchTest.search")}
               clearLabel={t("common.clearSearch")}
@@ -373,12 +384,10 @@ export function BatchModelTest({
                             />
                           </TableCell>
                           <TableCell className="max-w-64">
-                            <span
-                              className="block truncate text-xs font-medium"
-                              title={model}
-                            >
-                              {model}
-                            </span>
+                            <ModelLabel
+                              className="text-xs font-medium"
+                              model={model}
+                            />
                           </TableCell>
                           <TableCell>
                             <StatusBadge tone={tone}>

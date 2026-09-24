@@ -9,6 +9,9 @@ const bridgeMocks = vi.hoisted(() => ({
   deleteAccessToken: vi.fn(),
   listAccessTokenUsage: vi.fn(),
   revealAccessToken: vi.fn(),
+  openCCSwitchImport: vi.fn(),
+  listServices: vi.fn(),
+  listRoutes: vi.fn(),
 }));
 
 vi.mock("./bridge", () => bridgeMocks);
@@ -96,6 +99,8 @@ describe("AccessTokenManager", () => {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
     bridgeMocks.listAccessTokenUsage.mockResolvedValue({ items: [] });
+    bridgeMocks.listServices.mockResolvedValue({ items: [] });
+    bridgeMocks.listRoutes.mockResolvedValue({ items: [] });
     container = document.createElement("div");
     document.body.append(container);
     reactRoot = createRoot(container);
@@ -151,6 +156,191 @@ describe("AccessTokenManager", () => {
     expect(container.textContent).not.toContain(secondSecret);
     expect(button("已复制", row(secondToken.name))).toBeTruthy();
     expect(button("复制", row(firstToken.name))).toBeTruthy();
+  });
+
+  it("fills CC Switch with the selected token and edited model without revealing its secret", async () => {
+    bridgeMocks.openCCSwitchImport.mockResolvedValueOnce(undefined);
+    await renderManager(readyCatalog([firstToken, secondToken]));
+    await act(async () => button("CC Switch", row(secondToken.name)).click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "Terminal",
+    );
+    expect(
+      document.querySelector<HTMLInputElement>("#cc-switch-model")?.value,
+    ).toBe("");
+    expect(button("填充到 CC Switch").disabled).toBe(false);
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[role="radio"][aria-label="Codex"]')
+        ?.click(),
+    );
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "http://127.0.0.1:8317/v1",
+    );
+    expect(button("填充到 CC Switch").disabled).toBe(true);
+    await setInput("#cc-switch-model", "my-route");
+    await act(async () => button("填充到 CC Switch").click());
+    expect(bridgeMocks.openCCSwitchImport).toHaveBeenCalledExactlyOnceWith({
+      tokenId: secondToken.id,
+      client: "codex",
+      name: "AstrLink · Terminal",
+      models: { model: "my-route" },
+      inferenceUrl: "http://127.0.0.1:8317",
+    });
+    expect(bridgeMocks.revealAccessToken).not.toHaveBeenCalled();
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("keeps failed imports retryable and hides native errors that may contain credentials", async () => {
+    bridgeMocks.openCCSwitchImport
+      .mockRejectedValueOnce(
+        new Error(`failed ccswitch://test?apiKey=${firstSecret}`),
+      )
+      .mockResolvedValueOnce(undefined);
+    await renderManager(readyCatalog([firstToken]));
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    await setInput("#cc-switch-model", "my-route");
+    await act(async () => button("填充到 CC Switch").click());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "无法打开 CC Switch",
+    );
+    expect(document.body.textContent).not.toContain(firstSecret);
+    await act(async () => button("填充到 CC Switch").click());
+    expect(bridgeMocks.openCCSwitchImport).toHaveBeenCalledTimes(2);
+  });
+
+  it("exports only the Claude model slots that were filled", async () => {
+    bridgeMocks.openCCSwitchImport.mockResolvedValueOnce(undefined);
+    await renderManager(readyCatalog([firstToken]));
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    expect(
+      document.querySelectorAll('[role="dialog"] input[role="combobox"]'),
+    ).toHaveLength(4);
+    await setInput("#cc-switch-haikuModel", "  ");
+    await setInput("#cc-switch-sonnetModel", " sonnet-route ");
+    await setInput("#cc-switch-opusModel", "opus-route");
+    await act(async () => button("填充到 CC Switch").click());
+    expect(bridgeMocks.openCCSwitchImport).toHaveBeenCalledExactlyOnceWith({
+      tokenId: firstToken.id,
+      client: "claude",
+      name: "AstrLink · VS Code",
+      models: { sonnetModel: "sonnet-route", opusModel: "opus-route" },
+      inferenceUrl: "http://127.0.0.1:8317",
+    });
+  });
+
+  it("allows all Claude model slots to be empty and keeps tier choices out of other clients", async () => {
+    bridgeMocks.openCCSwitchImport.mockResolvedValue(undefined);
+    await renderManager(readyCatalog([firstToken]));
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    await act(async () => button("填充到 CC Switch").click());
+    expect(bridgeMocks.openCCSwitchImport).toHaveBeenLastCalledWith(
+      expect.objectContaining({ models: {} }),
+    );
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    await setInput("#cc-switch-opusModel", "opus-route");
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[role="radio"][aria-label="Codex"]')!
+        .click(),
+    );
+    expect(button("填充到 CC Switch").disabled).toBe(true);
+    expect(document.querySelector("#cc-switch-opusModel")).toBeNull();
+    await setInput("#cc-switch-model", "codex-route");
+    await act(async () => button("填充到 CC Switch").click());
+    expect(bridgeMocks.openCCSwitchImport).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        client: "codex",
+        models: { model: "codex-route" },
+      }),
+    );
+  });
+
+  it("closes the import dialog when the Core session changes and blocks stale tokens", async () => {
+    await renderManager(readyCatalog([firstToken]));
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    await renderManager(
+      { ...readyCatalog([firstToken]), stale: true },
+      "session-2",
+    );
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(button("CC Switch", row(firstToken.name)).disabled).toBe(true);
+    expect(bridgeMocks.openCCSwitchImport).not.toHaveBeenCalled();
+  });
+
+  it("suggests compatible enabled models and route aliases for each CC Switch client", async () => {
+    const protocols = [
+      "anthropic.messages",
+      "openai.responses",
+      "google.generate_content",
+      "openai.chat",
+    ];
+    bridgeMocks.listServices.mockResolvedValue({
+      items: protocols
+        .map((protocol, index) => ({
+          enabled: true,
+          models: [`model-${index}`],
+          capabilities: [{ protocol }],
+        }))
+        .concat([
+          {
+            enabled: false,
+            models: ["disabled-model"],
+            capabilities: [{ protocol: "anthropic.messages" }],
+          },
+        ]),
+    });
+    bridgeMocks.listRoutes.mockResolvedValue({
+      items: [
+        {
+          enabled: true,
+          match: { protocol: "anthropic.messages", model: "team-route" },
+        },
+        {
+          enabled: true,
+          match: { protocol: "anthropic.messages", model: "*" },
+        },
+        {
+          enabled: false,
+          match: { protocol: "anthropic.messages", model: "disabled-route" },
+        },
+      ],
+    });
+    await renderManager(readyCatalog([firstToken]));
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    for (const [client, expected] of [
+      ["Claude Code", ["model-0", "team-route"]],
+      ["Codex", ["model-1"]],
+      ["Gemini CLI", ["model-2"]],
+      ["OpenCode", ["model-3"]],
+      ["OpenClaw", ["model-3"]],
+    ] as const) {
+      await act(async () =>
+        document
+          .querySelector<HTMLButtonElement>(
+            `[role="radio"][aria-label="${client}"]`,
+          )!
+          .click(),
+      );
+      await act(async () =>
+        document.querySelector<HTMLInputElement>("#cc-switch-model")!.click(),
+      );
+      const suggestions = [...document.querySelectorAll('[role="option"]')];
+      expect(
+        suggestions.map((option) => option.getAttribute("aria-label")),
+      ).toEqual(expected);
+      expect(suggestions.every((option) => option.querySelector("svg"))).toBe(
+        true,
+      );
+      await act(async () =>
+        document
+          .querySelector<HTMLInputElement>("#cc-switch-model")!
+          .dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+          ),
+      );
+    }
   });
 
   it("ignores a copy response from an old Core session", async () => {

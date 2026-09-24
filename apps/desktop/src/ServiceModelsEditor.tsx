@@ -1,3 +1,4 @@
+import { ModelSelect } from "./components/ModelSelect";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Plus, X } from "@/components/icons";
 import { useT } from "./i18n";
@@ -368,13 +369,13 @@ export function ServiceModelsEditor({
       </div>
 
       <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-2">
-        <Input
+        <ModelSelect
+          options={catalog}
           aria-label={t("models.searchConfigured")}
-          className="h-8 min-w-0 flex-[1_1_160px]"
+          className="min-w-0 flex-[1_1_160px]"
           placeholder={t("models.searchPlaceholder")}
-          type="search"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onValueChange={setQuery}
         />
         {onDiscoverModels ? (
           <Button

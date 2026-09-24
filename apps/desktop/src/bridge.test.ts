@@ -61,6 +61,7 @@ import {
   cancelServiceAuthorization,
   logoutService,
   openAuthorizationURL,
+  openCCSwitchImport,
   saveTextFile,
   getAgentDebugStatus,
   installAgentDebug,
@@ -590,6 +591,20 @@ describe("desktop bridge contract", () => {
       tokenId: "token_01",
     });
 
+    const ccSwitchInput = {
+      tokenId: "token_01",
+      client: "codex" as const,
+      name: "AstrLink",
+      models: { model: "gpt-5" },
+      inferenceUrl: "http://127.0.0.1:8317",
+    };
+    invokeMock.mockResolvedValueOnce(undefined);
+    await openCCSwitchImport(ccSwitchInput);
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "open_cc_switch_import",
+      ccSwitchInput,
+    );
+
     invokeMock.mockResolvedValueOnce(undefined);
     await deleteAccessToken("token_01");
     expect(invokeMock).toHaveBeenLastCalledWith("delete_access_token", {
@@ -970,7 +985,9 @@ describe("desktop bridge contract", () => {
       fresh: false,
     });
     invokeMock.mockResolvedValueOnce(usage);
-    await expect(getServiceUsage(service.id, { fresh: true })).resolves.toEqual(usage);
+    await expect(getServiceUsage(service.id, { fresh: true })).resolves.toEqual(
+      usage,
+    );
     expect(invokeMock).toHaveBeenLastCalledWith("get_service_usage", {
       serviceId: service.id,
       fresh: true,

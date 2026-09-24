@@ -206,7 +206,10 @@
   "settings": {
     "quotaDisplayMode": "订阅额度显示",
     "quotaDisplayHint": "应用于提供商列表、托盘面板和菜单栏。",
-    "quotaDisplayOptions": { "remaining": "剩余百分比", "used": "已用百分比" },
+    "quotaDisplayOptions": {
+      "remaining": "剩余百分比",
+      "used": "已用百分比"
+    },
     "theme": "外观",
     "themeOptions": {
       "system": "跟随系统",
@@ -2260,5 +2263,27 @@
     "testHint": "使用当前配置连接 {{target}}，不保存配置、不发送 API 密钥。",
     "testSuccess": "已收到 HTTP {{status}} 响应，耗时 {{latency}} ms。此测试不验证 API 权限。",
     "testFailed": "连接失败，请检查代理地址、认证信息和目标地址后重试。"
+  },
+  "ccSwitch": {
+    "title": "填充到 CC Switch",
+    "description": "选择客户端，带入连接配置，在 CC Switch 中确认导入。",
+    "client": "目标客户端",
+    "name": "供应商名称",
+    "model": "模型",
+    "modelHint": "可搜索当前客户端兼容的模型，或输入路由别名。",
+    "importToken": "将“{{name}}”填充到 CC Switch",
+    "open": "填充到 CC Switch",
+    "opening": "正在打开…",
+    "opened": "已请求打开 CC Switch，请在其中确认导入。",
+    "failed": "无法打开 CC Switch。请确认已安装并注册 ccswitch:// 协议，且网关和令牌仍可用，然后重试。",
+    "modelPlaceholder": "搜索或输入模型",
+    "token": "访问令牌",
+    "modelsLoading": "正在读取模型与路由…",
+    "modelsFailed": "部分模型未能读取，可手动输入模型 ID。",
+    "defaultModel": "默认 / 多模态模型（可选）",
+    "haikuModel": "Haiku（可选）",
+    "sonnetModel": "Sonnet（可选）",
+    "opusModel": "Opus（可选）",
+    "claudeModelHint": "按需填写；留空的模型项不会导入。"
   }
 }

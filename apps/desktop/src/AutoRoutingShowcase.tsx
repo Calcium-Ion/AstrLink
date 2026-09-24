@@ -1,3 +1,4 @@
+import { ModelSelect } from "./components/ModelSelect";
 import { RecoveryPathPicker } from "./components/RecoveryPathPicker";
 import { useRecoveryPaths } from "./use-recovery-paths";
 import { pathNodes, type RecoveryPathRecord } from "./recovery-path-model";
@@ -18,11 +19,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Field } from "@/components/Field";
 import { FormMessage } from "@/components/FormMessage";
-import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { Panel } from "@/components/Panel";
 import { SectionKicker } from "@/components/SectionKicker";
 import { Button } from "@/components/ui/button";
-import { Input, InputDatalist } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -771,31 +770,22 @@ export function AutoRoutingShowcase({
                               category: categoryLabel,
                             })}
                           >
-                            <Input
-                              list={`auto-models-${category.id}`}
+                            <ModelSelect
+                              aria-label={t("auto.modelFor", {
+                                category: categoryLabel,
+                              })}
+                              options={service?.models ?? []}
                               maxLength={256}
-                              onChange={(event) =>
+                              onValueChange={(model) =>
                                 updateCategory(category.id, (item) => ({
                                   ...item,
-                                  upstreamModel: event.target.value,
+                                  upstreamModel: model,
                                 }))
                               }
                               placeholder={t("auto.chooseModel")}
                               value={current.upstreamModel}
                             />
-                            <InputDatalist
-                              id={`auto-models-${category.id}`}
-                              options={service?.models ?? []}
-                            />
                           </Field>
-                          {current.upstreamModel ? (
-                            <p className="flex min-w-0 items-center gap-1 truncate text-micro text-muted-foreground">
-                              <ModelBrandIcon model={current.upstreamModel} />
-                              <span className="truncate">
-                                {current.upstreamModel}
-                              </span>
-                            </p>
-                          ) : null}
                           <BackupTargetsEditor
                             value={current.extraTargets}
                             protocol={protocol}

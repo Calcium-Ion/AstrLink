@@ -1406,7 +1406,6 @@
     "clearTokenFilter": "Clear selection",
     "selectedTokens": "{{count}} selected",
     "noAccessTokenResults": "No matching access tokens",
-
     "loadEarlier": "Load earlier records",
     "needCutoff": "Choose a purge cutoff time.",
     "confirmEnable": "Confirm enable",
@@ -2264,5 +2263,27 @@
     "testHint": "Connect to {{target}} with this draft without saving or sending an API key.",
     "testSuccess": "Received HTTP {{status}} in {{latency}} ms. This does not verify API access.",
     "testFailed": "Connection failed. Check the proxy address, authentication and target, then retry."
+  },
+  "ccSwitch": {
+    "title": "Fill in CC Switch",
+    "description": "Choose a client and review the connection in CC Switch before importing.",
+    "client": "Target client",
+    "name": "Provider name",
+    "model": "Model",
+    "modelHint": "Search compatible models or enter a route alias.",
+    "importToken": "Fill CC Switch with “{{name}}”",
+    "open": "Fill in CC Switch",
+    "opening": "Opening…",
+    "opened": "Requested CC Switch to open. Confirm the import there.",
+    "failed": "Unable to open CC Switch. Check that it is installed with the ccswitch:// protocol registered and that the gateway and token are still available, then retry.",
+    "modelPlaceholder": "Search or enter a model",
+    "token": "Access token",
+    "modelsLoading": "Loading models and routes…",
+    "modelsFailed": "Some models could not be loaded. You can enter a model ID.",
+    "defaultModel": "Default / multimodal (optional)",
+    "haikuModel": "Haiku (optional)",
+    "sonnetModel": "Sonnet (optional)",
+    "opusModel": "Opus (optional)",
+    "claudeModelHint": "All model fields are optional. Empty fields are omitted."
   }
 }

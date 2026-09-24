@@ -1421,7 +1421,7 @@ describe("ServiceManager", () => {
     )!;
     const suggestions = () =>
       [...document.querySelectorAll<HTMLElement>('[role="option"]')].map(
-        (option) => option.textContent,
+        (option) => option.getAttribute("aria-label"),
       );
     await act(async () => modelSearch.click());
     expect(suggestions()).toEqual(["claude-sonnet-4-5", "gpt-5", "gpt-5.4"]);

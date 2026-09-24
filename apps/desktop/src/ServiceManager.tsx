@@ -47,7 +47,7 @@ import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Combobox } from "@/components/ui/combobox";
+import { ModelSelect } from "@/components/ModelSelect";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -522,13 +522,13 @@ function ModelPreviewDialog({
         ) : null}
         {preview.models.length > 0 ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Input
-              className="h-8 min-w-0 flex-[1_1_160px]"
+            <ModelSelect
+              options={preview.models}
+              className="min-w-0 flex-[1_1_160px]"
               aria-label={t("services.searchUpstream")}
               placeholder={t("services.searchModels")}
-              type="search"
               value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
+              onValueChange={onQueryChange}
             />
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <Button
@@ -1540,7 +1540,7 @@ export function ServiceManager({
             placeholder={t("services.searchServicesPlaceholder")}
             clearLabel={t("common.clearSearch")}
             secondaryFilters={
-              <Combobox
+              <ModelSelect
                 aria-label={t("services.filterModel")}
                 clearLabel={t("common.clearSearch")}
                 emptyMessage={t("services.noModelSuggestions")}

@@ -20,7 +20,7 @@ import {
   SlidersHorizontal,
 } from "./components/icons";
 import { Button } from "./components/ui/button";
-import { Combobox } from "./components/ui/combobox";
+import { ModelSelect } from "./components/ModelSelect";
 import { Label } from "./components/ui/label";
 import { Textarea } from "./components/ui/textarea";
 import { Switch } from "./components/ui/switch";
@@ -73,7 +73,7 @@ function TestSettings({
     <div className="grid gap-4">
       {showModel ? (
         <Field label={t("serviceTest.model")} htmlFor={`${id}-model`}>
-          <Combobox
+          <ModelSelect
             id={`${id}-model`}
             aria-label={t("serviceTest.model")}
             value={model}

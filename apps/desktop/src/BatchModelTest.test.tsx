@@ -68,7 +68,7 @@ async function open(models = service.models) {
 }
 async function search(value: string) {
   const input = batch().querySelector<HTMLInputElement>(
-    'input[type="search"]',
+    'input[aria-label="搜索或输入模型 ID"]',
   )!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(

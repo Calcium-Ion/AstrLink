@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { Check, ChevronDown, X } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,10 @@ export function Combobox({
   maxLength,
   emptyMessage,
   clearLabel,
+  className,
+  leadingIcon,
+  renderOption,
+  allowCustomValue = true,
   "aria-label": ariaLabel,
 }: {
   id?: string;
@@ -33,6 +37,10 @@ export function Combobox({
   emptyMessage: string;
   /** Shows a clear button while the field has a value. */
   clearLabel?: string;
+  className?: string;
+  leadingIcon?: ReactNode;
+  renderOption?: (option: string) => ReactNode;
+  allowCustomValue?: boolean;
   "aria-label": string;
 }) {
   const generatedId = useId();
@@ -84,7 +92,19 @@ export function Combobox({
   return (
     <Popover open={expanded} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        <div ref={anchorRef} className="relative min-w-0" data-slot="combobox">
+        <div
+          ref={anchorRef}
+          className={cn("relative min-w-0", className)}
+          data-slot="combobox"
+        >
+          {leadingIcon ? (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-2.5 top-1/2 z-10 inline-flex -translate-y-1/2 text-muted-foreground"
+            >
+              {leadingIcon}
+            </span>
+          ) : null}
           <Input
             ref={inputRef}
             id={id ?? generatedId}
@@ -99,8 +119,8 @@ export function Combobox({
                 : undefined
             }
             autoComplete="off"
-            className={clearable ? "pr-14" : "pr-9"}
-            value={value}
+            className={cn(clearable ? "pr-14" : "pr-9", leadingIcon && "pl-8")}
+            value={!allowCustomValue && expanded ? query : value}
             disabled={disabled}
             placeholder={placeholder}
             maxLength={maxLength}
@@ -108,7 +128,7 @@ export function Combobox({
               if (!expanded) showOptions();
             }}
             onChange={(event) => {
-              onValueChange(event.target.value);
+              if (allowCustomValue) onValueChange(event.target.value);
               setQuery(event.target.value);
               setActiveIndex(-1);
               setOpen(true);
@@ -207,6 +227,7 @@ export function Combobox({
               key={option}
               id={`${listId}-${index}`}
               role="option"
+              aria-label={option}
               aria-selected={value === option}
               data-option-index={index}
               title={option}
@@ -218,7 +239,9 @@ export function Combobox({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => choose(option)}
             >
-              <span className="min-w-0 flex-1 break-all">{option}</span>
+              <span className="min-w-0 flex-1 break-all">
+                {renderOption ? renderOption(option) : option}
+              </span>
               {value === option ? (
                 <Check aria-hidden="true" className="size-3.5 shrink-0" />
               ) : null}

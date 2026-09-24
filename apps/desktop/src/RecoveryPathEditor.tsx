@@ -1,3 +1,4 @@
+import { ModelSelect } from "./components/ModelSelect";
 import { useEffect, useMemo, useState } from "react";
 import {
   createRecoveryPath,
@@ -18,7 +19,7 @@ import type { RoutableService } from "./service-model";
 import { protocolLabel } from "./service-presets";
 import { useT } from "./i18n";
 import { Button } from "./components/ui/button";
-import { Input, InputDatalist } from "./components/ui/input";
+import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { Switch } from "./components/ui/switch";
 import { Field } from "./components/Field";
@@ -410,20 +411,17 @@ export function RecoveryPathEditor({
                           />
                         </Field>
                         <Field label={t("paths.model")}>
-                          <Input
-                            list={`path-model-${node.id}`}
+                          <ModelSelect
+                            aria-label={`${t("paths.model")} ${index + 1}`}
+                            options={service?.models ?? []}
                             value={node.upstream_model ?? ""}
                             maxLength={256}
                             placeholder={t("paths.sameModel")}
-                            onChange={(event) =>
+                            onValueChange={(model) =>
                               updateNode(node.id, {
-                                upstream_model: event.target.value || undefined,
+                                upstream_model: model || undefined,
                               })
                             }
-                          />
-                          <InputDatalist
-                            id={`path-model-${node.id}`}
-                            options={service?.models ?? []}
                           />
                         </Field>
                       </div>
@@ -630,10 +628,11 @@ export function RecoveryPathEditor({
                   />
                 </Field>
                 <Field label={t("paths.requestModel")}>
-                  <Input
+                  <ModelSelect
+                    aria-label={t("paths.requestModel")}
+                    options={services.flatMap((service) => service.models)}
                     value={requestModel}
-                    placeholder="gpt-5.2"
-                    onChange={(event) => setRequestModel(event.target.value)}
+                    onValueChange={setRequestModel}
                   />
                 </Field>
                 <Field label="Retry-After">
