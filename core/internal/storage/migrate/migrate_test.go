@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,11 +32,13 @@ func (database *fakeDatabase) Begin(context.Context) (Transaction, error) {
 
 type fakeTransaction struct {
 	currentVersion int64
-	rowErr         error
-	failContains   string
-	execCalls      []execCall
-	committed      bool
-	rolledBack     bool
+	// recorded holds the schema_migrations rows through currentVersion.
+	recorded     map[int64]string
+	rowErr       error
+	failContains string
+	execCalls    []execCall
+	committed    bool
+	rolledBack   bool
 }
 
 func (transaction *fakeTransaction) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
@@ -46,8 +49,22 @@ func (transaction *fakeTransaction) ExecContext(_ context.Context, query string,
 	return nil, nil
 }
 
-func (transaction *fakeTransaction) QueryRowContext(context.Context, string, ...any) Row {
-	return fakeRow{value: transaction.currentVersion, err: transaction.rowErr}
+func (transaction *fakeTransaction) QueryRowContext(_ context.Context, query string, args ...any) Row {
+	if transaction.rowErr != nil {
+		return fakeRow{err: transaction.rowErr}
+	}
+	switch {
+	case strings.Contains(query, "COUNT(*)"):
+		return fakeRow{value: int64(len(transaction.recorded))}
+	case strings.Contains(query, "WHERE version = ?"):
+		name, ok := transaction.recorded[args[0].(int64)]
+		if !ok {
+			return fakeRow{err: sql.ErrNoRows}
+		}
+		return fakeRow{value: name}
+	default:
+		return fakeRow{value: transaction.currentVersion}
+	}
 }
 
 func (transaction *fakeTransaction) Commit() error {
@@ -61,7 +78,7 @@ func (transaction *fakeTransaction) Rollback() error {
 }
 
 type fakeRow struct {
-	value int64
+	value any
 	err   error
 }
 
@@ -72,11 +89,22 @@ func (row fakeRow) Scan(destinations ...any) error {
 	if len(destinations) != 1 {
 		return errors.New("unexpected destination count")
 	}
-	destination, ok := destinations[0].(*int64)
-	if !ok {
+	switch destination := destinations[0].(type) {
+	case *int64:
+		value, ok := row.value.(int64)
+		if !ok {
+			return errors.New("unexpected integer value")
+		}
+		*destination = value
+	case *string:
+		value, ok := row.value.(string)
+		if !ok {
+			return errors.New("unexpected text value")
+		}
+		*destination = value
+	default:
 		return errors.New("unexpected destination type")
 	}
-	*destination = row.value
 	return nil
 }
 
@@ -115,7 +143,7 @@ func TestRunnerAppliesMigrationsInOrderAndRecordsThem(t *testing.T) {
 }
 
 func TestRunnerSkipsAlreadyAppliedMigrations(t *testing.T) {
-	transaction := &fakeTransaction{currentVersion: 1}
+	transaction := &fakeTransaction{currentVersion: 1, recorded: map[int64]string{1: "one"}}
 	runner, err := New(&fakeDatabase{transaction: transaction}, []Migration{
 		{Version: 1, Name: "one", Statements: []string{"CREATE TABLE one (id INTEGER)"}},
 		{Version: 2, Name: "two", Statements: []string{"CREATE TABLE two (id INTEGER)"}},
@@ -165,6 +193,43 @@ func TestRunnerRejectsNewerDatabase(t *testing.T) {
 	}
 	if !transaction.rolledBack {
 		t.Fatal("newer database transaction was not rolled back")
+	}
+}
+
+func TestRunnerRejectsMismatchedMigrationHistory(t *testing.T) {
+	migrations := []Migration{
+		{Version: 1, Name: "one", Statements: []string{"CREATE TABLE one (id INTEGER)"}},
+		{Version: 3, Name: "three", Statements: []string{"CREATE TABLE three (id INTEGER)"}},
+		{Version: 4, Name: "four", Statements: []string{"CREATE TABLE four (id INTEGER)"}},
+	}
+	for _, test := range []struct {
+		name     string
+		recorded map[int64]string
+		want     string
+	}{
+		{"renamed", map[int64]string{1: "one", 3: "other"}, `migration 3 is recorded as "other", want "three"`},
+		{"missing", map[int64]string{3: "three"}, "migration 1 (one) is not recorded"},
+		{"unknown", map[int64]string{1: "one", 2: "two", 3: "three"}, "3 migrations are recorded through version 3, want 2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transaction := &fakeTransaction{currentVersion: 3, recorded: test.recorded}
+			runner, err := New(&fakeDatabase{transaction: transaction}, migrations)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = runner.Up(context.Background())
+			if !errors.Is(err, ErrMigrationHistory) || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Up error = %v, want ErrMigrationHistory containing %q", err, test.want)
+			}
+			if transaction.committed || !transaction.rolledBack {
+				t.Fatalf("committed=%t rolledBack=%t", transaction.committed, transaction.rolledBack)
+			}
+			for _, call := range transaction.execCalls {
+				if strings.Contains(call.query, "TABLE four") || strings.Contains(call.query, "INSERT INTO schema_migrations") {
+					t.Fatalf("mismatched history still migrated: %#v", call)
+				}
+			}
+		})
 	}
 }
 
@@ -818,5 +883,58 @@ func TestPassthroughCapabilityModesMergeToNative(t *testing.T) {
 	}
 	if delegatedTargets != 0 {
 		t.Fatalf("delegated route targets=%d, want 0", delegatedTargets)
+	}
+}
+
+// A development build once recorded request_model_redirect as migration 34.
+// After rebasing onto privacy_tool_declaration_defaults, Up must reject that
+// database unchanged instead of skipping 34 and re-adding the column in 35.
+func TestDefaultMigrationsRejectAnotherBuildsMigrationUnderTakenVersion(t *testing.T) {
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	migrations := DefaultMigrations()
+	index := map[string]int{}
+	for position, migration := range migrations {
+		index[migration.Name] = position
+	}
+	privacy, privacyOK := index["privacy_tool_declaration_defaults"]
+	redirect, redirectOK := index["request_model_redirect"]
+	if !privacyOK || !redirectOK || redirect != privacy+1 {
+		t.Fatalf("privacy=%d redirect=%d, want consecutive migrations", privacy, redirect)
+	}
+	otherBuild := append([]Migration(nil), migrations[:privacy]...)
+	otherBuild = append(otherBuild, Migration{
+		Version:    migrations[privacy].Version,
+		Name:       migrations[redirect].Name,
+		Statements: migrations[redirect].Statements,
+	})
+	otherRunner, err := New(SQLDatabase{DB: database}, otherBuild)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := otherRunner.Up(context.Background()); err != nil {
+		t.Fatalf("migrate as the other build: %v", err)
+	}
+
+	runner, err := New(SQLDatabase{DB: database}, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runner.Up(context.Background())
+	want := fmt.Sprintf("migration %d is recorded as %q, want %q", migrations[privacy].Version, migrations[redirect].Name, migrations[privacy].Name)
+	if !errors.Is(err, ErrMigrationHistory) || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Up error = %v, want ErrMigrationHistory containing %q", err, want)
+	}
+	var version int64
+	var name string
+	if err := database.QueryRow(`SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&version, &name); err != nil {
+		t.Fatal(err)
+	}
+	if version != migrations[privacy].Version || name != migrations[redirect].Name {
+		t.Fatalf("latest recorded migration = %d %s, want the other build's record unchanged", version, name)
 	}
 }

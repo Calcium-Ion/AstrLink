@@ -12,7 +12,12 @@ import (
 	"time"
 )
 
-var ErrDatabaseNewer = errors.New("database schema is newer than this core")
+var (
+	ErrDatabaseNewer = errors.New("database schema is newer than this core")
+	// ErrMigrationHistory reports applied migrations that differ from this
+	// core's, such as another build's migration recorded under a taken version.
+	ErrMigrationHistory = errors.New("database migration history differs from this core")
+)
 
 const createMigrationsTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -139,6 +144,9 @@ func (runner *Runner) Up(ctx context.Context) (err error) {
 	if currentVersion > latestVersion {
 		return fmt.Errorf("%w: database=%d core=%d", ErrDatabaseNewer, currentVersion, latestVersion)
 	}
+	if err = runner.verifyHistory(ctx, transaction, currentVersion); err != nil {
+		return err
+	}
 
 	for _, migration := range runner.migrations {
 		if migration.Version <= currentVersion {
@@ -162,6 +170,37 @@ func (runner *Runner) Up(ctx context.Context) (err error) {
 	}
 	if err = transaction.Commit(); err != nil {
 		return fmt.Errorf("commit migrations: %w", err)
+	}
+	return nil
+}
+
+// verifyHistory requires the database to record exactly this core's migrations
+// through currentVersion. Up skips by version alone, so a recorded migration
+// with another name would otherwise hide the one this core owns at that version.
+func (runner *Runner) verifyHistory(ctx context.Context, transaction Transaction, currentVersion int64) error {
+	var expected int64
+	for _, migration := range runner.migrations {
+		if migration.Version > currentVersion {
+			break
+		}
+		expected++
+		var name string
+		err := transaction.QueryRowContext(ctx, `SELECT name FROM schema_migrations WHERE version = ?`, migration.Version).Scan(&name)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("%w: migration %d (%s) is not recorded", ErrMigrationHistory, migration.Version, migration.Name)
+		case err != nil:
+			return fmt.Errorf("read recorded migration %d: %w", migration.Version, err)
+		case name != migration.Name:
+			return fmt.Errorf("%w: migration %d is recorded as %q, want %q", ErrMigrationHistory, migration.Version, name, migration.Name)
+		}
+	}
+	var recorded int64
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&recorded); err != nil {
+		return fmt.Errorf("count recorded migrations: %w", err)
+	}
+	if recorded != expected {
+		return fmt.Errorf("%w: %d migrations are recorded through version %d, want %d", ErrMigrationHistory, recorded, currentVersion, expected)
 	}
 	return nil
 }
