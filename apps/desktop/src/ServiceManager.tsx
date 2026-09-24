@@ -692,6 +692,10 @@ export function ServiceManager({
     >
   >("service-usage", {});
   const [usageEpoch, setUsageEpoch] = useState(0);
+  const [refreshingUsageIDs, setRefreshingUsageIDs] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const pendingUsageIDs = useRef(new Set<string>());
   const [testingService, setTestingService] = useState<Service | null>(null);
   const [billingService, setBillingService] = useState<string | null>(null);
   const copyFeedback = useCopyFeedback();
@@ -714,7 +718,48 @@ export function ServiceManager({
     [services],
   );
 
+  const loadServiceUsage = useCallback(
+    async (id: string, fresh: boolean) => {
+      if (pendingUsageIDs.current.has(id)) return;
+      const generation = usageGeneration.current;
+      pendingUsageIDs.current.add(id);
+      setRefreshingUsageIDs((current) => new Set(current).add(id));
+      try {
+        const usage = await getServiceUsage(id, { fresh });
+        if (usageGeneration.current !== generation) return;
+        setUsageByService((current) => ({
+          ...current,
+          [id]: { status: "ready", usage },
+        }));
+      } catch (cause) {
+        const message = formatSubscriptionUsageError(cause);
+        console.error("AstrLink failed to load subscription usage", id, cause);
+        if (usageGeneration.current !== generation) return;
+        setUsageByService((current) => ({
+          ...current,
+          [id]: {
+            status: "error",
+            usage: current[id]?.usage,
+            error: message,
+          },
+        }));
+      } finally {
+        if (usageGeneration.current === generation) {
+          pendingUsageIDs.current.delete(id);
+          setRefreshingUsageIDs((current) => {
+            const next = new Set(current);
+            next.delete(id);
+            return next;
+          });
+        }
+      }
+    },
+    [setUsageByService],
+  );
+
   useEffect(() => {
+    pendingUsageIDs.current.clear();
+    setRefreshingUsageIDs(new Set());
     if (view.kind !== "list" || !isReady) return;
     const ids = connectedUsageIDs === "" ? [] : connectedUsageIDs.split("\0");
     const generation = usageGeneration.current + 1;
@@ -739,38 +784,18 @@ export function ServiceManager({
     // epoch is the operator pressing refresh or resetting a window, and they
     // expect the provider's current numbers.
     const fresh = usageEpoch > 0;
-    void Promise.all(
-      ids.map(async (id) => {
-        try {
-          const usage = await getServiceUsage(id, { fresh });
-          if (usageGeneration.current !== generation) return;
-          setUsageByService((current) => ({
-            ...current,
-            [id]: { status: "ready", usage },
-          }));
-        } catch (cause) {
-          const message = formatSubscriptionUsageError(cause);
-          console.error(
-            "AstrLink failed to load subscription usage",
-            id,
-            cause,
-          );
-          if (usageGeneration.current !== generation) return;
-          setUsageByService((current) => ({
-            ...current,
-            [id]: {
-              status: "error",
-              usage: current[id]?.usage,
-              error: message,
-            },
-          }));
-        }
-      }),
-    );
+    void Promise.all(ids.map((id) => loadServiceUsage(id, fresh)));
     return () => {
       usageGeneration.current += 1;
     };
-  }, [connectedUsageIDs, isReady, usageEpoch, view.kind, setUsageByService]);
+  }, [
+    connectedUsageIDs,
+    isReady,
+    usageEpoch,
+    view.kind,
+    setUsageByService,
+    loadServiceUsage,
+  ]);
 
   const dirty =
     view.kind !== "list" &&
@@ -1765,6 +1790,13 @@ export function ServiceManager({
                             <SubscriptionUsageMeter
                               error={usageByService[service.id]?.error}
                               now={new Date()}
+                              onRefresh={
+                                isReady
+                                  ? () =>
+                                      void loadServiceUsage(service.id, true)
+                                  : undefined
+                              }
+                              refreshing={refreshingUsageIDs.has(service.id)}
                               status={
                                 usageByService[service.id]?.status ?? "loading"
                               }

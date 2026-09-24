@@ -9,11 +9,13 @@ export function SubscriptionQuotaMeter({
   caption,
   usedPercent,
   limitReached,
+  compact = false,
 }: {
   label: string;
   caption?: string | null;
   usedPercent: number;
   limitReached?: boolean;
+  compact?: boolean;
 }) {
   const t = useT();
   const mode = useQuotaDisplayMode();
@@ -23,6 +25,7 @@ export function SubscriptionQuotaMeter({
   return (
     <UsageMeter
       caption={caption}
+      compact={compact}
       label={label}
       value={value}
       valueLabel={t(

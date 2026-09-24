@@ -1,6 +1,7 @@
-import { RotateCcw } from "@/components/icons";
+import { RefreshCw, RotateCcw } from "@/components/icons";
 import { useT } from "./i18n";
 
+import { IconButton } from "@/components/IconButton";
 import { Button } from "@/components/ui/button";
 import { SubscriptionQuotaMeter } from "@/components/SubscriptionQuotaMeter";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
@@ -25,11 +26,15 @@ export type SubscriptionUsageStatus = "loading" | "ready" | "error";
 export function SubscriptionUsageMeter({
   error,
   now,
+  onRefresh,
+  refreshing = false,
   status,
   usage,
 }: {
   error?: string;
   now: Date;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   status: SubscriptionUsageStatus;
   usage?: SubscriptionUsage;
 }) {
@@ -48,16 +53,39 @@ export function SubscriptionUsageMeter({
   }
   if (status === "error" && !usage) {
     return (
-      <div data-testid="subscription-usage">
+      <div
+        className="flex min-w-0 items-start gap-1 [&_summary]:min-h-5.5"
+        data-testid="subscription-usage"
+      >
         {error ? (
           <HelpDisclosure title={t("usage.readFailed")} tone="warning">
             <p className="text-micro break-all">{error}</p>
           </HelpDisclosure>
         ) : (
-          <p className="text-xs text-warning-foreground">
+          <p className="flex min-h-5.5 items-center text-xs text-warning-foreground">
             {t("usage.readFailed")}
           </p>
         )}
+        {onRefresh ? (
+          <IconButton
+            aria-busy={refreshing || undefined}
+            className="text-muted-foreground"
+            disabled={refreshing}
+            label={refreshing ? t("common.refreshing") : t("common.refresh")}
+            onClick={onRefresh}
+            size="icon-xs"
+            type="button"
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={
+                refreshing
+                  ? "animate-spin motion-reduce:animate-none"
+                  : undefined
+              }
+            />
+          </IconButton>
+        ) : null}
       </div>
     );
   }
@@ -67,14 +95,16 @@ export function SubscriptionUsageMeter({
   return (
     <div className="grid min-w-0 gap-2" data-testid="subscription-usage">
       {usage.primary || usage.secondary ? (
-        <div className="grid gap-2.5">
+        <div className="grid gap-2">
           <UsageWindowRow
+            compact={Boolean(usage.primary && usage.secondary)}
             limitReached={usage.limit_reached}
             now={now}
             window={usage.primary}
             isSecondary={false}
           />
           <UsageWindowRow
+            compact={Boolean(usage.primary && usage.secondary)}
             limitReached={usage.limit_reached}
             now={now}
             window={usage.secondary}
@@ -154,8 +184,18 @@ function AdditionalLimitRows({
       <p className="text-micro font-medium text-muted-foreground break-words [overflow-wrap:anywhere]">
         {extra.limit_name}
       </p>
-      <UsageWindowRow now={now} window={extra.primary} isSecondary={false} />
-      <UsageWindowRow now={now} window={extra.secondary} isSecondary />
+      <UsageWindowRow
+        compact={Boolean(extra.primary && extra.secondary)}
+        now={now}
+        window={extra.primary}
+        isSecondary={false}
+      />
+      <UsageWindowRow
+        compact={Boolean(extra.primary && extra.secondary)}
+        now={now}
+        window={extra.secondary}
+        isSecondary
+      />
     </>
   );
 }
@@ -217,11 +257,13 @@ function QuotaRow({
 }
 
 function UsageWindowRow({
+  compact = false,
   isSecondary,
   limitReached,
   now,
   window,
 }: {
+  compact?: boolean;
   isSecondary: boolean;
   limitReached?: boolean;
   now: Date;
@@ -236,6 +278,7 @@ function UsageWindowRow({
     <div data-tone={tone}>
       <SubscriptionQuotaMeter
         caption={reset}
+        compact={compact}
         label={label}
         limitReached={limitReached}
         usedPercent={usedPercent}

@@ -1584,6 +1584,116 @@ describe("ServiceManager", () => {
     },
   );
 
+  it.each(["ready", "error"] as const)(
+    "retries only the failed quota, prevents duplicate requests, and handles %s",
+    async (outcome) => {
+      const connected = [codexService, secondCodexService].map((service) => ({
+        ...service,
+        subscription: {
+          ...service.subscription!,
+          status: "connected" as const,
+        },
+      }));
+      let resolveOther!: (usage: SubscriptionUsage) => void;
+      let resolveRetry!: (usage: SubscriptionUsage) => void;
+      let rejectRetry!: (cause: Error) => void;
+      bridgeMocks.getServiceUsage
+        .mockRejectedValueOnce(new Error("Quota temporarily unavailable"))
+        .mockImplementationOnce(
+          () =>
+            new Promise<SubscriptionUsage>((resolve) => {
+              resolveOther = resolve;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<SubscriptionUsage>((resolve, reject) => {
+              resolveRetry = resolve;
+              rejectRetry = reject;
+            }),
+        );
+      const onRefresh = vi.fn();
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await act(async () => {
+          root.render(
+            <ServiceManager
+              catalogError={null}
+              catalogStatus="ready"
+              isReady
+              onDirtyChange={() => {}}
+              onRefresh={onRefresh}
+              onServiceRemoved={() => {}}
+              onServiceSaved={() => {}}
+              onViewChange={() => {}}
+              protocols={[]}
+              services={connected}
+              view={{ kind: "list" }}
+            />,
+          );
+        });
+        const failedRow = container.querySelector(
+          '[data-testid="service-card"][aria-label="Codex personal"]',
+        )!;
+        const refresh = failedRow.querySelector<HTMLButtonElement>(
+          'button[aria-label="刷新"]',
+        )!;
+        expect(refresh).not.toBeNull();
+        await act(async () => {
+          refresh.click();
+          refresh.click();
+        });
+        expect(bridgeMocks.getServiceUsage).toHaveBeenCalledTimes(3);
+        expect(bridgeMocks.getServiceUsage).toHaveBeenLastCalledWith(
+          connected[0].id,
+          { fresh: true },
+        );
+        expect(onRefresh).not.toHaveBeenCalled();
+        expect(refresh.disabled).toBe(true);
+        expect(refresh.getAttribute("aria-label")).toBe("刷新中…");
+        expect(refresh.querySelector(".animate-spin")).not.toBeNull();
+        expect(failedRow.textContent).toContain("无法读取额度");
+        expect(failedRow.querySelector("details")?.open).toBe(false);
+
+        // Retrying one row must not invalidate another row's in-flight request.
+        await act(async () => {
+          resolveOther({
+            service_id: connected[1].id,
+            fetched_at: timestamp,
+            secondary: { used_percent: 20, limit_window_seconds: 604_800 },
+          });
+          if (outcome === "ready") {
+            resolveRetry({
+              service_id: connected[0].id,
+              fetched_at: timestamp,
+              secondary: { used_percent: 30, limit_window_seconds: 604_800 },
+            });
+          } else {
+            rejectRetry(new Error("Provider is still unavailable"));
+          }
+        });
+        expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(
+          outcome === "ready" ? 2 : 1,
+        );
+        if (outcome === "ready") {
+          expect(failedRow.textContent).not.toContain("无法读取额度");
+          expect(
+            failedRow.querySelector('button[aria-label="刷新"]'),
+          ).toBeNull();
+        } else {
+          expect(failedRow.textContent).toContain(
+            "Provider is still unavailable",
+          );
+          expect(refresh.disabled).toBe(false);
+          expect(refresh.getAttribute("aria-label")).toBe("刷新");
+          expect(refresh.querySelector(".animate-spin")).toBeNull();
+        }
+      } finally {
+        logged.mockRestore();
+      }
+    },
+  );
+
   it("shows the provider plan quota on Kimi and New API key rows", async () => {
     const kimi: Service = {
       id: "service_kimi_plan",
