@@ -20,25 +20,18 @@ type channelBindingAttempt struct {
 // Consume the SAME session resolution as request records (including echo ids
 // and keyed fingerprints). Binding isolation is stricter than record grouping:
 // two principals sharing an explicit conversation id never share preferences.
-func (handler *Handler) prepareChannelBinding(ctx context.Context, session *recordSession) *channelBindingAttempt {
+func (handler *Handler) prepareChannelBinding(session *recordSession, settings contract.RoutingSettings, loaded bool) *channelBindingAttempt {
 	if session == nil || session.classified.Protocol.IsModelDiscovery() {
 		return nil
 	}
 	if _, ok := convoProtocol(session.classified.Protocol); !ok {
 		return nil
 	}
-	settingsStore, ok := handler.requestRecords.(storage.RoutingSettingsStore)
-	if !ok {
-		return nil
-	}
 	store, ok := handler.requestRecords.(storage.ChannelBindingStore)
 	if !ok {
 		return nil
 	}
-	lookup, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-	defer cancel()
-	settings, err := settingsStore.GetRoutingSettings(lookup)
-	if err != nil || settings.ChannelStickiness == nil || !settings.ChannelStickiness.Enabled {
+	if !loaded || settings.ChannelStickiness == nil || !settings.ChannelStickiness.Enabled {
 		return nil
 	}
 	protocol := session.classified.Protocol
@@ -53,7 +46,23 @@ func (handler *Handler) prepareChannelBinding(ctx context.Context, session *reco
 	if session.sessionLink != nil {
 		source = string(session.sessionLink.Kind)
 	}
-	return &channelBindingAttempt{store: store, scope: contract.ChannelBindingScope{SessionID: session.sessionID, Principal: principal, Protocol: protocol, Model: session.classified.Model}, ttl: time.Duration(settings.ChannelStickiness.TTLSeconds) * time.Second, source: source}
+	return &channelBindingAttempt{store: store, scope: contract.ChannelBindingScope{SessionID: session.sessionID, Principal: principal, Protocol: protocol, Model: session.classified.routingModel()}, ttl: time.Duration(settings.ChannelStickiness.TTLSeconds) * time.Second, source: source}
+}
+
+// loadRoutingSettings reads the persisted routing settings for one request.
+// A store without routing settings means defaults (loaded=false). A failed
+// read is returned, like the resolver's own read, so callers can fail closed
+// instead of silently skipping model redirects.
+func (handler *Handler) loadRoutingSettings(ctx context.Context) (contract.RoutingSettings, bool, error) {
+	settingsStore, ok := handler.requestRecords.(storage.RoutingSettingsStore)
+	if !ok {
+		return contract.RoutingSettings{}, false, nil
+	}
+	settings, err := settingsStore.GetRoutingSettings(ctx)
+	if err != nil {
+		return contract.RoutingSettings{}, false, err
+	}
+	return settings, true, nil
 }
 
 func (handler *Handler) preferChannelBinding(request *http.Request, session *recordSession, candidates []endpoint.Resolved) []endpoint.Resolved {

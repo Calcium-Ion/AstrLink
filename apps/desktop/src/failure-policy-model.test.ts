@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   defaultFailurePolicy,
   identitySettingKeys,
+  modelRedirectIssues,
   parseFailurePolicy,
   parseFailoverPolicy,
   parseRoutingSettings,
+  type ModelRedirect,
 } from "./failure-policy-model";
 
 describe("failure policies", () => {
@@ -104,5 +106,94 @@ describe("failure policies", () => {
         max_attempts: 21,
       }),
     ).toThrow();
+  });
+
+  describe("model redirects", () => {
+    const settings = {
+      default_failure_policy: defaultFailurePolicy(),
+      allow_unmatched_failover: true,
+      strategy: "failover_only",
+      max_attempts: 6,
+    };
+    const rule = (from: string, to: string, enabled = true) => ({
+      from,
+      to,
+      enabled,
+    });
+
+    it("parses an absent list as empty and preserves saved rules in order", () => {
+      expect(parseRoutingSettings(settings).model_redirects).toEqual([]);
+      const model_redirects = [
+        rule("gpt-4o", "gpt-5"),
+        rule("astrlink/auto", "claude-sonnet-4-5", false),
+      ];
+      expect(
+        parseRoutingSettings({ ...settings, model_redirects }).model_redirects,
+      ).toEqual(model_redirects);
+      expect(
+        parseRoutingSettings({
+          ...settings,
+          model_redirects: Array.from({ length: 200 }, (_, index) =>
+            rule(`model-${index}`, "gpt-5"),
+          ),
+        }).model_redirects,
+      ).toHaveLength(200);
+    });
+
+    it("rejects malformed and invalid redirect lists", () => {
+      for (const model_redirects of [
+        null,
+        {},
+        [null],
+        [{ from: "a", to: "b" }],
+        [{ ...rule("a", "b"), extra: true }],
+        [{ ...rule("a", "b"), enabled: "true" }],
+        [{ ...rule("a", "b"), from: 1 }],
+        [rule("a", "a")],
+        [rule("a", "astrlink/auto")],
+        [rule("a", "b"), rule("a", "c", false)],
+        [rule("a", "b"), rule("b", "c")],
+        Array.from({ length: 201 }, (_, index) =>
+          rule(`model-${index}`, "gpt-5"),
+        ),
+      ]) {
+        expect(() =>
+          parseRoutingSettings({ ...settings, model_redirects }),
+        ).toThrow();
+      }
+    });
+
+    it("mirrors the gateway validation rules with the first issue per row", () => {
+      const cases: [ModelRedirect[], ReturnType<typeof modelRedirectIssues>][] =
+        [
+          [[rule("", "gpt-5")], ["empty_from"]],
+          [[rule("gpt-4o", "")], ["empty_to"]],
+          [[rule("", "")], ["empty_from"]],
+          [[rule("x".repeat(257), "gpt-5")], ["too_long"]],
+          [[rule("\u{1F600}".repeat(256), "gpt-5")], [undefined]],
+          [[rule("gpt-4o", "gpt\n5")], ["control_character"]],
+          [[rule("gpt\u00004o", "gpt-5")], ["control_character"]],
+          [[rule("gpt\t4o", "gpt-5")], [undefined]],
+          [[rule(" gpt-4o", "gpt-5")], ["whitespace"]],
+          [[rule("gpt-4o", "gpt-5\u0085")], ["whitespace"]],
+          [[rule("gpt-4o", "\u3000gpt-5")], ["whitespace"]],
+          // Go's TrimSpace keeps U+FEFF, unlike String.prototype.trim.
+          [[rule("\ufeffgpt-4o", "gpt-5")], [undefined]],
+          [[rule("gpt-5", "gpt-5")], ["same_model"]],
+          [[rule("GPT-5", "gpt-5")], [undefined]],
+          [[rule("gpt-4o", "astrlink/auto")], ["auto_target"]],
+          [[rule("astrlink/auto", "gpt-5")], [undefined]],
+          [
+            [rule("gpt-4o", "gpt-5"), rule("gpt-4o", "gpt-5-mini", false)],
+            ["duplicate_from", "duplicate_from"],
+          ],
+          [
+            [rule("gpt-4o", "gpt-5"), rule("gpt-4", "gpt-4o", false)],
+            [undefined, "chained_target"],
+          ],
+        ];
+      for (const [redirects, issues] of cases)
+        expect(modelRedirectIssues(redirects)).toEqual(issues);
+    });
   });
 });

@@ -132,6 +132,89 @@ describe("reasoning effort metadata", () => {
   });
 });
 
+describe("model redirect metadata", () => {
+  const redirect = { from: "gpt-4.1", to: "claude-sonnet-4-5" };
+
+  it("keeps the client model and adds the redirect on records and sessions", () => {
+    const record = parseRequestRecord({
+      ...fullRecord,
+      model_redirect: redirect,
+    });
+    expect(record.requested_model).toBe(fullRecord.requested_model);
+    expect(record.model_redirect).toStrictEqual(redirect);
+
+    const session = parseRequestSession({
+      ...fullSession,
+      model_redirect: redirect,
+    });
+    expect(session.requested_model).toBe(fullSession.requested_model);
+    expect(session.model_redirect).toStrictEqual(redirect);
+  });
+
+  it("leaves the key out when the call was not redirected", () => {
+    for (const model_redirect of [null, undefined]) {
+      expect(
+        parseRequestRecord({ ...fullRecord, model_redirect }),
+      ).not.toHaveProperty("model_redirect");
+      expect(
+        parseRequestSession({ ...fullSession, model_redirect }),
+      ).not.toHaveProperty("model_redirect");
+    }
+    expect(parseRequestRecord(fullRecord)).not.toHaveProperty("model_redirect");
+  });
+
+  it("rejects a malformed redirect", () => {
+    const long = "m".repeat(257);
+    for (const model_redirect of [
+      { from: "", to: "b" },
+      { from: "a", to: "" },
+      { from: long, to: "b" },
+      { from: "a", to: long },
+    ]) {
+      expect(() =>
+        parseRequestRecord({ ...fullRecord, model_redirect }),
+      ).toThrow("模型重定向无效");
+      expect(() =>
+        parseRequestSession({ ...fullSession, model_redirect }),
+      ).toThrow("模型重定向无效");
+    }
+    // 256 runes is the limit, counted as characters rather than UTF-16 units.
+    const wide = "模".repeat(256);
+    expect(
+      parseRequestRecord({
+        ...fullRecord,
+        model_redirect: { from: wide, to: "b" },
+      }).model_redirect?.from,
+    ).toBe(wide);
+    for (const model_redirect of ["a → b", ["a", "b"], { from: "a" }]) {
+      expect(() =>
+        parseRequestRecord({ ...fullRecord, model_redirect }),
+      ).toThrow("model_redirect");
+    }
+  });
+
+  it("accepts the model_redirect trajectory event", () => {
+    const parsed = parseRequestRecord({
+      ...fullRecord,
+      model_redirect: redirect,
+      events: [
+        {
+          kind: "model_redirect",
+          started_at: fullRecord.started_at,
+          ended_at: fullRecord.started_at,
+          status: "succeeded",
+          summary: "gpt-4.1 → claude-sonnet-4-5",
+          attempt_index: 0,
+        },
+      ],
+    });
+    expect(parsed.events[0]).toMatchObject({
+      kind: "model_redirect",
+      summary: "gpt-4.1 → claude-sonnet-4-5",
+    });
+  });
+});
+
 describe("request-record IPC contract", () => {
   it("round-trips a valid record and drops plan/extensions", () => {
     const parsed = parseRequestRecord(fullRecord);

@@ -11,6 +11,7 @@ import type {
 const chipClass: Record<TrajectoryChip, string> = {
   TURN: "bg-foreground text-background",
   CLIENT: "bg-primary text-primary-foreground",
+  REDIRECT: "bg-accent-foreground text-primary-foreground",
   POLICY: "bg-warning text-primary-foreground",
   ROUTE: "bg-tide text-primary-foreground",
   UPSTREAM: "bg-warning text-primary-foreground",
@@ -22,6 +23,7 @@ const chipClass: Record<TrajectoryChip, string> = {
 const subtleChipClass: Record<TrajectoryChip, string> = {
   TURN: "bg-muted text-foreground",
   CLIENT: "bg-accent text-primary",
+  REDIRECT: "bg-secondary text-accent-foreground",
   POLICY: "bg-muted text-muted-foreground",
   ROUTE: "bg-tide-wash text-accent-foreground",
   UPSTREAM: "bg-warning-wash text-warning-foreground",

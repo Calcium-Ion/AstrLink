@@ -30,13 +30,15 @@ when the stdio handshake failed; authenticating cannot fix a local process.
 4. `get_request_children` — inspect failed retries under a root record.
 5. `get_request_audit` — bodies only if the user already enabled capture for
    that request.
+6. `get_routing_settings` — model redirects, failover and retry settings,
+   channel stickiness, and identity enforcement.
 
 If the only visible tool is `mcp_auth`, or the server is loading / error /
 disconnected:
 
 1. Ask the user to open the AstrLink desktop and wait until the gateway is
    Ready.
-2. If the seven read-only tools still do not appear, ask them to open Settings →
+2. If the eight read-only tools still do not appear, ask them to open Settings →
    Agent tools, reinstall skill + MCP, then start a **new** agent session in
    that host.
 3. If an authenticate / login dialog appears for `astrlink`, tell the user to
@@ -49,7 +51,12 @@ memory, process arguments, or `astrlink.db`.
 ## When to look
 
 - Gateway 4xx/5xx, timeouts, or cancellations
-- Wrong upstream model or service
+- Wrong upstream model or service — check `model_redirect` on the record and
+  `get_routing_settings` first; a redirect rule may have replaced the model
+- `codex-auto-review` fails (for example `missing_protocol_capability`) — it is
+  Codex's auto-review model, which third-party providers rarely list; Codex then
+  denies the pending action. Suggest the featured redirect in Routing → Model
+  redirects (OpenAI serves it with `gpt-5.6-luna`)
 - Privacy policy `block` / `warn` / unexpected redaction
 - Retry loops or a child attempt that failed after a root
 - `astrlink/auto` picked an unexpected category or fallback
@@ -59,7 +66,10 @@ memory, process arguments, or `astrlink.db`.
 Metadata is always present. Treat these fields as the source of truth:
 
 - `status`: `pending` | `succeeded` | `failed` | `cancelled` | `blocked`
-- `requested_model`, `input_protocol`, `streaming`
+- `requested_model` (the model the client sent), `input_protocol`, `streaming`
+- `model_redirect` `{from, to}`: a routing-settings redirect replaced
+  `requested_model` with `to` for routing; absent when no rule matched
+- `recovery.upstream_model`: the model finally sent upstream
 - `service_id`, `route_id`, `plan`
 - `error` (transport failures include the unwrapped cause — host/URL/IP may be
   present; credentials are redacted; no bodies or header maps)
@@ -84,7 +94,7 @@ Ask the user to enable it in the app if the prompt/response text is required.
 
 - Do not call `mcp_auth` or complete a host login flow for the local `astrlink`
   server.
-- Do not call purge, delete, or change audit settings.
+- Do not call purge, delete, or change audit or routing settings.
 - Do not disable the privacy policy to “make it work”.
 - Do not put control tokens, access tokens, or upstream keys into chat, files,
   or MCP config.

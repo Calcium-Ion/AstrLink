@@ -376,7 +376,8 @@ describe("RequestRecords", () => {
           coreSessionKey={session}
           services={services}
           isReady
-        />,      );
+        />,
+      );
       await Promise.resolve();
     });
     await act(async () => {
@@ -714,6 +715,127 @@ describe("RequestRecords", () => {
     expect(copied).not.toContain("secret");
     expect(copied).not.toContain("hello");
     expect(copied).not.toContain("Bearer");
+  });
+
+  it("shows a model redirect in the list, the trajectory, the inspector and the diagnostic", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const redirect = { from: "gpt-4.1", to: "claude-sonnet-4-5" };
+    // A legacy record: the trajectory synthesizes the REDIRECT step.
+    const root: RequestRecord = { ...firstRecord, model_redirect: redirect };
+    const session = sessionFromRecord(root, { model_redirect: redirect });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [session],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValue({
+      ...session,
+      turns: [root],
+    });
+
+    await renderRecords();
+    const label = container.querySelector(
+      '[data-testid="request-session-row"] [data-redirected-to="claude-sonnet-4-5"]',
+    );
+    // Both models keep their brand mark; the arrow is spoken as words.
+    expect(label?.textContent).toBe(
+      "OpenAIgpt-4.1→重定向到Claudeclaude-sonnet-4-5",
+    );
+    expect(
+      [...(label?.querySelectorAll('[aria-hidden="true"]') ?? [])].some(
+        (element) => element.textContent === "→",
+      ),
+    ).toBe(true);
+    expect(label?.querySelector(".sr-only")?.textContent).toBe("重定向到");
+
+    await act(async () => {
+      (
+        container.querySelector(
+          `[data-session-id="${root.id}"]`,
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+
+    const chips = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-testid="trajectory-row"]',
+      ),
+    ].map((row) => row.dataset.chip);
+    expect(chips.slice(0, 3)).toEqual(["CLIENT", "REDIRECT", "POLICY"]);
+    const redirectRow = container.querySelector<HTMLButtonElement>(
+      '[data-testid="trajectory-row"][data-chip="REDIRECT"]',
+    );
+    expect(redirectRow?.textContent).toContain("重定向");
+    expect(
+      redirectRow?.querySelector('[data-redirected-to="claude-sonnet-4-5"]')
+        ?.textContent,
+    ).toContain("gpt-4.1");
+
+    await act(async () => {
+      redirectRow?.click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    const inspector = container.querySelector(
+      '[data-testid="trajectory-inspector"]',
+    );
+    const redirectInspector = inspector?.querySelector(
+      '[data-testid="redirect-inspector"]',
+    );
+    expect(inspector?.textContent).toContain("模型重定向");
+    expect(
+      redirectInspector?.querySelector(
+        '[data-testid="inspector-requested-model"]',
+      )?.textContent,
+    ).toBe("客户端请求模型OpenAIgpt-4.1");
+    expect(
+      redirectInspector?.querySelector(
+        '[data-testid="inspector-redirect-target"]',
+      )?.textContent,
+    ).toBe("重定向到Claudeclaude-sonnet-4-5");
+    expect(redirectInspector?.textContent).toContain("原模型名");
+
+    await act(async () => {
+      (
+        container.querySelector(
+          '[data-testid="trajectory-row"][data-chip="ROUTE"]',
+        ) as HTMLButtonElement
+      ).click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    expect(
+      container.querySelector(
+        '[data-testid="trajectory-inspector"] [data-testid="inspector-redirect-target"]',
+      )?.textContent,
+    ).toBe("重定向到Claudeclaude-sonnet-4-5");
+    expect(
+      container.querySelector(
+        '[data-testid="trajectory-inspector"] [data-testid="redirect-inspector"]',
+      ),
+    ).toBeNull();
+
+    await act(async () => {
+      exactButton("复制诊断信息").click();
+      await Promise.resolve();
+    });
+    await act(async () => await Promise.resolve());
+    const copied = writeText.mock.calls[0]?.[0] as string;
+    const fence = "```json\n";
+    const payload = JSON.parse(
+      copied.slice(
+        copied.indexOf(fence) + fence.length,
+        copied.lastIndexOf("}") + 1,
+      ),
+    );
+    expect(payload.session.requested_model).toBe("gpt-4.1");
+    expect(payload.session.model_redirect).toStrictEqual(redirect);
+    expect(payload.records[0].model_redirect).toStrictEqual(redirect);
   });
 
   // The detail carries every root turn of the conversation, and the children

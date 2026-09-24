@@ -177,7 +177,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		convertTo := declaredConvertTo(candidate.Service, classified.Protocol, mode)
 		protocolModel := candidate.UpstreamModel
 		if protocolModel == "" {
-			protocolModel = classified.Model
+			protocolModel = classified.routingModel()
 		}
 		if native := candidate.Service.Kind.ModelNativeProtocol(protocolModel); native != "" {
 			convertTo = ""
@@ -313,7 +313,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			_ = attemptRequest.Body.Close()
 			upstreamModel := candidate.UpstreamModel
 			if upstreamModel == "" {
-				upstreamModel = classified.Model
+				upstreamModel = classified.routingModel()
 			}
 			converted, convertErr := handler.conversionEngine.ConvertRequest(request.Context(), relaykitbridge.ConvertRequestInput{
 				From: plan.InputProtocol, To: plan.UpstreamProtocol, ContentType: attemptRequest.Header.Get("Content-Type"),
@@ -426,7 +426,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 		upstreamModel := candidate.UpstreamModel
 		if upstreamModel == "" {
-			upstreamModel = classified.Model
+			upstreamModel = classified.routingModel()
 		}
 		canRepairThinking := body.Replayable() && policy.AllowsThinkingSignatureRecovery() &&
 			supportsThinkingSignatureRecovery(plan, upstreamModel)
@@ -468,7 +468,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			attemptRequest.Header.Del("Accept-Encoding")
 			upstreamModel := candidate.UpstreamModel
 			if upstreamModel == "" {
-				upstreamModel = classified.Model
+				upstreamModel = classified.routingModel()
 			}
 			relayWriter, planErr = newRelayKitResponseWriter(
 				outWriter, handler.conversionEngine, plan, classified.Model, upstreamModel,

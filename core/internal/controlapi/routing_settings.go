@@ -3,6 +3,8 @@ package controlapi
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 const RoutingSettingsPath = "/control/v1/routing-settings"
@@ -19,7 +21,7 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 			handler.writeStoreError(writer, err)
 			return
 		}
-		writeJSON(writer, http.StatusOK, settings)
+		writeJSON(writer, http.StatusOK, normalizeRoutingSettings(settings))
 	case http.MethodPatch:
 		if !requireMediaType(writer, request, "application/merge-patch+json") {
 			return
@@ -51,6 +53,8 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 			case "default_recovery_paths":
 				writeError(writer, http.StatusGone, "routing_feature_retired", "default call paths are retired")
 				return
+			case "model_redirects":
+				destination = &settings.ModelRedirects
 			case "channel_stickiness":
 				destination = &settings.ChannelStickiness
 			case "default_failure_policy":
@@ -70,6 +74,7 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 				return
 			}
 		}
+		settings = normalizeRoutingSettings(settings)
 		if err := settings.Validate(); err != nil {
 			writeError(writer, http.StatusUnprocessableEntity, "invalid_routing_settings", err.Error())
 			return
@@ -83,4 +88,13 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 		writer.Header().Set("Allow", "GET, PATCH")
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET and PATCH are allowed")
 	}
+}
+
+// normalizeRoutingSettings keeps model_redirects an array on the wire even if
+// a store returns a nil table.
+func normalizeRoutingSettings(settings contract.RoutingSettings) contract.RoutingSettings {
+	if settings.ModelRedirects == nil {
+		settings.ModelRedirects = []contract.ModelRedirect{}
+	}
+	return settings
 }

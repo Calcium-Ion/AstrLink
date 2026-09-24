@@ -1,6 +1,7 @@
 import { fence } from "./audit-bundle";
 import type {
   RequestEvent,
+  RequestModelRedirect,
   RequestRecord,
   RequestRecovery,
   RequestSession,
@@ -13,9 +14,11 @@ export const SKILL_DIAGNOSTIC_SKILL = "astrlink-debug" as const;
 const PREAMBLE = `AstrLink skill diagnostic (astrlink-debug)
 
 Read this snapshot first. Do not guess from model error text.
-Treat status, requested_model, input_protocol, streaming, service_id,
-route_id, error, input_preview, privacy_restore, events[], and recovery
-as source of truth. Retries are child records (parent_request_id set).
+Treat status, requested_model, model_redirect, input_protocol, streaming,
+service_id, route_id, error, input_preview, privacy_restore, events[], and
+recovery as source of truth. requested_model is the client's model; when
+model_redirect is set, the gateway routed with model_redirect.to instead.
+Retries are child records (parent_request_id set).
 Request/response bodies and header maps are omitted.
 `;
 
@@ -36,6 +39,7 @@ export interface SkillDiagnosticRecord {
   completed_at: string | null;
   status: RequestRecord["status"];
   requested_model: string | null;
+  model_redirect: RequestModelRedirect | null;
   reasoning_effort: string | null;
   input_protocol: string;
   entry: string;
@@ -74,6 +78,7 @@ export interface SkillDiagnosticPayload {
     title: string;
     status: RequestSession["status"];
     requested_model: string | null;
+    model_redirect: RequestModelRedirect | null;
     reasoning_effort: string | null;
     input_protocol: string;
     entry: string;
@@ -126,6 +131,7 @@ export function buildSkillDiagnosticPayload(
       title: options.session.title,
       status: options.session.status,
       requested_model: options.session.requested_model,
+      model_redirect: options.session.model_redirect ?? null,
       reasoning_effort: options.session.reasoning_effort ?? null,
       input_protocol: options.session.input_protocol,
       entry: protocolEntryPath(options.session.input_protocol),
@@ -159,6 +165,7 @@ function diagnosticRecord(
     completed_at: record.completed_at,
     status: record.status,
     requested_model: record.requested_model,
+    model_redirect: record.model_redirect ?? null,
     reasoning_effort: record.reasoning_effort ?? null,
     input_protocol: record.input_protocol,
     entry: protocolEntryPath(record.input_protocol, {

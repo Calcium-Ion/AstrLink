@@ -8,6 +8,7 @@ import {
   getRoutingSettings,
   listPrivacyModelInstallations,
 } from "./bridge";
+import type { ModelRedirect } from "./failure-policy-model";
 import type { PrivacyAction, PrivacyDetector } from "./privacy-policy-model";
 
 /**
@@ -40,6 +41,8 @@ export interface ExportEnvironment {
   routing: {
     strategy: string;
     max_attempts: number;
+    /** Every rule with its enabled flag; the readable line lists enabled ones. */
+    model_redirects: ModelRedirect[];
   } | null;
   capture: {
     request_body_enabled: boolean;
@@ -112,6 +115,11 @@ export async function loadExportEnvironment(): Promise<
       return {
         strategy: settings.strategy,
         max_attempts: settings.max_attempts,
+        model_redirects: (settings.model_redirects ?? []).map((rule) => ({
+          from: rule.from,
+          to: rule.to,
+          enabled: rule.enabled,
+        })),
       };
     }),
   ]);

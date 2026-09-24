@@ -118,6 +118,18 @@ func toolCatalog() []toolDef {
 				return client.get(ctx, controlapi.AuditSettingsPath, nil)
 			},
 		},
+		{
+			Name:        "get_routing_settings",
+			Description: "Read AstrLink routing settings: model_redirects (client model → routed model rules; only enabled rules apply, exact case-sensitive match, one hop), failover and retry settings (default_failure_policy, allow_unmatched_failover, strategy, max_attempts), channel_stickiness, and the Codex/Claude/Grok subscription identity enforcement flags.",
+			Schema: map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{},
+				"additionalProperties": false,
+			},
+			Call: func(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error) {
+				return client.get(ctx, controlapi.RoutingSettingsPath, nil)
+			},
+		},
 	}
 }
 

@@ -17,6 +17,7 @@ import {
   MessageSquare,
 } from "@/components/icons";
 import { IconButton } from "@/components/IconButton";
+import { ModelLabel } from "@/components/ModelLabel";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
@@ -1099,7 +1100,14 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
               service={service}
             />
           ) : null}
-          <span className="truncate">{row.summary}</span>
+          {row.chip === "REDIRECT" && row.redirect ? (
+            <ModelLabel
+              model={row.redirect.from}
+              redirectedTo={row.redirect.to}
+            />
+          ) : (
+            <span className="truncate">{row.summary}</span>
+          )}
         </span>
         <span
           className={cn(

@@ -11,7 +11,7 @@ import (
 const (
 	mcpProtocolVersion = "2024-11-05"
 	mcpServerName      = "astrlink"
-	mcpServerVersion   = "0.1.1"
+	mcpServerVersion   = "0.1.2"
 )
 
 type initializeParams struct {

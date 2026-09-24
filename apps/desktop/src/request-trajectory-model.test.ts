@@ -13,6 +13,7 @@ import {
   inspectorChainRows,
   inspectorPart,
   inspectorTitle,
+  modelRedirectSummary,
   callProgressAtListOffset,
   callProgressAtScrollLeft,
   listOffsetForCall,
@@ -102,6 +103,102 @@ describe("request trajectory model", () => {
       "restore",
       "completed",
     ]);
+  });
+
+  it("synthesizes the redirect step right after the client for legacy records", () => {
+    const redirected: RequestRecord = {
+      ...record,
+      model_redirect: { from: "gpt-4.1", to: "claude-sonnet-4-5" },
+    };
+    const events = synthesizeEvents(redirected);
+    expect(events.map((event) => event.kind)).toEqual([
+      "accepted",
+      "model_redirect",
+      "privacy",
+      "routed",
+      "upstream",
+      "restore",
+      "completed",
+    ]);
+    expect(events[0]?.summary).toBe("gpt-4.1 · openai.responses");
+    expect(events[1]).toStrictEqual({
+      kind: "model_redirect",
+      started_at: record.started_at,
+      ended_at: record.started_at,
+      status: "succeeded",
+      summary: "gpt-4.1 → claude-sonnet-4-5",
+      attempt_index: record.attempt_index,
+    });
+
+    const rows = inspectorChainRows(redirected);
+    expect(rows.map((row) => row.chip)).toEqual([
+      "CLIENT",
+      "REDIRECT",
+      "POLICY",
+      "ROUTE",
+      "UPSTREAM",
+      "RESTORE",
+      "RESULT",
+    ]);
+    expect(rows[1]).toMatchObject({
+      chip: "REDIRECT",
+      lane: "gateway",
+      tone: "ok",
+      summary: "gpt-4.1 → claude-sonnet-4-5",
+      redirect: { from: "gpt-4.1", to: "claude-sonnet-4-5" },
+    });
+    expect(rows.filter((row) => row.redirect)).toHaveLength(1);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+  });
+
+  it("maps a persisted model_redirect event onto the REDIRECT chip", () => {
+    const at = record.started_at;
+    const event = {
+      kind: "model_redirect" as const,
+      started_at: at,
+      ended_at: at,
+      status: "succeeded" as const,
+      summary: modelRedirectSummary({ from: "gpt-4.1", to: "glm-5" }),
+      attempt_index: 0,
+    };
+    const persisted: RequestRecord = {
+      ...record,
+      model_redirect: { from: "gpt-4.1", to: "glm-5" },
+      events: [
+        {
+          kind: "accepted",
+          started_at: at,
+          ended_at: at,
+          status: "succeeded",
+          summary: "gpt-4.1 · openai.responses",
+          attempt_index: 0,
+        },
+        event,
+      ],
+    };
+    const [client, redirect] = inspectorChainRows(persisted);
+    expect(client?.chip).toBe("CLIENT");
+    expect(client?.redirect).toBeUndefined();
+    expect(redirect).toMatchObject({
+      chip: "REDIRECT",
+      lane: "gateway",
+      summary: "gpt-4.1 → glm-5",
+      redirect: { from: "gpt-4.1", to: "glm-5" },
+    });
+
+    // A record without the field still recovers the models from the summary,
+    // but an ambiguous summary stays plain text.
+    const bare: RequestRecord = { ...persisted, model_redirect: undefined };
+    expect(inspectorChainRows(bare)[1]?.redirect).toStrictEqual({
+      from: "gpt-4.1",
+      to: "glm-5",
+    });
+    const ambiguous: RequestRecord = {
+      ...bare,
+      events: [{ ...event, summary: "a → b → c" }],
+    };
+    expect(inspectorChainRows(ambiguous)[0]?.redirect).toBeUndefined();
+    expect(inspectorChainRows(ambiguous)[0]?.summary).toBe("a → b → c");
   });
 
   it("keeps persisted events when present", () => {
@@ -975,12 +1072,14 @@ describe("request trajectory model", () => {
     expect(inspectorPart("CLIENT")).toBe("request_body");
     expect(inspectorPart("POLICY")).toBe("upstream_request_body");
     expect(inspectorPart("ROUTE")).toBe("route");
+    expect(inspectorPart("REDIRECT")).toBe("redirect");
     expect(inspectorPart("UPSTREAM")).toBe("upstream_response_content");
     expect(inspectorPart("RETRY")).toBe("upstream_response_content");
     expect(inspectorPart("RESTORE")).toBe("response_content");
     expect(inspectorPart("RESULT")).toBe("response_content");
     expect(inspectorTitle("POLICY")).toBe("命中");
     expect(inspectorTitle("RETRY")).toBe("上游响应");
+    expect(inspectorTitle("REDIRECT")).toBe("模型重定向");
   });
 
   it("extracts privacy hit kinds from placeholders without originals", () => {

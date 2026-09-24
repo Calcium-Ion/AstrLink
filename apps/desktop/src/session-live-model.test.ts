@@ -79,6 +79,33 @@ describe("mergeLiveSessions", () => {
     ).toBe(cleared);
   });
 
+  it("updates the model badge when a redirect appears, moves or clears", () => {
+    const before = session("sess_a");
+    const redirected = session("sess_a", {
+      model_redirect: { from: "gpt-4.1", to: "claude-sonnet-4-5" },
+    });
+    const first = mergeLiveSessions([before], [], [redirected], false);
+    expect(first.items[0]).toBe(redirected);
+
+    const moved = session("sess_a", {
+      model_redirect: { from: "gpt-4.1", to: "claude-opus-4-1" },
+    });
+    const second = mergeLiveSessions(first.items, [], [moved], false);
+    expect(second.items[0]).toBe(moved);
+
+    const same = session("sess_a", {
+      model_redirect: { from: "gpt-4.1", to: "claude-opus-4-1" },
+    });
+    expect(mergeLiveSessions(second.items, [], [same], false).items).toBe(
+      second.items,
+    );
+
+    const cleared = session("sess_a");
+    expect(mergeLiveSessions(second.items, [], [cleared], false).items[0]).toBe(
+      cleared,
+    );
+  });
+
   // The monitor polls once a second, and an idle gateway answers with the same
   // rows decoded into new objects. Passing those on re-rendered the list, the
   // open detail and every trajectory row behind it, so an empty merge has to be

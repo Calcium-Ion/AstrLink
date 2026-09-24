@@ -2,11 +2,19 @@ import { ArrowRight } from "@/components/icons";
 import { useT } from "../i18n";
 import {
   statusLabel,
+  type RequestModelRedirect,
   type RequestRecord,
   type RequestRecovery,
 } from "../request-record-model";
 
-export function RecoveryDetails({ value }: { value?: RequestRecovery }) {
+export function RecoveryDetails({
+  value,
+  modelRedirect,
+}: {
+  value?: RequestRecovery;
+  /** Shown under the upstream model so a renamed model is not a mystery. */
+  modelRedirect?: RequestModelRedirect;
+}) {
   const t = useT();
   if (!value) return null;
   return (
@@ -26,6 +34,17 @@ export function RecoveryDetails({ value }: { value?: RequestRecovery }) {
             {t("failure.upstreamModel")}
           </dt>
           <dd className="break-all">{value.upstream_model}</dd>
+          {modelRedirect ? (
+            <dd
+              className="break-all text-muted-foreground"
+              data-testid="recovery-model-redirect"
+            >
+              {t("records.modelRedirectNote", {
+                from: modelRedirect.from,
+                to: modelRedirect.to,
+              })}
+            </dd>
+          ) : null}
         </div>
       ) : null}
       {value.action ? (

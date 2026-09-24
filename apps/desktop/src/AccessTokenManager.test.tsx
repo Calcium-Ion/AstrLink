@@ -12,6 +12,7 @@ const bridgeMocks = vi.hoisted(() => ({
   openCCSwitchImport: vi.fn(),
   listServices: vi.fn(),
   listRoutes: vi.fn(),
+  getRoutingSettings: vi.fn(),
 }));
 
 vi.mock("./bridge", () => bridgeMocks);
@@ -101,6 +102,7 @@ describe("AccessTokenManager", () => {
     bridgeMocks.listAccessTokenUsage.mockResolvedValue({ items: [] });
     bridgeMocks.listServices.mockResolvedValue({ items: [] });
     bridgeMocks.listRoutes.mockResolvedValue({ items: [] });
+    bridgeMocks.getRoutingSettings.mockResolvedValue({ model_redirects: [] });
     container = document.createElement("div");
     document.body.append(container);
     reactRoot = createRoot(container);
@@ -333,6 +335,62 @@ describe("AccessTokenManager", () => {
       expect(suggestions.every((option) => option.querySelector("svg"))).toBe(
         true,
       );
+      await act(async () =>
+        document
+          .querySelector<HTMLInputElement>("#cc-switch-model")!
+          .dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+          ),
+      );
+    }
+  });
+
+  it("suggests enabled redirect sources whose target a compatible service lists", async () => {
+    bridgeMocks.listServices.mockResolvedValue({
+      items: [
+        {
+          enabled: true,
+          models: ["gemini-2.5-pro"],
+          capabilities: [{ protocol: "google.generate_content" }],
+        },
+        {
+          enabled: true,
+          models: ["gpt-5"],
+          capabilities: [{ protocol: "openai.responses" }],
+        },
+      ],
+    });
+    bridgeMocks.getRoutingSettings.mockResolvedValue({
+      model_redirects: [
+        { from: "gemini-pro", to: "gemini-2.5-pro", enabled: true },
+        { from: "openrouter/gemini-pro", to: "gemini-2.5-pro", enabled: true },
+        { from: "gpt-4o", to: "gpt-5", enabled: true },
+        { from: "retired-model", to: "gpt-5", enabled: false },
+        { from: "astrlink/auto", to: "gpt-5", enabled: true },
+        { from: "orphan-model", to: "unlisted-model", enabled: true },
+      ],
+    });
+    await renderManager(readyCatalog([firstToken]));
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    for (const [client, expected] of [
+      ["Gemini CLI", ["gemini-2.5-pro", "gemini-pro"]],
+      ["Codex", ["gpt-4o", "gpt-5"]],
+    ] as const) {
+      await act(async () =>
+        document
+          .querySelector<HTMLButtonElement>(
+            `[role="radio"][aria-label="${client}"]`,
+          )!
+          .click(),
+      );
+      await act(async () =>
+        document.querySelector<HTMLInputElement>("#cc-switch-model")!.click(),
+      );
+      expect(
+        [...document.querySelectorAll('[role="option"]')].map((option) =>
+          option.getAttribute("aria-label"),
+        ),
+      ).toEqual(expected);
       await act(async () =>
         document
           .querySelector<HTMLInputElement>("#cc-switch-model")!

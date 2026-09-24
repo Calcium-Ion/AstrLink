@@ -50,6 +50,19 @@ type Request struct {
 	Conversation convo.RequestSummary
 	// lastUserText is classifier input only. Never persist, log, or cache it.
 	lastUserText string
+	// RedirectedModel is the routing model chosen by an enabled model
+	// redirect rule. Model keeps the client's original id so responses and
+	// records still report what the client asked for.
+	RedirectedModel string
+}
+
+// routingModel is the model id used to select services and sent upstream when
+// a candidate has no explicit upstream model.
+func (request Request) routingModel() string {
+	if request.RedirectedModel != "" {
+		return request.RedirectedModel
+	}
+	return request.Model
 }
 
 type protocolRoute struct {

@@ -69,7 +69,9 @@ describe("shared global recovery settings", () => {
     async (provider) => {
       const dirty = vi.fn();
       await act(async () =>
-        root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />),
+        root.render(
+          <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+        ),
       );
       await selectTab("转发身份");
       const toggles = [
@@ -113,13 +115,21 @@ describe("shared global recovery settings", () => {
     });
     const dirty = vi.fn();
     await act(async () =>
-      root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />),
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+      ),
     );
     await selectTab("转发身份");
     for (const toggle of container.querySelectorAll('[role="switch"]'))
       expect(toggle.getAttribute("aria-checked")).toBe("false");
     await act(async () =>
-      root.render(<RoutingSettingsPanel ready={false} onDirtyChange={dirty} />),
+      root.render(
+        <RoutingSettingsPanel
+          services={[]}
+          ready={false}
+          onDirtyChange={dirty}
+        />,
+      ),
     );
     expect(
       container.querySelector<HTMLFieldSetElement>("fieldset")?.disabled,
@@ -134,7 +144,9 @@ describe("shared global recovery settings", () => {
   it("loads and saves a single policy for all services", async () => {
     const dirty = vi.fn();
     await act(async () => {
-      root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />);
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+      );
     });
     await selectTab("恢复与重试");
     expect(container.textContent).toContain("在这里配置一次");
@@ -172,7 +184,9 @@ describe("shared global recovery settings", () => {
       });
       const dirty = vi.fn();
       await act(async () =>
-        root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />),
+        root.render(
+          <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+        ),
       );
       await selectTab("会话粘性");
       const heading = [...container.querySelectorAll("h2")].find(
@@ -204,7 +218,11 @@ describe("shared global recovery settings", () => {
     const render = async (ready: boolean) =>
       act(async () =>
         root.render(
-          <RoutingSettingsPanel ready={ready} onDirtyChange={onDirtyChange} />,
+          <RoutingSettingsPanel
+            services={[]}
+            ready={ready}
+            onDirtyChange={onDirtyChange}
+          />,
         ),
       );
     await render(true);
@@ -241,17 +259,16 @@ describe("shared global recovery settings", () => {
 
   it("changes unmatched failover independently of the global attempt budget", async () => {
     await act(async () =>
-      root.render(<RoutingSettingsPanel ready onDirtyChange={() => {}} />),
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={() => {}} />,
+      ),
     );
+    await selectTab("恢复与重试");
     expect(
       [...container.querySelectorAll("h2")].map(
         (element) => element.textContent,
       ),
-    ).toEqual([
-      "失败恢复与切换",
-      "重试次数与等待时间",
-      "推理内容修复",
-    ]);
+    ).toEqual(["失败恢复与切换", "重试次数与等待时间", "推理内容修复"]);
     await act(async () =>
       container
         .querySelector<HTMLButtonElement>(
@@ -271,7 +288,9 @@ describe("shared global recovery settings", () => {
 
   it("saves the thinking signature switch and labels repair attempts", async () => {
     await act(async () => {
-      root.render(<RoutingSettingsPanel ready onDirtyChange={vi.fn()} />);
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={vi.fn()} />,
+      );
     });
     await selectTab("恢复与重试");
     const toggle = container.querySelector<HTMLButtonElement>(
@@ -306,7 +325,9 @@ describe("shared global recovery settings", () => {
 
   it("saves OpenAI repair independently and labels its attempts", async () => {
     await act(async () => {
-      root.render(<RoutingSettingsPanel ready onDirtyChange={vi.fn()} />);
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={vi.fn()} />,
+      );
     });
     await selectTab("恢复与重试");
     const toggle = container.querySelector<HTMLButtonElement>(
@@ -346,7 +367,9 @@ describe("shared global recovery settings", () => {
 
   it("saves the opt-in function-output switch and labels its attempts", async () => {
     await act(async () => {
-      root.render(<RoutingSettingsPanel ready onDirtyChange={vi.fn()} />);
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={vi.fn()} />,
+      );
     });
     await selectTab("恢复与重试");
     const toggle = container.querySelector<HTMLButtonElement>(
@@ -391,17 +414,19 @@ describe("shared global recovery settings", () => {
   it("keeps drafts across tabs, scopes reset to the current group, and saves all edits together", async () => {
     const dirty = vi.fn();
     await act(async () =>
-      root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />),
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+      ),
     );
     expect(
       [...container.querySelectorAll('[role="tab"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual(["恢复与重试", "错误规则", "会话粘性", "转发身份"]);
+    ).toEqual(["模型重定向", "恢复与重试", "错误规则", "会话粘性", "转发身份"]);
+    await selectTab("恢复与重试");
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[role="switch"]')!.click(),
     );
-    await selectTab("恢复与重试");
     await act(async () => {
       const input = retryInput();
       Object.getOwnPropertyDescriptor(
@@ -458,6 +483,187 @@ describe("shared global recovery settings", () => {
     expect(dirty).toHaveBeenLastCalledWith(false);
   });
 
+  const services = [
+    {
+      id: "service_a",
+      name: "A",
+      enabled: true,
+      models: ["gpt-5", "claude-sonnet-4-5"],
+      capabilities: [],
+    },
+    {
+      id: "service_b",
+      name: "B",
+      enabled: true,
+      models: ["gpt-5"],
+      capabilities: [],
+    },
+    {
+      id: "service_off",
+      name: "Off",
+      enabled: false,
+      models: ["gpt-6"],
+      capabilities: [],
+    },
+  ];
+
+  function redirectField(label: string) {
+    return container.querySelector<HTMLInputElement>(
+      `input[role="combobox"][aria-label="${label}"]`,
+    )!;
+  }
+
+  async function typeRedirect(label: string, value: string) {
+    await act(async () => {
+      const input = redirectField(label);
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function button(label: string) {
+    return [...container.querySelectorAll("button")].find(
+      (element) => element.textContent === label,
+    )!;
+  }
+
+  it("opens on model redirects and saves only the replaced redirect list", async () => {
+    const dirty = vi.fn();
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={dirty}
+        />,
+      ),
+    );
+    const tabs = [...container.querySelectorAll('[role="tab"]')];
+    expect(tabs[0].textContent).toBe("模型重定向");
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Codex 自动审查");
+    // A document without model_redirects is not a pending change.
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(button("保存默认策略").disabled).toBe(true);
+
+    await act(async () => button("添加重定向").click());
+    await act(async () => redirectField("第 1 条规则的请求模型").click());
+    expect(
+      [...document.querySelectorAll('[role="option"]')].map((option) =>
+        option.getAttribute("aria-label"),
+      ),
+    ).toEqual(["claude-sonnet-4-5", "gpt-5", "astrlink/auto"]);
+    await typeRedirect("第 1 条规则的请求模型", "gpt-4o");
+    await typeRedirect("第 1 条规则的目标模型", "gpt-6");
+    expect(container.textContent).toContain(
+      "已启用的 API 提供商都未列出 gpt-6",
+    );
+    await typeRedirect("第 1 条规则的目标模型", "gpt-5");
+    expect(container.textContent).not.toContain("已启用的 API 提供商都未列出");
+    expect(dirty).toHaveBeenLastCalledWith(true);
+
+    await act(async () => button("保存默认策略").click());
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledExactlyOnceWith({
+      model_redirects: [{ from: "gpt-4o", to: "gpt-5", enabled: true }],
+    });
+    expect(dirty).toHaveBeenLastCalledWith(false);
+  });
+
+  it("persists the built-in rule only after it is configured and saved", async () => {
+    const dirty = vi.fn();
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={dirty}
+        />,
+      ),
+    );
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+    const toggle = () =>
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="启用 codex-auto-review 的重定向"]',
+      )!;
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    await typeRedirect("Codex 自动审查的目标模型", "gpt-5");
+    await act(async () => toggle().click());
+    await act(async () => button("保存默认策略").click());
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      model_redirects: [
+        { from: "codex-auto-review", to: "gpt-5", enabled: true },
+      ],
+    });
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    await act(async () => toggle().click());
+    await act(async () => button("保存默认策略").click());
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      model_redirects: [
+        { from: "codex-auto-review", to: "gpt-5", enabled: false },
+      ],
+    });
+    expect(redirectField("Codex 自动审查的目标模型").value).toBe("gpt-5");
+  });
+
+  it("blocks saving until every redirect is valid", async () => {
+    bridge.getRoutingSettings.mockResolvedValue({
+      ...settings(),
+      model_redirects: [{ from: "gpt-4o", to: "gpt-5", enabled: true }],
+    });
+    const dirty = vi.fn();
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={dirty}
+        />,
+      ),
+    );
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    await act(async () => button("添加重定向").click());
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await selectTab("恢复与重试");
+    await act(async () => button("保存默认策略").click());
+    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('[role="tab"][aria-selected="true"]')
+        ?.textContent,
+    ).toBe("模型重定向");
+    expect(
+      [...container.querySelectorAll('[role="alert"]')].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["请先修正模型重定向中标出的问题，再保存。", "请填写请求模型。"]);
+
+    await typeRedirect("第 2 条规则的请求模型", "claude-3-opus");
+    await typeRedirect("第 2 条规则的目标模型", "gpt-4o");
+    expect(
+      [...container.querySelectorAll('[role="alert"]')].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual([
+      "请先修正模型重定向中标出的问题，再保存。",
+      "目标模型是另一条规则的请求模型；重定向只生效一次，不能串联。",
+    ]);
+    await act(async () => button("保存默认策略").click());
+    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+
+    await typeRedirect("第 2 条规则的目标模型", "claude-sonnet-4-5");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => button("保存默认策略").click());
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledExactlyOnceWith({
+      model_redirects: [
+        { from: "gpt-4o", to: "gpt-5", enabled: true },
+        { from: "claude-3-opus", to: "claude-sonnet-4-5", enabled: true },
+      ],
+    });
+  });
+
   it("does not mark an unchanged group reset as dirty", async () => {
     bridge.getRoutingSettings.mockResolvedValue({
       ...settings(),
@@ -465,7 +671,9 @@ describe("shared global recovery settings", () => {
     });
     const dirty = vi.fn();
     await act(async () =>
-      root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />),
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+      ),
     );
     await selectTab("恢复与重试");
     await act(async () =>
@@ -497,7 +705,9 @@ describe("shared global recovery settings", () => {
     });
     const dirty = vi.fn();
     await act(async () =>
-      root.render(<RoutingSettingsPanel ready onDirtyChange={dirty} />),
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+      ),
     );
     await selectTab("错误规则");
     const retrySwitch = (error: string) =>
@@ -538,7 +748,9 @@ describe("shared global recovery settings", () => {
 
   it("validates custom statuses and resets only error rules", async () => {
     await act(async () =>
-      root.render(<RoutingSettingsPanel ready onDirtyChange={() => {}} />),
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={() => {}} />,
+      ),
     );
     await selectTab("错误规则");
     const input = container.querySelector<HTMLInputElement>(

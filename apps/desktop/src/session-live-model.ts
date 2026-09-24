@@ -46,6 +46,8 @@ function sameSession(left: RequestSession, right: RequestSession): boolean {
     left.call_count === right.call_count &&
     left.status === right.status &&
     left.requested_model === right.requested_model &&
+    left.model_redirect?.from === right.model_redirect?.from &&
+    left.model_redirect?.to === right.model_redirect?.to &&
     (left.reasoning_effort ?? null) === (right.reasoning_effort ?? null) &&
     left.input_protocol === right.input_protocol &&
     left.service_id === right.service_id &&

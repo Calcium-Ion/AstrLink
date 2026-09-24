@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
@@ -79,6 +80,18 @@ func TestMCPListsAndCallsRequestRecordTools(t *testing.T) {
 	mux.HandleFunc(controlapi.AuditSettingsPath, func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, map[string]any{"request_body_enabled": false, "response_content_enabled": false})
 	})
+	var routingCalls atomic.Int32
+	mux.HandleFunc(controlapi.RoutingSettingsPath, func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		routingCalls.Add(1)
+		writeJSON(writer, map[string]any{
+			"model_redirects": []any{map[string]any{"from": "gpt-4o", "to": "gpt-5", "enabled": true}},
+			"max_attempts":    3,
+		})
+	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
@@ -125,6 +138,10 @@ func TestMCPListsAndCallsRequestRecordTools(t *testing.T) {
 		"arguments": map[string]any{},
 	})
 	writeRPC(t, input, 10, "tools/call", map[string]any{
+		"name":      "get_routing_settings",
+		"arguments": map[string]any{},
+	})
+	writeRPC(t, input, 11, "tools/call", map[string]any{
 		"name":      "purge_request_records",
 		"arguments": map[string]any{},
 	})
@@ -134,14 +151,14 @@ func TestMCPListsAndCallsRequestRecordTools(t *testing.T) {
 	}
 
 	responses := readAllResponses(t, output)
-	if len(responses) != 10 {
+	if len(responses) != 11 {
 		t.Fatalf("responses = %d, payload=%s", len(responses), output.String())
 	}
 	if _, ok := responses[1]["result"].(map[string]any)["capabilities"]; !ok {
 		t.Fatalf("initialize result = %#v", responses[1]["result"])
 	}
 	tools := responses[2]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 7 {
+	if len(tools) != 8 {
 		t.Fatalf("tool count = %d", len(tools))
 	}
 	names := map[string]bool{}
@@ -151,6 +168,7 @@ func TestMCPListsAndCallsRequestRecordTools(t *testing.T) {
 	for _, name := range []string{
 		"list_request_sessions", "get_request_session", "list_request_records",
 		"get_request_record", "get_request_children", "get_request_audit", "get_audit_settings",
+		"get_routing_settings",
 	} {
 		if !names[name] {
 			t.Fatalf("missing tool %s", name)
@@ -167,7 +185,18 @@ func TestMCPListsAndCallsRequestRecordTools(t *testing.T) {
 	if !strings.Contains(auditText, "were not captured") {
 		t.Fatalf("audit hint missing: %s", auditText)
 	}
-	unknown := callResult(t, responses[10])
+	if calls := routingCalls.Load(); calls != 1 {
+		t.Fatalf("routing settings calls = %d, want 1", calls)
+	}
+	routing := callResult(t, responses[10])
+	if routing["isError"] == true {
+		t.Fatalf("get_routing_settings should succeed: %#v", routing)
+	}
+	routingText := callText(t, responses[10])
+	if !strings.Contains(routingText, `"model_redirects"`) || !strings.Contains(routingText, `"to":"gpt-5"`) {
+		t.Fatalf("routing settings = %s", routingText)
+	}
+	unknown := callResult(t, responses[11])
 	if unknown["isError"] != true {
 		t.Fatalf("unknown tool should be an error: %#v", unknown)
 	}
@@ -207,7 +236,7 @@ func TestServeStdioHandshakesWithoutControlSession(t *testing.T) {
 		t.Fatalf("server version = %#v", info["version"])
 	}
 	tools := responses[2]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 7 {
+	if len(tools) != 8 {
 		t.Fatalf("tool count = %d", len(tools))
 	}
 	call := callResult(t, responses[3])

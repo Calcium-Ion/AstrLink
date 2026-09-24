@@ -74,12 +74,14 @@ type discoveryEntry struct {
 // Endpoint ID, unless an explicit Route matched — and the first candidate
 // returning a public model ID wins any conflict, so discovery names the same
 // upstream that routing would select for that ID. Each request fans out
-// fresh; there is no discovery cache in Alpha.
+// fresh; there is no discovery cache in Alpha. Enabled model redirects add
+// their source names next to listed targets.
 func (handler *Handler) aggregateModelDiscovery(
 	writer http.ResponseWriter,
 	request *http.Request,
 	classified Request,
 	candidates []endpoint.Resolved,
+	redirects []contract.ModelRedirect,
 ) {
 	if request.Context().Err() != nil {
 		return
@@ -188,8 +190,11 @@ func (handler *Handler) aggregateModelDiscovery(
 			visible = append(visible, entry)
 		}
 	}
-	merged = visible
-	body, err := encodeDiscoveryList(classified.Protocol, merged)
+	merged, err := appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
+	var body []byte
+	if err == nil {
+		body, err = encodeDiscoveryList(classified.Protocol, merged)
+	}
 	if err != nil {
 		writeInferenceError(
 			writer,
@@ -599,6 +604,62 @@ func encodeDiscoveryList(protocol contract.ProtocolID, entries []discoveryEntry)
 		envelope.LastID = &entries[len(entries)-1].id
 	}
 	return json.Marshal(envelope)
+}
+
+// appendRedirectDiscoveryEntries lists each enabled redirect source whose
+// target is already listed, so clients can select the source name. A source
+// that is already listed keeps its entry, and targets are never hidden. The
+// retired astrlink/auto stays unlisted, and Gemini skips sources containing
+// "/" because they cannot form a models/<id> path segment.
+func appendRedirectDiscoveryEntries(
+	protocol contract.ProtocolID,
+	entries []discoveryEntry,
+	redirects []contract.ModelRedirect,
+) ([]discoveryEntry, error) {
+	if len(redirects) == 0 {
+		return entries, nil
+	}
+	listed := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		listed[discoveryModelID(protocol, entry.id)] = struct{}{}
+	}
+	sources := make([]string, 0)
+	for _, redirect := range redirects {
+		if !redirect.Enabled || redirect.From == "" || redirect.From == contract.AstrLinkAutoModelID {
+			continue
+		}
+		if protocol == contract.ProtocolGoogleModels && strings.Contains(redirect.From, "/") {
+			continue
+		}
+		if _, targetListed := listed[redirect.To]; !targetListed {
+			continue
+		}
+		if _, sourceListed := listed[redirect.From]; sourceListed {
+			continue
+		}
+		listed[redirect.From] = struct{}{}
+		sources = append(sources, redirect.From)
+	}
+	if len(sources) == 0 {
+		return entries, nil
+	}
+	synthesized, err := synthesizeAliasDiscoveryEntries(protocol, sources)
+	if err != nil {
+		return nil, err
+	}
+	entries = append(entries, synthesized...)
+	sort.Slice(entries, func(left, right int) bool {
+		return entries[left].id < entries[right].id
+	})
+	return entries, nil
+}
+
+// discoveryModelID converts a listed entry id to the model id clients send.
+func discoveryModelID(protocol contract.ProtocolID, id string) string {
+	if protocol == contract.ProtocolGoogleModels {
+		return strings.TrimPrefix(id, "models/")
+	}
+	return id
 }
 
 type openAIAliasDiscoveryModel struct {

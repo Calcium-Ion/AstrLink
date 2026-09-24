@@ -23,17 +23,18 @@ func (id SessionID) Validate() error {
 type RequestEventKind string
 
 const (
-	RequestEventAccepted  RequestEventKind = "accepted"
-	RequestEventPrivacy   RequestEventKind = "privacy"
-	RequestEventRouted    RequestEventKind = "routed"
-	RequestEventUpstream  RequestEventKind = "upstream"
-	RequestEventRestore   RequestEventKind = "restore"
-	RequestEventCompleted RequestEventKind = "completed"
+	RequestEventAccepted      RequestEventKind = "accepted"
+	RequestEventModelRedirect RequestEventKind = "model_redirect"
+	RequestEventPrivacy       RequestEventKind = "privacy"
+	RequestEventRouted        RequestEventKind = "routed"
+	RequestEventUpstream      RequestEventKind = "upstream"
+	RequestEventRestore       RequestEventKind = "restore"
+	RequestEventCompleted     RequestEventKind = "completed"
 )
 
 func (kind RequestEventKind) Valid() bool {
 	switch kind {
-	case RequestEventAccepted, RequestEventPrivacy, RequestEventRouted,
+	case RequestEventAccepted, RequestEventModelRedirect, RequestEventPrivacy, RequestEventRouted,
 		RequestEventUpstream, RequestEventRestore, RequestEventCompleted:
 		return true
 	default:
@@ -348,6 +349,9 @@ type RequestRecord struct {
 	Status          RequestStatus    `json:"status"`
 	InputProtocol   ProtocolID       `json:"input_protocol"`
 	RequestedModel  *string          `json:"requested_model"`
+	// ModelRedirect is set when a routing-settings redirect replaced
+	// RequestedModel for provider selection.
+	ModelRedirect *RequestModelRedirect `json:"model_redirect,omitempty"`
 	// ReasoningEffort is the explicitly requested level; nil means unspecified or historical.
 	ReasoningEffort    *string        `json:"reasoning_effort"`
 	Streaming          bool           `json:"streaming"`
@@ -427,6 +431,11 @@ func (record RequestRecord) Validate() error {
 	if record.RequestedModel != nil {
 		if *record.RequestedModel == "" || utf8.RuneCountInString(*record.RequestedModel) > 256 {
 			return fmt.Errorf("requested_model must contain 1 to 256 characters when set")
+		}
+	}
+	if record.ModelRedirect != nil {
+		if err := record.ModelRedirect.Validate(); err != nil {
+			return err
 		}
 	}
 	if record.ReasoningEffort != nil {
@@ -561,18 +570,20 @@ type RequestSession struct {
 	DurationMs    int64      `json:"duration_ms"`
 	// ToolDurationMs estimates gaps between calls in the same user turn;
 	// retry backoff and gaps between user turns are excluded. Nil if unknown.
-	ToolDurationMs        *int64         `json:"tool_duration_ms"`
-	AverageTTFTMs         *float64       `json:"average_ttft_ms"`
-	OutputTokensPerSecond *float64       `json:"output_tokens_per_second"`
-	ActiveRequestStarts   []time.Time    `json:"active_request_starts"`
-	TurnCount             int            `json:"turn_count"`
-	CallCount             int            `json:"call_count"`
-	Status                SessionStatus  `json:"status"`
-	RequestedModel        *string        `json:"requested_model"`
-	ReasoningEffort       *string        `json:"reasoning_effort"`
-	InputProtocol         ProtocolID     `json:"input_protocol"`
-	ServiceID             *ServiceID     `json:"service_id"`
-	LocalAccessTokenID    *AccessTokenID `json:"local_access_token_id"`
+	ToolDurationMs        *int64        `json:"tool_duration_ms"`
+	AverageTTFTMs         *float64      `json:"average_ttft_ms"`
+	OutputTokensPerSecond *float64      `json:"output_tokens_per_second"`
+	ActiveRequestStarts   []time.Time   `json:"active_request_starts"`
+	TurnCount             int           `json:"turn_count"`
+	CallCount             int           `json:"call_count"`
+	Status                SessionStatus `json:"status"`
+	RequestedModel        *string       `json:"requested_model"`
+	// ModelRedirect mirrors the latest call's redirect, if any.
+	ModelRedirect      *RequestModelRedirect `json:"model_redirect,omitempty"`
+	ReasoningEffort    *string               `json:"reasoning_effort"`
+	InputProtocol      ProtocolID            `json:"input_protocol"`
+	ServiceID          *ServiceID            `json:"service_id"`
+	LocalAccessTokenID *AccessTokenID        `json:"local_access_token_id"`
 }
 
 func (session RequestSession) Validate() error {
@@ -618,6 +629,11 @@ func (session RequestSession) Validate() error {
 	if session.RequestedModel != nil {
 		if *session.RequestedModel == "" || utf8.RuneCountInString(*session.RequestedModel) > 256 {
 			return fmt.Errorf("requested_model must contain 1 to 256 characters when set")
+		}
+	}
+	if session.ModelRedirect != nil {
+		if err := session.ModelRedirect.Validate(); err != nil {
+			return err
 		}
 	}
 	if session.ReasoningEffort != nil {

@@ -5,6 +5,7 @@ import type { RoutableService } from "./service-model";
 import type { ProtocolDescriptor } from "./service-presets";
 
 export function RouteManager({
+  services,
   isReady,
   onDirtyChange,
 }: {
@@ -26,7 +27,11 @@ export function RouteManager({
         title={t("nav.routing")}
         titleId="route-manager-title"
       />
-      <RoutingSettingsPanel ready={isReady} onDirtyChange={onDirtyChange} />
+      <RoutingSettingsPanel
+        ready={isReady}
+        services={services}
+        onDirtyChange={onDirtyChange}
+      />
     </section>
   );
 }

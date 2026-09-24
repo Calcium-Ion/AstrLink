@@ -1,5 +1,9 @@
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+
+const MAX_MODEL_REDIRECTS: usize = 200;
+const MAX_REDIRECT_MODEL_CHARS: usize = 256;
+const ASTRLINK_AUTO_MODEL_ID: &str = "astrlink/auto";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -94,6 +98,51 @@ pub(crate) fn validate_attempts(value: &serde_json::Value) -> Result<(), String>
     }
 }
 
+/// Mirrors contract.ValidateModelRedirects: sources are unique and no target is
+/// another rule's source, so every redirect is a single hop.
+fn validate_model_redirects(value: &serde_json::Value) -> Result<(), String> {
+    let rules = value
+        .as_array()
+        .filter(|rules| rules.len() <= MAX_MODEL_REDIRECTS)
+        .ok_or("model_redirects must be an array of at most 200 rules")?;
+    let mut sources = HashSet::with_capacity(rules.len());
+    let mut targets = Vec::with_capacity(rules.len());
+    for rule in rules {
+        let fields = rule.as_object().ok_or("model redirect must be an object")?;
+        if fields.len() != 3
+            || !fields
+                .get("enabled")
+                .is_some_and(serde_json::Value::is_boolean)
+        {
+            return Err("invalid model redirect fields".into());
+        }
+        let from = redirect_model(fields.get("from"))?;
+        let to = redirect_model(fields.get("to"))?;
+        if from == to || to == ASTRLINK_AUTO_MODEL_ID {
+            return Err("invalid model redirect target".into());
+        }
+        if !sources.insert(from) {
+            return Err("model redirect source is duplicated".into());
+        }
+        targets.push(to);
+    }
+    if targets.iter().any(|to| sources.contains(to)) {
+        return Err("model redirect target must not be another rule's source".into());
+    }
+    Ok(())
+}
+
+fn redirect_model(value: Option<&serde_json::Value>) -> Result<&str, String> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .filter(|model| {
+            (1..=MAX_REDIRECT_MODEL_CHARS).contains(&model.chars().count())
+                && model.trim() == *model
+                && !model.chars().any(|c| c < ' ' && c != '\t')
+        })
+        .ok_or_else(|| "invalid model redirect model".into())
+}
+
 pub(crate) fn validate_routing_settings(
     value: &serde_json::Value,
     patch: bool,
@@ -138,6 +187,7 @@ pub(crate) fn validate_routing_settings(
                     return Err("invalid API provider reuse settings".into());
                 }
             }
+            "model_redirects" => validate_model_redirects(value)?,
             "default_failure_policy" => validate_failure_policy(value)?,
             "allow_unmatched_failover"
             | "codex_identity_enforcement"
@@ -189,6 +239,71 @@ mod tests {
             for invalid in [json!(null), json!("false"), json!(0)] {
                 assert!(validate_routing_settings(&json!({key: invalid}), true).is_err());
             }
+        }
+    }
+    fn redirect(from: &str, to: &str) -> serde_json::Value {
+        json!({"from":from,"to":to,"enabled":true})
+    }
+    fn redirects(rules: serde_json::Value) -> Result<(), String> {
+        validate_routing_settings(&json!({ "model_redirects": rules }), true)
+    }
+    #[test]
+    fn accepts_valid_model_redirects() {
+        let long = "模".repeat(256);
+        let many: Vec<_> = (0..200)
+            .map(|index| redirect(&format!("client-{index}"), &format!("upstream-{index}")))
+            .collect();
+        for rules in [
+            json!([]),
+            json!([redirect("gpt-4o", "gpt-5")]),
+            json!([
+                redirect("astrlink/auto", "gpt-5"),
+                {"from":"Claude","to":"claude-sonnet","enabled":false},
+                redirect("claude", "claude-sonnet"),
+                redirect("tab\tinside", &long),
+            ]),
+            json!(many),
+        ] {
+            assert!(redirects(rules.clone()).is_ok(), "{rules}");
+        }
+        assert!(validate_routing_settings(&json!({"model_redirects":[redirect("a","b")],"default_failure_policy":policy(),"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}),false).is_ok());
+    }
+    #[test]
+    fn rejects_invalid_model_redirects() {
+        let many: Vec<_> = (0..201)
+            .map(|index| redirect(&format!("client-{index}"), &format!("upstream-{index}")))
+            .collect();
+        let long = "m".repeat(257);
+        for rules in [
+            json!(null),
+            json!({}),
+            json!("gpt-4o"),
+            json!(many),
+            json!(["gpt-4o"]),
+            json!([null]),
+            json!([{"from":"a","to":"b"}]),
+            json!([{"from":"a","enabled":true}]),
+            json!([{"from":"a","to":"b","enabled":true,"note":"x"}]),
+            json!([{"from":"a","to":"b","enabled":"true"}]),
+            json!([{"from":"a","to":"b","enabled":null}]),
+            json!([{"from":1,"to":"b","enabled":true}]),
+            json!([{"from":"a","to":null,"enabled":true}]),
+            json!([redirect("", "b")]),
+            json!([redirect("a", "")]),
+            json!([redirect(&long, "b")]),
+            json!([redirect("a", &long)]),
+            json!([redirect(" a", "b")]),
+            json!([redirect("a", "b\t")]),
+            json!([redirect("a", "b\u{3000}")]),
+            json!([redirect("a\nb", "c")]),
+            json!([redirect("a", "b\u{0}c")]),
+            json!([redirect("a", "a")]),
+            json!([redirect("a", "astrlink/auto")]),
+            json!([redirect("a", "b"), redirect("a", "c")]),
+            json!([redirect("a", "b"), redirect("b", "c")]),
+            json!([redirect("b", "c"), {"from":"a","to":"b","enabled":false}]),
+        ] {
+            assert!(redirects(rules.clone()).is_err(), "{rules}");
         }
     }
     #[test]

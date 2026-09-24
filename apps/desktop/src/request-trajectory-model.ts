@@ -3,6 +3,7 @@ import { i18n } from "./i18n";
 import {
   statusLabel,
   type RequestEvent,
+  type RequestModelRedirect,
   type RequestRecord,
   type RequestStatus,
 } from "./request-record-model";
@@ -11,6 +12,7 @@ export type TrajectoryLane = "client" | "gateway" | "upstream";
 export type TrajectoryChip =
   | "TURN"
   | "CLIENT"
+  | "REDIRECT"
   | "POLICY"
   | "ROUTE"
   | "UPSTREAM"
@@ -30,13 +32,16 @@ export type InspectorPart =
   | "upstream_request_body"
   | "upstream_response_content"
   | "response_content"
-  | "route";
+  | "route"
+  | "redirect";
 
 export function inspectorPart(chip: TrajectoryChip): InspectorPart {
   switch (chip) {
     case "TURN":
     case "CLIENT":
       return "request_body";
+    case "REDIRECT":
+      return "redirect";
     case "POLICY":
       return "upstream_request_body";
     case "ROUTE":
@@ -56,6 +61,8 @@ export function inspectorTitle(chip: TrajectoryChip): string {
       return i18n.t("trajectory.turnHeaderTitle");
     case "CLIENT":
       return i18n.t("trajectory.clientBody");
+    case "REDIRECT":
+      return i18n.t("trajectory.modelRedirect");
     case "POLICY":
       return i18n.t("trajectory.hit");
     case "ROUTE":
@@ -244,6 +251,8 @@ export interface TrajectoryRow {
   lane: TrajectoryLane;
   child: boolean;
   turnIndex: number | null;
+  /** Set on REDIRECT rows: the client model and the model routed with. */
+  redirect?: RequestModelRedirect;
 }
 
 export const TIMELINE_GAP_COLLAPSE_MS = 2000;
@@ -297,6 +306,7 @@ export interface TrajectoryTimeline {
 
 const chipByKind: Record<RequestEvent["kind"], TrajectoryChip> = {
   accepted: "CLIENT",
+  model_redirect: "REDIRECT",
   privacy: "POLICY",
   routed: "ROUTE",
   upstream: "UPSTREAM",
@@ -307,6 +317,7 @@ const chipByKind: Record<RequestEvent["kind"], TrajectoryChip> = {
 const laneByChip: Record<TrajectoryChip, TrajectoryLane> = {
   TURN: "client",
   CLIENT: "client",
+  REDIRECT: "gateway",
   POLICY: "gateway",
   ROUTE: "gateway",
   UPSTREAM: "upstream",
@@ -334,6 +345,16 @@ export function synthesizeEvents(record: RequestRecord): RequestEvent[] {
       attempt_index: record.attempt_index,
     },
   ];
+  if (record.model_redirect) {
+    events.push({
+      kind: "model_redirect",
+      started_at: started,
+      ended_at: started,
+      status: "succeeded",
+      summary: modelRedirectSummary(record.model_redirect),
+      attempt_index: record.attempt_index,
+    });
+  }
   if (record.privacy_restore) {
     events.push({
       kind: "privacy",
@@ -391,6 +412,27 @@ export function synthesizeEvents(record: RequestRecord): RequestEvent[] {
     attempt_index: record.attempt_index,
   });
   return events;
+}
+
+/** Core writes the redirect event summary as "from → to". */
+const REDIRECT_SEPARATOR = " → ";
+
+export function modelRedirectSummary(redirect: RequestModelRedirect): string {
+  return `${redirect.from}${REDIRECT_SEPARATOR}${redirect.to}`;
+}
+
+// The record field is authoritative; the summary is only a fallback for an
+// event whose record lost the field. A model name may itself contain the
+// arrow, so an ambiguous summary is left as plain text.
+function rowRedirect(
+  record: RequestRecord,
+  event: RequestEvent,
+): RequestModelRedirect | undefined {
+  if (event.kind !== "model_redirect") return undefined;
+  if (record.model_redirect) return record.model_redirect;
+  const parts = event.summary.split(REDIRECT_SEPARATOR);
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return undefined;
+  return { from: parts[0], to: parts[1] };
 }
 
 /**
@@ -597,6 +639,7 @@ function rowFromEvent(
     event.kind === "upstream" || event.kind === "completed"
       ? readableUsageSummary(event.summary)
       : event.summary;
+  const redirect = rowRedirect(record, event);
   return {
     id: `${record.id}:${event.kind}:${event.started_at}:${event.attempt_index}`,
     requestId: record.id,
@@ -610,6 +653,7 @@ function rowFromEvent(
     lane: laneByChip[chip],
     child,
     turnIndex: null,
+    ...(redirect ? { redirect } : {}),
   };
 }
 

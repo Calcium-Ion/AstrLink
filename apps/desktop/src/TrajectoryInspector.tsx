@@ -7,13 +7,18 @@ import {
 } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
+import { ModelLabel } from "@/components/ModelLabel";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { cn } from "@/lib/utils";
 
 import { AuditPartSection } from "./AuditReviewer";
 import type { CopyFeedback } from "./copy-feedback";
 import { i18n, useT } from "./i18n";
-import type { AuditContent, RequestRecord } from "./request-record-model";
+import type {
+  AuditContent,
+  RequestModelRedirect,
+  RequestRecord,
+} from "./request-record-model";
 import {
   namedRouteSummary,
   requestServiceIdentity,
@@ -27,12 +32,16 @@ import {
   inspectorPart,
   inspectorTitle,
   recordedPrivacyHits,
+  type InspectorPart,
   type PrivacyHitGroup,
   type TrajectoryChip,
   type TrajectoryRow,
 } from "./request-trajectory-model";
 import { protocolEntryPath } from "./service-presets";
 import { CHIP_BADGE_CLASS, chipToneClass } from "./trajectory-chip";
+
+/** The parts backed by a captured body, as opposed to record metadata. */
+type BodyPart = Exclude<InspectorPart, "route" | "redirect">;
 
 /**
  * One selected call. Header chips are tabs; only the active section body is
@@ -263,7 +272,9 @@ function InspectorSection({
         : t("trajectory.miss")
       : inspectorTitle(row.chip);
   const captured =
-    part === "route" || omitCapturedBody ? null : auditPart(auditContent, part);
+    part === "route" || part === "redirect" || omitCapturedBody
+      ? null
+      : auditPart(auditContent, part);
   const httpStatus = inspectorHttpStatus(row.chip, record, auditContent);
   const disconnectNote = clientDisconnectNote(record);
   return (
@@ -310,6 +321,8 @@ function InspectorSection({
           />
           <RecoveryDetails value={record.recovery} />
         </>
+      ) : part === "redirect" ? (
+        <RedirectInspector redirect={row.redirect ?? record.model_redirect} />
       ) : (
         <BodyInspector
           auditContent={auditContent}
@@ -359,6 +372,9 @@ function RouteInspector({
         label={t("trajectory.summary")}
         value={namedRouteSummary(row.summary, names)}
       />
+      {record.model_redirect ? (
+        <ModelRedirectFields redirect={record.model_redirect} />
+      ) : null}
       {tried.length > 0 ? (
         <div>
           <dt className="text-muted-foreground">
@@ -412,6 +428,51 @@ function RouteInspector({
   );
 }
 
+/** The client's model and the one the gateway routed with, one field each. */
+function ModelRedirectFields({ redirect }: { redirect: RequestModelRedirect }) {
+  const t = i18n.t.bind(i18n);
+  return (
+    <>
+      <div data-testid="inspector-requested-model">
+        <dt className="text-muted-foreground">
+          {t("trajectory.requestedModel")}
+        </dt>
+        <dd className="mt-0.5 text-foreground">
+          <ModelLabel model={redirect.from} />
+        </dd>
+      </div>
+      <div data-testid="inspector-redirect-target">
+        <dt className="text-muted-foreground">
+          {t("trajectory.redirectTarget")}
+        </dt>
+        <dd className="mt-0.5 text-foreground">
+          <ModelLabel model={redirect.to} />
+        </dd>
+      </div>
+    </>
+  );
+}
+
+function RedirectInspector({
+  redirect,
+}: {
+  redirect: RequestModelRedirect | undefined;
+}) {
+  const t = i18n.t.bind(i18n);
+  return (
+    <div className="space-y-2" data-testid="redirect-inspector">
+      {redirect ? (
+        <dl className="grid gap-2 text-xs">
+          <ModelRedirectFields redirect={redirect} />
+        </dl>
+      ) : null}
+      <p className="text-xs leading-6 text-muted-foreground">
+        {t("trajectory.modelRedirectHint")}
+      </p>
+    </div>
+  );
+}
+
 function BodyInspector({
   part,
   row,
@@ -421,7 +482,7 @@ function BodyInspector({
   copyFeedback,
   omitCapturedBody,
 }: {
-  part: Exclude<ReturnType<typeof inspectorPart>, "route">;
+  part: BodyPart;
   row: TrajectoryRow;
   record: RequestRecord;
   auditContent: AuditContent | null;
@@ -698,10 +759,7 @@ function bodySectionTitle(chip: TrajectoryChip): string {
   }
 }
 
-function auditPart(
-  content: AuditContent | null,
-  part: Exclude<ReturnType<typeof inspectorPart>, "route">,
-) {
+function auditPart(content: AuditContent | null, part: BodyPart) {
   if (!content) return null;
   switch (part) {
     case "request_body":

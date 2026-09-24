@@ -39,10 +39,86 @@ export const identitySettingKeys = [
 ] as const;
 export type IdentitySettingKey = (typeof identitySettingKeys)[number];
 
+export interface ModelRedirect {
+  from: string;
+  to: string;
+  enabled: boolean;
+}
+
+export const maxModelRedirects = 200;
+export const maxRedirectModelLength = 256;
+export const astrlinkAutoModelId = "astrlink/auto";
+
+/** Built-in redirects are always shown; missing entries default to disabled. */
+export interface BuiltinModelRedirect {
+  /** Key under `modelRedirect.builtin` in the locales. */
+  id: "codexAutoReview";
+  from: string;
+  /** Default target; only forwarded after the user enables and saves the rule. */
+  defaultTo: string;
+}
+
+export const builtinModelRedirects: readonly BuiltinModelRedirect[] = [
+  {
+    id: "codexAutoReview",
+    from: "codex-auto-review",
+    defaultTo: "gpt-5.6-luna",
+  },
+];
+
+export type ModelRedirectIssue =
+  | "empty_from"
+  | "empty_to"
+  | "too_long"
+  | "control_character"
+  | "whitespace"
+  | "same_model"
+  | "auto_target"
+  | "duplicate_from"
+  | "chained_target";
+
+// Go's unicode.IsSpace, which strings.TrimSpace uses; JavaScript's trim()
+// differs at U+0085 and U+FEFF.
+const goSpace =
+  "\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const edgeSpace = new RegExp(`^[${goSpace}]|[${goSpace}]$`, "u");
+
+function hasControlCharacter(value: string) {
+  for (const character of value) {
+    const code = character.codePointAt(0)!;
+    if (code < 32 && code !== 9) return true;
+  }
+  return false;
+}
+
+/** Mirrors contract.ValidateModelRedirects; the first issue per row wins. */
+export function modelRedirectIssues(
+  redirects: readonly ModelRedirect[],
+): (ModelRedirectIssue | undefined)[] {
+  const sources = new Map<string, number>();
+  for (const redirect of redirects)
+    sources.set(redirect.from, (sources.get(redirect.from) ?? 0) + 1);
+  return redirects.map((redirect) => {
+    const models = [redirect.from, redirect.to];
+    if (!redirect.from) return "empty_from";
+    if (!redirect.to) return "empty_to";
+    if (models.some((model) => [...model].length > maxRedirectModelLength))
+      return "too_long";
+    if (models.some(hasControlCharacter)) return "control_character";
+    if (models.some((model) => edgeSpace.test(model))) return "whitespace";
+    if (redirect.from === redirect.to) return "same_model";
+    if (redirect.to === astrlinkAutoModelId) return "auto_target";
+    if ((sources.get(redirect.from) ?? 0) > 1) return "duplicate_from";
+    if (sources.has(redirect.to)) return "chained_target";
+    return undefined;
+  });
+}
+
 export interface RoutingSettings {
   codex_identity_enforcement?: boolean;
   claude_identity_enforcement?: boolean;
   grok_identity_enforcement?: boolean;
+  model_redirects?: ModelRedirect[];
   channel_stickiness?: ChannelStickiness;
   default_recovery_paths?: Record<string, string>;
   default_failure_policy: FailurePolicy;
@@ -232,6 +308,31 @@ export function parseFailoverPolicy(
   };
 }
 
+function parseModelRedirects(value: unknown): ModelRedirect[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > maxModelRedirects)
+    throw Error("model_redirects: expected an array");
+  const redirects = value.map((item, index) => {
+    const path = `model_redirects[${index}]`;
+    const redirect = object(item, path);
+    keys(redirect, ["from", "to", "enabled"], [], path);
+    if (
+      typeof redirect.from !== "string" ||
+      typeof redirect.to !== "string" ||
+      typeof redirect.enabled !== "boolean"
+    )
+      throw Error(`${path}: invalid model redirect`);
+    return {
+      from: redirect.from,
+      to: redirect.to,
+      enabled: redirect.enabled,
+    };
+  });
+  if (modelRedirectIssues(redirects).some(Boolean))
+    throw Error("model_redirects: invalid model redirect");
+  return redirects;
+}
+
 export function parseRoutingSettings(value: unknown): RoutingSettings {
   const settings = object(value, "routing_settings");
   keys(
@@ -242,9 +343,15 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
       "max_attempts",
       "default_failure_policy",
     ],
-    ["default_recovery_paths", "channel_stickiness", ...identitySettingKeys],
+    [
+      "default_recovery_paths",
+      "channel_stickiness",
+      "model_redirects",
+      ...identitySettingKeys,
+    ],
     "routing_settings",
   );
+  const redirects = parseModelRedirects(settings.model_redirects);
   const parsed = parseFailoverPolicy({
     enabled: settings.allow_unmatched_failover,
     strategy: settings.strategy,
@@ -291,6 +398,7 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
       (settings.claude_identity_enforcement as boolean | undefined) ?? true,
     grok_identity_enforcement:
       (settings.grok_identity_enforcement as boolean | undefined) ?? true,
+    model_redirects: redirects,
     ...(stickiness ? { channel_stickiness: stickiness } : {}),
     ...(defaults
       ? { default_recovery_paths: defaults as Record<string, string> }

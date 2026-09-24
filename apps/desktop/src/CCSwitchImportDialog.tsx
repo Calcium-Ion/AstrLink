@@ -27,12 +27,17 @@ import { Input } from "@/components/ui/input";
 
 import type { AccessTokenSummary } from "./access-token-model";
 import {
+  getRoutingSettings,
   listRoutes,
   listServices,
   openCCSwitchImport,
   type CCSwitchClient,
   type CCSwitchModels,
 } from "./bridge";
+import {
+  astrlinkAutoModelId,
+  type ModelRedirect,
+} from "./failure-policy-model";
 import type { Route } from "./route-model";
 import type { Service } from "./service-model";
 import { i18n } from "./i18n";
@@ -80,7 +85,8 @@ export function CCSwitchImportDialog({
   const [catalog, setCatalog] = useState<{
     services: Service[];
     routes: Route[];
-  }>({ services: [], routes: [] });
+    redirects: ModelRedirect[];
+  }>({ services: [], routes: [], redirects: [] });
   const [catalogStatus, setCatalogStatus] = useState<
     "loading" | "ready" | "error"
   >("loading");
@@ -96,20 +102,27 @@ export function CCSwitchImportDialog({
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.allSettled([listServices(), listRoutes()]).then(
-      ([services, routes]) => {
-        if (cancelled) return;
-        setCatalog({
-          services: services.status === "fulfilled" ? services.value.items : [],
-          routes: routes.status === "fulfilled" ? routes.value.items : [],
-        });
-        setCatalogStatus(
-          services.status === "fulfilled" && routes.status === "fulfilled"
-            ? "ready"
-            : "error",
-        );
-      },
-    );
+    void Promise.allSettled([
+      listServices(),
+      listRoutes(),
+      // Redirect sources are optional suggestions; any failure only drops them.
+      Promise.resolve().then(() => getRoutingSettings()),
+    ]).then(([services, routes, routing]) => {
+      if (cancelled) return;
+      setCatalog({
+        services: services.status === "fulfilled" ? services.value.items : [],
+        routes: routes.status === "fulfilled" ? routes.value.items : [],
+        redirects:
+          routing.status === "fulfilled"
+            ? (routing.value.model_redirects ?? [])
+            : [],
+      });
+      setCatalogStatus(
+        services.status === "fulfilled" && routes.status === "fulfilled"
+          ? "ready"
+          : "error",
+      );
+    });
     return () => {
       cancelled = true;
     };
@@ -134,6 +147,23 @@ export function CCSwitchImportDialog({
           !route.match.model.includes("*"),
       )
       .map((route) => route.match.model!),
+    ...catalog.redirects
+      .filter(
+        (redirect) =>
+          redirect.enabled &&
+          redirect.from !== astrlinkAutoModelId &&
+          // Gemini paths cannot carry "/" in the model segment.
+          !(client === "gemini" && redirect.from.includes("/")) &&
+          catalog.services.some(
+            (service) =>
+              service.enabled &&
+              service.models.includes(redirect.to) &&
+              service.capabilities.some(
+                (capability) => capability.protocol === protocols[client],
+              ),
+          ),
+      )
+      .map((redirect) => redirect.from),
   ].sort();
 
   const submit = async (event: FormEvent) => {

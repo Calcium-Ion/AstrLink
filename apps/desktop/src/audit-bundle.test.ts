@@ -210,6 +210,31 @@ describe("buildRecordBundle", () => {
     expect(bundle).toContain("gateway unavailable");
   });
 
+  it("states a model redirect right after the protocol line", () => {
+    const bundle = buildRecordBundle(
+      {
+        ...record,
+        model_redirect: { from: "gpt-4.1", to: "claude-sonnet-4-5" },
+      },
+      content,
+      { format: "txt" },
+    );
+    const protocol = bundle.indexOf(
+      "协议: openai.responses · 模型: gpt-4.1 · 流式: 是",
+    );
+    const redirect = bundle.indexOf("模型重定向: gpt-4.1 → claude-sonnet-4-5");
+    expect(protocol).toBeGreaterThanOrEqual(0);
+    expect(redirect).toBeGreaterThan(protocol);
+    expect(bundle.slice(protocol, redirect).split("\n")).toHaveLength(2);
+    // The legacy record has no events, so the trajectory synthesizes the step.
+    expect(bundle).toMatch(/重定向 · 成功 · .* · gpt-4\.1 → claude-sonnet-4-5/);
+  });
+
+  it("leaves the redirect line out when the model was not redirected", () => {
+    const bundle = buildRecordBundle(record, content, { format: "txt" });
+    expect(bundle).not.toContain("模型重定向");
+  });
+
   it("labels a legacy succeeded HTTP 502 as failed", () => {
     const bundle = buildRecordBundle(
       { ...record, status: "succeeded", http_status: 502, error: null },
@@ -327,7 +352,14 @@ describe("buildRecordBundle diagnosis context", () => {
       max_concurrent_inspections: 1,
       max_request_body_mib: 32,
     },
-    routing: { strategy: "priority", max_attempts: 3 },
+    routing: {
+      strategy: "priority",
+      max_attempts: 3,
+      model_redirects: [
+        { from: "gpt-5.5", to: "claude-opus-4-1", enabled: true },
+        { from: "o3", to: "gpt-5.5-pro", enabled: false },
+      ],
+    },
     capture: {
       request_body_enabled: true,
       response_content_enabled: false,
@@ -394,6 +426,14 @@ describe("buildRecordBundle diagnosis context", () => {
       "响应开始超时: 120 秒 · 并发检测数: 1 · 请求体上限: 32 MiB",
     );
     expect(bundle).toContain("路由策略: priority · 最大尝试次数: 3");
+    // Only enabled rules shape routing, so only they are named.
+    expect(bundle).toContain(
+      "模型重定向规则: 已启用 1 · gpt-5.5 → claude-opus-4-1",
+    );
+    expect(bundle).not.toContain("o3 → gpt-5.5-pro");
+    expect(bundle.indexOf("模型重定向规则")).toBeGreaterThan(
+      bundle.indexOf("路由策略"),
+    );
     expect(bundle).toContain(
       "内容捕获: 请求体 已开启 · 响应内容 已关闭 · HTTP 元数据 已开启",
     );
@@ -431,6 +471,10 @@ describe("buildRecordBundle diagnosis context", () => {
     expect(payload.exported_at).toBe("2026-09-20T10:06:40.200Z");
     expect(payload.environment.privacy.detector).toBe("local_model");
     expect(payload.environment.privacy.inspect_additional_tools).toBe(false);
+    expect(payload.environment.routing.model_redirects).toStrictEqual([
+      { from: "gpt-5.5", to: "claude-opus-4-1", enabled: true },
+      { from: "o3", to: "gpt-5.5-pro", enabled: false },
+    ]);
     expect(
       payload.records.map((item: { id: string }) => item.id),
     ).toStrictEqual(["req_detector_timeout", "req_live_inspection"]);
@@ -448,6 +492,48 @@ describe("buildRecordBundle diagnosis context", () => {
     expect(bundle).toContain("- ▶ 第 3 轮");
   });
 
+  it("says when no redirect rule is enabled", () => {
+    const bundle = buildRecordBundle(liveTurn, liveContent, {
+      format: "txt",
+      exportedAt,
+      environment: {
+        ...environment,
+        routing: {
+          strategy: "priority",
+          max_attempts: 3,
+          model_redirects: [{ from: "o3", to: "gpt-5.5-pro", enabled: false }],
+        },
+      },
+    });
+    expect(bundle).toContain("模型重定向规则: 已启用 0 · （无）");
+  });
+
+  it("names the first 20 enabled redirect rules and counts the rest", () => {
+    const rules = Array.from({ length: 23 }, (_, index) => ({
+      from: `client-${index + 1}`,
+      to: `target-${index + 1}`,
+      enabled: true,
+    }));
+    const bundle = buildRecordBundle(liveTurn, liveContent, {
+      format: "txt",
+      exportedAt,
+      environment: {
+        ...environment,
+        routing: {
+          strategy: "priority",
+          max_attempts: 3,
+          model_redirects: rules,
+        },
+      },
+    });
+    const listed = rules
+      .slice(0, 20)
+      .map((rule) => `${rule.from} → ${rule.to}`)
+      .join("、");
+    expect(bundle).toContain(`模型重定向规则: 已启用 23 · ${listed}、另 3 条`);
+    expect(bundle).not.toContain("client-21 → target-21");
+  });
+
   it("marks settings it could not read instead of dropping them", () => {
     const bundle = buildRecordBundle(liveTurn, liveContent, {
       format: "txt",
@@ -463,6 +549,9 @@ describe("buildRecordBundle diagnosis context", () => {
     expect(bundle).toContain("隐私保护: （未能读取）");
     expect(bundle).toContain(
       "跳过函数调用检查: （未能读取） · 跳过 additional_tools 检查: （未能读取）",
+    );
+    expect(bundle).toContain(
+      "模型重定向规则: 已启用 （未能读取） · （未能读取）",
     );
     expect(bundle).not.toContain("版本:");
     // Without a session there is nothing to anchor the diagnostic to.

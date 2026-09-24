@@ -430,7 +430,7 @@ describe("App workspace navigation", () => {
       {
         nav: "路由",
         read: bridgeMocks.getRoutingSettings,
-        content: "最多重试几次",
+        content: "Codex 自动审查",
       },
       {
         nav: "安全策略",
@@ -812,7 +812,7 @@ describe("App workspace navigation", () => {
       [...container.querySelectorAll('[role="tab"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual(["恢复与重试", "错误规则", "会话粘性", "转发身份"]);
+    ).toEqual(["模型重定向", "恢复与重试", "错误规则", "会话粘性", "转发身份"]);
     expect(container.textContent).not.toContain("mmBERT");
     expect(bridgeMocks.listRoutes).not.toHaveBeenCalled();
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
@@ -1017,6 +1017,7 @@ describe("App workspace navigation", () => {
   it("protects default-policy drafts when leaving routing", async () => {
     await renderApp();
     await act(async () => button("路由").click());
+    await act(async () => button("恢复与重试").click());
     const label = "最多重试几次";
     const input = [...container.querySelectorAll("label")]
       .find(

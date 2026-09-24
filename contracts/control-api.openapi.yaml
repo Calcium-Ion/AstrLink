@@ -2928,7 +2928,16 @@ components:
     UsageSummary:
       type: object
       additionalProperties: false
-      required: [totals, by_day, by_hour, by_service, by_model, by_token, scanned_records]
+      required:
+        [
+          totals,
+          by_day,
+          by_hour,
+          by_service,
+          by_model,
+          by_token,
+          scanned_records,
+        ]
       properties:
         totals:
           $ref: "#/components/schemas/UsageTotals"
@@ -3391,6 +3400,24 @@ components:
         enabled: { type: boolean, default: true }
         ttl_seconds:
           { type: integer, minimum: 60, maximum: 86400, default: 3600 }
+    ModelRedirect:
+      type: object
+      additionalProperties: false
+      required: [from, to, enabled]
+      description: Routes a client-requested model to another model before service selection. Matching is exact and case-sensitive, only enabled rules apply, and a redirect is a single hop. Responses keep the client's model name.
+      properties:
+        from:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Model name sent by the client. Must be unique in the table, must not be another rule's target, and has no leading or trailing whitespace or control characters. astrlink/auto is allowed so clients still configured with the retired model can be redirected.
+        to:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Model used for routing and sent upstream. Must differ from from, must not be astrlink/auto, and must not be the source of any rule.
+        enabled:
+          type: boolean
     ChannelBindingScope:
       type: object
       required: [session_id, local_access_token_id, protocol, model]
@@ -3459,6 +3486,7 @@ components:
       type: object
       required:
         [
+          model_redirects,
           allow_unmatched_failover,
           strategy,
           max_attempts,
@@ -3477,6 +3505,13 @@ components:
           type: boolean
           default: true
           description: Use the default Grok client identity. When disabled, preserve recognized Grok client identities with a matching version header.
+        model_redirects:
+          type: array
+          maxItems: 200
+          default: []
+          description: Model redirect table applied to new inference requests before service selection. Always present; empty when no rules exist.
+          items:
+            $ref: "#/components/schemas/ModelRedirect"
         channel_stickiness:
           $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:
@@ -3508,6 +3543,12 @@ components:
           type: boolean
         grok_identity_enforcement:
           type: boolean
+        model_redirects:
+          type: array
+          maxItems: 200
+          description: Replaces the whole redirect table. Send an empty array to remove every rule; null is rejected.
+          items:
+            $ref: "#/components/schemas/ModelRedirect"
         channel_stickiness:
           $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:
@@ -5376,6 +5417,9 @@ components:
         requested_model:
           type: [string, "null"]
           maxLength: 256
+          description: Model name sent by the client, before any model redirect.
+        model_redirect:
+          $ref: "#/components/schemas/RequestModelRedirect"
         reasoning_effort:
           type: [string, "null"]
           minLength: 1
@@ -5522,13 +5566,38 @@ components:
           minLength: 1
           maxLength: 256
       additionalProperties: false
+    RequestModelRedirect:
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      description: Model redirect applied to this request. Omitted when no redirect applied, including historical records.
+      properties:
+        from:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Client-requested model; equals requested_model.
+        to:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Model used for service selection.
     RequestEvent:
       type: object
       required: [kind, started_at, ended_at, status, summary, attempt_index]
       properties:
         kind:
           type: string
-          enum: [accepted, privacy, routed, upstream, restore, completed]
+          enum:
+            [
+              accepted,
+              model_redirect,
+              privacy,
+              routed,
+              upstream,
+              restore,
+              completed,
+            ]
         started_at:
           type: string
           format: date-time
@@ -5598,6 +5667,8 @@ components:
         requested_model:
           type: [string, "null"]
           maxLength: 256
+        model_redirect:
+          $ref: "#/components/schemas/RequestModelRedirect"
         reasoning_effort:
           type: [string, "null"]
           minLength: 1

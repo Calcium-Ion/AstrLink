@@ -668,8 +668,9 @@ func TestInferencePlaneCapabilityErrorsNameProtocolModeAndStreaming(t *testing.T
 					Streaming: true,
 				}
 			}),
-			body:            `{"model":"gpt-5","stream":true}`,
-			wantModeReason:  "required mode=native; streaming=true",
+			body: `{"model":"gpt-5","stream":true}`,
+			// The error names the client's model even when the resolver omits it.
+			wantModeReason:  `required mode=native; streaming=true; model="gpt-5"`,
 			wantPlanTypes:   []string{"native"},
 			wantMessagePart: `protocol "openai.responses" in native mode with streaming=true`,
 		},

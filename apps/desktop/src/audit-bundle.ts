@@ -274,6 +274,34 @@ function serviceLabel(
   return serviceNames[record.service_id] ?? record.service_id;
 }
 
+/** The environment lists at most this many redirect rules by name. */
+const MAX_LISTED_REDIRECTS = 20;
+
+function modelRedirectsLine(
+  routing: ExportEnvironment["routing"],
+  unavailable: string,
+): string {
+  if (!routing) {
+    return i18n.t("audit.modelRedirectsLine", {
+      count: unavailable,
+      rules: unavailable,
+    });
+  }
+  const enabled = routing.model_redirects.filter((rule) => rule.enabled);
+  const listed = enabled
+    .slice(0, MAX_LISTED_REDIRECTS)
+    .map((rule) => `${rule.from} → ${rule.to}`);
+  const rest = enabled.length - listed.length;
+  if (rest > 0) listed.push(i18n.t("audit.moreRedirects", { count: rest }));
+  return i18n.t("audit.modelRedirectsLine", {
+    count: enabled.length,
+    rules:
+      listed.length > 0
+        ? listed.join(i18n.t("audit.listJoin"))
+        : i18n.t("audit.none"),
+  });
+}
+
 function environmentSection(
   environment: ExportEnvironment,
   format: BundleFormat,
@@ -346,6 +374,7 @@ function environmentSection(
           }),
       format,
     ),
+    bullet(modelRedirectsLine(routing, unavailable), format),
     bullet(
       capture
         ? i18n.t("audit.captureLine", {
@@ -445,6 +474,17 @@ export function buildRecordBundle(
       format,
     ),
   );
+  if (record.model_redirect) {
+    lines.push(
+      bullet(
+        i18n.t("audit.modelRedirectLine", {
+          from: record.model_redirect.from,
+          to: record.model_redirect.to,
+        }),
+        format,
+      ),
+    );
+  }
   lines.push(
     bullet(
       i18n.t("audit.attemptLine", {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -112,6 +114,120 @@ func TestRoutingSettingsRejectInvalidPolicy(t *testing.T) {
 		if response.Code != 422 {
 			t.Fatalf("%s => %d %s", body, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestRoutingSettingsModelRedirectsReplaceAndPersist(t *testing.T) {
+	store, handler := newRouteHandler(t)
+	ctx := context.Background()
+	response := controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"model_redirects":[]`) {
+		t.Fatalf("GET defaults: %d %s", response.Code, response.Body.String())
+	}
+	patch := `{"model_redirects":[{"from":"gpt-4o","to":"gpt-4.1","enabled":true},{"from":"astrlink/auto","to":"gpt-4.1-mini","enabled":false}]}`
+	response = controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", patch, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH: %d %s", response.Code, response.Body.String())
+	}
+	want := []contract.ModelRedirect{
+		{From: "gpt-4o", To: "gpt-4.1", Enabled: true},
+		{From: contract.AstrLinkAutoModelID, To: "gpt-4.1-mini", Enabled: false},
+	}
+	var patched contract.RoutingSettings
+	decode(t, response, &patched)
+	if !reflect.DeepEqual(patched.ModelRedirects, want) || patched.MaxAttempts != 6 {
+		t.Fatalf("PATCH response = %+v", patched)
+	}
+	stored, err := store.GetRoutingSettings(ctx)
+	if err != nil || !reflect.DeepEqual(stored.ModelRedirects, want) {
+		t.Fatalf("stored = %+v %v", stored.ModelRedirects, err)
+	}
+	// A merge patch replaces the array instead of appending to it.
+	response = controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", `{"model_redirects":[{"from":"claude-old","to":"claude-new","enabled":true}]}`, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("replace: %d %s", response.Code, response.Body.String())
+	}
+	response = controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")
+	var fetched contract.RoutingSettings
+	decode(t, response, &fetched)
+	if !reflect.DeepEqual(fetched.ModelRedirects, []contract.ModelRedirect{{From: "claude-old", To: "claude-new", Enabled: true}}) {
+		t.Fatalf("replaced = %+v", fetched.ModelRedirects)
+	}
+	// Other keys leave the table untouched.
+	response = controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", `{"max_attempts":3}`, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"model_redirects":[{"from":"claude-old","to":"claude-new","enabled":true}]`) {
+		t.Fatalf("unrelated PATCH: %d %s", response.Code, response.Body.String())
+	}
+	response = controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", `{"model_redirects":[]}`, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"model_redirects":[]`) {
+		t.Fatalf("clear: %d %s", response.Code, response.Body.String())
+	}
+	stored, err = store.GetRoutingSettings(ctx)
+	if err != nil || stored.ModelRedirects == nil || len(stored.ModelRedirects) != 0 || stored.MaxAttempts != 3 {
+		t.Fatalf("cleared = %+v %v", stored, err)
+	}
+}
+
+func TestRoutingSettingsRejectInvalidModelRedirects(t *testing.T) {
+	store, handler := newRouteHandler(t)
+	valid := `{"model_redirects":[{"from":"gpt-4o","to":"gpt-4.1","enabled":true}]}`
+	if response := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", valid, ""); response.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", response.Code, response.Body.String())
+	}
+	for _, body := range []string{
+		`{"model_redirects":null}`,
+		`{"model_redirects":{}}`,
+		`{"model_redirects":"gpt-4o"}`,
+		`{"model_redirects":[null]}`,
+		`{"model_redirects":[{"from":"a","to":"b","enabled":true},{"from":"a","to":"c","enabled":false}]}`,
+		`{"model_redirects":[{"from":"a","to":"b","enabled":true},{"from":"b","to":"c","enabled":true}]}`,
+		`{"model_redirects":[{"from":"same","to":"same","enabled":true}]}`,
+		`{"model_redirects":[{"from":"client","to":"astrlink/auto","enabled":true}]}`,
+		`{"model_redirects":[{"from":"client","to":"target","enabled":true,"id":"rule_1"}]}`,
+		`{"model_redirects":[{"from":"client","to":"target"}]}`,
+		`{"model_redirects":[{"from":"","to":"target","enabled":true}]}`,
+		`{"model_redirects":[{"from":"client ","to":"target","enabled":true}]}`,
+	} {
+		response := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", body, "")
+		if response.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s => %d %s", body, response.Code, response.Body.String())
+		}
+	}
+	rules := make([]contract.ModelRedirect, contract.MaxModelRedirects+1)
+	for i := range rules {
+		rules[i] = contract.ModelRedirect{From: fmt.Sprintf("client-%03d", i), To: "target", Enabled: true}
+	}
+	encoded, _ := json.Marshal(map[string]any{"model_redirects": rules})
+	if response := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", string(encoded), ""); response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("over limit => %d %s", response.Code, response.Body.String())
+	}
+	stored, err := store.GetRoutingSettings(context.Background())
+	if err != nil || !reflect.DeepEqual(stored.ModelRedirects, []contract.ModelRedirect{{From: "gpt-4o", To: "gpt-4.1", Enabled: true}}) {
+		t.Fatalf("rejected patches changed the table: %+v %v", stored.ModelRedirects, err)
+	}
+}
+
+// nilRedirectRoutingStore simulates a store that returns a nil table.
+type nilRedirectRoutingStore struct {
+	storage.RoutingSettingsStore
+}
+
+func (store nilRedirectRoutingStore) GetRoutingSettings(ctx context.Context) (contract.RoutingSettings, error) {
+	settings, err := store.RoutingSettingsStore.GetRoutingSettings(ctx)
+	settings.ModelRedirects = nil
+	return settings, err
+}
+
+func TestRoutingSettingsNeverEmitNullModelRedirects(t *testing.T) {
+	store, handler := newRouteHandler(t)
+	handler.routingSettings = nilRedirectRoutingStore{store}
+	response := controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"model_redirects":[]`) {
+		t.Fatalf("GET: %d %s", response.Code, response.Body.String())
+	}
+	response = controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", `{"max_attempts":4}`, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"model_redirects":[]`) {
+		t.Fatalf("PATCH: %d %s", response.Code, response.Body.String())
 	}
 }
 

@@ -24,6 +24,9 @@ type responsesWSTurn struct {
 	eventID  string
 	streamID string
 	controls chan []byte
+	// routingModel is this turn's model after redirects; forward pins it on
+	// the socket together with the client model.
+	routingModel string
 }
 
 func responsesWSTurnFromContext(ctx context.Context) *responsesWSTurn {
@@ -43,6 +46,8 @@ type responsesWSSession struct {
 	serviceID     contract.ServiceID
 	model         string
 	upstreamModel string
+	// routingModel is the redirect result pinned when the socket bound.
+	routingModel string
 }
 
 func (handler *Handler) serveResponsesWebSocket(writer http.ResponseWriter, request *http.Request) {
@@ -172,7 +177,10 @@ func normalizeResponsesWSCreate(data []byte) ([]byte, error) {
 	return json.Marshal(body)
 }
 
-func (session *responsesWSSession) filterCandidates(model string, candidates []endpoint.Resolved) []endpoint.Resolved {
+// filterCandidates keeps native Responses WebSocket candidates. model is the
+// client's model, which the bound socket must match; routingModel stands in
+// for a candidate without an explicit upstream model.
+func (session *responsesWSSession) filterCandidates(model, routingModel string, candidates []endpoint.Resolved) []endpoint.Resolved {
 	result := make([]endpoint.Resolved, 0, len(candidates))
 	for _, candidate := range candidates {
 		service := candidate.CanonicalService()
@@ -184,7 +192,7 @@ func (session *responsesWSSession) filterCandidates(model string, candidates []e
 		}
 		upstreamModel := candidate.UpstreamModel
 		if upstreamModel == "" {
-			upstreamModel = model
+			upstreamModel = routingModel
 		}
 		if native := service.Kind.ModelNativeProtocol(upstreamModel); native != "" && native != contract.ProtocolOpenAIResponses {
 			continue
@@ -214,6 +222,10 @@ func (turn *responsesWSTurn) forward(writer http.ResponseWriter, request *http.R
 		turn.session.serviceID = candidate.CanonicalService().ID
 		turn.session.model = candidate.RequestedModel
 		turn.session.upstreamModel = upstreamModel
+		turn.session.routingModel = turn.routingModel
+		if turn.session.routingModel == "" {
+			turn.session.routingModel = candidate.RequestedModel
+		}
 	}
 	return err
 }

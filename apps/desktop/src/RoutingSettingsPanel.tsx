@@ -1,5 +1,5 @@
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getRoutingSettings, updateRoutingSettings } from "./bridge";
 import { ChannelStickinessEditor } from "./components/ChannelStickinessEditor";
 import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
@@ -8,40 +8,69 @@ import {
   RecoveryOrderControls,
 } from "./components/FailoverEditor";
 import { FormMessage } from "./components/FormMessage";
+import { ModelRedirectEditor } from "./components/ModelRedirectEditor";
 import { Panel, PanelHeader } from "./components/Panel";
 import { Button } from "./components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import {
   identitySettingKeys,
+  modelRedirectIssues,
   parseRoutingSettings,
   type RoutingSettings,
 } from "./failure-policy-model";
 import { useT } from "./i18n";
 import { notify } from "./notify";
+import type { RoutableService } from "./service-model";
 import { UpstreamIdentitySettings } from "./UpstreamIdentitySettings";
+
+const routingTabs = ["redirects", "recovery", "rules", "session", "identity"];
+
+// A document without the key has no redirects; compare and edit it as [].
+function withRedirects(settings: RoutingSettings): RoutingSettings {
+  return { ...settings, model_redirects: settings.model_redirects ?? [] };
+}
 
 export function RoutingSettingsPanel({
   ready,
+  services,
   onDirtyChange,
 }: {
   ready: boolean;
+  services: readonly RoutableService[];
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const t = useT();
-  const [tab, setTab] = useState("recovery");
+  const [tab, setTab] = useState("redirects");
   const [settings, setSettings] = useWorkspaceSnapshot<RoutingSettings | null>(
     "routing-settings",
     null,
   );
-  const [draft, setDraft] = useState<RoutingSettings | null>(settings);
+  const [draft, setDraft] = useState<RoutingSettings | null>(() =>
+    settings ? withRedirects(settings) : null,
+  );
   const [baseline, setBaseline] = useState(() =>
-    settings ? JSON.stringify(settings) : "",
+    settings ? JSON.stringify(withRedirects(settings)) : "",
   );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
+  const [showRedirectIssues, setShowRedirectIssues] = useState(false);
   const dirty = draft !== null && JSON.stringify(draft) !== baseline;
+  const redirectsInvalid =
+    draft !== null &&
+    modelRedirectIssues(draft.model_redirects ?? []).some(Boolean);
+  const modelOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          services
+            .filter((service) => service.enabled)
+            .flatMap((service) => service.models),
+        ),
+      ].sort(),
+    [services],
+  );
   const mutationVersion = useRef(0);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -59,8 +88,8 @@ export function RoutingSettingsPanel({
         setSettings(settings);
         // Reconnection and retry must never replace an unsaved draft.
         if (!dirtyRef.current) {
-          setDraft(settings);
-          setBaseline(JSON.stringify(settings));
+          setDraft(withRedirects(settings));
+          setBaseline(JSON.stringify(withRedirects(settings)));
         }
         setLoadError(null);
       })
@@ -77,6 +106,11 @@ export function RoutingSettingsPanel({
 
   const save = async () => {
     if (!draft || !ready || saving) return;
+    if (redirectsInvalid) {
+      setShowRedirectIssues(true);
+      setTab("redirects");
+      return;
+    }
     try {
       parseRoutingSettings(draft);
     } catch {
@@ -95,15 +129,19 @@ export function RoutingSettingsPanel({
         "strategy",
         "max_attempts",
         "channel_stickiness",
+        "model_redirects",
         ...identitySettingKeys,
       ] as const) {
-        if (JSON.stringify(draft[key]) !== JSON.stringify(original[key]))
-          Object.assign(patch, { [key]: draft[key] });
+        const next = withRedirects(draft)[key];
+        if (
+          JSON.stringify(next) !== JSON.stringify(withRedirects(original)[key])
+        )
+          Object.assign(patch, { [key]: next });
       }
       const saved = await updateRoutingSettings(patch);
       setSettings(saved);
-      setDraft(saved);
-      setBaseline(JSON.stringify(saved));
+      setDraft(withRedirects(saved));
+      setBaseline(JSON.stringify(withRedirects(saved)));
       notify.success(t("failure.saved"));
     } catch (error) {
       setError(
@@ -132,6 +170,9 @@ export function RoutingSettingsPanel({
         </FormMessage>
       ) : null}
       {error ? <FormMessage tone="error">{error}</FormMessage> : null}
+      {showRedirectIssues && redirectsInvalid ? (
+        <FormMessage tone="error">{t("routing.redirectsInvalid")}</FormMessage>
+      ) : null}
       <Tabs
         value={tab}
         onValueChange={setTab}
@@ -143,7 +184,7 @@ export function RoutingSettingsPanel({
             aria-label={t("nav.routing")}
             className="min-w-0"
           >
-            {["recovery", "rules", "session", "identity"].map((value) => (
+            {routingTabs.map((value) => (
               <TabsTrigger
                 key={value}
                 value={value}
@@ -165,6 +206,28 @@ export function RoutingSettingsPanel({
         </div>
         {draft ? (
           <>
+            <TabsContent
+              value="redirects"
+              className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1"
+              data-tab-scroller
+            >
+              <fieldset
+                disabled={!ready || saving}
+                className="flex min-h-0 min-w-0 flex-1 flex-col"
+              >
+                <ModelRedirectEditor
+                  value={draft.model_redirects ?? []}
+                  modelOptions={modelOptions}
+                  disabled={!ready || saving}
+                  showAllIssues={showRedirectIssues}
+                  onChange={(model_redirects) => {
+                    setDraft({ ...draft, model_redirects });
+                    if (!modelRedirectIssues(model_redirects).some(Boolean))
+                      setShowRedirectIssues(false);
+                  }}
+                />
+              </fieldset>
+            </TabsContent>
             <TabsContent
               value="recovery"
               className="min-h-0 flex-1 overflow-y-auto pb-1"

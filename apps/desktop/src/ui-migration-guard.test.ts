@@ -40,6 +40,7 @@ const migratedSources = [
   "components/FormMessage.tsx",
   "components/LoadingState.tsx",
   "components/Metric.tsx",
+  "components/ModelRedirectEditor.tsx",
   "components/Panel.tsx",
   "components/SectionKicker.tsx",
   "components/StatusDot.tsx",

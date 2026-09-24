@@ -4,14 +4,15 @@
 
 `events[]` on a request record is the gateway pipeline. Read it in order.
 
-| kind        | Meaning                                                                                                                                                                      |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accepted`  | Local inference accepted the request and assigned an id                                                                                                                      |
-| `privacy`   | Request privacy policy ran (`allow`, `warn`, `block`, or `redact`)                                                                                                           |
-| `routed`    | Route / `astrlink/auto` category and target were chosen                                                                                                                      |
-| `upstream`  | The selected service was invoked                                                                                                                                             |
-| `restore`   | Privacy placeholders were restored on the way back                                                                                                                           |
-| `completed` | Terminal status written (`succeeded`, `failed`, `cancelled`, `blocked`). Failures use `error.code ·` the unwrapped transport cause (host/URL allowed; credentials redacted). |
+| kind             | Meaning                                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accepted`       | Local inference accepted the request and assigned an id                                                                                                                      |
+| `model_redirect` | A routing-settings redirect replaced the client model. Closed point event right after `accepted`; status `succeeded`, summary `from → to`. Desktop chip `REDIRECT`           |
+| `privacy`        | Request privacy policy ran (`allow`, `warn`, `block`, or `redact`)                                                                                                           |
+| `routed`         | Route / `astrlink/auto` category and target were chosen                                                                                                                      |
+| `upstream`       | The selected service was invoked                                                                                                                                             |
+| `restore`        | Privacy placeholders were restored on the way back                                                                                                                           |
+| `completed`      | Terminal status written (`succeeded`, `failed`, `cancelled`, `blocked`). Failures use `error.code ·` the unwrapped transport cause (host/URL allowed; credentials redacted). |
 
 Retries appear as **child** records (`parent_request_id` set).
 `get_request_children` lists them. The root keeps `child_count` and the
@@ -62,6 +63,8 @@ or a client that compacted the history all prevent linking. That is expected,
 not a gateway fault.
 
 If `status` is `blocked`, start with the `privacy` event and `privacy_restore`
-counts. If the model name looks wrong, start with `routed` and
-`requested_model`. If the client saw a 5xx after a delay, compare root `events`
-with child retries.
+counts. If the model name looks wrong, check for a `model_redirect` event (and
+the record's `model_redirect`) first, then `routed`, `requested_model`, and
+`recovery.upstream_model`; `get_routing_settings` shows the current redirect
+rules. If the client saw a 5xx after a delay, compare root `events` with child
+retries.

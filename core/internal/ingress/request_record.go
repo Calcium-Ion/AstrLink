@@ -116,6 +116,7 @@ type recordSession struct {
 	channelBinding           *channelBindingAttempt
 	pendingAttempt           *pendingAttemptRecord
 	recovery                 *contract.RequestRecovery
+	modelRedirect            *contract.RequestModelRedirect
 	id                       contract.RequestID
 	startedAt                time.Time
 	classified               Request
@@ -453,6 +454,11 @@ func (session *recordSession) recordSnapshot(
 		link := *session.sessionLink
 		record.SessionLink = &link
 	}
+	if session.modelRedirect != nil {
+		// Copy so a retry child never aliases the root's redirect.
+		redirect := *session.modelRedirect
+		record.ModelRedirect = &redirect
+	}
 	record.Cursors = mergeSessionCursors(session.inboundCursors, session.outputCursors)
 	return record
 }
@@ -575,7 +581,7 @@ func (session *recordSession) noteServed(candidate endpoint.Resolved, plan contr
 func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan contract.ExecutionPlan) {
 	model := candidate.UpstreamModel
 	if model == "" {
-		model = session.classified.Model
+		model = session.classified.routingModel()
 	}
 	if session.recovery == nil {
 		session.recovery = &contract.RequestRecovery{}
@@ -605,6 +611,23 @@ func (session *recordSession) noteAttemptedService(id contract.ServiceID) {
 		return
 	}
 	session.endpointID = &id
+}
+
+// noteModelRedirect records that routing uses to instead of the client's
+// requested model from. It is a closed point event right after accepted; the
+// requested model stays from, and retry children inherit the redirect.
+func (session *recordSession) noteModelRedirect(ctx context.Context, from, to string) {
+	if session == nil || from == "" || to == "" || from == to {
+		return
+	}
+	session.modelRedirect = &contract.RequestModelRedirect{From: from, To: to}
+	session.classified.RedirectedModel = to
+	session.addEvent(contract.RequestEventModelRedirect, contract.RequestStatusSucceeded, from+" → "+to)
+	event := &session.events[len(session.events)-1]
+	ended := event.StartedAt
+	event.EndedAt = &ended
+	// The pending row was written before routing settings were read.
+	session.persistLiveMetadata(ctx)
 }
 
 // noteCandidateRejected keeps a provider that was chosen but never called

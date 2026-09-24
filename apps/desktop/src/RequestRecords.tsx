@@ -161,6 +161,8 @@ function sessionSummaryKey(session: RequestSession): string {
     session.id,
     session.status,
     session.requested_model ?? "",
+    session.model_redirect?.from ?? "",
+    session.model_redirect?.to ?? "",
     session.reasoning_effort ?? "",
     session.turn_count,
     session.call_count,
@@ -189,6 +191,8 @@ function sessionDetailKey(detail: RequestSessionDetail): string {
       turn.id,
       turn.status,
       turn.requested_model ?? "",
+      turn.model_redirect?.from ?? "",
+      turn.model_redirect?.to ?? "",
       turn.reasoning_effort ?? "",
       turn.http_status ?? "",
       turn.latency_ms ?? "",
@@ -437,7 +441,9 @@ export function RequestRecords({
     setFilters((current) => {
       const sameTokenSelection =
         current.localAccessTokenIds.length === initialTokenIds.length &&
-        current.localAccessTokenIds.every((id, index) => id === initialTokenIds[index]);
+        current.localAccessTokenIds.every(
+          (id, index) => id === initialTokenIds[index],
+        );
       if (
         sameTokenSelection &&
         current.status === EMPTY_FILTERS.status &&
@@ -1152,19 +1158,26 @@ export function RequestRecords({
                     />
                     <MultiFilterSelect
                       allLabel={t("common.all")}
-                      ariaLabel={t("records.filter", { label: t("records.accessToken") })}
+                      ariaLabel={t("records.filter", {
+                        label: t("records.accessToken"),
+                      })}
                       className="w-full"
                       clearLabel={t("records.clearTokenFilter")}
                       disabled={!isReady || !accessTokensReady}
                       emptyMessage={t("records.noAccessTokenResults")}
                       label={t("records.accessToken")}
                       onChange={(localAccessTokenIds) =>
-                        setFilters((current) => ({ ...current, localAccessTokenIds }))
+                        setFilters((current) => ({
+                          ...current,
+                          localAccessTokenIds,
+                        }))
                       }
                       options={accessTokenOptions}
                       searchPlaceholder={t("records.searchAccessTokens")}
                       selectAllLabel={t("records.selectAllTokens")}
-                      selectedCountLabel={(count) => t("records.selectedTokens", { count })}
+                      selectedCountLabel={(count) =>
+                        t("records.selectedTokens", { count })
+                      }
                       value={filters.localAccessTokenIds}
                     />
                   </div>
@@ -1232,12 +1245,17 @@ export function RequestRecords({
                         : "records.empty",
                   )}
                   action={
-                    filters.status || filters.serviceId || filters.protocol || filters.localAccessTokenIds.length ? (
+                    filters.status ||
+                    filters.serviceId ||
+                    filters.protocol ||
+                    filters.localAccessTokenIds.length ? (
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => setFilters(EMPTY_FILTERS)}
-                      >                        {t("records.clearFilters")}
+                      >
+                        {" "}
+                        {t("records.clearFilters")}
                       </Button>
                     ) : undefined
                   }
@@ -1616,6 +1634,7 @@ function SessionRow({
           fallback={t("records.unspecifiedModel")}
           model={session.requested_model}
           reasoningEffort={session.reasoning_effort}
+          redirectedTo={session.model_redirect?.to}
         />
         <span className="col-span-2 col-start-2 row-start-3 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs leading-5 text-muted-foreground @[680px]:row-start-2 @[680px]:grid-cols-[7rem_minmax(0,1fr)_minmax(max-content,1fr)_4.5rem]">
           <code
@@ -2044,6 +2063,7 @@ function RecordDetail({
                   <ModelLabel
                     model={record.requested_model}
                     reasoningEffort={record.reasoning_effort}
+                    redirectedTo={record.model_redirect?.to}
                   />
                 }
               />
@@ -2172,7 +2192,10 @@ function RecordDetail({
                 records={recoveryRecords}
                 serviceNames={serviceNames}
               />
-              <RecoveryDetails value={record.recovery} />
+              <RecoveryDetails
+                modelRedirect={record.model_redirect}
+                value={record.recovery}
+              />
             </DetailSection>
           ) : null}
 

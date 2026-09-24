@@ -276,17 +276,34 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		session.finish(context.Background(), handler.requestRecords, handler.auditBlobs, handler.recordLogger)
 	}()
 
-	if classified.Model == contract.AstrLinkAutoModelID {
+	// One read serves model redirects, channel binding and discovery.
+	routingSettings, routingSettingsLoaded, err := handler.loadRoutingSettings(request.Context())
+	if err != nil {
+		if request.Context().Err() == nil {
+			logRequestRecordFailure(handler.recordLogger, "routing_settings_lookup", err)
+		}
+		// Redirects choose the routed model, so inference never skips them
+		// silently; discovery only loses its redirect-source entries.
+		if !classified.Protocol.IsModelDiscovery() {
+			session.captureUnreadRequestBody(request)
+			handler.writeResolveError(outWriter, request, classified, fmt.Errorf("read routing settings: %w", err))
+			return
+		}
+	}
+	if !classified.Protocol.IsModelDiscovery() && classified.Model != "" {
+		classified = handler.applyModelRedirect(request.Context(), session, classified, routingSettings)
+	}
+	if classified.routingModel() == contract.AstrLinkAutoModelID {
 		session.captureUnreadRequestBody(request)
 		writeInferenceError(outWriter, http.StatusGone, "routing_feature_retired", "astrlink/auto is retired; request an explicit model", false, nil)
 		session.noteFailed(errorSummaryFromInference("routing_feature_retired", "automatic routing is retired", false))
 		return
 	}
 	category := ""
-	session.channelBinding = handler.prepareChannelBinding(request.Context(), session)
+	session.channelBinding = handler.prepareChannelBinding(session, routingSettings, routingSettingsLoaded)
 	candidates, err := handler.resolveCandidates(request.Context(), endpoint.ResolveRequest{
 		Protocol:      classified.Protocol,
-		Model:         classified.Model,
+		Model:         classified.routingModel(),
 		Streaming:     classified.Streaming,
 		Category:      category,
 		Continuation:  classified.PreviousResponseID != "",
@@ -304,8 +321,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.writeResolveError(outWriter, request, classified, err)
 		return
 	}
+	candidates = redirectCandidates(classified, candidates)
 	if turn := responsesWSTurnFromContext(request.Context()); turn != nil {
-		candidates = turn.session.filterCandidates(classified.Model, candidates)
+		candidates = turn.session.filterCandidates(classified.Model, classified.routingModel(), candidates)
 		if len(candidates) == 0 {
 			writeInferenceError(outWriter, http.StatusUnprocessableEntity, "responses_websocket_unavailable", "no enabled API provider supports native Responses WebSocket for this model and connection", false, nil)
 			session.noteFailed(errorSummaryFromInference("responses_websocket_unavailable", "no enabled API provider supports Responses WebSocket for this connection", false))
@@ -319,7 +337,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if classified.Protocol.IsModelDiscovery() {
-		handler.aggregateModelDiscovery(outWriter, request, classified, candidates)
+		handler.aggregateModelDiscovery(outWriter, request, classified, candidates, routingSettings.ModelRedirects)
 		return
 	}
 	candidates = handler.preferChannelBinding(request, session, candidates)
@@ -870,7 +888,8 @@ func (handler *Handler) writeResolveError(writer http.ResponseWriter, request *h
 		writeMissingCapability(
 			writer,
 			capabilityErr.Protocol,
-			capabilityErr.Model,
+			// The resolver saw the routing model; report what the client sent.
+			classified.Model,
 			capabilityErr.Modes,
 			capabilityErr.Streaming,
 		)

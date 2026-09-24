@@ -437,7 +437,7 @@ const requestSessionSummaryColumns = `
     session_id, NULL, NULL, input_preview, NULL, created_at,
     turn_index, NULL, NULL, NULL, NULL,
     (SELECT COUNT(*) FROM request_records children
-     WHERE children.parent_request_id = request_records.id), NULL, NULL`
+     WHERE children.parent_request_id = request_records.id), NULL, NULL, model_redirect_json`
 
 func (store *Store) loadSessionSummaries(ctx context.Context, items []sessionAggregate) (map[string][]contract.RequestRecord, error) {
 	result := make(map[string][]contract.RequestRecord, len(items))
@@ -530,6 +530,7 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 		CallCount:          callCount,
 		Status:             sessionStatus(turns, latest),
 		RequestedModel:     latest.RequestedModel,
+		ModelRedirect:      latest.ModelRedirect,
 		ReasoningEffort:    latest.ReasoningEffort,
 		InputProtocol:      latest.InputProtocol,
 		ServiceID:          latest.ServiceID,

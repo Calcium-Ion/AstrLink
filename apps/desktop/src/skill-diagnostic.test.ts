@@ -210,6 +210,37 @@ describe("buildSkillDiagnosticPayload", () => {
     expect(record.children?.[0]).not.toHaveProperty("selected");
   });
 
+  it("carries the model redirect on the session and on every record", () => {
+    const redirect = { from: "glm-5.3-flash", to: "deepseek-v4" };
+    const payload = buildSkillDiagnosticPayload({
+      session: { ...session, model_redirect: redirect },
+      selectedRequestId: root.id,
+      turns: [{ ...root, model_redirect: redirect }],
+      childrenByRoot: { [root.id]: [{ ...child, model_redirect: redirect }] },
+    });
+
+    expect(payload.session.requested_model).toBe("glm-5.3-flash");
+    expect(payload.session.model_redirect).toStrictEqual(redirect);
+    expect(payload.records[0]?.requested_model).toBe("glm-5.3-flash");
+    expect(payload.records[0]?.model_redirect).toStrictEqual(redirect);
+    expect(payload.records[0]?.children?.[0]?.model_redirect).toStrictEqual(
+      redirect,
+    );
+  });
+
+  it("states explicitly that a call was not redirected", () => {
+    const payload = buildSkillDiagnosticPayload({
+      session,
+      selectedRequestId: root.id,
+      turns: [root],
+      childrenByRoot: { [root.id]: [child] },
+    });
+
+    expect(payload.session.model_redirect).toBeNull();
+    expect(payload.records[0]?.model_redirect).toBeNull();
+    expect(payload.records[0]?.children?.[0]?.model_redirect).toBeNull();
+  });
+
   it("marks a selected child and flags missing retries", () => {
     const loaded = buildSkillDiagnosticPayload({
       session,
@@ -242,6 +273,8 @@ describe("buildSkillDiagnostic", () => {
 
     expect(text).toContain("astrlink-debug");
     expect(text).toContain("Read this snapshot first");
+    expect(text).toContain("requested_model, model_redirect, input_protocol");
+    expect(text).toContain('"model_redirect": null');
     expect(text).toContain("```json");
     expect(text).toContain(root.id);
     expect(text).toContain(child.id);

@@ -136,15 +136,17 @@ func (policy FailoverPolicy) Validate() error {
 }
 
 type RoutingSettings struct {
-	CodexIdentityEnforcement  bool                          `json:"codex_identity_enforcement"`
-	ClaudeIdentityEnforcement bool                          `json:"claude_identity_enforcement"`
-	GrokIdentityEnforcement   bool                          `json:"grok_identity_enforcement"`
-	ChannelStickiness         *ChannelStickiness            `json:"channel_stickiness,omitempty"`
-	DefaultRecoveryPaths      map[ProtocolID]RecoveryPathID `json:"default_recovery_paths,omitempty"`
-	DefaultFailurePolicy      FailurePolicy                 `json:"default_failure_policy"`
-	AllowUnmatchedFailover    bool                          `json:"allow_unmatched_failover"`
-	Strategy                  FailoverStrategy              `json:"strategy"`
-	MaxAttempts               int                           `json:"max_attempts"`
+	CodexIdentityEnforcement  bool `json:"codex_identity_enforcement"`
+	ClaudeIdentityEnforcement bool `json:"claude_identity_enforcement"`
+	GrokIdentityEnforcement   bool `json:"grok_identity_enforcement"`
+	// ModelRedirects is always emitted; nil documents load as an empty table.
+	ModelRedirects         []ModelRedirect               `json:"model_redirects"`
+	ChannelStickiness      *ChannelStickiness            `json:"channel_stickiness,omitempty"`
+	DefaultRecoveryPaths   map[ProtocolID]RecoveryPathID `json:"default_recovery_paths,omitempty"`
+	DefaultFailurePolicy   FailurePolicy                 `json:"default_failure_policy"`
+	AllowUnmatchedFailover bool                          `json:"allow_unmatched_failover"`
+	Strategy               FailoverStrategy              `json:"strategy"`
+	MaxAttempts            int                           `json:"max_attempts"`
 }
 
 func DefaultRoutingSettings() RoutingSettings {
@@ -152,6 +154,7 @@ func DefaultRoutingSettings() RoutingSettings {
 		CodexIdentityEnforcement:  true,
 		ClaudeIdentityEnforcement: true,
 		GrokIdentityEnforcement:   true,
+		ModelRedirects:            []ModelRedirect{},
 		ChannelStickiness:         &ChannelStickiness{Enabled: true, TTLSeconds: 3600},
 		DefaultFailurePolicy:      DefaultFailurePolicy(),
 		AllowUnmatchedFailover:    true,
@@ -163,6 +166,9 @@ func (settings RoutingSettings) FailoverPolicy() FailoverPolicy {
 	return FailoverPolicy{Enabled: settings.AllowUnmatchedFailover, Strategy: settings.Strategy, MaxAttempts: settings.MaxAttempts}
 }
 func (settings RoutingSettings) Validate() error {
+	if err := ValidateModelRedirects(settings.ModelRedirects); err != nil {
+		return err
+	}
 	if settings.ChannelStickiness != nil {
 		if err := settings.ChannelStickiness.Validate(); err != nil {
 			return err

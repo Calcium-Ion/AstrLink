@@ -32,7 +32,15 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
         <StrictMode>
           <RouteManager
             coreSessionKey="test"
-            services={[]}
+            services={[
+              {
+                id: "service_a",
+                name: "A",
+                enabled: true,
+                models: ["gpt-5"],
+                capabilities: [],
+              },
+            ]}
             protocols={[]}
             isReady
             onDirtyChange={dirty}
@@ -44,9 +52,43 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
     expect(
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(4);
-    expect(container.textContent).toContain("ABC：失败后换下一家");
+    const tabs = [...container.querySelectorAll('[role="tab"]')];
+    expect(tabs).toHaveLength(5);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Codex 自动审查");
     expect(container.textContent).not.toContain("astrlink/auto");
+    // The redirect editor suggests models from the forwarded services.
+    await act(async () =>
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "添加重定向")!
+        .click(),
+    );
+    await act(async () =>
+      container
+        .querySelector<HTMLInputElement>(
+          'input[role="combobox"][aria-label="第 1 条规则的目标模型"]',
+        )!
+        .click(),
+    );
+    expect(
+      [...document.querySelectorAll('[role="option"]')].map((option) =>
+        option.getAttribute("aria-label"),
+      ),
+    ).toEqual(["gpt-5"]);
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="删除 第 1 条规则 的重定向"]',
+        )!
+        .click(),
+    );
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    await act(async () =>
+      tabs
+        .find((tab) => tab.textContent === "恢复与重试")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    expect(container.textContent).toContain("ABC：失败后换下一家");
     expect(bridge.listRoutes).not.toHaveBeenCalled();
     expect(bridge.listRecoveryPaths).not.toHaveBeenCalled();
     const input = container.querySelector<HTMLInputElement>(

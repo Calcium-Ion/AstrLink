@@ -652,5 +652,8 @@ WHERE id = 'policy_privacy_default'
   AND (json_type(document_json, '$.skip_tool_declarations') IS NULL
        OR json_type(document_json, '$.inspect_additional_tools') IS NULL)`,
 		}},
+		{Version: 35, Name: "request_model_redirect", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN model_redirect_json TEXT`,
+		}},
 	}
 }

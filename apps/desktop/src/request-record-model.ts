@@ -61,11 +61,18 @@ export interface PrivacyRestoreSummary {
 
 export type RequestEventKind =
   | "accepted"
+  | "model_redirect"
   | "privacy"
   | "routed"
   | "upstream"
   | "restore"
   | "completed";
+
+/** The routing-settings redirect applied to a call: client model → routed model. */
+export interface RequestModelRedirect {
+  from: string;
+  to: string;
+}
 
 export interface RequestEvent {
   kind: RequestEventKind;
@@ -121,6 +128,7 @@ export interface RequestRecord {
   status: RequestStatus;
   input_protocol: string;
   requested_model: string | null;
+  model_redirect?: RequestModelRedirect;
   reasoning_effort?: string | null;
   streaming: boolean;
   route_id: string | null;
@@ -174,6 +182,7 @@ export interface RequestSession {
   call_count: number;
   status: SessionStatus;
   requested_model: string | null;
+  model_redirect?: RequestModelRedirect;
   reasoning_effort?: string | null;
   input_protocol: string;
   service_id: string | null;
@@ -516,6 +525,27 @@ function parseRecovery(value: unknown, path: string): RequestRecovery {
   return result;
 }
 
+function parseModelRedirect(
+  value: unknown,
+  path: string,
+): RequestModelRedirect | undefined {
+  if (value == null) return undefined;
+  const redirect = objectAt(value, path);
+  const from = stringAt(redirect.from, `${path}.from`);
+  const to = stringAt(redirect.to, `${path}.to`);
+  if (!from || !to || [...from].length > 256 || [...to].length > 256)
+    invalid(path, "模型重定向无效");
+  return { from, to };
+}
+
+function optionalModelRedirect(
+  value: unknown,
+  path: string,
+): { model_redirect?: RequestModelRedirect } {
+  const redirect = parseModelRedirect(value, path);
+  return redirect ? { model_redirect: redirect } : {};
+}
+
 export function parseRequestRecord(value: unknown): RequestRecord {
   return parseRequestRecordAt(value, "$");
 }
@@ -557,6 +587,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
       record.requested_model,
       `${path}.requested_model`,
     ),
+    ...optionalModelRedirect(record.model_redirect, `${path}.model_redirect`),
     reasoning_effort:
       record.reasoning_effort == null
         ? null
@@ -660,6 +691,7 @@ function parseSessionCursors(value: unknown, path: string): SessionCursor[] {
 
 const eventKinds = new Set<RequestEventKind>([
   "accepted",
+  "model_redirect",
   "privacy",
   "routed",
   "upstream",
@@ -782,6 +814,7 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
       session.requested_model,
       `${path}.requested_model`,
     ),
+    ...optionalModelRedirect(session.model_redirect, `${path}.model_redirect`),
     reasoning_effort:
       session.reasoning_effort == null
         ? null

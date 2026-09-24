@@ -17,7 +17,15 @@ func (store *Store) GetRoutingSettings(ctx context.Context) (contract.RoutingSet
 	if err := json.Unmarshal([]byte(document), &settings); err != nil {
 		return settings, fmt.Errorf("%w: routing settings", storage.ErrInvalidRecord)
 	}
-	return settings, settings.Validate()
+	// Documents saved before redirects existed, or with an explicit null,
+	// load as an empty table so readers never see a nil list.
+	if settings.ModelRedirects == nil {
+		settings.ModelRedirects = []contract.ModelRedirect{}
+	}
+	if err := settings.Validate(); err != nil {
+		return settings, fmt.Errorf("%w: routing settings: %v", storage.ErrInvalidRecord, err)
+	}
+	return settings, nil
 }
 
 func (store *Store) UpdateRoutingSettings(ctx context.Context, settings contract.RoutingSettings) (err error) {

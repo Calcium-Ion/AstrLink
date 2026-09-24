@@ -34,7 +34,7 @@ func (handler *Handler) rememberResponseAffinity(ctx context.Context, session *r
 	principal, _ := AccessTokenIDFromContext(ctx)
 	model := candidate.UpstreamModel
 	if model == "" {
-		model = session.classified.Model
+		model = session.classified.routingModel()
 	}
 	binding := storage.ResponseAffinity{ServiceID: candidate.CanonicalService().ID, UpstreamModel: model, UpstreamProtocol: plan.UpstreamProtocol, PlanType: plan.Type}
 	key := affinityKey{string(principal), session.outputResponseID}
@@ -93,7 +93,7 @@ func (handler *Handler) bindResponseAffinity(ctx context.Context, request Reques
 		for _, candidate := range candidates {
 			model := candidate.UpstreamModel
 			if model == "" {
-				model = request.Model
+				model = request.routingModel()
 			}
 			protocol := candidate.UpstreamProtocol
 			if protocol == "" {
