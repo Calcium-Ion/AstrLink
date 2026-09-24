@@ -2362,21 +2362,7 @@ export function ServiceManager({
   const protocolEditor = (
     <Panel asChild>
       <section aria-labelledby="service-capabilities-heading">
-        <PanelHeader
-          actions={
-            <>
-              <ProtocolModeHelp />
-              <Badge
-                className="mt-px shrink-0 tabular-nums"
-                variant="secondary"
-              >
-                {t("services.enabledItems", {
-                  count: draft.capabilities.length,
-                })}
-              </Badge>
-            </>
-          }
-        >
+        <PanelHeader actions={<ProtocolModeHelp />}>
           <div className="grid min-w-0 gap-0.5">
             <strong
               className="text-sm font-semibold"

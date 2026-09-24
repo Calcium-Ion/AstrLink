@@ -28,7 +28,8 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-muted",
+        default:
+          "bg-muted [&>[data-slot=tabs-trigger][data-state=inactive]+[data-slot=tabs-trigger][data-state=inactive]]:before:opacity-100",
         line: "gap-1 bg-transparent",
       },
     },
@@ -71,6 +72,7 @@ function TabsTrigger({
         "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-sm border border-transparent px-2.5 py-1 text-xs font-medium whitespace-nowrap text-foreground/60 transition-all group-data-[orientation=vertical]/tabs:w-full group-data-[orientation=vertical]/tabs:justify-start hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-45 group-data-[variant=default]/tabs-list:data-[state=active]:shadow-none group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
         "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent",
         "data-[state=active]:bg-background data-[state=active]:text-foreground",
+        "before:pointer-events-none before:absolute before:rounded-full before:bg-border/80 before:opacity-0 before:transition-opacity group-data-[orientation=horizontal]/tabs:before:inset-y-1/4 group-data-[orientation=horizontal]/tabs:before:-left-px group-data-[orientation=horizontal]/tabs:before:w-px group-data-[orientation=vertical]/tabs:before:inset-x-2 group-data-[orientation=vertical]/tabs:before:-top-px group-data-[orientation=vertical]/tabs:before:h-px",
         "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-[orientation=horizontal]/tabs:after:inset-x-0 group-data-[orientation=horizontal]/tabs:after:bottom-[-5px] group-data-[orientation=horizontal]/tabs:after:h-0.5 group-data-[orientation=vertical]/tabs:after:inset-y-0 group-data-[orientation=vertical]/tabs:after:-right-1 group-data-[orientation=vertical]/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100",
         className,
       )}

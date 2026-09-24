@@ -45,7 +45,9 @@
 
   /* Brand ink: navy-blue, not the logo's indigo */
   --primary: #1d4d87;
+  --primary-fill: var(--primary);
   --primary-foreground: #ffffff;
+  --primary-fill-foreground: var(--primary-foreground);
   --primary-hover: #16345c;
   --accent: #e8f1fb;
   --accent-foreground: #2456a0;
@@ -56,7 +58,9 @@
 
   /* Semantic states, tuned to sit beside blue */
   --destructive: #c2384f;
+  --destructive-fill: var(--destructive);
   --destructive-foreground: #ffffff;
+  --destructive-fill-foreground: var(--destructive-foreground);
   --danger-foreground: #a52c43;
   --danger-wash: #fdeef1;
   --success: #1f9d6b;
@@ -106,58 +110,65 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #111827;
-  --foreground: #e5edf7;
-  --card: #151e2e;
-  --card-foreground: #e5edf7;
-  --popover: #1b2638;
-  --popover-foreground: #e5edf7;
-  --secondary: #202c3e;
-  --secondary-foreground: #e5edf7;
-  --muted: #202c3e;
-  --muted-foreground: #a0aec2;
-  --border: #303d52;
-  --input: #485870;
-  --ring: #7cb5ff;
+  /* Charcoal surfaces rise gently with elevation; text stops short of white. */
+  --background: #1a1c20;
+  --foreground: #cbd0d8;
+  --card: #202328;
+  --card-foreground: var(--foreground);
+  --popover: #292d33;
+  --popover-foreground: var(--foreground);
+  --secondary: #2c3037;
+  --secondary-foreground: var(--foreground);
+  --muted: #262a30;
+  --muted-foreground: #969eaa;
+  --border: #363c45;
+  --input: #505966;
+  --ring: #799bc4;
 
-  --primary: #8abbff;
-  --primary-foreground: #10233e;
-  --primary-hover: #afd0ff;
-  --accent: #223a59;
-  --accent-foreground: #b4d5ff;
-  --tide: #7cb5ff;
-  --tide-wash: #203550;
+  /* Readable blue ink and subdued solid controls need different luminance. */
+  --primary: #91afd4;
+  --primary-fill: #3d5f8a;
+  --primary-foreground: #1b2330;
+  --primary-fill-foreground: #e4ebf4;
+  --primary-hover: #486c98;
+  --accent: #2b3849;
+  --accent-foreground: #aac0dc;
+  --tide: #799bc4;
+  --tide-wash: #273343;
 
-  --destructive: #f27589;
-  --destructive-foreground: #301018;
-  --danger-foreground: #ffacbb;
-  --danger-wash: #3c222e;
-  --success: #5ad5a0;
-  --success-foreground: #83e4b7;
-  --success-wash: #17382f;
-  --warning: #edba5a;
-  --warning-foreground: #f5d18d;
-  --warning-wash: #3c311e;
-  --blocked: #da91b9;
-  --blocked-foreground: #edb5d2;
-  --blocked-wash: #38283c;
-  --violet: #89b4ff;
-  --violet-foreground: #b1cdff;
-  --violet-wash: #233451;
+  /* Muted state colors keep dense badges and charts from glowing. */
+  --destructive: #cd8c96;
+  --destructive-fill: #884453;
+  --destructive-foreground: #291c21;
+  --destructive-fill-foreground: #f3e5e8;
+  --danger-foreground: #d5a0a8;
+  --danger-wash: #38292e;
+  --success: #78aa94;
+  --success-foreground: #99bfac;
+  --success-wash: #26362f;
+  --warning: #bfa16e;
+  --warning-foreground: #cfb58d;
+  --warning-wash: #373127;
+  --blocked: #ad8da4;
+  --blocked-foreground: #c3a4b9;
+  --blocked-wash: #342c35;
+  --violet: #94a7c9;
+  --violet-foreground: #aebed8;
+  --violet-wash: #2b3240;
 
-  --sidebar: #111827;
-  --sidebar-foreground: #e5edf7;
-  --sidebar-primary: #8abbff;
-  --sidebar-primary-foreground: #10233e;
-  --sidebar-accent: #223a59;
-  --sidebar-accent-foreground: #b4d5ff;
-  --sidebar-border: #303d52;
-  --sidebar-ring: #7cb5ff;
-  --text-secondary: #bdcadd;
-  --overlay: rgb(0 0 0 / 60%);
-  --shadow-overlay: 0 1px 3px rgb(0 0 0 / 30%), 0 10px 30px rgb(0 0 0 / 25%);
+  --sidebar: #181a1e;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary-fill);
+  --sidebar-primary-foreground: var(--primary-fill-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: #30353d;
+  --sidebar-ring: var(--ring);
+  --text-secondary: #adb5c0;
+  --overlay: rgb(8 10 13 / 65%);
+  --shadow-overlay: 0 1px 3px rgb(0 0 0 / 24%), 0 10px 30px rgb(0 0 0 / 22%);
   --shadow-floating:
-    0 0 0 1px rgb(255 255 255 / 4%), 0 18px 48px -12px rgb(0 0 0 / 70%);
+    0 0 0 1px rgb(203 208 216 / 6%), 0 18px 48px -12px rgb(0 0 0 / 55%);
 }
 
 @keyframes streaming-restore-demo-plain {
@@ -415,7 +426,9 @@
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  --color-primary-fill: var(--primary-fill);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-fill-foreground: var(--primary-fill-foreground);
   --color-primary-hover: var(--primary-hover);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -426,7 +439,9 @@
   --color-tide: var(--tide);
   --color-tide-wash: var(--tide-wash);
   --color-destructive: var(--destructive);
+  --color-destructive-fill: var(--destructive-fill);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-fill-foreground: var(--destructive-fill-foreground);
   --color-danger-foreground: var(--danger-foreground);
   --color-danger-wash: var(--danger-wash);
   --color-border: var(--border);

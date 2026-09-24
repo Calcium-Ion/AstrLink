@@ -26,10 +26,13 @@ export function SegmentedControl<T extends string>({
   return (
     <ToggleGroup.Root
       aria-label={label}
+      data-slot="segmented-control"
       disabled={disabled}
       className={cn(
         "inline-flex max-w-full flex-wrap items-center",
-        variant === "line" ? "gap-4" : "gap-0.5 rounded-md bg-muted p-0.5",
+        variant === "line"
+          ? "gap-4"
+          : "gap-0.5 rounded-md bg-muted p-0.5 [&>[data-slot=segmented-control-item][data-state=off]+[data-slot=segmented-control-item][data-state=off]]:before:opacity-100",
       )}
       onValueChange={(next) => {
         const option = options.find((item) => item.value === next);
@@ -40,11 +43,12 @@ export function SegmentedControl<T extends string>({
     >
       {options.map((option) => (
         <ToggleGroup.Item
+          data-slot="segmented-control-item"
           className={cn(
             "inline-flex h-7 items-center justify-center gap-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-45",
             variant === "line"
               ? "border-b-2 border-transparent px-0.5 data-[state=on]:border-primary data-[state=on]:text-primary"
-              : "rounded-sm px-2.5 data-[state=on]:bg-background data-[state=on]:text-foreground",
+              : "relative rounded-sm px-2.5 before:pointer-events-none before:absolute before:inset-y-1/4 before:-left-px before:w-px before:rounded-full before:bg-border/80 before:opacity-0 before:transition-opacity data-[state=on]:bg-background data-[state=on]:text-foreground",
           )}
           key={option.value}
           value={option.value}
