@@ -45,6 +45,7 @@ import {
 import { ServiceManager } from "./ServiceManager";
 import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
+import { SERVICE_LIST_COLUMNS_STORAGE_KEY } from "./service-list-columns";
 import { parseService, type Service } from "./service-model";
 import { httpServicePreset } from "./service-presets";
 import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
@@ -146,6 +147,13 @@ async function openServiceOverflow(name: string): Promise<void> {
   });
 }
 
+function showAllServiceColumns(): void {
+  localStorage.setItem(
+    SERVICE_LIST_COLUMNS_STORAGE_KEY,
+    JSON.stringify({ hidden: [] }),
+  );
+}
+
 async function chooseMenuItem(label: string): Promise<void> {
   const item = [
     ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -192,6 +200,7 @@ describe("ServiceManager", () => {
     // Existing editor/action tests represent returning users.
     localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
     localStorage.setItem(PROTOCOL_MODE_GUIDE_KEY, "seen");
+    localStorage.removeItem(SERVICE_LIST_COLUMNS_STORAGE_KEY);
     bridgeMocks.getRoutingSettings.mockResolvedValue({
       default_failure_policy: defaultFailurePolicy(),
       allow_unmatched_failover: false,
@@ -354,6 +363,7 @@ describe("ServiceManager", () => {
   });
 
   it("shows channel WebSocket state and saves an explicit Codex opt-out", async () => {
+    showAllServiceColumns();
     const saved = { ...codexService, responses_websocket_enabled: false };
     bridgeMocks.getService.mockResolvedValue({ service: codexService, etag });
     bridgeMocks.updateService.mockResolvedValue({ service: saved, etag });
@@ -3216,6 +3226,7 @@ describe("ServiceManager", () => {
   });
 
   it("opens the provider's model list straight from the model count", async () => {
+    showAllServiceColumns();
     bridgeMocks.getService.mockResolvedValue({ service: gatewayService, etag });
     const changed = vi.fn();
     const props = {
@@ -3266,6 +3277,84 @@ describe("ServiceManager", () => {
         .querySelector('[data-testid="service-editor-tab-connection"]')
         ?.getAttribute("data-state"),
     ).toBe("inactive");
+  });
+
+  it("hides the model column by default and lets users choose visible columns", async () => {
+    await act(async () => {
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[gatewayService]}
+          view={{ kind: "list" }}
+        />,
+      );
+    });
+    const modelCount = () =>
+      container.querySelector(
+        `button[aria-label="打开 ${gatewayService.name} 的模型列表"]`,
+      );
+    const statusSwitch = () =>
+      container.querySelector(
+        `[role="switch"][aria-label="启用 ${gatewayService.name}"]`,
+      );
+    const columnItem = (label: string) => {
+      const item = [
+        ...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
+      ].find((candidate) => candidate.textContent?.trim() === label);
+      if (!item) throw new Error(`Missing column option: ${label}`);
+      return item;
+    };
+    const storedHidden = () =>
+      JSON.parse(localStorage.getItem(SERVICE_LIST_COLUMNS_STORAGE_KEY)!)
+        .hidden;
+    expect(modelCount()).toBeNull();
+    expect(container.textContent).not.toContain("模型 / API");
+    expect(statusSwitch()).not.toBeNull();
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="自定义显示列"]',
+    )!;
+    await act(async () => {
+      trigger.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerType: "mouse",
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(columnItem("模型 / API").getAttribute("aria-checked")).toBe("false");
+    await act(async () => {
+      columnItem("模型 / API").click();
+      await Promise.resolve();
+    });
+    expect(modelCount()?.textContent).toBe(
+      `${gatewayService.models.length} 个模型`,
+    );
+    expect(container.textContent).toContain("模型 / API");
+    expect(storedHidden()).toEqual([]);
+
+    // The menu stays open so several columns can be toggled in a row.
+    await act(async () => {
+      columnItem("状态").click();
+      await Promise.resolve();
+    });
+    expect(statusSwitch()).toBeNull();
+    expect(storedHidden()).toEqual(["status"]);
+
+    await chooseMenuItem("恢复默认列");
+    expect(modelCount()).toBeNull();
+    expect(statusSwitch()).not.toBeNull();
+    expect(storedHidden()).toEqual(["models"]);
   });
 
   it("toggles a service from the list without opening the editor", async () => {

@@ -9,6 +9,7 @@ import {
 import { ServiceTestDialog } from "./ServiceTestDialog";
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
+import { useServiceListColumns } from "./service-list-columns";
 import { ServiceOrderHelp } from "./ServiceOrderHelp";
 import { ProtocolModeHelp } from "./ProtocolModeHelp";
 import { OrderedList } from "./components/OrderedList";
@@ -39,7 +40,12 @@ import { IconButton } from "@/components/IconButton";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { CapabilityIndicator } from "@/components/CapabilityIndicator";
 import { CapabilityToggle } from "@/components/CapabilityToggle";
-import { ServiceListHeader, ServiceListRow } from "@/components/ServiceListRow";
+import {
+  SERVICE_LIST_COLUMNS,
+  ServiceListHeader,
+  ServiceListRow,
+  type ServiceListLabels,
+} from "@/components/ServiceListRow";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { DataRow } from "@/components/DataRow";
 import { ServiceKindIcon } from "@/components/ServiceKindIcon";
@@ -51,8 +57,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ModelSelect } from "@/components/ModelSelect";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -650,7 +658,16 @@ export function ServiceManager({
     isReady && view.kind === "list" && catalogStatus === "ready",
     onRefresh,
   );
+  const listColumns = useServiceListColumns();
   const t = useT();
+  const columnLabels: ServiceListLabels = {
+    service: t("services.columnService"),
+    models: t("services.columnModels"),
+    usage: t("services.columnUsage"),
+    billing: t("services.columnBilling"),
+    status: t("services.columnStatus"),
+    actions: t("services.columnActions"),
+  };
   const descriptors = useMemo(
     () => protocolDescriptors(protocols),
     [protocols],
@@ -1494,6 +1511,42 @@ export function ServiceManager({
           actions={
             <>
               <ServiceOrderHelp ready={isReady && catalogStatus === "ready"} />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton
+                    label={t("services.customizeColumns")}
+                    size="icon"
+                    type="button"
+                  >
+                    <SlidersHorizontal aria-hidden="true" />
+                  </IconButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                    {t("services.visibleColumns")}
+                  </DropdownMenuLabel>
+                  {SERVICE_LIST_COLUMNS.map((id) => (
+                    <DropdownMenuCheckboxItem
+                      checked={!listColumns.hidden.includes(id)}
+                      key={id}
+                      onCheckedChange={(visible) =>
+                        listColumns.setVisible(id, visible)
+                      }
+                      // Keep the menu open to toggle several columns.
+                      onSelect={(event) => event.preventDefault()}
+                    >
+                      {columnLabels[id]}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={listColumns.isDefault}
+                    onSelect={listColumns.reset}
+                  >
+                    {t("services.resetColumns")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <IconButton
                 label={
                   busy ? t("common.refreshing") : t("services.refreshList")
@@ -1644,14 +1697,8 @@ export function ServiceManager({
                 data-testid="service-list-scroller"
               >
                 <ServiceListHeader
-                  labels={[
-                    t("services.columnService"),
-                    t("services.columnModels"),
-                    t("services.columnUsage"),
-                    t("services.columnBilling"),
-                    t("services.columnStatus"),
-                    t("services.columnActions"),
-                  ]}
+                  hidden={listColumns.hidden}
+                  labels={columnLabels}
                 />
                 {visibleServices.length === 0 ? (
                   <EmptyState
@@ -1702,6 +1749,7 @@ export function ServiceManager({
                     return (
                       <ServiceListRow
                         key={service.id}
+                        hidden={listColumns.hidden}
                         name={service.name}
                         order={controls}
                         sorting={sorting}
