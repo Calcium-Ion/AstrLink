@@ -22,6 +22,10 @@ import {
   type AccessTokenCatalog,
 } from "./AccessTokenManager";
 import type { AccessTokenSummary } from "./access-token-model";
+import {
+  finishExitAnimations,
+  installDialogAnimations,
+} from "./lib/test-dialog-animations";
 
 const firstToken: AccessTokenSummary = {
   id: "token_01",
@@ -587,6 +591,40 @@ describe("AccessTokenManager", () => {
     expect(
       container.querySelector('[data-testid="access-token-row"]'),
     ).toBeNull();
+  });
+
+  describe("while the create dialog closes", () => {
+    let removeDialogAnimations: () => void;
+    const createDialog = () => document.querySelector('[role="dialog"]')!;
+    const nameInput = () =>
+      document.querySelector<HTMLInputElement>("#access-token-name");
+
+    beforeEach(async () => {
+      removeDialogAnimations = installDialogAnimations();
+      await renderManager(readyCatalog([firstToken]));
+      await act(async () => button("创建令牌").click());
+      await setInput("#access-token-name", "CI");
+      await act(async () => button("取消", createDialog()).click());
+    });
+
+    afterEach(() => removeDialogAnimations());
+
+    it("keeps the cancelled name and starts empty next time", async () => {
+      expect(createDialog().getAttribute("data-state")).toBe("closed");
+      expect(nameInput()?.value).toBe("CI");
+
+      await finishExitAnimations();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      await act(async () => button("创建令牌").click());
+      expect(nameInput()?.value).toBe("");
+    });
+
+    it("ignores a submission from the closing frame", async () => {
+      await act(async () => button("创建", createDialog()).click());
+
+      expect(bridgeMocks.createAccessToken).not.toHaveBeenCalled();
+      expect(document.body.textContent).not.toContain("请输入令牌名称。");
+    });
   });
 
   it("loads all token totals in one call and fills unused tokens with zero", async () => {

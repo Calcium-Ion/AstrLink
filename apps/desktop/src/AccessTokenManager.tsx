@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useExitSnapshot } from "@/lib/exit-snapshot";
 
 import {
   createAccessToken,
@@ -119,6 +120,9 @@ export function AccessTokenManager({
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  // Closing clears the draft; keep the exit animation on what was entered.
+  const shownName = useExitSnapshot(name, createOpen);
+  const shownCreating = useExitSnapshot(creating, createOpen);
   const [deletingID, setDeletingID] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AccessTokenSummary | null>(
     null,
@@ -219,6 +223,8 @@ export function AccessTokenManager({
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // The closing frame still shows the draft that was just cleared.
+    if (!createOpen) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError(i18n.t("tokens.nameRequired"));
@@ -633,7 +639,7 @@ export function AccessTokenManager({
           }
         }}
       >
-        <DialogContent showCloseButton={!creating}>
+        <DialogContent showCloseButton={!shownCreating}>
           <DialogHeader>
             <KeyRound
               aria-hidden="true"
@@ -652,13 +658,13 @@ export function AccessTokenManager({
                 onChange={(event) => setName(event.currentTarget.value)}
                 placeholder={t("tokens.namePlaceholder")}
                 ref={nameInput}
-                value={name}
+                value={shownName}
               />
             </Field>
             <DialogFooter className="mt-5">
               <Button
                 variant="outline"
-                disabled={creating}
+                disabled={shownCreating}
                 onClick={() => {
                   setCreateOpen(false);
                   setName("");
@@ -667,8 +673,8 @@ export function AccessTokenManager({
               >
                 {t("common.cancel")}
               </Button>
-              <Button disabled={creating} type="submit">
-                {creating ? t("tokens.creating") : t("tokens.create")}
+              <Button disabled={shownCreating} type="submit">
+                {shownCreating ? t("tokens.creating") : t("tokens.create")}
               </Button>
             </DialogFooter>
           </form>

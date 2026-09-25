@@ -38,6 +38,10 @@ const notifyMocks = vi.hoisted(() => ({
 vi.mock("./notify", () => ({ notify: notifyMocks }));
 
 import { defaultFailurePolicy } from "./failure-policy-model";
+import {
+  finishExitAnimations,
+  installDialogAnimations,
+} from "./lib/test-dialog-animations";
 import { ServiceManager } from "./ServiceManager";
 import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
@@ -3158,6 +3162,57 @@ describe("ServiceManager", () => {
       "device_code",
     );
     expect(document.body.textContent).not.toContain("1455 和 1457 均不可用");
+  });
+
+  it("keeps a cancelled login choice on its own service while closing", async () => {
+    const claude: Service = {
+      ...codexService,
+      id: "service_claude",
+      name: "Claude Code",
+      kind: "claude_subscription",
+      subscription: { provider: "claude_code", status: "disconnected" },
+    };
+    const removeDialogAnimations = installDialogAnimations();
+    try {
+      await act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={[claude]}
+            view={{ kind: "list" }}
+          />,
+        ),
+      );
+      await openServiceOverflow("Claude Code");
+      await chooseMenuItem("登录");
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+      const cancel = [...(dialog?.querySelectorAll("button") ?? [])].find(
+        (button) => button.textContent === "取消",
+      );
+      await act(async () => cancel?.click());
+
+      expect(dialog?.isConnected).toBe(true);
+      expect(dialog?.getAttribute("data-state")).toBe("closed");
+      expect(dialog?.textContent).toContain("登录“Claude Code”");
+      expect(dialog?.textContent).not.toContain("OpenAI");
+      const methods = dialog?.querySelectorAll('[role="radio"]') ?? [];
+      expect(methods).toHaveLength(1);
+      expect(methods[0]?.getAttribute("aria-checked")).toBe("true");
+
+      await finishExitAnimations();
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(bridgeMocks.beginServiceAuthorization).not.toHaveBeenCalled();
+    } finally {
+      removeDialogAnimations();
+    }
   });
 
   it("opens the provider's model list straight from the model count", async () => {

@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from "react";
 
 import { i18n } from "@/i18n";
+import { useExitSnapshot } from "@/lib/exit-snapshot";
 
 import {
   AlertDialog,
@@ -26,18 +27,19 @@ interface ConfirmDialogProps {
   title: string;
 }
 
-export function ConfirmDialog({
-  cancelLabel = i18n.t("common.cancel"),
-  confirmLabel,
-  confirmDisabled = false,
-  description,
-  destructive = false,
-  disabled = false,
-  onCancel,
-  onConfirm,
-  open,
-  title,
-}: ConfirmDialogProps) {
+export function ConfirmDialog(props: ConfirmDialogProps) {
+  const { onCancel, onConfirm, open } = props;
+  // Callers close the dialog by clearing the state that picks its copy, so the
+  // exit animation keeps what was being confirmed instead of another prompt.
+  const {
+    cancelLabel = i18n.t("common.cancel"),
+    confirmLabel,
+    confirmDisabled = false,
+    description,
+    destructive = false,
+    disabled = false,
+    title,
+  } = useExitSnapshot(props, open);
   const actionPendingRef = useRef(false);
   return (
     <AlertDialog
@@ -65,6 +67,8 @@ export function ConfirmDialog({
           <AlertDialogAction
             disabled={disabled || confirmDisabled}
             onClick={() => {
+              // onConfirm reads the caller's already-cleared state while closing.
+              if (!open) return;
               actionPendingRef.current = true;
               onConfirm();
             }}

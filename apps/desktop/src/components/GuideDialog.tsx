@@ -57,7 +57,10 @@ export function GuideDialog({
   onOpenChange?: (open: boolean) => void;
   /** Extra dialog classes, e.g. a wider max width for side-by-side demos. */
   className?: string;
-  /** Mounted only while open and remounted on replay to restart the demo. */
+  /**
+   * Mounted with the dialog content, so the demo stays through the closing
+   * animation, and remounted on replay to restart it.
+   */
   children: ReactNode;
 }) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -113,7 +116,7 @@ export function GuideDialog({
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
-          {open ? <Fragment key={playback}>{children}</Fragment> : null}
+          <Fragment key={playback}>{children}</Fragment>
           {note ? (
             <p className="text-xs leading-5 text-muted-foreground">{note}</p>
           ) : null}

@@ -78,6 +78,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useExitSnapshot } from "@/lib/exit-snapshot";
 import { cn } from "@/lib/utils";
 
 import {
@@ -677,6 +678,12 @@ export function ServiceManager({
   const [loginChoice, setLoginChoice] = useState<Service | null>(null);
   const [loginChoiceFlow, setLoginChoiceFlow] =
     useState<AuthorizationFlow | null>(null);
+  // Closing clears the choice; keep the exit animation on the last one.
+  const shownLoginChoice = useExitSnapshot(loginChoice, loginChoice !== null);
+  const shownLoginChoiceFlow = useExitSnapshot(
+    loginChoiceFlow,
+    loginChoice !== null,
+  );
   const [authorizationDialog, setAuthorizationDialog] =
     useState<AuthorizationDialog | null>(null);
   const [authorizationCode, setAuthorizationCode] = useState("");
@@ -2046,12 +2053,14 @@ export function ServiceManager({
           <DialogContent>
             <DialogHeader>
               <DialogTitle>
-                {t("services.loginNamed", { name: loginChoice?.name ?? "" })}
+                {t("services.loginNamed", {
+                  name: shownLoginChoice?.name ?? "",
+                })}
               </DialogTitle>
               <DialogDescription>
-                {loginChoice?.kind === "grok_subscription"
+                {shownLoginChoice?.kind === "grok_subscription"
                   ? t("services.grokDeviceCodeHint")
-                  : loginChoice?.kind === "claude_subscription"
+                  : shownLoginChoice?.kind === "claude_subscription"
                     ? t("services.claudeOauthHint")
                     : t("services.chooseOauthHint")}
               </DialogDescription>
@@ -2062,20 +2071,20 @@ export function ServiceManager({
               onValueChange={(value) =>
                 setLoginChoiceFlow(value as AuthorizationFlow)
               }
-              value={loginChoiceFlow ?? ""}
+              value={shownLoginChoiceFlow ?? ""}
             >
-              {loginChoice?.kind === "claude_subscription" ? (
+              {shownLoginChoice?.kind === "claude_subscription" ? (
                 <ChoiceCard
                   label={t("services.claudeOauth")}
                   description={t("services.claudeOauthHint")}
-                  selected={loginChoiceFlow === "authorization_code"}
+                  selected={shownLoginChoiceFlow === "authorization_code"}
                   value="authorization_code"
                 />
-              ) : loginChoice?.kind === "grok_subscription" ? (
+              ) : shownLoginChoice?.kind === "grok_subscription" ? (
                 <ChoiceCard
                   label="Device Code"
                   description={t("services.grokDeviceCodeHint")}
-                  selected={loginChoiceFlow === "device_code"}
+                  selected={shownLoginChoiceFlow === "device_code"}
                   value="device_code"
                 />
               ) : (
@@ -2083,13 +2092,13 @@ export function ServiceManager({
                   <ChoiceCard
                     description={t("services.browserOauthHint")}
                     label={t("services.browserOauth")}
-                    selected={loginChoiceFlow === "browser"}
+                    selected={shownLoginChoiceFlow === "browser"}
                     value="browser"
                   />
                   <ChoiceCard
                     description={t("services.deviceCodeHint")}
                     label="Device Code"
-                    selected={loginChoiceFlow === "device_code"}
+                    selected={shownLoginChoiceFlow === "device_code"}
                     value="device_code"
                   />
                 </>
@@ -2107,7 +2116,7 @@ export function ServiceManager({
                 {t("common.cancel")}
               </Button>
               <Button
-                disabled={loginChoiceFlow === null}
+                disabled={shownLoginChoiceFlow === null}
                 onClick={() => {
                   if (loginChoice && loginChoiceFlow) {
                     void authorize(loginChoice, loginChoiceFlow);
