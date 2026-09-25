@@ -112,7 +112,7 @@ it("opens the full model list with a preselected value and reopens it after choo
   expect(input.value).toBe(models[0]);
   expect(document.querySelector("datalist")).toBeNull();
   await act(async () => input.click());
-  expect(modelOptions().map((item) => item.textContent)).toEqual(models);
+  expect(modelOptions().map((item) => item.title)).toEqual(models);
   expect(modelOptions()[0].getAttribute("aria-selected")).toBe("true");
   await act(async () => modelOptions()[1].click());
   expect(input.value).toBe(models[1]);
@@ -122,7 +122,7 @@ it("opens the full model list with a preselected value and reopens it after choo
       .querySelector<HTMLButtonElement>('button[aria-label="测试模型"]')!
       .click(),
   );
-  expect(modelOptions().map((item) => item.textContent)).toEqual(models);
+  expect(modelOptions().map((item) => item.title)).toEqual(models);
   await press(input, "Escape");
   await act(async () => button("开始测试").click());
   expect(mocks.testService).toHaveBeenCalledWith(service.id, {
@@ -143,13 +143,10 @@ it("filters only while typing, preserves custom IDs, and clears the filter when 
   );
   const input = modelInput();
   await typeModel(input, "BETA");
-  expect(modelOptions().map((item) => item.textContent)).toEqual(["beta"]);
+  expect(modelOptions().map((item) => item.title)).toEqual(["beta"]);
   await press(input, "Escape");
   await act(async () => input.click());
-  expect(modelOptions().map((item) => item.textContent)).toEqual([
-    "alpha",
-    "beta",
-  ]);
+  expect(modelOptions().map((item) => item.title)).toEqual(["alpha", "beta"]);
   expect(input.value).toBe("BETA");
   await typeModel(input, "custom-model");
   expect(modelOptions()).toHaveLength(0);
@@ -263,7 +260,7 @@ it("supports keyboard selection and dismisses the model list without closing the
   await press(input, "ArrowDown");
   expect(
     document.getElementById(input.getAttribute("aria-activedescendant")!)
-      ?.textContent,
+      ?.title,
   ).toBe("beta");
   expect(input.value).toBe("alpha");
   await press(input, "Enter");
