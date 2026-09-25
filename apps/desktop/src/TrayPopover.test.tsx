@@ -165,7 +165,7 @@ describe("TrayPopoverPanel", () => {
     expect(text).toContain("上次请求刚刚 · gpt-5 · 2.1 s");
     expect(text).toContain("本月48M tokens");
     expect(buttons()).toEqual(
-      expect.arrayContaining(["安全策略", "路由", "Agent 工具"]),
+      expect.arrayContaining(["安全策略", "路由策略", "Agent 工具"]),
     );
   });
 

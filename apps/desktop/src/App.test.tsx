@@ -8,12 +8,12 @@ describe("desktop application shell", () => {
     const markup = renderToStaticMarkup(<App />);
 
     expect(markup).toContain("主要导航");
-    expect(markup).toContain("概览");
+    expect(markup).toContain("运行概览");
     expect(markup).toContain("API 提供商");
     expect(markup).toContain("访问令牌");
-    expect(markup).toContain("路由");
+    expect(markup).toContain("路由策略");
     expect(markup).toContain("Agent 工具");
-    expect(markup).toContain("设置");
+    expect(markup).toContain("偏好设置");
     expect(markup).toContain("overview-welcome");
     expect(markup).toContain("正在读取工作区");
     expect(markup).not.toContain("用量概览");

@@ -428,7 +428,7 @@ describe("App workspace navigation", () => {
         content: "Primary gateway",
       },
       {
-        nav: "路由",
+        nav: "路由策略",
         read: bridgeMocks.getRoutingSettings,
         content: "Codex 自动审查",
       },
@@ -449,7 +449,7 @@ describe("App workspace navigation", () => {
         container.querySelector('[data-slot="workspace"]')?.textContent,
       ).toContain(page.content);
       const calls = page.read.mock.calls.length;
-      await act(async () => button("概览").click());
+      await act(async () => button("运行概览").click());
       page.read.mockReturnValueOnce(new Promise(() => {}));
       await act(async () => button(page.nav).click());
       expect(page.read).toHaveBeenCalledTimes(calls + 1);
@@ -459,7 +459,7 @@ describe("App workspace navigation", () => {
       expect(
         container.querySelector('[data-slot="workspace"]')?.textContent,
       ).not.toContain("加载中");
-      await act(async () => button("概览").click());
+      await act(async () => button("运行概览").click());
     }
   });
 
@@ -470,7 +470,7 @@ describe("App workspace navigation", () => {
     const before = container.querySelector(
       '[data-slot="workspace"]',
     )?.textContent;
-    await act(async () => button("概览").click());
+    await act(async () => button("运行概览").click());
     const calls = bridgeMocks.listRequestSessions.mock.calls.length;
     await act(async () => vi.advanceTimersByTimeAsync(5_000));
     expect(bridgeMocks.listRequestSessions).toHaveBeenCalledTimes(calls);
@@ -505,9 +505,9 @@ describe("App workspace navigation", () => {
     };
     bridgeMocks.getPreferences.mockResolvedValue(preferences);
     await renderApp();
-    await act(async () => button("设置").click());
+    await act(async () => button("偏好设置").click());
     await setInput('input[type="number"]', "9123");
-    await act(async () => button("概览").click());
+    await act(async () => button("运行概览").click());
     await act(async () => button("放弃修改并离开").click());
     let finishRefresh!: (value: typeof preferences) => void;
     bridgeMocks.getPreferences.mockReturnValueOnce(
@@ -515,7 +515,7 @@ describe("App workspace navigation", () => {
         finishRefresh = resolve;
       }),
     );
-    await act(async () => button("设置").click());
+    await act(async () => button("偏好设置").click());
     const port = container.querySelector<HTMLInputElement>(
       'input[type="number"]',
     );
@@ -523,7 +523,7 @@ describe("App workspace navigation", () => {
     await setInput('input[type="number"]', "9000");
     await act(async () => finishRefresh(preferences));
     expect(port?.value).toBe("9000");
-    await act(async () => button("概览").click());
+    await act(async () => button("运行概览").click());
     expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
   });
 
@@ -532,7 +532,7 @@ describe("App workspace navigation", () => {
     await renderApp();
     await act(async () => button("API 提供商").click());
     expect(container.textContent).toContain("Primary gateway");
-    await act(async () => button("概览").click());
+    await act(async () => button("运行概览").click());
     bridgeMocks.getCoreStatus.mockResolvedValue({ ...readySnapshot, pid: 84 });
     await act(async () => vi.advanceTimersByTimeAsync(1_500));
     bridgeMocks.getServiceOrder.mockReturnValueOnce(new Promise(() => {}));
@@ -547,11 +547,11 @@ describe("App workspace navigation", () => {
 
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
-    ).toContain("概览");
+    ).toContain("运行概览");
     expect(
       container.querySelectorAll('[data-slot="page-header"]'),
     ).toHaveLength(1);
-    expect(workspaceHeading().textContent).toBe("概览");
+    expect(workspaceHeading().textContent).toBe("运行概览");
     expect(container.textContent).toContain("API 地址");
     expect(container.textContent).toContain("用量概览");
     expect(
@@ -708,14 +708,14 @@ describe("App workspace navigation", () => {
     });
     await renderApp();
 
-    expect(button("路由").disabled).toBe(false);
+    expect(button("路由策略").disabled).toBe(false);
     expect(button("安全策略").disabled).toBe(false);
     expect(button("请求记录").disabled).toBe(false);
     await act(async () => {
-      button("设置").click();
+      button("偏好设置").click();
       await Promise.resolve();
     });
-    expect(workspaceHeading().textContent).toBe("设置");
+    expect(workspaceHeading().textContent).toBe("偏好设置");
     expect(container.textContent).toContain("推理入口");
     expect(container.textContent).toContain("检查并发");
     expect(container.textContent).toContain("响应头等待");
@@ -765,7 +765,7 @@ describe("App workspace navigation", () => {
     });
     await renderApp();
     await act(async () => {
-      button("设置").click();
+      button("偏好设置").click();
       await Promise.resolve();
     });
     const port = container.querySelector<HTMLInputElement>(
@@ -781,9 +781,9 @@ describe("App workspace navigation", () => {
       port.dispatchEvent(new Event("input", { bubbles: true }));
       port.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await act(async () => button("概览").click());
+    await act(async () => button("运行概览").click());
     expect(document.body.textContent).toContain("放弃未保存的修改？");
-    expect(workspaceHeading().textContent).toBe("设置");
+    expect(workspaceHeading().textContent).toBe("偏好设置");
   });
 
   it("opens default routing policy without retired routing tabs", async () => {
@@ -792,14 +792,14 @@ describe("App workspace navigation", () => {
     const requestCalls = bridgeMocks.getUsageSummary.mock.calls.length;
 
     await act(async () => {
-      button("路由").click();
+      button("路由策略").click();
       await Promise.resolve();
     });
 
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
-    ).toContain("路由");
-    expect(workspaceHeading().textContent).toBe("路由");
+    ).toContain("路由策略");
+    expect(workspaceHeading().textContent).toBe("路由策略");
     expect(
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
@@ -1004,7 +1004,7 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("添加 API 提供商");
 
     await act(async () => {
-      button("路由").click();
+      button("路由策略").click();
     });
     expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
 
@@ -1012,11 +1012,11 @@ describe("App workspace navigation", () => {
       button("放弃修改并离开").click();
     });
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(workspaceHeading().textContent).toBe("路由");
+    expect(workspaceHeading().textContent).toBe("路由策略");
   });
   it("protects default-policy drafts when leaving routing", async () => {
     await renderApp();
-    await act(async () => button("路由").click());
+    await act(async () => button("路由策略").click());
     await act(async () => button("恢复与重试").click());
     const label = "最多重试几次";
     const input = [...container.querySelectorAll("label")]
@@ -1032,13 +1032,13 @@ describe("App workspace navigation", () => {
       )!.set!.call(input, "4");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await act(async () => button("概览").click());
+    await act(async () => button("运行概览").click());
     expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
-    expect(workspaceHeading().textContent).toBe("路由");
+    expect(workspaceHeading().textContent).toBe("路由策略");
     await act(async () => button("继续编辑").click());
     expect(input.value).toBe("4");
-    await act(async () => button("概览").click());
+    await act(async () => button("运行概览").click());
     await act(async () => button("放弃修改并离开").click());
-    expect(workspaceHeading().textContent).toBe("概览");
+    expect(workspaceHeading().textContent).toBe("运行概览");
   });
 });

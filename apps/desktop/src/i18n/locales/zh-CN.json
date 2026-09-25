@@ -140,14 +140,14 @@
     "main": "主要导航",
     "workspace": "工作区",
     "system": "系统",
-    "overview": "概览",
+    "overview": "运行概览",
     "services": "API 提供商",
     "tokens": "访问令牌",
     "safety": "安全策略",
     "records": "请求记录",
-    "routing": "路由",
+    "routing": "路由策略",
     "agentTools": "Agent 工具",
-    "settings": "设置",
+    "settings": "偏好设置",
     "gateway": "网关",
     "gatewayStatus": "网关 {{status}}"
   },
@@ -216,7 +216,7 @@
       "light": "浅色",
       "dark": "暗色"
     },
-    "title": "设置",
+    "title": "偏好设置",
     "failed": "设置操作失败。",
     "loadFailed": "无法加载设置",
     "loading": "正在读取桌面与系统设置…",
@@ -402,7 +402,7 @@
     "unknownModel": "未知模型"
   },
   "overview": {
-    "title": "概览",
+    "title": "运行概览",
     "description": "查看用量、构成与本地接入。",
     "welcomeTitle": "欢迎使用 AstrLink",
     "welcomePreview": "当前为浏览器预览，尚未连接本机工作区。",
