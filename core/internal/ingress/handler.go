@@ -290,6 +290,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
+	if handler.serveRoutingGraph(outWriter, request, classified, session) {
+		return
+	}
 	if !classified.Protocol.IsModelDiscovery() && classified.Model != "" {
 		classified = handler.applyModelRedirect(request.Context(), session, classified, routingSettings)
 	}
@@ -318,8 +321,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 				session.noteCandidateRejected(id, "circuit_open")
 			}
 		}
-		handler.writeResolveError(outWriter, request, classified, err)
-		return
+		if !handler.discoverGraphWithoutUpstreams(request.Context(), classified, err) {
+			handler.writeResolveError(outWriter, request, classified, err)
+			return
+		}
 	}
 	candidates = redirectCandidates(classified, candidates)
 	if turn := responsesWSTurnFromContext(request.Context()); turn != nil {

@@ -655,5 +655,11 @@ WHERE id = 'policy_privacy_default'
 		{Version: 35, Name: "request_model_redirect", Statements: []string{
 			`ALTER TABLE request_records ADD COLUMN model_redirect_json TEXT`,
 		}},
+		{Version: 36, Name: "model_routing_graph", Statements: []string{
+			`CREATE TABLE model_routing_graph (id INTEGER PRIMARY KEY CHECK(id=1), draft_json TEXT NOT NULL, layout_json TEXT NOT NULL, active_revision INTEGER NOT NULL DEFAULT 0)`,
+			`INSERT INTO model_routing_graph VALUES(1,'{"nodes":[],"edges":[]}','{}',0)`,
+			`CREATE TABLE model_routing_revisions (revision INTEGER PRIMARY KEY AUTOINCREMENT, document_json TEXT NOT NULL, created_at TEXT NOT NULL)`,
+			`CREATE TABLE model_routing_quota (service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE, document_json TEXT NOT NULL)`,
+		}},
 	}
 }

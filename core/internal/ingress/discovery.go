@@ -179,6 +179,22 @@ func (handler *Handler) aggregateModelDiscovery(
 			mergeInput = append(mergeInput, results...)
 		}
 	}
+	if lister, ok := handler.resolver.(endpoint.RoutingGraphResolver); ok {
+		models, graphErr := lister.ListRoutingGraphModels(request.Context())
+		if graphErr != nil {
+			handler.writeResolveError(writer, request, classified, graphErr)
+			return
+		}
+		models = graphDiscoveryModels(classified.Protocol, models)
+		if len(models) > 0 {
+			entries, graphErr := synthesizeAliasDiscoveryEntries(classified.Protocol, models)
+			if graphErr != nil {
+				handler.writeResolveError(writer, request, classified, graphErr)
+				return
+			}
+			mergeInput = append([]discoveryResult{{outcome: discoveryOutcomeFetched, entries: entries}}, mergeInput...)
+		}
+	}
 	merged, succeeded := mergeDiscoveryEntries(mergeInput)
 	if succeeded == 0 {
 		handler.writeDiscoveryFailure(writer, request, classified, results)

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@xyflow/react/dist/style.css";
+@import "./routing-graph.css";
 
 /* Native scrollbar pseudo-elements cannot reliably transition their own paint.
  * Animate this inherited value on the scrollport instead. */

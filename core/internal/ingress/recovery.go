@@ -10,11 +10,18 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/routinggraph"
 )
 
 // recoverySchedule is request-local. It is the only owner of retry quotas and
 // next-target ordering; transports and protocol converters never retry.
 type recoverySchedule struct {
+	graph              *routinggraph.Run
+	graphIndices       map[string]int
+	graphPending       bool
+	graphUnbound       bool // A stateful binding excluded at least one visited node.
+	graphBound         bool // The graph reached a node compatible with that binding.
+	replayable         bool
 	manual, simulation bool
 	nextRepair         bool
 	repairing          bool
@@ -45,7 +52,7 @@ func newRecoverySchedule(candidates []endpoint.Resolved, replayable bool) *recov
 		policy.MaxAttempts = 1
 		policy.Enabled = false
 	}
-	schedule := &recoverySchedule{candidates: candidates, policy: policy, selected: make([]bool, len(candidates)), maySwitch: policy.Enabled, counts: make([]int, len(candidates)), retryable: make([]bool, len(candidates)), readyAt: make([]time.Time, len(candidates)), nextIndex: 0}
+	schedule := &recoverySchedule{replayable: replayable, candidates: candidates, policy: policy, selected: make([]bool, len(candidates)), maySwitch: policy.Enabled, counts: make([]int, len(candidates)), retryable: make([]bool, len(candidates)), readyAt: make([]time.Time, len(candidates)), nextIndex: 0}
 	schedule.previous = -1
 	schedule.states = map[string]*stepTargetState{}
 	schedule.skips = map[int]string{}
@@ -68,11 +75,19 @@ func failurePolicy(candidate endpoint.Resolved) contract.FailurePolicy {
 }
 
 func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
+	if schedule.graph != nil && !schedule.graphPending && !schedule.nextRepair {
+		if !schedule.chooseGraph() {
+			return 0, false
+		}
+	}
 	if schedule.manual && !schedule.nextRepair && schedule.nextIndex >= 0 && !schedule.chooseStep(schedule.nextIndex) {
 		return 0, false
 	}
 	index := schedule.nextIndex
 	if index < 0 || schedule.total >= schedule.policy.MaxAttempts {
+		if schedule.total >= schedule.policy.MaxAttempts {
+			schedule.stopReason = "attempt_limit"
+		}
 		return 0, false
 	}
 	wait := time.Until(schedule.readyAt[index])
@@ -92,6 +107,12 @@ func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
 	}
 	schedule.repairing = schedule.nextRepair
 	schedule.nextRepair = false
+	if schedule.graph != nil {
+		schedule.graphPending = false
+		schedule.nextIndex = -1
+		schedule.selected[index] = true
+		return index, true
+	}
 	if schedule.manual {
 		schedule.selected[index] = true
 		schedule.nextIndex = index + 1
@@ -122,11 +143,15 @@ func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
 
 func (schedule *recoverySchedule) started(index int) {
 	schedule.total++
+	if schedule.graph != nil {
+		schedule.graph.Facts.Attempts = schedule.total
+		schedule.graphResult(index, "attempted", "")
+	}
 	if schedule.repairing {
 		return
 	}
 	schedule.counts[index]++
-	if schedule.manual {
+	if schedule.manual || schedule.graph != nil {
 		schedule.stepState(index).attempts++
 	}
 }
@@ -148,6 +173,9 @@ func (schedule *recoverySchedule) repair(index int) bool {
 }
 
 func (schedule *recoverySchedule) recover(index int, action contract.FailureAction, retryAfter time.Duration) bool {
+	if schedule.graph != nil {
+		return schedule.recoverGraph(index, action, retryAfter)
+	}
 	if schedule.manual {
 		return schedule.recoverStep(index, action, retryAfter)
 	}

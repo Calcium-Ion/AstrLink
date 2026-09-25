@@ -190,6 +190,8 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	handler.mux.HandleFunc(ObserversPath, handler.authenticated(handler.getObservers))
 	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource))
+	handler.mux.HandleFunc(RoutingGraphPath, handler.authenticated(handler.routingGraphResource))
+	handler.mux.HandleFunc(RoutingGraphPath+"/preview", handler.authenticated(handler.previewRoutingGraph))
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, contract.HealthResponse{Status: "ok"})
 	}))

@@ -9,6 +9,11 @@ const bridge = vi.hoisted(() => ({
   listRecoveryPaths: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
+vi.mock("./RoutingGraphEditor", () => ({
+  RoutingGraphEditor: ({ onSettings }: { onSettings: () => void }) => (
+    <button onClick={onSettings}>Open routing defaults</button>
+  ),
+}));
 import { RouteManager } from "./RouteManager";
 import { defaultFailurePolicy } from "./failure-policy-model";
 
@@ -49,6 +54,8 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
         </StrictMode>,
       ),
     );
+    expect(container.textContent).toContain("高级路由图");
+    expect(container.textContent).not.toContain("Open routing defaults");
     expect(
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
@@ -102,6 +109,29 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(dirty).toHaveBeenLastCalledWith(true);
+    const click = (text: string) =>
+      [...document.querySelectorAll("button")]
+        .find(
+          (button) =>
+            button.textContent === text ||
+            button.getAttribute("aria-label") === text,
+        )!
+        .click();
+    await act(async () => click("高级路由图"));
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    await act(async () => click("继续编辑"));
+    expect(input.value).toBe("4");
+    await act(async () => click("高级路由图"));
+    await act(async () => {
+      click("放弃修改并离开");
+      await import("./RoutingGraphEditor");
+    });
+    expect(container.textContent).toContain("Open routing defaults");
+    expect(dirty).toHaveBeenLastCalledWith(false);
+    await act(async () => click("Open routing defaults"));
+    expect(
+      container.querySelector('[data-testid="routing-defaults-panel"]'),
+    ).not.toBeNull();
   } finally {
     await act(async () => root.unmount());
     container.remove();

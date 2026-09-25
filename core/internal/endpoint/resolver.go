@@ -77,6 +77,7 @@ type ResolveRequest struct {
 }
 
 type Resolved struct {
+	GraphNodeID   string
 	Path          *RecoveryPathSnapshot
 	Unavailable   string
 	FailurePolicy *contract.FailurePolicy

@@ -1173,6 +1173,19 @@ async fn get_routing_settings(
 }
 
 #[tauri::command]
+async fn routing_graph(
+    operation: String,
+    input: Option<serde_json::Value>,
+    etag: Option<String>,
+    revision: Option<u64>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .routing_graph(&operation, input, etag, revision)
+        .await
+}
+
+#[tauri::command]
 async fn update_routing_settings(
     patch: serde_json::Value,
     manager: State<'_, Arc<CoreManager>>,
@@ -1472,6 +1485,7 @@ pub fn run() {
             purge_request_records,
             get_request_audit_content,
             get_routing_settings,
+            routing_graph,
             update_routing_settings,
             get_audit_settings,
             update_audit_settings,

@@ -2060,6 +2060,113 @@ paths:
                 $ref: "#/components/schemas/RecoveryPreview"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/routing-graph:
+    x-astrlink-implementation-status: implemented
+    get:
+      tags: [Routes]
+      operationId: getRoutingGraph
+      summary: Read the routing draft and active revision, or an immutable historical graph.
+      parameters:
+        - name: revision
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Routing document, or the requested historical graph.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/RoutingGraphDocument" }
+                  - { $ref: "#/components/schemas/RoutingGraph" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [Routes]
+      operationId: saveRoutingGraph
+      summary: Save a draft or atomically apply a validated graph. Layout never changes execution.
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [graph, layout, apply]
+              properties:
+                graph: { $ref: "#/components/schemas/RoutingGraph" }
+                layout: { $ref: "#/components/schemas/RoutingGraphLayout" }
+                apply: { type: boolean }
+              additionalProperties: false
+      responses:
+        "200":
+          description: Saved routing document. In-flight requests retain their graph snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingGraphDocument" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "412":
+          {
+            description: The draft or active revision changed; reload before saving.,
+          }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "428": { description: If-Match is required. }
+  /control/v1/routing-graph/preview:
+    x-astrlink-implementation-status: implemented
+    post:
+      tags: [Routes]
+      operationId: previewRoutingGraph
+      summary: Simulate the inference scheduler without network requests or health mutations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [graph, entry_id, facts, outcomes]
+              properties:
+                graph: { $ref: "#/components/schemas/RoutingGraph" }
+                entry_id: { type: string }
+                facts:
+                  type: object
+                  properties:
+                    protocol: { type: string }
+                    streaming: { type: boolean }
+                    has_tools: { type: boolean }
+                    has_images: { type: boolean }
+                    quota:
+                      {
+                        type: object,
+                        additionalProperties:
+                          { $ref: "#/components/schemas/SubscriptionUsage" },
+                      }
+                  required: [protocol, streaming]
+                  additionalProperties: false
+                outcomes:
+                  { type: object, additionalProperties: { type: string } }
+              additionalProperties: false
+      responses:
+        "200":
+          description: Decision trace including disabled-node skips and actual attempt counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [steps, stop_reason, attempts]
+                properties:
+                  steps:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/RoutingGraphStep" },
+                    }
+                  stop_reason: { type: string }
+                  attempts: { type: integer, minimum: 0 }
+                additionalProperties: false
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /control/v1/routing-settings:
     x-astrlink-implementation-status: implemented
     get:
@@ -3567,10 +3674,171 @@ components:
           minimum: 1
           maximum: 20
       additionalProperties: false
+    RoutingGraph:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          maxItems: 512
+          items:
+            type: object
+            required: [id, kind, enabled]
+            properties:
+              id: { type: string, minLength: 3, maxLength: 96 }
+              kind: { type: string, enum: [entry, call, condition, stop] }
+              enabled:
+                type: boolean
+                description: Disabled calls preserve their failure edge and are skipped without spending an inference attempt. Paused entries reject requests.
+              name: { type: string, maxLength: 512 }
+              model:
+                {
+                  type: string,
+                  maxLength: 256,
+                  description: Exact public model name for an entry.,
+                }
+              service_id: { type: string }
+              upstream_model:
+                {
+                  type: string,
+                  maxLength: 256,
+                  description: Explicit actual model for a call; cross-model mapping is allowed.,
+                }
+              max_attempts: { type: integer, minimum: 0, maximum: 20 }
+              failure_policy: { $ref: "#/components/schemas/FailurePolicy" }
+              unknown_port: { type: string, default: otherwise }
+              rules:
+                type: array
+                maxItems: 32
+                items:
+                  type: object
+                  required: [id, predicate]
+                  properties:
+                    id: { type: string }
+                    label: { type: string }
+                    predicate: { $ref: "#/components/schemas/RoutingPredicate" }
+                  additionalProperties: false
+            additionalProperties: false
+        edges:
+          type: array
+          maxItems: 1024
+          items:
+            type: object
+            required: [id, source, port, target]
+            properties:
+              id: { type: string }
+              source: { type: string }
+              port:
+                {
+                  type: string,
+                  description: next for entries; failure for calls; rule ID,
+                  otherwise or unknown for conditions.,
+                }
+              target: { type: string }
+            additionalProperties: false
+      additionalProperties: false
+    RoutingPredicate:
+      type: object
+      description: Bounded three-valued expression. Exactly one of field, all or any. Maximum nesting depth is four.
+      properties:
+        all:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 16,
+            items: { $ref: "#/components/schemas/RoutingPredicate" },
+          }
+        any:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 16,
+            items: { $ref: "#/components/schemas/RoutingPredicate" },
+          }
+        field:
+          {
+            type: string,
+            enum:
+              [
+                request.model,
+                request.protocol,
+                request.streaming,
+                request.has_tools,
+                request.has_images,
+                last.status,
+                last.error,
+                attempts,
+                quota.exhausted,
+                quota.used_percent,
+              ],
+          }
+        operator: { type: string, enum: [eq, ne, gt, gte, lt, lte] }
+        value:
+          oneOf:
+            [
+              { type: string, maxLength: 256 },
+              { type: boolean },
+              { type: number },
+            ]
+        service_id: { type: string }
+        window: { type: string, enum: [primary, secondary] }
+      additionalProperties: false
+    RoutingGraphLayout:
+      type: object
+      additionalProperties:
+        type: object
+        required: [x, y]
+        properties:
+          x: { type: number, minimum: -1000000, maximum: 1000000 }
+          y: { type: number, minimum: -1000000, maximum: 1000000 }
+        additionalProperties: false
+    RoutingGraphDocument:
+      type: object
+      required: [draft, layout, active, revision, etag, history]
+      properties:
+        draft: { $ref: "#/components/schemas/RoutingGraph" }
+        layout: { $ref: "#/components/schemas/RoutingGraphLayout" }
+        active: { $ref: "#/components/schemas/RoutingGraph" }
+        revision: { type: integer, minimum: 0 }
+        etag: { type: string }
+        history:
+          type: array
+          items:
+            type: object
+            required: [revision, created_at]
+            properties:
+              revision: { type: integer, minimum: 1 }
+              created_at: { type: string, format: date-time }
+            additionalProperties: false
+      additionalProperties: false
+    RoutingGraphStep:
+      type: object
+      required: [node_id, kind, status]
+      properties:
+        node_id: { type: string }
+        kind: { type: string, enum: [entry, call, condition, stop] }
+        status:
+          {
+            type: string,
+            enum: [selected, skipped, attempted, succeeded, failed, stopped],
+          }
+        reason: { type: string }
+        port: { type: string }
+        service_id: { type: string }
+        model: { type: string }
+      additionalProperties: false
     RequestRecovery:
       type: object
       required: [delay_ms]
       properties:
+        graph_revision: { type: integer, minimum: 0 }
+        graph_entry_id: { type: string }
+        graph_trace:
+          {
+            type: array,
+            maxItems: 2048,
+            items: { $ref: "#/components/schemas/RoutingGraphStep" },
+          }
         path_id: { type: string, maxLength: 128 }
         path_name: { type: string, maxLength: 128 }
         path_version: { type: string, maxLength: 128 }

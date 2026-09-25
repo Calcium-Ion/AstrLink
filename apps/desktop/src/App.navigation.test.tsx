@@ -22,6 +22,8 @@ const bridgeMocks = vi.hoisted(() => ({
     .mockRejectedValue(new Error("tray unavailable in tests")),
   trayAction: vi.fn().mockRejectedValue(new Error("tray unavailable in tests")),
   getRoutingSettings: vi.fn(),
+  getRoutingGraph: vi.fn(),
+  saveRoutingGraph: vi.fn(),
   getServiceOrder: vi
     .fn()
     .mockResolvedValue({ service_ids: [], etag: '"order"' }),
@@ -207,6 +209,24 @@ describe("App workspace navigation", () => {
       }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
+    bridgeMocks.getRoutingGraph.mockResolvedValue({
+      draft: {
+        nodes: [
+          {
+            id: "entry_fixture",
+            kind: "entry",
+            enabled: true,
+            model: "fixture-route",
+          },
+        ],
+        edges: [],
+      },
+      active: { nodes: [], edges: [] },
+      layout: { entry_fixture: { x: 40, y: 40 } },
+      revision: 0,
+      etag: '"graph-fixture"',
+      history: [],
+    });
     bridgeMocks.getRoutingSettings.mockResolvedValue({
       default_failure_policy: defaultFailurePolicy(),
       allow_unmatched_failover: false,
@@ -444,7 +464,9 @@ describe("App workspace navigation", () => {
       },
     ];
     for (const page of pages) {
-      await act(async () => button(page.nav).click());
+      await act(async () => {
+        button(page.nav).click();
+      });
       expect(
         container.querySelector('[data-slot="workspace"]')?.textContent,
       ).toContain(page.content);
@@ -786,7 +808,7 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("设置");
   });
 
-  it("opens default routing policy without retired routing tabs", async () => {
+  it("opens default settings and exposes the graph through an advanced entry", async () => {
     await renderApp();
     const serviceCalls = bridgeMocks.listServices.mock.calls.length;
     const requestCalls = bridgeMocks.getUsageSummary.mock.calls.length;
@@ -799,6 +821,18 @@ describe("App workspace navigation", () => {
     expect(
       document.querySelector('[aria-current="page"]')?.textContent,
     ).toContain("路由");
+    expect(bridgeMocks.getRoutingGraph).not.toHaveBeenCalled();
+    const advanced = button("高级路由图");
+    expect(advanced.closest('[data-slot="page-header"]')).toBeNull();
+    expect(advanced.getAttribute("aria-describedby")).toBe(
+      "routing-advanced-description",
+    );
+    expect(
+      container.querySelector("#routing-advanced-description")?.textContent,
+    ).toContain("后备顺序与条件分支");
+    expect(
+      container.querySelector('[data-testid="routing-graph-workspace"]'),
+    ).toBeNull();
     expect(workspaceHeading().textContent).toBe("路由");
     expect(
       container.querySelector('[data-testid="routing-defaults-panel"]'),
@@ -817,6 +851,58 @@ describe("App workspace navigation", () => {
     expect(bridgeMocks.listRoutes).not.toHaveBeenCalled();
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(requestCalls);
+    await act(async () => {
+      button("高级路由图").click();
+      await import("./RoutingGraphEditor");
+    });
+    expect(workspaceHeading().textContent).toBe("高级路由图");
+    expect(
+      container.querySelector('[data-testid="routing-graph-workspace"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="routing-defaults-panel"]'),
+    ).toBeNull();
+    const back = button("返回路由设置");
+    expect(back.closest('[data-slot="page-header"]')).not.toBeNull();
+    expect(
+      container.querySelectorAll('button[aria-label="返回路由设置"]'),
+    ).toHaveLength(1);
+    expect(container.textContent).not.toContain("默认路由设置");
+    await act(async () => back.click());
+    expect(workspaceHeading().textContent).toBe("路由");
+    expect(
+      container.querySelector('[data-testid="routing-defaults-panel"]'),
+    ).not.toBeNull();
+  });
+
+  it("labels pending graph edits as unsaved instead of saved", async () => {
+    bridgeMocks.saveRoutingGraph.mockReturnValue(new Promise(() => {}));
+    await renderApp();
+    await act(async () => {
+      button("路由").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      button("高级路由图").click();
+      await import("./RoutingGraphEditor");
+    });
+    const status = () =>
+      container.querySelector(".routing-save-status")?.textContent;
+    expect(status()).toBe("草稿 · 尚未应用");
+    await act(async () => button("启用或禁用 fixture-route").click());
+    expect(status()).toBe("有未保存的修改");
+    expect(bridgeMocks.saveRoutingGraph).not.toHaveBeenCalled();
+    await act(async () => button("返回路由设置").click());
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull();
+    await act(async () => button("继续编辑").click());
+    expect(workspaceHeading().textContent).toBe("高级路由图");
+    expect(status()).toBe("有未保存的修改");
+    await act(async () => button("返回路由设置").click());
+    await act(async () => button("放弃修改并离开").click());
+    expect(workspaceHeading().textContent).toBe("路由");
+    expect(
+      container.querySelector('[data-testid="routing-defaults-panel"]'),
+    ).not.toBeNull();
   });
 
   it("summarizes usage over the default yearly window", async () => {

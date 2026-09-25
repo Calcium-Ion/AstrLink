@@ -5,6 +5,14 @@ import {
 } from "./service-test-model";
 import { parseChannelBindingAudit } from "./channel-binding-model";
 import {
+  parseGraph,
+  parseGraphDocument,
+  parseGraphPreview,
+  type RoutingGraph,
+  type GraphLayout,
+  type GraphPreviewInput,
+} from "./routing-graph-model";
+import {
   parseRecoveryPath,
   parseRecoveryPathRecord,
   parseRecoveryPathPage,
@@ -871,6 +879,40 @@ export async function saveTextFile(
 export async function getRoutingSettings(): Promise<RoutingSettings> {
   requireNativeBridge();
   return parseRoutingSettings(await invoke<unknown>("get_routing_settings"));
+}
+
+export async function getRoutingGraph() {
+  requireNativeBridge();
+  return parseGraphDocument(
+    await invoke("routing_graph", { operation: "get" }),
+  );
+}
+export async function saveRoutingGraph(
+  graph: RoutingGraph,
+  layout: GraphLayout,
+  etag: string,
+  apply = false,
+) {
+  requireNativeBridge();
+  return parseGraphDocument(
+    await invoke("routing_graph", {
+      operation: "save",
+      etag,
+      input: { graph, layout, apply },
+    }),
+  );
+}
+export async function getRoutingGraphRevision(revision: number) {
+  requireNativeBridge();
+  return parseGraph(
+    await invoke("routing_graph", { operation: "revision", revision }),
+  );
+}
+export async function previewRoutingGraph(input: GraphPreviewInput) {
+  requireNativeBridge();
+  return parseGraphPreview(
+    await invoke("routing_graph", { operation: "preview", input }),
+  );
 }
 export async function updateRoutingSettings(
   patch: Partial<RoutingSettings>,
