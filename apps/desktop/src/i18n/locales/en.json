@@ -2481,6 +2481,7 @@
     "quickOrder": "Drag to reorder fallback calls",
     "focus": "Focus an entry (— shows all)",
     "fit": "Fit canvas",
+    "returnToContent": "Back to content",
     "arrange": "Arrange",
     "canvasHint": "Dragging changes layout · Edges define routing · Success returns immediately",
     "defaultHint": "Unmatched models keep existing redirects and the global provider order.",

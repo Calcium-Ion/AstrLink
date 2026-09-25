@@ -2481,6 +2481,7 @@
     "quickOrder": "拖动调整后备顺序",
     "focus": "聚焦一个入口（— 表示全部）",
     "fit": "适合画布",
+    "returnToContent": "回到内容",
     "arrange": "整理布局",
     "canvasHint": "拖动节点只改变位置 · 连线决定路径 · 成功即返回",
     "defaultHint": "未匹配入口的模型继续使用原来的重定向与全局顺序。",

@@ -54,6 +54,7 @@ import { Field } from "./components/Field";
 import { FormMessage } from "./components/FormMessage";
 import { EmptyState } from "./components/EmptyState";
 import { HelpPopover } from "./components/HelpPopover";
+import { FlowCanvasRecovery } from "./components/FlowCanvasRecovery";
 import { ModelSelect } from "./components/ModelSelect";
 import { Panel } from "./components/Panel";
 import { Button } from "./components/ui/button";
@@ -316,7 +317,9 @@ function GraphEditor({ ready, services, onDirtyChange, onSettings }: Props) {
       nodes: id ? [{ id }] : undefined,
       padding: 0.22,
       maxZoom: 1,
-      duration: 200,
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? 0
+        : 200,
     });
   };
   const onConnect = (connection: Connection) => {
@@ -868,6 +871,16 @@ function GraphEditor({ ready, services, onDirtyChange, onSettings }: Props) {
               color="var(--border)"
             />
             <Controls showInteractive={false} position="bottom-left" />
+            <FlowCanvasRecovery
+              label={t("graph.returnToContent")}
+              onReturn={() => {
+                const target =
+                  nodes.find((node) => node.id === selected) ??
+                  nodes.find((node) => node.id === focus) ??
+                  nodes[0];
+                if (target) center(target.id);
+              }}
+            />
             {graph.nodes.length > 12 ? (
               <MiniMap
                 pannable
