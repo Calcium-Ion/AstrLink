@@ -1,3 +1,4 @@
+import { parseGraphStep } from "./routing-graph-model";
 import { i18n } from "./i18n";
 
 export type RequestStatus =
@@ -106,6 +107,9 @@ export interface SessionLink {
 }
 
 export interface RequestRecovery {
+  graph_revision?: number;
+  graph_entry_id?: string;
+  graph_trace?: import("./routing-graph-model").GraphStep[];
   path_id?: string;
   path_name?: string;
   path_version?: string;
@@ -505,6 +509,21 @@ function parseRecovery(value: unknown, path: string): RequestRecovery {
   )
     invalid(path, "invalid recovery action");
   const result: RequestRecovery = { delay_ms: delay };
+  if (record.graph_revision !== undefined)
+    result.graph_revision = intAt(
+      record.graph_revision,
+      `${path}.graph_revision`,
+    );
+  if (record.graph_entry_id !== undefined)
+    result.graph_entry_id = stringAt(
+      record.graph_entry_id,
+      `${path}.graph_entry_id`,
+    );
+  if (record.graph_trace !== undefined) {
+    if (!Array.isArray(record.graph_trace) || record.graph_trace.length > 2048)
+      invalid(path, "invalid graph trace");
+    result.graph_trace = record.graph_trace.map(parseGraphStep);
+  }
   if (record.action) result.action = record.action as RequestRecovery["action"];
   for (const key of [
     "upstream_model",

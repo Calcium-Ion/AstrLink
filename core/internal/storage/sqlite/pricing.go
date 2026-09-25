@@ -561,6 +561,16 @@ func (s *Store) ObserveSubscriptionUsage(ctx context.Context, service contract.S
 	if service.ID != usage.ServiceID {
 		return fmt.Errorf("usage service mismatch")
 	}
+	if err := usage.Validate(); err != nil {
+		return err
+	}
+	usageJSON, err := json.Marshal(usage)
+	if err != nil {
+		return err
+	}
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO model_routing_quota(service_id,document_json) VALUES(?,?) ON CONFLICT(service_id) DO UPDATE SET document_json=excluded.document_json WHERE julianday(json_extract(excluded.document_json,'$.fetched_at')) >= COALESCE(julianday(json_extract(model_routing_quota.document_json,'$.fetched_at')), 0)`, service.ID, string(usageJSON)); err != nil {
+		return err
+	}
 	key := pricing.AccountKey(service)
 	windows := map[string]*contract.RateLimitWindow{"primary": usage.Primary, "secondary": usage.Secondary}
 	for _, extra := range usage.AdditionalRateLimits {
@@ -605,6 +615,9 @@ func (s *Store) ObserveSubscriptionReset(ctx context.Context, service contract.S
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE billing_periods SET end_at=?,closed=1 WHERE service_id=? AND account_key=? AND start_at<? AND end_at>? AND closed=0`, at, service.ID, key, at, at); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM model_routing_quota WHERE service_id=?`, service.ID); err != nil {
 		return err
 	}
 	return tx.Commit()

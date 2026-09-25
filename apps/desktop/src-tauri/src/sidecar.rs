@@ -2074,6 +2074,46 @@ impl CoreManager {
         Ok(value)
     }
 
+    pub async fn routing_graph(
+        &self,
+        operation: &str,
+        input: Option<serde_json::Value>,
+        etag: Option<String>,
+        revision: Option<u64>,
+    ) -> Result<serde_json::Value, String> {
+        let base = "/control/v1/routing-graph";
+        let (method, path) = match operation {
+            "get" => (Method::GET, base.to_string()),
+            "revision" => {
+                let revision = revision
+                    .filter(|value| *value > 0)
+                    .ok_or("revision is required")?;
+                (Method::GET, format!("{base}?revision={revision}"))
+            }
+            "save" | "preview" => {
+                let value = input
+                    .as_ref()
+                    .filter(|value| value.is_object())
+                    .ok_or("graph input is required")?;
+                if serde_json::to_vec(value).map_err(|e| e.to_string())?.len() > 1_048_576 {
+                    return Err("routing graph input exceeds 1 MiB".into());
+                }
+                if operation == "save" {
+                    validate_strong_etag(etag.as_deref().ok_or("graph version is required")?)?;
+                    (Method::PUT, base.to_string())
+                } else {
+                    (Method::POST, format!("{base}/preview"))
+                }
+            }
+            _ => return Err("unknown routing graph operation".into()),
+        };
+        let (_, body) = self
+            .authenticated_control(method, &path, input, etag.as_deref())
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid routing graph response: {error}"))
+    }
+
     pub async fn update_routing_settings(
         &self,
         patch: serde_json::Value,

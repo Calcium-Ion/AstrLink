@@ -1,3 +1,4 @@
+import { RoutingGraphTrace } from "./RoutingGraphTrace";
 import { ArrowRight } from "@/components/icons";
 import { useT } from "../i18n";
 import {
@@ -19,6 +20,16 @@ export function RecoveryDetails({
   if (!value) return null;
   return (
     <dl className="grid gap-2 text-xs">
+      {value.graph_trace?.length ? (
+        <div>
+          <dt className="text-muted-foreground">
+            {t("graph.actualTrace")} · #{value.graph_revision}
+          </dt>
+          <dd>
+            <RoutingGraphTrace steps={value.graph_trace} />
+          </dd>
+        </div>
+      ) : null}
       {value.path_name ? (
         <div>
           <dt className="text-muted-foreground">{t("paths.title")}</dt>

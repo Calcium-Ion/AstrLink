@@ -1,0 +1,264 @@
+.routing-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  gap: 8px;
+}
+.routing-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+  min-width: 0;
+}
+.routing-save-status {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-right: 6px;
+  white-space: nowrap;
+}
+.routing-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.routing-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: var(--background);
+}
+.routing-canvas-tools {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none;
+}
+.routing-canvas-tools > * {
+  pointer-events: auto;
+  background: var(--background);
+}
+.routing-canvas-caption {
+  position: absolute;
+  bottom: 12px;
+  left: 54px;
+  right: 16px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.routing-empty {
+  position: absolute;
+  inset: 68px 20px 40px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+.routing-empty button {
+  pointer-events: auto;
+}
+.routing-inspector {
+  width: 302px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--background);
+  z-index: 10;
+}
+.routing-trace-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 172px;
+  min-height: 0;
+  max-height: 20%;
+}
+.routing-node {
+  width: 250px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--foreground) 5%, transparent);
+  transition:
+    border-color 140ms,
+    box-shadow 140ms;
+}
+.routing-node[data-selected="true"] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.routing-node[data-kind="entry"] {
+  border-top: 3px solid var(--primary);
+}
+.routing-node[data-kind="condition"] {
+  border-top: 3px solid var(--warning-foreground);
+}
+.routing-node[data-kind="stop"] {
+  border-top: 3px solid var(--muted-foreground);
+}
+.routing-node[data-disabled="true"] {
+  border-style: dashed;
+  background: var(--muted);
+  box-shadow: none;
+}
+.routing-node[data-disabled="true"] .routing-node-title,
+.routing-node[data-disabled="true"] .routing-node-service {
+  color: var(--muted-foreground);
+}
+.routing-node[data-status="succeeded"] {
+  border-color: var(--success-foreground);
+}
+.routing-node[data-status="failed"] {
+  border-color: var(--danger-foreground);
+}
+.routing-node-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  min-height: 29px;
+}
+.routing-node-shared {
+  font-size: 9px;
+  border: 1px solid var(--border);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+.routing-node-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px 5px;
+  font-size: 13px;
+  min-height: 36px;
+}
+.routing-node-title strong {
+  font-weight: 600;
+}
+.routing-node-service {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 12px 10px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.routing-node-footer {
+  padding: 5px 10px 5px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 33px;
+}
+.routing-node-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.routing-node-ports {
+  padding: 3px 0 8px;
+}
+.routing-node-branch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: relative;
+  padding: 7px 13px 7px 34px;
+  font-size: 11px;
+  min-height: 30px;
+  color: var(--text-secondary);
+}
+.routing-node-branch + .routing-node-branch {
+  border-top: 1px solid var(--border);
+}
+.routing-workspace .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--background);
+  background: var(--muted-foreground);
+}
+.routing-workspace .react-flow__handle:hover {
+  background: var(--primary);
+  width: 12px;
+  height: 12px;
+}
+.routing-workspace .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin: 12px;
+}
+.routing-workspace .react-flow__controls-button {
+  background: var(--background);
+  fill: var(--foreground);
+  border-bottom-color: var(--border);
+}
+.routing-workspace .react-flow__controls-button:hover {
+  background: var(--muted);
+}
+.routing-workspace .react-flow__minimap {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  width: 130px;
+  height: 85px;
+}
+.routing-workspace .react-flow__attribution {
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 8px;
+}
+@media (max-width: 1100px) {
+  .routing-inspector {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(302px, 86%);
+    box-shadow: -6px 0 20px
+      color-mix(in srgb, var(--foreground) 8%, transparent);
+  }
+}
+@media (max-width: 760px) {
+  .routing-save-status {
+    display: none;
+  }
+  .routing-toolbar {
+    gap: 4px;
+  }
+  .routing-canvas-caption {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .routing-node {
+    transition: none;
+  }
+}

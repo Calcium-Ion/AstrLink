@@ -141,6 +141,19 @@ func (handler *Handler) executeCandidatesWithTest(
 		controller, healthAware = nil, false
 	}
 	schedule := newRecoverySchedule(candidates, body.Replayable())
+	if plan, ok := request.Context().Value(graphPlanKey{}).(*endpoint.RoutingGraphPlan); ok {
+		var factsBody []byte
+		if body.Replayable() {
+			if reader, err := body.factory(); err == nil {
+				factsBody, _ = io.ReadAll(io.LimitReader(reader, 4*1024*1024+1))
+				_ = reader.Close()
+				if len(factsBody) > 4*1024*1024 {
+					factsBody = nil
+				}
+			}
+		}
+		schedule.attachGraph(plan, factsBody, recordSessionFromContext(request.Context()))
+	}
 	repairedTargets := map[string][]byte{}
 	var last executionFailure
 	var lastNetworkFailure executionFailure
@@ -153,6 +166,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 		candidate := candidates[candidateIndex]
 		if candidate.Unavailable != "" {
+			schedule.graphSkip(candidateIndex, candidate.Unavailable)
 			records.noteCandidateRejected(candidate.CanonicalService().ID, candidate.Unavailable)
 			continue
 		}
@@ -192,6 +206,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		} else if planType == contract.PlanTypeRelayKit || convertTo != "" {
 			if handler.conversionEngine == nil {
 				last = executionFailure{kind: executionFailureCapability, endpointID: candidate.Service.ID}
+				schedule.graphSkip(candidateIndex, last.code())
 				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
@@ -226,6 +241,7 @@ func (handler *Handler) executeCandidatesWithTest(
 					endpointID: candidate.Service.ID,
 					capability: capabilityErr,
 				}
+				schedule.graphSkip(candidateIndex, last.code())
 				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
@@ -234,6 +250,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				err:        planErr,
 				endpointID: candidate.Service.ID,
 			}
+			schedule.graphSkip(candidateIndex, last.code())
 			records.noteCandidateRejected(last.endpointID, last.code())
 			continue
 		}
@@ -274,6 +291,7 @@ func (handler *Handler) executeCandidatesWithTest(
 					err:        rewriteErr,
 					endpointID: candidate.Service.ID,
 				}
+				schedule.graphSkip(candidateIndex, last.code())
 				records.noteCandidateRejected(last.endpointID, last.code())
 				_ = attemptRequest.Body.Close()
 				continue
@@ -307,6 +325,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				finishPrivacy()
 				_ = attemptRequest.Body.Close()
 				last = executionFailure{kind: executionFailureConversionUnsupported, err: readErr, endpointID: candidate.Service.ID}
+				schedule.graphSkip(candidateIndex, last.code())
 				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
@@ -322,6 +341,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			if convertErr != nil || adaptRelayKitRequest(attemptRequest, plan.UpstreamProtocol, classified.Streaming, upstreamModel, converted.Body) != nil {
 				finishPrivacy()
 				last = executionFailure{kind: executionFailureConversionUnsupported, err: convertErr, endpointID: candidate.Service.ID}
+				schedule.graphSkip(candidateIndex, last.code())
 				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
@@ -329,6 +349,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				if err := prepareCodexConvertedRequest(attemptRequest); err != nil {
 					finishPrivacy()
 					last = executionFailure{kind: executionFailureConversionUnsupported, err: err, endpointID: candidate.Service.ID}
+					schedule.graphSkip(candidateIndex, last.code())
 					records.noteCandidateRejected(last.endpointID, last.code())
 					continue
 				}
@@ -339,6 +360,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			if err := prepareClaudeSubscriptionRequest(attemptRequest); err != nil {
 				finishPrivacy()
 				last = executionFailure{kind: executionFailureConfiguration, endpointID: candidate.Service.ID, err: err}
+				schedule.graphSkip(candidateIndex, last.code())
 				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
@@ -367,6 +389,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				err:        authorizeErr,
 				endpointID: candidate.Service.ID,
 			}
+			schedule.graphSkip(candidateIndex, last.code())
 			records.noteCandidateRejected(last.endpointID, last.code())
 			if !body.Replayable() {
 				break
@@ -385,6 +408,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				err:        parseErr,
 				endpointID: candidate.Service.ID,
 			}
+			schedule.graphSkip(candidateIndex, last.code())
 			records.noteCandidateRejected(last.endpointID, last.code())
 			if !body.Replayable() {
 				break
@@ -401,6 +425,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 
 		if healthAware && !controller.BeginAttempt(candidate) {
+			schedule.graphSkip(candidateIndex, "circuit_open")
 			records.noteCandidateRejected(candidate.Service.ID, "circuit_open")
 			finishPrivacy()
 			_ = attemptRequest.Body.Close()
@@ -585,6 +610,7 @@ func (handler *Handler) executeCandidatesWithTest(
 						cooldown.RecordRateLimit(candidate, max(retryAfter, time.Duration(policy.InitialDelayMS)*time.Millisecond))
 					}
 				}
+				schedule.graphOutcome(candidateIndex, "http_"+fmt.Sprint(response.StatusCode))
 				recovering := false
 				if repaired != nil && schedule.repair(candidateIndex) {
 					repairedTargets[repairTarget] = repaired
@@ -714,6 +740,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				session.noteSucceeded()
 				if session.status == contract.RequestStatusSucceeded {
 					session.noteRecoveryStop("succeeded")
+					schedule.graphResult(candidateIndex, "succeeded", "")
 					if test == nil {
 						handler.rememberResponseAffinity(request.Context(), session, candidate, plan)
 						handler.rememberChannelBinding(request.Context(), session, candidate)
@@ -779,6 +806,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				err:        forwardErr,
 				endpointID: candidate.Service.ID,
 			}
+			schedule.graphSkip(candidateIndex, last.code())
 			continue
 		}
 		if relayConversionFailed {
@@ -790,6 +818,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			if !body.Replayable() {
 				break
 			}
+			schedule.graphOutcome(candidateIndex, "conversion_failed")
 			if !schedule.recover(candidateIndex, contract.FailureFailover, 0) {
 				recordSession.noteRecoveryStop(schedule.stopReason)
 				break
@@ -831,6 +860,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		if isUpstreamTimeout(forwardErr) {
 			action = policy.ResponseTimeout
 		}
+		schedule.graphOutcome(candidateIndex, code)
 		if !schedule.recover(candidateIndex, action, 0) {
 			recordSession.noteRecoveryStop(schedule.stopReason)
 			break
@@ -864,6 +894,17 @@ func (handler *Handler) executeCandidatesWithTest(
 		return
 	}
 	resetResponseHeaders(downstream.Header(), initialHeaders)
+	if last.kind == executionFailureNone && schedule.graph != nil {
+		status := http.StatusServiceUnavailable
+		if schedule.stopReason == "protocol_binding" {
+			status = http.StatusConflict
+		}
+		message := graphStopMessage(schedule.stopReason)
+		writeInferenceError(downstream, status, "routing_graph_stopped", message, false, nil)
+		records.noteRecoveryStop(schedule.stopReason)
+		records.noteFailed(errorSummaryFromInference("routing_graph_stopped", message, false))
+		return
+	}
 	if last.kind == executionFailureNone {
 		handler.writeResolveError(
 			downstream,
