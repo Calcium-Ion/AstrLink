@@ -186,7 +186,7 @@ func TestConnectedAccountModelsAndResponsesPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels() = %v", err)
 	}
-	if len(models.Data) != 1 || models.Data[0].ID != "gpt-5" {
+	if len(models.Data) != 2 || models.Data[0].ID != "gpt-5" || models.Data[1].ID != "codex-auto-review" {
 		t.Fatalf("models = %#v", models)
 	}
 	body, status, err := manager.Provider().ProbeNonStreamingResponse(context.Background(), liveTokens, "gpt-5")

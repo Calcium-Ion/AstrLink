@@ -65,7 +65,7 @@ func TestDecodeCodexModelsOfficialAndCompatibleEnvelopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("official DecodeCodexModels() = %v", err)
 	}
-	if got, want := modelIDs(official), "gpt-5,gpt-5-codex,gpt-4.1"; got != want {
+	if got, want := modelIDs(official), "gpt-5,gpt-5-codex,gpt-4.1,codex-auto-review"; got != want {
 		t.Fatalf("official IDs = %q, want %q", got, want)
 	}
 
@@ -73,16 +73,16 @@ func TestDecodeCodexModelsOfficialAndCompatibleEnvelopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compatible DecodeCodexModels() = %v", err)
 	}
-	if got, want := modelIDs(compatible), "gpt-z,gpt-a"; got != want {
+	if got, want := modelIDs(compatible), "gpt-z,gpt-a,codex-auto-review"; got != want {
 		t.Fatalf("compatible IDs = %q, want %q", got, want)
 	}
 
 	emptyOfficial, err := DecodeCodexModels([]byte(`{"models":[]}`))
-	if err != nil || emptyOfficial.Data == nil || len(emptyOfficial.Data) != 0 {
+	if err != nil || modelIDs(emptyOfficial) != "codex-auto-review" {
 		t.Fatalf("empty official = %#v err=%v", emptyOfficial, err)
 	}
 	emptyCompatible, err := DecodeCodexModels([]byte(`{"data":[]}`))
-	if err != nil || emptyCompatible.Data == nil || len(emptyCompatible.Data) != 0 {
+	if err != nil || modelIDs(emptyCompatible) != "codex-auto-review" {
 		t.Fatalf("empty compatible = %#v err=%v", emptyCompatible, err)
 	}
 }

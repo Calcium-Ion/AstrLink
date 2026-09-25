@@ -84,13 +84,26 @@ func DecodeCodexModels(body []byte) (ModelList, error) {
 	if envelope == nil {
 		return ModelList{}, fmt.Errorf("decode codex models: empty object")
 	}
+	var list ModelList
+	var err error
 	if raw, ok := envelope["models"]; ok {
-		return decodeOfficialCodexModels(raw)
+		list, err = decodeOfficialCodexModels(raw)
+	} else if raw, ok := envelope["data"]; ok {
+		list, err = decodeOpenAICompatibleModels(raw)
+	} else {
+		return ModelList{}, fmt.Errorf("decode codex models: missing models or data")
 	}
-	if raw, ok := envelope["data"]; ok {
-		return decodeOpenAICompatibleModels(raw)
+	if err != nil {
+		return ModelList{}, err
 	}
-	return ModelList{}, fmt.Errorf("decode codex models: missing models or data")
+	// Codex's auto-review model may be omitted or hidden in the upstream catalog.
+	for _, model := range list.Data {
+		if model.ID == "codex-auto-review" {
+			return list, nil
+		}
+	}
+	list.Data = append(list.Data, ModelRecord{ID: "codex-auto-review", Object: "model"})
+	return list, nil
 }
 
 func decodeOfficialCodexModels(raw json.RawMessage) (ModelList, error) {

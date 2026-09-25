@@ -295,12 +295,12 @@ func TestProbeServiceUsesConnectedCodexAccountAndRejectsMalformedResponse(t *tes
 	}
 	prober := New(store, manager, nil)
 	models, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels)
-	if err != nil || strings.Join(models, ",") != "gpt-6-astra,gpt-a,gpt-z" {
+	if err != nil || strings.Join(models, ",") != "codex-auto-review,gpt-6-astra,gpt-a,gpt-z" {
 		t.Fatalf("models=%v err=%v", models, err)
 	}
 	responseBody = `{"models":[]}`
 	empty, err := prober.ProbeService(context.Background(), service, contract.ProtocolOpenAIModels)
-	if err != nil || len(empty) != 0 {
+	if err != nil || strings.Join(empty, ",") != "codex-auto-review" {
 		t.Fatalf("empty Codex catalog = %v err=%v", empty, err)
 	}
 	responseBody = `{}`
