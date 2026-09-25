@@ -76,7 +76,7 @@ export function formatUSD(value: string | undefined): string {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
+    maximumFractionDigits: 2,
   }).format(Number(value));
 }
 export function billingAmount(amounts: BillingAmounts | undefined): string {
