@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	DefaultInferenceListen = "127.0.0.1:8317"
+	DefaultInferenceListen = "127.0.0.1:18317"
 	DefaultControlListen   = "127.0.0.1:0"
 	inferenceReadTimeout   = 60 * time.Second
 )

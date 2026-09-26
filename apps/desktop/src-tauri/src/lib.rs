@@ -1481,7 +1481,11 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .map_err(|error| format!("unable to resolve AstrLink config directory: {error}"))?;
-            let preferences = Arc::new(PreferencesStore::load(&config_directory));
+            let data_directory = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| format!("unable to resolve AstrLink data directory: {error}"))?;
+            let preferences = Arc::new(PreferencesStore::load(&config_directory, &data_directory));
             let values = preferences.snapshot().values;
             apply_native_theme(app.handle(), values.theme);
             if let Some(window) = app.get_webview_window("main") {

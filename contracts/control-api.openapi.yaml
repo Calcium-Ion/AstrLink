@@ -6,7 +6,7 @@ info:
   summary: Stable local contract between the AstrLink desktop application and Core.
   description: |
     This API is a local control plane; it is not part of the public inference API.
-    Core binds the inference plane to `127.0.0.1:8317` by default and binds this
+    Core binds the inference plane to `127.0.0.1:18317` by default and binds this
     control plane to the ephemeral address `127.0.0.1:0`. On startup Core writes
     exactly one ready JSON line to stdout containing the selected `control_url`.
     Launchers must use that value rather than guessing a port.

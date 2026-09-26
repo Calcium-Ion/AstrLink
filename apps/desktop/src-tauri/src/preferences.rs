@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::i18n::{self, Locale};
 
-pub const DEFAULT_INFERENCE_PORT: u16 = 8317;
+pub const DEFAULT_INFERENCE_PORT: u16 = 18317;
+const LEGACY_INFERENCE_PORT: u16 = 8317;
 pub const DEFAULT_MAX_CONCURRENT_INSPECTIONS: u16 = 16;
 pub const MIN_MAX_CONCURRENT_INSPECTIONS: u16 = 4;
 pub const MAX_MAX_CONCURRENT_INSPECTIONS: u16 = 128;
@@ -20,6 +21,10 @@ pub const DEFAULT_RESPONSE_START_TIMEOUT_SECONDS: u32 = 0;
 pub const MAX_RESPONSE_START_TIMEOUT_SECONDS: u32 = 86400;
 const FILE_NAME: &str = "desktop-preferences.json";
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn legacy_inference_port() -> u16 {
+    LEGACY_INFERENCE_PORT
+}
 
 fn default_max_concurrent_inspections() -> u16 {
     DEFAULT_MAX_CONCURRENT_INSPECTIONS
@@ -196,6 +201,8 @@ pub struct Preferences {
     pub core_auto_start: bool,
     pub core_auto_recover: bool,
     pub use_system_proxy: bool,
+    // Existing preferences without this field used the original default.
+    #[serde(default = "legacy_inference_port")]
     pub inference_port: u16,
     #[serde(default = "default_max_concurrent_inspections")]
     pub max_concurrent_inspections: u16,
@@ -272,16 +279,27 @@ pub struct PreferencesStore {
 }
 
 impl PreferencesStore {
-    pub fn load(config_directory: &Path) -> Self {
-        Self::load_with_fallback_locale(config_directory, Locale::system())
+    pub fn load(config_directory: &Path, data_directory: &Path) -> Self {
+        Self::load_with_fallback_locale(config_directory, data_directory, Locale::system())
     }
 
     /// Loads stored preferences; when none are usable (first run, unreadable or
     /// unparseable file) the interface starts in `fallback_locale`.
-    fn load_with_fallback_locale(config_directory: &Path, fallback_locale: Locale) -> Self {
+    fn load_with_fallback_locale(
+        config_directory: &Path,
+        data_directory: &Path,
+        fallback_locale: Locale,
+    ) -> Self {
         let path = config_directory.join(FILE_NAME);
+        // Older installations may have run without ever saving preferences.
+        let has_existing_data = data_directory.join("astrlink.db").exists();
         let fallback = |locale| Preferences {
             locale,
+            inference_port: if has_existing_data {
+                LEGACY_INFERENCE_PORT
+            } else {
+                DEFAULT_INFERENCE_PORT
+            },
             ..Preferences::default()
         };
         let (values, load_warning) = match fs::read(&path) {
@@ -307,7 +325,15 @@ impl PreferencesStore {
                 ),
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                (fallback(fallback_locale), None)
+                let values = fallback(fallback_locale);
+                // Save new-install defaults before Core creates its database, so
+                // subsequent starts keep the same port. Do not migrate old installs.
+                let warning = if has_existing_data {
+                    None
+                } else {
+                    persist_atomic(&path, &values).err()
+                };
+                (values, warning)
             }
             Err(error) => (
                 fallback(fallback_locale),
@@ -473,7 +499,7 @@ mod tests {
 
     /// Pins the fallback so assertions do not depend on the host's language.
     fn load(directory: &Path) -> PreferencesStore {
-        PreferencesStore::load_with_fallback_locale(directory, Locale::En)
+        PreferencesStore::load_with_fallback_locale(directory, directory, Locale::En)
     }
 
     fn temporary_directory(name: &str) -> PathBuf {
@@ -512,20 +538,65 @@ mod tests {
         assert!(snapshot.values.use_system_proxy);
         assert_eq!(snapshot.values.max_request_body_mib, 0);
         assert_eq!(snapshot.load_warning, None);
+        assert_eq!(snapshot.values.inference_port, 18317);
+        // Starting Core must not make a new install look like a legacy install.
+        fs::write(directory.join("astrlink.db"), b"").unwrap();
+        assert_eq!(load(&directory).snapshot().values, snapshot.values);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn existing_inference_ports_are_not_migrated() {
+        let directory = temporary_directory("existing-port");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(FILE_NAME);
+        for (bytes, expected_port) in [
+            (r#"{"inference_port":8317}"#, 8317),
+            (r#"{"inference_port":9123}"#, 9123),
+            (r#"{"locale":"en"}"#, 8317),
+        ] {
+            fs::write(&path, bytes).unwrap();
+            let snapshot = load(&directory).snapshot();
+            assert_eq!(snapshot.values.inference_port, expected_port);
+            assert_eq!(snapshot.load_warning, None);
+            assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn existing_install_without_saved_preferences_keeps_legacy_port() {
+        let directory = temporary_directory("existing-data");
+        let config_directory = directory.join("config");
+        let data_directory = directory.join("data");
+        fs::create_dir_all(&data_directory).unwrap();
+        fs::write(data_directory.join("astrlink.db"), b"").unwrap();
+        let snapshot = PreferencesStore::load_with_fallback_locale(
+            &config_directory,
+            &data_directory,
+            Locale::En,
+        )
+        .snapshot();
+        assert_eq!(snapshot.values.inference_port, 8317);
+        assert_eq!(snapshot.load_warning, None);
+        assert!(!config_directory.join(FILE_NAME).exists());
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn first_run_and_unusable_files_start_in_the_system_language() {
         let directory = temporary_directory("system-locale");
         let snapshot =
-            PreferencesStore::load_with_fallback_locale(&directory, Locale::ZhCN).snapshot();
+            PreferencesStore::load_with_fallback_locale(&directory, &directory, Locale::ZhCN)
+                .snapshot();
         assert_eq!(snapshot.values.locale, Locale::ZhCN);
         assert_eq!(snapshot.load_warning, None);
 
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join(FILE_NAME), b"{no").unwrap();
         let snapshot =
-            PreferencesStore::load_with_fallback_locale(&directory, Locale::ZhCN).snapshot();
+            PreferencesStore::load_with_fallback_locale(&directory, &directory, Locale::ZhCN)
+                .snapshot();
         assert_eq!(snapshot.values.locale, Locale::ZhCN);
         assert!(snapshot.load_warning.is_some());
 
@@ -536,7 +607,8 @@ mod tests {
         )
         .unwrap();
         let snapshot =
-            PreferencesStore::load_with_fallback_locale(&directory, Locale::ZhCN).snapshot();
+            PreferencesStore::load_with_fallback_locale(&directory, &directory, Locale::ZhCN)
+                .snapshot();
         assert_eq!(snapshot.values.locale, Locale::En);
         assert_eq!(snapshot.values.inference_port, DEFAULT_INFERENCE_PORT);
         let _ = fs::remove_dir_all(directory);

@@ -85,7 +85,7 @@ try {
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
     Start-Sleep -Seconds 1
     try {
-      $response = Invoke-WebRequest -Uri "http://127.0.0.1:8317/v1/models" -NoProxy -SkipHttpErrorCheck -TimeoutSec 2
+      $response = Invoke-WebRequest -Uri "http://127.0.0.1:18317/v1/models" -NoProxy -SkipHttpErrorCheck -TimeoutSec 2
       if ($response.StatusCode -in @(200, 401, 403)) { $ready = $true; break }
     } catch { }
     if ($desktop.HasExited) { throw "astrlink-desktop exited during startup" }

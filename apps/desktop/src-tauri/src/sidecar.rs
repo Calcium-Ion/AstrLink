@@ -431,7 +431,7 @@ impl Default for CoreInner {
             control_token: None,
             last_error: None,
             app_handle: None,
-            inference_port: 8317,
+            inference_port: crate::preferences::DEFAULT_INFERENCE_PORT,
             started_inference_port: None,
             max_concurrent_inspections: 16,
             response_start_timeout_seconds: 0,
@@ -6478,7 +6478,10 @@ mod tests {
         let fallback = manager.snapshot().inference_port_fallback.unwrap();
         assert_eq!(fallback.requested_port, 9000);
         assert_eq!(fallback.active_port, 8317);
-        assert_eq!(manager.lock_inner().inference_port, 8317);
+        assert_eq!(
+            manager.lock_inner().inference_port,
+            crate::preferences::DEFAULT_INFERENCE_PORT
+        );
         assert_eq!(manager.lock_inner().max_request_body_mib, 64);
         manager.lock_inner().clear_handshake();
         assert!(manager.snapshot().inference_port_fallback.is_none());
