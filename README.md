@@ -13,7 +13,7 @@
 **English** | [简体中文](README.zh-CN.md)
 
 **A local AI gateway for AI agents, unifying your subscriptions and API
-providers with smart routing and on-device privacy protection.**
+providers with model routing and on-device privacy protection.**
 
 AstrLink is an open-source desktop app for macOS, Windows, and Linux. Connect
 your existing subscriptions or API providers, point your agent to the local API
@@ -44,9 +44,8 @@ at full size.
 - **Subscriptions and APIs in one place**: Connect Codex, Claude, and Grok
   subscriptions, major API providers, Coding Plans, and compatible gateways such
   as New API. Manage accounts and credentials centrally.
-- **Smart routing**: Configure model aliases, provider priorities, and retries.
-  Install a local classification model to let `astrlink/auto` select a target
-  model automatically.
+- **Model routing**: Redirect requested model names to target models, set
+  provider priorities, and configure retries and failover between providers.
 - **Multiple API protocols**: Expose OpenAI Responses, Chat Completions,
   Anthropic Messages, and Gemini endpoints, with protocol conversion
   configurable according to upstream capabilities.
@@ -97,8 +96,8 @@ to GitHub. These are development builds and may not be signed or notarized.
 | Windows  | x64 `.exe` installer; WebView2 may need to be downloaded during installation |
 | Linux    | x64 `.deb`, Debian 12 or a compatible newer distribution                     |
 
-Privacy and routing classification models are downloaded or imported separately.
-Model weights are not included in the app package.
+Local privacy models are downloaded or imported separately. Model weights are
+not included in the app package.
 
 ## Getting started
 
@@ -112,7 +111,7 @@ and add an existing subscription or API.
 | Codex, Claude, or Grok subscription                                           | Select the subscription type and follow the authorization steps; Grok uses device code login |
 | New API or another compatible gateway                                         | Enter the gateway URL and its API key                                                        |
 | OpenAI, Anthropic, Gemini, DeepSeek, Qwen, Kimi, GLM, MiniMax, Doubao, or xAI | Select the provider under pay-as-you-go APIs and enter your API key                          |
-| OpenCode Go, Kimi Coding, GLM Coding Plan, or MiniMax Coding Plan             | Select the Coding Plan and use its subscription-specific credentials                         |
+| Coding Plan subscriptions                                                     | Select the corresponding Coding Plan and use its subscription-specific credentials           |
 
 After saving, fetch or manually add the models you want to use. **Providers with
 an empty model list will not handle inference requests.** API and Coding Plan
@@ -139,11 +138,11 @@ the address shown in the app.
 Enter the local API address, access token, and model in your agent's model
 configuration. For an OpenAI-compatible client using Chat Completions:
 
-| Setting  | Value                                                                  |
-| -------- | ---------------------------------------------------------------------- |
-| Base URL | `http://127.0.0.1:8317/v1`, adjusted to the actual port                |
-| API Key  | The AstrLink access token you just created                             |
-| Model    | A model ID from the provider's model list, or a configured model alias |
+| Setting  | Value                                                                                            |
+| -------- | ------------------------------------------------------------------------------------------------ |
+| Base URL | `http://127.0.0.1:8317/v1`, adjusted to the actual port                                          |
+| API Key  | The AstrLink access token you just created                                                       |
+| Model    | A model ID from the provider's model list, or the request model name in an enabled redirect rule |
 
 Base URL requirements vary by client: some append `/v1` automatically, while
 others expect a full endpoint URL. Common request paths are:
@@ -160,8 +159,9 @@ available protocol conversion.
 
 ### 4. Configure routing and privacy policies
 
-- In **Routing**, configure model aliases, target providers, and retries. Before
-  using `astrlink/auto`, configure the classification model and routing targets.
+- In **Routing**, configure model redirects, retries, and failover. Set provider
+  priorities by dragging entries in the **API providers** list; the gateway
+  selects providers that support the target model and request protocol.
 - In **Safety policy**, choose the detection method and action. Check the
   results with a dry run before using the policy for everyday requests. Local
   models must be downloaded or imported first.
@@ -183,8 +183,9 @@ login status.
 **Why is a model missing, or why are no API providers available?**
 
 Check that the provider is enabled, its model list includes the requested model,
-and its enabled inbound protocols match the request. If you use a model alias,
-also check its routing targets.
+and its enabled inbound protocols match the request. If you use a model
+redirect, check that the rule is enabled and a provider supports its target
+model.
 
 **Why can I no longer connect to the previous port?**
 
