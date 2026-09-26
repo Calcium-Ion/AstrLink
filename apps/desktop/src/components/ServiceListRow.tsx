@@ -3,18 +3,26 @@ import type { ReactNode } from "react";
 import { DataRow } from "@/components/DataRow";
 import { cn } from "@/lib/utils";
 
-// Share spare width across the content columns and reserve all three actions.
+// Share spare width across the content columns and reserve the visible actions.
 // Query the scroller itself, including the space taken by its scrollbar.
-const columns =
-  "@[860px]/service-list:grid-cols-[3.25rem_minmax(0,1.25fr)_minmax(6rem,0.5fr)_minmax(9.5rem,0.95fr)_minmax(6.5rem,0.6fr)_3.75rem_6.25rem]";
+const columns = (intelligence: boolean) =>
+  intelligence
+    ? "@[860px]/service-list:grid-cols-[3rem_minmax(7rem,1.2fr)_4.5rem_minmax(7rem,0.9fr)_5rem_5.5rem_3.25rem_10rem]"
+    : "@[860px]/service-list:grid-cols-[3rem_minmax(8rem,1.4fr)_minmax(4.5rem,0.5fr)_minmax(7rem,0.9fr)_minmax(5rem,0.6fr)_3.25rem_8.75rem]";
 
-export function ServiceListHeader({ labels }: { labels: readonly string[] }) {
+export function ServiceListHeader({
+  labels,
+  intelligence = false,
+}: {
+  labels: readonly string[];
+  intelligence?: boolean;
+}) {
   return (
     <div
       aria-hidden="true"
       className={cn(
-        "sticky top-0 z-10 hidden shrink-0 items-center gap-4 border-y bg-muted px-3 py-2 text-micro font-medium text-muted-foreground transition-opacity group-has-[[data-sorting=true]]/service-list:opacity-0 motion-reduce:transition-none @[860px]/service-list:grid",
-        columns,
+        "sticky top-0 z-10 hidden shrink-0 items-center gap-2 border-y bg-muted px-3 py-2 text-micro font-medium text-muted-foreground transition-opacity group-has-[[data-sorting=true]]/service-list:opacity-0 motion-reduce:transition-none @[860px]/service-list:grid",
+        columns(!!intelligence),
       )}
     >
       <span />
@@ -34,6 +42,7 @@ export function ServiceListRow({
   billing,
   status,
   actions,
+  intelligence,
   sorting = false,
   sortIcon,
   sortStatus,
@@ -46,6 +55,7 @@ export function ServiceListRow({
   billing?: ReactNode;
   status: ReactNode;
   actions: ReactNode;
+  intelligence?: ReactNode;
   sorting?: boolean;
   sortIcon?: ReactNode;
   sortStatus?: ReactNode;
@@ -77,8 +87,8 @@ export function ServiceListRow({
     <DataRow
       asChild
       className={cn(
-        "grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-2 py-3 transition-colors hover:bg-muted/30 @[640px]/service-list:grid-cols-[3.25rem_minmax(0,1fr)_minmax(10rem,0.85fr)_6.25rem] @[640px]/service-list:px-3 @[860px]/service-list:min-h-20 @[860px]/service-list:gap-x-4",
-        columns,
+        "grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-2 py-3 transition-colors hover:bg-muted/30 @[640px]/service-list:grid-cols-[3.25rem_minmax(0,1fr)_minmax(10rem,0.85fr)_10rem] @[640px]/service-list:px-3 @[860px]/service-list:min-h-20 @[860px]/service-list:gap-x-2",
+        columns(!!intelligence),
       )}
     >
       <article aria-label={name} data-testid="service-card">
@@ -107,12 +117,34 @@ export function ServiceListRow({
             </div>
           ) : null}
         </div>
-        <div className="col-start-1 row-start-4 flex items-center gap-2.5 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-2 @[640px]/service-list:justify-end @[860px]/service-list:col-start-6 @[860px]/service-list:row-start-1 @[860px]/service-list:justify-between">
+        <div
+          className={cn(
+            "col-start-1 row-start-4 flex items-center gap-2.5 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-2 @[640px]/service-list:justify-end @[860px]/service-list:row-start-1 @[860px]/service-list:justify-between",
+            intelligence
+              ? "@[860px]/service-list:col-start-7"
+              : "@[860px]/service-list:col-start-6",
+          )}
+        >
           {status}
         </div>
-        <div className="col-start-2 row-start-4 flex shrink-0 items-center justify-end gap-1 @max-[640px]/service-list:[&>button]:size-9 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-1 @[860px]/service-list:col-start-7">
+        <div
+          className={cn(
+            "col-start-2 row-start-4 flex shrink-0 items-center justify-end gap-1 @max-[640px]/service-list:[&>button]:size-9 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-1",
+            intelligence
+              ? "@[860px]/service-list:col-start-8"
+              : "@[860px]/service-list:col-start-7",
+          )}
+        >
           {actions}
         </div>
+        {intelligence ? (
+          <div className="col-start-2 row-start-5 flex min-w-0 items-center gap-2 @[640px]/service-list:col-start-3 @[640px]/service-list:row-start-3 @[860px]/service-list:col-start-6 @[860px]/service-list:row-start-1">
+            <span className="text-xs text-muted-foreground @[860px]/service-list:hidden">
+              智力结果
+            </span>
+            {intelligence}
+          </div>
+        ) : null}
       </article>
     </DataRow>
   );

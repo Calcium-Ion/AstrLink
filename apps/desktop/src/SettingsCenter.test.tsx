@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridge = vi.hoisted(() => ({
+  listServices: vi.fn(),
   getPreferences: vi.fn(),
   getTrayState: vi.fn(),
   trayAction: vi.fn(),
@@ -16,6 +17,15 @@ const bridge = vi.hoisted(() => ({
   updatePreferences: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
+
+const iq = vi.hoisted(() => ({
+  intelligence: vi.fn(),
+  readReferenceImage: vi.fn(),
+}));
+vi.mock("./intelligence-bridge", () => ({ intelligence: iq.intelligence }));
+vi.mock("./lib/question-image", () => ({
+  readReferenceImage: iq.readReferenceImage,
+}));
 
 const notifyMocks = vi.hoisted(() => ({
   success: vi.fn(),
@@ -77,6 +87,11 @@ describe("SettingsCenter", () => {
       .mockResolvedValue({ codex_identity_enforcement: true });
     bridge.updateRoutingSettings.mockReset();
     bridge.getPreferences.mockReset().mockResolvedValue(settings);
+    bridge.listServices
+      .mockReset()
+      .mockResolvedValue({ items: [], next_cursor: null });
+    iq.intelligence.mockReset();
+    iq.readReferenceImage.mockReset();
     bridge.getTrayState
       .mockReset()
       .mockRejectedValue(new Error("tray unavailable in tests"));
@@ -91,6 +106,104 @@ describe("SettingsCenter", () => {
     await applyLocale("zh-CN");
     await act(async () => root.unmount());
     container.remove();
+  });
+
+  it("manages global questions without a channel and persists uploaded references across reopening", async () => {
+    let saved = {
+      default_model: "gpt-6-astra",
+      judge_service_id: "",
+      judge_model: "",
+      timeout_seconds: 60,
+      default_question_ids: ["svg"],
+      questions: [
+        {
+          id: "svg",
+          kind: "svg",
+          name: "鹈鹕骑单车 SVG",
+          prompt: "画图",
+          answer: "骑单车",
+          model: "",
+          reference_png: "",
+        },
+      ],
+    };
+    iq.intelligence.mockImplementation(async (operation, _serviceId, input) => {
+      if (operation === "settings") return structuredClone(saved);
+      if (operation === "save_settings") saved = structuredClone(input);
+    });
+    const png = "data:image/png;base64,cG5n";
+    const onQuestionDirty = vi.fn();
+    iq.readReferenceImage.mockResolvedValue(png);
+    await act(async () =>
+      root.render(
+        <SettingsCenter
+          snapshot={snapshot}
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={onQuestionDirty}
+        />,
+      ),
+    );
+    const selectTab = async (text: string) => {
+      const tab = [
+        ...container.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+      ].find((el) => el.textContent === text)!;
+      await act(async () => {
+        tab.dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, button: 0 }),
+        );
+      });
+    };
+    const clickButton = async (text: string) => {
+      const button = [
+        ...container.querySelectorAll<HTMLButtonElement>("button"),
+      ].find((el) => el.textContent === text)!;
+      await act(async () => button.click());
+    };
+    await selectTab("智力题管理");
+    const file = new File(["image"], "reference.png", { type: "image/png" });
+    const upload = container.querySelector<HTMLInputElement>(
+      '[aria-label="上传参考图"]',
+    )!;
+    expect(upload).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="输出 Token 上限"]'),
+    ).toBeNull();
+    expect(container.querySelector('[aria-label="题目内容"]')).not.toBeNull();
+    await act(async () => {
+      Object.defineProperty(upload, "files", { value: [file] });
+      upload.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(iq.readReferenceImage).toHaveBeenCalledWith(file);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(png);
+    expect(onQuestionDirty).toHaveBeenLastCalledWith(true);
+    await selectTab("常规");
+    expect(
+      container.querySelector(
+        '[data-state="inactive"][data-slot="tabs-content"] [aria-label="上传参考图"]',
+      ),
+    ).not.toBeNull();
+    await selectTab("智力题管理");
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(png);
+    expect(
+      iq.intelligence.mock.calls.filter(
+        ([operation]) => operation === "settings",
+      ),
+    ).toHaveLength(1);
+    await clickButton("保存题库设置");
+    expect(onQuestionDirty).toHaveBeenLastCalledWith(false);
+    expect(saved.questions[0].reference_png).toBe(png);
+    expect(
+      iq.intelligence.mock.calls.every(([operation]) =>
+        ["settings", "save_settings"].includes(operation),
+      ),
+    ).toBe(true);
+    await selectTab("常规");
+    await selectTab("智力题管理");
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(png);
+    await clickButton("移除参考图");
+    await clickButton("保存题库设置");
+    expect(saved.questions[0].reference_png).toBe("");
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("keeps forwarding identity controls in Routing instead of desktop settings", async () => {

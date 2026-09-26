@@ -27,9 +27,10 @@ type textBlock struct {
 	Thought bool   `json:"thought"`
 }
 type envelope struct {
-	Type   string          `json:"type"`
-	Status string          `json:"status"`
-	Error  json.RawMessage `json:"error"`
+	StopReason string          `json:"stop_reason"`
+	Type       string          `json:"type"`
+	Status     string          `json:"status"`
+	Error      json.RawMessage `json:"error"`
 	// Anthropic message_start carries an object here; error envelopes can carry
 	// a string. Leave it opaque until extracting an actual failure message.
 	Message      json.RawMessage `json:"message"`
@@ -85,7 +86,11 @@ func upstreamError(raw []byte) string {
 }
 
 func decodeResponse(body io.Reader, protocol contract.ProtocolID, stream bool, _ string, onText func()) (string, error) {
-	limited := &io.LimitedReader{R: body, N: maxResponseBytes + 1}
+	return decodeResponseWithLimit(body, protocol, stream, maxResponseBytes, onText)
+}
+
+func decodeResponseWithLimit(body io.Reader, protocol contract.ProtocolID, stream bool, byteLimit int, onText func()) (string, error) {
+	limited := &io.LimitedReader{R: body, N: int64(byteLimit) + 1}
 	if !stream {
 		raw, err := io.ReadAll(limited)
 		if err != nil {
@@ -187,7 +192,7 @@ func decodeResponse(body io.Reader, protocol contract.ProtocolID, stream bool, _
 	}
 	// Decode events as the body arrives, not after buffering the whole stream.
 	scanner := bufio.NewScanner(limited)
-	scanner.Buffer(make([]byte, 4096), maxResponseBytes+1)
+	scanner.Buffer(make([]byte, 4096), byteLimit+1)
 	for scanner.Scan() {
 		if limited.N == 0 {
 			return output.String(), errResponseTooLarge
@@ -223,6 +228,26 @@ func decodeResponse(body io.Reader, protocol contract.ProtocolID, stream bool, _
 }
 
 func checkFailure(value envelope, raw []byte) error {
+	var delta struct {
+		StopReason string `json:"stop_reason"`
+	}
+	_ = json.Unmarshal(value.Delta, &delta)
+	if delta.StopReason == "max_tokens" {
+		return &responseFailure{message: "输出不完整：达到输出 Token 上限"}
+	}
+	if value.StopReason == "max_tokens" {
+		return &responseFailure{message: "输出不完整：达到输出 Token 上限"}
+	}
+	for _, choice := range value.Choices {
+		if choice.FinishReason != nil && (*choice.FinishReason == "length" || *choice.FinishReason == "content_filter") {
+			return &responseFailure{message: "输出不完整：上游提前终止生成"}
+		}
+	}
+	for _, candidate := range value.Candidates {
+		if candidate.FinishReason == "MAX_TOKENS" {
+			return &responseFailure{message: "输出不完整：达到输出 Token 上限"}
+		}
+	}
 	if (len(value.Error) > 0 && string(value.Error) != "null") || value.Type == "error" || value.Type == "response.failed" || value.Type == "response.incomplete" || value.Status == "failed" || value.Status == "incomplete" {
 		message := upstreamError(raw)
 		if value.Response != nil {
