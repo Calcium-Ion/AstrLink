@@ -31,13 +31,64 @@ jobs:
           - os: macos-15-intel
             arch: x86_64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APPLE_NOTARY_PROFILE: astrlink-notary
     defaults:
       run:
         shell: bash
         working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v6
+      - name: Import Developer ID certificate and validate notarization credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_NOTARY_KEYCHAIN: ${{ runner.temp }}/astrlink-signing.keychain-db
+        run: |
+          echo "APPLE_NOTARY_KEYCHAIN=$APPLE_NOTARY_KEYCHAIN" >> "$GITHUB_ENV"
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_API_KEY_P8 APPLE_TEAM_ID APPLE_SIGNING_IDENTITY; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing required Actions setting: $name"
+              exit 1
+            fi
+          done
+          [[ "$APPLE_SIGNING_IDENTITY" == "Developer ID Application: "* ]] || {
+            echo "::error::APPLE_SIGNING_IDENTITY must name a Developer ID Application certificate"
+            exit 1
+          }
+          certificate_path="$RUNNER_TEMP/astrlink-signing.p12"
+          api_key_path="$RUNNER_TEMP/astrlink-notary.p8"
+          signing_probe="$RUNNER_TEMP/astrlink-signing-probe"
+          trap 'rm -f "$certificate_path" "$api_key_path" "$signing_probe"' EXIT
+          umask 077
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate_path"
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$api_key_path"
+          keychain_password="$(openssl rand -base64 32)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$APPLE_NOTARY_KEYCHAIN"
+          security set-keychain-settings -lut 7200 "$APPLE_NOTARY_KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$APPLE_NOTARY_KEYCHAIN"
+          security import "$certificate_path" -k "$APPLE_NOTARY_KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$APPLE_NOTARY_KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$APPLE_NOTARY_KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+          security find-identity -v -p codesigning "$APPLE_NOTARY_KEYCHAIN"
+          cp /usr/bin/true "$signing_probe"
+          codesign --force --timestamp --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$signing_probe"
+          codesign --verify --strict \
+            --test-requirement "=anchor apple generic and certificate leaf[subject.OU] = \"$APPLE_TEAM_ID\"" \
+            "$signing_probe"
+          xcrun notarytool store-credentials "$APPLE_NOTARY_PROFILE" \
+            --keychain "$APPLE_NOTARY_KEYCHAIN" --key "$api_key_path" \
+            --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
+          echo "Developer ID private key and Apple notarization API credentials verified."
       - uses: actions/setup-go@v6
         with:
           go-version-file: core/go.mod
@@ -88,9 +139,10 @@ jobs:
         run: bun ../../scripts/check-no-production-models.mjs
       - name: Stage Core and worker sidecars
         run: bun run sidecar:build
-      - name: Build development app and DMG
-        # No Developer ID certificate or notarization credentials are required.
-        run: bun run tauri build --ci --no-sign --bundles app,dmg
+      - name: Build Developer ID signed app and DMG
+        run: bun run tauri build --ci --bundles app,dmg
+      - name: Notarize, staple and verify app and DMG
+        run: bun run macos:notarize
       - name: Mount DMG and verify packaged application
         env:
           PACKAGE_ARCH: ${{ matrix.arch }}
@@ -133,3 +185,18 @@ jobs:
           path: ${{ runner.temp }}/astrlink-smoke/*
           if-no-files-found: ignore
           retention-days: 7
+      - name: Upload notarization diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macOS-${{ matrix.arch }}-notarization
+          path: apps/desktop/src-tauri/target/release/bundle/notarization/*
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [[ -f "$APPLE_NOTARY_KEYCHAIN" ]]; then
+            security delete-keychain "$APPLE_NOTARY_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/astrlink-signing.p12" "$RUNNER_TEMP/astrlink-notary.p8" "$RUNNER_TEMP/astrlink-signing-probe"
