@@ -43,8 +43,7 @@ const routingSettingKeys = [
 ] as const;
 
 const routingTabs = [
-  "redirects",
-  "tools",
+  "modelsAndTools",
   "recovery",
   "rules",
   "session",
@@ -66,7 +65,7 @@ export function RoutingSettingsPanel({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const t = useT();
-  const [tab, setTab] = useState("redirects");
+  const [tab, setTab] = useState("modelsAndTools");
   const [settings, setSettings] = useWorkspaceSnapshot<RoutingSettings | null>(
     "routing-settings",
     null,
@@ -281,27 +280,13 @@ export function RoutingSettingsPanel({
         {draft ? (
           <>
             <TabsContent
-              value="tools"
-              className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1"
-              data-tab-scroller
-            >
-              <BuiltinToolsEditor
-                value={draft.builtin_tools}
-                services={services}
-                disabled={!ready}
-                onChange={(builtin_tools) =>
-                  changeDraft({ ...draft, builtin_tools })
-                }
-              />
-            </TabsContent>
-            <TabsContent
-              value="redirects"
-              className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1"
+              value="modelsAndTools"
+              className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1"
               data-tab-scroller
             >
               <fieldset
                 disabled={!ready}
-                className="flex min-h-0 min-w-0 flex-1 flex-col"
+                className="flex max-h-96 min-h-0 min-w-0 shrink-0 flex-col"
               >
                 <ModelRedirectEditor
                   value={draft.model_redirects ?? []}
@@ -314,6 +299,14 @@ export function RoutingSettingsPanel({
                   }
                 />
               </fieldset>
+              <BuiltinToolsEditor
+                value={draft.builtin_tools}
+                services={services}
+                disabled={!ready}
+                onChange={(builtin_tools) =>
+                  changeDraft({ ...draft, builtin_tools })
+                }
+              />
             </TabsContent>
             <TabsContent
               value="recovery"

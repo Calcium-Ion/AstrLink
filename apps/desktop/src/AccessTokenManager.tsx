@@ -658,7 +658,31 @@ export function AccessTokenManager({
                     <ActionGroup className="row-start-3 shrink-0 flex-nowrap gap-1 @[480px]/token-list:col-start-2 @[480px]/token-list:row-start-1 @[720px]/token-list:col-start-3">
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
+                        disabled={
+                          !isReady ||
+                          catalog.status !== "ready" ||
+                          catalog.stale ||
+                          deletingID !== null ||
+                          !inferenceURL
+                        }
+                        onClick={() => setImportToken(token)}
+                        type="button"
+                        aria-label={t("ccSwitch.importToken", {
+                          name: token.name,
+                        })}
+                        title={t("ccSwitch.importToken", {
+                          name: token.name,
+                        })}
+                      >
+                        <CCSwitchIcon size={16} />
+                        <span className="@[720px]/token-list:sr-only @[800px]/token-list:not-sr-only">
+                          CC Switch
+                        </span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         disabled={
                           !isReady || deletingID !== null || copyingID !== null
                         }
@@ -688,30 +712,6 @@ export function AccessTokenManager({
                             : isCopied
                               ? t("common.copied")
                               : t("common.copy")}
-                        </span>
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={
-                          !isReady ||
-                          catalog.status !== "ready" ||
-                          catalog.stale ||
-                          deletingID !== null ||
-                          !inferenceURL
-                        }
-                        onClick={() => setImportToken(token)}
-                        type="button"
-                        aria-label={t("ccSwitch.importToken", {
-                          name: token.name,
-                        })}
-                        title={t("ccSwitch.importToken", {
-                          name: token.name,
-                        })}
-                      >
-                        <CCSwitchIcon size={16} />
-                        <span className="@[720px]/token-list:sr-only @[800px]/token-list:not-sr-only">
-                          CC Switch
                         </span>
                       </Button>
                       <Button

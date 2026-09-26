@@ -38,15 +38,18 @@ export function PanelHeader({
   actions,
   children,
   className,
+  size = "default",
   ...props
 }: Omit<HTMLAttributes<HTMLDivElement>, "children"> & {
   actions?: ReactNode;
   children: ReactNode;
+  size?: "default" | "sm";
 }) {
   return (
     <div
       className={cn(
-        "flex min-w-0 items-start justify-between gap-3 border-b px-4 py-3",
+        "flex min-w-0 justify-between gap-3 border-b",
+        size === "sm" ? "items-center px-3 py-1.5" : "items-start px-4 py-3",
         className,
       )}
       data-slot="panel-header"

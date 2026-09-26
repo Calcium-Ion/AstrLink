@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({
+  builtinToolAction: vi.fn().mockResolvedValue({ configured: false }),
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
 }));
@@ -552,14 +553,7 @@ describe("shared global recovery settings", () => {
       [...container.querySelectorAll('[role="tab"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual([
-      "模型重定向",
-      "内置工具",
-      "恢复与重试",
-      "错误规则",
-      "会话粘性",
-      "转发身份",
-    ]);
+    ).toEqual(["模型与工具", "恢复与重试", "错误规则", "会话粘性", "转发身份"]);
     await selectTab("恢复与重试");
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[role="switch"]')!.click(),
@@ -681,7 +675,7 @@ describe("shared global recovery settings", () => {
       ),
     );
     const tabs = [...container.querySelectorAll('[role="tab"]')];
-    expect(tabs[0].textContent).toBe("模型重定向");
+    expect(tabs[0].textContent).toBe("模型与工具");
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(container.textContent).toContain("Codex 自动审查");
     // A document without model_redirects is not a pending change.
@@ -881,7 +875,7 @@ describe("shared global recovery settings", () => {
       container.querySelector('[role="tab"][aria-selected="true"]')
         ?.textContent,
     ).toBe("恢复与重试");
-    await selectTab("模型重定向");
+    await selectTab("模型与工具");
     expect(
       [...container.querySelectorAll('[role="alert"]')].map(
         (element) => element.textContent,

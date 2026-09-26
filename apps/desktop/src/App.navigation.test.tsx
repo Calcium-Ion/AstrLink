@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridgeMocks = vi.hoisted(() => ({
+  builtinToolAction: vi.fn().mockResolvedValue({ configured: false }),
   cancelPrivacyModelInstallation: vi.fn(),
   createAccessToken: vi.fn(),
   createService: vi.fn(),
@@ -981,14 +982,7 @@ describe("App workspace navigation", () => {
       [...container.querySelectorAll('[role="tab"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual([
-      "模型重定向",
-      "内置工具",
-      "恢复与重试",
-      "错误规则",
-      "会话粘性",
-      "转发身份",
-    ]);
+    ).toEqual(["模型与工具", "恢复与重试", "错误规则", "会话粘性", "转发身份"]);
     expect(container.textContent).not.toContain("mmBERT");
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(requestCalls);

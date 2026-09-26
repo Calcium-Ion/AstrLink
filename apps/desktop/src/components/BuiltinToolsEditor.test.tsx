@@ -169,7 +169,7 @@ it("separates the provider Images API from a chat model executing the tool", asy
   await act(async () => root.render(<Editor />));
   expect(field("图片生成执行模型")?.value).toBe("gpt-5");
   expect(field("图片生成绘图模型")).toBeNull();
-  await choose("图片生成执行方", "直接调用提供商的绘图接口");
+  await choose("图片生成执行方", "提供商的 Images API");
   expect(latest?.image_generation).toEqual({
     enabled: true,
     backend: "service_images",
@@ -203,12 +203,12 @@ it("separates the provider Images API from a chat model executing the tool", asy
     service_id: "newapi_main",
     model: "gpt-image-1",
   });
-  await choose("图片生成执行方", "自定义绘图 API（OpenAI Images 兼容）");
+  await choose("图片生成执行方", "自定义 Images API");
   expect(latest?.image_generation).toMatchObject({
     backend: "external",
     model: "gpt-image-1",
   });
-  await choose("图片生成执行方", "由上游模型调用内置工具");
+  await choose("图片生成执行方", "Responses · image_generation");
   expect(latest?.image_generation).toMatchObject({
     backend: "upstream",
     service_id: "newapi_main",
