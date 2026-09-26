@@ -208,6 +208,14 @@ WHERE root_id = ? AND attempt = ? AND local_access_token_id IS NULL`,
 		if len(matches) == 1 {
 			priceJSON = matches[0]
 		}
+		if rates, ok := c.Overrides[model]; ok {
+			raw, e := json.Marshal(rates.Price(model))
+			if e != nil {
+				return e
+			}
+			priceJSON = string(raw)
+			version = "channel"
+		}
 	}
 	terminal = 0
 	amount = "0.000000000"
@@ -244,12 +252,12 @@ WHERE root_id = ? AND attempt = ? AND local_access_token_id IS NULL`,
 	return err
 }
 
-// PriceUnpriced fills missing prices from new catalogs and retries audio
+// PriceUnpriced fills missing prices from new catalogs or channel overrides and retries audio
 // breakdown failures with the original price snapshot after evaluator fixes.
 // It does not import legacy logs or rewrite amounts that were already priced.
 func (s *Store) PriceUnpriced(ctx context.Context) (int, error) {
 	catalog, err := s.PricingCatalog(ctx)
-	if err != nil || catalog.Version == "" {
+	if err != nil {
 		return 0, err
 	}
 	processed := 0
@@ -258,7 +266,9 @@ func (s *Store) PriceUnpriced(ctx context.Context) (int, error) {
 	for {
 		rows, err := s.db.QueryContext(ctx, `SELECT b.root_id,b.attempt,b.service_id,b.started_at,b.model,b.usage_json,COALESCE(b.price_json,''),b.reason
 FROM billing_ledger b JOIN services s ON s.id=b.service_id
-WHERE b.terminal=1 AND ((b.reason='missing_price' AND b.price_version<>?)
+WHERE b.terminal=1 AND ((b.reason='missing_price' AND (b.price_version<>?
+OR EXISTS (SELECT 1 FROM pricing_configs pc, json_each(pc.document_json, '$.overrides') o
+WHERE pc.service_id=b.service_id AND o.key=b.model)))
 OR b.reason IN ('missing_audio_usage','missing_audio_cache_partition'))
 AND (b.root_id>? OR (b.root_id=? AND b.attempt>?))
 ORDER BY b.root_id,b.attempt LIMIT 100`, catalog.Version, lastRoot, lastRoot, lastAttempt)

@@ -44,6 +44,7 @@ security:
 x-astrlink-implementation:
   milestone: M3-unified-service-slice
   implemented_operations:
+    - "GET /control/v1/services/{service_id}/statistics"
     - GET /control/v1/pricing/status
     - GET /control/v1/pricing/catalog
     - POST /control/v1/pricing/sync
@@ -126,6 +127,49 @@ tags:
   - name: Requests
     description: Request metadata and explicitly enabled encrypted audit content.
 paths:
+  "/control/v1/services/{service_id}/statistics":
+    {
+      "parameters":
+        [
+          { "$ref": "#/components/parameters/ServiceId" },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "format": "date-time" },
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "format": "date-time" },
+          },
+        ],
+      "get":
+        {
+          "operationId": "getServiceStatistics",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "$ref": "#/components/schemas/ServiceStatistics",
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+        },
+    }
   /control/v1/pricing/status:
     get:
       x-astrlink-implementation-status: implemented
@@ -2679,6 +2723,127 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    "ServiceStatistics":
+      {
+        "type": "object",
+        "required":
+          [
+            "records",
+            "priced",
+            "unpriced",
+            "cost_samples",
+            "input_tokens",
+            "output_tokens",
+            "cache_samples",
+            "cache_hits",
+            "cache_read_tokens",
+            "cache_input_tokens",
+            "first_token_samples",
+            "duration_samples",
+            "tps_samples",
+            "amount_usd",
+            "per_million_usd",
+            "first_token_ms",
+            "duration_ms",
+            "tps",
+            "from",
+            "to",
+            "models",
+          ],
+        "properties":
+          {
+            "records": { "type": "integer", "minimum": 0 },
+            "priced": { "type": "integer", "minimum": 0 },
+            "unpriced": { "type": "integer", "minimum": 0 },
+            "cost_samples": { "type": "integer", "minimum": 0 },
+            "input_tokens": { "type": "integer", "minimum": 0 },
+            "output_tokens": { "type": "integer", "minimum": 0 },
+            "cache_samples": { "type": "integer", "minimum": 0 },
+            "cache_hits": { "type": "integer", "minimum": 0 },
+            "cache_read_tokens": { "type": "integer", "minimum": 0 },
+            "cache_input_tokens": { "type": "integer", "minimum": 0 },
+            "first_token_samples": { "type": "integer", "minimum": 0 },
+            "duration_samples": { "type": "integer", "minimum": 0 },
+            "tps_samples": { "type": "integer", "minimum": 0 },
+            "amount_usd": { "type": "string" },
+            "per_million_usd": { "type": ["string", "null"] },
+            "first_token_ms": { "type": ["number", "null"] },
+            "duration_ms": { "type": ["number", "null"] },
+            "tps": { "type": ["number", "null"] },
+            "from": { "type": "string" },
+            "to": { "type": "string" },
+            "models":
+              {
+                "type": "array",
+                "items":
+                  {
+                    "type": "object",
+                    "required":
+                      [
+                        "records",
+                        "priced",
+                        "unpriced",
+                        "cost_samples",
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_samples",
+                        "cache_hits",
+                        "cache_read_tokens",
+                        "cache_input_tokens",
+                        "first_token_samples",
+                        "duration_samples",
+                        "tps_samples",
+                        "amount_usd",
+                        "per_million_usd",
+                        "first_token_ms",
+                        "duration_ms",
+                        "tps",
+                        "model",
+                      ],
+                    "properties":
+                      {
+                        "records": { "type": "integer", "minimum": 0 },
+                        "priced": { "type": "integer", "minimum": 0 },
+                        "unpriced": { "type": "integer", "minimum": 0 },
+                        "cost_samples": { "type": "integer", "minimum": 0 },
+                        "input_tokens": { "type": "integer", "minimum": 0 },
+                        "output_tokens": { "type": "integer", "minimum": 0 },
+                        "cache_samples": { "type": "integer", "minimum": 0 },
+                        "cache_hits": { "type": "integer", "minimum": 0 },
+                        "cache_read_tokens":
+                          { "type": "integer", "minimum": 0 },
+                        "cache_input_tokens":
+                          { "type": "integer", "minimum": 0 },
+                        "first_token_samples":
+                          { "type": "integer", "minimum": 0 },
+                        "duration_samples": { "type": "integer", "minimum": 0 },
+                        "tps_samples": { "type": "integer", "minimum": 0 },
+                        "amount_usd": { "type": "string" },
+                        "per_million_usd": { "type": ["string", "null"] },
+                        "first_token_ms": { "type": ["number", "null"] },
+                        "duration_ms": { "type": ["number", "null"] },
+                        "tps": { "type": ["number", "null"] },
+                        "model": { "type": "string" },
+                      },
+                    "additionalProperties": false,
+                  },
+              },
+          },
+        "additionalProperties": false,
+      }
+    "ModelRates":
+      {
+        "type": "object",
+        "required": ["input", "output", "cache_read", "cache_write"],
+        "properties":
+          {
+            "input": { "type": "string" },
+            "output": { "type": "string" },
+            "cache_read": { "type": "string" },
+            "cache_write": { "type": "string" },
+          },
+        "additionalProperties": false,
+      }
     PricingStatus:
       type: object
       required:
@@ -2725,6 +2890,11 @@ components:
       type: object
       required: [provider, bindings, monthly_budget_usd, billing_day, time_zone]
       properties:
+        overrides:
+          {
+            type: object,
+            additionalProperties: { $ref: "#/components/schemas/ModelRates" },
+          }
         provider:
           {
             type: string,

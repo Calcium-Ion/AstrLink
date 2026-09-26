@@ -113,6 +113,8 @@ func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Re
 	}
 	if len(parts) == 2 {
 		switch parts[1] {
+		case "statistics":
+			handler.serviceStatistics(writer, request, id)
 		case "authorization":
 			handler.serviceAuthorization(writer, request, id)
 		case "logout":

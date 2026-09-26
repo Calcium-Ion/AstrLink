@@ -6,6 +6,8 @@ import {
   billingAmount,
   currentBillingPeriod,
   formatUSD,
+  resolveCatalogPrice,
+  catalogRateRows,
   type BillingPeriod,
 } from "./pricing-model";
 const config = {
@@ -17,6 +19,52 @@ const config = {
   billing_day: 31,
   time_zone: "Asia/Shanghai",
 };
+it("shows the same unique catalog binding used for billing and preserves tier prices", () => {
+  const price = {
+    provider: "openai",
+    model: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    expression:
+      'len <= 272000 ? tier("0_272k", p * 10 + cr * 1 + cc * 12.5 + c * 50) : tier("272k_plus", p * 20 + cr * 2 + cc * 25 + c * 75)',
+  };
+  expect(
+    resolveCatalogPrice(
+      { ...config, provider: "", bindings: {} },
+      price.model,
+      [price],
+    ),
+  ).toBe(price);
+  expect(
+    resolveCatalogPrice(
+      { ...config, provider: "", bindings: {} },
+      "deepseek-v4.1-flash",
+      [price],
+    ),
+  ).toBeUndefined();
+  expect(
+    resolveCatalogPrice(
+      { ...config, provider: "", bindings: {} },
+      price.model,
+      [price, { ...price, provider: "other" }],
+    ),
+  ).toBeUndefined();
+  expect(catalogRateRows(price.expression).map((row) => row.rates)).toEqual([
+    { input: "10", output: "50", cache_read: "1", cache_write: "12.5" },
+    { input: "20", output: "75", cache_read: "2", cache_write: "25" },
+  ]);
+  expect(catalogRateRows('hour("UTC") < 8 ? p * 1 : p * 2')).toEqual([]);
+  expect(catalogRateRows("p * 2 + c * 8")[0].rates).toEqual({
+    input: "2",
+    output: "8",
+    cache_read: "2",
+    cache_write: "2",
+  });
+  expect(
+    catalogRateRows(
+      'len <= 100 ? tier("low", p * 2 + c * 8) : tier("high", p * 4 + cr * 1 + c * 16)',
+    )[0].rates.cache_read,
+  ).toBe("0");
+});
 describe("official pricing boundary", () => {
   it("preserves money as decimal strings and accepts only canonical suppliers", () => {
     expect(parsePricingConfig(config)).toEqual(config);
@@ -100,11 +148,21 @@ describe("official pricing boundary", () => {
       coverage: "complete",
       summary,
     };
-    expect(parseServiceBilling({ config, periods: [period] }).periods[0].summary.by_token).toEqual([]);
+    expect(
+      parseServiceBilling({ config, periods: [period] }).periods[0].summary
+        .by_token,
+    ).toEqual([]);
     for (const by_token of [undefined, null, {}]) {
       const invalid = { ...summary, by_token };
-      expect(() => parseBillingSummary(invalid)).toThrow("Invalid pricing list");
-      expect(() => parseServiceBilling({ config, periods: [{ ...period, summary: invalid }] })).toThrow("Invalid pricing list");
+      expect(() => parseBillingSummary(invalid)).toThrow(
+        "Invalid pricing list",
+      );
+      expect(() =>
+        parseServiceBilling({
+          config,
+          periods: [{ ...period, summary: invalid }],
+        }),
+      ).toThrow("Invalid pricing list");
     }
   });
   it("parses token billing groups with the stable token_id field", () => {
@@ -118,15 +176,17 @@ describe("official pricing boundary", () => {
       from: "2026-09-19T00:00:00Z",
       to: "2026-09-20T00:00:00Z",
       by_model: [],
-      by_token: [{
-        token_id: "token_a",
-        amount_usd: "1.25",
-        priced: 1,
-        unpriced: 0,
-        pending: 0,
-        revalued: 0,
-        requests: 1,
-      }],
+      by_token: [
+        {
+          token_id: "token_a",
+          amount_usd: "1.25",
+          priced: 1,
+          unpriced: 0,
+          pending: 0,
+          revalued: 0,
+          requests: 1,
+        },
+      ],
     };
     expect(parseBillingSummary(value).by_token).toEqual(value.by_token);
   });
