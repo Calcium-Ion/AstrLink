@@ -78,7 +78,7 @@ func (a *statisticsAccumulator) finish() storage.StatisticsTotals {
 func (s *Store) ServiceStatistics(ctx context.Context, id contract.ServiceID, from, to time.Time) (storage.ServiceStatistics, error) {
 	result := storage.ServiceStatistics{From: from, To: to, Models: []storage.StatisticsModel{}}
 	if from.IsZero() || !to.After(from) || to.Sub(from) > 31*24*time.Hour || from.Nanosecond() != 0 || to.Nanosecond() != 0 {
-		return result, fmt.Errorf("请选择不超过 31 天的时间范围")
+		return result, fmt.Errorf("%w: 请选择不超过 31 天的时间范围", storage.ErrInvalidArgument)
 	}
 	if _, err := s.GetService(ctx, id); err != nil {
 		return result, err

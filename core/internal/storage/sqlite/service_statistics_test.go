@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -60,8 +61,8 @@ func TestServiceStatisticsRatesCacheMissingAndPinnedHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert()
-	if _, err := s.ServiceStatistics(ctx, service.ID, start, start.Add(32*24*time.Hour)); err == nil {
-		t.Fatal("accepted >31 day range")
+	if _, err := s.ServiceStatistics(ctx, service.ID, start, start.Add(32*24*time.Hour)); !errors.Is(err, storage.ErrInvalidArgument) {
+		t.Fatalf("invalid range error=%v", err)
 	}
 }
 

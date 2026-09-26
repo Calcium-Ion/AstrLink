@@ -178,6 +178,7 @@ paths:
       "get":
         {
           "operationId": "getServiceStatistics",
+          "x-astrlink-role": "observer",
           "x-astrlink-implementation-status": "implemented",
           "responses":
             {
