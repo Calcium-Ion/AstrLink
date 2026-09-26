@@ -3,6 +3,7 @@ import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({
+  builtinToolAction: vi.fn().mockResolvedValue({ configured: false }),
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
 }));
@@ -49,7 +50,13 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
     const tabs = [...container.querySelectorAll('[role="tab"]')];
-    expect(tabs).toHaveLength(6);
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "模型与工具",
+      "恢复与重试",
+      "错误规则",
+      "会话粘性",
+      "转发身份",
+    ]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(container.textContent).toContain("Codex 自动审查");
     expect(container.textContent).not.toContain("astrlink/auto");
