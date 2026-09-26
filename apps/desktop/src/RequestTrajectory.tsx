@@ -17,6 +17,7 @@ import {
   MessageSquare,
 } from "@/components/icons";
 import { IconButton } from "@/components/IconButton";
+import { ConversationIndicator } from "@/components/ConversationIndicator";
 import { ModelLabel } from "@/components/ModelLabel";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { StatusDot } from "@/components/StatusDot";
@@ -41,6 +42,7 @@ import {
   listScrollForTimeline,
   timelineScrollForList,
   timelineWeight,
+  trajectoryListSummaries,
   trajectoryRows,
   trajectoryTimeline,
   type TrajectoryCallColumn,
@@ -142,6 +144,7 @@ export function RequestTrajectory({
       ),
     [childrenByRoot, turns, services],
   );
+  const listSummaries = useMemo(() => trajectoryListSummaries(rows), [rows]);
   // Resolving a row id by scanning `rows` costs nothing once, and used to cost
   // a full scan inside every phase mark of every lane: 1300 marks against 1400
   // rows is close to two million comparisons per paint.
@@ -530,6 +533,7 @@ export function RequestTrajectory({
                     onSelect={selectListRow}
                     position={item.index}
                     row={rows[item.index]!}
+                    summary={listSummaries.get(rows[item.index]!.id) ?? ""}
                     service={serviceByRequest[rows[item.index]!.requestId]}
                     selected={rows[item.index]!.id === selectedRow?.id}
                   />
@@ -545,6 +549,7 @@ export function RequestTrajectory({
                     onSelect={selectListRow}
                     position={position}
                     row={row}
+                    summary={listSummaries.get(row.id) ?? ""}
                     service={serviceByRequest[row.requestId]}
                     selected={row.id === selectedRow?.id}
                   />
@@ -999,6 +1004,7 @@ function findRecord(
  */
 const TrajectoryRowView = memo(function TrajectoryRowView({
   row,
+  summary,
   service,
   selected,
   highlighted,
@@ -1008,6 +1014,7 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
   onSelect,
 }: {
   row: TrajectoryRow;
+  summary: string;
   service?: RequestServiceIdentity;
   selected: boolean;
   highlighted: boolean;
@@ -1096,7 +1103,10 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
         <span className="flex min-w-0 items-center gap-2" title={row.summary}>
           {service && (row.chip === "UPSTREAM" || row.chip === "RETRY") ? (
             <RequestServiceLabel
-              className="max-w-[65%] shrink-0 font-medium"
+              className={cn(
+                "shrink-0 font-medium",
+                summary ? "max-w-[65%]" : "max-w-full",
+              )}
               service={service}
             />
           ) : null}
@@ -1106,8 +1116,14 @@ const TrajectoryRowView = memo(function TrajectoryRowView({
               redirectedTo={row.redirect.to}
             />
           ) : (
-            <span className="truncate">{row.summary}</span>
+            <span className="truncate">
+              {summary ||
+                (row.chip === "RESULT" ? t("trajectory.clientResponse") : "")}
+            </span>
           )}
+          {row.conversationContinued ? (
+            <ConversationIndicator kind="continuation" />
+          ) : null}
         </span>
         <span
           className={cn(

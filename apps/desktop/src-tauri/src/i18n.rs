@@ -12,6 +12,29 @@ pub enum Locale {
     ZhCN,
 }
 
+impl Locale {
+    /// The operating system's most preferred supported language, used until the
+    /// operator picks one in settings.
+    pub fn system() -> Self {
+        Self::from_preferred(sys_locale::get_locales())
+    }
+
+    /// Walks BCP 47 (or POSIX) tags in preference order; any Chinese variant
+    /// maps to the only Chinese catalog, and unsupported languages are skipped.
+    fn from_preferred(tags: impl IntoIterator<Item = String>) -> Self {
+        for tag in tags {
+            let language = tag.split(['-', '_', '.']).next().unwrap_or_default();
+            if language.eq_ignore_ascii_case("zh") {
+                return Self::ZhCN;
+            }
+            if language.eq_ignore_ascii_case("en") {
+                return Self::En;
+            }
+        }
+        Self::En
+    }
+}
+
 fn catalog(locale: Locale) -> &'static Value {
     static EN: OnceLock<Value> = OnceLock::new();
     static ZH: OnceLock<Value> = OnceLock::new();
@@ -117,6 +140,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn system_locale_follows_first_supported_preference() {
+        let pick = |tags: &[&str]| Locale::from_preferred(tags.iter().map(|tag| tag.to_string()));
+        assert_eq!(pick(&["zh-Hans-CN", "en-US"]), Locale::ZhCN);
+        assert_eq!(pick(&["zh_CN.UTF-8"]), Locale::ZhCN);
+        assert_eq!(pick(&["zh-Hant-TW"]), Locale::ZhCN);
+        assert_eq!(pick(&["en-GB", "zh-CN"]), Locale::En);
+        assert_eq!(pick(&["ja-JP", "zh-Hans", "en"]), Locale::ZhCN);
+        assert_eq!(pick(&["fr-FR", "C"]), Locale::En);
+        assert_eq!(pick(&[]), Locale::En);
     }
 
     #[test]

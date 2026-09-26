@@ -63,32 +63,38 @@ func newCircuitBreaker(config circuitBreakerConfig) *circuitBreaker {
 // half-open transition immediately before I/O, but automatic resolution can
 // already exclude circuits that are still open or have a probe in flight.
 func (breaker *circuitBreaker) available(candidate Resolved) bool {
+	return breaker.unavailableReason(candidate) == ""
+}
+
+// unavailableReason is the available check that also says why selection must
+// skip the candidate; it is empty when an attempt may begin.
+func (breaker *circuitBreaker) unavailableReason(candidate Resolved) contract.RoutingSkipReason {
 	if breaker == nil || candidate.CanonicalService().ID == "" {
-		return false
+		return contract.RoutingSkipCircuitOpen
 	}
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
 	if deadline := breaker.rateLimits[rateLimitKey(candidate)]; breaker.now().Before(deadline) {
-		return false
+		return contract.RoutingSkipRateLimited
 	}
 	state := breaker.states[candidate.CanonicalService().ID]
 	switch state.phase {
 	case circuitClosed:
-		return true
+		return ""
 	case circuitOpen:
-		return candidate.Pinned ||
-			breaker.now().Sub(state.openedAt) >= breaker.cooldown
-	case circuitHalfOpen:
-		return candidate.Pinned
+		if breaker.now().Sub(state.openedAt) >= breaker.cooldown {
+			return ""
+		}
+		return contract.RoutingSkipCircuitOpen
 	default:
-		return false
+		// Half-open: the single automatic probe is already in flight.
+		return contract.RoutingSkipCircuitOpen
 	}
 }
 
-// begin admits ordinary closed-circuit attempts, one automatic half-open
-// probe after the cooldown, and all explicitly pinned attempts. Pinned bypass
-// attempts do not consume or replace the single automatic probe.
+// begin admits ordinary closed-circuit attempts and one automatic half-open
+// probe after the cooldown.
 func (breaker *circuitBreaker) begin(candidate Resolved) bool {
 	if breaker == nil || candidate.CanonicalService().ID == "" {
 		return false
@@ -104,18 +110,14 @@ func (breaker *circuitBreaker) begin(candidate Resolved) bool {
 	case circuitClosed:
 		return true
 	case circuitOpen:
-		if candidate.Pinned {
-			return true
-		}
 		if breaker.now().Sub(state.openedAt) < breaker.cooldown {
 			return false
 		}
 		state.phase = circuitHalfOpen
 		breaker.states[candidate.CanonicalService().ID] = state
 		return true
-	case circuitHalfOpen:
-		return candidate.Pinned
 	default:
+		// Half-open: the single automatic probe is already in flight.
 		return false
 	}
 }
@@ -127,15 +129,6 @@ func (breaker *circuitBreaker) success(candidate Resolved) {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
 
-	state, exists := breaker.states[candidate.CanonicalService().ID]
-	if !exists {
-		return
-	}
-	// A pinned request may run while the automatic circuit remains open or a
-	// half-open probe is in flight. Its result must not steal that probe.
-	if candidate.Pinned && state.phase != circuitClosed {
-		return
-	}
 	delete(breaker.states, candidate.CanonicalService().ID)
 }
 
@@ -147,9 +140,6 @@ func (breaker *circuitBreaker) failure(candidate Resolved) {
 	defer breaker.mu.Unlock()
 
 	state := breaker.states[candidate.CanonicalService().ID]
-	if candidate.Pinned && state.phase != circuitClosed {
-		return
-	}
 	switch state.phase {
 	case circuitClosed:
 		state.consecutiveFailures++
@@ -168,7 +158,7 @@ func (breaker *circuitBreaker) failure(candidate Resolved) {
 }
 
 func (breaker *circuitBreaker) abandon(candidate Resolved) {
-	if breaker == nil || candidate.CanonicalService().ID == "" || candidate.Pinned {
+	if breaker == nil || candidate.CanonicalService().ID == "" {
 		return
 	}
 	breaker.mu.Lock()

@@ -340,18 +340,58 @@ describe("TrajectoryInspectorWindow", () => {
         retryable: true,
       },
       events: [
-        { kind: "accepted", started_at: at(0), ended_at: at(0), status: "succeeded", summary: "gpt-4.1 · openai.responses", attempt_index: 0 },
-        { kind: "routed", started_at: at(1), ended_at: at(1), status: "succeeded", summary: `native · ${serviceA}`, attempt_index: 1 },
-        { kind: "upstream", started_at: at(1), ended_at: at(2), status: "failed", summary: "upstream_unavailable", attempt_index: 1 },
-        { kind: "routed", started_at: at(2), ended_at: at(2), status: "failed", summary: `${serviceB} · credential_unavailable`, attempt_index: 1 },
-        { kind: "completed", started_at: at(3), ended_at: at(3), status: "failed", summary: "upstream_unavailable", attempt_index: 1 },
+        {
+          kind: "accepted",
+          started_at: at(0),
+          ended_at: at(0),
+          status: "succeeded",
+          summary: "gpt-4.1 · openai.responses",
+          attempt_index: 0,
+        },
+        {
+          kind: "routed",
+          started_at: at(1),
+          ended_at: at(1),
+          status: "succeeded",
+          summary: `native · ${serviceA}`,
+          attempt_index: 1,
+        },
+        {
+          kind: "upstream",
+          started_at: at(1),
+          ended_at: at(2),
+          status: "failed",
+          summary: "upstream_unavailable",
+          attempt_index: 1,
+        },
+        {
+          kind: "routed",
+          started_at: at(2),
+          ended_at: at(2),
+          status: "failed",
+          summary: `${serviceB} · credential_unavailable`,
+          attempt_index: 1,
+        },
+        {
+          kind: "completed",
+          started_at: at(3),
+          ended_at: at(3),
+          status: "failed",
+          summary: "upstream_unavailable",
+          attempt_index: 1,
+        },
       ],
     };
     await render();
 
     await act(async () => {
       pushSelection({
-        row: { ...row, id: `${failed.id}:routed`, chip: "ROUTE", lane: "gateway" },
+        row: {
+          ...row,
+          id: `${failed.id}:routed`,
+          chip: "ROUTE",
+          lane: "gateway",
+        },
         record: failed,
         services: {
           [serviceA]: { id: serviceA, name: "Primary" },
@@ -379,6 +419,93 @@ describe("TrajectoryInspectorWindow", () => {
       ["Backup · credential_unavailable", "failed"],
     ]);
     expect(inspector(container)?.textContent).toContain("尝试过的 API 提供商");
+  });
+
+  it("says why routing chose the provider and names the ones it skipped", async () => {
+    const skipped = "service_aaaaaaaaaaaaaaaaaaaaaaaa";
+    const deleted = "service_bbbbbbbbbbbbbbbbbbbbbbbb";
+    const routeRow: TrajectoryRow = {
+      ...row,
+      id: `${record.id}:routed`,
+      chip: "ROUTE",
+      lane: "gateway",
+    };
+    await render();
+
+    await act(async () => {
+      pushSelection({
+        row: routeRow,
+        record: {
+          ...record,
+          routing_decision: {
+            selected: "failover",
+            skipped: [
+              { service_id: skipped, reason: "model_not_listed" },
+              { service_id: deleted, reason: "disabled" },
+            ],
+          },
+        },
+        services: { [skipped]: { id: skipped, name: "mly" } },
+      });
+    });
+    await flush();
+
+    const decision = inspector(container)?.querySelector(
+      '[data-testid="routing-decision"]',
+    );
+    expect(
+      decision
+        ?.querySelector("[data-selection]")
+        ?.getAttribute("data-selection"),
+    ).toBe("failover");
+    expect(decision?.textContent).toContain(
+      "故障切换：此前尝试的 API 提供商失败或被拒绝",
+    );
+    // A provider missing from the list is still named, by its ID.
+    expect(
+      [
+        ...(decision?.querySelectorAll('[data-testid="routing-skipped"] li') ??
+          []),
+      ].map((item) => [item.textContent, item.getAttribute("data-reason")]),
+    ).toEqual([
+      ["mly · 未列出该模型", "model_not_listed"],
+      [`${deleted} · 已停用`, "disabled"],
+    ]);
+
+    // Records from before the gateway explained its choice show nothing.
+    await act(async () => {
+      pushSelection({ row: routeRow, record });
+    });
+    await flush();
+    expect(
+      inspector(container)?.querySelector('[data-testid="routing-decision"]'),
+    ).toBeNull();
+  });
+
+  it("uses the same icon and hint for continuation and provider stickiness", async () => {
+    await render();
+    await act(async () => {
+      pushSelection({
+        row: { ...row, chip: "ROUTE", lane: "gateway" },
+        record: {
+          ...record,
+          session_link: { kind: "explicit", value: "previous-request" },
+          routing_decision: { selected: "session_binding", skipped: [] },
+        },
+      });
+    });
+    await flush();
+    const marks = inspector(container)?.querySelectorAll(
+      "[data-conversation-indicator]",
+    );
+    expect(marks).toHaveLength(2);
+    expect(
+      Array.from(marks ?? [], (mark) => mark.getAttribute("aria-label")),
+    ).toEqual(["对话延续：会话粘性", "对话延续：会话粘性"]);
+    for (const mark of marks ?? []) {
+      expect(mark.querySelector('[data-animated-icon="link"]')).not.toBeNull();
+      expect(mark.textContent).toBe("");
+    }
   });
 
   it("has no close button of its own, because the window frame owns that", async () => {

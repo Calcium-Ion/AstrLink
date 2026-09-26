@@ -113,9 +113,6 @@ func (handler *Handler) bindResponseAffinity(ctx context.Context, request Reques
 				break
 			}
 		}
-	} else if len(candidates) == 1 && candidates[0].SingleTargetRoute {
-		copy := candidates[0]
-		selected = &copy
 	}
 	if selected == nil {
 		return nil, fmt.Errorf("the previous response belongs to an unavailable or unknown API provider; use its original API provider or start a new conversation")
@@ -126,5 +123,6 @@ func (handler *Handler) bindResponseAffinity(ctx context.Context, request Reques
 	}
 	policy.Enabled = false
 	selected.Failover = &policy
+	recordSessionFromContext(ctx).noteRoutingPin(contract.RoutingSelectionResponseAffinity, selected.CanonicalService().ID)
 	return []endpoint.Resolved{*selected}, nil
 }

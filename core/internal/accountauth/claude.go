@@ -17,11 +17,6 @@ const (
 	DefaultClaudeAuthorizeURL = "https://claude.com/cai/oauth/authorize"
 	DefaultClaudeTokenURL     = "https://platform.claude.com/v1/oauth/token"
 	DefaultClaudeRedirectURI  = "https://platform.claude.com/oauth/code/callback"
-	// DefaultClaudeUserAgent mirrors the Claude Code CLI. api.anthropic.com
-	// routes unknown agents (including Go's default) into a far stricter
-	// rate-limit bucket on the OAuth usage and models endpoints.
-	DefaultClaudeUserAgent = "claude-cli/2.1.258 (external, cli)"
-	ClaudeUserAgentPrefix  = "claude-cli/"
 )
 
 func normalizeClaudeConfig(config OAuthConfig) OAuthConfig {
@@ -46,11 +41,13 @@ func normalizeClaudeConfig(config OAuthConfig) OAuthConfig {
 	return config
 }
 
-func ApplyClaudeAPIHeaders(header http.Header, tokens AccountTokens) {
+// ApplyClaudeAPIHeaders authenticates a request that carries identity, the
+// resolved Claude Code identity; the zero identity is the baseline.
+func ApplyClaudeAPIHeaders(header http.Header, tokens AccountTokens, identity ClientIdentity) {
 	if header == nil {
 		return
 	}
-	header.Set("User-Agent", DefaultClaudeUserAgent)
+	header.Set("User-Agent", claudeIdentityOrDefault(identity).UserAgent)
 	header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	header.Set("Anthropic-Version", "2023-06-01")
 	header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20")
@@ -70,7 +67,7 @@ func (manager *SessionManager) beginCodeAuthorization(ctx context.Context, servi
 	if err != nil {
 		return contract.AuthorizationSession{}, err
 	}
-	authURL, err := manager.buildAuthorizeURL(manager.config.CodeRedirectURI, state, pkce.Challenge)
+	authURL, err := manager.buildAuthorizeURL(ctx, manager.config.CodeRedirectURI, state, pkce.Challenge)
 	if err != nil {
 		return contract.AuthorizationSession{}, err
 	}

@@ -51,13 +51,7 @@ func TestResponseAffinityFollowsActualBackupAndIsolatesPrincipals(t *testing.T) 
 		t.Fatal("unavailable target silently switched")
 	}
 	continuation.PreviousResponseID = "unknown"
-	single := candidates[:1]
-	single[0].RouteID = "route_multi"
-	if _, err := handler.bindResponseAffinity(context.Background(), continuation, single); err == nil {
-		t.Fatal("filtered multi-target route treated as explicit single")
-	}
-	single[0].SingleTargetRoute = true
-	if got, err := handler.bindResponseAffinity(context.Background(), continuation, single); err != nil || got[0].Failover.Enabled {
-		t.Fatal("explicit single-target route not accepted/pinned")
+	if _, err := handler.bindResponseAffinity(context.Background(), continuation, candidates[:1]); err == nil {
+		t.Fatal("unknown previous response accepted")
 	}
 }

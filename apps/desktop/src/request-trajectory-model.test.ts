@@ -232,7 +232,7 @@ describe("request trajectory model", () => {
     const settled = trajectoryRows([stale], {})[0]!;
     expect(settled.status).toBe("succeeded");
     expect(settled.tone).toBe("ok");
-    expect(settled.result).toBe("成功");
+    expect(settled.result).toBe("完成");
 
     const live: RequestRecord = {
       ...stale,
@@ -354,7 +354,7 @@ describe("request trajectory model", () => {
     expect(
       rows.map((row) => [row.chip, row.lane, row.tone, row.result]),
     ).toEqual([
-      ["CLIENT", "client", "ok", "成功"],
+      ["CLIENT", "client", "ok", "完成"],
       ["UPSTREAM", "upstream", "ok", "HTTP 200"],
       ["RESULT", "client", "cancelled", "客户端断开"],
     ]);
@@ -458,9 +458,9 @@ describe("request trajectory model", () => {
     expect(rows.map((row) => [row.chip, row.summary])).toEqual([
       ["TURN", "第 1 轮 · 帮我看看仓库里有哪些文件"],
       ["CLIENT", "gpt-4.1 · openai.chat"],
-      ["CLIENT", "gpt-4.1 · openai.chat · 回显 ID 接续"],
+      ["CLIENT", "gpt-4.1 · openai.chat"],
       ["TURN", "第 2 轮 · 第二个文件是做什么的"],
-      ["CLIENT", "gpt-4.1 · openai.chat · 回复指纹接续"],
+      ["CLIENT", "gpt-4.1 · openai.chat"],
       ["TURN", "未标注轮次"],
       ["CLIENT", "gpt-4.1 · openai.chat"],
     ]);
@@ -1034,7 +1034,10 @@ describe("request trajectory model", () => {
       "RESTORE",
       "RESULT",
     ]);
-    expect(inspectorChainRows(linked)[0]?.summary).toContain("回显 ID 接续");
+    expect(inspectorChainRows(linked)[0]?.conversationContinued).toBe(true);
+    expect(
+      inspectorChainRows(record)[0]?.conversationContinued,
+    ).toBeUndefined();
     expect(inspectorChainRows(child).some((row) => row.chip === "RETRY")).toBe(
       true,
     );

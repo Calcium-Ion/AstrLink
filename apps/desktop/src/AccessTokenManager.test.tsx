@@ -11,7 +11,6 @@ const bridgeMocks = vi.hoisted(() => ({
   revealAccessToken: vi.fn(),
   openCCSwitchImport: vi.fn(),
   listServices: vi.fn(),
-  listRoutes: vi.fn(),
   getRoutingSettings: vi.fn(),
 }));
 
@@ -105,7 +104,6 @@ describe("AccessTokenManager", () => {
     });
     bridgeMocks.listAccessTokenUsage.mockResolvedValue({ items: [] });
     bridgeMocks.listServices.mockResolvedValue({ items: [] });
-    bridgeMocks.listRoutes.mockResolvedValue({ items: [] });
     bridgeMocks.getRoutingSettings.mockResolvedValue({ model_redirects: [] });
     container = document.createElement("div");
     document.body.append(container);
@@ -167,6 +165,7 @@ describe("AccessTokenManager", () => {
   it("fills CC Switch with the selected token and edited model without revealing its secret", async () => {
     bridgeMocks.openCCSwitchImport.mockResolvedValueOnce(undefined);
     await renderManager(readyCatalog([firstToken, secondToken]));
+
     await act(async () => button("CC Switch", row(secondToken.name)).click());
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
       "Terminal",
@@ -205,6 +204,7 @@ describe("AccessTokenManager", () => {
       )
       .mockResolvedValueOnce(undefined);
     await renderManager(readyCatalog([firstToken]));
+
     await act(async () => button("CC Switch", row(firstToken.name)).click());
     await setInput("#cc-switch-model", "my-route");
     await act(async () => button("填充到 CC Switch").click());
@@ -219,6 +219,7 @@ describe("AccessTokenManager", () => {
   it("exports only the Claude model slots that were filled", async () => {
     bridgeMocks.openCCSwitchImport.mockResolvedValueOnce(undefined);
     await renderManager(readyCatalog([firstToken]));
+
     await act(async () => button("CC Switch", row(firstToken.name)).click());
     expect(
       document.querySelectorAll('[role="dialog"] input[role="combobox"]'),
@@ -239,11 +240,13 @@ describe("AccessTokenManager", () => {
   it("allows all Claude model slots to be empty and keeps tier choices out of other clients", async () => {
     bridgeMocks.openCCSwitchImport.mockResolvedValue(undefined);
     await renderManager(readyCatalog([firstToken]));
+
     await act(async () => button("CC Switch", row(firstToken.name)).click());
     await act(async () => button("填充到 CC Switch").click());
     expect(bridgeMocks.openCCSwitchImport).toHaveBeenLastCalledWith(
       expect.objectContaining({ models: {} }),
     );
+
     await act(async () => button("CC Switch", row(firstToken.name)).click());
     await setInput("#cc-switch-opusModel", "opus-route");
     await act(async () =>
@@ -265,17 +268,19 @@ describe("AccessTokenManager", () => {
 
   it("closes the import dialog when the Core session changes and blocks stale tokens", async () => {
     await renderManager(readyCatalog([firstToken]));
+
     await act(async () => button("CC Switch", row(firstToken.name)).click());
     await renderManager(
       { ...readyCatalog([firstToken]), stale: true },
       "session-2",
     );
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+
     expect(button("CC Switch", row(firstToken.name)).disabled).toBe(true);
     expect(bridgeMocks.openCCSwitchImport).not.toHaveBeenCalled();
   });
 
-  it("suggests compatible enabled models and route aliases for each CC Switch client", async () => {
+  it("suggests only compatible enabled models for each CC Switch client without requesting routes", async () => {
     const protocols = [
       "anthropic.messages",
       "openai.responses",
@@ -297,26 +302,19 @@ describe("AccessTokenManager", () => {
           },
         ]),
     });
-    bridgeMocks.listRoutes.mockResolvedValue({
-      items: [
-        {
-          enabled: true,
-          match: { protocol: "anthropic.messages", model: "team-route" },
-        },
-        {
-          enabled: true,
-          match: { protocol: "anthropic.messages", model: "*" },
-        },
-        {
-          enabled: false,
-          match: { protocol: "anthropic.messages", model: "disabled-route" },
-        },
-      ],
-    });
     await renderManager(readyCatalog([firstToken]));
+
     await act(async () => button("CC Switch", row(firstToken.name)).click());
+    // Route aliases are retired, so the dialog reads only services and
+    // redirect sources; the strict bridge mock rejects any other export.
+    expect(
+      Object.entries(bridgeMocks)
+        .filter(([, mock]) => mock.mock.calls.length > 0)
+        .map(([name]) => name)
+        .sort(),
+    ).toEqual(["getRoutingSettings", "listAccessTokenUsage", "listServices"]);
     for (const [client, expected] of [
-      ["Claude Code", ["model-0", "team-route"]],
+      ["Claude Code", ["model-0"]],
       ["Codex", ["model-1"]],
       ["Gemini CLI", ["model-2"]],
       ["OpenCode", ["model-3"]],
@@ -338,6 +336,11 @@ describe("AccessTokenManager", () => {
       ).toEqual(expected);
       expect(suggestions.every((option) => option.querySelector("svg"))).toBe(
         true,
+      );
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+        client === "Claude Code"
+          ? "按需填写；留空的模型项不会导入。"
+          : "可搜索当前客户端兼容的模型，或输入模型名。",
       );
       await act(async () =>
         document
@@ -375,6 +378,7 @@ describe("AccessTokenManager", () => {
       ],
     });
     await renderManager(readyCatalog([firstToken]));
+
     await act(async () => button("CC Switch", row(firstToken.name)).click());
     for (const [client, expected] of [
       ["Gemini CLI", ["gemini-2.5-pro", "gemini-pro"]],
@@ -403,6 +407,44 @@ describe("AccessTokenManager", () => {
           ),
       );
     }
+  });
+
+  it("keeps CC Switch service suggestions when optional redirect sources fail", async () => {
+    bridgeMocks.listServices.mockResolvedValue({
+      items: [
+        {
+          enabled: true,
+          models: ["claude-sonnet"],
+          capabilities: [{ protocol: "anthropic.messages" }],
+        },
+      ],
+    });
+    bridgeMocks.getRoutingSettings.mockRejectedValue(new Error("offline"));
+    await renderManager(readyCatalog([firstToken]));
+
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    await act(async () =>
+      document.querySelector<HTMLInputElement>("#cc-switch-model")!.click(),
+    );
+    expect(
+      [...document.querySelectorAll('[role="option"]')].map((option) =>
+        option.getAttribute("aria-label"),
+      ),
+    ).toEqual(["claude-sonnet"]);
+    const dialog = document.querySelector('[role="dialog"]')?.textContent;
+    expect(dialog).toContain("按需填写；留空的模型项不会导入。");
+    expect(dialog).not.toContain("部分模型未能读取");
+  });
+
+  it("reports failed CC Switch model suggestions only when services cannot load", async () => {
+    bridgeMocks.listServices.mockRejectedValue(new Error("offline"));
+    await renderManager(readyCatalog([firstToken]));
+
+    await act(async () => button("CC Switch", row(firstToken.name)).click());
+    await act(async () => Promise.resolve());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "部分模型未能读取，可手动输入模型 ID。",
+    );
   });
 
   it("ignores a copy response from an old Core session", async () => {
@@ -640,8 +682,9 @@ describe("AccessTokenManager", () => {
 
     const tokenRow = row(firstToken.name);
     expect(tokenRow.textContent).toContain("今日 Token30");
-    expect(tokenRow.textContent).toContain("累计 Token90");
     expect(row(secondToken.name).textContent).toContain("今日 Token0");
+    await act(async () => button("累计").click());
+    expect(row(firstToken.name).textContent).toContain("累计 Token90");
     expect(row(secondToken.name).textContent).toContain("累计 Token0");
     expect(bridgeMocks.listAccessTokenUsage).toHaveBeenCalledOnce();
     const todayFrom = new Date(
@@ -669,7 +712,7 @@ describe("AccessTokenManager", () => {
         ],
       });
     });
-    expect(row(firstToken.name).textContent).toContain("累计 Token0");
+    expect(row(firstToken.name).textContent).toContain("今日 Token0");
     expect(row(firstToken.name).textContent).not.toContain("999");
   });
 
@@ -682,6 +725,109 @@ describe("AccessTokenManager", () => {
       new Error("unavailable"),
     );
     await renderManager(readyCatalog([firstToken]));
+    expect(row(firstToken.name).textContent).toContain("今日 Token30");
+  });
+  it("switches all usage periods together and keeps token details and actions visible", async () => {
+    const billed = {
+      amount_usd: "1.250000000",
+      priced: 2,
+      unpriced: 0,
+      pending: 0,
+      revalued: 0,
+      requests: 2,
+    };
+    bridgeMocks.listAccessTokenUsage.mockResolvedValue({
+      items: [
+        {
+          token_id: firstToken.id,
+          today_tokens: 30,
+          total_tokens: 90,
+          today_billing: billed,
+          total_billing: { ...billed, amount_usd: "325.750000000" },
+          today_performance: {
+            cache_hit_rate: 0,
+            output_tokens_per_second: 49,
+            cache_samples: 2,
+            speed_samples: 3,
+          },
+          total_performance: {
+            cache_hit_rate: 0.26,
+            output_tokens_per_second: 60,
+            cache_samples: 4,
+            speed_samples: 5,
+          },
+        },
+      ],
+    });
+    await renderManager(readyCatalog([firstToken, secondToken]));
+    expect(row(firstToken.name).textContent).toContain("今日消耗 · USD$1.25");
+    expect(row(firstToken.name).textContent).toContain("缓存率0.0%TPS49.0");
+    expect(row(secondToken.name).textContent).toContain("缓存率—TPS—");
+    expect(row(firstToken.name).textContent).toContain("创建时间");
+    expect(row(firstToken.name).textContent).toContain("CC Switch");
+    expect(row(firstToken.name).textContent).toContain("删除");
+    expect(row(secondToken.name).textContent).toContain("今日消耗 · USD$0.00");
+    await act(async () => button("累计").click());
+    expect(row(firstToken.name).textContent).toContain("累计消耗 · USD$325.75");
     expect(row(firstToken.name).textContent).toContain("累计 Token90");
+    expect(row(firstToken.name).textContent).toContain("缓存率26.0%TPS60.0");
+    expect(row(firstToken.name).textContent).not.toContain("今日 Token");
+    expect(bridgeMocks.listAccessTokenUsage).toHaveBeenCalledOnce();
+
+    expect(row(firstToken.name).textContent).toContain("创建时间");
+    expect(button("CC Switch", row(firstToken.name))).toBeTruthy();
+    expect(button("删除", row(firstToken.name))).toBeTruthy();
+  });
+
+  it("distinguishes unpriced costs from zero and retains costs after refresh failure", async () => {
+    const unpriced = {
+      amount_usd: "0",
+      priced: 0,
+      unpriced: 3,
+      pending: 1,
+      revalued: 0,
+      requests: 4,
+    };
+    bridgeMocks.listAccessTokenUsage.mockResolvedValueOnce({
+      items: [
+        {
+          token_id: firstToken.id,
+          today_tokens: 30,
+          total_tokens: 90,
+          today_billing: unpriced,
+          total_billing: { ...unpriced, priced: 2, amount_usd: "42.500000000" },
+        },
+      ],
+    });
+    await renderManager(readyCatalog([firstToken]));
+    expect(row(firstToken.name).textContent).toContain("今日消耗 · USD—");
+    await act(async () => button("累计").click());
+    bridgeMocks.listAccessTokenUsage.mockRejectedValueOnce(
+      new Error("offline"),
+    );
+    await renderManager(readyCatalog([firstToken]));
+    expect(row(firstToken.name).textContent).toContain("累计消耗 · USD$42.50");
+    const help = row(firstToken.name).querySelector<HTMLButtonElement>(
+      '[aria-label="统计状态"]',
+    )!;
+    await act(async () => help.click());
+    expect(document.body.textContent).toContain("统计更新失败");
+  });
+
+  it("shows unknown billing for older Core responses", async () => {
+    bridgeMocks.listAccessTokenUsage.mockResolvedValueOnce({
+      items: [
+        {
+          token_id: firstToken.id,
+          today_tokens: 30,
+          total_tokens: 90,
+          today_billing: null,
+          total_billing: null,
+        },
+      ],
+    });
+    await renderManager(readyCatalog([firstToken]));
+    expect(row(firstToken.name).textContent).toContain("今日消耗 · USD—");
+    expect(row(firstToken.name).textContent).toContain("今日 Token30");
   });
 });

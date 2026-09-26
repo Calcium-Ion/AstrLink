@@ -378,6 +378,9 @@ func (store *Store) DeleteEndpoint(ctx context.Context, id contract.ServiceID, e
 }
 
 func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error) {
+	if strings.HasPrefix(string(ref), "local://builtin-tool/") {
+		return store.builtinCredential(ctx, ref, "get", nil)
+	}
 	if strings.HasPrefix(string(ref), "local://service-proxy/") {
 		return store.getProxyCredential(ctx, ref)
 	}
@@ -402,6 +405,10 @@ func (store *Store) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error
 }
 
 func (store *Store) Put(ctx context.Context, ref secretstore.Ref, secret []byte) (err error) {
+	if strings.HasPrefix(string(ref), "local://builtin-tool/") {
+		_, err := store.builtinCredential(ctx, ref, "put", secret)
+		return err
+	}
 	id, err := localServiceID(ref)
 	if err != nil {
 		return err
@@ -425,6 +432,10 @@ func (store *Store) Put(ctx context.Context, ref secretstore.Ref, secret []byte)
 }
 
 func (store *Store) Delete(ctx context.Context, ref secretstore.Ref) error {
+	if strings.HasPrefix(string(ref), "local://builtin-tool/") {
+		_, err := store.builtinCredential(ctx, ref, "delete", nil)
+		return err
+	}
 	id, err := localServiceID(ref)
 	if err != nil {
 		return err
@@ -767,40 +778,6 @@ func decodeCursor(cursor string) (string, error) {
 		return "", fmt.Errorf("%w: endpoint cursor id", storagecontract.ErrInvalidCursor)
 	}
 	return string(id), nil
-}
-
-func routeReferencesEndpoint(ctx context.Context, transaction *sql.Tx, id contract.ServiceID) (bool, error) {
-	rows, err := transaction.QueryContext(ctx, `SELECT id, document_json FROM routes ORDER BY id`)
-	if err != nil {
-		return false, fmt.Errorf("read route references: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var rowID, document string
-		if err := rows.Scan(&rowID, &document); err != nil {
-			return false, fmt.Errorf("scan route reference: %w", err)
-		}
-		record, err := decodeRouteRecord(rowID, []byte(document))
-		if err != nil {
-			return false, err
-		}
-		for _, target := range record.Route.Targets {
-			if target.ServiceID == id {
-				return true, nil
-			}
-		}
-		for _, category := range record.Route.Categories {
-			for _, target := range category.Targets {
-				if target.ServiceID == id {
-					return true, nil
-				}
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterate route references: %w", err)
-	}
-	return false, nil
 }
 
 func rollbackOnError(transaction *sql.Tx, err *error) {

@@ -15,7 +15,6 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
-	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
@@ -31,6 +30,7 @@ const (
 	ServicesPath                 = "/control/v1/services"
 	ServiceModelProbesPath       = "/control/v1/service-model-probes"
 	RoutesPath                   = "/control/v1/routes"
+	RecoveryPathsPath            = "/control/v1/recovery-paths"
 	AccessTokensPath             = "/control/v1/access-tokens"
 	PoliciesPath                 = "/control/v1/policies"
 	PolicyDryRunPath             = PoliciesPath + "/" + string(contract.DefaultPrivacyPolicyID) + "/dry-run"
@@ -42,11 +42,10 @@ const (
 )
 
 type Dependencies struct {
+	BuiltinToolTester  BuiltinToolTester
 	PricingStore       PricingStore
 	PricingManager     *pricing.Manager
-	RecoveryResolver   *endpoint.StoreResolver
 	ServiceStore       storage.ServiceStore
-	RouteStore         storage.RouteStore
 	AccessTokenManager AccessTokenManager
 	PolicyStore        storage.PolicyStore
 	PrivacyModels      PrivacyModelRegistry
@@ -66,7 +65,6 @@ type Dependencies struct {
 	AutoClassifier   AutoClassifier
 	ControlToken     string
 	NewServiceID     func() (contract.ServiceID, error)
-	NewRouteID       func() (contract.RouteID, error)
 	ConversionEngine relaykitbridge.ConversionEngine
 	Shutdown         context.CancelFunc
 }
@@ -98,16 +96,14 @@ type PrivacyModelRegistry interface {
 }
 
 type Handler struct {
+	builtinToolTester BuiltinToolTester
 	pricingStore      PricingStore
 	pricingManager    *pricing.Manager
-	recoveryPaths     storage.RecoveryPathStore
-	recoveryResolver  *endpoint.StoreResolver
 	routingSettings   storage.RoutingSettingsStore
 	routingSettingsMu sync.Mutex
 	version           contract.VersionResponse
 	capabilities      contract.CapabilitiesResponse
 	serviceStore      storage.ServiceStore
-	routeStore        storage.RouteStore
 	accessTokens      AccessTokenManager
 	policyStore       storage.PolicyStore
 	privacyModels     PrivacyModelRegistry
@@ -125,7 +121,6 @@ type Handler struct {
 	autoClassifier    AutoClassifier
 	controlToken      []byte
 	newServiceID      func() (contract.ServiceID, error)
-	newRouteID        func() (contract.RouteID, error)
 	mux               *http.ServeMux
 	privacyMu         sync.Mutex
 	shutdown          context.CancelFunc
@@ -155,16 +150,14 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	if dependencies.ConversionEngine != nil {
 		capabilities.ConversionEngine = relaykitbridge.Descriptor(dependencies.ConversionEngine)
 	}
-	recoveryPaths, _ := dependencies.ServiceStore.(storage.RecoveryPathStore)
 	routingSettings, _ := dependencies.ServiceStore.(storage.RoutingSettingsStore)
 	handler := &Handler{
-		pricingStore: dependencies.PricingStore, pricingManager: dependencies.PricingManager,
+		builtinToolTester: dependencies.BuiltinToolTester,
+		pricingStore:      dependencies.PricingStore, pricingManager: dependencies.PricingManager,
 		routingSettings: routingSettings,
-		recoveryPaths:   recoveryPaths, recoveryResolver: dependencies.RecoveryResolver,
 		version:         version,
 		capabilities:    capabilities,
 		serviceStore:    dependencies.ServiceStore,
-		routeStore:      dependencies.RouteStore,
 		accessTokens:    dependencies.AccessTokenManager,
 		policyStore:     dependencies.PolicyStore,
 		privacyModels:   dependencies.PrivacyModels,
@@ -182,13 +175,13 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		autoClassifier:  dependencies.AutoClassifier,
 		controlToken:    []byte(dependencies.ControlToken),
 		newServiceID:    dependencies.NewServiceID,
-		newRouteID:      dependencies.NewRouteID,
 		shutdown:        dependencies.Shutdown,
 		mux:             http.NewServeMux(),
 		observers:       newObserverTracker(),
 	}
 	handler.mux.HandleFunc(ObserversPath, handler.authenticated(handler.getObservers))
 	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource))
+	handler.mux.HandleFunc(BuiltinToolsPath, handler.authenticated(handler.builtinToolResource))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource))
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, contract.HealthResponse{Status: "ok"})

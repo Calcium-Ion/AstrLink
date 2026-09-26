@@ -68,7 +68,7 @@ func toolCatalog() []toolDef {
 		},
 		{
 			Name:        "get_request_record",
-			Description: "Get one AstrLink request record including events[] trajectory phases, turn_index, session_link, and cursors[] (the typed session cursors stored for linking; fingerprint values are keyed digests, never text).",
+			Description: "Get one AstrLink request record including events[] trajectory phases, routing_decision (why routing chose service_id: selected reason, and the higher-priority providers skipped with their reasons), turn_index, session_link, and cursors[] (the typed session cursors stored for linking; fingerprint values are keyed digests, never text).",
 			Schema:      idQuery,
 			Call: func(ctx context.Context, client *Client, arguments map[string]any) (json.RawMessage, error) {
 				id, err := requiredID(arguments)

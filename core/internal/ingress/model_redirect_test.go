@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -143,7 +144,7 @@ func assertNoGatewayIdentity(t *testing.T, request *http.Request, clientUserAgen
 	}
 }
 
-func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
+func TestModelRedirectSendsTargetUpstreamAndForwardsResponseUnchanged(t *testing.T) {
 	const clientUA = "client-sdk/1.2.3"
 	tests := []struct {
 		name         string
@@ -156,7 +157,6 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 		wantBody     string
 		upstreamType string
 		upstream     string
-		wantClient   string
 	}{
 		{
 			name: "chat completions json", path: "/v1/chat/completions", protocol: contract.ProtocolOpenAIChat,
@@ -165,7 +165,6 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 			wantURL:  "https://upstream.example/prefix/v1/chat/completions",
 			wantBody: `{"model":"target-model","messages":[{"role":"user","content":"mentions astrlink"}]}`,
 			upstream: `{"id":"chatcmpl_1","model":"target-model","choices":[]}`, upstreamType: "application/json",
-			wantClient: `{"id":"chatcmpl_1","model":"client-model","choices":[]}`,
 		},
 		{
 			name: "responses json", path: "/v1/responses", protocol: contract.ProtocolOpenAIResponses,
@@ -174,7 +173,6 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 			wantURL:  "https://upstream.example/prefix/v1/responses",
 			wantBody: `{"model":"target-model","input":"hello"}`,
 			upstream: `{"id":"resp_1","model":"target-model","output":[]}`, upstreamType: "application/json",
-			wantClient: `{"id":"resp_1","model":"client-model","output":[]}`,
 		},
 		{
 			name: "responses sse", path: "/v1/responses", protocol: contract.ProtocolOpenAIResponses, streaming: true,
@@ -184,7 +182,6 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 			wantBody:     `{"model":"target-model","stream":true,"input":"hello"}`,
 			upstream:     "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"model\":\"target-model\"}}\n\n",
 			upstreamType: "text/event-stream",
-			wantClient:   "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"model\":\"client-model\"}}\n\n",
 		},
 		{
 			name: "anthropic messages json", path: "/v1/messages", protocol: contract.ProtocolAnthropicMessages,
@@ -193,7 +190,6 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 			wantURL:  "https://upstream.example/prefix/v1/messages",
 			wantBody: `{"model":"target-model","max_tokens":8,"messages":[]}`,
 			upstream: `{"id":"msg_1","type":"message","model":"target-model","content":[]}`, upstreamType: "application/json",
-			wantClient: `{"id":"msg_1","type":"message","model":"client-model","content":[]}`,
 		},
 		{
 			name: "anthropic messages sse", path: "/v1/messages", protocol: contract.ProtocolAnthropicMessages, streaming: true,
@@ -203,7 +199,6 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 			wantBody:     `{"model":"target-model","stream":true,"messages":[]}`,
 			upstream:     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"target-model\"}}\n\n",
 			upstreamType: "text/event-stream",
-			wantClient:   "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"client-model\"}}\n\n",
 		},
 		{
 			name: "gemini path escapes target once", path: "/v1beta/models/client-model:generateContent", protocol: contract.ProtocolGoogleGenerateContent,
@@ -212,7 +207,6 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 			wantURL:  "https://upstream.example/prefix/v1beta/models/tuned%2Fgemini%20flash:generateContent",
 			wantBody: `{"contents":[{"parts":[{"text":"hello"}]}]}`,
 			upstream: `{"candidates":[],"modelVersion":"tuned/gemini flash"}`, upstreamType: "application/json",
-			wantClient: `{"candidates":[],"modelVersion":"client-model"}`,
 		},
 	}
 	for _, test := range tests {
@@ -253,8 +247,10 @@ func TestModelRedirectSendsTargetUpstreamAndRestoresClientModel(t *testing.T) {
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 
-			if response.Code != http.StatusOK || response.Body.String() != test.wantClient {
-				t.Fatalf("client response = %d %q, want %q", response.Code, response.Body.String(), test.wantClient)
+			// The redirect only touches the request; the client sees the
+			// upstream's own model name.
+			if response.Code != http.StatusOK || response.Body.String() != test.upstream {
+				t.Fatalf("client response = %d %q, want upstream bytes %q", response.Code, response.Body.String(), test.upstream)
 			}
 			if strings.Join(resolved, ",") != test.target {
 				t.Fatalf("resolved models = %v, want target %q", resolved, test.target)
@@ -342,7 +338,7 @@ func TestModelRedirectRetryChildrenInheritRedirect(t *testing.T) {
 	})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"client-model","input":"hi"}`)))
-	if response.Code != http.StatusOK || response.Body.String() != `{"model":"client-model"}` {
+	if response.Code != http.StatusOK || response.Body.String() != `{"model":"target-model"}` {
 		t.Fatalf("response = %d %q", response.Code, response.Body.String())
 	}
 	want := `{"model":"target-model","input":"hi"}`
@@ -435,7 +431,7 @@ func TestModelRedirectFromRetiredAutoModel(t *testing.T) {
 		store := newRedirectSettingsStore(enabledRedirect(contract.AstrLinkAutoModelID, "gpt-4.1"))
 		response := httptest.NewRecorder()
 		newHandler(store, &called).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
-		if response.Code != http.StatusOK || !called || response.Body.String() != `{"model":"astrlink/auto"}` {
+		if response.Code != http.StatusOK || !called || response.Body.String() != `{"model":"gpt-4.1"}` {
 			t.Fatalf("response = %d %q called=%t", response.Code, response.Body.String(), called)
 		}
 		if redirect := store.root(t).ModelRedirect; redirect == nil || redirect.From != contract.AstrLinkAutoModelID || redirect.To != "gpt-4.1" {
@@ -489,21 +485,56 @@ func TestModelRedirectResolveErrorsNameClientModel(t *testing.T) {
 	}
 }
 
-func TestModelRedirectFillsCandidatesWithoutUpstreamModel(t *testing.T) {
-	aliased := validEndpoint(contract.ProtocolOpenAIResponses, false)
-	aliased.ID, aliased.BaseURL = "endpoint_alias", "https://alias.example"
-	plain := validEndpoint(contract.ProtocolOpenAIResponses, false)
-	plain.ID, plain.BaseURL = "endpoint_plain", "https://plain.example"
-	candidates := []endpoint.Resolved{{Endpoint: aliased, UpstreamModel: "provider-private"}, {Endpoint: plain}}
-	got := redirectCandidates(Request{Model: "client-model", RedirectedModel: "target-model"}, candidates)
-	if got[0].UpstreamModel != "provider-private" || got[1].UpstreamModel != "target-model" {
-		t.Fatalf("candidates = %q, %q", got[0].UpstreamModel, got[1].UpstreamModel)
-	}
-	if candidates[1].UpstreamModel != "" {
-		t.Fatal("resolver-owned candidates were mutated")
-	}
-	if same := redirectCandidates(Request{Model: "client-model"}, candidates); same[1].UpstreamModel != "" {
-		t.Fatal("no redirect must leave candidates unchanged")
+// The resolver names the routed model on every candidate. Without a redirect
+// the request and a compressed response must pass through byte for byte; with
+// one, only the request's model changes.
+func TestModelRedirectLeavesOtherRequestAndResponseBytesAlone(t *testing.T) {
+	// An escaped model would lose its escape if AstrLink re-encoded it.
+	const body = `{"messages":[],"model":"client\u002dmodel"}`
+	compressed := gzipBytes(t, []byte(`{"id":"chatcmpl_1","model":"provider-reported","choices":[]}`))
+	for _, test := range []struct {
+		name      string
+		redirects []contract.ModelRedirect
+		wantBody  string
+	}{
+		{name: "no redirect", wantBody: body},
+		{name: "redirect", redirects: []contract.ModelRedirect{enabledRedirect("client-model", "target-model")}, wantBody: `{"messages":[],"model":"target-model"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newRedirectSettingsStore(test.redirects...)
+			handler := NewWithDependencies(Dependencies{
+				Resolver: resolverFunc(func(_ context.Context, request endpoint.ResolveRequest) (endpoint.Resolved, error) {
+					return endpoint.Resolved{Endpoint: validEndpoint(contract.ProtocolOpenAIChat, false), UpstreamModel: request.Model}, nil
+				}),
+				RequestRecords: store,
+				Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					got, err := io.ReadAll(request.Body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(got) != test.wantBody {
+						t.Errorf("upstream body = %q, want %q", got, test.wantBody)
+					}
+					if encoding := request.Header.Get("Accept-Encoding"); encoding != "gzip" {
+						t.Errorf("upstream Accept-Encoding = %q, want client value", encoding)
+					}
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": {"application/json"}, "Content-Encoding": {"gzip"}},
+						Body:       io.NopCloser(bytes.NewReader(compressed)),
+					}, nil
+				})),
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Accept-Encoding", "gzip")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), compressed) ||
+				response.Header().Get("Content-Encoding") != "gzip" {
+				t.Fatalf("client response = %d %q encoding=%q", response.Code, response.Body.Bytes(), response.Header().Get("Content-Encoding"))
+			}
+		})
 	}
 }
 
@@ -544,13 +575,13 @@ func TestModelRedirectResponsesWebSocketPinsRoutingModel(t *testing.T) {
 	client := dialResponses(t, handler, nil)
 
 	sendWS(t, client, `{"type":"response.create","model":"client-model","input":"one"}`)
-	if completed := readWS(t, client); completed["response"].(map[string]any)["model"] != "client-model" {
+	if completed := readWS(t, client); completed["response"].(map[string]any)["model"] != "target-a" {
 		t.Fatalf("first completed = %#v", completed)
 	}
 	// A rule edit must not move a socket that is already bound upstream.
 	store.setRedirects(enabledRedirect("client-model", "target-b"))
 	sendWS(t, client, `{"type":"response.create","model":"client-model","input":"two"}`)
-	if completed := readWS(t, client); completed["response"].(map[string]any)["model"] != "client-model" {
+	if completed := readWS(t, client); completed["response"].(map[string]any)["model"] != "target-a" {
 		t.Fatalf("second completed = %#v", completed)
 	}
 	if first, second := <-models, <-models; first != "target-a" || second != "target-a" {
@@ -611,7 +642,7 @@ func TestModelRedirectResponsesWebSocketSettingsFailureDoesNotPin(t *testing.T) 
 	store.readErr = nil
 	store.mu.Unlock()
 	sendWS(t, client, `{"type":"response.create","model":"client-model","input":"two"}`)
-	if completed := readWS(t, client); completed["response"].(map[string]any)["model"] != "client-model" {
+	if completed := readWS(t, client); completed["response"].(map[string]any)["model"] != "target-a" {
 		t.Fatalf("second completed = %#v", completed)
 	}
 	if model := <-models; model != "target-a" {

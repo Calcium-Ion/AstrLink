@@ -50,9 +50,29 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 				destination = &settings.ClaudeIdentityEnforcement
 			case "grok_identity_enforcement":
 				destination = &settings.GrokIdentityEnforcement
+			case "subscription_risk_protection":
+				destination = &settings.SubscriptionRiskProtection
+			case "codex_request_normalization":
+				destination = &settings.CodexRequestNormalization
+			case "claude_request_normalization":
+				destination = &settings.ClaudeRequestNormalization
+			case "subscription_session_isolation":
+				destination = &settings.SubscriptionSessionIsolation
+			case "official_client_passthrough":
+				destination = &settings.OfficialClientPassthrough
+			case "claude_identity_auto_learn":
+				destination = &settings.ClaudeIdentityAutoLearn
+			case "codex_identity_auto_learn":
+				destination = &settings.CodexIdentityAutoLearn
+			case "claude_identity_version":
+				destination = &settings.ClaudeIdentityVersion
+			case "codex_identity_version":
+				destination = &settings.CodexIdentityVersion
 			case "default_recovery_paths":
 				writeError(writer, http.StatusGone, "routing_feature_retired", "default call paths are retired")
 				return
+			case "builtin_tools":
+				destination = &settings.BuiltinTools
 			case "model_redirects":
 				destination = &settings.ModelRedirects
 			case "channel_stickiness":

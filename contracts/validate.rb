@@ -168,6 +168,27 @@ patch_defaults = audit_patch_properties.each_with_object([]) do |(name, definiti
 end
 raise "AuditSettingsPatch must not materialize defaults: #{patch_defaults.join(', ')}" unless patch_defaults.empty?
 
+routing_settings = openapi.dig("components", "schemas", "RoutingSettings", "properties")
+routing_patch = openapi.dig("components", "schemas", "RoutingSettingsPatch", "properties")
+raise "RoutingSettingsPatch must cover every routing setting" unless routing_patch.keys.sort == routing_settings.keys.sort
+routing_patch_defaults = routing_patch.select { |_, definition| definition.is_a?(Hash) && definition.key?("default") }.keys
+raise "RoutingSettingsPatch must not materialize defaults: #{routing_patch_defaults.join(', ')}" unless routing_patch_defaults.empty?
+%w[official_client_passthrough claude_identity_auto_learn codex_identity_auto_learn].each do |setting|
+  raise "#{setting} must default to true" unless routing_settings.dig(setting, "default") == true
+end
+identity_version = Regexp.new(openapi.dig("components", "schemas", "ClientIdentityVersion", "pattern"))
+%w[2.1.300 0.144.0 2.2.0-beta.1 1.0.0+build.5].each do |version|
+  raise "client identity version rejects #{version}" unless identity_version.match?(version)
+end
+["", "2.1", "v2.1.300", "claude-cli/2.1.300", "2.1.300 (external, cli)", "2.1.300\n"].each do |version|
+  raise "client identity version accepts #{version.inspect}" if identity_version.match?(version)
+end
+%w[claude_identity_version codex_identity_version].each do |setting|
+  choices = routing_patch.dig(setting, "oneOf")
+  raise "#{setting} patch must accept an empty string to clear the override" unless choices.is_a?(Array) &&
+                                                                                  choices.include?({ "type" => "string", "const" => "" })
+end
+
 service = openapi.dig("components", "schemas", "Service")
 service_create = openapi.dig("components", "schemas", "ServiceCreate")
 expected_service_fields = %w[id name kind enabled models capabilities created_at updated_at]
@@ -214,121 +235,21 @@ raise "reserved automatic model identifier drifted" unless auto_model.fetch("typ
                                                           auto_model.fetch("const") == "astrlink/auto" &&
                                                           !auto_model.fetch("description").empty?
 
-selection_modes = openapi.dig("components", "schemas", "RouteSelectionMode", "enum")
-raise "route selection mode values drifted" unless selection_modes == %w[priority auto]
-
-route_selection = openapi.dig("components", "schemas", "RouteSelection")
-expected_taxonomy_condition = [{
-  "if" => {
-    "properties" => { "mode" => { "const" => "auto" } },
-    "required" => %w[mode]
-  },
-  "then" => { "required" => %w[taxonomy_id] },
-  "else" => { "not" => { "required" => %w[taxonomy_id] } }
-}]
-raise "RouteSelection classification shape drifted" unless route_selection.fetch("required") == %w[mode] &&
-                                                           route_selection.fetch("properties").keys == %w[mode taxonomy_id] &&
-                                                           route_selection.dig("properties", "mode", "$ref") == "#/components/schemas/RouteSelectionMode" &&
-                                                           route_selection.fetch("allOf") == expected_taxonomy_condition &&
-                                                           route_selection.fetch("additionalProperties") == false
-
-classification_id_pattern = Regexp.new(route_selection.dig("properties", "taxonomy_id", "pattern"))
-%w[astrlink-text-v1 code code.reasoning code_generation coding research architect].each do |identifier|
-  raise "classification identifier rejects #{identifier}" unless classification_id_pattern.match?(identifier)
-end
-["", "Code", "code generation", "-code", "code/reasoning"].each do |identifier|
-  raise "classification identifier accepts #{identifier.inspect}" if classification_id_pattern.match?(identifier)
-end
-
-route_target = openapi.dig("components", "schemas", "RouteTarget")
-raise "RouteTarget must not own a classification label" if route_target.fetch("properties").key?("category_id")
-raise "RouteTarget must use service_id" unless route_target.fetch("required").include?("service_id") &&
-                                                route_target.fetch("properties").key?("service_id") &&
-                                                !route_target.fetch("properties").key?("endpoint_id")
-
-route_category = openapi.dig("components", "schemas", "RouteCategory")
-category_id = route_category.dig("properties", "category_id")
-raise "RouteCategory shape drifted" unless route_category.fetch("required") == %w[category_id] &&
-                                           route_category.fetch("properties").keys.sort == %w[category_id recovery_path_id targets] &&
-                                           route_category.fetch("oneOf") == [{"required"=>["targets"]},{"required"=>["recovery_path_id"]}] &&
-                                           category_id.fetch("type") == "string" &&
-                                           category_id.fetch("minLength") == 1 &&
-                                           category_id.fetch("maxLength") == 64 &&
-                                           category_id.fetch("pattern") == route_selection.dig("properties", "taxonomy_id", "pattern") &&
-                                           route_category.dig("properties", "targets", "minItems") == 1 &&
-                                           route_category.dig("properties", "targets", "items", "$ref") == "#/components/schemas/RouteTarget" &&
-                                           route_category.fetch("additionalProperties") == false
-
-expected_route_shape_condition = [{
-  "if" => {
-    "properties" => {
-      "selection" => {
-        "properties" => { "mode" => { "const" => "auto" } },
-        "required" => %w[mode]
-      }
-    },
-    "required" => %w[selection]
-  },
-  "then" => {
-    "required" => %w[categories],
-    "properties" => {
-      "match" => {
-        "properties" => {
-          "model" => { "$ref" => "#/components/schemas/AstrLinkAutoModel" }
-        },
-        "required" => %w[model]
-      }
-    },
-    "not" => { "anyOf" => [{"required"=>%w[targets]},{"required"=>%w[recovery_path_id]}] }
-  },
-  "else" => {
-    "oneOf" => [{"required"=>%w[targets]},{"required"=>%w[recovery_path_id]}],
-    "properties" => {
-      "match" => {
-        "not" => {
-          "properties" => {
-            "model" => { "$ref" => "#/components/schemas/AstrLinkAutoModel" }
-          },
-          "required" => %w[model]
-        }
-      }
-    },
-    "not" => { "required" => %w[categories] }
-  }
-}]
-
-%w[Route RouteCreate].each do |schema_name|
-  route_schema = openapi.dig("components", "schemas", schema_name)
-  schema_required = route_schema.fetch("required")
-  selection = route_schema.dig("properties", "selection")
-  raise "#{schema_name} must expose optional RouteSelection" unless !schema_required.include?("selection") &&
-                                                                    selection == {
-                                                                      "$ref" => "#/components/schemas/RouteSelection"
-                                                                    }
-  raise "#{schema_name} priority/auto shape drifted" unless !schema_required.include?("targets") &&
-                                                         !schema_required.include?("categories") &&
-                                                         route_schema.dig("properties", "targets", "items", "$ref") == "#/components/schemas/RouteTarget" &&
-                                                         route_schema.dig("properties", "categories", "items", "$ref") == "#/components/schemas/RouteCategory" &&
-                                                         route_schema.fetch("allOf") == expected_route_shape_condition
-end
-route_patch_selection = openapi.dig("components", "schemas", "RoutePatch", "properties", "selection", "oneOf")
-unless route_patch_selection.is_a?(Array) &&
-       route_patch_selection.include?({ "$ref" => "#/components/schemas/RouteSelection" }) &&
-       route_patch_selection.any? { |choice| choice["type"] == "null" }
-  raise "RoutePatch selection must support RouteSelection and null reset"
-end
-route_patch = openapi.dig("components", "schemas", "RoutePatch")
-{
-  "targets" => ["#/components/schemas/RouteTarget", 1],
-  "categories" => ["#/components/schemas/RouteCategory", 2]
-}.each do |field, (item_ref, min_items)|
-  choices = route_patch.dig("properties", field, "oneOf")
-  array_choice = choices&.find { |choice| choice["type"] == "array" }
-  null_choice = choices&.find { |choice| choice["type"] == "null" }
-  raise "RoutePatch #{field} must support array and null" unless array_choice &&
-                                                                  null_choice &&
-                                                                  array_choice["minItems"] == min_items &&
-                                                                  array_choice.dig("items", "$ref") == item_ref
+retired_routing_paths = %w[
+  /control/v1/routes
+  /control/v1/routes/{route_id}
+  /control/v1/recovery-paths
+  /control/v1/recovery-paths/{path_id}
+  /control/v1/recovery-paths/preview
+]
+retired_routing_paths.each do |retired_path|
+  operations = openapi.dig("paths", retired_path)&.slice("get", "post", "patch", "delete")
+  raise "retired routing path missing: #{retired_path}" if operations.nil? || operations.empty?
+  operations.each do |method, operation|
+    raise "retired routing operation must only answer 410: #{method.upcase} #{retired_path}" unless operation["deprecated"] == true &&
+                                                                                                   !operation.key?("requestBody") &&
+                                                                                                   operation.fetch("responses").keys.sort == %w[401 410]
+  end
 end
 
 credential_ref_schema = schema.dig("$defs", "CredentialRef")
@@ -358,6 +279,8 @@ implemented_operations = openapi.dig("x-astrlink-implementation", "implemented_o
   POST\ /control/v1/services/{service_id}/logout
   GET\ /control/v1/services/{service_id}/usage
   POST\ /control/v1/services/{service_id}/usage/reset
+  POST\ /control/v1/services/{service_id}/risk/clear
+  GET\ /control/v1/services/{service_id}/risk-events
 ].each do |operation|
   raise "missing implemented service operation #{operation}" unless implemented_operations.include?(operation)
 end
@@ -395,6 +318,15 @@ raise "request records must use service_id" unless request_record.fetch("require
                                                    !request_record.fetch("properties").key?("endpoint_id")
 raise "request records must expose privacy restore diagnostics" unless request_record.fetch("required").include?("privacy_restore") &&
                                                                         request_record.dig("properties", "privacy_restore", "oneOf")&.any? { |entry| entry["$ref"] == "#/components/schemas/PrivacyRestoreSummary" }
+routing_decision = openapi.dig("components", "schemas", "RequestRoutingDecision")
+raise "request records must explain the provider choice" unless request_record.dig("properties", "routing_decision", "$ref") == "#/components/schemas/RequestRoutingDecision" &&
+                                                               routing_decision.fetch("required") == %w[skipped] &&
+                                                               routing_decision.dig("properties", "skipped", "maxItems") == 64
+raise "RoutingSelection wire values drifted" unless openapi.dig("components", "schemas", "RoutingSelection", "enum") == %w[priority session_binding response_affinity websocket_connection failover]
+raise "RoutingSkipReason wire values drifted" unless openapi.dig("components", "schemas", "RoutingSkipReason", "enum") == %w[
+  disabled not_connected risk_paused model_not_listed protocol_unsupported streaming_unsupported
+  conversion_unavailable circuit_open rate_limited websocket_disabled websocket_unsupported
+]
 
 policy_match = openapi.dig("components", "schemas", "PolicyMatch")
 raise "policy matches must use service_ids" unless policy_match.fetch("properties").key?("service_ids") &&
@@ -530,12 +462,4 @@ raise "local privacy model probe must accept only one path" unless local_probe.f
                                                                local_probe.fetch("properties").keys == %w[path] &&
                                                                local_probe.fetch("additionalProperties") == false
 
-puts "validated #{reference_count} local $ref values, frozen fixtures, Alpha relay and classification-route invariants, and audit patch semantics"
-
-# Reusable paths use array order; manual steps may revisit a target but never
-# inherit an automatic retry count.
-path = openapi.dig("components", "schemas", "RecoveryPath")
-raise "RecoveryPath modes drifted" unless path.dig("properties", "mode", "enum") == %w[automatic steps]
-raise "RecoveryPath steps must be bounded" unless path.dig("properties", "steps", "maxItems") == 20
-raise "RecoveryPath must reject unknown fields" unless path["additionalProperties"] == false
-raise "RecoveryPath preview missing" unless openapi.dig("paths", "/control/v1/recovery-paths/preview", "post", "operationId") == "previewRecoveryPath"
+puts "validated #{reference_count} local $ref values, frozen fixtures, Alpha relay invariants, retired routing operations, and audit patch semantics"

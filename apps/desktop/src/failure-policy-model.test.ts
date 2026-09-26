@@ -1,23 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultFailurePolicy,
+  identityLearningKeys,
   identitySettingKeys,
+  identityVersionKeys,
   modelRedirectIssues,
   parseFailurePolicy,
   parseFailoverPolicy,
   parseRoutingSettings,
+  subscriptionProtectionKeys,
+  validIdentityVersion,
   type ModelRedirect,
 } from "./failure-policy-model";
 
 describe("failure policies", () => {
-  it("defaults identity enforcement on for older settings and preserves explicit opt-out", () => {
+  it("defaults identity and subscription protections on for older settings and preserves explicit opt-out", () => {
     const settings = {
       default_failure_policy: defaultFailurePolicy(),
       allow_unmatched_failover: true,
       strategy: "failover_only",
       max_attempts: 6,
     };
-    for (const key of identitySettingKeys) {
+    for (const key of [
+      ...identitySettingKeys,
+      ...subscriptionProtectionKeys,
+      ...identityLearningKeys,
+    ]) {
       expect(parseRoutingSettings(settings)[key]).toBe(true);
       expect(parseRoutingSettings({ ...settings, [key]: false })[key]).toBe(
         false,
@@ -28,6 +36,70 @@ describe("failure policies", () => {
         ).toThrow();
       }
     }
+  });
+  it("parses optional client version overrides with the core's rules", () => {
+    const settings = {
+      default_failure_policy: defaultFailurePolicy(),
+      allow_unmatched_failover: true,
+      strategy: "failover_only",
+      max_attempts: 6,
+    };
+    const parsed = parseRoutingSettings(settings);
+    for (const key of identityVersionKeys) expect(key in parsed).toBe(false);
+    expect(
+      parseRoutingSettings({
+        ...settings,
+        claude_identity_version: "2.1.300",
+        codex_identity_version: "0.160.0",
+      }),
+    ).toMatchObject({
+      claude_identity_version: "2.1.300",
+      codex_identity_version: "0.160.0",
+    });
+    // A patch clears an override with an empty string.
+    expect(
+      "claude_identity_version" in
+        parseRoutingSettings({ ...settings, claude_identity_version: "" }),
+    ).toBe(false);
+    for (const key of identityVersionKeys) {
+      for (const version of [
+        "2.1.300",
+        "0.144.0",
+        "2.2.0-beta.1",
+        "1.0.0+build.5",
+      ])
+        expect(validIdentityVersion(key, version)).toBe(true);
+      for (const version of [
+        "2.1",
+        "v2.1.300",
+        "claude-cli/2.1.300",
+        "2.1.300 (external, cli)",
+        "2.1.300\n",
+        "4294967296.0.0",
+        `1.0.0-${"a".repeat(64)}`,
+      ]) {
+        expect(validIdentityVersion(key, version)).toBe(false);
+        expect(() =>
+          parseRoutingSettings({ ...settings, [key]: version }),
+        ).toThrow();
+      }
+      for (const value of [null, 2, true])
+        expect(() =>
+          parseRoutingSettings({ ...settings, [key]: value }),
+        ).toThrow();
+    }
+    // Codex rejects versions older than its backend accepts.
+    for (const version of ["0.143.9", "0.144.0-alpha.1", "0.100.0"])
+      expect(validIdentityVersion("codex_identity_version", version)).toBe(
+        false,
+      );
+    for (const version of ["0.143.9", "0.144.0-alpha.1"])
+      expect(validIdentityVersion("claude_identity_version", version)).toBe(
+        true,
+      );
+    expect(
+      validIdentityVersion("codex_identity_version", "0.144.1-alpha"),
+    ).toBe(true);
   });
   it("preserves the optional thinking signature recovery switch", () => {
     for (const enabled of [false, true]) {

@@ -48,7 +48,7 @@ func (manager *SessionManager) requestDeviceAuthorization(
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	ApplyCodexAuthIdentity(request.Header, manager.config.ModelsClientVersion)
+	ApplyCodexAuthIdentity(request.Header, manager.config.Identities.CodexIdentityFor(ctx, manager.config.ModelsClientVersion))
 	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := manager.config.HTTPClient.Do(request)
 	if err != nil {
@@ -191,7 +191,7 @@ func (manager *SessionManager) pollDeviceAuthorizationOnce(
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	ApplyCodexAuthIdentity(request.Header, manager.config.ModelsClientVersion)
+	ApplyCodexAuthIdentity(request.Header, manager.config.Identities.CodexIdentityFor(ctx, manager.config.ModelsClientVersion))
 	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := manager.config.HTTPClient.Do(request)
 	if err != nil {

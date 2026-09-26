@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/ingress"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
@@ -25,6 +26,7 @@ const maxRawResponseCharacters = 64 << 10
 
 type Tester struct {
 	gateway             *ingress.Handler
+	identities          *accountauth.IdentityRegistry
 	subscriptionBaseURL func(contract.SubscriptionProvider) string
 }
 
@@ -39,7 +41,7 @@ func New(authorizer endpoint.Authorizer, forwarder *transport.Forwarder, subscri
 // NewWithDependencies shares the gateway's privacy, audit and provider
 // dependencies. Its handler is reachable only from the control-plane tester.
 func NewWithDependencies(dependencies ingress.Dependencies, subscriptionBaseURL func(contract.SubscriptionProvider) string) *Tester {
-	return &Tester{gateway: ingress.NewWithDependencies(dependencies), subscriptionBaseURL: subscriptionBaseURL}
+	return &Tester{gateway: ingress.NewWithDependencies(dependencies), identities: dependencies.Identities, subscriptionBaseURL: subscriptionBaseURL}
 }
 
 func (tester *Tester) Test(ctx context.Context, service contract.Service, input contract.ServiceTestRequest) (result contract.ServiceTestResult) {
@@ -70,7 +72,7 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 		request.Header.Set("Anthropic-Version", "2023-06-01")
 	}
 	if service.Kind == contract.ServiceKindClaudeSubscription {
-		request.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
+		request.Header.Set("User-Agent", tester.identities.ClaudeIdentityFor(ctx).UserAgent)
 	}
 	exchange, err := tester.execute(request, service, input)
 	if err != nil {

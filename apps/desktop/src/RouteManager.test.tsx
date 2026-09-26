@@ -5,8 +5,6 @@ import { expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
-  listRoutes: vi.fn(),
-  listRecoveryPaths: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
 import { RouteManager } from "./RouteManager";
@@ -31,20 +29,18 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
       root.render(
         <StrictMode>
           <RouteManager
-            coreSessionKey="test"
             services={[
               {
                 id: "service_a",
                 name: "A",
+                kind: "openai",
                 enabled: true,
                 models: ["gpt-5"],
                 capabilities: [],
               },
             ]}
-            protocols={[]}
             isReady
             onDirtyChange={dirty}
-            onManageServices={() => {}}
           />
         </StrictMode>,
       ),
@@ -53,7 +49,7 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
     const tabs = [...container.querySelectorAll('[role="tab"]')];
-    expect(tabs).toHaveLength(5);
+    expect(tabs).toHaveLength(6);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(container.textContent).toContain("Codex 自动审查");
     expect(container.textContent).not.toContain("astrlink/auto");
@@ -89,8 +85,6 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
         .dispatchEvent(new MouseEvent("click", { bubbles: true })),
     );
     expect(container.textContent).toContain("ABC：失败后换下一家");
-    expect(bridge.listRoutes).not.toHaveBeenCalled();
-    expect(bridge.listRecoveryPaths).not.toHaveBeenCalled();
     const input = container.querySelector<HTMLInputElement>(
       'input[type="number"]',
     )!;

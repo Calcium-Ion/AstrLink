@@ -146,10 +146,41 @@ func TestRelayKitConvertsIntoSubscriptionEgress(t *testing.T) {
 					if request.URL.Path != test.wantPath || request.Header.Get("Authorization") != "Bearer subscription-token" {
 						t.Fatalf("wrong converted target/auth: %s", request.URL)
 					}
+					// The source SDK's fingerprint must not be mixed into the
+					// subscription client's identity: Codex sends none, and
+					// Claude sends only the Claude Code release's own set.
+					for name := range request.Header {
+						lower := strings.ToLower(name)
+						foreign := "anthropic-"
+						if test.kind == contract.ServiceKindClaudeSubscription {
+							foreign = "openai-"
+						}
+						stainless := strings.HasPrefix(lower, "x-stainless-") &&
+							(test.kind != contract.ServiceKindClaudeSubscription || lower == "x-stainless-helper-method")
+						if stainless || strings.HasPrefix(lower, foreign) {
+							t.Fatalf("converted request forwarded source header %s: %v", name, request.Header)
+						}
+					}
+					if test.kind == contract.ServiceKindClaudeSubscription &&
+						(request.Header.Get("X-Stainless-Runtime") != "node" || request.Header.Get("X-App") != "cli") {
+						t.Fatalf("converted Claude request lacks the Claude Code SDK headers: %v", request.Header)
+					}
+					for name, values := range request.Header {
+						if strings.Contains(strings.ToLower(name+strings.Join(values, ",")), "astrlink") {
+							t.Fatalf("forwarded header carries gateway branding: %s: %v", name, values)
+						}
+					}
+					if beta := request.Header.Get("Anthropic-Beta"); test.kind == contract.ServiceKindClaudeSubscription &&
+						(strings.Contains(beta, "files-api") || !strings.Contains(beta, "interleaved-thinking-2025-05-14")) {
+						t.Fatalf("converted Anthropic-Beta = %q", beta)
+					}
 					body, _ := io.ReadAll(request.Body)
 					var payload map[string]any
 					if err := json.Unmarshal(body, &payload); err != nil {
 						t.Fatal(err)
+					}
+					if strings.Contains(strings.ToLower(string(body)), "astrlink") {
+						t.Fatalf("forwarded body carries gateway branding: %s", body)
 					}
 					test.check(t, payload)
 					_, _, responseBody := nativeProviderExchange(test.upstream, false)
@@ -160,6 +191,10 @@ func TestRelayKitConvertsIntoSubscriptionEgress(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Authorization", "Bearer local-secret")
+			request.Header.Set("X-Stainless-Lang", "js")
+			request.Header.Set("X-Stainless-Helper-Method", "stream")
+			request.Header.Set("OpenAI-Organization", "org-client")
+			request.Header.Set("Anthropic-Beta", "files-api-2025-04-14,interleaved-thinking-2025-05-14")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if !called || response.Code != http.StatusOK {

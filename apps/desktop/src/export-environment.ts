@@ -43,6 +43,7 @@ export interface ExportEnvironment {
     max_attempts: number;
     /** Every rule with its enabled flag; the readable line lists enabled ones. */
     model_redirects: ModelRedirect[];
+    builtin_tools?: import("./builtin-tools-model").BuiltinTools;
   } | null;
   capture: {
     request_body_enabled: boolean;
@@ -113,6 +114,9 @@ export async function loadExportEnvironment(): Promise<
     settle(async () => {
       const settings = await getRoutingSettings();
       return {
+        ...(settings.builtin_tools
+          ? { builtin_tools: settings.builtin_tools }
+          : {}),
         strategy: settings.strategy,
         max_attempts: settings.max_attempts,
         model_redirects: (settings.model_redirects ?? []).map((rule) => ({

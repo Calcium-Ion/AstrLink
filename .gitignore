@@ -77,6 +77,7 @@ flax_model*.msgpack
 
 # local planning docs
 /plans/
+/.plans/
 
 # Local editor rules and internal project documents
 /.cursor/

@@ -70,12 +70,12 @@ type discoveryEntry struct {
 
 // aggregateModelDiscovery serves a model listing from every capable enabled
 // candidate instead of relaying to a single one. Candidates arrive in the
-// resolver's deterministic routing order — native before delegated, then
-// Endpoint ID, unless an explicit Route matched — and the first candidate
-// returning a public model ID wins any conflict, so discovery names the same
-// upstream that routing would select for that ID. Each request fans out
-// fresh; there is no discovery cache in Alpha. Enabled model redirects add
-// their source names next to listed targets.
+// resolver's deterministic routing order — configured service order, then
+// service ID — and the first candidate returning a public model ID wins any
+// conflict, so discovery names the same upstream that routing would select
+// for that ID. Each request fans out fresh; there is no discovery cache in
+// Alpha. Enabled model redirects add their source names next to listed
+// targets.
 func (handler *Handler) aggregateModelDiscovery(
 	writer http.ResponseWriter,
 	request *http.Request,
@@ -125,61 +125,7 @@ func (handler *Handler) aggregateModelDiscovery(
 		}
 		session.notePrivacyDecision(decision, contract.RequestStatusSucceeded)
 	}
-	mergeInput := results
-	if lister, ok := handler.resolver.(endpoint.AliasLister); ok {
-		mappings, aliasErr := lister.ListAliasModelMappings(request.Context(), classified.Protocol)
-		if aliasErr != nil {
-			handler.writeResolveError(writer, request, classified, aliasErr)
-			return
-		}
-		aliasSet := make(map[string]struct{}, len(mappings))
-		hiddenByService := make(map[contract.ServiceID]map[string]struct{})
-		for _, mapping := range mappings {
-			aliasSet[mapping.PublicModel] = struct{}{}
-			hidden := hiddenByService[mapping.ServiceID]
-			if hidden == nil {
-				hidden = make(map[string]struct{})
-				hiddenByService[mapping.ServiceID] = hidden
-			}
-			hidden[mapping.UpstreamModel] = struct{}{}
-		}
-		for index, candidate := range candidates {
-			serviceID := candidate.CanonicalService().ID
-			if hidden := hiddenByService[serviceID]; len(hidden) > 0 {
-				results[index].entries = removeHiddenAliasTargets(
-					classified.Protocol, results[index].entries, hidden,
-				)
-			}
-		}
-		aliases := make([]string, 0, len(aliasSet))
-		for alias := range aliasSet {
-			aliases = append(aliases, alias)
-		}
-		sort.Strings(aliases)
-		if len(aliases) > 0 {
-			aliasEntries, encodeErr := synthesizeAliasDiscoveryEntries(classified.Protocol, aliases)
-			if encodeErr != nil {
-				writeInferenceError(
-					writer,
-					http.StatusInternalServerError,
-					"discovery_aggregation_failed",
-					"aggregated model list could not be encoded",
-					true,
-					nil,
-				)
-				return
-			}
-			// Prepend so the existing first-wins dedupe keeps the alias over
-			// any upstream entry that reuses the same public ID.
-			mergeInput = make([]discoveryResult, 0, len(results)+1)
-			mergeInput = append(mergeInput, discoveryResult{
-				outcome: discoveryOutcomeFetched,
-				entries: aliasEntries,
-			})
-			mergeInput = append(mergeInput, results...)
-		}
-	}
-	merged, succeeded := mergeDiscoveryEntries(mergeInput)
+	merged, succeeded := mergeDiscoveryEntries(results)
 	if succeeded == 0 {
 		handler.writeDiscoveryFailure(writer, request, classified, results)
 		return
@@ -486,29 +432,11 @@ func filterAndCompleteDiscoveryEntries(
 	if len(missing) == 0 {
 		return filtered, nil
 	}
-	synthesized, err := synthesizeAliasDiscoveryEntries(protocol, missing)
+	synthesized, err := synthesizeDiscoveryEntries(protocol, missing)
 	if err != nil {
 		return nil, err
 	}
 	return append(filtered, synthesized...), nil
-}
-
-func removeHiddenAliasTargets(
-	protocol contract.ProtocolID,
-	entries []discoveryEntry,
-	hidden map[string]struct{},
-) []discoveryEntry {
-	filtered := make([]discoveryEntry, 0, len(entries))
-	for _, entry := range entries {
-		model := entry.id
-		if protocol == contract.ProtocolGoogleModels {
-			model = strings.TrimPrefix(model, "models/")
-		}
-		if _, private := hidden[model]; !private {
-			filtered = append(filtered, entry)
-		}
-	}
-	return filtered
 }
 
 // mergeDiscoveryEntries deduplicates public model IDs by first appearance in
@@ -643,7 +571,7 @@ func appendRedirectDiscoveryEntries(
 	if len(sources) == 0 {
 		return entries, nil
 	}
-	synthesized, err := synthesizeAliasDiscoveryEntries(protocol, sources)
+	synthesized, err := synthesizeDiscoveryEntries(protocol, sources)
 	if err != nil {
 		return nil, err
 	}
@@ -662,37 +590,39 @@ func discoveryModelID(protocol contract.ProtocolID, id string) string {
 	return id
 }
 
-type openAIAliasDiscoveryModel struct {
+type openAISynthesizedModel struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
 	Created int    `json:"created"`
 	OwnedBy string `json:"owned_by"`
 }
 
-type googleAliasDiscoveryModel struct {
+type googleSynthesizedModel struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
 }
 
-func synthesizeAliasDiscoveryEntries(
+// synthesizeDiscoveryEntries lists models that no upstream listing returned:
+// configured service models and redirect sources.
+func synthesizeDiscoveryEntries(
 	protocol contract.ProtocolID,
-	aliases []string,
+	models []string,
 ) ([]discoveryEntry, error) {
-	entries := make([]discoveryEntry, 0, len(aliases))
-	for _, alias := range aliases {
+	entries := make([]discoveryEntry, 0, len(models))
+	for _, model := range models {
 		if protocol == contract.ProtocolGoogleModels {
-			raw, err := json.Marshal(googleAliasDiscoveryModel{
-				Name:        "models/" + alias,
-				DisplayName: alias,
+			raw, err := json.Marshal(googleSynthesizedModel{
+				Name:        "models/" + model,
+				DisplayName: model,
 			})
 			if err != nil {
 				return nil, err
 			}
-			entries = append(entries, discoveryEntry{id: "models/" + alias, raw: raw})
+			entries = append(entries, discoveryEntry{id: "models/" + model, raw: raw})
 			continue
 		}
-		raw, err := json.Marshal(openAIAliasDiscoveryModel{
-			ID:      alias,
+		raw, err := json.Marshal(openAISynthesizedModel{
+			ID:      model,
 			Object:  "model",
 			Created: 0,
 			OwnedBy: "system",
@@ -700,7 +630,7 @@ func synthesizeAliasDiscoveryEntries(
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, discoveryEntry{id: alias, raw: raw})
+		entries = append(entries, discoveryEntry{id: model, raw: raw})
 	}
 	return entries, nil
 }

@@ -228,39 +228,6 @@ func TestNormalizeServiceModelsValidatesDeduplicatesAndSorts(t *testing.T) {
 	}
 }
 
-func TestRouteAlphaContractRejectsRelayKitTarget(t *testing.T) {
-	route := Route{
-		ID: "route_01", Name: "responses", Enabled: true,
-		Match: RouteMatch{Protocol: ProtocolOpenAIResponses},
-		Targets: []RouteTarget{{
-			ServiceID: "endpoint_01", PlanType: PlanTypeRelayKit,
-			UpstreamProtocol: ProtocolAnthropicMessages,
-		}},
-	}
-	if err := route.Validate(); err != nil {
-		t.Fatalf("future route should remain representable: %v", err)
-	}
-	if err := route.ValidateForAlpha(); err == nil || !strings.Contains(err.Error(), "not available") {
-		t.Fatalf("Alpha validation error = %v, want unavailable", err)
-	}
-}
-
-func TestRouteProtocolPreservingTargetsRejectProtocolChanges(t *testing.T) {
-	for _, planType := range []PlanType{PlanTypeNative, PlanTypeDelegated} {
-		route := Route{
-			ID: "route_01", Name: "responses", Enabled: true,
-			Match: RouteMatch{Protocol: ProtocolOpenAIResponses},
-			Targets: []RouteTarget{{
-				ServiceID: "endpoint_01", PlanType: planType,
-				UpstreamProtocol: ProtocolAnthropicMessages,
-			}},
-		}
-		if err := route.Validate(); err == nil || !strings.Contains(err.Error(), "preserve") {
-			t.Errorf("%s route error = %v, want protocol-preservation rejection", planType, err)
-		}
-	}
-}
-
 func TestPolicyRejectsDuplicateProtocolScope(t *testing.T) {
 	policy := Policy{
 		ID: "policy_01", Name: "sensitive content", Enabled: true,

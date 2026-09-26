@@ -190,17 +190,13 @@ function RedirectAnimation({
         <div data-redirect-model="client">
           <ModelField
             label={t("modelRedirect.guide.returned")}
-            model={step < 5 ? null : from}
-            previous={enabled && step >= 5 ? to : undefined}
+            model={step < 5 ? null : actual}
+            target={enabled}
           />
         </div>
         <TransferArrow
           returning
-          label={t(
-            enabled
-              ? "modelRedirect.guide.restore"
-              : "modelRedirect.guide.unchanged",
-          )}
+          label={t("modelRedirect.guide.unchanged")}
           active={step >= 4}
         />
         <ModelField

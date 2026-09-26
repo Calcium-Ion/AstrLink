@@ -21,6 +21,7 @@ reqwest = { version = "=0.12.23", default-features = false, features = ["json", 
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 sha2 = "=0.10.9"
+sys-locale = "=0.3.2"
 toml_edit = "=0.22.22"
 # macos-private-api: the tray popover is a transparent window with its own
 # rounded panel; macOS only allows a transparent NSWindow through this flag.

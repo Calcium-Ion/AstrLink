@@ -40,6 +40,7 @@ type ServiceAuthorizer struct {
 	subscriptions   SubscriptionTokenSource
 	codexIdentity   accountauth.CodexIdentityPolicy
 	routingSettings storage.RoutingSettingsStore
+	identities      *accountauth.IdentityRegistry
 }
 
 func NewSecretAuthorizer(store secretstore.SecretStore) *SecretAuthorizer {
@@ -58,6 +59,13 @@ func NewServiceAuthorizer(store secretstore.SecretStore, subscriptions Subscript
 // so changes in the desktop settings apply without restarting the gateway.
 func (authorizer *ServiceAuthorizer) WithRoutingSettings(settings storage.RoutingSettingsStore) *ServiceAuthorizer {
 	authorizer.routingSettings = settings
+	return authorizer
+}
+
+// WithIdentities resolves the learned client identities and version floors
+// that replace a non-official client's identity.
+func (authorizer *ServiceAuthorizer) WithIdentities(identities *accountauth.IdentityRegistry) *ServiceAuthorizer {
+	authorizer.identities = identities
 	return authorizer
 }
 
@@ -82,15 +90,28 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 			}
 		}
 		headers := make(http.Header)
+		// An official Claude Code or Codex CLI request is forwarded with its own
+		// identity intact; every other class keeps the enforced default.
+		official := settings.OfficialClientPassthrough &&
+			accountauth.ClientClassFrom(ctx) == accountauth.ClientClassOfficial
 		switch endpoint.Kind {
 		case contract.ServiceKindClaudeSubscription:
-			accountauth.ApplyClaudeForwardHeaders(headers, tokens, clientHeaders, settings.ClaudeIdentityEnforcement)
+			if official {
+				accountauth.ApplyClaudeOfficialForwardHeaders(headers, tokens, clientHeaders)
+			} else {
+				accountauth.ApplyClaudeForwardHeaders(headers, tokens, clientHeaders, authorizer.identities.ClaudeIdentity(settings), settings.ClaudeIdentityEnforcement)
+			}
 		case contract.ServiceKindGrokSubscription:
 			accountauth.ApplyGrokForwardHeaders(headers, tokens, clientHeaders, settings.GrokIdentityEnforcement)
 		default:
-			identity := authorizer.codexIdentity
-			identity.DisableEnforcement = !settings.CodexIdentityEnforcement
-			accountauth.ApplyCodexForwardHeaders(headers, tokens, clientHeaders, identity)
+			if official {
+				accountauth.ApplyCodexOfficialForwardHeaders(headers, tokens)
+			} else {
+				identity := authorizer.codexIdentity
+				identity.DisableEnforcement = !settings.CodexIdentityEnforcement
+				identity.Identity = authorizer.identities.CodexIdentity(settings, identity.ClientVersion)
+				accountauth.ApplyCodexForwardHeaders(headers, tokens, clientHeaders, identity)
+			}
 			if tokens.AccountID == "" {
 				// An empty overlay deletes any client-supplied account binding.
 				headers[http.CanonicalHeaderKey("ChatGPT-Account-ID")] = nil

@@ -183,35 +183,50 @@ func normalizeResponsesWSCreate(data []byte) ([]byte, error) {
 func (session *responsesWSSession) filterCandidates(model, routingModel string, candidates []endpoint.Resolved) []endpoint.Resolved {
 	result := make([]endpoint.Resolved, 0, len(candidates))
 	for _, candidate := range candidates {
-		service := candidate.CanonicalService()
-		if !service.Enabled || !service.ResponsesWebSocket() || candidate.PlanType == contract.PlanTypeRelayKit {
-			continue
-		}
-		if candidate.UpstreamProtocol != "" && candidate.UpstreamProtocol != contract.ProtocolOpenAIResponses {
+		if websocketSkip(candidate, routingModel) != "" {
 			continue
 		}
 		upstreamModel := candidate.UpstreamModel
 		if upstreamModel == "" {
 			upstreamModel = routingModel
 		}
-		if native := service.Kind.ModelNativeProtocol(upstreamModel); native != "" && native != contract.ProtocolOpenAIResponses {
-			continue
-		}
-		supported := false
-		for _, capability := range service.Capabilities {
-			if capability.Protocol == contract.ProtocolOpenAIResponses && capability.Streaming && capability.ConvertTo == "" {
-				supported = true
-			}
-		}
-		if !supported {
-			continue
-		}
-		if session.serviceID != "" && (session.serviceID != service.ID || session.model != model || session.upstreamModel != upstreamModel) {
+		if session.serviceID != "" && (session.serviceID != candidate.CanonicalService().ID || session.model != model || session.upstreamModel != upstreamModel) {
 			continue
 		}
 		result = append(result, candidate)
 	}
 	return result
+}
+
+// websocketSkip says why candidate cannot serve a native Responses WebSocket
+// turn, or is empty when it can.
+func websocketSkip(candidate endpoint.Resolved, routingModel string) contract.RoutingSkipReason {
+	service := candidate.CanonicalService()
+	if !service.Enabled {
+		return contract.RoutingSkipDisabled
+	}
+	if !service.ResponsesWebSocket() {
+		return contract.RoutingSkipWebSocketDisabled
+	}
+	if candidate.PlanType == contract.PlanTypeRelayKit {
+		return contract.RoutingSkipWebSocketUnsupported
+	}
+	if candidate.UpstreamProtocol != "" && candidate.UpstreamProtocol != contract.ProtocolOpenAIResponses {
+		return contract.RoutingSkipWebSocketUnsupported
+	}
+	upstreamModel := candidate.UpstreamModel
+	if upstreamModel == "" {
+		upstreamModel = routingModel
+	}
+	if native := service.Kind.ModelNativeProtocol(upstreamModel); native != "" && native != contract.ProtocolOpenAIResponses {
+		return contract.RoutingSkipWebSocketUnsupported
+	}
+	for _, capability := range service.Capabilities {
+		if capability.Protocol == contract.ProtocolOpenAIResponses && capability.Streaming && capability.ConvertTo == "" {
+			return ""
+		}
+	}
+	return contract.RoutingSkipWebSocketUnsupported
 }
 func (turn *responsesWSTurn) forward(writer http.ResponseWriter, request *http.Request, target transport.Target, candidate endpoint.Resolved, upstreamModel string) error {
 	// Hash credentials instead of retaining their plaintext as connection identity.

@@ -50,11 +50,7 @@ func newRouteHandler(t *testing.T) (*sqlite.Store, *Handler) {
 		contract.DefaultVersionResponse("0.1.0-test", "abc1234"),
 		Dependencies{
 			ServiceStore: store,
-			RouteStore:   store,
 			ControlToken: testControlToken,
-			NewRouteID: func() (contract.RouteID, error) {
-				return "route_test", nil
-			},
 		},
 	)
 	if err != nil {

@@ -42,6 +42,16 @@ type UsageTotals struct {
 type UsageGroup struct {
 	ID *string `json:"id"`
 	UsageTotals
+	Performance *ServicePerformance `json:"performance,omitempty"`
+}
+
+// ServicePerformance uses successful root inference requests with complete usage.
+// Missing cache reporting or streaming timing is excluded, not counted as zero.
+type ServicePerformance struct {
+	CacheHitRate          *float64 `json:"cache_hit_rate"`
+	OutputTokensPerSecond *float64 `json:"output_tokens_per_second"`
+	CacheSamples          int64    `json:"cache_samples"`
+	SpeedSamples          int64    `json:"speed_samples"`
 }
 
 type UsageTimeBucket struct {

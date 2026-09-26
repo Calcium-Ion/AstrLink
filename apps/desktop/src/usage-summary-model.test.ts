@@ -20,6 +20,43 @@ const response = {
 };
 
 describe("usage summary contract", () => {
+  it("accepts nullable service performance and validates sample coverage", () => {
+    const performance = {
+      cache_hit_rate: 0.26,
+      output_tokens_per_second: 49,
+      cache_samples: 2,
+      speed_samples: 3,
+    };
+    const withPerformance = (value: unknown) => ({
+      ...response,
+      by_service: [{ ...response.by_service[0], performance: value }],
+    });
+    expect(
+      parseUsageSummary(withPerformance(performance), window).by_service[0]
+        .performance,
+    ).toEqual(performance);
+    expect(
+      parseUsageSummary(
+        withPerformance({
+          cache_hit_rate: null,
+          output_tokens_per_second: null,
+          cache_samples: 0,
+          speed_samples: 0,
+        }),
+        window,
+      ).by_service[0].performance?.cache_hit_rate,
+    ).toBeNull();
+    for (const invalid of [
+      { ...performance, cache_hit_rate: 1.1 },
+      { ...performance, output_tokens_per_second: Infinity },
+      { ...performance, cache_samples: 0 },
+      { ...performance, cache_hit_rate: null },
+      { ...performance, speed_samples: -1 },
+    ])
+      expect(() =>
+        parseUsageSummary(withPerformance(invalid), window),
+      ).toThrow();
+  });
   it("keeps the final hour on a fall-back day without duplicate buckets", () => {
     const slots = usageWindowHourSlots({
       preset: "1d",

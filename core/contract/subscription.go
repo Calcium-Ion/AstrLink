@@ -201,6 +201,7 @@ type SubscriptionAccount struct {
 	TokenExpiresAt        *time.Time         `json:"token_expires_at,omitempty"`
 	LastRefreshAt         *time.Time         `json:"last_refresh_at,omitempty"`
 	LastError             *SubscriptionError `json:"last_error,omitempty"`
+	Risk                  *SubscriptionRisk  `json:"risk,omitempty"`
 	CreatedAt             time.Time          `json:"created_at"`
 	UpdatedAt             time.Time          `json:"updated_at"`
 }
@@ -266,6 +267,11 @@ func (account SubscriptionAccount) Validate() error {
 	}
 	if account.LastError != nil {
 		if err := account.LastError.Validate(); err != nil {
+			return err
+		}
+	}
+	if account.Risk != nil {
+		if err := account.Risk.Validate(); err != nil {
 			return err
 		}
 	}

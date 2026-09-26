@@ -1,4 +1,5 @@
 import { RecoveryDetails } from "./components/RecoveryDetails";
+import { RoutingDecisionDetails } from "./components/RoutingDecisionDetails";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
@@ -7,6 +8,7 @@ import {
 } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
+import { ConversationIndicator } from "@/components/ConversationIndicator";
 import { ModelLabel } from "@/components/ModelLabel";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
 import { cn } from "@/lib/utils";
@@ -120,12 +122,17 @@ export function TrajectoryInspector({
             className="text-xs font-medium"
             service={service}
           />
-          <strong
-            className="min-w-0 truncate text-xs font-medium"
-            title={title}
-          >
-            {title}
-          </strong>
+          <span className="flex min-w-0 max-w-full items-center gap-1.5">
+            <strong
+              className="min-w-0 truncate text-xs font-medium"
+              title={title}
+            >
+              {title}
+            </strong>
+            {record.session_link ? (
+              <ConversationIndicator kind="continuation" />
+            ) : null}
+          </span>
           {outcome ? (
             <span className="shrink-0 font-mono text-micro text-muted-foreground">
               → {outcome}
@@ -367,64 +374,72 @@ function RouteInspector({
       ? routes
       : [];
   return (
-    <dl className="grid gap-2 text-xs">
-      <InspectorField
-        label={t("trajectory.summary")}
-        value={namedRouteSummary(row.summary, names)}
-      />
-      {record.model_redirect ? (
-        <ModelRedirectFields redirect={record.model_redirect} />
-      ) : null}
-      {tried.length > 0 ? (
-        <div>
-          <dt className="text-muted-foreground">
-            {t("trajectory.triedProviders")}
-          </dt>
-          <dd className="mt-0.5">
-            <ol className="grid gap-0.5" data-testid="route-attempts">
-              {tried.map((route) => (
-                <li
-                  className={cn(
-                    "font-mono",
-                    route.tone === "failed"
-                      ? "text-destructive"
-                      : "text-foreground",
-                  )}
-                  data-tone={route.tone}
-                  key={route.id}
-                >
-                  {namedRouteSummary(route.summary, names)}
-                </li>
-              ))}
-            </ol>
-          </dd>
-        </div>
-      ) : null}
-      <InspectorField
-        code
-        label={t("trajectory.entry")}
-        value={protocolEntryPath(record.input_protocol, {
-          streaming: record.streaming,
-        })}
-      />
-      <InspectorField
-        code
-        label={t("trajectory.protocol")}
-        value={record.input_protocol}
-      />
-      <InspectorField label={t("records.provider")} value={service.name} />
-      {service.id ? (
+    <>
+      <dl className="grid gap-2 text-xs">
+        <InspectorField
+          label={t("trajectory.summary")}
+          value={namedRouteSummary(row.summary, names)}
+        />
+        {record.model_redirect ? (
+          <ModelRedirectFields redirect={record.model_redirect} />
+        ) : null}
+        {tried.length > 0 ? (
+          <div>
+            <dt className="text-muted-foreground">
+              {t("trajectory.triedProviders")}
+            </dt>
+            <dd className="mt-0.5">
+              <ol className="grid gap-0.5" data-testid="route-attempts">
+                {tried.map((route) => (
+                  <li
+                    className={cn(
+                      "font-mono",
+                      route.tone === "failed"
+                        ? "text-destructive"
+                        : "text-foreground",
+                    )}
+                    data-tone={route.tone}
+                    key={route.id}
+                  >
+                    {namedRouteSummary(route.summary, names)}
+                  </li>
+                ))}
+              </ol>
+            </dd>
+          </div>
+        ) : null}
         <InspectorField
           code
-          label={`${t("trajectory.service")} ID`}
-          value={service.id}
+          label={t("trajectory.entry")}
+          value={protocolEntryPath(record.input_protocol, {
+            streaming: record.streaming,
+          })}
         />
-      ) : null}
-      <InspectorField
-        label={t("trajectory.route")}
-        value={record.route_id ?? "—"}
+        <InspectorField
+          code
+          label={t("trajectory.protocol")}
+          value={record.input_protocol}
+        />
+        <InspectorField label={t("records.provider")} value={service.name} />
+        {service.id ? (
+          <InspectorField
+            code
+            label={`${t("trajectory.service")} ID`}
+            value={service.id}
+          />
+        ) : null}
+        <InspectorField
+          label={t("trajectory.route")}
+          value={record.route_id ?? "—"}
+        />
+      </dl>
+      <RoutingDecisionDetails
+        serviceNames={Object.fromEntries(
+          Object.entries(names).map(([id, item]) => [id, item.name]),
+        )}
+        value={record.routing_decision}
       />
-    </dl>
+    </>
   );
 }
 

@@ -15,25 +15,20 @@ import (
 // recoverySchedule is request-local. It is the only owner of retry quotas and
 // next-target ordering; transports and protocol converters never retry.
 type recoverySchedule struct {
-	manual, simulation bool
-	nextRepair         bool
-	repairing          bool
-	previous           int
-	action             contract.FailureAction
-	states             map[string]*stepTargetState
-	skips              map[int]string
-	waitBounds         [][2]int
-	candidates         []endpoint.Resolved
-	policy             contract.FailoverPolicy
-	selected           []bool
-	maySwitch          bool
-	counts             []int // Ordinary attempts only; repairs still count toward total.
-	retryable          []bool
-	readyAt            []time.Time
-	total              int
-	nextIndex          int
-	stopReason         string
-	delay              time.Duration
+	nextRepair bool
+	repairing  bool
+	candidates []endpoint.Resolved
+	policy     contract.FailoverPolicy
+	selected   []bool
+	maySwitch  bool
+	counts     []int // Ordinary attempts only; repairs still count toward total.
+	retryable  []bool
+	excluded   []bool
+	readyAt    []time.Time
+	total      int
+	nextIndex  int
+	stopReason string
+	delay      time.Duration
 }
 
 func newRecoverySchedule(candidates []endpoint.Resolved, replayable bool) *recoverySchedule {
@@ -45,12 +40,7 @@ func newRecoverySchedule(candidates []endpoint.Resolved, replayable bool) *recov
 		policy.MaxAttempts = 1
 		policy.Enabled = false
 	}
-	schedule := &recoverySchedule{candidates: candidates, policy: policy, selected: make([]bool, len(candidates)), maySwitch: policy.Enabled, counts: make([]int, len(candidates)), retryable: make([]bool, len(candidates)), readyAt: make([]time.Time, len(candidates)), nextIndex: 0}
-	schedule.previous = -1
-	schedule.states = map[string]*stepTargetState{}
-	schedule.skips = map[int]string{}
-	schedule.waitBounds = make([][2]int, len(candidates))
-	schedule.manual = len(candidates) > 0 && candidates[0].Path != nil && candidates[0].Path.Mode == "steps"
+	schedule := &recoverySchedule{candidates: candidates, policy: policy, selected: make([]bool, len(candidates)), maySwitch: policy.Enabled, counts: make([]int, len(candidates)), retryable: make([]bool, len(candidates)), excluded: make([]bool, len(candidates)), readyAt: make([]time.Time, len(candidates)), nextIndex: 0}
 	if len(candidates) == 0 {
 		schedule.nextIndex = -1
 	}
@@ -68,15 +58,12 @@ func failurePolicy(candidate endpoint.Resolved) contract.FailurePolicy {
 }
 
 func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
-	if schedule.manual && !schedule.nextRepair && schedule.nextIndex >= 0 && !schedule.chooseStep(schedule.nextIndex) {
-		return 0, false
-	}
 	index := schedule.nextIndex
 	if index < 0 || schedule.total >= schedule.policy.MaxAttempts {
 		return 0, false
 	}
 	wait := time.Until(schedule.readyAt[index])
-	if wait > 0 && !schedule.simulation {
+	if wait > 0 {
 		timer := time.NewTimer(wait)
 		defer timer.Stop()
 		select {
@@ -92,11 +79,6 @@ func (schedule *recoverySchedule) next(ctx context.Context) (int, bool) {
 	}
 	schedule.repairing = schedule.nextRepair
 	schedule.nextRepair = false
-	if schedule.manual {
-		schedule.selected[index] = true
-		schedule.nextIndex = index + 1
-		return index, true
-	}
 	schedule.selected[index] = true
 	schedule.retryable[index] = false
 	schedule.nextIndex = -1
@@ -126,14 +108,11 @@ func (schedule *recoverySchedule) started(index int) {
 		return
 	}
 	schedule.counts[index]++
-	if schedule.manual {
-		schedule.stepState(index).attempts++
-	}
 }
 
-// repair inserts an immediate same-target attempt, including within a manual
-// step. The caller permits only one repair per target. It spends the overall
-// network budget, but neither a normal retry nor a manual path step.
+// repair inserts an immediate same-target attempt. The caller permits only one
+// repair per target. It spends the overall network budget, but not a normal
+// retry.
 func (schedule *recoverySchedule) repair(index int) bool {
 	if schedule.total >= schedule.policy.MaxAttempts {
 		return false
@@ -141,27 +120,33 @@ func (schedule *recoverySchedule) repair(index int) bool {
 	schedule.nextIndex = index
 	schedule.nextRepair = true
 	schedule.readyAt[index] = time.Time{}
-	schedule.waitBounds[index] = [2]int{}
 	schedule.delay = 0
 	schedule.stopReason = ""
 	return true
 }
 
-func (schedule *recoverySchedule) recover(index int, action contract.FailureAction, retryAfter time.Duration) bool {
-	if schedule.manual {
-		return schedule.recoverStep(index, action, retryAfter)
+// excludeService removes every remaining route of a paused account from this
+// request, including routes for other protocols or models.
+func (schedule *recoverySchedule) excludeService(id contract.ServiceID) {
+	for index, candidate := range schedule.candidates {
+		if candidate.CanonicalService().ID == id {
+			schedule.selected[index] = true
+			schedule.retryable[index] = false
+			schedule.excluded[index] = true
+		}
 	}
+}
+
+func (schedule *recoverySchedule) recover(index int, action contract.FailureAction, retryAfter time.Duration) bool {
 	schedule.nextIndex = -1
 	schedule.delay = 0
 	schedule.stopReason = "error_rule"
 	policy := failurePolicy(schedule.candidates[index])
-	schedule.retryable[index] = schedule.policy.Strategy != contract.FailoverOnly && action.AllowsRetry() && schedule.counts[index] <= policy.MaxRetries
+	schedule.retryable[index] = !schedule.excluded[index] && schedule.policy.Strategy != contract.FailoverOnly && action.AllowsRetry() && schedule.counts[index] <= policy.MaxRetries
 	if schedule.total >= schedule.policy.MaxAttempts {
 		schedule.stopReason = "attempt_limit"
 		return false
 	}
-	_, bounds, _ := recoveryDelay(policy, schedule.counts[index], retryAfter)
-	schedule.waitBounds[index] = bounds
 	delay := time.Duration(policy.InitialDelayMS) * time.Millisecond
 	for retry := 1; retry < schedule.counts[index]; retry++ {
 		delay *= 2

@@ -1,28 +1,27 @@
 // @vitest-environment happy-dom
-import { act, useState } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const bridge = vi.hoisted(() => ({
   getRoutingSettings: vi.fn(),
-  listRecoveryPaths: vi.fn(),
   updateRoutingSettings: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
 vi.mock("./notify", () => ({ notify: { success: vi.fn() } }));
 import {
   defaultFailurePolicy,
+  identityLearningKeys,
   identitySettingKeys,
+  subscriptionProtectionKeys,
   type FailurePolicy,
-  type FailoverPolicy,
 } from "./failure-policy-model";
 import {
   RoutingSettingsPanel,
   routingAutosaveDelay,
 } from "./RoutingSettingsPanel";
-import { FailoverEditor } from "./components/FailoverEditor";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
 import type { RequestRecord } from "./request-record-model";
-import { applyLocale, i18n } from "./i18n";
+import { applyLocale } from "./i18n";
 
 describe("shared global recovery settings", () => {
   let container: HTMLDivElement, root: Root;
@@ -38,7 +37,6 @@ describe("shared global recovery settings", () => {
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
-    bridge.listRecoveryPaths.mockResolvedValue([]);
     bridge.getRoutingSettings.mockReset().mockResolvedValue(settings());
     bridge.updateRoutingSettings
       .mockReset()
@@ -84,7 +82,9 @@ describe("shared global recovery settings", () => {
       );
       await selectTab("转发身份");
       const toggles = [
-        ...container.querySelectorAll<HTMLButtonElement>('[role="switch"]'),
+        ...container.querySelectorAll<HTMLButtonElement>(
+          '[data-testid="upstream-identity-settings"] [role="switch"]',
+        ),
       ];
       expect(toggles).toHaveLength(3);
       for (const toggle of toggles)
@@ -115,10 +115,159 @@ describe("shared global recovery settings", () => {
     },
   );
 
+  it.each([
+    ["official_client_passthrough", "官方客户端请求原样转发"],
+    ["subscription_risk_protection", "识别上游封控并暂停调度"],
+    ["codex_request_normalization", "修正 Codex 订阅请求"],
+    ["claude_request_normalization", "修正 Claude 订阅请求结构"],
+    ["subscription_session_isolation", "按账号隔离会话标识"],
+  ])(
+    "defaults %s on under Forwarding identity and saves it independently",
+    async (key, label) => {
+      const dirty = vi.fn();
+      await act(async () =>
+        root.render(
+          <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+        ),
+      );
+      await selectTab("转发身份");
+      const toggles = [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          '[data-testid="subscription-protection-settings"] [role="switch"]',
+        ),
+      ];
+      expect(toggles).toHaveLength(subscriptionProtectionKeys.length);
+      for (const toggle of toggles)
+        expect(toggle.getAttribute("aria-checked")).toBe("true");
+      const toggle = container.querySelector<HTMLButtonElement>(
+        `[aria-label="${label}"]`,
+      )!;
+      await act(async () => toggle.click());
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      await flushAutosave();
+      expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+        [key]: false,
+      });
+      expect(dirty).toHaveBeenLastCalledWith(false);
+    },
+  );
+
+  it.each([
+    ["codex_identity_auto_learn", "从 Codex CLI 请求学习身份"],
+    ["claude_identity_auto_learn", "从 Claude Code 请求学习身份"],
+  ])("defaults %s on and saves it independently", async (key, label) => {
+    const dirty = vi.fn();
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+      ),
+    );
+    await selectTab("转发身份");
+    const toggles = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="identity-learning-settings"] [role="switch"]',
+      ),
+    ];
+    expect(toggles).toHaveLength(identityLearningKeys.length);
+    for (const toggle of toggles)
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    const toggle = container.querySelector<HTMLButtonElement>(
+      `[aria-label="${label}"]`,
+    )!;
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      [key]: false,
+    });
+    expect(dirty).toHaveBeenLastCalledWith(false);
+  });
+
+  it.each([
+    ["codex_identity_version", "Codex 最低版本", "0.160.0", "0.143.9"],
+    ["claude_identity_version", "Claude Code 最低版本", "2.1.300", "2.1"],
+  ])(
+    "commits the %s override on blur or Enter and clears it with an empty value",
+    async (key, label, version, invalid) => {
+      bridge.updateRoutingSettings.mockImplementation(async (patch) => {
+        const saved: Record<string, unknown> = { ...settings(), ...patch };
+        // The core omits a cleared override.
+        if (saved[key] === "") delete saved[key];
+        return saved;
+      });
+      const dirty = vi.fn();
+      await act(async () =>
+        root.render(
+          <RoutingSettingsPanel services={[]} ready onDirtyChange={dirty} />,
+        ),
+      );
+      await selectTab("转发身份");
+      const input = [...container.querySelectorAll("label")]
+        .find(
+          (element) =>
+            element.querySelector(":scope > span")?.textContent === label,
+        )!
+        .querySelector<HTMLInputElement>("input")!;
+      expect(input.value).toBe("");
+      expect(input.placeholder).toBe("留空则使用已学习或内置版本");
+      const type = async (value: string) =>
+        act(async () => {
+          Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            "value",
+          )!.set!.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      const blur = async () =>
+        act(async () =>
+          input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+        );
+
+      // A partly typed version is neither autosaved nor committed.
+      await type(invalid);
+      await flushAutosave();
+      expect(dirty).not.toHaveBeenCalledWith(true);
+      await blur();
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      await flushAutosave();
+      expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+
+      await type(` ${version} `);
+      expect(input.hasAttribute("aria-invalid")).toBe(false);
+      await act(async () =>
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+        ),
+      );
+      expect(input.value).toBe(version);
+      await flushAutosave();
+      expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+        [key]: version,
+      });
+      expect(dirty).toHaveBeenLastCalledWith(false);
+
+      await type("");
+      await blur();
+      await flushAutosave();
+      expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+        [key]: "",
+      });
+      expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(2);
+      expect(input.value).toBe("");
+      expect(dirty).toHaveBeenLastCalledWith(false);
+    },
+  );
+
   it("loads saved identity opt-outs and keeps them disabled while offline", async () => {
     bridge.getRoutingSettings.mockResolvedValue({
       ...settings(),
-      ...Object.fromEntries(identitySettingKeys.map((key) => [key, false])),
+      ...Object.fromEntries(
+        [
+          ...identitySettingKeys,
+          ...subscriptionProtectionKeys,
+          ...identityLearningKeys,
+        ].map((key) => [key, false]),
+      ),
     });
     const dirty = vi.fn();
     await act(async () =>
@@ -127,7 +276,9 @@ describe("shared global recovery settings", () => {
       ),
     );
     await selectTab("转发身份");
-    for (const toggle of container.querySelectorAll('[role="switch"]'))
+    const toggles = container.querySelectorAll('[role="switch"]');
+    expect(toggles).toHaveLength(10);
+    for (const toggle of toggles)
       expect(toggle.getAttribute("aria-checked")).toBe("false");
     await act(async () =>
       root.render(
@@ -401,7 +552,14 @@ describe("shared global recovery settings", () => {
       [...container.querySelectorAll('[role="tab"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual(["模型重定向", "恢复与重试", "错误规则", "会话粘性", "转发身份"]);
+    ).toEqual([
+      "模型重定向",
+      "内置工具",
+      "恢复与重试",
+      "错误规则",
+      "会话粘性",
+      "转发身份",
+    ]);
     await selectTab("恢复与重试");
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[role="switch"]')!.click(),
@@ -462,6 +620,7 @@ describe("shared global recovery settings", () => {
     {
       id: "service_a",
       name: "A",
+      kind: "openai" as const,
       enabled: true,
       models: ["gpt-5", "claude-sonnet-4-5"],
       capabilities: [],
@@ -469,6 +628,7 @@ describe("shared global recovery settings", () => {
     {
       id: "service_b",
       name: "B",
+      kind: "openai" as const,
       enabled: true,
       models: ["gpt-5"],
       capabilities: [],
@@ -476,6 +636,7 @@ describe("shared global recovery settings", () => {
     {
       id: "service_off",
       name: "Off",
+      kind: "openai" as const,
       enabled: false,
       models: ["gpt-6"],
       capabilities: [],
@@ -879,71 +1040,6 @@ describe("shared global recovery settings", () => {
     expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
       default_failure_policy: settings().default_failure_policy,
     });
-  });
-
-  it("keeps route exceptions optional and restores global order and counts", async () => {
-    function Editor() {
-      const [override, setOverride] = useState<FailurePolicy>();
-      const [custom, setCustom] = useState<FailoverPolicy | undefined>({
-        enabled: true,
-        strategy: "failover_first",
-        max_attempts: 12,
-      });
-      return (
-        <FailoverEditor
-          title={i18n.t("routes.failureTitle", { name: "Code alias" })}
-          scopeHint={i18n.t("routes.failureScope", {
-            name: "Code alias",
-            protocol: "OpenAI Responses",
-          })}
-          overrideLabel={i18n.t("routes.failureOverride", {
-            name: "Code alias",
-          })}
-          overrideHint={i18n.t("routes.failureOverrideHint", {
-            name: "Code alias",
-          })}
-          value={
-            custom ?? {
-              enabled: true,
-              strategy: "retry_first",
-              max_attempts: 6,
-            }
-          }
-          onChange={setCustom}
-          override={override}
-          onOverrideChange={setOverride}
-          inheritedFailurePolicy={settings().default_failure_policy}
-          onResetOrder={custom ? () => setCustom(undefined) : undefined}
-          targets={[{ name: "A" }, { name: "B" }]}
-        />
-      );
-    }
-    await act(async () => root.render(<Editor />));
-    expect(container.textContent).toContain("A：允许的错误最多重试 3 次");
-    expect(container.textContent).toContain("最多尝试 12 次");
-    const toggle = [
-      ...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]'),
-    ].find((button) =>
-      button
-        .closest("label")
-        ?.textContent?.includes("为「Code alias」单独设置失败处理"),
-    )!;
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    await act(async () => toggle.click());
-    expect(container.textContent).toContain("遇到这些错误时");
-    expect(container.textContent).toContain(
-      "统一用于「Code alias」的全部首选和备用目标",
-    );
-    await act(async () => toggle.click());
-    expect(container.textContent).not.toContain("遇到这些错误时");
-    const reset = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "恢复全局顺序和次数",
-    )!;
-    await act(async () => reset.click());
-    expect(container.textContent).toContain("最多尝试 6 次");
-    expect(container.textContent).toContain(
-      "顺序和总次数跟随「路由 → 默认策略」",
-    );
   });
 
   it("renders readable attempt details", async () => {

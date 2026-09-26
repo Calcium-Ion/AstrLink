@@ -25,9 +25,7 @@ use preferences::{
     TrayPreferences,
 };
 use serde::{Deserialize, Serialize};
-use sidecar::{
-    CoreManager, CoreSnapshot, PolicyRecordResponse, RouteRecordResponse, ServiceRecordResponse,
-};
+use sidecar::{CoreManager, CoreSnapshot, PolicyRecordResponse, ServiceRecordResponse};
 use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
@@ -1030,54 +1028,20 @@ async fn logout_service(
 }
 
 #[tauri::command]
-async fn recovery_paths(
-    operation: String,
-    id: Option<String>,
-    etag: Option<String>,
-    input: Option<serde_json::Value>,
+async fn clear_service_risk(
+    service_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<ServiceRecordResponse, String> {
+    manager.clear_service_risk(&service_id).await
+}
+
+#[tauri::command]
+async fn list_service_risk_events(
+    service_id: String,
+    limit: Option<u32>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
-    manager.recovery_paths(&operation, id, etag, input).await
-}
-
-#[tauri::command]
-async fn list_routes(manager: State<'_, Arc<CoreManager>>) -> Result<serde_json::Value, String> {
-    manager.list_routes().await
-}
-
-#[tauri::command]
-async fn get_route(
-    route_id: String,
-    manager: State<'_, Arc<CoreManager>>,
-) -> Result<RouteRecordResponse, String> {
-    manager.get_route(&route_id).await
-}
-
-#[tauri::command]
-async fn create_route(
-    input: serde_json::Value,
-    manager: State<'_, Arc<CoreManager>>,
-) -> Result<RouteRecordResponse, String> {
-    manager.create_route(input).await
-}
-
-#[tauri::command]
-async fn update_route(
-    route_id: String,
-    etag: String,
-    patch: serde_json::Value,
-    manager: State<'_, Arc<CoreManager>>,
-) -> Result<RouteRecordResponse, String> {
-    manager.update_route(&route_id, &etag, patch).await
-}
-
-#[tauri::command]
-async fn delete_route(
-    route_id: String,
-    etag: String,
-    manager: State<'_, Arc<CoreManager>>,
-) -> Result<(), String> {
-    manager.delete_route(&route_id, &etag).await
+    manager.list_service_risk_events(&service_id, limit).await
 }
 
 #[tauri::command]
@@ -1163,6 +1127,16 @@ async fn get_request_audit_content(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
     manager.get_request_audit_content(&request_id).await
+}
+
+#[tauri::command]
+async fn builtin_tool_action(
+    kind: String,
+    action: String,
+    input: Option<serde_json::Value>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.builtin_tool_action(kind, action, input).await
 }
 
 #[tauri::command]
@@ -1455,12 +1429,8 @@ pub fn run() {
             get_service_authorization,
             cancel_service_authorization,
             logout_service,
-            list_routes,
-            recovery_paths,
-            get_route,
-            create_route,
-            update_route,
-            delete_route,
+            clear_service_risk,
+            list_service_risk_events,
             list_request_records,
             list_request_sessions,
             get_request_session,
@@ -1471,6 +1441,7 @@ pub fn run() {
             delete_request_record,
             purge_request_records,
             get_request_audit_content,
+            builtin_tool_action,
             get_routing_settings,
             update_routing_settings,
             get_audit_settings,

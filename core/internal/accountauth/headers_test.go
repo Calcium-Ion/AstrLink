@@ -68,7 +68,7 @@ func TestCodexAuthPreservesAccept(t *testing.T) {
 	for _, accept := range [][]string{nil, {"application/json"}, {"text/event-stream"}, {"text/event-stream", "application/json;q=0.5"}} {
 		for name, apply := range map[string]func(http.Header){
 			"API": func(headers http.Header) {
-				ApplyCodexAPIHeaders(headers, AccountTokens{AccessToken: "access"}, "")
+				ApplyCodexAPIHeaders(headers, AccountTokens{AccessToken: "access"}, ClientIdentity{})
 			},
 			"forward": func(headers http.Header) {
 				ApplyCodexForwardHeaders(headers, AccountTokens{AccessToken: "access"}, nil, CodexIdentityPolicy{})
@@ -104,11 +104,11 @@ func TestCodexIdentityRejectsInvalidAndOldVersions(t *testing.T) {
 func TestApplyCodexAPIHeadersClearsStaleAccountID(t *testing.T) {
 	headers := make(http.Header)
 	headers.Set("ChatGPT-Account-ID", "stale-account")
-	ApplyCodexAPIHeaders(headers, AccountTokens{AccessToken: "access"}, "0.156.0")
+	ApplyCodexAPIHeaders(headers, AccountTokens{AccessToken: "access"}, codexIdentityAt("0.156.0"))
 	if got := headers.Get("ChatGPT-Account-ID"); got != "" {
 		t.Fatal("stale account ID was retained")
 	}
-	ApplyCodexAPIHeaders(nil, AccountTokens{}, "")
+	ApplyCodexAPIHeaders(nil, AccountTokens{}, ClientIdentity{})
 	ApplyCodexForwardHeaders(nil, AccountTokens{}, nil, CodexIdentityPolicy{DisableEnforcement: true})
 }
 
@@ -117,7 +117,9 @@ func TestOtherSubscriptionForwardIdentity(t *testing.T) {
 		name, product, version, defaultUA string
 		apply                             func(http.Header, AccountTokens, http.Header, bool)
 	}{
-		{"claude", "claude-cli", "2.2.0", DefaultClaudeUserAgent, ApplyClaudeForwardHeaders},
+		{"claude", "claude-cli", "2.2.0", DefaultClaudeUserAgent, func(header http.Header, tokens AccountTokens, client http.Header, enforce bool) {
+			ApplyClaudeForwardHeaders(header, tokens, client, ClientIdentity{}, enforce)
+		}},
 		{"grok", "xai-grok-workspace", "0.2.102", "xai-grok-workspace/" + DefaultGrokCLIClientVersion, ApplyGrokForwardHeaders},
 	} {
 		t.Run(provider.name, func(t *testing.T) {

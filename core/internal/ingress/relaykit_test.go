@@ -60,8 +60,9 @@ func TestRelayKitOpenAIChatToClaude(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("client body: %v", err)
 	}
-	if body["model"] != "public-chat" {
-		t.Fatalf("public model = %#v", body["model"])
+	// Conversion reshapes the response but keeps the upstream's model name.
+	if body["model"] != "claude-upstream" {
+		t.Fatalf("client model = %#v", body["model"])
 	}
 	choices, _ := body["choices"].([]any)
 	if len(choices) == 0 {
@@ -103,8 +104,8 @@ func TestRelayKitClaudeToOpenAIChat(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["model"] != "public-claude" {
-		t.Fatalf("public model = %#v", body["model"])
+	if body["model"] != "gpt-upstream" {
+		t.Fatalf("client model = %#v", body["model"])
 	}
 }
 
@@ -186,8 +187,8 @@ func TestRelayKitResponsesToClaude(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["model"] != "public-responses" {
-		t.Fatalf("public model = %#v", body["model"])
+	if body["model"] != "claude-upstream" {
+		t.Fatalf("client model = %#v", body["model"])
 	}
 }
 
@@ -265,8 +266,8 @@ func TestRelayKitStreamsOpenAIChatUpstreamAsResponsesSSE(t *testing.T) {
 		if payload.SequenceNumber == nil || *payload.SequenceNumber != len(eventTypes) {
 			t.Fatalf("frame %d has sequence_number %v: %s", len(eventTypes), payload.SequenceNumber, data)
 		}
-		if payload.Response != nil && payload.Response.Model != "public-responses" {
-			t.Fatalf("response model = %q, want public-responses: %s", payload.Response.Model, data)
+		if payload.Response != nil && payload.Response.Model != "gpt-upstream" {
+			t.Fatalf("response model = %q, want gpt-upstream: %s", payload.Response.Model, data)
 		}
 		if payload.Type == "response.output_text.delta" {
 			text.WriteString(payload.Delta)
@@ -464,7 +465,7 @@ func TestHTTPRecoveryUsesSameLoopForEveryExecutionPlan(t *testing.T) {
 			request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"public","messages":[{"role":"user","content":"hello"}]}`))
 			request.Header.Set("Content-Type", "application/json")
 			handler.ServeHTTP(response, request)
-			if attempts != 2 || response.Code != 200 || strings.Contains(response.Body.String(), "retry") || strings.Contains(response.Body.String(), `"model":"actual"`) {
+			if attempts != 2 || response.Code != 200 || strings.Contains(response.Body.String(), "retry") || !strings.Contains(response.Body.String(), `"model":"actual"`) {
 				t.Fatalf("attempts=%d status=%d body=%s", attempts, response.Code, response.Body.String())
 			}
 		})

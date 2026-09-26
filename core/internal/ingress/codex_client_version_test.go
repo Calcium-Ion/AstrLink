@@ -126,8 +126,13 @@ func TestCodexForwardingIdentityAcrossHTTPPaths(t *testing.T) {
 				select {
 				case headers := <-sawHeaders:
 					identity.checkUpstream(t, headers)
-					if got := headers.Get("Accept"); got != accept {
-						t.Errorf("Accept = %q, want %q", got, accept)
+					// HTTP Responses always stream upstream on a subscription.
+					wantAccept := accept
+					if route.path == "/v1/responses" {
+						wantAccept = "text/event-stream"
+					}
+					if got := headers.Get("Accept"); got != wantAccept {
+						t.Errorf("Accept = %q, want %q", got, wantAccept)
 					}
 				default:
 					t.Fatal("no upstream request")

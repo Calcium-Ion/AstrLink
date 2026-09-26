@@ -48,6 +48,8 @@ type Manager struct {
 	pendingProviderAccounts map[string]contract.SubscriptionAccountID
 	lifecycleTransitions    map[contract.ServiceID]bool
 	usageCache              map[contract.ServiceID]usageCacheEntry
+	riskEvents              RiskEventStore
+	forcedRefreshAt         map[contract.ServiceID]time.Time
 }
 
 const usageCacheTTL = 30 * time.Second
@@ -82,6 +84,8 @@ func NewManager(accounts AccountStore, credentials accountauth.AccountCredential
 		pendingProviderAccounts: make(map[string]contract.SubscriptionAccountID),
 		lifecycleTransitions:    make(map[contract.ServiceID]bool),
 		usageCache:              make(map[contract.ServiceID]usageCacheEntry),
+		riskEvents:              NewMemoryRiskEventStore(),
+		forcedRefreshAt:         make(map[contract.ServiceID]time.Time),
 	}
 	manager.sessions = accountauth.NewSessionManager(oauth, credentials, manager.persistAuthorizedTokens)
 	tokenClient := accountauth.NewTokenClient(oauth)
@@ -120,6 +124,9 @@ func providerOverride(overrides []accountauth.OAuthConfig, provider contract.Sub
 	}
 	if config.ResolveProxy == nil {
 		config.ResolveProxy = base.ResolveProxy
+	}
+	if config.Identities == nil {
+		config.Identities = base.Identities
 	}
 	config.Provider = provider
 	return config.Normalize()
@@ -338,6 +345,8 @@ func (manager *Manager) Logout(ctx context.Context, id contract.SubscriptionAcco
 		account.TokenExpiresAt = nil
 		account.LastRefreshAt = nil
 		account.LastError = nil
+		account.Risk = nil
+		delete(manager.forcedRefreshAt, id)
 		account.UpdatedAt = manager.now().UTC()
 		return nil
 	})
@@ -542,6 +551,16 @@ func (manager *Manager) GrokClientVersion() string {
 	return manager.grokConfig.ModelsClientVersion
 }
 
+// ClaudeIdentity resolves the Claude Code identity of a gateway-initiated
+// Claude request.
+func (manager *Manager) ClaudeIdentity(ctx context.Context) accountauth.ClientIdentity {
+	var identities *accountauth.IdentityRegistry
+	if manager != nil {
+		identities = manager.claudeConfig.Identities
+	}
+	return identities.ClaudeIdentityFor(ctx)
+}
+
 func (manager *Manager) CompleteAuthorizationCode(ctx context.Context, id contract.ServiceID, sessionID contract.AuthorizationSessionID, code string) (contract.AuthorizationSession, error) {
 	account, err := manager.Get(ctx, id)
 	if err != nil {
@@ -582,6 +601,9 @@ func (manager *Manager) persistAuthorizedTokens(ctx context.Context, session con
 		account.TokenExpiresAt = &expires
 		account.LastRefreshAt = &now
 		account.LastError = nil
+		// A new login is an explicit restore of any upstream risk pause.
+		account.Risk = nil
+		delete(manager.forcedRefreshAt, session.ServiceID)
 		account.UpdatedAt = now
 		if attempt.starting {
 			attempt.completed = true
@@ -901,7 +923,8 @@ func (manager *Manager) RunUsageMonitor(ctx context.Context) {
 		accounts, err := manager.List(ctx)
 		if err == nil {
 			for _, account := range accounts {
-				if account.Status != contract.SubscriptionStatusConnected || time.Now().Before(next[account.ID]) {
+				if account.Status != contract.SubscriptionStatusConnected || time.Now().Before(next[account.ID]) ||
+					(account.Risk != nil && account.Risk.State == contract.SubscriptionRiskSuspended) {
 					continue
 				}
 				child, cancel := context.WithTimeout(ctx, 20*time.Second)

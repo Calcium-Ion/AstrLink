@@ -197,6 +197,75 @@ describe("RequestTrajectory in a window host", () => {
     ).toBeNull();
   });
 
+  it.each(["explicit", "echo_id", "fingerprint"] as const)(
+    "shows the same continuation icon for %s without changing row navigation",
+    async (kind) => {
+      await renderTrajectory([
+        { ...record, session_link: { kind, value: "previous-request" } },
+      ]);
+      const row = container.querySelector(
+        '[data-testid="trajectory-row"][data-chip="CLIENT"]',
+      );
+      const mark = row?.querySelector<HTMLElement>(
+        '[data-conversation-indicator="continuation"]',
+      );
+      expect(mark?.getAttribute("aria-label")).toBe("对话延续：会话粘性");
+      expect(mark?.getAttribute("title")).toBe("");
+      expect(mark?.querySelector('[data-animated-icon="link"]')).not.toBeNull();
+      expect(row?.textContent).not.toContain("对话");
+      expect(row?.querySelector("button")).toBeNull();
+      await act(async () => {
+        mark!.dispatchEvent(
+          new PointerEvent("pointerover", {
+            bubbles: true,
+            pointerType: "mouse",
+          }),
+        );
+      });
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
+        "对话延续：会话粘性",
+      );
+      await act(async () => {
+        mark!.dispatchEvent(
+          new PointerEvent("pointerout", {
+            bubbles: true,
+            pointerType: "mouse",
+          }),
+        );
+      });
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+      await act(async () => {
+        mark!.click();
+      });
+      expect(invoked("show_trajectory_inspector")).toBe(false);
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
+        "对话延续：会话粘性",
+      );
+      await act(async () => {
+        mark!.dispatchEvent(
+          new PointerEvent("pointerout", {
+            bubbles: true,
+            pointerType: "mouse",
+          }),
+        );
+      });
+      expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+      await act(async () => {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        );
+      });
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+      await clickRow("CLIENT");
+      expect(invoked("show_trajectory_inspector")).toBe(true);
+
+      await renderTrajectory();
+      expect(
+        container.querySelector("[data-conversation-indicator]"),
+      ).toBeNull();
+    },
+  );
+
   it("jumps to a timeline phase in the list without opening a window", async () => {
     await renderTrajectory();
 

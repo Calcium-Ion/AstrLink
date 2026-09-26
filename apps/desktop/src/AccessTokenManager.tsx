@@ -23,9 +23,15 @@ import { CopyableValue } from "@/components/CopyableValue";
 import { FormMessage } from "@/components/FormMessage";
 import { DataField, DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
+import { HelpPopover } from "@/components/HelpPopover";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { UsagePerformanceMeter } from "@/components/UsagePerformanceMeter";
+import { BillingNote } from "./PricingWorkspace";
+import { billingAmount, type BillingAmounts } from "./pricing-model";
 import { Field } from "@/components/Field";
 import { ListToolbar } from "@/components/ListToolbar";
 import { Panel } from "@/components/Panel";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -48,7 +54,7 @@ import type { AccessTokenSummary } from "./access-token-model";
 import { i18n } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
-import { startOfTodayIso } from "./usage-range";
+import { startOfTodayIso, type ServicePerformance } from "./usage-range";
 import { CCSwitchImportDialog } from "./CCSwitchImportDialog";
 import { CCSwitchIcon } from "@/components/CCSwitchIcon";
 
@@ -67,6 +73,8 @@ export interface AccessTokenCatalog {
 
 type TokenUsageSlice = {
   total_tokens: number;
+  billing: BillingAmounts | null;
+  performance?: ServicePerformance;
 };
 
 type TokenUsageStats = {
@@ -74,6 +82,17 @@ type TokenUsageStats = {
   today: TokenUsageSlice | null;
   lifetime: TokenUsageSlice | null;
 };
+
+function emptyBilling(): BillingAmounts {
+  return {
+    amount_usd: "0",
+    priced: 0,
+    unpriced: 0,
+    pending: 0,
+    revalued: 0,
+    requests: 0,
+  };
+}
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -117,6 +136,7 @@ export function AccessTokenManager({
 }) {
   const t = i18n.t.bind(i18n);
   const [query, setQuery] = useState("");
+  const [period, setPeriod] = useState<"today" | "lifetime">("today");
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -193,8 +213,16 @@ export function AccessTokenManager({
         const usage = totals.get(tokenId);
         next[tokenId] = {
           status: "ready",
-          today: { total_tokens: usage?.today_tokens ?? 0 },
-          lifetime: { total_tokens: usage?.total_tokens ?? 0 },
+          today: {
+            total_tokens: usage?.today_tokens ?? 0,
+            billing: usage ? usage.today_billing : emptyBilling(),
+            performance: usage?.today_performance,
+          },
+          lifetime: {
+            total_tokens: usage?.total_tokens ?? 0,
+            billing: usage ? usage.total_billing : emptyBilling(),
+            performance: usage?.total_performance,
+          },
         };
       }
       setUsageByToken(next);
@@ -216,8 +244,12 @@ export function AccessTokenManager({
 
   useEffect(() => {
     void refreshTokenUsage();
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refreshTokenUsage();
+    }, 60_000);
     return () => {
       usageGeneration.current += 1;
+      window.clearInterval(timer);
     };
   }, [refreshTokenUsage, coreSessionKey]);
 
@@ -387,18 +419,23 @@ export function AccessTokenManager({
         description={t("tokens.description")}
         title={t("tokens.title")}
         titleId="token-manager-heading"
+        titleSuffix={
+          <Badge variant="secondary" className="tabular-nums">
+            {search
+              ? `${visibleTokens.length} / ${catalog.items.length}`
+              : catalog.items.length}
+          </Badge>
+        }
       />
 
-      <Panel className="mb-3 shrink-0">
-        <DataRow>
-          <CopyableValue
-            label={t("overview.apiAddress")}
-            value={inferenceURL}
-            placeholder={t("overview.waitingReady")}
-            copyLabel={t("overview.copyApiAddress")}
-          />
-        </DataRow>
-      </Panel>
+      <div className="mb-3 shrink-0">
+        <CopyableValue
+          label={t("overview.apiAddress")}
+          value={inferenceURL}
+          placeholder={t("overview.waitingReady")}
+          copyLabel={t("overview.copyApiAddress")}
+        />
+      </div>
 
       {(!isReady || catalog.status === "blocked") && (
         <FormMessage className="mb-3" tone="notice">
@@ -429,13 +466,27 @@ export function AccessTokenManager({
           searchLabel={t("tokens.search")}
           placeholder={t("tokens.searchPlaceholder")}
           clearLabel={t("common.clearSearch")}
-          help={{ label: t("tokens.title"), content: t("tokens.description") }}
+          filters={
+            <SegmentedControl
+              label={t("tokens.usagePeriod")}
+              options={[
+                { value: "today", label: t("tokens.today") },
+                { value: "lifetime", label: t("tokens.lifetime") },
+              ]}
+              value={period}
+              onValueChange={setPeriod}
+            />
+          }
+          help={{
+            label: t("tokens.usageHelp"),
+            content: t("tokens.usageExplanation"),
+          }}
         />
       </div>
       <div
         aria-busy={catalog.status === "loading"}
         aria-label={t("tokens.listLabel")}
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-1 pr-1"
+        className="@container/token-list min-h-0 min-w-0 flex-1 overflow-y-auto pb-1 pr-1"
       >
         {catalog.status === "blocked" && catalog.items.length === 0 ? (
           <EmptyState
@@ -501,14 +552,18 @@ export function AccessTokenManager({
               const usage = usageByToken[token.id];
               const usageStatus =
                 usage?.status ?? (isReady ? "loading" : "error");
+              const slice = usage?.[period];
+              const incomplete =
+                slice?.billing &&
+                slice.billing.unpriced + slice.billing.pending > 0;
               return (
                 <DataRow
                   asChild
-                  className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-5 gap-y-3 py-4 @[720px]:grid-cols-[minmax(0,1fr)_minmax(160px,0.6fr)_auto]"
+                  className="grid grid-cols-1 gap-x-4 gap-y-3 py-3 @[480px]/token-list:grid-cols-[minmax(0,1fr)_auto] @[720px]/token-list:grid-cols-[minmax(9rem,1fr)_minmax(0,1.6fr)_auto]"
                   key={token.id}
                 >
                   <article data-testid="access-token-row">
-                    <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
                       <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-text-secondary">
                         <KeyRound aria-hidden="true" className="size-4" />
                       </span>
@@ -525,39 +580,116 @@ export function AccessTokenManager({
                         >
                           {token.hint}
                         </code>
-                        <span className="text-micro text-muted-foreground tabular-nums">
+                        <span
+                          className="truncate text-micro tabular-nums text-muted-foreground"
+                          title={createdAtLabel(token.created_at)}
+                        >
                           {t("tokens.createdAt")} ·{" "}
                           {createdAtLabel(token.created_at)}
                         </span>
                       </div>
                     </div>
-                    <div className="order-3 col-span-2 grid grid-cols-2 gap-5 pl-12 @[720px]:order-none @[720px]:col-span-1 @[720px]:pl-0">
+                    <div className="row-start-2 grid grid-cols-2 gap-x-3 gap-y-1 @[400px]/token-list:col-span-full @[400px]/token-list:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] @[720px]/token-list:col-span-1 @[720px]/token-list:col-start-2 @[720px]/token-list:row-start-1">
                       <DataField
-                        label={t("tokens.todayTokens")}
+                        className="row-span-2 grid grid-rows-subgrid"
+                        label={t(
+                          period === "today"
+                            ? "tokens.todayAmount"
+                            : "tokens.lifetimeAmount",
+                        )}
                         value={
-                          <CompactCount
-                            placeholder={tokenCountPlaceholder(
-                              usage?.today ?? null,
-                              usageStatus,
-                            )}
-                            value={usage?.today?.total_tokens}
-                          />
+                          <span className="inline-flex items-center gap-1.5 font-semibold tabular-nums">
+                            {slice?.billing
+                              ? billingAmount(slice.billing)
+                              : tokenCountPlaceholder(null, usageStatus)}
+                            {incomplete || usageStatus === "error" ? (
+                              <HelpPopover label={t("tokens.usageStatus")}>
+                                {usageStatus === "error" ? (
+                                  <p>{t("tokens.usageFailed")}</p>
+                                ) : null}
+                                {slice?.billing ? (
+                                  <BillingNote amounts={slice.billing} />
+                                ) : null}
+                              </HelpPopover>
+                            ) : null}
+                          </span>
                         }
                       />
                       <DataField
-                        label={t("tokens.lifetimeTokens")}
+                        className="row-span-2 grid grid-rows-subgrid"
+                        label={t(
+                          period === "today"
+                            ? "tokens.todayTokens"
+                            : "tokens.lifetimeTokens",
+                        )}
                         value={
                           <CompactCount
                             placeholder={tokenCountPlaceholder(
-                              usage?.lifetime ?? null,
+                              slice ?? null,
                               usageStatus,
                             )}
-                            value={usage?.lifetime?.total_tokens}
+                            value={slice?.total_tokens}
                           />
                         }
+                      />
+                      <UsagePerformanceMeter
+                        layout="fields"
+                        key={`${coreSessionKey}:${token.id}`}
+                        target={{
+                          kind: "token",
+                          id: token.id,
+                          name: token.name,
+                        }}
+                        ready={isReady && !catalog.stale}
+                        performance={
+                          usageStatus === "error"
+                            ? undefined
+                            : slice?.performance
+                        }
+                        status={usageStatus}
+                        periodLabel={t(
+                          period === "today"
+                            ? "tokens.today"
+                            : "tokens.lifetime",
+                        )}
+                        scopeDescription={t("tokens.performanceScope")}
                       />
                     </div>
-                    <ActionGroup className="col-span-2 shrink-0 gap-1 @[560px]:col-span-1">
+                    <ActionGroup className="row-start-3 shrink-0 flex-nowrap gap-1 @[480px]/token-list:col-start-2 @[480px]/token-list:row-start-1 @[720px]/token-list:col-start-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={
+                          !isReady || deletingID !== null || copyingID !== null
+                        }
+                        onClick={() => void copyToken(token.id)}
+                        type="button"
+                        title={
+                          isCopying
+                            ? t("common.copying")
+                            : isCopied
+                              ? t("common.copied")
+                              : t("common.copy")
+                        }
+                      >
+                        {isCopying ? (
+                          <LoaderCircle
+                            animateOnHover={false}
+                            className="animate-spin motion-reduce:animate-none"
+                          />
+                        ) : isCopied ? (
+                          <Check />
+                        ) : (
+                          <Copy />
+                        )}
+                        <span className="@[720px]/token-list:sr-only @[960px]/token-list:not-sr-only">
+                          {isCopying
+                            ? t("common.copying")
+                            : isCopied
+                              ? t("common.copied")
+                              : t("common.copy")}
+                        </span>
+                      </Button>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -573,12 +705,22 @@ export function AccessTokenManager({
                         aria-label={t("ccSwitch.importToken", {
                           name: token.name,
                         })}
+                        title={t("ccSwitch.importToken", {
+                          name: token.name,
+                        })}
                       >
                         <CCSwitchIcon size={16} />
-                        CC Switch
+                        <span className="@[720px]/token-list:sr-only @[800px]/token-list:not-sr-only">
+                          CC Switch
+                        </span>
                       </Button>
                       <Button
                         className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
+                        title={
+                          deletingID === token.id
+                            ? t("tokens.deleting")
+                            : t("common.delete")
+                        }
                         disabled={!isReady || deletingID !== null}
                         onClick={() => {
                           revealGeneration.current += 1;
@@ -592,34 +734,11 @@ export function AccessTokenManager({
                         variant="ghost"
                       >
                         <Trash2 />
-                        {deletingID === token.id
-                          ? t("tokens.deleting")
-                          : t("common.delete")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={
-                          !isReady || deletingID !== null || copyingID !== null
-                        }
-                        onClick={() => void copyToken(token.id)}
-                        type="button"
-                      >
-                        {isCopying ? (
-                          <LoaderCircle
-                            animateOnHover={false}
-                            className="animate-spin motion-reduce:animate-none"
-                          />
-                        ) : isCopied ? (
-                          <Check />
-                        ) : (
-                          <Copy />
-                        )}
-                        {isCopying
-                          ? t("common.copying")
-                          : isCopied
-                            ? t("common.copied")
-                            : t("common.copy")}
+                        <span className="@[720px]/token-list:sr-only @[960px]/token-list:not-sr-only">
+                          {deletingID === token.id
+                            ? t("tokens.deleting")
+                            : t("common.delete")}
+                        </span>
                       </Button>
                     </ActionGroup>
                   </article>

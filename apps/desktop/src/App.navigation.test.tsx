@@ -8,10 +8,8 @@ const bridgeMocks = vi.hoisted(() => ({
   cancelPrivacyModelInstallation: vi.fn(),
   createAccessToken: vi.fn(),
   createService: vi.fn(),
-  createRoute: vi.fn(),
   deleteAccessToken: vi.fn(),
   deleteService: vi.fn(),
-  deleteRoute: vi.fn(),
   deletePrivacyModelInstallation: vi.fn(),
   getAgentDebugStatus: vi.fn(),
   getAuditSettings: vi.fn(),
@@ -26,14 +24,12 @@ const bridgeMocks = vi.hoisted(() => ({
     .fn()
     .mockResolvedValue({ service_ids: [], etag: '"order"' }),
   updateServiceOrder: vi.fn(),
-  listRecoveryPaths: vi.fn(),
   installAgentDebug: vi.fn(),
   uninstallAgentDebug: vi.fn(),
   getService: vi.fn(),
   getServiceAuthorization: vi.fn(),
   getServiceUsage: vi.fn(),
   resetServiceUsage: vi.fn(),
-  getRoute: vi.fn(),
   getPrivacyModelCatalog: vi.fn(),
   getPrivacyModelInstallation: vi.fn(),
   getPrivacyPolicy: vi.fn(),
@@ -42,7 +38,6 @@ const bridgeMocks = vi.hoisted(() => ({
   listAccessTokens: vi.fn(),
   listAccessTokenUsage: vi.fn().mockResolvedValue({ items: [] }),
   listServices: vi.fn(),
-  listRoutes: vi.fn(),
   listPrivacyModelInstallations: vi.fn(),
   listPrivacyPolicies: vi.fn(),
   listRequestRecords: vi.fn(),
@@ -58,12 +53,13 @@ const bridgeMocks = vi.hoisted(() => ({
   updatePreferences: vi.fn(),
   updateAuditSettings: vi.fn(),
   updateService: vi.fn(),
-  updateRoute: vi.fn(),
   updatePrivacyPolicy: vi.fn(),
   deleteRequestRecord: vi.fn(),
   getRequestRecord: vi.fn(),
   beginServiceAuthorization: vi.fn(),
   cancelServiceAuthorization: vi.fn(),
+  clearServiceRisk: vi.fn(),
+  listServiceRiskEvents: vi.fn(),
   logoutService: vi.fn(),
   openAuthorizationURL: vi.fn(),
   probeDraftServiceModels: vi.fn(),
@@ -77,6 +73,7 @@ import type { AppSnapshot } from "./core-model";
 import { defaultTrayPreferences } from "./preferences-model";
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
+import { ONBOARDING_STORAGE_KEY } from "./use-onboarding";
 
 const readySnapshot: AppSnapshot = {
   app_version: "0.1.0",
@@ -201,6 +198,7 @@ describe("App workspace navigation", () => {
   let root: Root;
 
   beforeEach(() => {
+    localStorage.removeItem(ONBOARDING_STORAGE_KEY);
     (
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -213,7 +211,6 @@ describe("App workspace navigation", () => {
       strategy: "retry_first",
       max_attempts: 6,
     });
-    bridgeMocks.listRecoveryPaths.mockResolvedValue([]);
     bridgeMocks.getCoreStatus.mockResolvedValue(readySnapshot);
     bridgeMocks.listServices.mockResolvedValue({
       items: [
@@ -351,10 +348,6 @@ describe("App workspace navigation", () => {
       items: [],
       next_cursor: null,
     });
-    bridgeMocks.listRoutes.mockResolvedValue({
-      items: [],
-      next_cursor: null,
-    });
     bridgeMocks.getServiceAuthorization.mockRejectedValue(
       new Error("no active authorization session"),
     );
@@ -401,6 +394,7 @@ describe("App workspace navigation", () => {
   });
 
   afterEach(async () => {
+    localStorage.removeItem(ONBOARDING_STORAGE_KEY);
     await act(async () => {
       root.unmount();
     });
@@ -418,6 +412,181 @@ describe("App workspace navigation", () => {
       await Promise.resolve();
     });
   }
+
+  it("starts a confirmed empty workspace with a resumable guide", async () => {
+    bridgeMocks.listServices.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    await renderApp();
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    expect(container.textContent).toContain("已完成 0 / 3 步");
+    expect(container.querySelector("#usage-heading")).toBeNull();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
+    await act(async () => button("添加 API 提供商").click());
+    expect(container.querySelector('[data-page="create"]')).not.toBeNull();
+    await act(async () => button("返回上手引导").click());
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    await act(async () => button("稍后设置").click());
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("dismissed");
+    expect(container.querySelector("#usage-heading")).not.toBeNull();
+    expect(container.textContent).not.toContain("欢迎使用 AstrLink");
+    const footer = container.querySelector('[data-slot="overview-footer"]');
+    expect(footer?.contains(button("上手引导"))).toBe(true);
+    expect(footer?.querySelector("#system-details-heading")).not.toBeNull();
+    expect(document.body.textContent).toContain("稍后可点击右下角");
+    await act(async () => button("上手引导").click());
+    expect(document.body.textContent).not.toContain("稍后可点击右下角");
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    vi.useFakeTimers();
+    await act(async () => button("稍后设置").click());
+    expect(document.body.textContent).toContain("稍后可点击右下角");
+    await act(async () => vi.advanceTimersByTime(6500));
+    expect(document.body.textContent).not.toContain("稍后可点击右下角");
+    expect(button("上手引导")).toBeTruthy();
+  });
+
+  it("resumes at token creation and continues to client setup after saving", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    bridgeMocks.createAccessToken.mockResolvedValue({
+      token: {
+        id: "token_setup",
+        name: "My assistant",
+        hint: "astr_…setup",
+        created_at: "2026-09-25T08:00:00Z",
+      },
+      access_token: "test-secret",
+    });
+    await renderApp();
+    expect(
+      container.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain("创建访问令牌");
+    await act(async () => button("前往创建访问令牌").click());
+    await act(async () => button("创建令牌").click());
+    await setInput("#access-token-name", "My assistant");
+    const form = document.querySelector('[role="dialog"] form');
+    expect(form).not.toBeNull();
+    await act(async () =>
+      form?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(bridgeMocks.createAccessToken).toHaveBeenCalledWith("My assistant");
+    expect(workspaceHeading().textContent).toBe("开始使用 AstrLink");
+    expect(
+      container.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain("连接客户端");
+    expect(container.textContent).toContain("http://127.0.0.1:8317/v1");
+    expect(container.textContent).not.toContain("test-secret");
+  });
+
+  it("uses protocol-specific client URLs and only completes after success", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    await renderApp();
+    expect(container.textContent).toContain("http://127.0.0.1:8317/v1");
+    await act(async () => button("Anthropic 兼容").click());
+    expect(container.textContent).toContain("http://127.0.0.1:8317");
+    expect(container.textContent).not.toContain("http://127.0.0.1:8317/v1");
+    const summary = await bridgeMocks.getUsageSummary.mock.results[0].value;
+    bridgeMocks.getUsageSummary.mockResolvedValue({
+      ...summary,
+      scanned_records: 1,
+      totals: { ...summary.totals, failed_requests: 1 },
+    });
+    await act(async () => button("检查连接结果").click());
+    expect(container.textContent).toContain("已收到请求，但尚未成功");
+    expect(container.textContent).not.toContain("进入运行概览");
+    bridgeMocks.getUsageSummary.mockResolvedValue({
+      ...summary,
+      scanned_records: 2,
+      totals: { ...summary.totals, requests: 1, failed_requests: 1 },
+    });
+    await act(async () => button("检查连接结果").click());
+    expect(container.textContent).toContain("第一条请求已成功");
+    await act(async () => button("进入运行概览").click());
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("complete");
+    expect(workspaceHeading().textContent).toBe("运行概览");
+  });
+
+  it("does not mistake an unread or failed catalog for a first launch", async () => {
+    bridgeMocks.listServices.mockRejectedValue(
+      new Error("catalog unavailable"),
+    );
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    await renderApp();
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
+  it("preserves a skipped guide across remounts", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "dismissed");
+    bridgeMocks.listServices.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    bridgeMocks.listAccessTokens.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    await renderApp();
+    expect(workspaceHeading().textContent).toBe("运行概览");
+    expect(button("上手引导")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("稍后可点击右下角");
+  });
+
+  it.each(["disabled", "no-models", "unauthorized"])(
+    "keeps an %s provider on the first setup step",
+    async (state) => {
+      localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+      const result = await bridgeMocks.listServices();
+      const service =
+        state === "unauthorized" ? result.items[1] : result.items[0];
+      bridgeMocks.listServices.mockResolvedValue({
+        items: [
+          {
+            ...service,
+            enabled: state !== "disabled",
+            models: state === "no-models" ? [] : ["model"],
+          },
+        ],
+        next_cursor: null,
+      });
+      await renderApp();
+      expect(
+        container.querySelector('[aria-current="step"]')?.textContent,
+      ).toContain("接入 API 提供商");
+      expect(container.textContent).toContain("提供商还未准备好");
+      expect(container.textContent).not.toContain("复制访问令牌");
+    },
+  );
+
+  it("reveals a setup token only when copying and does not persist the secret", async () => {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "active");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(navigator.clipboard, "writeText").mockImplementation(writeText);
+    bridgeMocks.revealAccessToken.mockResolvedValue({
+      access_token: "setup-secret",
+    });
+    await renderApp();
+    expect(bridgeMocks.revealAccessToken).not.toHaveBeenCalled();
+    await act(async () => button("复制访问令牌").click());
+    expect(bridgeMocks.revealAccessToken).toHaveBeenCalledWith("token_01");
+    expect(writeText).toHaveBeenCalledWith("setup-secret");
+    expect(container.textContent).not.toContain("setup-secret");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe("active");
+  });
 
   it("keeps loaded page content visible while revisits revalidate slowly", async () => {
     await renderApp();
@@ -812,9 +981,15 @@ describe("App workspace navigation", () => {
       [...container.querySelectorAll('[role="tab"]')].map(
         (tab) => tab.textContent,
       ),
-    ).toEqual(["模型重定向", "恢复与重试", "错误规则", "会话粘性", "转发身份"]);
+    ).toEqual([
+      "模型重定向",
+      "内置工具",
+      "恢复与重试",
+      "错误规则",
+      "会话粘性",
+      "转发身份",
+    ]);
     expect(container.textContent).not.toContain("mmBERT");
-    expect(bridgeMocks.listRoutes).not.toHaveBeenCalled();
     expect(bridgeMocks.listServices).toHaveBeenCalledTimes(serviceCalls);
     expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(requestCalls);
   });

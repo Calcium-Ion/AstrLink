@@ -39,9 +39,12 @@ export function namedRouteSummary(
     .join(" · ");
 }
 
-/** The services a record's route events name, for a window without the list. */
+/**
+ * The services a record's route events and routing decision name, for a
+ * window without the list.
+ */
 export function routeServices(
-  record: Pick<RequestRecord, "events">,
+  record: Pick<RequestRecord, "events" | "routing_decision">,
   services: RequestServiceMap = {},
 ): RequestServiceMap {
   const named: Record<string, RequestService> = {};
@@ -51,6 +54,10 @@ export function routeServices(
       const service = services[part];
       if (service) named[part] = service;
     }
+  }
+  for (const { service_id: id } of record.routing_decision?.skipped ?? []) {
+    const service = services[id];
+    if (service) named[id] = service;
   }
   return named;
 }

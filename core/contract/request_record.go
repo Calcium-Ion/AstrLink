@@ -339,6 +339,8 @@ func (link SessionLink) Validate() error {
 }
 
 type RequestRecord struct {
+	// ClientType is absent on historical records.
+	ClientType      ClientType       `json:"client_type,omitempty"`
 	Recovery        *RequestRecovery `json:"recovery,omitempty"`
 	ID              RequestID        `json:"id"`
 	ParentRequestID *RequestID       `json:"parent_request_id"`
@@ -353,14 +355,17 @@ type RequestRecord struct {
 	// RequestedModel for provider selection.
 	ModelRedirect *RequestModelRedirect `json:"model_redirect,omitempty"`
 	// ReasoningEffort is the explicitly requested level; nil means unspecified or historical.
-	ReasoningEffort    *string        `json:"reasoning_effort"`
-	Streaming          bool           `json:"streaming"`
-	RouteID            *RouteID       `json:"route_id"`
-	ServiceID          *ServiceID     `json:"service_id"`
-	LocalAccessTokenID *AccessTokenID `json:"local_access_token_id"`
-	Plan               *ExecutionPlan `json:"plan"`
-	HTTPStatus         *int           `json:"http_status"`
-	LatencyMs          *int           `json:"latency_ms"`
+	ReasoningEffort *string    `json:"reasoning_effort"`
+	Streaming       bool       `json:"streaming"`
+	RouteID         *RouteID   `json:"route_id"`
+	ServiceID       *ServiceID `json:"service_id"`
+	// RoutingDecision explains why routing chose ServiceID, or why no
+	// provider was eligible; nil on historical records.
+	RoutingDecision    *RequestRoutingDecision `json:"routing_decision,omitempty"`
+	LocalAccessTokenID *AccessTokenID          `json:"local_access_token_id"`
+	Plan               *ExecutionPlan          `json:"plan"`
+	HTTPStatus         *int                    `json:"http_status"`
+	LatencyMs          *int                    `json:"latency_ms"`
 	// FirstTokenMs measures upstream send to first generated stream content
 	// (text, reasoning, or tool call). Nil for non-streaming and historical calls.
 	FirstTokenMs       *int                   `json:"first_token_ms"`
@@ -394,6 +399,9 @@ type RequestRecord struct {
 }
 
 func (record RequestRecord) Validate() error {
+	if record.ClientType != "" && !record.ClientType.Valid() {
+		return fmt.Errorf("unknown client type %q", record.ClientType)
+	}
 	if record.Recovery != nil {
 		if err := record.Recovery.Validate(); err != nil {
 			return err
@@ -435,6 +443,11 @@ func (record RequestRecord) Validate() error {
 	}
 	if record.ModelRedirect != nil {
 		if err := record.ModelRedirect.Validate(); err != nil {
+			return err
+		}
+	}
+	if record.RoutingDecision != nil {
+		if err := record.RoutingDecision.Validate(); err != nil {
 			return err
 		}
 	}
@@ -562,6 +575,8 @@ func (record RequestRecord) EffectiveStatus() RequestStatus {
 }
 
 type RequestSession struct {
+	// ClientType mirrors the latest call, like the model and provider fields.
+	ClientType    ClientType `json:"client_type,omitempty"`
 	ID            SessionID  `json:"id"`
 	Title         string     `json:"title"`
 	StartedAt     time.Time  `json:"started_at"`
@@ -587,6 +602,9 @@ type RequestSession struct {
 }
 
 func (session RequestSession) Validate() error {
+	if session.ClientType != "" && !session.ClientType.Valid() {
+		return fmt.Errorf("unknown client type %q", session.ClientType)
+	}
 	if err := session.ID.Validate(); err != nil {
 		return err
 	}

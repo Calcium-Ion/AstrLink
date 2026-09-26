@@ -19,6 +19,15 @@ import (
 
 const maxMediaBytes = 20 << 20
 
+// ResolveImageData resolves only public HTTP(S) images or bounded data URLs.
+// Tool execution shares the same media boundary as protocol conversion.
+func ResolveImageData(ctx context.Context, raw string) (string, string, error) {
+	if strings.HasPrefix(raw, "data:") {
+		return decodeBase64FileData(raw)
+	}
+	return resolveMediaURL(ctx, types.NewURLFileSource(raw))
+}
+
 func secureMediaResolver() relayconvert.MediaResolver {
 	return relayconvert.MediaResolver{
 		GetBase64Data:        resolveMediaURL,

@@ -155,6 +155,38 @@ export interface SubscriptionServiceConnection {
   token_expires_at?: string;
   last_refresh_at?: string;
   last_error?: SubscriptionError;
+  risk?: SubscriptionRisk;
+}
+
+/**
+ * `suspended` keeps the account out of scheduling until the user clears it;
+ * `cooling` resumes automatically at `paused_until`.
+ */
+export type SubscriptionRiskState = "suspended" | "cooling";
+
+/** Current upstream risk signal of a subscription account; mirrors contract SubscriptionRisk. */
+export interface SubscriptionRisk {
+  state: SubscriptionRiskState;
+  code: string;
+  message?: string;
+  http_status?: number;
+  observed_at: string;
+  paused_until?: string;
+  occurrences?: number;
+}
+
+export type SubscriptionRiskEventKind = SubscriptionRiskState | "cleared";
+
+/** One entry of a subscription's risk history; mirrors contract SubscriptionRiskEvent. */
+export interface SubscriptionRiskEvent {
+  id: number;
+  service_id: string;
+  kind: SubscriptionRiskEventKind;
+  code?: string;
+  message?: string;
+  http_status?: number;
+  observed_at: string;
+  paused_until?: string;
 }
 
 export interface Service {
@@ -175,7 +207,13 @@ export interface Service {
 
 export type RoutableService = Pick<
   Service,
-  "id" | "name" | "enabled" | "models" | "capabilities" | "failure_policy"
+  | "id"
+  | "name"
+  | "kind"
+  | "enabled"
+  | "models"
+  | "capabilities"
+  | "failure_policy"
 >;
 
 export interface ServicePage {
@@ -479,6 +517,166 @@ function parseSubscriptionError(
   return { code, message };
 }
 
+const riskStates = new Set<SubscriptionRiskState>(["suspended", "cooling"]);
+const riskEventKinds = new Set<SubscriptionRiskEventKind>([
+  "suspended",
+  "cooling",
+  "cleared",
+]);
+const maxRiskEvents = 50;
+
+function riskCodeAt(value: unknown, path: string): string {
+  const code = stringAt(value, path, 2, 64);
+  if (!errorCodePattern.test(code)) invalid(path, "invalid risk code");
+  return code;
+}
+
+function riskMessageAt(value: unknown, path: string): string {
+  const message = stringAt(value, path, 0, 240);
+  if (credentialLeakPattern.test(message)) {
+    invalid(path, "must not contain credential material");
+  }
+  return message;
+}
+
+function integerAt(
+  value: unknown,
+  path: string,
+  min: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < min ||
+    value > max
+  ) {
+    return invalid(path, `expected an integer from ${min} to ${max}`);
+  }
+  return value;
+}
+
+function parseSubscriptionRisk(value: unknown, path: string): SubscriptionRisk {
+  const risk = objectAt(value, path);
+  keysAt(
+    risk,
+    ["state", "code", "observed_at"],
+    ["message", "http_status", "paused_until", "occurrences"],
+    path,
+  );
+  if (
+    typeof risk.state !== "string" ||
+    !riskStates.has(risk.state as SubscriptionRiskState)
+  ) {
+    invalid(`${path}.state`, "unknown risk state");
+  }
+  const state = risk.state as SubscriptionRiskState;
+  const result: SubscriptionRisk = {
+    state,
+    code: riskCodeAt(risk.code, `${path}.code`),
+    observed_at: timestampAt(risk.observed_at, `${path}.observed_at`),
+  };
+  if (Object.hasOwn(risk, "message")) {
+    result.message = riskMessageAt(risk.message, `${path}.message`);
+  }
+  if (Object.hasOwn(risk, "http_status")) {
+    result.http_status = integerAt(
+      risk.http_status,
+      `${path}.http_status`,
+      100,
+      599,
+    );
+  }
+  if (state === "cooling") {
+    result.paused_until = timestampAt(
+      risk.paused_until,
+      `${path}.paused_until`,
+    );
+  } else if (Object.hasOwn(risk, "paused_until")) {
+    invalid(`${path}.paused_until`, "only cooling may set paused_until");
+  }
+  if (Object.hasOwn(risk, "occurrences")) {
+    result.occurrences = integerAt(risk.occurrences, `${path}.occurrences`, 1);
+  }
+  return result;
+}
+
+function parseSubscriptionRiskEvent(
+  value: unknown,
+  path: string,
+): SubscriptionRiskEvent {
+  const event = objectAt(value, path);
+  keysAt(
+    event,
+    ["id", "service_id", "kind", "observed_at"],
+    ["code", "message", "http_status", "paused_until"],
+    path,
+  );
+  const serviceID = stringAt(event.service_id, `${path}.service_id`, 3, 96);
+  if (!resourceIDPattern.test(serviceID)) {
+    invalid(`${path}.service_id`, "invalid resource ID");
+  }
+  if (
+    typeof event.kind !== "string" ||
+    !riskEventKinds.has(event.kind as SubscriptionRiskEventKind)
+  ) {
+    invalid(`${path}.kind`, "unknown risk event kind");
+  }
+  const result: SubscriptionRiskEvent = {
+    id: integerAt(event.id, `${path}.id`, 1),
+    service_id: serviceID,
+    kind: event.kind as SubscriptionRiskEventKind,
+    observed_at: timestampAt(event.observed_at, `${path}.observed_at`),
+  };
+  if (Object.hasOwn(event, "code")) {
+    result.code = riskCodeAt(event.code, `${path}.code`);
+  }
+  if (Object.hasOwn(event, "message")) {
+    result.message = riskMessageAt(event.message, `${path}.message`);
+  }
+  if (Object.hasOwn(event, "http_status")) {
+    result.http_status = integerAt(
+      event.http_status,
+      `${path}.http_status`,
+      100,
+      599,
+    );
+  }
+  if (Object.hasOwn(event, "paused_until")) {
+    result.paused_until = timestampAt(
+      event.paused_until,
+      `${path}.paused_until`,
+    );
+  }
+  return result;
+}
+
+/**
+ * Parses GET /services/{id}/risk-events. When `serviceID` is given every
+ * event must belong to that service, so a stale or crossed reply cannot
+ * render another account's history.
+ */
+export function parseSubscriptionRiskEvents(
+  value: unknown,
+  serviceID?: string,
+): SubscriptionRiskEvent[] {
+  const page = objectAt(value, "$");
+  keysAt(page, ["items"], [], "$");
+  if (!Array.isArray(page.items) || page.items.length > maxRiskEvents) {
+    return invalid(
+      "$.items",
+      `expected an array with at most ${maxRiskEvents} items`,
+    );
+  }
+  return page.items.map((item, index) => {
+    const event = parseSubscriptionRiskEvent(item, `$.items[${index}]`);
+    if (serviceID !== undefined && event.service_id !== serviceID) {
+      invalid(`$.items[${index}].service_id`, "belongs to another service");
+    }
+    return event;
+  });
+}
+
 function parseSubscriptionConnection(
   value: unknown,
   path: string,
@@ -495,6 +693,7 @@ function parseSubscriptionConnection(
       "token_expires_at",
       "last_refresh_at",
       "last_error",
+      "risk",
     ],
     path,
   );
@@ -557,6 +756,9 @@ function parseSubscriptionConnection(
       subscription.last_error,
       `${path}.last_error`,
     );
+  }
+  if (Object.hasOwn(subscription, "risk")) {
+    result.risk = parseSubscriptionRisk(subscription.risk, `${path}.risk`);
   }
   return result;
 }
@@ -743,10 +945,59 @@ export function serviceKindLabel(kind: ServiceKind): string {
   return i18n.t(`kind.${kind}`);
 }
 
-export function serviceStatusLabel(service: Service): string {
+export function serviceStatusLabel(
+  service: Service,
+  now: Date = new Date(),
+): string {
   if (!service.enabled) return i18n.t("common.disabled");
   if (!service.subscription) return i18n.t("common.enabled");
-  return i18n.t(`subscription.${service.subscription.status}`);
+  const { last_error: lastError, status } = service.subscription;
+  let label = i18n.t(`subscription.${status}`);
+  if (status === "needs_reauth" && lastError?.message) {
+    label = i18n.t("subscription.statusDetail", {
+      status: label,
+      detail: lastError.message,
+    });
+  }
+  const risk = activeServiceRisk(service, now);
+  if (!risk) return label;
+  return i18n.t("subscription.statusWithRisk", {
+    status: label,
+    risk: subscriptionRiskLabel(risk.code, risk.state),
+  });
+}
+
+/**
+ * The risk that currently keeps a subscription out of scheduling. A cooling
+ * risk whose `paused_until` has passed no longer applies: core resumes the
+ * account on its own, so it is reported as inactive before the next refresh.
+ */
+export function activeServiceRisk(
+  service: Pick<Service, "subscription">,
+  now: Date,
+): SubscriptionRisk | undefined {
+  const risk = service.subscription?.risk;
+  if (!risk) return undefined;
+  if (risk.state === "suspended") return risk;
+  const until = Date.parse(risk.paused_until ?? "");
+  return Number.isFinite(until) && until > now.getTime() ? risk : undefined;
+}
+
+/** Human label for a risk code; unknown codes fall back to a state-level label. */
+export function subscriptionRiskLabel(
+  code: string | undefined,
+  state: SubscriptionRiskEventKind,
+): string {
+  const key = `subscription.risk.${code ?? ""}`;
+  if (code && errorCodePattern.test(code) && i18n.exists(key)) {
+    return i18n.t(key);
+  }
+  if (state === "cleared") return i18n.t("services.riskEventCleared");
+  return i18n.t(
+    state === "suspended"
+      ? "subscription.risk.genericSuspended"
+      : "subscription.risk.genericCooling",
+  );
 }
 
 export function supportsResponsesWebSocket(

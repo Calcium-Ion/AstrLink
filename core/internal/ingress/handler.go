@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
 	"github.com/QuantumNous/astrlink/core/internal/autotext"
+	"github.com/QuantumNous/astrlink/core/internal/builtintools"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
@@ -75,6 +77,12 @@ type Dependencies struct {
 	MaxConcurrentInspections int
 	// MaxRequestBodyMiB limits incoming request bodies; zero means unlimited.
 	MaxRequestBodyMiB uint32
+	// SubscriptionRisk is optional. It receives classified upstream ban and
+	// quota signals from Claude and Codex subscription accounts.
+	SubscriptionRisk SubscriptionRiskReporter
+	// Identities is optional. It learns the client identity of recognized
+	// official Claude Code and Codex requests; nil learns nothing.
+	Identities *accountauth.IdentityRegistry
 }
 
 type Classifier interface {
@@ -102,6 +110,7 @@ func (function PolicyWarningReporterFunc) ReportPolicyWarning(
 }
 
 type Handler struct {
+	builtinStates            builtintools.Store
 	proxyCredentials         secretstore.SecretStore
 	affinities               responseAffinities
 	resolver                 endpoint.Resolver
@@ -120,6 +129,8 @@ type Handler struct {
 	maxRequestBodyBytes      int64
 	conversionEngine         relaykitbridge.ConversionEngine
 	classifier               Classifier
+	subscriptionRisk         SubscriptionRiskReporter
+	identities               *accountauth.IdentityRegistry
 	sessionFingerprints      sessionFingerprints
 }
 
@@ -222,6 +233,8 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		maxRequestBodyBytes:   int64(dependencies.MaxRequestBodyMiB) << 20,
 		conversionEngine:      dependencies.ConversionEngine,
 		classifier:            dependencies.Classifier,
+		subscriptionRisk:      dependencies.SubscriptionRisk,
+		identities:            dependencies.Identities,
 	}
 }
 
@@ -229,7 +242,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	// The policy warning header is owned by this local response boundary.
 	// Strip any client-supplied value so it cannot be spoofed upstream.
 	request.Header.Del(PolicyWarningHeader)
-	if !handler.allowInferenceBoundary(writer, request) {
+	if builtinInternalFrom(request.Context()) == nil && !handler.allowInferenceBoundary(writer, request) {
 		return
 	}
 	if isResponsesWebSocket(request) {
@@ -264,13 +277,29 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	session := handler.startRecordSession(request, classified)
+	var session *recordSession
+	if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
+		session = mode.SharedSession
+		session.classified = classified
+		session.inputPreview = classified.InputPreview
+		session.scanner = newUsageScanner(classified.Protocol, classified.Streaming)
+		session.captureHTTPRequestMeta(request)
+		session.attachRequestCapture(request)
+	} else {
+		session = handler.startRecordSession(request, classified)
+	}
 	session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
 	outWriter := session.wrap(writer)
 	request = request.WithContext(withRecordSession(request.Context(), session))
 	defer func() {
+		if mode := builtinInternalFrom(request.Context()); mode != nil && !mode.Native && session.endpointID != nil {
+			mode.Target = *session.endpointID
+		}
 		if request.Context().Err() != nil {
 			session.noteCancelled()
+		}
+		if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
+			return
 		}
 		// Never delay or fail the client response on persistence errors.
 		session.finish(context.Background(), handler.requestRecords, handler.auditBlobs, handler.recordLogger)
@@ -290,7 +319,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
-	if !classified.Protocol.IsModelDiscovery() && classified.Model != "" {
+	if routingSettingsLoaded && err == nil {
+		session.routingSettings = &routingSettings
+	}
+	if mode := builtinInternalFrom(request.Context()); (mode == nil || (!mode.Native && mode.Model == "")) && !classified.Protocol.IsModelDiscovery() && classified.Model != "" {
 		classified = handler.applyModelRedirect(request.Context(), session, classified, routingSettings)
 	}
 	if classified.routingModel() == contract.AstrLinkAutoModelID {
@@ -299,15 +331,16 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		session.noteFailed(errorSummaryFromInference("routing_feature_retired", "automatic routing is retired", false))
 		return
 	}
-	category := ""
+	if handler.tryBuiltinTools(outWriter, request, classified, routingSettings) {
+		return
+	}
 	session.channelBinding = handler.prepareChannelBinding(session, routingSettings, routingSettingsLoaded)
 	candidates, err := handler.resolveCandidates(request.Context(), endpoint.ResolveRequest{
 		Protocol:      classified.Protocol,
 		Model:         classified.routingModel(),
 		Streaming:     classified.Streaming,
-		Category:      category,
 		Continuation:  classified.PreviousResponseID != "",
-		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil,
+		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil || builtinInternalFrom(request.Context()) != nil,
 	})
 	if err != nil {
 		// No attempt will read the body, so capture it for the audit now.
@@ -321,13 +354,26 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.writeResolveError(outWriter, request, classified, err)
 		return
 	}
-	candidates = redirectCandidates(classified, candidates)
+	candidates = filterBuiltinCandidates(request.Context(), candidates)
+	if len(candidates) == 0 {
+		writeInferenceError(outWriter, 422, "builtin_tool_provider_unavailable", "configured tool provider must support native Responses", false, nil)
+		return
+	}
 	if turn := responsesWSTurnFromContext(request.Context()); turn != nil {
+		for _, candidate := range candidates {
+			if reason := websocketSkip(candidate, classified.routingModel()); reason != "" {
+				session.noteRoutingSkip(candidate.CanonicalService().ID, reason)
+			}
+		}
 		candidates = turn.session.filterCandidates(classified.Model, classified.routingModel(), candidates)
 		if len(candidates) == 0 {
 			writeInferenceError(outWriter, http.StatusUnprocessableEntity, "responses_websocket_unavailable", "no enabled API provider supports native Responses WebSocket for this model and connection", false, nil)
 			session.noteFailed(errorSummaryFromInference("responses_websocket_unavailable", "no enabled API provider supports Responses WebSocket for this connection", false))
 			return
+		}
+		if turn.session.serviceID != "" {
+			// Later turns stay on the provider that opened the connection.
+			session.noteRoutingPin(contract.RoutingSelectionWebSocketConnection, turn.session.serviceID)
 		}
 	}
 	candidates, err = handler.bindResponseAffinity(request.Context(), classified, candidates)
@@ -719,6 +765,7 @@ func (handler *Handler) loadAuditSettings(ctx context.Context) contract.AuditSet
 func (handler *Handler) startRecordSession(request *http.Request, classified Request) *recordSession {
 	accessTokenID, _ := AccessTokenIDFromContext(request.Context())
 	session := newRecordSession(classified, accessTokenID, handler.loadAuditSettings(request.Context()))
+	session.clientType = detectClientType(request.Header)
 	session.bindPersistence(handler.requestRecords, handler.auditBlobs, handler.recordLogger)
 	if handler.requestRecords != nil {
 		session.fingerprinter = handler.sessionFingerprints.get(request.Context(), handler.auditBlobs, handler.recordLogger)

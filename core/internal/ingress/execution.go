@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/planner"
@@ -70,7 +71,18 @@ func (handler *Handler) resolveCandidates(
 	request endpoint.ResolveRequest,
 ) ([]endpoint.Resolved, error) {
 	if resolver, ok := handler.resolver.(endpoint.CandidateResolver); ok {
-		candidates, err := resolver.ResolveCandidates(ctx, request)
+		var candidates []endpoint.Resolved
+		var err error
+		if ranker, ranks := resolver.(endpoint.RankingResolver); ranks {
+			var ranking []endpoint.RankedService
+			candidates, ranking, err = ranker.ResolveRankedCandidates(ctx, request)
+			// Discovery lists every provider's models instead of choosing one.
+			if !request.Protocol.IsModelDiscovery() {
+				recordSessionFromContext(ctx).noteRoutingRanking(ranking)
+			}
+		} else {
+			candidates, err = resolver.ResolveCandidates(ctx, request)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -141,6 +153,9 @@ func (handler *Handler) executeCandidatesWithTest(
 		controller, healthAware = nil, false
 	}
 	schedule := newRecoverySchedule(candidates, body.Replayable())
+	protection := handler.subscriptionProtection(request.Context())
+	// Each official client identity is learned at most once per request.
+	learnedClaude, learnedCodex := false, false
 	repairedTargets := map[string][]byte{}
 	var last executionFailure
 	var lastNetworkFailure executionFailure
@@ -152,10 +167,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			break
 		}
 		candidate := candidates[candidateIndex]
-		if candidate.Unavailable != "" {
-			records.noteCandidateRejected(candidate.CanonicalService().ID, candidate.Unavailable)
-			continue
-		}
+		records.noteRoutingTried(candidate.CanonicalService().ID)
 		candidate.Service = candidate.CanonicalService()
 		candidate.BaseURL = candidate.EffectiveBaseURL()
 		policy := failurePolicy(candidate)
@@ -175,11 +187,11 @@ func (handler *Handler) executeCandidatesWithTest(
 		var plan contract.ExecutionPlan
 		var planErr error
 		convertTo := declaredConvertTo(candidate.Service, classified.Protocol, mode)
-		protocolModel := candidate.UpstreamModel
-		if protocolModel == "" {
-			protocolModel = classified.routingModel()
+		upstreamModel := candidate.UpstreamModel
+		if upstreamModel == "" {
+			upstreamModel = classified.routingModel()
 		}
-		if native := candidate.Service.Kind.ModelNativeProtocol(protocolModel); native != "" {
+		if native := candidate.Service.Kind.ModelNativeProtocol(upstreamModel); native != "" {
 			convertTo = ""
 			if native != classified.Protocol {
 				convertTo = native
@@ -261,11 +273,13 @@ func (handler *Handler) executeCandidatesWithTest(
 			replaceRecoveryRequestBody(attemptRequest, repaired)
 		}
 
-		if candidate.UpstreamModel != "" && plan.Type != contract.PlanTypeRelayKit {
+		// A redirect rewrites only the request's model, and only when it differs
+		// from the client's; the response keeps the upstream's model name.
+		if plan.Type != contract.PlanTypeRelayKit && upstreamModel != classified.Model {
 			rewritten, rewriteErr := rewriteRequestModel(
 				attemptRequest,
 				classified,
-				candidate.UpstreamModel,
+				upstreamModel,
 				body.Replayable(),
 			)
 			if rewriteErr != nil {
@@ -311,10 +325,6 @@ func (handler *Handler) executeCandidatesWithTest(
 				continue
 			}
 			_ = attemptRequest.Body.Close()
-			upstreamModel := candidate.UpstreamModel
-			if upstreamModel == "" {
-				upstreamModel = classified.routingModel()
-			}
 			converted, convertErr := handler.conversionEngine.ConvertRequest(request.Context(), relaykitbridge.ConvertRequestInput{
 				From: plan.InputProtocol, To: plan.UpstreamProtocol, ContentType: attemptRequest.Header.Get("Content-Type"),
 				Body: convertedInput, PublicModel: classified.Model, UpstreamModel: upstreamModel, Streaming: classified.Streaming,
@@ -325,27 +335,96 @@ func (handler *Handler) executeCandidatesWithTest(
 				records.noteCandidateRejected(last.endpointID, last.code())
 				continue
 			}
-			if candidate.Service.Kind == contract.ServiceKindCodexSubscription && plan.UpstreamProtocol == contract.ProtocolOpenAIResponses {
-				if err := prepareCodexConvertedRequest(attemptRequest); err != nil {
+		}
+
+		clientClass := accountauth.ClientClassUnknown
+		codexForcedStream := false
+		if candidate.Service.Kind == contract.ServiceKindCodexSubscription &&
+			(plan.UpstreamProtocol == contract.ProtocolOpenAIResponses || plan.UpstreamProtocol == contract.ProtocolOpenAIResponsesCompact) {
+			converted := plan.Type == contract.PlanTypeRelayKit
+			// A converted request never teaches or keeps a client identity.
+			recognized := !converted && (protection.officialPassthrough || protection.codexAutoLearn) &&
+				accountauth.RecognizedCodexOfficialClient(attemptRequest.Header)
+			if recognized && protection.codexAutoLearn && !learnedCodex {
+				learnedCodex = true
+				handler.learnClientIdentity(request.Context(), contract.SubscriptionProviderOpenAICodex, attemptRequest.Header)
+			}
+			if recognized && protection.officialPassthrough {
+				// A genuine Codex CLI request is forwarded untouched.
+				clientClass = accountauth.ClientClassOfficial
+			} else {
+				clientClass = accountauth.ClientClassThirdParty
+				if converted {
+					clientClass = accountauth.ClientClassConverted
+				}
+				options := codexRequestOptions{normalize: protection.codexRequests, converted: converted}
+				if options.normalize && options.converted {
+					filterCodexRelayKitHeaders(attemptRequest.Header)
+				}
+				if protection.sessionIsolation {
+					options.sessionScope = candidate.Service.ID
+				}
+				forced, err := prepareCodexSubscriptionRequest(attemptRequest, plan.UpstreamProtocol, options)
+				if err != nil {
 					finishPrivacy()
-					last = executionFailure{kind: executionFailureConversionUnsupported, err: err, endpointID: candidate.Service.ID}
+					kind := executionFailureConfiguration
+					if converted {
+						kind = executionFailureConversionUnsupported
+					}
+					last = executionFailure{kind: kind, err: err, endpointID: candidate.Service.ID}
+					records.noteCandidateRejected(last.endpointID, last.code())
+					continue
+				}
+				codexForcedStream = forced
+			}
+		}
+
+		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription && plan.UpstreamProtocol == contract.ProtocolAnthropicMessages {
+			converted := plan.Type == contract.PlanTypeRelayKit
+			official := false
+			if !converted && (protection.officialPassthrough || protection.claudeAutoLearn) &&
+				accountauth.RecognizedClaudeOfficialHeaders(attemptRequest.Header) {
+				// The body signal (metadata.user_id) is peeked only after the
+				// cheap header signals match and passthrough or learning is on.
+				if raw, ok := peekClaudeRequestBody(attemptRequest); ok && accountauth.ClaudeMetadataUserIDRecognized(raw) {
+					if protection.claudeAutoLearn && !learnedClaude {
+						learnedClaude = true
+						handler.learnClientIdentity(request.Context(), contract.SubscriptionProviderClaudeCode, attemptRequest.Header)
+					}
+					official = protection.officialPassthrough
+				}
+			}
+			if official {
+				// A genuine Claude Code request is forwarded untouched.
+				clientClass = accountauth.ClientClassOfficial
+			} else {
+				clientClass = accountauth.ClientClassThirdParty
+				if converted {
+					clientClass = accountauth.ClientClassConverted
+				}
+				options := claudeRequestOptions{normalize: protection.claudeRequests}
+				if options.normalize && converted {
+					filterClaudeRelayKitHeaders(attemptRequest.Header)
+				}
+				if protection.sessionIsolation {
+					options.session = &claudeSessionScope{serviceID: candidate.Service.ID, identity: protection.claudeIdentity}
+					if candidate.Service.Subscription != nil {
+						options.session.accountUUID = candidate.Service.Subscription.ProviderAccountID
+					}
+				}
+				if err := prepareClaudeSubscriptionRequest(attemptRequest, options); err != nil {
+					finishPrivacy()
+					last = executionFailure{kind: executionFailureConfiguration, endpointID: candidate.Service.ID, err: err}
 					records.noteCandidateRejected(last.endpointID, last.code())
 					continue
 				}
 			}
 		}
-
-		if candidate.Service.Kind == contract.ServiceKindClaudeSubscription && plan.UpstreamProtocol == contract.ProtocolAnthropicMessages {
-			if err := prepareClaudeSubscriptionRequest(attemptRequest); err != nil {
-				finishPrivacy()
-				last = executionFailure{kind: executionFailureConfiguration, endpointID: candidate.Service.ID, err: err}
-				records.noteCandidateRejected(last.endpointID, last.code())
-				continue
-			}
-		}
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
-		proxyContext := request.Context()
+		// The recognized class rides the proxy context so the authorizer, which
+		// receives only headers, keeps an official client's identity.
+		proxyContext := accountauth.WithClientClass(request.Context(), clientClass)
 		if authorizeErr == nil {
 			proxyContext, authorizeErr = networkproxy.Bind(proxyContext, candidate.Service, handler.proxyCredentials)
 			attemptRequest = attemptRequest.WithContext(proxyContext)
@@ -410,6 +489,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			continue
 		}
 		health := newAttemptHealthOutcome(controller, candidate, healthAware)
+		health.accountRejections = protection.risk
 		recordSession := recordSessionFromContext(request.Context())
 		if candidate.Service.Kind == contract.ServiceKindOpenCodeGo || candidate.Service.Kind == contract.ServiceKindOpenCodeZen {
 			if headers == nil {
@@ -424,17 +504,12 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 
 		outWriter := http.ResponseWriter(downstream)
-		var aliasWriter *aliasRestoringWriter
 		var restoring *restoringResponseWriter
 		var relayWriter *relayKitResponseWriter
 		if recordSession != nil &&
 			(recordSession.responseCaptureEnabled() ||
 				recordSession.upstreamResponseCapture.enabled) {
 			attemptRequest.Header.Del("Accept-Encoding")
-		}
-		upstreamModel := candidate.UpstreamModel
-		if upstreamModel == "" {
-			upstreamModel = classified.routingModel()
 		}
 		canRepairThinking := body.Replayable() && policy.AllowsThinkingSignatureRecovery() &&
 			supportsThinkingSignatureRecovery(plan, upstreamModel)
@@ -448,19 +523,9 @@ func (handler *Handler) executeCandidatesWithTest(
 			attemptRequest.Header.Del("Accept-Encoding")
 		}
 		// Writer onion (outermost receives upstream bytes first):
-		// Native/Delegated: upstream -> privacy restore -> alias restore -> client
+		// Native/Delegated: upstream -> privacy restore -> client
 		// RelayKit: upstream -> convert -> privacy restore -> client
-		if plan.Type != contract.PlanTypeRelayKit && candidate.UpstreamModel != "" && classified.Model != "" {
-			attemptRequest.Header.Del("Accept-Encoding")
-			aliasWriter = newAliasRestoringWriter(
-				outWriter,
-				classified.Model,
-				candidate.UpstreamModel,
-				classified.Streaming,
-				aliasMemberNames(classified.Protocol),
-			)
-			outWriter = aliasWriter
-		}
+		// A forced Codex stream is first aggregated: upstream -> aggregate -> ...
 		if len(redactions) > 0 {
 			attemptRequest.Header.Del("Accept-Encoding")
 			restoring = newRestoringResponseWriter(
@@ -474,10 +539,6 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 		if plan.Type == contract.PlanTypeRelayKit {
 			attemptRequest.Header.Del("Accept-Encoding")
-			upstreamModel := candidate.UpstreamModel
-			if upstreamModel == "" {
-				upstreamModel = classified.routingModel()
-			}
 			relayWriter, planErr = newRelayKitResponseWriter(
 				outWriter, handler.conversionEngine, plan, classified.Model, upstreamModel,
 			)
@@ -490,7 +551,15 @@ func (handler *Handler) executeCandidatesWithTest(
 			}
 			outWriter = relayWriter
 		}
-		deferHealthStatus := (restoring != nil || aliasWriter != nil || relayWriter != nil) && !classified.Streaming
+		var codexAggregate *codexAggregateWriter
+		if codexForcedStream {
+			// The Codex backend only streams; rebuild the JSON response locally.
+			attemptRequest.Header.Del("Accept-Encoding")
+			attemptRequest.Header.Set("Accept", "text/event-stream")
+			codexAggregate = newCodexAggregateWriter(outWriter)
+			outWriter = codexAggregate
+		}
+		deferHealthStatus := (restoring != nil || relayWriter != nil || codexAggregate != nil) && !classified.Streaming
 		var upstreamStatus atomic.Int32
 
 		responseTimeout := handler.responseStartTimeout
@@ -542,21 +611,49 @@ func (handler *Handler) executeCandidatesWithTest(
 			if recordSession != nil {
 				body = recordSession.wrapUpstreamResponseBody(status, header, body)
 			}
-			return body
+			if !protection.risk {
+				return body
+			}
+			return handler.watchSubscriptionStream(request.Context(), candidate, status, header, body)
 		}
 		forwardTarget.HandleResponse = func(response *http.Response) error {
 			if test != nil && test.observer.Response != nil {
 				test.observer.Response(response.StatusCode)
 			}
 			startWriter.markStarted(response.StatusCode)
+			if response.StatusCode < 400 {
+				handler.clearExpiredSubscriptionRisk(request.Context(), candidate, time.Now())
+			}
 			if response.StatusCode >= 400 {
 				action := policy.ActionForStatus(response.StatusCode)
 				reason := "http_" + fmt.Sprint(response.StatusCode)
+				inspectedDone, inspectedComplete := false, false
+				var inspected []byte
+				inspect := func() ([]byte, bool) {
+					if !inspectedDone {
+						inspected, inspectedComplete = inspectRecoveryError(response)
+						inspectedDone = true
+					}
+					return inspected, inspectedComplete
+				}
+				var risk subscriptionRiskSignal
+				if protection.risk && handler.subscriptionRisk != nil && subscriptionRiskKind(candidate.Service.Kind) &&
+					subscriptionRiskStatus(response.StatusCode) {
+					risk = inspectSubscriptionRisk(candidate.Service.Kind, response, inspect, time.Now())
+					handler.applySubscriptionRisk(request.Context(), candidate, risk, headers)
+				}
+				accountBlocked := risk.scope == subscriptionRiskAccount
+				if accountBlocked {
+					// The paused account cannot serve this request either; move on
+					// without retrying any of its routes.
+					action = contract.FailureFailover
+					schedule.excludeService(candidate.CanonicalService().ID)
+				}
 				var repaired []byte
-				if response.StatusCode == http.StatusBadRequest && !downstream.Committed() &&
+				if response.StatusCode == http.StatusBadRequest && !downstream.Committed() && !accountBlocked &&
 					(canRepairThinking || canRepairOpenAI) && repairedTargets[repairTarget] == nil &&
 					schedule.total < schedule.policy.MaxAttempts {
-					data, complete := inspectRecoveryError(response)
+					data, complete := inspect()
 					if complete && canRepairThinking && isThinkingSignatureError(data) {
 						repaired = prepareReasoningRecovery(body, rectifyThinkingSignature)
 						if repaired != nil {
@@ -580,9 +677,18 @@ func (handler *Handler) executeCandidatesWithTest(
 					}
 				}
 				retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
+				if risk.scope == subscriptionRiskModel {
+					retryAfter = max(retryAfter, risk.cooldown)
+				}
 				if test == nil && response.StatusCode == http.StatusTooManyRequests {
 					if cooldown, ok := handler.resolver.(endpoint.RateLimitController); ok {
-						cooldown.RecordRateLimit(candidate, max(retryAfter, time.Duration(policy.InitialDelayMS)*time.Millisecond))
+						duration := max(retryAfter, time.Duration(policy.InitialDelayMS)*time.Millisecond)
+						if until := risk.observation.PausedUntil; accountBlocked && until != nil {
+							// Hold concurrent in-flight requests off this route until the
+							// persisted pause is visible to their next resolution.
+							duration = max(duration, time.Until(*until))
+						}
+						cooldown.RecordRateLimit(candidate, duration)
 					}
 				}
 				recovering := false
@@ -611,9 +717,6 @@ func (handler *Handler) executeCandidatesWithTest(
 							}
 							if restoring != nil {
 								_ = restoring.Finish()
-							}
-							if aliasWriter != nil {
-								_ = aliasWriter.Finish()
 							}
 						} else {
 							writeInferenceError(downstream, response.StatusCode, "upstream_error", "upstream returned an error and no recovery target was available", false, nil)
@@ -656,6 +759,11 @@ func (handler *Handler) executeCandidatesWithTest(
 		attemptContext.Stop()
 		timedOut := attemptContext.TimedOut()
 		relayConversionFailed := false
+		if codexAggregate != nil && retryHTTP == nil && forwardErr == nil {
+			if finishErr := codexAggregate.Finish(); finishErr != nil {
+				forwardErr = transport.NewResponseError(finishErr)
+			}
+		}
 		if relayWriter != nil && forwardErr == nil {
 			if finishErr := relayWriter.Finish(); finishErr != nil {
 				forwardErr = transport.NewResponseError(finishErr)
@@ -670,11 +778,6 @@ func (handler *Handler) executeCandidatesWithTest(
 		if restoring != nil {
 			if session := recordSessionFromContext(request.Context()); session != nil {
 				session.notePrivacyRestore(restoring.privacyRestoreSummary())
-			}
-		}
-		if aliasWriter != nil && forwardErr == nil {
-			if finishErr := aliasWriter.Finish(); finishErr != nil {
-				forwardErr = transport.NewResponseError(finishErr)
 			}
 		}
 		if retryHTTP == nil && relayWriter != nil && forwardErr != nil && !downstream.Committed() {
@@ -1166,7 +1269,10 @@ type attemptHealthOutcome struct {
 	controller endpoint.AttemptController
 	candidate  endpoint.Resolved
 	enabled    bool
-	once       sync.Once
+	// accountRejections counts subscription credential and entitlement
+	// rejections as failures under subscription risk protection.
+	accountRejections bool
+	once              sync.Once
 }
 
 func newAttemptHealthOutcome(
@@ -1187,6 +1293,13 @@ func (outcome *attemptHealthOutcome) RecordStatus(status int) {
 		return
 	}
 	if status >= http.StatusInternalServerError {
+		outcome.Failure()
+		return
+	}
+	// A subscription credential or entitlement rejection affects every request
+	// of the account, unlike request errors such as 400.
+	if outcome != nil && outcome.accountRejections && outcome.candidate.CanonicalService().Kind.IsSubscription() &&
+		(status == http.StatusUnauthorized || status == http.StatusPaymentRequired || status == http.StatusForbidden) {
 		outcome.Failure()
 		return
 	}

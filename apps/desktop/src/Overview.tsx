@@ -14,18 +14,16 @@ import {
   ArrowRight,
   ArrowUpRight,
   Boxes,
-  Bot,
   Check,
   CircleDollarSign,
   Copy,
-  Key,
   Plus,
   RefreshCw,
   RotateCcw,
   SlidersHorizontal,
-  Server,
 } from "@/components/icons";
 
+import { ActionHint } from "@/components/ActionHint";
 import { CompactCount } from "@/components/CompactCount";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
@@ -34,6 +32,7 @@ import {
   ActivityHeatmap,
   type ActivityCell,
 } from "@/components/ActivityHeatmap";
+import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { HelpPopover } from "@/components/HelpPopover";
 import { IconButton } from "@/components/IconButton";
 import { SegmentedControl } from "@/components/SegmentedControl";
@@ -77,7 +76,6 @@ import {
   formatCompactNumber,
   formatExactNumber,
 } from "./format-compact-number";
-import astrlinkLogo from "./assets/astrlink-logo.svg";
 import { i18n, useT } from "./i18n";
 import { PageHeader } from "./PageHeader";
 import { ActionGroup } from "@/components/ActionGroup";
@@ -128,6 +126,9 @@ export function Overview({
   onCopy,
   onManageServices,
   onManageTokens,
+  onOpenOnboarding,
+  onDismissOnboardingHint,
+  showOnboardingHint = false,
   onOpenService,
   onOpenTokenRecords,
   onRefreshServices,
@@ -149,6 +150,9 @@ export function Overview({
   onCopy: (value: string, label: string) => void;
   onManageServices: () => void;
   onManageTokens: () => void;
+  onOpenOnboarding?: () => void;
+  onDismissOnboardingHint?: () => void;
+  showOnboardingHint?: boolean;
   onOpenService: (serviceId: string) => void;
   onOpenTokenRecords: (tokenId: string) => void;
   onRefreshServices: () => void;
@@ -166,8 +170,21 @@ export function Overview({
   );
   const [editingLayout, setEditingLayout] = useState(false);
   const layout = useOverviewLayout();
+  const footerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!showOnboardingHint) return;
+    const scroller = footerRef.current?.closest<HTMLElement>(
+      '[data-slot="overview-content"]',
+    );
+    scroller?.scrollTo?.({
+      top: scroller.scrollHeight,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  }, [showOnboardingHint]);
   const visibleModules = layout.order.filter(
-    (id) => !layout.hidden.includes(id),
+    (id) => id !== "system" && !layout.hidden.includes(id),
   );
   const capabilities = snapshot?.capabilities ?? null;
   const conversionEngine = capabilities?.conversion_engine;
@@ -190,19 +207,6 @@ export function Overview({
     revision: summary,
   });
 
-  // A disconnected catalog is unknown, not empty. Use the same compact surface
-  // with connection-specific content, and keep any retained activity visible.
-  const emptyWorkspace =
-    catalog.items.length === 0 &&
-    tokenCatalog.items.length === 0 &&
-    catalog.status !== "error" &&
-    tokenCatalog.status !== "error" &&
-    usage.status !== "error" &&
-    !summary?.scanned_records &&
-    !summary?.totals.requests &&
-    !summary?.totals.total_tokens &&
-    !summary?.by_service.length &&
-    !summary?.by_model.length;
   const inferenceURL = snapshot?.ready?.inference_url ?? "";
   const apiAddressLabel = t("overview.apiAddress");
   const apiCopied =
@@ -667,15 +671,15 @@ export function Overview({
     system: (
       <section
         aria-labelledby="system-details-heading"
-        className="min-w-0 px-1 pb-1"
+        className="min-w-0 flex-1 py-1.5"
       >
-        <h2
-          className="text-xs font-medium text-muted-foreground"
-          id="system-details-heading"
+        <HelpDisclosure
+          title={
+            <h2 className="font-medium" id="system-details-heading">
+              {t("overview.systemDetails")}
+            </h2>
+          }
         >
-          {t("overview.systemDetails")}
-        </h2>
-        <div className="mt-3 grid min-w-0 gap-3 text-xs leading-relaxed text-muted-foreground">
           <dl className="grid grid-cols-3 gap-x-6 gap-y-4 max-[720px]:grid-cols-2">
             {systemDetails.map(([term, detail]) => (
               <div className="min-w-0" key={term}>
@@ -709,14 +713,14 @@ export function Overview({
               )}
             </div>
           </div>
-        </div>
+        </HelpDisclosure>
       </section>
     ),
   };
 
   return (
     <ScrollWorkspace
-      contentClassName="[overflow-anchor:none]"
+      contentClassName="flex flex-col [overflow-anchor:none]"
       contentSlot="overview-content"
       data-slot="overview-workspace"
       header={
@@ -751,28 +755,26 @@ export function Overview({
                     <SlidersHorizontal aria-hidden="true" />
                   )}
                 </IconButton>
-                {!emptyWorkspace ? (
-                  <Button
-                    disabled={!isReady || usage.status === "loading"}
-                    onClick={onRefreshUsage}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                    aria-label={t("common.refresh")}
-                  >
-                    <RefreshCw
-                      aria-hidden="true"
-                      className={cn(
-                        usage.status === "loading" &&
-                          "animate-spin motion-reduce:animate-none",
-                      )}
-                    />
-                  </Button>
-                ) : null}
+                <Button
+                  disabled={!isReady || usage.status === "loading"}
+                  onClick={onRefreshUsage}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                  aria-label={t("common.refresh")}
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={cn(
+                      usage.status === "loading" &&
+                        "animate-spin motion-reduce:animate-none",
+                    )}
+                  />
+                </Button>
                 <StatusBadge tone={statusTone}>
                   {isReady ? t("overview.gatewayHealthy") : statusLabel}
                 </StatusBadge>
-                {isNativeApp && !isReady && !emptyWorkspace ? (
+                {isNativeApp && !isReady ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -801,23 +803,15 @@ export function Overview({
       }
     >
       <div className="grid min-w-0 gap-3 pb-1">
-        {emptyWorkspace && !editingLayout ? (
-          <>
-            <OverviewWelcome
-              catalog={catalog}
-              isNativeApp={isNativeApp}
-              isReady={isReady}
-              isRestarting={isRestarting}
-              onAddService={onAddService}
-              onManageServices={onManageServices}
-              onManageTokens={onManageTokens}
-              onRestart={onRestart}
-              snapshot={snapshot}
-              tokenCatalog={tokenCatalog}
-            />
-            {!layout.hidden.includes("system") && moduleContent.system}
-          </>
-        ) : !editingLayout && visibleModules.length === 0 ? (
+        {isNativeApp && !isReady && snapshot?.last_error ? (
+          <p
+            className="max-h-24 overflow-y-auto break-words text-xs text-danger-foreground"
+            role="alert"
+          >
+            {snapshot.last_error}
+          </p>
+        ) : null}
+        {!editingLayout && visibleModules.length === 0 ? (
           <EmptyState
             title={t("overview.allModulesHidden")}
             description={t("overview.allModulesHiddenHint")}
@@ -849,17 +843,62 @@ export function Overview({
                   />
                 </Label>
               )}
-              items={(editingLayout ? layout.order : visibleModules).map(
-                (id) => ({ id }),
-              )}
+              items={(editingLayout
+                ? layout.order.filter((id) => id !== "system")
+                : visibleModules
+              ).map((id) => ({ id }))}
               label={t("overview.customizeLayout")}
-              onChange={(items) => layout.save(items.map(({ id }) => id))}
+              onChange={(items) =>
+                layout.save([...items.map(({ id }) => id), "system"])
+              }
               variant="modules"
             >
               {({ id }) => !layout.hidden.includes(id) && moduleContent[id]}
             </OrderedList>
           </>
         )}
+      </div>
+      <div
+        ref={footerRef}
+        className="mt-auto flex min-w-0 shrink-0 items-start justify-between gap-3 px-1 pt-3"
+        data-slot="overview-footer"
+      >
+        {editingLayout ? (
+          <Label className="flex min-h-7 items-center gap-2 text-xs font-normal text-muted-foreground">
+            {t("overview.systemDetails")}
+            <Switch
+              aria-label={t("overview.showModule", {
+                module: moduleLabels.system,
+              })}
+              checked={!layout.hidden.includes("system")}
+              onCheckedChange={(visible) =>
+                layout.setVisible("system", visible)
+              }
+              size="sm"
+            />
+          </Label>
+        ) : !layout.hidden.includes("system") ? (
+          moduleContent.system
+        ) : null}
+        {onOpenOnboarding ? (
+          <div className="ml-auto shrink-0">
+            <ActionHint
+              open={showOnboardingHint}
+              onDismiss={() => onDismissOnboardingHint?.()}
+              message={t("onboarding.deferredHint")}
+              dismissLabel={t("common.close")}
+            >
+              <Button
+                variant={showOnboardingHint ? "secondary" : "ghost"}
+                className={cn(showOnboardingHint && "text-primary")}
+                size="sm"
+                onClick={onOpenOnboarding}
+              >
+                {t("onboarding.open")}
+              </Button>
+            </ActionHint>
+          </div>
+        ) : null}
       </div>
     </ScrollWorkspace>
   );
@@ -1192,181 +1231,6 @@ function TokenUsagePanel({
         }}
       </PaginatedList>
     </Panel>
-  );
-}
-
-function OverviewWelcome({
-  catalog,
-  isNativeApp,
-  isReady,
-  isRestarting,
-  onAddService,
-  onManageServices,
-  onManageTokens,
-  onRestart,
-  snapshot,
-  tokenCatalog,
-}: {
-  catalog: ServiceCatalog;
-  isNativeApp: boolean;
-  isReady: boolean;
-  isRestarting: boolean;
-  onAddService: () => void;
-  onManageServices: () => void;
-  onManageTokens: () => void;
-  onRestart: () => void;
-  snapshot: AppSnapshot | null;
-  tokenCatalog: AccessTokenCatalog;
-}) {
-  const t = i18n.t.bind(i18n);
-  const loading =
-    !snapshot ||
-    (isReady &&
-      (catalog.status !== "ready" || tokenCatalog.status !== "ready"));
-  const gatewayTone = snapshot ? phaseTone(snapshot.phase) : "pending";
-  const gatewayLabel = snapshot
-    ? phaseLabel(snapshot.phase)
-    : t("core.phase.connecting");
-  const description = loading
-    ? t("overview.welcomeLoading")
-    : !isNativeApp
-      ? t("overview.welcomePreview")
-      : !isReady
-        ? t("overview.welcomeDisconnected")
-        : t("overview.welcomeEmpty");
-
-  return (
-    <section
-      aria-labelledby="welcome-heading"
-      className="flex min-w-0 flex-1 flex-col"
-      data-slot="overview-welcome"
-    >
-      <EmptyState
-        className="min-h-72 flex-1"
-        description={description}
-        illustration={
-          <div
-            aria-hidden="true"
-            className="flex w-64 max-w-full items-center justify-center gap-3"
-          >
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">
-              <Bot className="size-5" />
-            </span>
-            <span className="min-w-2 flex-1 border-t border-dashed border-input" />
-            <img
-              alt=""
-              className="size-16 shrink-0"
-              height={64}
-              src={astrlinkLogo}
-              width={64}
-            />
-            <span className="min-w-2 flex-1 border-t border-dashed border-input" />
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">
-              <Server className="size-5" />
-            </span>
-          </div>
-        }
-        title={t("overview.welcomeTitle")}
-        titleId="welcome-heading"
-        variant="page"
-        action={
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {loading ? (
-              <LoadingState label={t("overview.loadingServices")} />
-            ) : !isNativeApp ? (
-              <Button
-                onClick={onManageServices}
-                type="button"
-                variant="outline"
-              >
-                <Server aria-hidden="true" />
-                {t("overview.welcomeBrowseServices")}
-                <ArrowRight aria-hidden="true" />
-              </Button>
-            ) : !isReady ? (
-              <Button
-                disabled={isRestarting || snapshot?.phase === "stopping"}
-                onClick={onRestart}
-                type="button"
-              >
-                <RefreshCw
-                  aria-hidden="true"
-                  className={cn(
-                    isRestarting && "animate-spin motion-reduce:animate-none",
-                  )}
-                />
-                {t(
-                  isRestarting
-                    ? "overview.restarting"
-                    : "overview.restartGateway",
-                )}
-              </Button>
-            ) : (
-              <>
-                <Button onClick={onAddService} type="button">
-                  <Plus aria-hidden="true" />
-                  {t("overview.addService")}
-                </Button>
-                <Button onClick={onManageTokens} type="button" variant="ghost">
-                  <Key aria-hidden="true" />
-                  {t("overview.welcomeCreateToken")}
-                </Button>
-              </>
-            )}
-          </div>
-        }
-      />
-      {isNativeApp && !isReady && snapshot?.last_error ? (
-        <p
-          className="mb-4 max-h-24 overflow-y-auto break-words text-xs text-danger-foreground"
-          role="alert"
-        >
-          {snapshot.last_error}
-        </p>
-      ) : null}
-      <dl className="grid min-w-0 border-y @min-[520px]/workspace-surface:grid-cols-3">
-        {[
-          {
-            icon: <StatusDot tone={isNativeApp ? gatewayTone : "neutral"} />,
-            label: t("nav.gateway"),
-            value: isNativeApp
-              ? gatewayLabel
-              : t("overview.welcomeNotConnected"),
-          },
-          {
-            icon: <Server aria-hidden="true" className="size-4" />,
-            label: t("nav.services"),
-            value: t(
-              catalog.status === "ready"
-                ? "overview.welcomeNoServices"
-                : "overview.welcomeNotRead",
-            ),
-          },
-          {
-            icon: <Key aria-hidden="true" className="size-4" />,
-            label: t("nav.tokens"),
-            value: t(
-              tokenCatalog.status === "ready"
-                ? "overview.welcomeNoTokens"
-                : "overview.welcomeNotRead",
-            ),
-          },
-        ].map(({ icon, label, value }) => (
-          <div
-            className="flex min-w-0 items-center gap-3 px-3 py-4 max-[520px]:py-3"
-            key={label}
-          >
-            <span className="flex size-8 shrink-0 items-center justify-center text-muted-foreground">
-              {icon}
-            </span>
-            <div className="min-w-0">
-              <dt className="text-xs font-medium">{label}</dt>
-              <dd className="mt-0.5 text-xs text-muted-foreground">{value}</dd>
-            </div>
-          </div>
-        ))}
-      </dl>
-    </section>
   );
 }
 

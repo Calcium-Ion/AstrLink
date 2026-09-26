@@ -113,7 +113,11 @@ type pendingAttemptRecord struct {
 }
 
 type recordSession struct {
-	channelBinding           *channelBindingAttempt
+	clientType     contract.ClientType
+	channelBinding *channelBindingAttempt
+	// routingSettings is the request's single settings read; nil when the
+	// store has none or the read failed.
+	routingSettings          *contract.RoutingSettings
 	pendingAttempt           *pendingAttemptRecord
 	recovery                 *contract.RequestRecovery
 	modelRedirect            *contract.RequestModelRedirect
@@ -129,7 +133,6 @@ type recordSession struct {
 	upstreamHTTPStatus       int
 	hasUpstreamHTTPStatus    bool
 	endpointID               *contract.ServiceID
-	routeID                  *contract.RouteID
 	plan                     *contract.ExecutionPlan
 	errorSummary             *contract.ErrorSummary
 	privacyRestore           *contract.PrivacyRestoreSummary
@@ -161,6 +164,9 @@ type recordSession struct {
 	// next linked request compares against; nil when the protocol has none.
 	turn        *convo.TurnState
 	sessionLink *contract.SessionLink
+	// routing explains the provider choice. All attempts share it, so
+	// resetAttemptLocal keeps it; nil when the resolver cannot rank providers.
+	routing *routingTrace
 	// inboundCursors are the explicit cursors the request named; they are
 	// stored so sibling requests naming the same conversation can link.
 	inboundCursors []contract.SessionCursor
@@ -397,6 +403,7 @@ func (session *recordSession) recordSnapshot(
 		httpStatus = &status
 	}
 	record := contract.RequestRecord{
+		ClientType:         session.clientType,
 		ID:                 session.id,
 		ParentRequestID:    nil,
 		AttemptIndex:       session.attemptIndex,
@@ -408,7 +415,6 @@ func (session *recordSession) recordSnapshot(
 		RequestedModel:     requestedModel,
 		ReasoningEffort:    session.classified.ReasoningEffort,
 		Streaming:          session.classified.Streaming,
-		RouteID:            session.routeID,
 		ServiceID:          session.endpointID,
 		LocalAccessTokenID: session.accessTokenID,
 		Plan:               session.plan,
@@ -459,6 +465,7 @@ func (session *recordSession) recordSnapshot(
 		redirect := *session.modelRedirect
 		record.ModelRedirect = &redirect
 	}
+	record.RoutingDecision = session.routingDecision()
 	record.Cursors = mergeSessionCursors(session.inboundCursors, session.outputCursors)
 	return record
 }
@@ -587,18 +594,8 @@ func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan con
 		session.recovery = &contract.RequestRecovery{}
 	}
 	session.recovery.UpstreamModel = model
-	if candidate.Path != nil {
-		session.recovery.PathID = candidate.Path.ID
-		session.recovery.PathName = candidate.Path.Name
-		session.recovery.PathVersion = candidate.Path.Version
-		session.recovery.StepID = candidate.Path.StepID
-	}
 	endpointID := candidate.Service.ID
 	session.endpointID = &endpointID
-	if candidate.RouteID != "" {
-		routeID := candidate.RouteID
-		session.routeID = &routeID
-	}
 	planCopy := plan
 	session.plan = &planCopy
 }
@@ -740,6 +737,12 @@ func (session *recordSession) wrapUpstreamResponseBody(
 		session.upstreamHTTPMetaCaptured = true
 	}
 	if session.upstreamScanner != nil {
+		// A non-streaming request can be answered with SSE when streaming was
+		// forced upstream (Codex subscriptions); parse usage from the events.
+		if !session.upstreamScanner.streaming &&
+			strings.HasPrefix(strings.ToLower(strings.TrimSpace(headers.Get("Content-Type"))), "text/event-stream") {
+			session.upstreamScanner.reset(session.upstreamScanner.protocol, true)
+		}
 		session.upstreamScanner.setContentEncoding(headers.Get("Content-Encoding"))
 	}
 	if body == nil {
@@ -1046,7 +1049,6 @@ func (session *recordSession) resetAttemptLocal() {
 	session.upstreamHTTPStatus = 0
 	session.hasUpstreamHTTPStatus = false
 	session.endpointID = nil
-	session.routeID = nil
 	session.plan = nil
 	session.errorSummary = nil
 	session.privacyRestore = nil

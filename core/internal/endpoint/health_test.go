@@ -18,7 +18,7 @@ func TestCircuitBreakerConsecutiveFailuresAndSuccessReset(t *testing.T) {
 		Cooldown:         30 * time.Second,
 		Now:              func() time.Time { return now },
 	})
-	candidate := healthCandidate(false)
+	candidate := healthCandidate()
 
 	for attempt := 0; attempt < 2; attempt++ {
 		if !breaker.begin(candidate) {
@@ -71,7 +71,7 @@ func TestCircuitBreakerAllowsExactlyOneHalfOpenProbe(t *testing.T) {
 		Cooldown:         30 * time.Second,
 		Now:              clock,
 	})
-	candidate := healthCandidate(false)
+	candidate := healthCandidate()
 	if !breaker.begin(candidate) {
 		t.Fatal("initial attempt was not admitted")
 	}
@@ -136,7 +136,7 @@ func TestCircuitBreakerHalfOpenOutcomes(t *testing.T) {
 				Cooldown:         30 * time.Second,
 				Now:              func() time.Time { return now },
 			})
-			candidate := healthCandidate(false)
+			candidate := healthCandidate()
 			if !breaker.begin(candidate) {
 				t.Fatal("initial attempt was not admitted")
 			}
@@ -159,53 +159,12 @@ func TestCircuitBreakerHalfOpenOutcomes(t *testing.T) {
 	}
 }
 
-func TestCircuitBreakerPinnedEndpointBypassesOpenWithoutStealingProbe(t *testing.T) {
-	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
-	breaker := newCircuitBreaker(circuitBreakerConfig{
-		FailureThreshold: 1,
-		Cooldown:         30 * time.Second,
-		Now:              func() time.Time { return now },
-	})
-	automatic := healthCandidate(false)
-	pinned := healthCandidate(true)
-	if !breaker.begin(automatic) {
-		t.Fatal("initial automatic attempt was not admitted")
-	}
-	breaker.failure(automatic)
-	if breaker.begin(automatic) {
-		t.Fatal("automatic attempt bypassed an open circuit")
-	}
-	if !breaker.begin(pinned) {
-		t.Fatal("explicitly pinned attempt did not bypass an open circuit")
-	}
-	breaker.success(pinned)
-	if breaker.begin(automatic) {
-		t.Fatal("pinned bypass stole and closed the automatic circuit")
-	}
-
-	now = now.Add(30 * time.Second)
-	if !breaker.begin(automatic) {
-		t.Fatal("automatic half-open probe was not admitted")
-	}
-	if !breaker.begin(pinned) {
-		t.Fatal("pinned request did not remain usable during half-open probe")
-	}
-	breaker.failure(pinned)
-	if breaker.begin(automatic) {
-		t.Fatal("second automatic half-open probe was admitted concurrently")
-	}
-	breaker.success(automatic)
-	if !breaker.begin(automatic) {
-		t.Fatal("successful automatic probe did not close the circuit")
-	}
-}
-
 func TestStoreResolverImplementsAttemptControllerWithDefaultCircuit(t *testing.T) {
 	resolver, err := NewStoreResolver(resolverStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate := healthCandidate(false)
+	candidate := healthCandidate()
 	for attempt := 0; attempt < defaultFailureThreshold; attempt++ {
 		if !resolver.BeginAttempt(candidate) {
 			t.Fatalf("default attempt %d was excluded before threshold", attempt+1)
@@ -217,101 +176,65 @@ func TestStoreResolverImplementsAttemptControllerWithDefaultCircuit(t *testing.T
 	}
 }
 
-func TestStoreResolverExcludesOpenCandidatesIncludingRetiredPins(t *testing.T) {
-	tests := []struct {
-		name        string
-		routes      []contract.Route
-		wantPinned  bool
-		wantOpenErr bool
-	}{
-		{
-			name:        "automatic candidate is excluded",
-			wantOpenErr: true,
-		},
-		{
-			name: "retired single target route cannot bypass health",
-			routes: []contract.Route{
-				resolverRoute(
-					"route_pin",
-					0,
-					"",
-					resolverTarget("endpoint_health", contract.PlanTypeNative, 0),
-				),
-			},
-			wantPinned:  false,
-			wantOpenErr: true,
-		},
+func TestStoreResolverExcludesOpenCandidates(t *testing.T) {
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	candidateEndpoint := resolverEndpoint(
+		"endpoint_health",
+		contract.CapabilityModeNative,
+		true,
+		nil,
+	)
+	resolver, err := NewStoreResolver(resolverStore{
+		endpoints: []contract.Endpoint{candidateEndpoint},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
-			candidateEndpoint := resolverEndpoint(
-				"endpoint_health",
-				contract.CapabilityModeNative,
-				true,
-				nil,
-			)
-			resolver, err := NewStoreResolver(resolverStore{
-				endpoints: []contract.Endpoint{candidateEndpoint},
-				routes:    test.routes,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			resolver.breaker = newCircuitBreaker(circuitBreakerConfig{
-				FailureThreshold: 1,
-				Cooldown:         30 * time.Second,
-				Now:              func() time.Time { return now },
-			})
-			request := ResolveRequest{
-				Protocol:  contract.ProtocolOpenAIResponses,
-				Model:     "gpt-5",
-				Streaming: true,
-			}
-			candidates, err := resolver.ResolveCandidates(context.Background(), request)
-			if err != nil || len(candidates) != 1 || candidates[0].Pinned != test.wantPinned {
-				t.Fatalf("initial candidates = %#v, %v", candidates, err)
-			}
-			if !resolver.BeginAttempt(candidates[0]) {
-				t.Fatal("initial candidate was not admitted")
-			}
-			resolver.RecordFailure(candidates[0])
+	resolver.breaker = newCircuitBreaker(circuitBreakerConfig{
+		FailureThreshold: 1,
+		Cooldown:         30 * time.Second,
+		Now:              func() time.Time { return now },
+	})
+	request := ResolveRequest{
+		Protocol:  contract.ProtocolOpenAIResponses,
+		Model:     "gpt-5",
+		Streaming: true,
+	}
+	candidates, err := resolver.ResolveCandidates(context.Background(), request)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("initial candidates = %#v, %v", candidates, err)
+	}
+	if !resolver.BeginAttempt(candidates[0]) {
+		t.Fatal("initial candidate was not admitted")
+	}
+	resolver.RecordFailure(candidates[0])
 
-			candidates, err = resolver.ResolveCandidates(context.Background(), request)
-			if test.wantOpenErr {
-				if !errors.Is(err, ErrNoHealthyEndpoint) || len(candidates) != 0 {
-					t.Fatalf("open automatic candidates = %#v, %v", candidates, err)
-				}
-				var unhealthy *UnhealthyCandidatesError
-				if !errors.As(err, &unhealthy) || len(unhealthy.Services) != 1 || unhealthy.Services[0] != "endpoint_health" {
-					t.Fatalf("open candidates error = %#v, want the skipped service", err)
-				}
-				now = now.Add(30 * time.Second)
-				candidates, err = resolver.ResolveCandidates(context.Background(), request)
-				if err != nil || len(candidates) != 1 {
-					t.Fatalf("cooled candidates = %#v, %v", candidates, err)
-				}
-				return
-			}
-			if err != nil || len(candidates) != 1 || !candidates[0].Pinned {
-				t.Fatalf("open pinned candidates = %#v, %v", candidates, err)
-			}
-		})
+	candidates, err = resolver.ResolveCandidates(context.Background(), request)
+	if !errors.Is(err, ErrNoHealthyEndpoint) || len(candidates) != 0 {
+		t.Fatalf("open automatic candidates = %#v, %v", candidates, err)
+	}
+	var unhealthy *UnhealthyCandidatesError
+	if !errors.As(err, &unhealthy) || len(unhealthy.Services) != 1 || unhealthy.Services[0] != "endpoint_health" {
+		t.Fatalf("open candidates error = %#v, want the skipped service", err)
+	}
+	now = now.Add(30 * time.Second)
+	candidates, err = resolver.ResolveCandidates(context.Background(), request)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("cooled candidates = %#v, %v", candidates, err)
 	}
 }
 
-func healthCandidate(pinned bool) Resolved {
+func healthCandidate() Resolved {
 	return Resolved{
 		Endpoint: contract.Endpoint{ID: "endpoint_health"},
 		Mode:     contract.CapabilityModeNative,
-		Pinned:   pinned,
 	}
 }
 
 func TestRateLimitCooldownIsIsolatedAndConcurrent(t *testing.T) {
 	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 	breaker := newCircuitBreaker(circuitBreakerConfig{Now: func() time.Time { return now }})
-	a := healthCandidate(false)
+	a := healthCandidate()
 	a.UpstreamModel = "a"
 	a.UpstreamProtocol = contract.ProtocolOpenAIChat
 	b := a

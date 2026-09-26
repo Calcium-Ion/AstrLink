@@ -9,6 +9,18 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
+type resolverStore struct {
+	endpoints []contract.Endpoint
+}
+
+func (store resolverStore) ListEndpoints(context.Context, storage.EndpointListOptions) (storage.EndpointPage, error) {
+	items := make([]storage.EndpointRecord, 0, len(store.endpoints))
+	for _, candidate := range store.endpoints {
+		items = append(items, storage.EndpointRecord{Endpoint: candidate})
+	}
+	return storage.EndpointPage{Items: items}, nil
+}
+
 type endpointReaderFunc func(context.Context, storage.EndpointListOptions) (storage.EndpointPage, error)
 
 func (function endpointReaderFunc) ListEndpoints(ctx context.Context, options storage.EndpointListOptions) (storage.EndpointPage, error) {
@@ -132,12 +144,33 @@ func TestStoreResolverPaginatesAndFailsClosed(t *testing.T) {
 	}
 }
 
+func TestStoreResolverResolveServiceFindsOnlyTheEnabledProvider(t *testing.T) {
+	disabled := resolverEndpoint("endpoint_disabled", contract.CapabilityModeNative, true, nil)
+	disabled.Enabled = false
+	// Images API calls are outside protocol routing, so the model list and
+	// Responses capability do not decide eligibility.
+	images := resolverEndpoint("endpoint_images", contract.CapabilityModeDelegated, false, []string{"gpt-5"})
+	resolver, err := NewStoreResolver(resolverStore{endpoints: []contract.Endpoint{disabled, images}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolver.ResolveService(context.Background(), "endpoint_images")
+	if err != nil || resolved.Service.ID != "endpoint_images" || resolved.EffectiveBaseURL() != "https://api.example/v1" {
+		t.Fatalf("ResolveService = %#v, %v", resolved, err)
+	}
+	if _, err := resolved.AuthorizationEndpoint(); err != nil {
+		t.Fatalf("AuthorizationEndpoint: %v", err)
+	}
+	for _, id := range []contract.ServiceID{"endpoint_disabled", "endpoint_missing"} {
+		if _, err := resolver.ResolveService(context.Background(), id); !errors.Is(err, ErrNoEndpoint) {
+			t.Fatalf("ResolveService(%s) error = %v", id, err)
+		}
+	}
+}
+
 func resolverEndpoint(id contract.ServiceID, mode contract.CapabilityMode, streaming bool, models []string) contract.Endpoint {
 	if models == nil {
-		models = []string{
-			"gpt-5", "other", "public-alias", "real", "real-a", "real-b",
-			"real-a-dup", "delegated-rewrite", "native-rewrite", "gemini-real",
-		}
+		models = []string{"gpt-5", "other"}
 	}
 	return contract.Endpoint{
 		ID: id, Name: string(id), Kind: contract.EndpointKindOpenAI,

@@ -156,7 +156,7 @@ func (prober *Prober) probeSubscription(
 	}
 	if account.Provider == contract.SubscriptionProviderClaudeCode {
 		headers := make(http.Header)
-		accountauth.ApplyClaudeAPIHeaders(headers, tokens)
+		accountauth.ApplyClaudeAPIHeaders(headers, tokens, prober.subscriptions.ClaudeIdentity(probeContext))
 		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, true)
 	}
 	if account.Provider == contract.SubscriptionProviderXAIGrok {

@@ -25,7 +25,8 @@ const requestRecordSelectColumns = `
     (SELECT json_group_array(json_object('kind', kind, 'direction', direction, 'value', value))
      FROM (SELECT kind, direction, value FROM request_record_cursors
            WHERE request_record_cursors.request_id = request_records.id
-           ORDER BY kind, direction, value)) AS cursors_json, first_token_ms, model_redirect_json`
+           ORDER BY kind, direction, value)) AS cursors_json, first_token_ms, model_redirect_json,
+    routing_decision_json, client_type`
 
 const requestRecordInsertColumns = `
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
@@ -33,9 +34,9 @@ const requestRecordInsertColumns = `
     http_status, latency_ms, usage_json, error_json, audit_json, privacy_restore_json,
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
     turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json, first_token_ms,
-    model_redirect_json`
+    model_redirect_json, routing_decision_json, client_type`
 
-const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (row requestRecordRow) insertArgs() []any {
 	return []any{
@@ -45,7 +46,7 @@ func (row requestRecordRow) insertArgs() []any {
 		row.errorJSON, row.auditJSON, row.privacyRestoreJSON, row.sessionID, row.previousResponseID,
 		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
 		row.turnIndex, row.sessionLinkJSON, row.turnUserMessages, row.turnUserFingerprint, row.recoveryJSON, row.firstTokenMs,
-		row.modelRedirectJSON,
+		row.modelRedirectJSON, row.routingDecisionJSON, row.clientType,
 	}
 }
 
@@ -131,7 +132,9 @@ ON CONFLICT(id) DO UPDATE SET
     turn_user_messages = excluded.turn_user_messages,
     recovery_json = excluded.recovery_json,
     turn_user_fingerprint = excluded.turn_user_fingerprint,
-    model_redirect_json = excluded.model_redirect_json
+    model_redirect_json = excluded.model_redirect_json,
+    routing_decision_json = excluded.routing_decision_json,
+    client_type = excluded.client_type
 WHERE request_records.status = 'pending' OR excluded.status <> 'pending'`,
 		row.insertArgs()...,
 	)
@@ -562,8 +565,10 @@ WHERE parent_request_id IN (
 }
 
 type requestRecordRow struct {
+	clientType          any
 	recoveryJSON        any
 	modelRedirectJSON   any
+	routingDecisionJSON any
 	id                  string
 	parentRequestID     any
 	attemptIndex        int
@@ -612,6 +617,9 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 		auditJSON:     string(auditJSON),
 		createdAt:     createdAt.Format(time.RFC3339Nano),
 	}
+	if record.ClientType != "" {
+		row.clientType = string(record.ClientType)
+	}
 	if record.Recovery != nil {
 		encoded, err := json.Marshal(record.Recovery)
 		if err != nil {
@@ -625,6 +633,13 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 			return requestRecordRow{}, fmt.Errorf("encode model redirect: %w", err)
 		}
 		row.modelRedirectJSON = string(encoded)
+	}
+	if record.RoutingDecision != nil {
+		encoded, err := json.Marshal(record.RoutingDecision)
+		if err != nil {
+			return requestRecordRow{}, fmt.Errorf("encode routing decision: %w", err)
+		}
+		row.routingDecisionJSON = string(encoded)
 	}
 	if record.ParentRequestID != nil {
 		row.parentRequestID = string(*record.ParentRequestID)
@@ -727,7 +742,7 @@ type scannable interface {
 }
 
 func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
-	var recoveryJSON, modelRedirectJSON sql.NullString
+	var recoveryJSON, modelRedirectJSON, routingDecisionJSON, clientType sql.NullString
 	var firstTokenMs sql.NullInt64
 	var (
 		id, startedAt, status, inputProtocol, auditJSON, createdAt        string
@@ -747,7 +762,7 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		&httpStatus, &latencyMs, &usageJSON, &errorJSON, &auditJSON, &privacyRestoreJSON,
 		&sessionID, &previousResponseID, &outputResponseID, &inputPreview, &eventsJSON,
 		&createdAt, &turnIndex, &sessionLinkJSON, &turnUserMessages, &turnUserFingerprint, &recoveryJSON, &childCount, &cursorsJSON, &firstTokenMs,
-		&modelRedirectJSON,
+		&modelRedirectJSON, &routingDecisionJSON, &clientType,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -756,6 +771,7 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		return contract.RequestRecord{}, fmt.Errorf("%w: request %q started_at", storagecontract.ErrInvalidRecord, id)
 	}
 	record := contract.RequestRecord{
+		ClientType:    contract.ClientType(clientType.String),
 		ID:            contract.RequestID(id),
 		AttemptIndex:  attemptIndex,
 		ChildCount:    childCount,
@@ -775,6 +791,13 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 			return contract.RequestRecord{}, fmt.Errorf("%w: request %q model_redirect", storagecontract.ErrInvalidRecord, id)
 		}
 		record.ModelRedirect = &redirect
+	}
+	if routingDecisionJSON.Valid && routingDecisionJSON.String != "" {
+		var decision contract.RequestRoutingDecision
+		if err := json.Unmarshal([]byte(routingDecisionJSON.String), &decision); err != nil {
+			return contract.RequestRecord{}, fmt.Errorf("%w: request %q routing_decision", storagecontract.ErrInvalidRecord, id)
+		}
+		record.RoutingDecision = &decision
 	}
 	if parentRequestID.Valid {
 		value := contract.RequestID(parentRequestID.String)

@@ -171,7 +171,7 @@ func TestUnlimitedLargeRequestReplayAndRecovery(t *testing.T) {
 func TestClaudeSubscriptionPreparesLargeRequest(t *testing.T) {
 	body := `{"model":"test-model","messages":[],"padding":"` + strings.Repeat("x", 8<<20) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
-	if err := prepareClaudeSubscriptionRequest(request); err != nil {
+	if err := prepareClaudeSubscriptionRequest(request, claudeRequestOptions{normalize: true}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := io.ReadAll(request.Body)

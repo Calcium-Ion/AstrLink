@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Select,
   SelectContent,
@@ -23,7 +24,7 @@ export function FilterSelect({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  options: Array<{ label: string; value: string }>;
+  options: Array<{ label: string; value: string; displayLabel?: ReactNode }>;
 }) {
   return (
     <Select
@@ -37,13 +38,13 @@ export function FilterSelect({
         size="sm"
         title={options.find((option) => option.value === value)?.label}
       >
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 font-normal text-muted-foreground">
-            {label}
-          </span>
-          <span className="min-w-0 truncate">
-            <SelectValue />
-          </span>
+        <span className="flex min-w-0 items-center gap-2 *:data-[slot=select-value]:flex *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:items-center *:data-[slot=select-value]:overflow-hidden">
+          {label ? (
+            <span className="shrink-0 font-normal text-muted-foreground">
+              {label}
+            </span>
+          ) : null}
+          <SelectValue />
         </span>
       </SelectTrigger>
       <SelectContent>
@@ -51,8 +52,11 @@ export function FilterSelect({
           <SelectItem
             key={option.value || "__all__"}
             value={option.value || "__all__"}
+            textValue={option.label}
           >
-            {option.label}
+            {option.displayLabel ?? (
+              <span className="truncate">{option.label}</span>
+            )}
           </SelectItem>
         ))}
       </SelectContent>

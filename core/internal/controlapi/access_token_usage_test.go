@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -33,16 +34,25 @@ func TestAccessTokenUsageAPI(t *testing.T) {
 	started := time.Date(2026, 9, 18, 16, 0, 0, 1, time.UTC)
 	completed := started.Add(time.Second)
 	token := contract.AccessTokenID("token_usage")
+	latency, first, cache := 1000, 500, 20
 	if err := store.InsertRequestRecord(context.Background(), contract.RequestRecord{
 		ID: "request_usage", StartedAt: started, CompletedAt: &completed,
 		Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses,
-		LocalAccessTokenID: &token, Usage: &contract.Usage{TotalTokens: 42}, Audit: contract.NotCapturedAuditSummary(),
+		LocalAccessTokenID: &token, Usage: &contract.Usage{InputTokens: 40, CacheReadTokens: &cache, OutputTokens: 2, TotalTokens: 42}, Audit: contract.NotCapturedAuditSummary(),
+		Streaming: true, LatencyMs: &latency, FirstTokenMs: &first,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	response = accessTokenRequest(t, handler, http.MethodGet, path, "", "")
-	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"items":[{"token_id":"token_usage","today_tokens":42,"total_tokens":42}]}` {
+	var result accessTokenUsageResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(result.Items) != 1 || result.Items[0].TokenID != token || result.Items[0].TodayTokens != 42 || result.Items[0].TotalTokens != 42 || result.Items[0].TodayBilling.AmountUSD != "0.000000000" || result.Items[0].TotalBilling.AmountUSD != "0.000000000" {
 		t.Fatalf("usage status=%d body=%s", response.Code, response.Body.String())
+	}
+	if stats := result.Items[0].TodayPerformance; stats.CacheHitRate == nil || *stats.CacheHitRate != 0.5 || stats.OutputTokensPerSecond == nil || *stats.OutputTokensPerSecond != 4 || stats.SpeedSamples != 1 || stats.CacheSamples != 1 {
+		t.Fatalf("performance missing from response: %s", response.Body.String())
 	}
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, path, nil))

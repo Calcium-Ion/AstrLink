@@ -13,11 +13,13 @@ import {
 } from "@/components/icons";
 
 import { ConfirmDialog as AppConfirmDialog } from "@/components/ConfirmDialog";
+import { ClientTypeIcon } from "@/components/ClientTypeIcon";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
 import { ActionGroup } from "@/components/ActionGroup";
 import { ScrollWorkspace } from "@/components/ScrollWorkspace";
 import { FilterSelect } from "@/components/FilterSelect";
+import { ServiceSelect } from "@/components/ServiceSelect";
 import { FormMessage } from "@/components/FormMessage";
 import { MultiFilterSelect } from "@/components/MultiFilterSelect";
 import { HelpPopover } from "@/components/HelpPopover";
@@ -160,6 +162,7 @@ function sessionSummaryKey(session: RequestSession): string {
   return [
     session.id,
     session.status,
+    session.client_type ?? "",
     session.requested_model ?? "",
     session.model_redirect?.from ?? "",
     session.model_redirect?.to ?? "",
@@ -190,6 +193,7 @@ function sessionDetailKey(detail: RequestSessionDetail): string {
     parts.push(
       turn.id,
       turn.status,
+      turn.client_type ?? "",
       turn.requested_model ?? "",
       turn.model_redirect?.from ?? "",
       turn.model_redirect?.to ?? "",
@@ -1120,7 +1124,7 @@ export function RequestRecords({
                       ]}
                       value={filters.status}
                     />
-                    <FilterSelect
+                    <ServiceSelect
                       ariaLabel={t("records.filter", {
                         label: t("records.provider"),
                       })}
@@ -1129,13 +1133,8 @@ export function RequestRecords({
                       onChange={(serviceId) =>
                         setFilters((current) => ({ ...current, serviceId }))
                       }
-                      options={[
-                        { label: t("common.all"), value: "" },
-                        ...services.map((service) => ({
-                          label: service.name,
-                          value: service.id,
-                        })),
-                      ]}
+                      allLabel={t("common.all")}
+                      services={services}
                       value={filters.serviceId}
                     />
                     <FilterSelect
@@ -1197,7 +1196,7 @@ export function RequestRecords({
           >
             <TabsContent
               value={kind}
-              className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+              className="@container/request-list min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
               data-testid="request-records-scroll"
               onScroll={(event) => {
                 atTopRef.current = event.currentTarget.scrollTop <= 8;
@@ -1534,7 +1533,7 @@ function DiscoveryRow({
   return (
     <DataRow
       asChild
-      className="grid grid-cols-[5rem_minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2.5 @[680px]:grid-cols-[5rem_minmax(0,1fr)_5rem_6rem]"
+      className="grid grid-cols-[5rem_1.25rem_minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2.5 @[680px]:grid-cols-[5rem_1.25rem_minmax(0,1fr)_5rem_6rem]"
     >
       <Button
         aria-current={selected ? "true" : undefined}
@@ -1555,7 +1554,11 @@ function DiscoveryRow({
         >
           {statusLabel(session.status)}
         </StatusBadge>
-        <span className="col-start-2 row-start-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <ClientTypeIcon
+          className="col-start-2 row-start-1 mt-0.5"
+          clientType={session.client_type}
+        />
+        <span className="col-start-3 row-start-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-xs font-medium">
             {t("records.fetchModels")}
           </span>
@@ -1566,11 +1569,11 @@ function DiscoveryRow({
             GET {protocolEntryPath(session.input_protocol)}
           </code>
         </span>
-        <span className="col-start-2 row-start-2 text-micro tabular-nums text-muted-foreground @[680px]:col-start-3 @[680px]:row-start-1 @[680px]:text-right">
+        <span className="col-start-3 row-start-2 text-micro tabular-nums text-muted-foreground @[680px]:col-start-4 @[680px]:row-start-1 @[680px]:text-right">
           {formatDuration(sessionRuntimeMs(session, nowMs))}
         </span>
         <time
-          className="col-start-3 row-start-1 text-right text-micro tabular-nums text-muted-foreground @[680px]:col-start-4"
+          className="col-start-4 row-start-1 text-right text-micro tabular-nums text-muted-foreground @[680px]:col-start-5"
           dateTime={session.last_started_at}
           title={formatDateTime(session.last_started_at)}
         >
@@ -1602,7 +1605,7 @@ function SessionRow({
   return (
     <DataRow
       asChild
-      className="grid grid-cols-[5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-3 @[680px]:grid-cols-[5rem_minmax(0,1fr)_15rem]"
+      className="grid grid-cols-[4.5rem_1.25rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5 px-3 py-2.5"
     >
       <Button
         aria-current={selected ? "true" : undefined}
@@ -1614,7 +1617,7 @@ function SessionRow({
         variant="ghost"
       >
         <StatusBadge
-          className="col-start-1 row-start-1 @[680px]:row-span-2 @[680px]:row-start-1"
+          className="col-start-1 row-start-1"
           tone={
             session.status === "cancelled"
               ? "neutral"
@@ -1623,35 +1626,32 @@ function SessionRow({
         >
           {statusLabel(session.status)}
         </StatusBadge>
+        <ClientTypeIcon
+          className="col-start-2 row-start-1 mt-0.5"
+          clientType={session.client_type}
+        />
         <strong
-          className="col-span-2 col-start-2 row-start-1 min-w-0 truncate text-sm font-medium @[680px]:col-span-1"
+          className="col-span-2 col-start-3 row-start-1 min-w-0 truncate text-sm font-medium @[560px]/request-list:col-span-1"
           title={session.title}
         >
           {session.title}
         </strong>
-        <ModelLabel
-          className="col-span-2 col-start-2 row-start-2 text-xs text-text-secondary @[680px]:col-span-1 @[680px]:col-start-3 @[680px]:row-start-1 @[680px]:justify-end"
-          fallback={t("records.unspecifiedModel")}
-          model={session.requested_model}
-          reasoningEffort={session.reasoning_effort}
-          redirectedTo={session.model_redirect?.to}
-        />
-        <span className="col-span-2 col-start-2 row-start-3 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs leading-5 text-muted-foreground @[680px]:row-start-2 @[680px]:grid-cols-[7rem_minmax(0,1fr)_minmax(max-content,1fr)_4.5rem]">
+        <span className="col-span-full row-start-3 grid min-w-0 grid-cols-[minmax(0,1fr)_8rem] items-center gap-x-3 gap-y-1 text-xs leading-5 @[560px]/request-list:col-span-3 @[560px]/request-list:col-start-2 @[560px]/request-list:row-start-2 @[560px]/request-list:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(0,1.7fr)_4rem]">
           <code
-            className="col-start-1 row-start-2 min-w-0 truncate font-mono text-xs @[680px]:row-start-1"
+            className="min-w-0 max-w-full truncate font-mono text-muted-foreground"
             title={protocolEntryPath(session.input_protocol)}
           >
             {protocolEntryPath(session.input_protocol)}
           </code>
           <RequestServiceLabel
-            className="col-start-1 row-start-1 font-medium text-foreground @[680px]:col-start-2"
+            className="max-w-40 font-medium text-text-secondary"
             label={
               session.call_count > 1 ? t("records.latestProvider") : undefined
             }
-            labelClassName="sr-only @[880px]:not-sr-only @[880px]:w-24"
+            labelClassName="sr-only"
             service={service}
           />
-          <span className="col-start-2 row-start-1 whitespace-nowrap tabular-nums @[680px]:col-start-3">
+          <span className="inline-flex min-w-0 flex-wrap gap-x-1 whitespace-nowrap tabular-nums text-muted-foreground">
             {t(
               session.turn_count === session.call_count
                 ? "records.sessionMetaTurns"
@@ -1669,7 +1669,7 @@ function SessionRow({
             ) : null}
           </span>
           <time
-            className="col-start-2 row-start-2 text-right tabular-nums @[680px]:col-start-4 @[680px]:row-start-1"
+            className="text-right text-xs leading-5 tabular-nums text-muted-foreground"
             dateTime={session.last_started_at}
             title={formatDateTime(session.last_started_at)}
           >
@@ -1678,6 +1678,13 @@ function SessionRow({
               : last.toLocaleTimeString(dateTimeLocale(), { hour12: false })}
           </time>
         </span>
+        <ModelLabel
+          className="col-span-2 col-start-3 row-start-2 text-xs text-text-secondary @[560px]/request-list:col-span-1 @[560px]/request-list:col-start-4 @[560px]/request-list:row-start-1 @[560px]/request-list:max-w-60 @[560px]/request-list:justify-end"
+          fallback={t("records.unspecifiedModel")}
+          model={session.requested_model}
+          reasoningEffort={session.reasoning_effort}
+          redirectedTo={session.model_redirect?.to}
+        />
       </Button>
     </DataRow>
   );
@@ -1847,6 +1854,7 @@ function RecordDetail({
             : session.title
         }
         titleId="request-detail-heading"
+        titlePrefix={<ClientTypeIcon clientType={record.client_type} />}
         titleSuffix={
           <StatusBadge
             className="shrink-0"

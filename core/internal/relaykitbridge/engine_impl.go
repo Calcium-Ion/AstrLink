@@ -66,12 +66,12 @@ func (e *Engine) ConvertResponse(ctx context.Context, in ConvertResponseInput) (
 	if err != nil {
 		return ConvertResponseOutput{}, err
 	}
-	meta := newMeta(in.PublicModel, in.PublicModel, false, false)
+	upstream := firstNonEmpty(in.UpstreamModel, in.PublicModel)
+	meta := newMeta(in.PublicModel, upstream, in.UpstreamModel != "", false)
 	result, err := relayconvert.ConvertResponse(ctx, meta, target, response)
 	if err != nil {
 		return ConvertResponseOutput{}, fmt.Errorf("convert response %s to %s: %w", in.From, in.To, err)
 	}
-	restoreResponseModel(result.Value, in.PublicModel)
 	body, err := json.Marshal(result.Value)
 	if err != nil {
 		return ConvertResponseOutput{}, fmt.Errorf("marshal converted response: %w", err)
@@ -169,34 +169,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func restoreResponseModel(value any, model string) {
-	if model == "" {
-		return
-	}
-	switch response := value.(type) {
-	case *dto.OpenAITextResponse:
-		response.Model = model
-	case *dto.ChatCompletionsStreamResponse:
-		response.Model = model
-	case *dto.OpenAIResponsesResponse:
-		response.Model = model
-	case *dto.ResponsesStreamResponse:
-		if response.Response != nil {
-			response.Response.Model = model
-		}
-	case *dto.ClaudeResponse:
-		response.Model = model
-		if response.Message != nil {
-			response.Message.Model = model
-		}
-	case []*dto.ClaudeResponse:
-		for _, item := range response {
-			item.Model = model
-			if item.Message != nil {
-				item.Message.Model = model
-			}
-		}
-	}
 }

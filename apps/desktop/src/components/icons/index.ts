@@ -25,6 +25,7 @@ export { Flask } from "./flask";
 export { GripVertical } from "./grip-vertical";
 export { Home } from "./home";
 export { Key } from "./key";
+export { Link } from "./link";
 export { LoaderCircle } from "./loader-circle";
 export { LockKeyhole } from "./lock-keyhole";
 export { MapPin } from "./map-pin";

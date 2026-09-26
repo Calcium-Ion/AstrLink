@@ -2,42 +2,34 @@ package accountauth
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
-)
 
-const (
-	DefaultCodexOriginator = "codex-tui"
-	// Keep the canonical UA shape and version in one place, as in sub2api.
-	codexUserAgentSuffix = " (Ubuntu 22.4.0; x86_64) xterm-256color"
+	"github.com/QuantumNous/astrlink/core/contract"
 )
 
 // CodexIdentityPolicy defaults to a single upstream identity. Disabling
 // enforcement preserves recognized client UAs, but still pairs originator and
 // version with that UA. Arbitrary client originators are never forwarded.
+// ClientVersion is the configured baseline release; Identity, when set, is
+// the resolved identity that replaces that baseline.
 type CodexIdentityPolicy struct {
 	DisableEnforcement bool
 	ClientVersion      string
+	Identity           ClientIdentity
 }
 
+func (policy CodexIdentityPolicy) identity() ClientIdentity {
+	if policy.Identity.UserAgent != "" {
+		return policy.Identity
+	}
+	return codexIdentityAt(policy.ClientVersion)
+}
+
+// validCodexVersion uses sub2api's compatibility floor (0.144.0); older or
+// invalid identities fall back as a complete tuple instead of mixing a new
+// version with an old UA.
 func validCodexVersion(version string) bool {
-	if len(version) > 64 || !clientVersionPattern.MatchString(version) {
-		return false
-	}
-	base := strings.FieldsFunc(version, func(r rune) bool { return r == '-' || r == '+' })[0]
-	parts := strings.Split(base, ".")
-	var numbers [3]uint64
-	for i, part := range parts {
-		number, err := strconv.ParseUint(part, 10, 32)
-		if err != nil {
-			return false
-		}
-		numbers[i] = number
-	}
-	// Use sub2api's compatibility floor (0.144.0); older or invalid identities
-	// fall back as a complete tuple instead of mixing a new version with an old UA.
-	return numbers[0] > 0 || numbers[1] > 144 ||
-		(numbers[1] == 144 && (numbers[2] > 0 || !strings.Contains(strings.SplitN(version, "+", 2)[0], "-")))
+	return contract.ValidCodexClientVersion(version)
 }
 
 func codexVersionOrDefault(version string) string {
@@ -49,51 +41,97 @@ func codexVersionOrDefault(version string) string {
 }
 
 func CodexUserAgent(version string) string {
-	return DefaultCodexOriginator + "/" + codexVersionOrDefault(version) + codexUserAgentSuffix
+	return codexIdentityAt(version).UserAgent
 }
 
 // ApplyCodexAuthIdentity is for token/device authorization requests. The
 // inference-only version header is deliberately not sent to the auth service.
-func ApplyCodexAuthIdentity(header http.Header, version string) {
+// The zero identity is the baseline.
+func ApplyCodexAuthIdentity(header http.Header, identity ClientIdentity) {
 	if header == nil {
 		return
 	}
-	header.Set("originator", DefaultCodexOriginator)
-	header.Set("User-Agent", CodexUserAgent(version))
+	identity = codexIdentityOrDefault(identity)
+	header.Set("originator", codexOriginator(identity))
+	header.Set("User-Agent", identity.UserAgent)
+}
+
+func codexIdentityOrDefault(identity ClientIdentity) ClientIdentity {
+	if identity.UserAgent == "" {
+		return DefaultCodexIdentity()
+	}
+	return identity
+}
+
+func codexOriginator(identity ClientIdentity) string {
+	if originator := identity.Headers["originator"]; originator != "" {
+		return originator
+	}
+	return DefaultCodexOriginator
 }
 
 // ApplyCodexForwardHeaders shares credential and identity construction across
 // HTTP inference, model discovery, and WebSocket handshakes.
 func ApplyCodexForwardHeaders(header http.Header, tokens AccountTokens, clientHeaders http.Header, policy CodexIdentityPolicy) {
-	ApplyCodexAPIHeaders(header, tokens, policy.ClientVersion)
-	if !policy.DisableEnforcement || header == nil {
+	ApplyCodexAPIHeaders(header, tokens, policy.identity())
+	if header == nil {
 		return
 	}
-	ua := clientHeaders.Get("User-Agent")
-	if len(ua) > 1024 {
+	if policy.DisableEnforcement {
+		if ua, name, version, ok := recognizedCodexClient(clientHeaders); ok {
+			header.Set("User-Agent", ua)
+			header.Set("originator", name)
+			header.Set("version", version)
+			return
+		}
+	}
+	// Codex clients send no Stainless SDK headers, so another SDK's fingerprint
+	// must not accompany the default identity.
+	clearClientHeaderPrefix(header, clientHeaders, "x-stainless-")
+}
+
+// ApplyCodexOfficialForwardHeaders authenticates a recognized Codex CLI request
+// without replacing its identity: it sets the OAuth Authorization, account
+// binding and product sku, and keeps the client's own User-Agent, originator
+// and version.
+func ApplyCodexOfficialForwardHeaders(header http.Header, tokens AccountTokens) {
+	if header == nil {
 		return
+	}
+	header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	header.Del("ChatGPT-Account-ID")
+	if tokens.AccountID != "" {
+		header.Set("ChatGPT-Account-ID", tokens.AccountID)
+	}
+	header.Set("OAI-Product-Sku", "codex")
+}
+
+// recognizedCodexClient reports whether the caller's User-Agent is an official
+// Codex client with a supported version, returning its UA, originator and version.
+func recognizedCodexClient(clientHeaders http.Header) (ua, name, version string, ok bool) {
+	ua = clientHeaders.Get("User-Agent")
+	if len(ua) > 1024 {
+		return "", "", "", false
 	}
 	for _, r := range ua {
 		if r < 0x20 || r > 0x7e {
-			return
+			return "", "", "", false
 		}
 	}
 	ua = strings.TrimSpace(ua)
 	name, rest, found := strings.Cut(ua, "/")
 	if !found {
-		return
+		return "", "", "", false
 	}
 	switch name {
 	case "codex-tui", "codex_cli_rs", "codex_vscode", "codex_vscode_copilot",
 		"codex_app", "codex_chatgpt_desktop", "codex_atlas", "codex_exec", "codex_sdk_ts":
 	default:
-		return
+		return "", "", "", false
 	}
-	version, _, _ := strings.Cut(rest, " ")
+	version, _, _ = strings.Cut(rest, " ")
 	if !validCodexVersion(version) {
-		return
+		return "", "", "", false
 	}
-	header.Set("User-Agent", ua)
-	header.Set("originator", name)
-	header.Set("version", version)
+	return ua, name, version, true
 }

@@ -118,6 +118,33 @@ func (source *TokenSource) AccessToken(ctx context.Context, accountID contract.S
 	return source.refresh(ctx, accountID, tokens)
 }
 
+// RefreshRejected refreshes accountID after the provider rejected
+// rejectedAccessToken. Callers holding the same rejected token share one
+// refresh, and nothing is refreshed once the stored token has already rotated.
+func (source *TokenSource) RefreshRejected(ctx context.Context, accountID contract.SubscriptionAccountID, rejectedAccessToken string) (bool, error) {
+	if source.client.config.ResolveProxy != nil {
+		var err error
+		ctx, err = source.client.config.ResolveProxy(ctx, accountID)
+		if err != nil {
+			return false, err
+		}
+	}
+	if source.invalidated(accountID) {
+		return false, ErrTokenSourceInvalidated
+	}
+	tokens, err := source.store.Get(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	if rejectedAccessToken == "" || tokens.AccessToken != rejectedAccessToken {
+		return false, nil
+	}
+	if _, err := source.refresh(ctx, accountID, tokens); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (source *TokenSource) refresh(ctx context.Context, accountID contract.SubscriptionAccountID, current AccountTokens) (AccountTokens, error) {
 	source.mu.Lock()
 	lifecycle := source.lifecycles[accountID]

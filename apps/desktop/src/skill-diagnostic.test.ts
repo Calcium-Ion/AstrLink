@@ -157,6 +157,24 @@ const session: RequestSession = {
 };
 
 describe("buildSkillDiagnosticPayload", () => {
+  it.each(["pi", "unknown", undefined] as const)(
+    "preserves client attribution %s on sessions, records, and retry children",
+    (clientType) => {
+      const payload = buildSkillDiagnosticPayload({
+        session: { ...session, client_type: clientType },
+        selectedRequestId: root.id,
+        turns: [{ ...root, client_type: clientType }],
+        childrenByRoot: { [root.id]: [{ ...child, client_type: clientType }] },
+      });
+
+      expect(payload.session.client_type).toBe(clientType ?? null);
+      expect(payload.records[0]?.client_type).toBe(clientType ?? null);
+      expect(payload.records[0]?.children?.[0]?.client_type).toBe(
+        clientType ?? null,
+      );
+    },
+  );
+
   it("keeps skill fields and nests retry children under the root", () => {
     const payload = buildSkillDiagnosticPayload({
       session,

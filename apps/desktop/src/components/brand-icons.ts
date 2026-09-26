@@ -6,6 +6,7 @@ export { default as AnthropicMono } from "@lobehub/icons/es/Anthropic/components
 export { default as ByteDanceColor } from "@lobehub/icons/es/ByteDance/components/Color";
 export { default as ClaudeCodeColor } from "@lobehub/icons/es/ClaudeCode/components/Color";
 export { default as ClaudeColor } from "@lobehub/icons/es/Claude/components/Color";
+export { default as ClineMono } from "@lobehub/icons/es/Cline/components/Mono";
 export { default as CodexColor } from "@lobehub/icons/es/Codex/components/Color";
 export { default as CursorMono } from "@lobehub/icons/es/Cursor/components/Mono";
 export { default as DeepSeekColor } from "@lobehub/icons/es/DeepSeek/components/Color";
@@ -22,6 +23,7 @@ export { default as MoonshotMono } from "@lobehub/icons/es/Moonshot/components/M
 export { default as OpenAIMono } from "@lobehub/icons/es/OpenAI/components/Mono";
 export { default as OpenCodeMono } from "@lobehub/icons/es/OpenCode/components/Mono";
 export { default as OpenClawColor } from "@lobehub/icons/es/OpenClaw/components/Color";
+export { default as PiMono } from "@lobehub/icons/es/Pi/components/Mono";
 export { default as QwenColor } from "@lobehub/icons/es/Qwen/components/Color";
 export { default as StepfunMono } from "@lobehub/icons/es/Stepfun/components/Mono";
 export { default as WenxinColor } from "@lobehub/icons/es/Wenxin/components/Color";

@@ -9,9 +9,9 @@ import (
 const MaxModelRedirects = 200
 
 // ModelRedirect routes a client-requested model name to another model before
-// provider selection. Responses keep the client's model name; only the
-// upstream request carries To. Redirects are a single hop: To is never looked
-// up again.
+// provider selection. Only the upstream request's model is rewritten to To;
+// responses reach the client as the upstream returned them. Redirects are a
+// single hop: To is never looked up again.
 type ModelRedirect struct {
 	From    string `json:"from"`
 	To      string `json:"to"`

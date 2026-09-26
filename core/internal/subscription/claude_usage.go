@@ -32,8 +32,7 @@ func (manager *Manager) claudeUsage(ctx context.Context, tokens accountauth.Acco
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
-	accountauth.ApplyClaudeAPIHeaders(request.Header, tokens)
-	request.Header.Set("User-Agent", accountauth.DefaultClaudeUserAgent)
+	accountauth.ApplyClaudeAPIHeaders(request.Header, tokens, manager.ClaudeIdentity(ctx))
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := manager.claudeConfig.HTTPClient.Do(request)

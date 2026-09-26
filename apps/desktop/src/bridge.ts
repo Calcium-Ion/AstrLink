@@ -5,14 +5,6 @@ import {
 } from "./service-test-model";
 import { parseChannelBindingAudit } from "./channel-binding-model";
 import {
-  parseRecoveryPath,
-  parseRecoveryPathRecord,
-  parseRecoveryPathPage,
-  parseRecoveryPreview,
-  type RecoveryPathInput,
-  type RecoveryPreviewInput,
-} from "./recovery-path-model";
-import {
   parseRoutingSettings,
   type RoutingSettings,
 } from "./failure-policy-model";
@@ -36,6 +28,7 @@ import {
   parseServicePage,
   parseServiceModelProbe,
   parseServiceRecord,
+  parseSubscriptionRiskEvents,
   type ServiceCreateInput,
   type ServicePage,
   type ServicePatchInput,
@@ -43,6 +36,7 @@ import {
   type ServiceModelProbe,
   type DraftServiceModelProbeInput,
   type ModelDiscoveryProtocol,
+  type SubscriptionRiskEvent,
 } from "./service-model";
 import {
   parseAccessTokenCreateResult,
@@ -102,14 +96,6 @@ import {
   type AuditSettings,
   type AuditSettingsPatch,
 } from "./audit-settings-model";
-import {
-  parseRoutePage,
-  parseRouteRecord,
-  type RouteCreateInput,
-  type RoutePage,
-  type RoutePatchInput,
-  type RouteRecord,
-} from "./route-model";
 import {
   parseAuthorizationSession,
   parseBeginCodexAuthorizationResult,
@@ -452,40 +438,32 @@ export async function logoutService(serviceId: string): Promise<ServiceRecord> {
   );
 }
 
-export async function listRoutes(): Promise<RoutePage> {
+/**
+ * Restores scheduling for a subscription paused by an upstream risk signal.
+ * Credentials are kept; the provider may pause the account again.
+ */
+export async function clearServiceRisk(
+  serviceId: string,
+): Promise<ServiceRecord> {
   requireNativeBridge();
-  return parseRoutePage(await invoke<unknown>("list_routes"));
-}
-
-export async function getRoute(routeId: string): Promise<RouteRecord> {
-  requireNativeBridge();
-  return parseRouteRecord(await invoke<unknown>("get_route", { routeId }));
-}
-
-export async function createRoute(
-  input: RouteCreateInput,
-): Promise<RouteRecord> {
-  requireNativeBridge();
-  return parseRouteRecord(await invoke<unknown>("create_route", { input }));
-}
-
-export async function updateRoute(
-  routeId: string,
-  etag: string,
-  patch: RoutePatchInput,
-): Promise<RouteRecord> {
-  requireNativeBridge();
-  return parseRouteRecord(
-    await invoke<unknown>("update_route", { routeId, etag, patch }),
+  return parseServiceRecord(
+    await invoke<unknown>("clear_service_risk", { serviceId }),
   );
 }
 
-export async function deleteRoute(
-  routeId: string,
-  etag: string,
-): Promise<void> {
+/** Recent upstream risk history of a subscription, newest first. */
+export async function listServiceRiskEvents(
+  serviceId: string,
+  limit?: number,
+): Promise<SubscriptionRiskEvent[]> {
   requireNativeBridge();
-  await invoke("delete_route", { routeId, etag });
+  return parseSubscriptionRiskEvents(
+    await invoke<unknown>("list_service_risk_events", {
+      serviceId,
+      limit: limit ?? null,
+    }),
+    serviceId,
+  );
 }
 
 function compactQuery(
@@ -881,57 +859,15 @@ export async function updateRoutingSettings(
   );
 }
 
-export async function listRecoveryPaths() {
+export async function builtinToolAction(
+  kind: import("./builtin-tools-model").BuiltinToolKind,
+  action: "status" | "save_key" | "delete_key" | "test",
+  input?: unknown,
+): Promise<Record<string, unknown>> {
   requireNativeBridge();
-  return parseRecoveryPathPage(
-    await invoke("recovery_paths", { operation: "list" }),
-  );
-}
-export async function getRecoveryPath(id: string) {
-  requireNativeBridge();
-  return parseRecoveryPathRecord(
-    await invoke("recovery_paths", { operation: "get", id }),
-  );
-}
-export async function createRecoveryPath(input: RecoveryPathInput) {
-  requireNativeBridge();
-  parseRecoveryPath({ ...input, id: "path_validation" });
-  return parseRecoveryPathRecord(
-    await invoke("recovery_paths", { operation: "create", input }),
-  );
-}
-export async function updateRecoveryPath(
-  id: string,
-  etag: string,
-  input: RecoveryPathInput,
-) {
-  requireNativeBridge();
-  parseRecoveryPath({ ...input, id });
-  const patch = {
-    targets: null,
-    steps: null,
-    strategy: null,
-    max_attempts: null,
-    failure_policy: null,
-    ...input,
-  };
-  return parseRecoveryPathRecord(
-    await invoke("recovery_paths", {
-      operation: "update",
-      id,
-      etag,
-      input: patch,
-    }),
-  );
-}
-export async function deleteRecoveryPath(id: string, etag: string) {
-  requireNativeBridge();
-  await invoke("recovery_paths", { operation: "delete", id, etag });
-}
-export async function previewRecoveryPath(input: RecoveryPreviewInput) {
-  requireNativeBridge();
-  parseRecoveryPath(input.path);
-  return parseRecoveryPreview(
-    await invoke("recovery_paths", { operation: "preview", input }),
-  );
+  return invoke<Record<string, unknown>>("builtin_tool_action", {
+    kind,
+    action,
+    input,
+  });
 }

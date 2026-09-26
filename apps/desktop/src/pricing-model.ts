@@ -129,7 +129,7 @@ function array<T>(value: unknown, read: (v: unknown) => T): T[] {
   if (!Array.isArray(value)) throw new Error("Invalid pricing list");
   return value.map(read);
 }
-function amounts(value: unknown): BillingAmounts {
+export function parseBillingAmounts(value: unknown): BillingAmounts {
   const o = object(value);
   return {
     amount_usd: decimal(o.amount_usd),
@@ -143,13 +143,13 @@ function amounts(value: unknown): BillingAmounts {
 export function parseBillingSummary(value: unknown): BillingSummary {
   const o = object(value);
   return {
-    ...amounts(o),
+    ...parseBillingAmounts(o),
     from: timestamp(o.from),
     to: timestamp(o.to),
     by_model: array(o.by_model, (v) => {
       const row = object(v);
       return {
-        ...amounts(row),
+        ...parseBillingAmounts(row),
         provider: str(row.provider),
         model: str(row.model),
       };
@@ -157,7 +157,7 @@ export function parseBillingSummary(value: unknown): BillingSummary {
     by_token: array(o.by_token, (v) => {
       const row = object(v);
       return {
-        ...amounts(row),
+        ...parseBillingAmounts(row),
         token_id: str(row.token_id),
       };
     }),

@@ -1,5 +1,17 @@
 import { i18n } from "./i18n";
 
+export type ClientType =
+  | "unknown"
+  | "codex"
+  | "claude_code"
+  | "cursor"
+  | "grok_cli"
+  | "gemini_cli"
+  | "opencode"
+  | "openclaw"
+  | "cline"
+  | "pi";
+
 export type RequestStatus =
   | "pending"
   | "succeeded"
@@ -74,6 +86,44 @@ export interface RequestModelRedirect {
   to: string;
 }
 
+/** Why an attempt used its API provider. */
+export type RoutingSelection =
+  | "priority"
+  | "session_binding"
+  | "response_affinity"
+  | "websocket_connection"
+  | "failover";
+
+/** Why routing excluded a provider before any attempt. */
+export type RoutingSkipReason =
+  | "disabled"
+  | "not_connected"
+  | "risk_paused"
+  | "model_not_listed"
+  | "protocol_unsupported"
+  | "streaming_unsupported"
+  | "conversion_unavailable"
+  | "circuit_open"
+  | "rate_limited"
+  | "websocket_disabled"
+  | "websocket_unsupported";
+
+export interface RoutingSkip {
+  service_id: string;
+  reason: RoutingSkipReason;
+}
+
+/**
+ * Why routing chose service_id. `selected` is absent when no provider could be
+ * selected. `skipped` lists, in priority order, the providers ranked ahead of
+ * service_id that routing excluded (every excluded provider when none was
+ * selected); providers tried and rejected show up as events or retry children.
+ */
+export interface RequestRoutingDecision {
+  selected?: RoutingSelection;
+  skipped: RoutingSkip[];
+}
+
 export interface RequestEvent {
   kind: RequestEventKind;
   started_at: string;
@@ -118,6 +168,8 @@ export interface RequestRecovery {
 }
 
 export interface RequestRecord {
+  /** Original inbound client; absent on historical records. */
+  client_type?: ClientType;
   recovery?: RequestRecovery;
   id: string;
   parent_request_id: string | null;
@@ -133,6 +185,8 @@ export interface RequestRecord {
   streaming: boolean;
   route_id: string | null;
   service_id: string | null;
+  /** Absent on historical records, discovery, and pending calls. */
+  routing_decision?: RequestRoutingDecision;
   local_access_token_id: string | null;
   http_status: number | null;
   latency_ms: number | null;
@@ -168,6 +222,8 @@ export const emptyTrajectoryFields = {
 };
 
 export interface RequestSession {
+  /** Original inbound client; absent on historical records. */
+  client_type?: ClientType;
   id: string;
   title: string;
   started_at: string;
@@ -546,6 +602,89 @@ function optionalModelRedirect(
   return redirect ? { model_redirect: redirect } : {};
 }
 
+const routingSelections = new Set<RoutingSelection>([
+  "priority",
+  "session_binding",
+  "response_affinity",
+  "websocket_connection",
+  "failover",
+]);
+
+const routingSkipReasons = new Set<RoutingSkipReason>([
+  "disabled",
+  "not_connected",
+  "risk_paused",
+  "model_not_listed",
+  "protocol_unsupported",
+  "streaming_unsupported",
+  "conversion_unavailable",
+  "circuit_open",
+  "rate_limited",
+  "websocket_disabled",
+  "websocket_unsupported",
+]);
+
+function optionalRoutingDecision(
+  value: unknown,
+  path: string,
+): { routing_decision?: RequestRoutingDecision } {
+  if (value == null) return {};
+  const decision = objectAt(value, path);
+  if (!Array.isArray(decision.skipped)) invalid(`${path}.skipped`, "应为数组");
+  if (decision.skipped.length > 64) invalid(`${path}.skipped`, "条目过多");
+  const parsed: RequestRoutingDecision = {
+    skipped: decision.skipped.map((item, index) => {
+      const skip = objectAt(item, `${path}.skipped[${index}]`);
+      if (
+        typeof skip.reason !== "string" ||
+        !routingSkipReasons.has(skip.reason as RoutingSkipReason)
+      ) {
+        invalid(`${path}.skipped[${index}].reason`, "跳过原因无效");
+      }
+      return {
+        service_id: stringAt(
+          skip.service_id,
+          `${path}.skipped[${index}].service_id`,
+        ),
+        reason: skip.reason as RoutingSkipReason,
+      };
+    }),
+  };
+  if (decision.selected !== undefined) {
+    if (
+      typeof decision.selected !== "string" ||
+      !routingSelections.has(decision.selected as RoutingSelection)
+    ) {
+      invalid(`${path}.selected`, "选择原因无效");
+    }
+    parsed.selected = decision.selected as RoutingSelection;
+  }
+  return { routing_decision: parsed };
+}
+
+function optionalClientType(value: unknown): { client_type?: ClientType } {
+  if (value == null) return {};
+  // Future Core labels remain displayable by older desktop builds.
+  const known: readonly string[] = [
+    "unknown",
+    "codex",
+    "claude_code",
+    "cursor",
+    "grok_cli",
+    "gemini_cli",
+    "opencode",
+    "openclaw",
+    "cline",
+    "pi",
+  ];
+  return {
+    client_type:
+      typeof value === "string" && known.includes(value)
+        ? (value as ClientType)
+        : "unknown",
+  };
+}
+
 export function parseRequestRecord(value: unknown): RequestRecord {
   return parseRequestRecordAt(value, "$");
 }
@@ -573,6 +712,7 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     ...(record.recovery === undefined
       ? {}
       : { recovery: parseRecovery(record.recovery, `${path}.recovery`) }),
+    ...optionalClientType(record.client_type),
     id: stringAt(record.id, `${path}.id`),
     parent_request_id: Object.hasOwn(record, "parent_request_id")
       ? nullableStringAt(record.parent_request_id, `${path}.parent_request_id`)
@@ -595,6 +735,10 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     streaming: boolAt(record.streaming, `${path}.streaming`),
     route_id: nullableStringAt(record.route_id, `${path}.route_id`),
     service_id: nullableStringAt(record.service_id, `${path}.service_id`),
+    ...optionalRoutingDecision(
+      record.routing_decision,
+      `${path}.routing_decision`,
+    ),
     local_access_token_id: nullableStringAt(
       record.local_access_token_id,
       `${path}.local_access_token_id`,
@@ -781,6 +925,7 @@ function parseRequestSessionAt(value: unknown, path: string): RequestSession {
     },
   );
   return {
+    ...optionalClientType(session.client_type),
     id: stringAt(session.id, `${path}.id`),
     title: stringAt(session.title, `${path}.title`),
     started_at: stringAt(session.started_at, `${path}.started_at`),

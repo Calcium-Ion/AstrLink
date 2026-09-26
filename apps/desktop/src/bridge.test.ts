@@ -17,11 +17,9 @@ import {
   pausePrivacyModelInstallation,
   resumePrivacyModelInstallation,
   createAccessToken,
-  createRoute,
   createService,
   deleteAccessToken,
   deletePrivacyModelInstallation,
-  deleteRoute,
   deleteService,
   dryRunPrivacyPolicy,
   getCoreStatus,
@@ -29,7 +27,6 @@ import {
   getPrivacyModelCatalog,
   getPrivacyModelInstallation,
   getPrivacyPolicy,
-  getRoute,
   getService,
   getServiceOrder,
   updateServiceOrder,
@@ -37,7 +34,6 @@ import {
   getServiceUsage,
   resetServiceUsage,
   installPrivacyModel,
-  listRoutes,
   listServices,
   listRequestSessions,
   listRequestRecords,
@@ -54,11 +50,12 @@ import {
   probePrivacyModel,
   revealAccessToken,
   restartCore,
-  updateRoute,
   updateService,
   updatePrivacyPolicy,
   beginServiceAuthorization,
   cancelServiceAuthorization,
+  clearServiceRisk,
+  listServiceRiskEvents,
   logoutService,
   openAuthorizationURL,
   openCCSwitchImport,
@@ -482,63 +479,6 @@ describe("desktop bridge contract", () => {
     });
   });
 
-  it("proxies priority route CRUD through fixed native commands", async () => {
-    const route = {
-      id: "route_01",
-      name: "Code alias",
-      enabled: true,
-      priority: 10,
-      match: { protocol: "openai.responses", model: "team/code" },
-      selection: { mode: "priority" as const },
-      targets: [
-        {
-          service_id: "service_01",
-          plan_type: "native" as const,
-          upstream_protocol: "openai.responses",
-          priority: 0,
-          upstream_model: "gpt-5.2",
-        },
-      ],
-    };
-    const etag = `"sha256:${"c".repeat(64)}"`;
-    invokeMock.mockResolvedValueOnce({ items: [route], next_cursor: null });
-    await expect(listRoutes()).resolves.toEqual({
-      items: [route],
-      next_cursor: null,
-    });
-    expect(invokeMock).toHaveBeenLastCalledWith("list_routes");
-
-    invokeMock.mockResolvedValueOnce({ route, etag });
-    await expect(getRoute(route.id)).resolves.toEqual({ route, etag });
-    expect(invokeMock).toHaveBeenLastCalledWith("get_route", {
-      routeId: route.id,
-    });
-
-    const { id: _id, enabled: _enabled, ...baseInput } = route;
-    const input = { ...baseInput, enabled: true };
-    invokeMock.mockResolvedValueOnce({ route, etag });
-    await expect(createRoute(input)).resolves.toEqual({ route, etag });
-    expect(invokeMock).toHaveBeenLastCalledWith("create_route", { input });
-
-    invokeMock.mockResolvedValueOnce({
-      route: { ...route, enabled: false },
-      etag,
-    });
-    await updateRoute(route.id, etag, { enabled: false });
-    expect(invokeMock).toHaveBeenLastCalledWith("update_route", {
-      routeId: route.id,
-      etag,
-      patch: { enabled: false },
-    });
-
-    invokeMock.mockResolvedValueOnce(undefined);
-    await deleteRoute(route.id, etag);
-    expect(invokeMock).toHaveBeenLastCalledWith("delete_route", {
-      routeId: route.id,
-      etag,
-    });
-  });
-
   it("proxies access-token operations through fixed commands and strict parsers", async () => {
     const secret = `astr_${"A".repeat(43)}`;
     const token = {
@@ -564,7 +504,13 @@ describe("desktop bridge contract", () => {
     invokeMock.mockResolvedValueOnce(usage);
     await expect(
       listAccessTokenUsage("2026-09-19T00:00:00.000Z"),
-    ).resolves.toEqual(usage);
+    ).resolves.toEqual({
+      items: usage.items.map((item) => ({
+        ...item,
+        today_billing: null,
+        total_billing: null,
+      })),
+    });
     expect(invokeMock).toHaveBeenLastCalledWith("list_access_token_usage", {
       todayFrom: "2026-09-19T00:00:00.000Z",
     });
@@ -860,6 +806,70 @@ describe("desktop bridge contract", () => {
     expect(invokeMock).toHaveBeenLastCalledWith(
       "delete_privacy_model_installation",
       { installationId: installation.id },
+    );
+  });
+
+  it("clears a subscription risk and reads its history through strict parsers", async () => {
+    const service = {
+      id: "service_claude_01",
+      name: "Claude subscription",
+      kind: "claude_subscription",
+      enabled: true,
+      models: [],
+      capabilities: [
+        { protocol: "anthropic.messages", mode: "native", streaming: true },
+      ],
+      subscription: { provider: "claude_code", status: "connected" },
+      created_at: "2026-07-28T08:00:00Z",
+      updated_at: "2026-07-28T08:05:00Z",
+    };
+    const etag = `"sha256:${"e".repeat(64)}"`;
+    invokeMock.mockResolvedValueOnce({ service, etag });
+    await expect(clearServiceRisk(service.id)).resolves.toEqual({
+      service,
+      etag,
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith("clear_service_risk", {
+      serviceId: service.id,
+    });
+
+    invokeMock.mockResolvedValueOnce({
+      service: { ...service, risk: 1 },
+      etag,
+    });
+    await expect(clearServiceRisk(service.id)).rejects.toThrow(
+      /Invalid Service IPC response/,
+    );
+
+    const event = {
+      id: 3,
+      service_id: service.id,
+      kind: "suspended",
+      code: "organization_disabled",
+      http_status: 403,
+      observed_at: "2026-07-28T08:01:00Z",
+    };
+    invokeMock.mockResolvedValueOnce({ items: [event] });
+    await expect(listServiceRiskEvents(service.id, 20)).resolves.toEqual([
+      event,
+    ]);
+    expect(invokeMock).toHaveBeenLastCalledWith("list_service_risk_events", {
+      serviceId: service.id,
+      limit: 20,
+    });
+
+    invokeMock.mockResolvedValueOnce({ items: [] });
+    await expect(listServiceRiskEvents(service.id)).resolves.toEqual([]);
+    expect(invokeMock).toHaveBeenLastCalledWith("list_service_risk_events", {
+      serviceId: service.id,
+      limit: null,
+    });
+
+    invokeMock.mockResolvedValueOnce({
+      items: [{ ...event, service_id: "service_other" }],
+    });
+    await expect(listServiceRiskEvents(service.id)).rejects.toThrow(
+      /belongs to another service/,
     );
   });
 

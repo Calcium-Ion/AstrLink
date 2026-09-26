@@ -67,6 +67,14 @@ export interface UsageTotals {
 
 export interface UsageGroup extends UsageTotals {
   id: string | null;
+  performance?: ServicePerformance;
+}
+
+export interface ServicePerformance {
+  cache_hit_rate: number | null;
+  output_tokens_per_second: number | null;
+  cache_samples: number;
+  speed_samples: number;
 }
 
 export interface UsageDayBucket extends UsageTotals {
@@ -391,9 +399,25 @@ export function aggregateUsageRecords(
     scanned_records += 1;
     const day = dayBucket(dayMap, record.started_at);
 
-    addUsageGroup(serviceMap, record.service_id, record.usage, status === "failed");
-    addUsageGroup(modelMap, record.requested_model, record.usage, status === "failed");
-    addUsageGroup(tokenMap, record.local_access_token_id, record.usage, status === "failed", false);
+    addUsageGroup(
+      serviceMap,
+      record.service_id,
+      record.usage,
+      status === "failed",
+    );
+    addUsageGroup(
+      modelMap,
+      record.requested_model,
+      record.usage,
+      status === "failed",
+    );
+    addUsageGroup(
+      tokenMap,
+      record.local_access_token_id,
+      record.usage,
+      status === "failed",
+      false,
+    );
 
     if (status === "failed") {
       totals.failed_requests += 1;

@@ -214,11 +214,11 @@ export function ModelRedirectEditor({
           <h2 id={`${id}-title`} className="text-sm font-semibold">
             {t("modelRedirect.title")}
           </h2>
-          <Badge className="tabular-nums" variant="secondary">
-            {full
-              ? t("modelRedirect.limit", { max: maxModelRedirects })
-              : t("modelRedirect.count", { count: rows.length })}
-          </Badge>
+          {full ? (
+            <Badge className="tabular-nums" variant="secondary">
+              {t("modelRedirect.limit", { max: maxModelRedirects })}
+            </Badge>
+          ) : null}
           <ModelRedirectHelp />
         </div>
         {addButton}

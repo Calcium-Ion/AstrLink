@@ -1,0 +1,287 @@
+package ingress
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/transport"
+)
+
+func TestRewriteRequestModelJSONProtocolsPreserveUnrelatedBytes(t *testing.T) {
+	protocols := []contract.ProtocolID{
+		contract.ProtocolOpenAIResponses,
+		contract.ProtocolOpenAIResponsesCompact,
+		contract.ProtocolOpenAIChat,
+		contract.ProtocolOpenAICompletions,
+		contract.ProtocolAnthropicMessages,
+	}
+	tests := []struct {
+		name          string
+		body          string
+		upstreamModel string
+		wantModel     string
+		wantErr       string
+	}{
+		{
+			name:          "model first key",
+			body:          `{"model":"public-alias","input":"keep me","nested":{"model":"nested-must-stay"}}`,
+			upstreamModel: "provider/real",
+			wantModel:     "provider/real",
+		},
+		{
+			name:          "model after other members",
+			body:          `{"input":"keep me","nested":{"model":"nested-must-stay"},"model":"public-alias","stream":false}`,
+			upstreamModel: "provider/real",
+			wantModel:     "provider/real",
+		},
+		{
+			name:          "whitespace and key order preserved",
+			body:          " {\n \"input\" : \"x\" , \"model\" : \"public-alias\" , \"arr\":[{\"model\":\"inside\"}] }\n",
+			upstreamModel: "real",
+			wantModel:     "real",
+		},
+		{
+			name:          "escaped characters in new model",
+			body:          `{"model":"public-alias","note":"ok"}`,
+			upstreamModel: "prov\"ider/real\nmodel",
+			wantModel:     "prov\"ider/real\nmodel",
+		},
+		{
+			name:          "duplicate model rewrites the member encoding/json reads",
+			body:          `{"model":"stale","input":"x","model":"public-alias"}`,
+			upstreamModel: "real",
+			wantModel:     "real",
+		},
+		{
+			name:          "missing top-level model",
+			body:          `{"input":"x","nested":{"model":"nested"}}`,
+			upstreamModel: "real",
+			wantErr:       "request has no top-level model member to rewrite",
+		},
+		{
+			name:          "non-string top-level model",
+			body:          `{"model":123,"input":"x"}`,
+			upstreamModel: "real",
+			wantErr:       "top-level model member must be a string",
+		},
+	}
+
+	for _, protocol := range protocols {
+		for _, test := range tests {
+			t.Run(string(protocol)+"/"+test.name, func(t *testing.T) {
+				request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(test.body))
+				request.ContentLength = int64(len(test.body))
+				request.GetBody = func() (io.ReadCloser, error) {
+					return io.NopCloser(strings.NewReader(test.body)), nil
+				}
+				classified := Request{Protocol: protocol}
+				got, err := rewriteRequestModel(request, classified, test.upstreamModel, true)
+				if test.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+						t.Fatalf("error = %v, want %q", err, test.wantErr)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("rewriteRequestModel: %v", err)
+				}
+				rewritten, err := io.ReadAll(got.Body)
+				if err != nil {
+					t.Fatalf("read rewritten body: %v", err)
+				}
+				if got.ContentLength != int64(len(rewritten)) {
+					t.Fatalf("ContentLength = %d, want %d", got.ContentLength, len(rewritten))
+				}
+				assertJSONModelSpliced(t, test.body, string(rewritten), test.wantModel)
+			})
+		}
+	}
+}
+
+func TestRewriteRequestModelRequiresBufferedBody(t *testing.T) {
+	body := `{"model":"public-alias"}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	_, err := rewriteRequestModel(
+		request,
+		Request{Protocol: contract.ProtocolOpenAIChat},
+		"real",
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "model rewrite requires a fully buffered request body") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRewriteRequestModelGeminiPath(t *testing.T) {
+	tests := []struct {
+		name            string
+		path            string
+		rawQuery        string
+		upstreamModel   string
+		wantPath        string
+		wantEscapedPath string
+	}{
+		{
+			name:            "space escaped once in path segment",
+			path:            "/v1beta/models/gemini-pro:generateContent",
+			upstreamModel:   "real model",
+			wantPath:        "/v1beta/models/real model:generateContent",
+			wantEscapedPath: "/v1beta/models/real%20model:generateContent",
+		},
+		{
+			name:            "slash stays inside one path segment",
+			path:            "/v1beta/models/gemini-pro:generateContent",
+			upstreamModel:   "vendor/real model",
+			wantPath:        "/v1beta/models/vendor/real model:generateContent",
+			wantEscapedPath: "/v1beta/models/vendor%2Freal%20model:generateContent",
+		},
+		{
+			name:            "stream action and query preserved",
+			path:            "/v1beta/models/gemini-pro:streamGenerateContent",
+			rawQuery:        "alt=sse",
+			upstreamModel:   "upstream-flash",
+			wantPath:        "/v1beta/models/upstream-flash:streamGenerateContent",
+			wantEscapedPath: "/v1beta/models/upstream-flash:streamGenerateContent",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(
+				http.MethodPost,
+				test.path,
+				strings.NewReader(`{"contents":[]}`),
+			)
+			request.URL.RawQuery = test.rawQuery
+			originalBody, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Body = io.NopCloser(strings.NewReader(string(originalBody)))
+			got, err := rewriteRequestModel(
+				request,
+				Request{Protocol: contract.ProtocolGoogleGenerateContent},
+				test.upstreamModel,
+				true,
+			)
+			if err != nil {
+				t.Fatalf("rewriteRequestModel: %v", err)
+			}
+			if got.URL.Path != test.wantPath {
+				t.Fatalf("Path = %q, want %q", got.URL.Path, test.wantPath)
+			}
+			if got.URL.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("EscapedPath = %q, want %q", got.URL.EscapedPath(), test.wantEscapedPath)
+			}
+			// The forwarder joins the escaped path; it must not escape it again.
+			base, _ := url.Parse("https://upstream.example")
+			if joined := transport.JoinTargetURL(base, got.URL); joined.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("joined path = %q, want %q", joined.EscapedPath(), test.wantEscapedPath)
+			}
+			if got.URL.RawQuery != test.rawQuery {
+				t.Fatalf("RawQuery = %q, want %q", got.URL.RawQuery, test.rawQuery)
+			}
+			body, err := io.ReadAll(got.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != string(originalBody) {
+				t.Fatalf("gemini body changed: %q", body)
+			}
+		})
+	}
+}
+
+func assertJSONModelSpliced(t *testing.T, original, rewritten, wantModel string) {
+	t.Helper()
+	valueStart, valueEnd, err := topLevelModelValueSpan([]byte(original))
+	if err != nil {
+		t.Fatalf("locate original model: %v", err)
+	}
+	prefix := original[:valueStart]
+	suffix := original[valueEnd:]
+	if !strings.HasPrefix(rewritten, prefix) {
+		t.Fatalf("prefix changed\noriginal prefix=%q\nrewritten=%q", prefix, rewritten)
+	}
+	if !strings.HasSuffix(rewritten, suffix) {
+		t.Fatalf("suffix changed\noriginal suffix=%q\nrewritten=%q", suffix, rewritten)
+	}
+	gotValue := rewritten[len(prefix) : len(rewritten)-len(suffix)]
+	encoded, err := json.Marshal(wantModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != string(encoded) {
+		t.Fatalf("spliced model value = %s, want %s", gotValue, encoded)
+	}
+	var decoded struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal([]byte(rewritten), &decoded); err != nil || decoded.Model != wantModel {
+		t.Fatalf("decoded model = %q (err %v), want %q", decoded.Model, err, wantModel)
+	}
+	if strings.Contains(original, `"nested":{"model":"nested-must-stay"}`) &&
+		!strings.Contains(rewritten, `"nested":{"model":"nested-must-stay"}`) {
+		t.Fatalf("nested model was rewritten: %s", rewritten)
+	}
+	if strings.Contains(original, `[{"model":"inside"}]`) &&
+		!strings.Contains(rewritten, `[{"model":"inside"}]`) {
+		t.Fatalf("array nested model was rewritten: %s", rewritten)
+	}
+}
+
+func TestAdaptRelayKitRequestEscapesGeminiModelOnce(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		model           string
+		streaming       bool
+		wantPath        string
+		wantEscapedPath string
+		wantQuery       string
+	}{
+		{
+			name:            "space and slash",
+			model:           "vendor/real model",
+			wantPath:        "/v1beta/models/vendor/real model:generateContent",
+			wantEscapedPath: "/v1beta/models/vendor%2Freal%20model:generateContent",
+		},
+		{
+			name:            "plain streaming model",
+			model:           "gemini-2.5-flash",
+			streaming:       true,
+			wantPath:        "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+			wantEscapedPath: "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+			wantQuery:       "alt=sse",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+			if err := adaptRelayKitRequest(request, contract.ProtocolGoogleGenerateContent, test.streaming, test.model, []byte(`{"contents":[]}`)); err != nil {
+				t.Fatal(err)
+			}
+			if request.URL.Path != test.wantPath || request.URL.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("path = %q escaped = %q, want %q / %q", request.URL.Path, request.URL.EscapedPath(), test.wantPath, test.wantEscapedPath)
+			}
+			if request.URL.RawQuery != test.wantQuery {
+				t.Fatalf("query = %q, want %q", request.URL.RawQuery, test.wantQuery)
+			}
+			base, _ := url.Parse("https://upstream.example/v1beta")
+			if joined := transport.JoinTargetURL(base, request.URL); joined.EscapedPath() != test.wantEscapedPath {
+				t.Fatalf("joined path = %q, want %q", joined.EscapedPath(), test.wantEscapedPath)
+			}
+		})
+	}
+	// Other protocols keep a plain path with no stale escaped form.
+	request := httptest.NewRequest(http.MethodPost, "/v1beta/models/a%2Fb:generateContent", strings.NewReader(`{}`))
+	if err := adaptRelayKitRequest(request, contract.ProtocolOpenAIChat, false, "vendor/model", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if request.URL.Path != "/v1/chat/completions" || request.URL.RawPath != "" {
+		t.Fatalf("chat path = %q raw = %q", request.URL.Path, request.URL.RawPath)
+	}
+}

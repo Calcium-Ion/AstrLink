@@ -19,7 +19,7 @@ export function RequestServiceLabel({
   const t = useT();
   const prefix = label ?? t("records.provider");
   const title = [
-    service.name,
+    `${prefix}: ${service.name}`,
     service.kind ? serviceKindLabel(service.kind) : null,
     service.id,
   ]

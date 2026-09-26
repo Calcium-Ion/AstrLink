@@ -8,6 +8,7 @@ export const SERVICE_LIST_COLUMNS = [
   "models",
   "usage",
   "billing",
+  "performance",
   "status",
 ] as const;
 export type ServiceListColumn = (typeof SERVICE_LIST_COLUMNS)[number];
@@ -17,27 +18,33 @@ export type ServiceListLabels = Record<
   string
 >;
 
+// Every visible column shares spare width. Bound the contents separately so
+// neither the name column nor a progress bar stretches to fill the whole row.
 const tracks: Record<ServiceListColumn, string> = {
-  models: "minmax(6rem,0.5fr)",
-  usage: "minmax(9.5rem,0.95fr)",
-  billing: "minmax(6.5rem,0.6fr)",
-  status: "3.75rem",
+  models: "minmax(6rem,0.6fr)",
+  usage: "minmax(10rem,1.2fr)",
+  billing: "minmax(5.5rem,0.7fr)",
+  performance: "minmax(7rem,0.7fr)",
+  status: "minmax(3.25rem,0.45fr)",
 };
 
-// Share spare width across the visible content columns and reserve all three
-// actions. Query the scroller itself, including the space taken by its scrollbar.
-const columns = "@[860px]/service-list:grid-cols-(--service-list-columns)";
+// An ordinary desktop window has about 820px left after the sidebar and padding.
+// Keep the optional model counts with identity until there is room for a column.
+const columns =
+  "@[820px]/service-list:grid-cols-(--service-list-columns) @[1080px]/service-list:grid-cols-(--service-list-expanded-columns)";
 
 function columnsStyle(hidden: readonly ServiceListColumn[]): CSSProperties {
+  const visible = SERVICE_LIST_COLUMNS.filter((id) => !hidden.includes(id));
+  const template = (ids: readonly ServiceListColumn[]) =>
+    [
+      "2.75rem",
+      "minmax(0,1.4fr)",
+      ...ids.map((id) => tracks[id]),
+      "minmax(5.75rem,0.65fr)",
+    ].join(" ");
   return {
-    "--service-list-columns": [
-      "3.25rem",
-      "minmax(0,1.25fr)",
-      ...SERVICE_LIST_COLUMNS.filter((id) => !hidden.includes(id)).map(
-        (id) => tracks[id],
-      ),
-      "6.25rem",
-    ].join(" "),
+    "--service-list-columns": template(visible.filter((id) => id !== "models")),
+    "--service-list-expanded-columns": template(visible),
   } as CSSProperties;
 }
 
@@ -52,7 +59,7 @@ export function ServiceListHeader({
     <div
       aria-hidden="true"
       className={cn(
-        "sticky top-0 z-10 hidden shrink-0 items-center gap-4 border-y bg-muted px-3 py-2 text-micro font-medium text-muted-foreground transition-opacity group-has-[[data-sorting=true]]/service-list:opacity-0 motion-reduce:transition-none @[860px]/service-list:grid",
+        "sticky top-0 z-10 hidden shrink-0 items-center gap-3 border-y bg-muted px-2 py-2 text-micro font-medium text-muted-foreground transition-opacity group-has-[[data-sorting=true]]/service-list:opacity-0 motion-reduce:transition-none @[820px]/service-list:grid @[1040px]/service-list:gap-4 @[1040px]/service-list:px-3",
         columns,
       )}
       style={columnsStyle(hidden)}
@@ -60,9 +67,21 @@ export function ServiceListHeader({
       <span />
       <span>{labels.service}</span>
       {SERVICE_LIST_COLUMNS.filter((id) => !hidden.includes(id)).map((id) => (
-        <span key={id}>{labels[id]}</span>
+        <span
+          className={cn(
+            id === "models" &&
+              "mx-auto hidden w-full max-w-28 @[1080px]/service-list:block",
+            id === "usage" && "mx-auto w-full max-w-68 px-2",
+            id === "billing" && "mx-auto w-full max-w-24",
+            id === "performance" && "mx-auto w-full max-w-32",
+            id === "status" && "text-center",
+          )}
+          key={id}
+        >
+          {labels[id]}
+        </span>
       ))}
-      <span>{labels.actions}</span>
+      <span className="text-center">{labels.actions}</span>
     </div>
   );
 }
@@ -74,6 +93,7 @@ export function ServiceListRow({
   inventory,
   usage,
   billing,
+  performance,
   status,
   actions,
   hidden = [],
@@ -87,6 +107,7 @@ export function ServiceListRow({
   inventory: ReactNode;
   usage?: ReactNode;
   billing?: ReactNode;
+  performance?: ReactNode;
   status: ReactNode;
   actions: ReactNode;
   hidden?: readonly ServiceListColumn[];
@@ -119,74 +140,88 @@ export function ServiceListRow({
   }
   const showUsage = !hidden.includes("usage");
   const showBilling = !hidden.includes("billing");
-  // Without usage or billing, the compact layout gives their column to identity.
-  const widenIdentity =
-    !showUsage &&
-    !showBilling &&
-    "@[640px]/service-list:col-end-4 @[860px]/service-list:col-end-auto";
+  const showPerformance = !hidden.includes("performance");
   return (
     <DataRow
       asChild
       className={cn(
-        "grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-2 py-3 transition-colors hover:bg-muted/30 @[640px]/service-list:grid-cols-[3.25rem_minmax(0,1fr)_minmax(10rem,0.85fr)_6.25rem] @[640px]/service-list:px-3 @[860px]/service-list:min-h-20 @[860px]/service-list:gap-x-4",
+        "grid grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-2 px-2 py-2.5 transition-colors hover:bg-muted/30 @[480px]/service-list:grid-cols-[2.75rem_minmax(0,1fr)_auto] @[820px]/service-list:min-h-20 @[820px]/service-list:gap-x-3 @[820px]/service-list:gap-y-3 @[820px]/service-list:py-3 @[1040px]/service-list:gap-x-4 @[1040px]/service-list:px-3",
         columns,
       )}
       style={columnsStyle(hidden)}
     >
       <article aria-label={name} data-testid="service-card">
-        {/* The table layout pins order and identity, then auto-places visible cells in row one. */}
-        <div className="col-start-1 row-start-1 row-span-2 self-start pt-1 @[640px]/service-list:self-center @[640px]/service-list:pt-0 @[860px]/service-list:row-span-1 @[860px]/service-list:row-start-1">
+        <div className="col-start-1 row-start-1 self-start pt-1 @[820px]/service-list:self-center @[820px]/service-list:pt-0">
           {order}
         </div>
-        <div className={cn("col-start-2 row-start-1 min-w-0", widenIdentity)}>
-          {identity}
-        </div>
-        {!hidden.includes("models") ? (
-          <div
-            className={cn(
-              "col-start-2 row-start-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @[860px]/service-list:col-start-auto @[860px]/service-list:row-start-1 @[860px]/service-list:grid @[860px]/service-list:gap-1",
-              widenIdentity,
-            )}
-          >
-            {inventory}
+        <div className="col-start-2 row-start-1 grid min-w-0 gap-2 @[1080px]/service-list:contents">
+          <div className="min-w-0 @[1080px]/service-list:col-start-2 @[1080px]/service-list:row-start-1">
+            {identity}
           </div>
-        ) : null}
-        {/* Usage and billing stack in one cell until the table layout gives each its own column. */}
+          {!hidden.includes("models") ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 @[1080px]/service-list:row-start-1 @[1080px]/service-list:mx-auto @[1080px]/service-list:grid @[1080px]/service-list:w-full @[1080px]/service-list:max-w-28 @[1080px]/service-list:gap-1">
+              {inventory}
+            </div>
+          ) : null}
+        </div>
+        {/* Small windows get a quota column and a compact billing/performance
+            summary. The same controls become table cells on wide screens. */}
         <div
           className={cn(
-            "col-span-2 col-start-1 row-start-3 grid min-w-0 gap-1 @[640px]/service-list:col-span-1 @[640px]/service-list:col-start-3 @[640px]/service-list:row-span-2 @[640px]/service-list:row-start-1 @[860px]/service-list:contents",
-            !(showUsage && usage) && !(showBilling && billing) && "hidden",
+            "col-span-full row-start-2 grid min-w-0 items-start gap-x-5 gap-y-2 @[480px]/service-list:col-span-2 @[480px]/service-list:col-start-2 @[820px]/service-list:contents",
+            showUsage &&
+              usage &&
+              (showBilling || showPerformance) &&
+              "@[320px]/service-list:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]",
+            !(showUsage && usage) &&
+              !(showBilling && billing) &&
+              !(showPerformance && performance) &&
+              "hidden",
           )}
         >
           {showUsage ? (
             // Keep empty cells in the table so later columns stay aligned.
             <div
               className={cn(
-                "min-w-0 @[860px]/service-list:row-start-1 @[860px]/service-list:pr-6",
-                !usage && "hidden @[860px]/service-list:block",
+                "min-w-0 @[820px]/service-list:row-start-1 @[820px]/service-list:mx-auto @[820px]/service-list:w-full @[820px]/service-list:max-w-68 @[820px]/service-list:px-2",
+                !usage && "hidden @[820px]/service-list:block",
               )}
             >
               {usage}
             </div>
           ) : null}
-          {showBilling ? (
-            <div
-              className={cn(
-                "min-w-0 @[860px]/service-list:row-start-1",
-                !billing && "hidden @[860px]/service-list:block",
-              )}
-            >
-              {billing}
+          <div
+            className={cn(
+              "grid min-w-0 gap-1 @[820px]/service-list:contents",
+              !showBilling && !showPerformance && "hidden",
+            )}
+          >
+            {showBilling ? (
+              <div
+                className={cn(
+                  "min-w-0 @[820px]/service-list:row-start-1 @[820px]/service-list:mx-auto @[820px]/service-list:w-full @[820px]/service-list:max-w-24",
+                  !billing && "hidden @[820px]/service-list:block",
+                )}
+              >
+                {billing}
+              </div>
+            ) : null}
+            {showPerformance ? (
+              <div className="min-w-0 @[820px]/service-list:row-start-1 @[820px]/service-list:mx-auto @[820px]/service-list:w-full @[820px]/service-list:max-w-32">
+                {performance}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="col-span-full row-start-3 flex min-w-0 items-center justify-between gap-3 @[480px]/service-list:col-span-1 @[480px]/service-list:col-start-3 @[480px]/service-list:row-start-1 @[820px]/service-list:contents">
+          {!hidden.includes("status") ? (
+            <div className="flex shrink-0 items-center gap-2 @[820px]/service-list:row-start-1 @[820px]/service-list:justify-center">
+              {status}
             </div>
           ) : null}
-        </div>
-        {!hidden.includes("status") ? (
-          <div className="col-start-1 row-start-4 flex items-center gap-2.5 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-2 @[640px]/service-list:justify-end @[860px]/service-list:col-start-auto @[860px]/service-list:row-start-1 @[860px]/service-list:justify-between">
-            {status}
+          <div className="ml-auto flex shrink-0 items-center justify-end gap-1 @max-[480px]/service-list:[&>button]:size-9 @[820px]/service-list:row-start-1 @[820px]/service-list:ml-0 @[820px]/service-list:justify-center">
+            {actions}
           </div>
-        ) : null}
-        <div className="col-start-2 row-start-4 flex shrink-0 items-center justify-end gap-1 @max-[640px]/service-list:[&>button]:size-9 @[640px]/service-list:col-start-4 @[640px]/service-list:row-start-1 @[860px]/service-list:col-start-auto">
-          {actions}
         </div>
       </article>
     </DataRow>

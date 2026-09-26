@@ -15,13 +15,12 @@ import (
 )
 
 type responseStream struct {
-	from, to    contract.ProtocolID
-	state       *relayconvert.ResponseStreamState
-	meta        *convmeta.Values
-	publicModel string
-	finalized   bool
-	closed      bool
-	mu          sync.Mutex
+	from, to  contract.ProtocolID
+	state     *relayconvert.ResponseStreamState
+	meta      *convmeta.Values
+	finalized bool
+	closed    bool
+	mu        sync.Mutex
 }
 
 var _ ResponseStream = (*responseStream)(nil)
@@ -46,7 +45,7 @@ func (e *Engine) NewResponseStream(_ context.Context, options StreamOptions) (Re
 		return nil, err
 	}
 	return &responseStream{
-		from: options.From, to: options.To, state: state, publicModel: options.PublicModel,
+		from: options.From, to: options.To, state: state,
 		meta: newMeta(options.PublicModel, upstream, options.UpstreamModel != "", true),
 	}, nil
 }
@@ -72,7 +71,7 @@ func (s *responseStream) Convert(ctx context.Context, event ResponseEvent) ([]Re
 	if err != nil {
 		return nil, fmt.Errorf("convert stream response %s to %s: %w", s.from, s.to, err)
 	}
-	return responseEvents(s.to, s.publicModel, results)
+	return responseEvents(s.to, results)
 }
 
 func applyStreamEventType(response any, eventType string) {
@@ -105,7 +104,7 @@ func (s *responseStream) Finalize(ctx context.Context) ([]ResponseEvent, error) 
 	if err != nil {
 		return nil, err
 	}
-	events, err := responseEvents(s.to, s.publicModel, results)
+	events, err := responseEvents(s.to, results)
 	if err != nil {
 		return nil, err
 	}
@@ -152,11 +151,10 @@ func decodeResponse(protocol contract.ProtocolID, body []byte, stream bool) (any
 	return response, nil
 }
 
-func responseEvents(protocol contract.ProtocolID, publicModel string, results []relayconvert.ResponseResult) ([]ResponseEvent, error) {
+func responseEvents(protocol contract.ProtocolID, results []relayconvert.ResponseResult) ([]ResponseEvent, error) {
 	events := make([]ResponseEvent, 0, len(results))
 	for _, result := range results {
 		for _, item := range flattenResponseValue(result.Value) {
-			restoreResponseModel(item.value, publicModel)
 			body, err := json.Marshal(item.value)
 			if err != nil {
 				return nil, fmt.Errorf("marshal stream response: %w", err)
@@ -180,7 +178,6 @@ func responseEvents(protocol contract.ProtocolID, publicModel string, results []
 }
 
 // streamValue is one wire payload extracted from a RelayKit stream result.
-// value is always a pointer so restoreResponseModel can mutate it in place.
 type streamValue struct {
 	value     any
 	eventType string

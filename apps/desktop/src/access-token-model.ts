@@ -1,3 +1,7 @@
+import { parseBillingAmounts, type BillingAmounts } from "./pricing-model";
+import { parseUsagePerformance } from "./usage-summary-model";
+import type { ServicePerformance } from "./usage-range";
+
 export interface AccessTokenSummary {
   id: string;
   name: string;
@@ -14,6 +18,10 @@ export interface AccessTokenUsage {
   token_id: string;
   today_tokens: number;
   total_tokens: number;
+  today_billing: BillingAmounts | null;
+  total_billing: BillingAmounts | null;
+  today_performance?: ServicePerformance;
+  total_performance?: ServicePerformance;
 }
 
 export interface AccessTokenUsageResponse {
@@ -131,7 +139,21 @@ export function parseAccessTokenUsageResponse(
     items: result.items.map((value, index) => {
       const path = `$.items[${index}]`;
       const item = objectAt(value, path);
-      exactKeys(item, ["token_id", "today_tokens", "total_tokens"], path);
+      // Older Core versions have no billing fields; keep their token counts
+      // usable without misrepresenting unavailable amounts as zero.
+      exactKeys(
+        item,
+        [
+          "token_id",
+          "today_tokens",
+          "total_tokens",
+          ...("today_billing" in item ? ["today_billing"] : []),
+          ...("total_billing" in item ? ["total_billing"] : []),
+          ...("today_performance" in item ? ["today_performance"] : []),
+          ...("total_performance" in item ? ["total_performance"] : []),
+        ],
+        path,
+      );
       const tokenID = stringAt(item.token_id, `${path}.token_id`, 3, 96);
       if (!resourceIDPattern.test(tokenID) || seen.has(tokenID)) {
         invalid(`${path}.token_id`, "invalid or duplicate token ID");
@@ -145,7 +167,25 @@ export function parseAccessTokenUsageResponse(
       const today = item.today_tokens as number;
       const total = item.total_tokens as number;
       if (today > total) invalid(path, "today tokens exceed total tokens");
-      return { token_id: tokenID, today_tokens: today, total_tokens: total };
+      return {
+        token_id: tokenID,
+        today_tokens: today,
+        total_tokens: total,
+        ...(Object.hasOwn(item, "today_performance")
+          ? { today_performance: parseUsagePerformance(item.today_performance) }
+          : {}),
+        ...(Object.hasOwn(item, "total_performance")
+          ? { total_performance: parseUsagePerformance(item.total_performance) }
+          : {}),
+        today_billing:
+          item.today_billing === undefined
+            ? null
+            : parseBillingAmounts(item.today_billing),
+        total_billing:
+          item.total_billing === undefined
+            ? null
+            : parseBillingAmounts(item.total_billing),
+      };
     }),
   };
 }

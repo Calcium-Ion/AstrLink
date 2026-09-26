@@ -71,15 +71,6 @@ pub(crate) fn validate_failure_policy(value: &serde_json::Value) -> Result<(), S
     Ok(())
 }
 
-pub(crate) fn validate_failover(value: &serde_json::Value) -> Result<(), String> {
-    let object = value.as_object().ok_or("failover must be an object")?;
-    if object.len() != 3 || !value["enabled"].is_boolean() {
-        return Err("invalid failover fields".into());
-    }
-    validate_strategy(&value["strategy"])?;
-    validate_attempts(&value["max_attempts"])
-}
-
 pub(crate) fn validate_strategy(value: &serde_json::Value) -> Result<(), String> {
     match value.as_str() {
         Some("retry_first" | "failover_first" | "failover_only") => Ok(()),
@@ -187,17 +178,130 @@ pub(crate) fn validate_routing_settings(
                     return Err("invalid API provider reuse settings".into());
                 }
             }
+            "builtin_tools" => validate_builtin_tools(value)?,
             "model_redirects" => validate_model_redirects(value)?,
             "default_failure_policy" => validate_failure_policy(value)?,
             "allow_unmatched_failover"
             | "codex_identity_enforcement"
             | "claude_identity_enforcement"
             | "grok_identity_enforcement"
+            | "official_client_passthrough"
+            | "subscription_risk_protection"
+            | "codex_request_normalization"
+            | "claude_request_normalization"
+            | "subscription_session_isolation"
+            | "claude_identity_auto_learn"
+            | "codex_identity_auto_learn"
                 if value.is_boolean() => {}
+            "claude_identity_version" | "codex_identity_version" => {
+                validate_identity_version(value)?
+            }
             "strategy" => validate_strategy(value)?,
             "max_attempts" => validate_attempts(value)?,
             _ => return Err("invalid routing settings field".into()),
         }
+    }
+    Ok(())
+}
+
+// validate_identity_version checks the shape of a client version override; an
+// empty string clears it. The core applies the full version rules.
+fn validate_identity_version(value: &serde_json::Value) -> Result<(), String> {
+    let version = value.as_str().ok_or("invalid client identity version")?;
+    if version.is_empty() {
+        return Ok(());
+    }
+    if version.len() > 64
+        || !version.starts_with(|c: char| c.is_ascii_digit())
+        || !version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+    {
+        return Err("invalid client identity version".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_builtin_tools(value: &serde_json::Value) -> Result<(), String> {
+    let tools = value.as_object().ok_or("invalid builtin tools")?;
+    if tools.len() != 2
+        || !tools.contains_key("web_search")
+        || !tools.contains_key("image_generation")
+    {
+        return Err("invalid builtin tool fields".into());
+    }
+    for (kind, value) in tools {
+        validate_builtin_tool(kind, value)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_builtin_tool(kind: &str, value: &serde_json::Value) -> Result<(), String> {
+    if !matches!(kind, "web_search" | "image_generation") {
+        return Err("invalid builtin tool kind".into());
+    }
+    let config = value.as_object().ok_or("invalid builtin tool")?;
+    if !config
+        .get("enabled")
+        .is_some_and(serde_json::Value::is_boolean)
+    {
+        return Err("enabled must be a boolean".into());
+    }
+    for (key, value) in config {
+        if key == "enabled" {
+            continue;
+        }
+        if !matches!(
+            key.as_str(),
+            "backend" | "service_id" | "model" | "base_url"
+        ) || !value.is_string()
+        {
+            return Err("invalid builtin tool field".into());
+        }
+    }
+    let text = |key: &str| {
+        config
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+    };
+    if !config.contains_key("backend") {
+        return Err("backend is required".into());
+    }
+    if !text("service_id").is_empty() {
+        crate::recovery_path::id(&serde_json::Value::String(text("service_id").into()))?;
+    }
+    let backend = text("backend");
+    if !matches!(backend, "" | "upstream" | "external" | "service_images")
+        || (backend == "service_images" && kind != "image_generation")
+    {
+        return Err("invalid builtin backend".into());
+    }
+    if text("model").chars().count() > 256 || text("model").chars().any(char::is_control) {
+        return Err("invalid tool model".into());
+    }
+    if !text("base_url").is_empty() {
+        let url = reqwest::Url::parse(text("base_url")).map_err(|_| "invalid tool API URL")?;
+        if text("base_url").len() > 2048
+            || !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err("invalid tool API URL".into());
+        }
+    }
+    if config.get("enabled").and_then(serde_json::Value::as_bool) == Some(true)
+        && (backend.is_empty()
+            || (matches!(backend, "upstream" | "service_images")
+                && (text("service_id").is_empty() || text("model").is_empty()))
+            || (backend == "external"
+                && (text("base_url").is_empty()
+                    || (kind == "image_generation" && text("model").is_empty()))))
+    {
+        return Err("tool configuration is incomplete".into());
     }
     Ok(())
 }
@@ -209,6 +313,28 @@ mod tests {
     fn policy() -> serde_json::Value {
         json!({"max_retries":1,"initial_delay_ms":500,"max_delay_ms":5000,"network_error":"retry_and_failover","response_timeout":"retry_and_failover","http_status":{"401":"failover","429":"retry_and_failover","418":"retry"}})
     }
+    #[test]
+    fn validates_builtin_tool_settings_without_credentials() {
+        let disabled = json!({"enabled":false,"backend":"upstream"});
+        let tools = json!({"web_search":{"enabled":true,"backend":"external","base_url":"https://search.example"},"image_generation":disabled});
+        assert!(validate_routing_settings(&json!({"builtin_tools":tools}), true).is_ok());
+        for tool in [
+            json!({"enabled":false}),
+            json!({"enabled":true,"backend":"external"}),
+            json!({"enabled":false,"backend":"upstream","secret":"private"}),
+            json!({"enabled":false,"backend":"service_images"}),
+        ] {
+            assert!(validate_builtin_tool("web_search", &tool).is_err());
+        }
+        let provider_images = json!({"enabled":true,"backend":"service_images","service_id":"newapi_main","model":"gpt-image-1"});
+        assert!(validate_builtin_tool("image_generation", &provider_images).is_ok());
+        assert!(validate_builtin_tool(
+            "image_generation",
+            &json!({"enabled":true,"backend":"service_images","service_id":"newapi_main"})
+        )
+        .is_err());
+    }
+
     #[test]
     fn accepts_complete_global_defaults_and_optional_timeout() {
         let mut value = policy();
@@ -232,6 +358,13 @@ mod tests {
             "codex_identity_enforcement",
             "claude_identity_enforcement",
             "grok_identity_enforcement",
+            "official_client_passthrough",
+            "subscription_risk_protection",
+            "codex_request_normalization",
+            "claude_request_normalization",
+            "subscription_session_isolation",
+            "claude_identity_auto_learn",
+            "codex_identity_auto_learn",
         ] {
             for enabled in [true, false] {
                 assert!(validate_routing_settings(&json!({key: enabled}), true).is_ok());
@@ -240,6 +373,58 @@ mod tests {
                 assert!(validate_routing_settings(&json!({key: invalid}), true).is_err());
             }
         }
+        for key in ["claude_identity_version", "codex_identity_version"] {
+            for version in ["", "2.1.300", "0.160.0", "2.2.0-beta.1", "1.0.0+build.5"] {
+                assert_eq!(
+                    validate_routing_settings(&json!({key: version}), true),
+                    Ok(()),
+                    "{key} {version}"
+                );
+            }
+            for invalid in [
+                json!(null),
+                json!(2),
+                json!("v2.1.300"),
+                json!("claude-cli/2.1.300"),
+                json!("2.1.300 (external, cli)"),
+                json!("2.1.300\n"),
+                json!(format!("1.0.0-{}", "a".repeat(64))),
+            ] {
+                assert!(
+                    validate_routing_settings(&json!({key: invalid}), true).is_err(),
+                    "{key} {invalid}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loads_complete_routing_settings_with_builtin_tools_and_identity_controls() {
+        let settings = json!({
+            "default_failure_policy": policy(),
+            "allow_unmatched_failover": true,
+            "strategy": "failover_only",
+            "max_attempts": 6,
+            "model_redirects": [],
+            "channel_stickiness": {"enabled": true, "ttl_seconds": 3600},
+            "codex_identity_enforcement": true,
+            "claude_identity_enforcement": true,
+            "grok_identity_enforcement": true,
+            "official_client_passthrough": false,
+            "subscription_risk_protection": true,
+            "codex_request_normalization": true,
+            "claude_request_normalization": true,
+            "subscription_session_isolation": true,
+            "claude_identity_auto_learn": true,
+            "codex_identity_auto_learn": false,
+            "claude_identity_version": "2.1.300",
+            "codex_identity_version": "0.160.0",
+            "builtin_tools": {
+                "web_search": {"enabled": true, "backend": "upstream", "service_id": "service_test", "model": "search-model"},
+                "image_generation": {"enabled": false, "backend": "upstream"}
+            }
+        });
+        assert_eq!(validate_routing_settings(&settings, false), Ok(()));
     }
     fn redirect(from: &str, to: &str) -> serde_json::Value {
         json!({"from":from,"to":to,"enabled":true})
@@ -338,10 +523,7 @@ mod tests {
             value.as_object_mut().unwrap().remove(key);
             assert!(validate_failure_policy(&value).is_err(), "{key}");
         }
-        assert!(validate_failover(
-            &json!({"enabled":true,"strategy":"retry_first","max_attempts":21})
-        )
-        .is_err());
+        assert!(validate_routing_settings(&json!({"max_attempts":21}), true).is_err());
         assert!(validate_routing_settings(&json!({"default_failure_policy":policy(),"allow_unmatched_failover":false,"strategy":"retry_first"}),false).is_err());
     }
 }

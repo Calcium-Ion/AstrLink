@@ -44,6 +44,10 @@ security:
 x-astrlink-implementation:
   milestone: M3-unified-service-slice
   implemented_operations:
+    - GET /control/v1/builtin-tools/{kind}/credential
+    - PUT /control/v1/builtin-tools/{kind}/credential
+    - DELETE /control/v1/builtin-tools/{kind}/credential
+    - POST /control/v1/builtin-tools/{kind}/test
     - GET /control/v1/pricing/status
     - GET /control/v1/pricing/catalog
     - POST /control/v1/pricing/sync
@@ -69,6 +73,8 @@ x-astrlink-implementation:
     - POST /control/v1/services/{service_id}/probe-responses
     - GET /control/v1/services/{service_id}/usage
     - POST /control/v1/services/{service_id}/usage/reset
+    - POST /control/v1/services/{service_id}/risk/clear
+    - GET /control/v1/services/{service_id}/risk-events
     - GET /control/v1/access-tokens
     - GET /control/v1/access-token-usage
     - GET /control/v1/usage-summary
@@ -1041,6 +1047,88 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
         "504":
           $ref: "#/components/responses/GatewayTimeout"
+  /control/v1/services/{service_id}/risk/clear:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    post:
+      tags: [Services]
+      operationId: clearServiceRisk
+      summary: Restore scheduling for a subscription paused by an upstream risk signal.
+      description: |
+        Removes the current `subscription.risk` of a Claude Code or Codex
+        subscription service and records a `cleared` risk event. Credentials
+        are kept. If the provider still restricts the account, the next
+        request pauses it again.
+      responses:
+        "200":
+          description: Updated service without a current risk.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /control/v1/services/{service_id}/risk-events:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    get:
+      tags: [Services]
+      operationId: listServiceRiskEvents
+      summary: List the recent upstream risk history of a subscription service.
+      description: |
+        Returns the most recent risk events of a subscription service, newest
+        first. Core keeps at most 50 events per service; messages are
+        sanitized upstream excerpts and never contain credential material.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Recent risk events.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 50
+                    items:
+                      $ref: "#/components/schemas/SubscriptionRiskEvent"
+                additionalProperties: false
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /control/v1/usage-summary:
     x-astrlink-implementation-status: implemented
     get:
@@ -1216,63 +1304,22 @@ paths:
       tags: [Routes]
       operationId: listRoutes
       summary: List routes in deterministic evaluation order.
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-        - name: enabled
-          in: query
-          schema:
-            type: boolean
       deprecated: true
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "200":
-          description: Route page.
-          headers:
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RoutePage"
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
       tags: [Routes]
       operationId: createRoute
       summary: Create a route.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RouteCreate"
       deprecated: true
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "201":
-          description: Route created.
-          headers:
-            Location:
-              $ref: "#/components/headers/Location"
-            ETag:
-              $ref: "#/components/headers/ETag"
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Route"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
   /control/v1/routes/{route_id}:
     x-astrlink-implementation-status: implemented
     parameters:
@@ -1285,76 +1332,28 @@ paths:
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "200":
-          description: Route details.
-          headers:
-            ETag:
-              $ref: "#/components/headers/ETag"
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Route"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
     patch:
       tags: [Routes]
       operationId: updateRoute
       summary: Update a route.
-      parameters:
-        - $ref: "#/components/parameters/IfMatch"
-      requestBody:
-        required: true
-        content:
-          application/merge-patch+json:
-            schema:
-              $ref: "#/components/schemas/RoutePatch"
       deprecated: true
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "200":
-          description: Updated route.
-          headers:
-            ETag:
-              $ref: "#/components/headers/ETag"
-            Cache-Control:
-              $ref: "#/components/headers/NoStore"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Route"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "412":
-          $ref: "#/components/responses/PreconditionFailed"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
     delete:
       tags: [Routes]
       operationId: deleteRoute
       summary: Delete a route.
-      parameters:
-        - $ref: "#/components/parameters/IfMatch"
       deprecated: true
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "204":
-          description: Route deleted.
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "412":
-          $ref: "#/components/responses/PreconditionFailed"
   /control/v1/policies:
     get:
       x-astrlink-implementation-status: implemented
@@ -1935,40 +1934,17 @@ paths:
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "200":
-          description: All reusable paths, versions, and references.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/RecoveryPathRecord"
-                additionalProperties: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     post:
       tags: [Routes]
       operationId: createRecoveryPath
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RecoveryPathCreate"
       deprecated: true
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "201":
-          description: Created path and strong version.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RecoveryPathRecord"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /control/v1/recovery-paths/{path_id}:
     x-astrlink-implementation-status: implemented
     parameters:
@@ -1984,82 +1960,124 @@ paths:
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "200":
-          description: Path and its current references.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RecoveryPathRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     patch:
       tags: [Routes]
       operationId: updateRecoveryPath
-      parameters:
-        - name: If-Match
-          in: header
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/merge-patch+json:
-            schema:
-              $ref: "#/components/schemas/RecoveryPathPatch"
       deprecated: true
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "200":
-          description: Updated path; active requests retain their original snapshot.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RecoveryPathRecord"
-        "412":
-          description: The path version changed.
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     delete:
       tags: [Routes]
       operationId: deleteRecoveryPath
-      parameters:
-        - name: If-Match
-          in: header
-          required: true
-          schema: { type: string }
       deprecated: true
       responses:
         "410":
           description: Legacy routing feature retired; use service order and routing settings
-        "204":
-          description: Path removed.
-        "409":
-          description: A route, category, or default still references this path.
-        "412":
-          description: The path version changed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /control/v1/recovery-paths/preview:
     x-astrlink-implementation-status: implemented
     post:
       tags: [Routes]
       operationId: previewRecoveryPath
       summary: Simulate the actual scheduler without saving, waiting, or sending inference requests.
+      deprecated: true
+      responses:
+        "410":
+          description: Legacy routing feature retired; use service order and routing settings
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/builtin-tools/{kind}/credential:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: { type: string, enum: [web_search, image_generation] }
+    get:
+      operationId: getBuiltinToolCredentialStatus
+      summary: Read whether the tool API key is configured, never its value.
+      responses:
+        "200":
+          description: Credential status.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/BuiltinToolCredentialStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: putBuiltinToolCredential
+      summary: Save a tool API key independently of routing settings.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RecoveryPreviewInput"
-      deprecated: true
+              type: object
+              additionalProperties: false
+              required: [secret]
+              properties:
+                secret:
+                  {
+                    type: string,
+                    minLength: 1,
+                    maxLength: 16384,
+                    writeOnly: true,
+                  }
       responses:
-        "410":
-          description: Legacy routing feature retired; use service order and routing settings
         "200":
-          description: Actual attempt ordering and skipped steps for synthetic outcomes.
+          description: Credential saved.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RecoveryPreview"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
+                { $ref: "#/components/schemas/BuiltinToolCredentialStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+    delete:
+      operationId: deleteBuiltinToolCredential
+      summary: Clear the stored tool API key.
+      responses:
+        "200":
+          description: Credential removed.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/BuiltinToolCredentialStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /control/v1/builtin-tools/{kind}/test:
+    x-astrlink-implementation-status: implemented
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: { type: string, enum: [web_search, image_generation] }
+    post:
+      operationId: testBuiltinTool
+      summary: Execute one real search or image call using the supplied configuration.
+      description: Explicit invocation only; can incur backend charges. Never called by configuration saving.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BuiltinTool" }
+      responses:
+        "200":
+          description: Tool executed successfully.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BuiltinToolTestResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "502":
+          description: Tool invocation failed or timed out.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /control/v1/routing-settings:
     x-astrlink-implementation-status: implemented
     get:
@@ -2924,7 +2942,30 @@ components:
           required: [id]
           properties:
             id: { type: [string, "null"] }
+            performance:
+              $ref: "#/components/schemas/ServicePerformance"
       unevaluatedProperties: false
+    ServicePerformance:
+      type: object
+      additionalProperties: false
+      description: >-
+        Performance of successful root inference requests in the selected window;
+        present on by_service and by_token groups and access-token usage periods. Failed requests, retry children, model
+        discovery and incomplete usage are excluded. Null means no eligible samples.
+      required:
+        [cache_hit_rate, output_tokens_per_second, cache_samples, speed_samples]
+      properties:
+        cache_hit_rate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+          description: Cache read tokens divided by input tokens, only for requests with explicit valid cache reporting and positive input.
+        output_tokens_per_second:
+          type: [number, "null"]
+          minimum: 0
+          description: Output tokens divided by total generation seconds for streaming requests with positive output and valid latency and TTFT. Each generation duration is max(latency - TTFT, 500 ms).
+        cache_samples: { type: integer, minimum: 0 }
+        speed_samples: { type: integer, minimum: 0 }
     UsageSummary:
       type: object
       additionalProperties: false
@@ -2968,7 +3009,16 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [token_id, today_tokens, total_tokens]
+            required:
+              [
+                token_id,
+                today_tokens,
+                total_tokens,
+                today_billing,
+                total_billing,
+                today_performance,
+                total_performance,
+              ]
             properties:
               token_id:
                 $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -2980,6 +3030,14 @@ components:
                 type: integer
                 format: int64
                 minimum: 0
+              today_billing:
+                $ref: "#/components/schemas/BillingAmounts"
+              total_billing:
+                $ref: "#/components/schemas/BillingAmounts"
+              today_performance:
+                $ref: "#/components/schemas/ServicePerformance"
+              total_performance:
+                $ref: "#/components/schemas/ServicePerformance"
     AccessToken:
       type: object
       required: [id, name, hint, created_at]
@@ -3069,241 +3127,6 @@ components:
       type: string
       enum: [stop, retry, failover, retry_and_failover]
       description: Applies only to replayable requests before client response commitment. Retry and switching permissions are further bounded by the route and request budget.
-    RecoveryPathNode:
-      type: object
-      required: [id, service_id, upstream_protocol, plan_type]
-      properties:
-        id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        service_id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        upstream_protocol:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        plan_type:
-          $ref: ./protocol-capabilities.schema.json#/$defs/PlanType
-        upstream_model:
-          type: string
-          maxLength: 256
-          description: Empty or omitted preserves the requested model.
-        max_retries:
-          type: integer
-          minimum: 0
-          maximum: 5
-          description: Automatic targets only; omission inherits the effective policy.
-      additionalProperties: false
-    RecoveryPath:
-      type: object
-      required: [id, name, protocol, mode]
-      properties:
-        id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        name:
-          type: string
-          minLength: 1
-          maxLength: 128
-        protocol:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        mode:
-          type: string
-          enum: [automatic, steps]
-        targets:
-          type: array
-          minItems: 1
-          maxItems: 200
-          items:
-            $ref: "#/components/schemas/RecoveryPathNode"
-        steps:
-          type: array
-          minItems: 1
-          maxItems: 20
-          items:
-            $ref: "#/components/schemas/RecoveryPathNode"
-          description: Same execution target may appear at most six times; node IDs remain unique.
-        strategy:
-          type: string
-          enum: [retry_first, failover_first, failover_only]
-        max_attempts:
-          type: integer
-          minimum: 1
-          maximum: 20
-        failure_policy:
-          $ref: "#/components/schemas/FailurePolicy"
-      oneOf:
-        - properties:
-            mode: { const: automatic }
-          required: [targets]
-          not:
-            required: [steps]
-        - properties:
-            mode: { const: steps }
-            steps:
-              items:
-                not:
-                  required: [max_retries]
-          required: [steps]
-          not:
-            anyOf:
-              - required: [targets]
-              - required: [strategy]
-      additionalProperties: false
-    RecoveryPathCreate:
-      type: object
-      required: [name, protocol, mode]
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 128
-        protocol:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        mode:
-          type: string
-          enum: [automatic, steps]
-        targets:
-          type: array
-          minItems: 1
-          maxItems: 200
-          items:
-            $ref: "#/components/schemas/RecoveryPathNode"
-        steps:
-          type: array
-          minItems: 1
-          maxItems: 20
-          items:
-            $ref: "#/components/schemas/RecoveryPathNode"
-          description: Same execution target may appear at most six times; node IDs remain unique.
-        strategy:
-          type: string
-          enum: [retry_first, failover_first, failover_only]
-        max_attempts:
-          type: integer
-          minimum: 1
-          maximum: 20
-        failure_policy:
-          $ref: "#/components/schemas/FailurePolicy"
-      oneOf:
-        - properties:
-            mode: { const: automatic }
-          required: [targets]
-          not:
-            required: [steps]
-        - properties:
-            mode: { const: steps }
-            steps:
-              items:
-                not:
-                  required: [max_retries]
-          required: [steps]
-          not:
-            anyOf:
-              - required: [targets]
-              - required: [strategy]
-      additionalProperties: false
-    RecoveryPathPatch:
-      type: object
-      minProperties: 1
-      properties:
-        name:
-          $ref: "#/components/schemas/RecoveryPath/properties/name"
-        protocol:
-          $ref: "#/components/schemas/RecoveryPath/properties/protocol"
-        mode:
-          $ref: "#/components/schemas/RecoveryPath/properties/mode"
-        targets:
-          oneOf:
-            - $ref: "#/components/schemas/RecoveryPath/properties/targets"
-            - type: "null"
-        steps:
-          oneOf:
-            - $ref: "#/components/schemas/RecoveryPath/properties/steps"
-            - type: "null"
-        strategy:
-          oneOf:
-            - $ref: "#/components/schemas/RecoveryPath/properties/strategy"
-            - type: "null"
-        max_attempts:
-          oneOf:
-            - $ref: "#/components/schemas/RecoveryPath/properties/max_attempts"
-            - type: "null"
-        failure_policy:
-          oneOf:
-            - $ref: "#/components/schemas/RecoveryPath/properties/failure_policy"
-            - type: "null"
-      additionalProperties: false
-    RecoveryPathRecord:
-      type: object
-      required: [path, etag, references]
-      properties:
-        path:
-          $ref: "#/components/schemas/RecoveryPath"
-        etag:
-          type: string
-          pattern: '^"sha256:[0-9a-f]{64}"$'
-        references:
-          type: array
-          items:
-            type: object
-            required: [name, protocol, override]
-            properties:
-              route_id:
-                $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-              name: { type: string, maxLength: 128 }
-              protocol:
-                $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-              category_id: { type: string, maxLength: 64 }
-              override: { type: boolean }
-            additionalProperties: false
-      additionalProperties: false
-    RecoveryPreviewInput:
-      type: object
-      required: [path, streaming, error]
-      properties:
-        path:
-          $ref: "#/components/schemas/RecoveryPath"
-        model: { type: string, maxLength: 256 }
-        streaming: { type: boolean }
-        error:
-          type: string
-          pattern: "^(network_error|response_timeout|[45][0-9]{2})$"
-        success_at: { type: integer, minimum: 0, maximum: 20 }
-        retry_after: { type: string, maxLength: 128 }
-        route_id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        category_id: { type: string, maxLength: 64 }
-      additionalProperties: false
-    RecoveryPreview:
-      type: object
-      required: [steps, stop_reason, max_attempts]
-      properties:
-        stop_reason: { type: string, maxLength: 128 }
-        max_attempts: { type: integer, minimum: 1, maximum: 20 }
-        steps:
-          type: array
-          items:
-            type: object
-            required:
-              [
-                step_id,
-                service_id,
-                model,
-                action,
-                status,
-                wait_min_ms,
-                wait_max_ms,
-              ]
-            properties:
-              step_id:
-                $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-              service_id:
-                $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-              model: { type: string, maxLength: 256 }
-              action: { type: string, enum: [initial, retry, failover] }
-              status: { type: string, enum: [failed, succeeded, skipped] }
-              reason: { type: string, maxLength: 128 }
-              wait_min_ms: { type: integer, minimum: 0 }
-              wait_max_ms: { type: integer, minimum: 0 }
-            additionalProperties: false
-      additionalProperties: false
     FailurePolicy:
       type: object
       required:
@@ -3363,24 +3186,6 @@ components:
           description: Controls ordinary retries and switching after any enabled request repair. Unlisted statuses stop. Request repair is independent of HTTP status rules. Defaults permit retry and switching for 408, 429, 500, 502, 503, 504, 529; 401 and 403 permit switching only.
       additionalProperties: false
       description: A complete policy. Missing service policy inherits RoutingSettings.default_failure_policy; missing route policy uses each service policy (or the global policy). A route override replaces the entire inherited policy. Missing route failover inherits global strategy and max_attempts with switching enabled.
-    FailoverPolicy:
-      type: object
-      required: [enabled, strategy, max_attempts]
-      properties:
-        enabled:
-          type: boolean
-          default: true
-        strategy:
-          type: string
-          enum: [retry_first, failover_first, failover_only]
-          default: retry_first
-        max_attempts:
-          type: integer
-          minimum: 1
-          maximum: 20
-          default: 6
-          description: Total actual upstream inference requests, including the first request, ordinary retries, request repairs and backups.
-      additionalProperties: false
     ServiceOrder:
       type: object
       additionalProperties: false
@@ -3404,7 +3209,7 @@ components:
       type: object
       additionalProperties: false
       required: [from, to, enabled]
-      description: Routes a client-requested model to another model before service selection. Matching is exact and case-sensitive, only enabled rules apply, and a redirect is a single hop. Responses keep the client's model name.
+      description: Routes a client-requested model to another model before service selection. Matching is exact and case-sensitive, only enabled rules apply, and a redirect is a single hop. Only the upstream request's model changes; responses pass through as the upstream returned them.
       properties:
         from:
           type: string
@@ -3482,6 +3287,40 @@ components:
           items:
             $ref: "#/components/schemas/ChannelBindingEvent"
         has_more: { type: boolean }
+    BuiltinTool:
+      type: object
+      additionalProperties: false
+      required: [enabled, backend]
+      properties:
+        enabled: { type: boolean, default: false }
+        backend:
+          { type: string, enum: ["", upstream, external, service_images] }
+        service_id: { type: string }
+        model: { type: string, maxLength: 256 }
+        base_url: { type: string, maxLength: 2048, format: uri }
+      description: Upstream execution requires an enabled native Responses provider and an executor model that supports the hosted tool; the executor chooses the image model. service_images (image generation only) calls the OpenAI Images API of an enabled newapi, openai or openai_compatible provider with its own credential; model is the image model. External search uses Tavily; external images use OpenAI Images with a configured model. Credentials are stored separately. Enabled configurations require the selected backend's fields.
+    BuiltinTools:
+      type: object
+      additionalProperties: false
+      required: [web_search, image_generation]
+      properties:
+        web_search: { $ref: "#/components/schemas/BuiltinTool" }
+        image_generation: { $ref: "#/components/schemas/BuiltinTool" }
+    BuiltinToolCredentialStatus:
+      type: object
+      additionalProperties: false
+      required: [configured]
+      properties:
+        configured: { type: boolean }
+    BuiltinToolTestResult:
+      type: object
+      additionalProperties: false
+      required: [ok, duration_ms, result_count, usage]
+      properties:
+        ok: { type: boolean }
+        duration_ms: { type: integer, minimum: 0 }
+        result_count: { type: integer, minimum: 0 }
+        usage: { type: [object, "null"], additionalProperties: true }
     RoutingSettings:
       type: object
       required:
@@ -3493,6 +3332,8 @@ components:
           default_failure_policy,
         ]
       properties:
+        builtin_tools:
+          $ref: "#/components/schemas/BuiltinTools"
         codex_identity_enforcement:
           type: boolean
           default: true
@@ -3505,6 +3346,38 @@ components:
           type: boolean
           default: true
           description: Use the default Grok client identity. When disabled, preserve recognized Grok client identities with a matching version header.
+        subscription_risk_protection:
+          type: boolean
+          default: true
+          description: Pause subscription accounts on upstream ban, quota and repeated 403 signals, and refresh a rejected token once. When disabled, no new pause is recorded; existing pauses remain until restored or expired.
+        codex_request_normalization:
+          type: boolean
+          default: true
+          description: Repair Codex subscription request structure the backend rejects, without rewriting content. When disabled, only locally converted Responses requests receive the minimal storage, instructions and max_output_tokens fixes.
+        claude_request_normalization:
+          type: boolean
+          default: true
+          description: Repair Claude subscription request structure the Messages API rejects, without rewriting content. When disabled, only the Claude Code banner is added.
+        subscription_session_isolation:
+          type: boolean
+          default: true
+          description: Scope forwarded device and session identifiers to each subscription account so failover does not link accounts.
+        official_client_passthrough:
+          type: boolean
+          default: true
+          description: Forward a recognized Claude Code or Codex CLI request untouched, adding only credentials and required OAuth items. Identity and request protections then apply to third-party and converted requests only.
+        claude_identity_auto_learn:
+          type: boolean
+          default: true
+          description: Let recognized Claude Code requests replace the built-in Claude identity used for converted requests, model discovery, connection tests, OAuth and usage requests. When disabled, the built-in identity is used and nothing new is learned.
+        codex_identity_auto_learn:
+          type: boolean
+          default: true
+          description: Let recognized Codex CLI requests replace the built-in Codex identity used for converted requests, model discovery, connection tests, OAuth and usage requests. When disabled, the built-in identity is used and nothing new is learned.
+        claude_identity_version:
+          $ref: "#/components/schemas/ClientIdentityVersion"
+        codex_identity_version:
+          $ref: "#/components/schemas/CodexIdentityVersion"
         model_redirects:
           type: array
           maxItems: 200
@@ -3533,16 +3406,51 @@ components:
           maximum: 20
           default: 6
       additionalProperties: false
+    ClientIdentityVersion:
+      type: string
+      maxLength: 64
+      pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?(?![\\s\\S])"
+      description: Minimum client version the subscription identity declares, as a bare semantic version. A higher value replaces the learned or built-in version; a lower one never downgrades it. Omitted when no override is set.
+    CodexIdentityVersion:
+      allOf:
+        - $ref: "#/components/schemas/ClientIdentityVersion"
+      description: Minimum Codex client version the subscription identity declares; it must be 0.144.0 or newer, the oldest version the Codex backend accepts. Omitted when no override is set.
     RoutingSettingsPatch:
       type: object
       minProperties: 1
       properties:
+        builtin_tools:
+          $ref: "#/components/schemas/BuiltinTools"
         codex_identity_enforcement:
           type: boolean
         claude_identity_enforcement:
           type: boolean
         grok_identity_enforcement:
           type: boolean
+        subscription_risk_protection:
+          type: boolean
+        codex_request_normalization:
+          type: boolean
+        claude_request_normalization:
+          type: boolean
+        subscription_session_isolation:
+          type: boolean
+        official_client_passthrough:
+          type: boolean
+        claude_identity_auto_learn:
+          type: boolean
+        codex_identity_auto_learn:
+          type: boolean
+        claude_identity_version:
+          description: An empty string removes the override; null is rejected.
+          oneOf:
+            - $ref: "#/components/schemas/ClientIdentityVersion"
+            - { type: string, const: "" }
+        codex_identity_version:
+          description: An empty string removes the override; null is rejected.
+          oneOf:
+            - $ref: "#/components/schemas/CodexIdentityVersion"
+            - { type: string, const: "" }
         model_redirects:
           type: array
           maxItems: 200
@@ -3673,6 +3581,8 @@ components:
           format: date-time
         last_error:
           $ref: "#/components/schemas/SubscriptionError"
+        risk:
+          $ref: "#/components/schemas/SubscriptionRisk"
       additionalProperties: false
     ServiceProxy:
       type: object
@@ -3947,330 +3857,9 @@ components:
       type: string
       const: astrlink/auto
       description: >
-        Reserved public virtual-model identifier. It is never an ordinary
-        alias: requests using this exact model require a Route whose
-        selection.mode is auto.
-    RouteSelectionMode:
-      type: string
-      enum: [priority, auto]
-      description: >
-        priority chooses targets in deterministic target-priority order. auto
-        applies hard capability constraints, classifies the bounded request into
-        one category in a versioned taxonomy, keeps the targets configured under
-        that category_id, and then uses target priority as the deterministic
-        selection and fallback order. The classifier never predicts a target or
-        upstream model identifier.
-    RouteSelection:
-      type: object
-      required: [mode]
-      properties:
-        mode:
-          $ref: "#/components/schemas/RouteSelectionMode"
-        taxonomy_id:
-          type: string
-          minLength: 1
-          maxLength: 64
-          pattern: "^[a-z][a-z0-9._-]{0,63}$"
-          example: astrlink-text-v1
-          description: >
-            Versioned task-classification taxonomy used by auto selection.
-            Required when mode is auto and forbidden when mode is priority.
-            It identifies label semantics, not a classifier implementation.
-      allOf:
-        - if:
-            properties:
-              mode:
-                const: auto
-            required: [mode]
-          then:
-            required: [taxonomy_id]
-          else:
-            not:
-              required: [taxonomy_id]
-      additionalProperties: false
-      description: >
-        Optional target-selection strategy. Omission is exactly equivalent to
-        mode priority, preserving existing Route behavior. Mode auto requires
-        match.model to equal astrlink/auto and replaces the ordinary top-level
-        targets array with at least two RouteCategory objects. Every category
-        owns one or more targets, every target has a concrete upstream_model,
-        and the complete Route contains at least two distinct upstream model
-        names. The taxonomy ID and category-owned model pools are stable
-        configuration; classifier weights, confidence values, and model-ranking
-        predictions are not.
-    Route:
-      type: object
-      required:
-        - id
-        - name
-        - enabled
-        - priority
-        - match
-      properties:
-        recovery_path_id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        failure_policy:
-          $ref: "#/components/schemas/FailurePolicy"
-        failover:
-          $ref: "#/components/schemas/FailoverPolicy"
-        id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        name:
-          type: string
-          minLength: 1
-          maxLength: 128
-        enabled:
-          type: boolean
-        priority:
-          type: integer
-          minimum: 0
-          maximum: 1000000
-        match:
-          $ref: "#/components/schemas/RouteMatch"
-        selection:
-          $ref: "#/components/schemas/RouteSelection"
-        targets:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/RouteTarget"
-        categories:
-          type: array
-          minItems: 2
-          items:
-            $ref: "#/components/schemas/RouteCategory"
-      allOf:
-        - if:
-            properties:
-              selection:
-                properties:
-                  mode:
-                    const: auto
-                required: [mode]
-            required: [selection]
-          then:
-            required: [categories]
-            properties:
-              match:
-                properties:
-                  model:
-                    $ref: "#/components/schemas/AstrLinkAutoModel"
-                required: [model]
-            not:
-              anyOf:
-                - required: [targets]
-                - required: [recovery_path_id]
-          else:
-            oneOf:
-              - required: [targets]
-              - required: [recovery_path_id]
-            properties:
-              match:
-                not:
-                  properties:
-                    model:
-                      $ref: "#/components/schemas/AstrLinkAutoModel"
-                  required: [model]
-            not:
-              required: [categories]
-      additionalProperties: false
-    RouteCreate:
-      type: object
-      required: [name, priority, match]
-      properties:
-        recovery_path_id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        failure_policy:
-          $ref: "#/components/schemas/FailurePolicy"
-        failover:
-          $ref: "#/components/schemas/FailoverPolicy"
-        name:
-          type: string
-          minLength: 1
-          maxLength: 128
-        enabled:
-          type: boolean
-          default: true
-        priority:
-          type: integer
-          minimum: 0
-          maximum: 1000000
-        match:
-          $ref: "#/components/schemas/RouteMatch"
-        selection:
-          $ref: "#/components/schemas/RouteSelection"
-        targets:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/RouteTarget"
-        categories:
-          type: array
-          minItems: 2
-          items:
-            $ref: "#/components/schemas/RouteCategory"
-      allOf:
-        - if:
-            properties:
-              selection:
-                properties:
-                  mode:
-                    const: auto
-                required: [mode]
-            required: [selection]
-          then:
-            required: [categories]
-            properties:
-              match:
-                properties:
-                  model:
-                    $ref: "#/components/schemas/AstrLinkAutoModel"
-                required: [model]
-            not:
-              anyOf:
-                - required: [targets]
-                - required: [recovery_path_id]
-          else:
-            oneOf:
-              - required: [targets]
-              - required: [recovery_path_id]
-            properties:
-              match:
-                not:
-                  properties:
-                    model:
-                      $ref: "#/components/schemas/AstrLinkAutoModel"
-                  required: [model]
-            not:
-              required: [categories]
-      additionalProperties: false
-    RoutePatch:
-      type: object
-      minProperties: 1
-      properties:
-        recovery_path_id:
-          oneOf:
-            - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-            - type: "null"
-        failure_policy:
-          oneOf:
-            - $ref: "#/components/schemas/FailurePolicy"
-            - type: "null"
-        failover:
-          oneOf:
-            - $ref: "#/components/schemas/FailoverPolicy"
-            - type: "null"
-        name:
-          type: string
-          minLength: 1
-          maxLength: 128
-        enabled:
-          type: boolean
-        priority:
-          type: integer
-          minimum: 0
-          maximum: 1000000
-        match:
-          $ref: "#/components/schemas/RouteMatch"
-        selection:
-          oneOf:
-            - $ref: "#/components/schemas/RouteSelection"
-            - type: "null"
-              description: Restore the backward-compatible priority selection mode.
-        targets:
-          oneOf:
-            - type: array
-              minItems: 1
-              items:
-                $ref: "#/components/schemas/RouteTarget"
-            - type: "null"
-              description: Remove top-level priority targets when switching to auto.
-        categories:
-          oneOf:
-            - type: array
-              minItems: 2
-              items:
-                $ref: "#/components/schemas/RouteCategory"
-            - type: "null"
-              description: Remove category pools when switching to priority.
-          description: >
-            After applying a merge patch, the resulting Route must satisfy the
-            priority/auto conditional shape and full cross-field validation.
-      additionalProperties: false
-    RouteMatch:
-      type: object
-      required: [protocol]
-      properties:
-        protocol:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        model:
-          type: string
-          minLength: 1
-          maxLength: 256
-          description: >
-            Exact public model or alias. Omission matches any model.
-            astrlink/auto is reserved and is valid only with
-            selection.mode=auto.
-      additionalProperties: false
-    RouteTarget:
-      type: object
-      required:
-        - service_id
-        - plan_type
-        - upstream_protocol
-        - priority
-      properties:
-        service_id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        plan_type:
-          $ref: ./protocol-capabilities.schema.json#/$defs/PlanType
-          description: RelayKit is a stable future value but is rejected while capabilities report it unavailable in Alpha.
-        upstream_protocol:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-        priority:
-          type: integer
-          minimum: 0
-          maximum: 1000000
-        upstream_model:
-          type: string
-          minLength: 1
-          maxLength: 256
-          description: >
-            Rewrite the public model to this upstream model for this target.
-            Requires a non-empty match.model on the route. Omission preserves
-            the public model bytes. Every auto-selection target requires this
-            field; target priority remains its deterministic low-confidence and
-            transport-failure fallback order.
-      additionalProperties: false
-    RouteCategory:
-      type: object
-      required: [category_id]
-      oneOf:
-        - required: [targets]
-        - required: [recovery_path_id]
-      properties:
-        recovery_path_id:
-          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
-        category_id:
-          type: string
-          minLength: 1
-          maxLength: 64
-          pattern: "^[a-z][a-z0-9._-]{0,63}$"
-          description: >
-            One classifier output from selection.taxonomy_id. Category IDs are
-            supplied by AstrLink's versioned taxonomy, not inferred from model
-            names.
-        targets:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/RouteTarget"
-          description: >
-            Ordered concrete model candidates configured under this category.
-            Multiple models are allowed and target priority determines the
-            category-local selection and transport-fallback order. The same
-            concrete model may appear in another category explicitly.
-      additionalProperties: false
+        Reserved public virtual-model identifier of the retired automatic
+        model. Inference requests that still route to this exact model after
+        model redirects are rejected with 410 Gone.
     Policy:
       type: object
       required:
@@ -5354,6 +4943,22 @@ components:
         one successful answer and then the client abandoned the last stream,
         so a stopped agent loop is not reported as if nothing had run.
         cancelled is kept for a conversation that produced nothing.
+    ClientType:
+      type: string
+      enum:
+        [
+          unknown,
+          codex,
+          claude_code,
+          cursor,
+          grok_cli,
+          gemini_cli,
+          opencode,
+          openclaw,
+          cline,
+          pi,
+        ]
+      description: Best-effort client label from original inbound headers, before upstream identity rewriting. Display metadata only; never an authenticated identity. Unknown means no recognized signature. Historical records omit this field.
     RequestRecord:
       type: object
       required:
@@ -5383,6 +4988,8 @@ components:
         - input_preview
         - events
       properties:
+        client_type:
+          $ref: "#/components/schemas/ClientType"
         recovery:
           $ref: "#/components/schemas/RequestRecovery"
         id:
@@ -5435,6 +5042,8 @@ components:
           oneOf:
             - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
             - type: "null"
+        routing_decision:
+          $ref: "#/components/schemas/RequestRoutingDecision"
         local_access_token_id:
           oneOf:
             - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
@@ -5582,6 +5191,74 @@ components:
           minLength: 1
           maxLength: 256
           description: Model used for service selection.
+    RequestRoutingDecision:
+      type: object
+      additionalProperties: false
+      required: [skipped]
+      description: Why routing chose service_id for this attempt. Omitted for historical records, model discovery, requests still waiting for a provider, and resolvers that cannot rank providers.
+      properties:
+        selected:
+          $ref: "#/components/schemas/RoutingSelection"
+        skipped:
+          type: array
+          maxItems: 64
+          description: Providers ranked ahead of service_id that routing excluded before any attempt, in priority order; every excluded provider when none was selected. Providers tried and rejected appear as routed events or retry children instead.
+          items:
+            $ref: "#/components/schemas/RoutingSkip"
+    RoutingSelection:
+      type: string
+      enum:
+        [
+          priority,
+          session_binding,
+          response_affinity,
+          websocket_connection,
+          failover,
+        ]
+      description: |
+        Why the attempt used service_id. Absent when no provider could be selected.
+        priority: first eligible provider in the configured order.
+        session_binding: channel stickiness promoted the provider that last served this session.
+        response_affinity: the provider that produced previous_response_id.
+        websocket_connection: the provider the Responses WebSocket connection is bound to.
+        failover: an earlier provider of this request was rejected or failed.
+    RoutingSkip:
+      type: object
+      additionalProperties: false
+      required: [service_id, reason]
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        reason:
+          $ref: "#/components/schemas/RoutingSkipReason"
+    RoutingSkipReason:
+      type: string
+      enum:
+        [
+          disabled,
+          not_connected,
+          risk_paused,
+          model_not_listed,
+          protocol_unsupported,
+          streaming_unsupported,
+          conversion_unavailable,
+          circuit_open,
+          rate_limited,
+          websocket_disabled,
+          websocket_unsupported,
+        ]
+      description: |
+        disabled: the provider is turned off.
+        not_connected: the subscription account is not connected.
+        risk_paused: an upstream risk signal paused the subscription account.
+        model_not_listed: the provider does not list the requested model.
+        protocol_unsupported: the provider has no capability for the input protocol.
+        streaming_unsupported: the provider cannot stream this protocol.
+        conversion_unavailable: the model only speaks another protocol and the local converter cannot bridge the request.
+        circuit_open: recent failures opened the provider's circuit breaker.
+        rate_limited: the provider is cooling down after an upstream rate limit.
+        websocket_disabled: Responses WebSocket is turned off for the provider.
+        websocket_unsupported: the provider cannot serve this model over a native Responses WebSocket.
     RequestEvent:
       type: object
       required: [kind, started_at, ended_at, status, summary, attempt_index]
@@ -5631,6 +5308,8 @@ components:
         - service_id
         - local_access_token_id
       properties:
+        client_type:
+          $ref: "#/components/schemas/ClientType"
         id:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         title:
@@ -6011,18 +5690,6 @@ components:
           type: [string, "null"]
           maxLength: 512
       additionalProperties: false
-    RoutePage:
-      type: object
-      required: [items, next_cursor]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/Route"
-        next_cursor:
-          type: [string, "null"]
-          maxLength: 512
-      additionalProperties: false
     PolicyPage:
       type: object
       required: [items, next_cursor]
@@ -6123,6 +5790,70 @@ components:
           type: string
           minLength: 1
           maxLength: 240
+      additionalProperties: false
+    SubscriptionRisk:
+      type: object
+      description: |
+        Current upstream risk state of a subscription account. `suspended`
+        keeps the account out of scheduling until the user clears it;
+        `cooling` resumes automatically at `paused_until`. Authorization
+        status and credentials are unaffected.
+      required: [state, code, observed_at]
+      properties:
+        state:
+          type: string
+          enum: [suspended, cooling]
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,63}$
+          description: Stable risk code such as `organization_disabled`, `account_deactivated`, `repeated_forbidden`, `forbidden`, `rate_limit_5h`, or `usage_limit_reached`.
+        message:
+          type: string
+          maxLength: 240
+          description: Sanitized single-line upstream excerpt.
+        http_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        observed_at:
+          type: string
+          format: date-time
+        paused_until:
+          type: string
+          format: date-time
+          description: Required for `cooling`; absent for `suspended`.
+        occurrences:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    SubscriptionRiskEvent:
+      type: object
+      required: [id, service_id, kind, observed_at]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        kind:
+          type: string
+          enum: [suspended, cooling, cleared]
+        code:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{1,63}$
+        message:
+          type: string
+          maxLength: 240
+        http_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        observed_at:
+          type: string
+          format: date-time
+        paused_until:
+          type: string
+          format: date-time
       additionalProperties: false
     AuthorizationFlow:
       type: string

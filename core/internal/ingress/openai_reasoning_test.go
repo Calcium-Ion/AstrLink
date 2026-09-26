@@ -10,9 +10,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -320,7 +322,6 @@ func TestOpenAIReasoningRepairKeepsContinuationAffinity(t *testing.T) {
 	policy := contract.DefaultFailurePolicy()
 	policy.InitialDelayMS = 0
 	candidates := openAIRecoveryCandidates(policy, 6, contract.ProtocolOpenAIResponses, "gpt-5.3-codex")
-	candidates[0].SingleTargetRoute = true
 	trips := 0
 	handler := NewWithDependencies(Dependencies{Resolver: candidateResolver{candidates: candidates}, Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		trips++
@@ -333,6 +334,16 @@ func TestOpenAIReasoningRepairKeepsContinuationAffinity(t *testing.T) {
 		}
 		return jsonResponse(200, `{"id":"resp_repaired","output":[]}`), nil
 	}))})
+	// Seed the exact continuation binding a previous response would have left.
+	handler.affinities.entries = map[affinityKey]affinityEntry{{responseID: "resp_previous"}: {
+		binding: storage.ResponseAffinity{
+			ServiceID:        candidates[0].CanonicalService().ID,
+			UpstreamModel:    "gpt-5.3-codex",
+			UpstreamProtocol: contract.ProtocolOpenAIResponses,
+			PlanType:         contract.PlanTypeNative,
+		},
+		at: time.Now(),
+	}}
 	input := strings.Replace(codexReasoningRequest, `"store":false`, `"store":false,"previous_response_id":"resp_previous"`, 1)
 	request := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(input))
 	request.Header.Set("Content-Type", "application/json")

@@ -10,7 +10,12 @@ import { ServiceTestDialog } from "./ServiceTestDialog";
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
 import { useServiceListColumns } from "./service-list-columns";
+import { useServicePerformance } from "./use-service-performance";
+import { ServicePerformanceMeter } from "./components/ServicePerformanceMeter";
+import { UsageRangeSelect } from "./components/UsageRangeSelect";
+import type { UsageRangePreset } from "./usage-range";
 import { ServiceOrderHelp } from "./ServiceOrderHelp";
+import { ServiceRiskBadge } from "./ServiceRiskBadge";
 import { ProtocolModeHelp } from "./ProtocolModeHelp";
 import { OrderedList } from "./components/OrderedList";
 import { useRoutingDefaults } from "./use-routing-defaults";
@@ -92,6 +97,7 @@ import { cn } from "@/lib/utils";
 import {
   beginServiceAuthorization,
   cancelServiceAuthorization,
+  clearServiceRisk,
   completeServiceAuthorization,
   createService,
   deleteService,
@@ -130,6 +136,7 @@ import { decodeModelEditorValue, encodeModelEditorValue } from "./model-editor";
 import { filterModels } from "./model-groups";
 import { ServiceModelsEditor } from "./ServiceModelsEditor";
 import {
+  activeServiceRisk,
   responsesWebSocketEnabled,
   supportsResponsesWebSocket,
   serviceKindLabel,
@@ -221,6 +228,7 @@ type ConfirmAction =
   | { kind: "delete"; service: Service }
   | { kind: "logout"; service: Service }
   | { kind: "reset-usage"; service: Service; availableCount: number }
+  | { kind: "clear-risk"; service: Service }
   | null;
 
 type AuthorizationDialog = {
@@ -481,11 +489,19 @@ function validateDraft(
   return null;
 }
 
+/** Subscriptions refresh while the list is visible so risk state stays current. */
+const SERVICE_RISK_POLL_INTERVAL_MS = 30_000;
+
 function serviceDot(
   service: Service,
+  now: Date,
 ): "positive" | "pending" | "negative" | "neutral" {
   if (!service.enabled) return "neutral";
+  const risk = activeServiceRisk(service, now);
+  if (risk?.state === "suspended") return "negative";
   const status = service.subscription?.status;
+  if (status === "needs_reauth" || status === "error") return "negative";
+  if (risk) return "pending";
   if (!status || status === "connected") return "positive";
   if (status === "authorizing" || status === "disconnected") return "pending";
   return "negative";
@@ -665,6 +681,7 @@ export function ServiceManager({
     models: t("services.columnModels"),
     usage: t("services.columnUsage"),
     billing: t("services.columnBilling"),
+    performance: t("services.columnPerformance"),
     status: t("services.columnStatus"),
     actions: t("services.columnActions"),
   };
@@ -724,6 +741,13 @@ export function ServiceManager({
     >
   >("service-usage", {});
   const [usageEpoch, setUsageEpoch] = useState(0);
+  const [performancePreset, setPerformancePreset] =
+    useWorkspaceSnapshot<UsageRangePreset>("service-performance-preset", "7d");
+  const performance = useServicePerformance(
+    isReady && view.kind === "list",
+    performancePreset,
+    usageEpoch,
+  );
   const [refreshingUsageIDs, setRefreshingUsageIDs] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1007,6 +1031,42 @@ export function ServiceManager({
     onRefresh,
     t,
   ]);
+
+  const hasSubscriptionServices = services.some((service) =>
+    isSubscriptionKind(service.kind),
+  );
+  const serviceListScrollerRef = useRef<HTMLDivElement>(null);
+  const riskPollState = useRef({
+    actionID,
+    catalogStatus,
+    onRefresh,
+    savingOrder: serviceOrder.saving,
+  });
+  riskPollState.current = {
+    actionID,
+    catalogStatus,
+    onRefresh,
+    savingOrder: serviceOrder.saving,
+  };
+  useEffect(() => {
+    if (view.kind !== "list" || !isReady || !hasSubscriptionServices) return;
+    const timer = window.setInterval(() => {
+      const current = riskPollState.current;
+      if (document.visibilityState !== "visible") return;
+      // A refresh marks the catalog busy, which would cancel a drag in
+      // progress and disable row actions mid-click; wait for the next tick.
+      if (
+        current.catalogStatus === "loading" ||
+        current.actionID !== null ||
+        current.savingOrder ||
+        serviceListScrollerRef.current?.querySelector('[data-sorting="true"]')
+      ) {
+        return;
+      }
+      void current.onRefresh();
+    }, SERVICE_RISK_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [hasSubscriptionServices, isReady, view.kind]);
 
   const selectKind = (kind: ServiceKind) => {
     const next = draftForKind(kind, protocols);
@@ -1438,6 +1498,10 @@ export function ServiceManager({
         const record = await logoutService(service.id);
         onServiceSaved(record.service);
         notify.success(t("services.loggedOut", { name: service.name }));
+      } else if (confirmAction.kind === "clear-risk") {
+        const record = await clearServiceRisk(service.id);
+        onServiceSaved(record.service);
+        notify.success(t("services.riskRestored", { name: service.name }));
       } else {
         const record = await getService(service.id);
         await deleteService(service.id, record.etag);
@@ -1460,7 +1524,9 @@ export function ServiceManager({
           cause,
           confirmAction.kind === "logout"
             ? t("services.logoutFailed")
-            : t("services.deleteFailed"),
+            : confirmAction.kind === "clear-risk"
+              ? t("services.riskRestoreFailed")
+              : t("services.deleteFailed"),
         ),
       );
     } finally {
@@ -1493,6 +1559,12 @@ export function ServiceManager({
           .includes(search),
     );
     const busy = catalogStatus === "loading";
+    const now = new Date();
+    const suspendedCount = services.filter(
+      (service) =>
+        service.enabled &&
+        activeServiceRisk(service, now)?.state === "suspended",
+    ).length;
     return (
       <section
         className="@container flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
@@ -1600,6 +1672,15 @@ export function ServiceManager({
             {error}
           </FormMessage>
         ) : null}
+        {suspendedCount > 0 ? (
+          <FormMessage
+            className="mb-3 truncate"
+            data-testid="service-risk-summary"
+            tone="warning"
+          >
+            {t("services.riskSuspendedSummary", { count: suspendedCount })}
+          </FormMessage>
+        ) : null}
 
         <div className="mb-3 shrink-0">
           <ListToolbar
@@ -1626,28 +1707,35 @@ export function ServiceManager({
               />
             }
             filters={
-              <SegmentedControl<ServiceFilter>
-                label={t("services.filterStatus")}
-                onValueChange={setServiceFilter}
-                options={[
-                  {
-                    value: "all",
-                    label: t("services.filterAll"),
-                    count: services.length,
-                  },
-                  {
-                    value: "enabled",
-                    label: t("services.filterEnabled"),
-                    count: enabledCount,
-                  },
-                  {
-                    value: "disabled",
-                    label: t("services.filterDisabled"),
-                    count: services.length - enabledCount,
-                  },
-                ]}
-                value={serviceFilter}
-              />
+              <>
+                <SegmentedControl<ServiceFilter>
+                  label={t("services.filterStatus")}
+                  onValueChange={setServiceFilter}
+                  options={[
+                    {
+                      value: "all",
+                      label: t("services.filterAll"),
+                      count: services.length,
+                    },
+                    {
+                      value: "enabled",
+                      label: t("services.filterEnabled"),
+                      count: enabledCount,
+                    },
+                    {
+                      value: "disabled",
+                      label: t("services.filterDisabled"),
+                      count: services.length - enabledCount,
+                    },
+                  ]}
+                  value={serviceFilter}
+                />
+                <UsageRangeSelect
+                  label={t("services.performanceRange")}
+                  preset={performancePreset}
+                  onChange={setPerformancePreset}
+                />
+              </>
             }
           />
         </div>
@@ -1695,6 +1783,7 @@ export function ServiceManager({
               <div
                 className="@container/service-list group/service-list min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
                 data-testid="service-list-scroller"
+                ref={serviceListScrollerRef}
               >
                 <ServiceListHeader
                   hidden={listColumns.hidden}
@@ -1745,7 +1834,9 @@ export function ServiceManager({
                       usageByService[service.id]?.usage?.plan_type,
                       subscription?.provider,
                     );
-                    const tone = serviceDot(service);
+                    const tone = serviceDot(service, now);
+                    const risk = activeServiceRisk(service, now);
+                    const statusLabel = serviceStatusLabel(service, now);
                     return (
                       <ServiceListRow
                         key={service.id}
@@ -1757,10 +1848,7 @@ export function ServiceManager({
                           <ServiceKindIcon kind={service.kind} size={20} />
                         }
                         sortStatus={
-                          <StatusDot
-                            label={serviceStatusLabel(service)}
-                            tone={tone}
-                          />
+                          <StatusDot label={statusLabel} tone={tone} />
                         }
                         identity={
                           <div className="flex min-w-0 items-center gap-3">
@@ -1792,25 +1880,42 @@ export function ServiceManager({
                                     {plan}
                                   </Badge>
                                 ) : null}
+                                {risk ? (
+                                  <ServiceRiskBadge
+                                    disabled={!isReady || acting}
+                                    now={now}
+                                    onRestore={() =>
+                                      setConfirmAction({
+                                        kind: "clear-risk",
+                                        service,
+                                      })
+                                    }
+                                    risk={risk}
+                                    serviceId={service.id}
+                                    serviceName={service.name}
+                                  />
+                                ) : null}
                               </div>
-                              <span className="text-micro text-muted-foreground">
-                                {serviceKindLabel(service.kind)}
-                              </span>
-                              <span
-                                className="block truncate text-xs text-text-secondary"
-                                title={
-                                  service.http?.base_url ??
-                                  subscription?.account_hint
-                                }
-                              >
-                                {service.http?.base_url ??
-                                  (subscription?.account_hint
-                                    ? subscriptionAccountLabel(
-                                        service.kind,
-                                        subscription.account_hint,
-                                      )
-                                    : subscriptionOauthLabel(service.kind))}
-                              </span>
+                              <div className="flex min-w-0 items-baseline gap-2 @[820px]/service-list:grid @[820px]/service-list:gap-0.5">
+                                <span className="shrink-0 text-micro text-muted-foreground">
+                                  {serviceKindLabel(service.kind)}
+                                </span>
+                                <span
+                                  className="block truncate text-xs text-text-secondary"
+                                  title={
+                                    service.http?.base_url ??
+                                    subscription?.account_hint
+                                  }
+                                >
+                                  {service.http?.base_url ??
+                                    (subscription?.account_hint
+                                      ? subscriptionAccountLabel(
+                                          service.kind,
+                                          subscription.account_hint,
+                                        )
+                                      : subscriptionOauthLabel(service.kind))}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         }
@@ -1903,12 +2008,19 @@ export function ServiceManager({
                             ) : null}
                           </div>
                         }
+                        performance={
+                          <ServicePerformanceMeter
+                            serviceId={service.id}
+                            serviceName={service.name}
+                            ready={isReady}
+                            performance={performance.byService[service.id]}
+                            status={performance.status}
+                            preset={performancePreset}
+                          />
+                        }
                         status={
                           <>
-                            <StatusDot
-                              label={serviceStatusLabel(service)}
-                              tone={tone}
-                            />
+                            <StatusDot label={statusLabel} tone={tone} />
                             <Switch
                               aria-label={t("services.enableNamed", {
                                 name: service.name,
@@ -2059,7 +2171,9 @@ export function ServiceManager({
           confirmLabel={
             confirmAction?.kind === "reset-usage"
               ? t("services.reset")
-              : t("common.confirm")
+              : confirmAction?.kind === "clear-risk"
+                ? t("services.riskRestore")
+                : t("common.confirm")
           }
           description={
             <p>
@@ -2072,12 +2186,16 @@ export function ServiceManager({
                       name: confirmAction.service.name,
                       count: confirmAction.availableCount,
                     })
-                  : t("services.logoutBody", {
-                      name: confirmAction?.service.name ?? "",
-                    })}
+                  : confirmAction?.kind === "clear-risk"
+                    ? t("services.riskRestoreBody", {
+                        name: confirmAction.service.name,
+                      })
+                    : t("services.logoutBody", {
+                        name: confirmAction?.service.name ?? "",
+                      })}
             </p>
           }
-          destructive
+          destructive={confirmAction?.kind !== "clear-risk"}
           onCancel={() => setConfirmAction(null)}
           onConfirm={() => void confirmDestructiveAction()}
           open={confirmAction !== null}
@@ -2086,7 +2204,9 @@ export function ServiceManager({
               ? t("services.confirmDelete")
               : confirmAction?.kind === "reset-usage"
                 ? t("services.confirmReset")
-                : t("services.confirmLogout")
+                : confirmAction?.kind === "clear-risk"
+                  ? t("services.confirmRiskRestore")
+                  : t("services.confirmLogout")
           }
         />
         <Dialog

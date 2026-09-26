@@ -14,7 +14,7 @@ export const SKILL_DIAGNOSTIC_SKILL = "astrlink-debug" as const;
 const PREAMBLE = `AstrLink skill diagnostic (astrlink-debug)
 
 Read this snapshot first. Do not guess from model error text.
-Treat status, requested_model, model_redirect, input_protocol, streaming,
+Treat status, client_type, requested_model, model_redirect, input_protocol, streaming,
 service_id, route_id, error, input_preview, privacy_restore, events[], and
 recovery as source of truth. requested_model is the client's model; when
 model_redirect is set, the gateway routed with model_redirect.to instead.
@@ -38,6 +38,7 @@ export interface SkillDiagnosticRecord {
   started_at: string;
   completed_at: string | null;
   status: RequestRecord["status"];
+  client_type: RequestRecord["client_type"] | null;
   requested_model: string | null;
   model_redirect: RequestModelRedirect | null;
   reasoning_effort: string | null;
@@ -77,6 +78,7 @@ export interface SkillDiagnosticPayload {
     id: string;
     title: string;
     status: RequestSession["status"];
+    client_type: RequestSession["client_type"] | null;
     requested_model: string | null;
     model_redirect: RequestModelRedirect | null;
     reasoning_effort: string | null;
@@ -130,6 +132,7 @@ export function buildSkillDiagnosticPayload(
       id: options.session.id,
       title: options.session.title,
       status: options.session.status,
+      client_type: options.session.client_type ?? null,
       requested_model: options.session.requested_model,
       model_redirect: options.session.model_redirect ?? null,
       reasoning_effort: options.session.reasoning_effort ?? null,
@@ -164,6 +167,7 @@ function diagnosticRecord(
     started_at: record.started_at,
     completed_at: record.completed_at,
     status: record.status,
+    client_type: record.client_type ?? null,
     requested_model: record.requested_model,
     model_redirect: record.model_redirect ?? null,
     reasoning_effort: record.reasoning_effort ?? null,

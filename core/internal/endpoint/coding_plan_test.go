@@ -41,11 +41,6 @@ func TestOpenCodeSelectsNativeProtocolByModel(t *testing.T) {
 					t.Fatal("routed incompatible protocol without conversion engine")
 				}
 			}
-			route := resolverRoute("route_opencode", 0, test.model, resolverTarget("service_opencode", contract.PlanTypeNative, 0))
-			candidates = routeCandidates(route, []contract.Service{service}, request, runtime, "")
-			if len(candidates) != 1 || candidates[0].UpstreamProtocol != test.protocol {
-				t.Fatalf("explicit route ignored model protocol: %#v", candidates)
-			}
 		})
 	}
 }

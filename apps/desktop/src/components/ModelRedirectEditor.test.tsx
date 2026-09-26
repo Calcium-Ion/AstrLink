@@ -87,7 +87,6 @@ describe("ModelRedirectEditor", () => {
     await act(async () => root.render(<Harness change={change} />));
     expect(container.textContent).toContain("Codex 自动审查");
     expect(container.querySelector("table")).not.toBeNull();
-    expect(container.textContent).toContain("1 条");
 
     await act(async () => button("添加重定向")!.click());
     expect(change).toHaveBeenLastCalledWith([
@@ -116,7 +115,7 @@ describe("ModelRedirectEditor", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
 
     await act(async () => button("添加重定向")!.click());
-    expect(container.textContent).toContain("3 条");
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(3);
     expect(document.activeElement).toBe(field("第 2 条规则的请求模型"));
     await type("第 2 条规则的请求模型", "claude-3-opus");
     await type("第 2 条规则的目标模型", "claude-sonnet-4-5");

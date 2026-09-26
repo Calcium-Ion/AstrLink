@@ -129,6 +129,7 @@ type SubscriptionConnection struct {
 	TokenExpiresAt        *time.Time           `json:"token_expires_at,omitempty"`
 	LastRefreshAt         *time.Time           `json:"last_refresh_at,omitempty"`
 	LastError             *SubscriptionError   `json:"last_error,omitempty"`
+	Risk                  *SubscriptionRisk    `json:"risk,omitempty"`
 }
 
 func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
@@ -145,6 +146,7 @@ func (connection SubscriptionConnection) Validate(serviceID ServiceID) error {
 		TokenExpiresAt:        connection.TokenExpiresAt,
 		LastRefreshAt:         connection.LastRefreshAt,
 		LastError:             connection.LastError,
+		Risk:                  connection.Risk,
 		CreatedAt:             time.Unix(1, 0).UTC(),
 		UpdatedAt:             time.Unix(1, 0).UTC(),
 	}
@@ -334,7 +336,7 @@ func ServiceFromSubscriptionAccount(account SubscriptionAccount) Service {
 			Provider: account.Provider, Status: account.Status, AccountHint: account.AccountHint,
 			ProviderAccountID: account.ProviderAccountID, CredentialRef: account.CredentialRef,
 			AuthorizationBoundary: account.AuthorizationBoundary, TokenExpiresAt: account.TokenExpiresAt,
-			LastRefreshAt: account.LastRefreshAt, LastError: account.LastError,
+			LastRefreshAt: account.LastRefreshAt, LastError: account.LastError, Risk: account.Risk,
 		},
 		CreatedAt: account.CreatedAt, UpdatedAt: account.UpdatedAt,
 	}
@@ -352,7 +354,8 @@ func (service Service) SubscriptionAccountView() (SubscriptionAccount, error) {
 		Capabilities:          append([]Capability(nil), service.Capabilities...),
 		AuthorizationBoundary: service.Subscription.AuthorizationBoundary,
 		TokenExpiresAt:        service.Subscription.TokenExpiresAt, LastRefreshAt: service.Subscription.LastRefreshAt,
-		LastError: service.Subscription.LastError, CreatedAt: service.CreatedAt, UpdatedAt: service.UpdatedAt,
+		LastError: service.Subscription.LastError, Risk: service.Subscription.Risk,
+		CreatedAt: service.CreatedAt, UpdatedAt: service.UpdatedAt,
 	}
 	return account, account.Validate()
 }

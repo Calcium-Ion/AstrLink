@@ -182,12 +182,19 @@ func main() {
 			os.Exit(1)
 		}
 		conversionEngine := relaykitbridge.NewEngine()
-		subscriptionManager, err := newSubscriptionManager(store)
+		// One registry serves inference, gateway-initiated requests and
+		// learning, so a learned identity applies everywhere at once.
+		identities := accountauth.NewIdentityRegistry(store, store)
+		if err := identities.Hydrate(ctx); err != nil {
+			logger.Printf("load learned client identities: %v", err)
+		}
+		subscriptionManager, err := newSubscriptionManager(store, identities)
 		if err != nil {
 			_ = store.Close()
 			logger.Printf("configure subscription manager: %v", err)
 			os.Exit(1)
 		}
+		subscriptionManager.SetRiskEventStore(store)
 		pricingManager := pricing.NewManager(store, nil)
 		subscriptionManager.SetUsageObservers(
 			func(ctx context.Context, account contract.SubscriptionAccount, usage contract.SubscriptionUsage) error {
@@ -222,7 +229,8 @@ func main() {
 		gatewayDependencies := ingress.Dependencies{
 			ProxyCredentials: store,
 			Resolver:         resolver,
-			Authorizer:       endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).WithRoutingSettings(store),
+			Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).
+				WithRoutingSettings(store).WithIdentities(identities),
 			AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
 				func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
 					return accessTokenManager.Authenticate(ctx, raw)
@@ -247,12 +255,12 @@ func main() {
 			MaxConcurrentInspections: maxConcurrentInspections,
 			MaxRequestBodyMiB:        uint32(maxRequestBodyMiB),
 			ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
+			SubscriptionRisk:         subscriptionRiskReporter{manager: subscriptionManager},
+			Identities:               identities,
 		}
 		handler, err := controlapi.NewWithDependencies(config.Version, controlapi.Dependencies{
 			ServiceStore: store,
 			PricingStore: store, PricingManager: pricingManager,
-			RecoveryResolver:   resolver,
-			RouteStore:         store,
 			AccessTokenManager: accessTokenManager,
 			PolicyStore:        store,
 			PrivacyModels:      privacyModel,
@@ -266,6 +274,7 @@ func main() {
 			CodingPlans:        codingplan.New(store, nil),
 			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
 			ServiceTester:      servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor),
+			BuiltinToolTester:  ingress.NewWithDependencies(gatewayDependencies),
 			ControlToken:       controlToken,
 			ConversionEngine:   conversionEngine,
 			Shutdown:           stopSignals,
@@ -337,10 +346,11 @@ func readTokenLine(reader *bufio.Reader) (string, error) {
 	return token, nil
 }
 
-func newSubscriptionManager(store *sqlite.Store) (*subscription.Manager, error) {
+func newSubscriptionManager(store *sqlite.Store, identities *accountauth.IdentityRegistry) (*subscription.Manager, error) {
 	oauth := accountauth.OAuthConfig{
 		ResolveProxy: networkproxy.Resolver(store, store),
 		ClientID:     accountauth.DefaultCodexOAuthClientID,
+		Identities:   identities,
 	}
 	if clientID := strings.TrimSpace(os.Getenv("ASTRLINK_CODEX_OAUTH_CLIENT_ID")); clientID != "" {
 		oauth.ClientID = clientID
@@ -364,4 +374,24 @@ func newSubscriptionManager(store *sqlite.Store) (*subscription.Manager, error) 
 		oauth,
 		grok,
 	)
+}
+
+// subscriptionRiskReporter lets the inference plane pause subscription
+// accounts through the manager that owns their persisted state.
+type subscriptionRiskReporter struct{ manager *subscription.Manager }
+
+func (reporter subscriptionRiskReporter) ReportSubscriptionRisk(
+	ctx context.Context, id contract.ServiceID, observation contract.SubscriptionRiskObservation,
+) error {
+	return reporter.manager.ReportRisk(ctx, id, observation)
+}
+
+func (reporter subscriptionRiskReporter) ClearExpiredSubscriptionRisk(ctx context.Context, id contract.ServiceID) error {
+	return reporter.manager.ClearExpiredRisk(ctx, id)
+}
+
+func (reporter subscriptionRiskReporter) RefreshRejectedSubscriptionToken(
+	ctx context.Context, id contract.ServiceID, rejectedAccessToken string,
+) error {
+	return reporter.manager.HandleUnauthorized(ctx, id, rejectedAccessToken)
 }

@@ -23,12 +23,27 @@ type RequestRecordPage struct {
 	NextCursor string
 }
 
-// AccessTokenUsage counts successful root requests in retained history only.
-// Retry children must not be counted again alongside their root.
+// AccessTokenBilling matches the billing summary amounts without coupling the
+// storage interfaces to the pricing engine and its transport dependencies.
+type AccessTokenBilling struct {
+	AmountUSD string `json:"amount_usd"`
+	Priced    int64  `json:"priced"`
+	Unpriced  int64  `json:"unpriced"`
+	Pending   int64  `json:"pending"`
+	Revalued  int64  `json:"revalued"`
+	Requests  int64  `json:"requests"`
+}
+
+// AccessTokenUsage counts successful roots in retained request history and
+// costs in the durable billing ledger (including billable retry attempts).
 type AccessTokenUsage struct {
-	TokenID     contract.AccessTokenID `json:"token_id"`
-	TodayTokens int64                  `json:"today_tokens"`
-	TotalTokens int64                  `json:"total_tokens"`
+	TokenID          contract.AccessTokenID `json:"token_id"`
+	TodayTokens      int64                  `json:"today_tokens"`
+	TotalTokens      int64                  `json:"total_tokens"`
+	TodayBilling     AccessTokenBilling     `json:"today_billing"`
+	TotalBilling     AccessTokenBilling     `json:"total_billing"`
+	TodayPerformance ServicePerformance     `json:"today_performance"`
+	TotalPerformance ServicePerformance     `json:"total_performance"`
 }
 
 // RequestRecordStore persists always-on inference metadata records (ADR 0007).

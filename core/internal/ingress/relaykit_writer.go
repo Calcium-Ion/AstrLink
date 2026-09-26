@@ -89,6 +89,7 @@ func (writer *relayKitResponseWriter) Finish() error {
 		output, err := writer.engine.ConvertResponse(context.Background(), relaykitbridge.ConvertResponseInput{
 			From: writer.plan.UpstreamProtocol, To: writer.plan.InputProtocol, StatusCode: writer.status,
 			ContentType: writer.Header().Get("Content-Type"), Body: writer.body.Bytes(), PublicModel: writer.publicModel,
+			UpstreamModel: writer.upstreamModel,
 		})
 		if err != nil {
 			return err

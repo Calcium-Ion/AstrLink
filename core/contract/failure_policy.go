@@ -136,9 +136,37 @@ func (policy FailoverPolicy) Validate() error {
 }
 
 type RoutingSettings struct {
-	CodexIdentityEnforcement  bool `json:"codex_identity_enforcement"`
-	ClaudeIdentityEnforcement bool `json:"claude_identity_enforcement"`
-	GrokIdentityEnforcement   bool `json:"grok_identity_enforcement"`
+	BuiltinTools              *BuiltinTools `json:"builtin_tools,omitempty"`
+	CodexIdentityEnforcement  bool          `json:"codex_identity_enforcement"`
+	ClaudeIdentityEnforcement bool          `json:"claude_identity_enforcement"`
+	GrokIdentityEnforcement   bool          `json:"grok_identity_enforcement"`
+	// Subscription account protections, all on by default.
+	// SubscriptionRiskProtection pauses accounts on upstream ban, quota and
+	// repeated 403 signals and refreshes a rejected token once.
+	SubscriptionRiskProtection bool `json:"subscription_risk_protection"`
+	// CodexRequestNormalization and ClaudeRequestNormalization repair request
+	// structure the subscription backends reject; content is never rewritten.
+	CodexRequestNormalization  bool `json:"codex_request_normalization"`
+	ClaudeRequestNormalization bool `json:"claude_request_normalization"`
+	// SubscriptionSessionIsolation scopes forwarded device and session
+	// identifiers to each account.
+	SubscriptionSessionIsolation bool `json:"subscription_session_isolation"`
+	// OfficialClientPassthrough forwards a recognized Claude Code or Codex CLI
+	// request untouched, adding only credentials and required OAuth items. The
+	// other identity and request protections then apply to third-party and
+	// converted requests only.
+	OfficialClientPassthrough bool `json:"official_client_passthrough"`
+	// ClaudeIdentityAutoLearn and CodexIdentityAutoLearn let recognized
+	// official client requests replace the baseline identity that AstrLink
+	// sends when it must supply one: converted requests, discovery, tests,
+	// OAuth and usage requests. Both default on.
+	ClaudeIdentityAutoLearn bool `json:"claude_identity_auto_learn"`
+	CodexIdentityAutoLearn  bool `json:"codex_identity_auto_learn"`
+	// ClaudeIdentityVersion and CodexIdentityVersion are optional floors for
+	// the version that identity declares: a higher value replaces it, a lower
+	// one never downgrades it. Empty sets no floor.
+	ClaudeIdentityVersion string `json:"claude_identity_version,omitempty"`
+	CodexIdentityVersion  string `json:"codex_identity_version,omitempty"`
 	// ModelRedirects is always emitted; nil documents load as an empty table.
 	ModelRedirects         []ModelRedirect               `json:"model_redirects"`
 	ChannelStickiness      *ChannelStickiness            `json:"channel_stickiness,omitempty"`
@@ -151,21 +179,39 @@ type RoutingSettings struct {
 
 func DefaultRoutingSettings() RoutingSettings {
 	return RoutingSettings{
-		CodexIdentityEnforcement:  true,
-		ClaudeIdentityEnforcement: true,
-		GrokIdentityEnforcement:   true,
-		ModelRedirects:            []ModelRedirect{},
-		ChannelStickiness:         &ChannelStickiness{Enabled: true, TTLSeconds: 3600},
-		DefaultFailurePolicy:      DefaultFailurePolicy(),
-		AllowUnmatchedFailover:    true,
-		Strategy:                  FailoverOnly,
-		MaxAttempts:               6,
+		CodexIdentityEnforcement:     true,
+		ClaudeIdentityEnforcement:    true,
+		GrokIdentityEnforcement:      true,
+		SubscriptionRiskProtection:   true,
+		CodexRequestNormalization:    true,
+		ClaudeRequestNormalization:   true,
+		SubscriptionSessionIsolation: true,
+		OfficialClientPassthrough:    true,
+		ClaudeIdentityAutoLearn:      true,
+		CodexIdentityAutoLearn:       true,
+		ModelRedirects:               []ModelRedirect{},
+		ChannelStickiness:            &ChannelStickiness{Enabled: true, TTLSeconds: 3600},
+		DefaultFailurePolicy:         DefaultFailurePolicy(),
+		AllowUnmatchedFailover:       true,
+		Strategy:                     FailoverOnly,
+		MaxAttempts:                  6,
 	}
 }
 func (settings RoutingSettings) FailoverPolicy() FailoverPolicy {
 	return FailoverPolicy{Enabled: settings.AllowUnmatchedFailover, Strategy: settings.Strategy, MaxAttempts: settings.MaxAttempts}
 }
 func (settings RoutingSettings) Validate() error {
+	if settings.ClaudeIdentityVersion != "" && !ValidClientVersion(settings.ClaudeIdentityVersion) {
+		return fmt.Errorf("claude_identity_version must be a version such as 2.1.258")
+	}
+	if settings.CodexIdentityVersion != "" && !ValidCodexClientVersion(settings.CodexIdentityVersion) {
+		return fmt.Errorf("codex_identity_version must be a version of at least %s", MinCodexClientVersion)
+	}
+	if settings.BuiltinTools != nil {
+		if err := settings.BuiltinTools.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := ValidateModelRedirects(settings.ModelRedirects); err != nil {
 		return err
 	}

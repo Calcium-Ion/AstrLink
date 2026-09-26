@@ -28,7 +28,6 @@ import { Input } from "@/components/ui/input";
 import type { AccessTokenSummary } from "./access-token-model";
 import {
   getRoutingSettings,
-  listRoutes,
   listServices,
   openCCSwitchImport,
   type CCSwitchClient,
@@ -38,7 +37,6 @@ import {
   astrlinkAutoModelId,
   type ModelRedirect,
 } from "./failure-policy-model";
-import type { Route } from "./route-model";
 import type { Service } from "./service-model";
 import { i18n } from "./i18n";
 import { notify } from "./notify";
@@ -84,9 +82,8 @@ export function CCSwitchImportDialog({
   const [error, setError] = useState(false);
   const [catalog, setCatalog] = useState<{
     services: Service[];
-    routes: Route[];
     redirects: ModelRedirect[];
-  }>({ services: [], routes: [], redirects: [] });
+  }>({ services: [], redirects: [] });
   const [catalogStatus, setCatalogStatus] = useState<
     "loading" | "ready" | "error"
   >("loading");
@@ -104,24 +101,18 @@ export function CCSwitchImportDialog({
     let cancelled = false;
     void Promise.allSettled([
       listServices(),
-      listRoutes(),
       // Redirect sources are optional suggestions; any failure only drops them.
       Promise.resolve().then(() => getRoutingSettings()),
-    ]).then(([services, routes, routing]) => {
+    ]).then(([services, routing]) => {
       if (cancelled) return;
       setCatalog({
         services: services.status === "fulfilled" ? services.value.items : [],
-        routes: routes.status === "fulfilled" ? routes.value.items : [],
         redirects:
           routing.status === "fulfilled"
             ? (routing.value.model_redirects ?? [])
             : [],
       });
-      setCatalogStatus(
-        services.status === "fulfilled" && routes.status === "fulfilled"
-          ? "ready"
-          : "error",
-      );
+      setCatalogStatus(services.status === "fulfilled" ? "ready" : "error");
     });
     return () => {
       cancelled = true;
@@ -138,15 +129,6 @@ export function CCSwitchImportDialog({
           ),
       )
       .flatMap((service) => service.models),
-    ...catalog.routes
-      .filter(
-        (route) =>
-          route.enabled &&
-          route.match.protocol === protocols[client] &&
-          route.match.model &&
-          !route.match.model.includes("*"),
-      )
-      .map((route) => route.match.model!),
     ...catalog.redirects
       .filter(
         (redirect) =>

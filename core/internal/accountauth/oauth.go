@@ -18,21 +18,16 @@ import (
 )
 
 const (
-	DefaultIssuer             = "https://auth.openai.com"
-	DefaultCodexAPIBaseURL    = "https://chatgpt.com/backend-api/codex"
-	DefaultCodexOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-	// DefaultCodexModelsClientVersion is the observed openai/codex ModelsClient
-	// query (public CLI 0.155.1). GPT-6 Astra support landed in CLI 0.154.0.
-	// The backend may hide models below a catalog minimum; keep this aligned
-	// with stable releases: https://learn.chatgpt.com/docs/changelog
-	DefaultCodexModelsClientVersion = "0.155.1"
-	DefaultAuthorizationTTL         = 10 * time.Minute
-	DefaultDeviceCodeTTL            = 15 * time.Minute
-	DefaultRefreshSkew              = 5 * time.Minute
-	DefaultCallbackPort             = 1455
-	DefaultFallbackCallbackPort     = 1457
-	DefaultDevicePollMinInterval    = time.Second
-	DefaultDevicePollMaxInterval    = 30 * time.Second
+	DefaultIssuer                = "https://auth.openai.com"
+	DefaultCodexAPIBaseURL       = "https://chatgpt.com/backend-api/codex"
+	DefaultCodexOAuthClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
+	DefaultAuthorizationTTL      = 10 * time.Minute
+	DefaultDeviceCodeTTL         = 15 * time.Minute
+	DefaultRefreshSkew           = 5 * time.Minute
+	DefaultCallbackPort          = 1455
+	DefaultFallbackCallbackPort  = 1457
+	DefaultDevicePollMinInterval = time.Second
+	DefaultDevicePollMaxInterval = 30 * time.Second
 
 	// ObservedCodexCLIOAuthClientID remains as a source-compatibility alias for
 	// tests and older integrations. The public Codex client is intentionally
@@ -87,6 +82,10 @@ type OAuthConfig struct {
 	RefreshSkew           time.Duration
 	ExtraAuthQuery        url.Values
 	ModelsClientVersion   string
+	// Identities resolves the client identity of Codex authorization
+	// requests and of the provider's gateway-initiated requests; nil uses the
+	// baseline.
+	Identities *IdentityRegistry
 }
 
 func (config OAuthConfig) Normalize() OAuthConfig {
@@ -165,19 +164,20 @@ func (config OAuthConfig) normalized() OAuthConfig {
 // backend requests. Forwarded requests use the same identity by default.
 // Accept belongs to the request so authentication overlays cannot change its
 // response format (for example, an SSE inference stream).
-func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, clientVersion string) {
+// The zero identity is the baseline.
+func ApplyCodexAPIHeaders(header http.Header, tokens AccountTokens, identity ClientIdentity) {
 	if header == nil {
 		return
 	}
-	clientVersion = codexVersionOrDefault(clientVersion)
+	identity = codexIdentityOrDefault(identity)
 	header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	header.Del("ChatGPT-Account-ID")
 	if tokens.AccountID != "" {
 		header.Set("ChatGPT-Account-ID", tokens.AccountID)
 	}
 	header.Set("OAI-Product-Sku", "codex")
-	ApplyCodexAuthIdentity(header, clientVersion)
-	header.Set("version", clientVersion)
+	ApplyCodexAuthIdentity(header, identity)
+	header.Set("version", identity.Version)
 }
 
 type tokenResponse struct {
@@ -255,7 +255,7 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	if client.config.Provider == contract.SubscriptionProviderXAIGrok {
 		applyGrokOAuthHeaders(request.Header, client.config.ModelsClientVersion)
 	} else if client.config.Provider == contract.SubscriptionProviderOpenAICodex {
-		ApplyCodexAuthIdentity(request.Header, client.config.ModelsClientVersion)
+		ApplyCodexAuthIdentity(request.Header, client.config.Identities.CodexIdentityFor(ctx, client.config.ModelsClientVersion))
 	}
 	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 	response, err := client.config.HTTPClient.Do(request)

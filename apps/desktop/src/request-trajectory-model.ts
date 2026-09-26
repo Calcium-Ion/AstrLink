@@ -251,6 +251,8 @@ export interface TrajectoryRow {
   lane: TrajectoryLane;
   child: boolean;
   turnIndex: number | null;
+  /** The request was grouped into an existing conversation. */
+  conversationContinued?: boolean;
   /** Set on REDIRECT rows: the client model and the model routed with. */
   redirect?: RequestModelRedirect;
 }
@@ -482,6 +484,39 @@ export function trajectoryRows(
   return rows;
 }
 
+/** Compact list text; full event summaries remain available to the inspector. */
+export function trajectoryListSummaries(
+  rows: TrajectoryRow[],
+): Map<string, string> {
+  const completed = new Map<string, string>();
+  for (const row of rows) {
+    if (row.chip === "RESULT") {
+      completed.set(row.requestId, row.summary);
+    }
+  }
+  return new Map(
+    rows.map((row) => {
+      const upstream = row.chip === "UPSTREAM" || row.chip === "RETRY";
+      if (!upstream && row.chip !== "RESULT") return [row.id, row.summary];
+      const outcome = new Set(row.result.split(" · "));
+      const repeated = upstream ? completed.get(row.requestId) : undefined;
+      // Match the whole summary so partially matching token counts are kept.
+      // Child retry rows may prefix that summary with their attempt number.
+      const unique =
+        repeated && row.summary === repeated
+          ? ""
+          : repeated && row.summary.endsWith(` · ${repeated}`)
+            ? row.summary.slice(0, -` · ${repeated}`.length)
+            : row.summary;
+      const summary = unique
+        .split(" · ")
+        .filter((part) => !outcome.has(part))
+        .join(" · ");
+      return [row.id, summary];
+    }),
+  );
+}
+
 function turnHeaderRow(group: TrajectoryTurnGroup): TrajectoryRow {
   const first = group.records[0];
   const last = group.records[group.records.length - 1];
@@ -545,9 +580,7 @@ export function inspectorChainRows(record: RequestRecord): TrajectoryRow[] {
   for (const event of synthesizeEvents(record)) {
     const row = rowFromEvent(record, event, child);
     if (event.kind === "accepted" && record.session_link) {
-      row.summary = `${row.summary} · ${i18n.t(
-        `trajectory.linkedVia.${record.session_link.kind}`,
-      )}`;
+      row.conversationContinued = true;
     }
     rows.push(row);
   }

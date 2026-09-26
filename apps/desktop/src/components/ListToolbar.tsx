@@ -43,7 +43,7 @@ export function ListToolbar({
       className={cn(
         "min-w-0 shrink-0 items-center",
         secondaryFilters
-          ? "grid grid-cols-1 gap-2 @[480px]:grid-cols-2 @[800px]:grid-cols-[auto_minmax(0,1fr)_minmax(10rem,12rem)]"
+          ? "grid grid-cols-1 gap-2 @[300px]:grid-cols-2 @[720px]:grid-cols-[auto_minmax(0,1fr)_minmax(8rem,10rem)] @[960px]:grid-cols-[auto_minmax(0,1fr)_minmax(10rem,12rem)]"
           : actions
             ? "grid grid-cols-[minmax(0,1fr)_auto] gap-2 @[480px]:grid-cols-[auto_minmax(0,1fr)_auto]"
             : "flex flex-wrap justify-between gap-3",
@@ -53,7 +53,8 @@ export function ListToolbar({
         <div
           className={cn(
             "flex min-w-0 items-center gap-2",
-            secondaryFilters && "@[480px]:col-span-2 @[800px]:col-span-1",
+            secondaryFilters &&
+              "flex-wrap @[300px]:col-span-2 @[720px]:col-span-1",
           )}
         >
           {filters}

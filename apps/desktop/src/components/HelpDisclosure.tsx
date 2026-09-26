@@ -8,7 +8,7 @@ export function HelpDisclosure({
   open,
   tone = "neutral",
 }: {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   open?: boolean;
   tone?: "neutral" | "warning";

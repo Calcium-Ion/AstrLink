@@ -152,6 +152,9 @@ func ValidateCredentialRef(value string) error {
 	}
 	switch parsed.Scheme {
 	case "local":
+		if parsed.Host == "builtin-tool" && BuiltinToolKind(strings.TrimPrefix(parsed.Path, "/")) {
+			return nil
+		}
 		identifier := strings.TrimPrefix(parsed.Path, "/")
 		if (parsed.Host != "service" && parsed.Host != "endpoint") ||
 			strings.Contains(identifier, "/") || ServiceID(identifier).Validate() != nil {

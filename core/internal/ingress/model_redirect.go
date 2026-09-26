@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 )
 
 // applyModelRedirect chooses the routing model for one request. Model keeps
@@ -33,20 +32,4 @@ func (handler *Handler) applyModelRedirect(
 	classified.RedirectedModel = routingModel
 	session.noteModelRedirect(ctx, classified.Model, routingModel)
 	return classified
-}
-
-// redirectCandidates makes the redirect target explicit on candidates that
-// did not name an upstream model, so alias rewriting sends the target and
-// restores the client's model in the response.
-func redirectCandidates(classified Request, candidates []endpoint.Resolved) []endpoint.Resolved {
-	if classified.RedirectedModel == "" {
-		return candidates
-	}
-	result := append([]endpoint.Resolved(nil), candidates...)
-	for index := range result {
-		if result[index].UpstreamModel == "" {
-			result[index].UpstreamModel = classified.RedirectedModel
-		}
-	}
-	return result
 }

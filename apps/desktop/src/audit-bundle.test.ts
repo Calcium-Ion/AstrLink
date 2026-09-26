@@ -141,7 +141,7 @@ describe("buildRecordBundle", () => {
     });
 
     expect(bundle).toContain("# AstrLink 请求记录 req_bundle_test");
-    expect(bundle).toContain("- 状态: 成功 · HTTP 200");
+    expect(bundle).toContain("- 状态: 完成 · HTTP 200");
     expect(bundle).toContain(
       "- 隐私还原: 已开启 · 映射 4 · 已还原 5 · 安全降级 0",
     );
@@ -227,7 +227,7 @@ describe("buildRecordBundle", () => {
     expect(redirect).toBeGreaterThan(protocol);
     expect(bundle.slice(protocol, redirect).split("\n")).toHaveLength(2);
     // The legacy record has no events, so the trajectory synthesizes the step.
-    expect(bundle).toMatch(/重定向 · 成功 · .* · gpt-4\.1 → claude-sonnet-4-5/);
+    expect(bundle).toMatch(/重定向 · 完成 · .* · gpt-4\.1 → claude-sonnet-4-5/);
   });
 
   it("leaves the redirect line out when the model was not redirected", () => {
@@ -254,7 +254,7 @@ describe("buildRecordBundle", () => {
     expect(bundle).not.toContain("# AstrLink");
     expect(bundle).not.toContain("## ");
     expect(bundle).not.toContain("```");
-    expect(bundle).toContain("状态: 成功 · HTTP 200");
+    expect(bundle).toContain("状态: 完成 · HTTP 200");
     expect(bundle).toContain("POST /v1/responses?stream=true HTTP/1.1");
     expect(bundle).toContain('{"model":"gpt-4.1"}');
     expect(bundle).toContain("已截断");
@@ -397,7 +397,7 @@ describe("buildRecordBundle diagnosis context", () => {
       "当前阶段: 隐私检测 · 已等待 6m 40s · local_model · inspecting · 96.6 KiB",
     );
     expect(bundle).toContain(
-      "+0 ms · 客户端 · 成功 · 200 ms · gpt-5.5 · openai.responses",
+      "+0 ms · 客户端 · 完成 · 200 ms · gpt-5.5 · openai.responses",
     );
     expect(bundle).toContain(
       "+200 ms · 策略 · 进行中 · 已 6m 40s（未结束） · local_model · inspecting · 96.6 KiB",
@@ -411,7 +411,7 @@ describe("buildRecordBundle diagnosis context", () => {
 
     expect(bundle).toContain("同会话请求（第 1–2 条，共 2 条）");
     expect(bundle).toContain(
-      "  第 2 轮 · 2026-09-20T09:55:00Z · 失败 · 尝试 0 · 重试 0 · 所有 API 提供商均失败 · 2m 00s · privacy · safety_engine_unavailable · req_detector_timeout",
+      "  第 2 轮 · 2026-09-20T09:55:00Z · 失败 · 尝试 0 · 重试 0 · 无可用提供商 · 2m 00s · privacy · safety_engine_unavailable · req_detector_timeout",
     );
     expect(bundle).toContain(
       "▶ 第 3 轮 · 2026-09-20T10:00:00Z · 进行中 · 尝试 0 · 重试 0 · 正在选择 API 提供商 · 6m 40s · req_live_inspection",

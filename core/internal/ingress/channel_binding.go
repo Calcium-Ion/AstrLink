@@ -90,7 +90,7 @@ func (handler *Handler) preferChannelBinding(request *http.Request, session *rec
 	case found:
 		event.Reason, event.PreviousServiceID = "unavailable", binding.ServiceID
 		for i, candidate := range candidates {
-			if candidate.CanonicalService().ID != binding.ServiceID || candidate.Unavailable != "" {
+			if candidate.CanonicalService().ID != binding.ServiceID {
 				continue
 			}
 			// Stable promotion preserves the configured order of all other services.
@@ -98,6 +98,10 @@ func (handler *Handler) preferChannelBinding(request *http.Request, session *rec
 			copy(candidates[1:i+1], candidates[:i])
 			candidates[0] = candidate
 			event.Action, event.Reason, event.ServiceID = "hit", "session_match", binding.ServiceID
+			if i > 0 {
+				// Only a promotion overrides the priority order.
+				session.noteRoutingPin(contract.RoutingSelectionSessionBinding, binding.ServiceID)
+			}
 			break
 		}
 	}

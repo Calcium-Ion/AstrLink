@@ -42,6 +42,8 @@ import {
   type AppSnapshot,
 } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
+import { GettingStarted } from "./GettingStarted";
+import { useOnboarding } from "./use-onboarding";
 import { i18n, useT } from "./i18n";
 import { RequestGate } from "./request-gate";
 import { RequestRecords } from "./RequestRecords";
@@ -267,6 +269,7 @@ export default function App() {
 
   const isReady = snapshot?.phase === "ready";
   const isNativeApp = snapshot !== null && snapshot.phase !== "unavailable";
+  const onboarding = useOnboarding({ isReady, catalog, tokenCatalog, usage });
   const coreSessionKey =
     isReady && snapshot?.ready
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
@@ -544,6 +547,7 @@ export default function App() {
       error: null,
       stale: false,
     }));
+    if (onboarding.active) setPage({ kind: "overview" });
   };
 
   const handleTokenDeleted = (tokenId: string) => {
@@ -694,7 +698,51 @@ export default function App() {
             data-page={page.kind}
             data-slot="workspace"
           >
-            {page.kind === "overview" ? (
+            {onboarding.active && page.kind !== "overview" ? (
+              <div
+                className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground"
+                data-slot="onboarding-return"
+              >
+                <span>
+                  {t("onboarding.inProgress")} ·{" "}
+                  {t(
+                    [
+                      "onboarding.serviceTitle",
+                      "onboarding.tokenTitle",
+                      "onboarding.clientTitle",
+                    ][onboarding.step],
+                  )}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate({ kind: "overview" })}
+                >
+                  {t("onboarding.return")}
+                </Button>
+              </div>
+            ) : null}
+            {page.kind === "overview" && onboarding.active ? (
+              <GettingStarted
+                onboarding={onboarding}
+                catalog={catalog}
+                tokenCatalog={tokenCatalog}
+                snapshot={snapshot}
+                usage={usage}
+                isReady={isReady}
+                isRestarting={isRestarting}
+                onAddService={() => navigate({ kind: "create" })}
+                onManageServices={() => navigate({ kind: "list" })}
+                onManageTokens={() => navigate({ kind: "tokens" })}
+                onOpenRecords={() => navigate({ kind: "records" })}
+                onRefresh={() => {
+                  void refreshServices();
+                  void refreshAccessTokens();
+                  void refreshUsage();
+                }}
+                onRestart={() => void handleRestart()}
+              />
+            ) : page.kind === "overview" ? (
               <Overview
                 catalog={catalog}
                 copyError={copyError}
@@ -706,6 +754,9 @@ export default function App() {
                 onCopy={(value, label) => void copyValue(value, label)}
                 onManageServices={() => navigate({ kind: "list" })}
                 onManageTokens={() => navigate({ kind: "tokens" })}
+                onOpenOnboarding={onboarding.open}
+                showOnboardingHint={onboarding.showResumeHint}
+                onDismissOnboardingHint={onboarding.dismissResumeHint}
                 onOpenService={(serviceId) =>
                   navigate({ kind: "edit", serviceId })
                 }
@@ -744,12 +795,9 @@ export default function App() {
               />
             ) : page.kind === "routing" ? (
               <RouteManager
-                coreSessionKey={coreSessionKey}
                 services={catalog.items}
                 isReady={isReady}
                 onDirtyChange={handleEditorDirtyChange}
-                onManageServices={() => navigate({ kind: "list" })}
-                protocols={protocols}
               />
             ) : page.kind === "agentTools" ? (
               <AgentDebugSettings />

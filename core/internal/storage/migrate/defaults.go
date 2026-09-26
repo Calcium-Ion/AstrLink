@@ -655,5 +655,21 @@ WHERE id = 'policy_privacy_default'
 		{Version: 35, Name: "request_model_redirect", Statements: []string{
 			`ALTER TABLE request_records ADD COLUMN model_redirect_json TEXT`,
 		}},
+		{Version: 36, Name: "subscription_risk_events", Statements: []string{
+			`CREATE TABLE subscription_risk_events (id INTEGER PRIMARY KEY AUTOINCREMENT, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE, observed_at TEXT NOT NULL, document_json TEXT NOT NULL)`,
+			`CREATE INDEX subscription_risk_events_service_idx ON subscription_risk_events(service_id, id DESC)`,
+		}},
+		{Version: 37, Name: "request_routing_decision", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN routing_decision_json TEXT`,
+		}},
+		{Version: 38, Name: "request_client_type", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN client_type TEXT`,
+		}},
+		{Version: 39, Name: "builtin_tool_credentials", Statements: []string{
+			`CREATE TABLE builtin_tool_credentials (kind TEXT PRIMARY KEY, credential_value BLOB NOT NULL)`,
+		}},
+		{Version: 40, Name: "learned_client_identity", Statements: []string{
+			`CREATE TABLE learned_client_identity (provider TEXT PRIMARY KEY, document_json TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+		}},
 	}
 }

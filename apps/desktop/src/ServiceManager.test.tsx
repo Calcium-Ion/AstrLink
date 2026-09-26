@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const bridgeMocks = vi.hoisted(() => ({
   beginServiceAuthorization: vi.fn(),
   cancelServiceAuthorization: vi.fn(),
+  clearServiceRisk: vi.fn(),
   completeServiceAuthorization: vi.fn(),
   createService: vi.fn(),
   deleteService: vi.fn(),
@@ -18,6 +19,8 @@ const bridgeMocks = vi.hoisted(() => ({
   getRoutingSettings: vi.fn(),
   getServiceAuthorization: vi.fn(),
   getServiceUsage: vi.fn(),
+  getUsageSummary: vi.fn(),
+  listServiceRiskEvents: vi.fn(),
   logoutService: vi.fn(),
   resetServiceUsage: vi.fn(),
   openAuthorizationURL: vi.fn(),
@@ -213,6 +216,7 @@ describe("ServiceManager", () => {
       }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
+    bridgeMocks.getUsageSummary.mockResolvedValue({ by_service: [] });
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -221,6 +225,88 @@ describe("ServiceManager", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+  });
+
+  it("shows per-provider cache and TPS, changes period and refreshes unavailable statistics", async () => {
+    bridgeMocks.getUsageSummary.mockResolvedValueOnce({
+      by_service: [
+        {
+          id: gatewayService.id,
+          performance: {
+            cache_hit_rate: 0.26,
+            output_tokens_per_second: 49,
+            cache_samples: 2,
+            speed_samples: 3,
+          },
+        },
+      ],
+    });
+    const render = () =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          services={[
+            gatewayService,
+            { ...gatewayService, id: "service_empty", name: "No usage" },
+          ]}
+          protocols={[]}
+          view={{ kind: "list" }}
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+        />,
+      );
+    await act(async () => render());
+    const meters = () =>
+      ["new-api", "No usage"].map(
+        (name) =>
+          container.querySelector(
+            `[aria-label="${name}"] [data-testid="service-performance"]`,
+          )!,
+      );
+    expect(meters()).toHaveLength(2);
+    expect(meters()[0].textContent).toContain("26.0%");
+    expect(meters()[0].textContent).toContain("49.0");
+    expect(meters()[1].textContent).toContain("—");
+    expect(meters()[1].textContent).not.toContain("0.0%");
+    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(1);
+    expect(bridgeMocks.getUsageSummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ preset: "7d" }),
+    );
+
+    bridgeMocks.getUsageSummary.mockResolvedValueOnce({
+      by_service: [
+        {
+          id: gatewayService.id,
+          performance: {
+            cache_hit_rate: 0,
+            output_tokens_per_second: null,
+            cache_samples: 1,
+            speed_samples: 0,
+          },
+        },
+      ],
+    });
+    await chooseOption("缓存与 TPS 统计区间", "近 30 天");
+    expect(bridgeMocks.getUsageSummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ preset: "30d" }),
+    );
+    expect(meters()[0].textContent).toContain("0.0%");
+    expect(meters()[0].textContent).toContain("TPS—");
+    expect(meters()[0].textContent).not.toContain("49.0");
+
+    bridgeMocks.getUsageSummary.mockRejectedValueOnce(new Error("Unavailable"));
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="刷新列表"]')!
+        .click(),
+    );
+    expect(meters()[0].textContent).toContain("统计加载失败");
+    expect(meters()[0].textContent).not.toContain("0.0%");
   });
 
   it("tests the selected saved provider without changing its configuration", async () => {
@@ -4091,5 +4177,375 @@ describe("ServiceManager", () => {
       etag,
       expect.objectContaining({ failure_policy: null }),
     );
+  });
+
+  describe("upstream risk", () => {
+    const hour = 3_600_000;
+    const suspendedClaude: Service = {
+      id: "service_claude_personal",
+      name: "Claude personal",
+      kind: "claude_subscription",
+      enabled: true,
+      models: [],
+      capabilities: [
+        { protocol: "anthropic.messages", mode: "native", streaming: true },
+      ],
+      subscription: {
+        provider: "claude_code",
+        status: "disconnected",
+        risk: {
+          state: "suspended",
+          code: "organization_disabled",
+          message: "This organization has been disabled.",
+          http_status: 403,
+          observed_at: timestamp,
+          occurrences: 2,
+        },
+      },
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    const coolingCodex = (pausedUntil: string): Service => ({
+      ...codexService,
+      subscription: {
+        provider: "openai_codex",
+        status: "disconnected",
+        risk: {
+          state: "cooling",
+          code: "rate_limit_5h",
+          observed_at: timestamp,
+          paused_until: pausedUntil,
+        },
+      },
+    });
+
+    async function renderList(
+      services: Service[],
+      props: {
+        catalogStatus?: "ready" | "loading";
+        onRefresh?: () => void;
+        onServiceSaved?: (service: Service) => void;
+      } = {},
+    ): Promise<void> {
+      await act(async () => {
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus={props.catalogStatus ?? "ready"}
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={props.onRefresh ?? (() => {})}
+            onServiceRemoved={() => {}}
+            onServiceSaved={props.onServiceSaved ?? (() => {})}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={services}
+            view={{ kind: "list" }}
+          />,
+        );
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+
+    function riskBadge(state: "suspended" | "cooling"): HTMLButtonElement {
+      const badge = container.querySelector<HTMLButtonElement>(
+        `button[data-testid="service-risk-badge"][data-risk-state="${state}"]`,
+      );
+      if (!badge) throw new Error(`missing ${state} risk badge`);
+      return badge;
+    }
+
+    function buttonWithText(
+      scope: ParentNode,
+      text: string,
+    ): HTMLButtonElement {
+      const button = [
+        ...scope.querySelectorAll<HTMLButtonElement>("button"),
+      ].find((candidate) => candidate.textContent?.trim() === text);
+      if (!button) throw new Error(`missing button: ${text}`);
+      return button;
+    }
+
+    it("badges paused and cooling subscriptions and summarizes suspended accounts", async () => {
+      const disabledSuspended: Service = {
+        ...suspendedClaude,
+        id: "service_claude_work",
+        name: "Claude work",
+        enabled: false,
+      };
+      const elapsed: Service = {
+        ...coolingCodex(new Date(Date.now() - hour).toISOString()),
+        id: "service_codex_elapsed",
+        name: "Codex elapsed",
+      };
+      await renderList([
+        suspendedClaude,
+        coolingCodex(new Date(Date.now() + 3.5 * hour).toISOString()),
+        disabledSuspended,
+        elapsed,
+        gatewayService,
+      ]);
+
+      expect(riskBadge("suspended").textContent).toBe("已暂停调度");
+      expect(riskBadge("cooling").textContent).toBe("冷却中 · 3 小时后重置");
+      expect(
+        riskBadge("suspended").querySelector('[data-tone="negative"]'),
+      ).not.toBeNull();
+      expect(
+        riskBadge("cooling").querySelector('[data-tone="pending"]'),
+      ).not.toBeNull();
+      // The disabled account keeps its badge; the elapsed cooling does not.
+      expect(
+        container.querySelectorAll('[data-testid="service-risk-badge"]'),
+      ).toHaveLength(3);
+      const elapsedRow = [
+        ...container.querySelectorAll<HTMLElement>(
+          '[data-testid="service-card"]',
+        ),
+      ].find((row) => row.textContent?.includes("Codex elapsed"));
+      expect(
+        elapsedRow?.querySelector('[data-testid="service-risk-badge"]'),
+      ).toBeNull();
+
+      const status = container.querySelector<HTMLElement>(
+        'span[role="img"][aria-label="待登录 · 组织已被上游停用"]',
+      );
+      expect(status?.querySelector('[data-tone="negative"]')).not.toBeNull();
+
+      const summary = container.querySelector<HTMLElement>(
+        '[data-testid="service-risk-summary"]',
+      );
+      expect(summary?.textContent).toBe("1 个订阅账号因上游风控已暂停调度。");
+      expect(bridgeMocks.listServiceRiskEvents).not.toHaveBeenCalled();
+    });
+
+    it("omits the risk summary when no enabled account is suspended", async () => {
+      await renderList([
+        coolingCodex(new Date(Date.now() + hour).toISOString()),
+        gatewayService,
+      ]);
+      expect(
+        container.querySelector('[data-testid="service-risk-summary"]'),
+      ).toBeNull();
+    });
+
+    it("shows the reauthorization reason in the status label", async () => {
+      await renderList([
+        {
+          ...codexService,
+          subscription: {
+            provider: "openai_codex",
+            status: "needs_reauth",
+            last_error: {
+              code: "refresh_failed",
+              message: "Refresh token was revoked.",
+            },
+          },
+        },
+      ]);
+      expect(
+        container.querySelector(
+          'span[role="img"][aria-label="需要重新登录：Refresh token was revoked."]',
+        ),
+      ).not.toBeNull();
+    });
+
+    it("loads risk events lazily and restores scheduling after confirmation", async () => {
+      const onRefresh = vi.fn();
+      const onServiceSaved = vi.fn();
+      const cleared: Service = {
+        ...suspendedClaude,
+        subscription: { provider: "claude_code", status: "disconnected" },
+      };
+      bridgeMocks.listServiceRiskEvents.mockResolvedValue([
+        {
+          id: 9,
+          service_id: suspendedClaude.id,
+          kind: "suspended",
+          code: "organization_disabled",
+          message: "This organization has been disabled.",
+          http_status: 403,
+          observed_at: timestamp,
+        },
+        {
+          id: 8,
+          service_id: suspendedClaude.id,
+          kind: "cleared",
+          observed_at: "2026-07-28T11:00:00Z",
+        },
+      ]);
+      bridgeMocks.clearServiceRisk.mockResolvedValue({
+        service: cleared,
+        etag,
+      });
+      await renderList([suspendedClaude], { onRefresh, onServiceSaved });
+
+      await act(async () => {
+        riskBadge("suspended").click();
+        await Promise.resolve();
+      });
+      const popover = document.querySelector<HTMLElement>(
+        '[data-testid="service-risk-popover"]',
+      );
+      if (!popover) throw new Error("missing risk popover");
+      expect(bridgeMocks.listServiceRiskEvents).toHaveBeenCalledWith(
+        suspendedClaude.id,
+        20,
+      );
+      expect(popover.textContent).toContain("组织已被上游停用");
+      expect(
+        popover.querySelector('[data-testid="service-risk-message"]')
+          ?.textContent,
+      ).toBe("This organization has been disabled.");
+      expect(popover.textContent).toContain("HTTP 状态403");
+      expect(popover.textContent).toContain("触发次数2");
+      expect(popover.textContent).not.toContain("恢复时间");
+      const events = popover.querySelector<HTMLElement>(
+        '[data-testid="service-risk-events"]',
+      );
+      expect(events?.querySelectorAll("li")).toHaveLength(2);
+      expect(events?.textContent).toContain("暂停调度");
+      expect(events?.textContent).toContain("组织已被上游停用 · HTTP 403");
+      expect(events?.textContent).toContain("已恢复调度");
+
+      await act(async () => {
+        buttonWithText(popover, "恢复调度").click();
+        await Promise.resolve();
+      });
+      expect(bridgeMocks.clearServiceRisk).not.toHaveBeenCalled();
+      const dialog = document.querySelector<HTMLElement>(
+        '[role="alertdialog"]',
+      );
+      if (!dialog) throw new Error("missing restore confirmation");
+      expect(dialog.textContent).toContain("恢复这个账号的调度？");
+      expect(dialog.textContent).toContain("下一次请求会再次暂停调度");
+
+      await act(async () => {
+        buttonWithText(dialog, "恢复调度").click();
+        await Promise.resolve();
+      });
+      expect(bridgeMocks.clearServiceRisk).toHaveBeenCalledWith(
+        suspendedClaude.id,
+      );
+      expect(onServiceSaved).toHaveBeenCalledWith(cleared);
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(notifyMocks.success).toHaveBeenCalledWith(
+        "已恢复“Claude personal”的调度。",
+      );
+    });
+
+    it("keeps risk event and restore failures visible", async () => {
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        bridgeMocks.listServiceRiskEvents
+          .mockRejectedValueOnce(new Error("GET risk-events returned 503"))
+          .mockResolvedValueOnce([]);
+        bridgeMocks.clearServiceRisk.mockRejectedValueOnce(
+          new Error("POST risk/clear returned 409 Conflict"),
+        );
+        const onRefresh = vi.fn();
+        await renderList(
+          [coolingCodex(new Date(Date.now() + hour).toISOString())],
+          { onRefresh },
+        );
+
+        await act(async () => {
+          riskBadge("cooling").click();
+          await Promise.resolve();
+        });
+        const popover = document.querySelector<HTMLElement>(
+          '[data-testid="service-risk-popover"]',
+        );
+        if (!popover) throw new Error("missing risk popover");
+        expect(popover.textContent).toContain("已达 5 小时用量上限");
+        expect(popover.textContent).toContain("恢复时间");
+        expect(popover.textContent).toContain("无法读取风控事件。");
+        expect(logged).toHaveBeenCalled();
+
+        await act(async () => {
+          buttonWithText(popover, "重试").click();
+          await Promise.resolve();
+        });
+        expect(bridgeMocks.listServiceRiskEvents).toHaveBeenCalledTimes(2);
+        expect(popover.textContent).toContain("暂无风控事件。");
+
+        await act(async () => {
+          buttonWithText(popover, "恢复调度").click();
+          await Promise.resolve();
+        });
+        const dialog = document.querySelector<HTMLElement>(
+          '[role="alertdialog"]',
+        );
+        if (!dialog) throw new Error("missing restore confirmation");
+        await act(async () => {
+          buttonWithText(dialog, "恢复调度").click();
+          await Promise.resolve();
+        });
+        expect(bridgeMocks.clearServiceRisk).toHaveBeenCalledWith(
+          codexService.id,
+        );
+        expect(onRefresh).not.toHaveBeenCalled();
+        expect(
+          container.querySelector('[role="alert"]')?.textContent,
+        ).toContain("POST risk/clear returned 409 Conflict");
+      } finally {
+        logged.mockRestore();
+      }
+    });
+
+    it("refreshes subscriptions every 30 seconds only while the page is visible", async () => {
+      const intervals = vi.spyOn(window, "setInterval");
+      const cleared = vi.spyOn(window, "clearInterval");
+      const visibility = vi
+        .spyOn(document, "visibilityState", "get")
+        .mockReturnValue("visible");
+      const onRefresh = vi.fn();
+      try {
+        await renderList([gatewayService], { onRefresh });
+        expect(intervals.mock.calls.some(([, delay]) => delay === 30_000)).toBe(
+          false,
+        );
+
+        await renderList([suspendedClaude, gatewayService], { onRefresh });
+        const polls = intervals.mock.calls.filter(
+          ([, delay]) => delay === 30_000,
+        );
+        expect(polls).toHaveLength(1);
+        const tick = polls[0][0] as () => void;
+        const timer = intervals.mock.results[
+          intervals.mock.calls.indexOf(polls[0])
+        ].value as number;
+
+        act(() => tick());
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+
+        visibility.mockReturnValue("hidden");
+        act(() => tick());
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+
+        visibility.mockReturnValue("visible");
+        await renderList([suspendedClaude, gatewayService], {
+          catalogStatus: "loading",
+          onRefresh,
+        });
+        act(() => tick());
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+        // Re-rendering the same list must not stack another interval.
+        expect(
+          intervals.mock.calls.filter(([, delay]) => delay === 30_000),
+        ).toHaveLength(1);
+
+        await act(async () => root.unmount());
+        expect(cleared).toHaveBeenCalledWith(timer);
+        root = createRoot(container);
+      } finally {
+        intervals.mockRestore();
+        cleared.mockRestore();
+        visibility.mockRestore();
+      }
+    });
   });
 });

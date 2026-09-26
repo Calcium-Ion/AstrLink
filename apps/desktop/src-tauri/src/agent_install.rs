@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::control_session::astrlink_home;
 
 pub const BUNDLE_NAME: &str = "astrlink-debug";
-pub const BUNDLE_VERSION: &str = "0.1.3";
+pub const BUNDLE_VERSION: &str = "0.1.4";
 pub const MCP_SERVER_NAME: &str = "astrlink";
 const RECEIPT_VERSION: u32 = 1;
 const MANAGED_FILES_NAME: &str = ".astrlink-managed-files.json";

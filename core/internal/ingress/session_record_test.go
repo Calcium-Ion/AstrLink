@@ -103,10 +103,8 @@ func newSessionHarness(t *testing.T, protocol contract.ProtocolID, path string, 
 	harness := &sessionHarness{t: t, store: &memoryRequestRecordStore{}, path: path, contentType: "application/json"}
 	dependencies := Dependencies{
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
-			Endpoint:          validEndpoint(protocol, options.streaming),
-			UpstreamModel:     "provider/secret-upstream",
-			RouteID:           "route_alias",
-			SingleTargetRoute: true,
+			Endpoint:      validEndpoint(protocol, options.streaming),
+			UpstreamModel: "provider/secret-upstream",
 		}}},
 		RequestRecords: harness.store,
 		AuditBlobs:     options.auditBlobs,
@@ -619,6 +617,11 @@ func TestInferencePlaneLinksResponsesTurnsAndKeepsBrokenCursor(t *testing.T) {
 	assertSameSession(t, first, third)
 	assertTurn(t, third, 1)
 
+	// Give the unmatched cursor a provider binding so the request still routes;
+	// no recorded session carries it, so session linking must break.
+	harness.handler.affinities.mu.Lock()
+	harness.handler.affinities.entries[affinityKey{responseID: "resp_missing"}] = harness.handler.affinities.entries[affinityKey{responseID: "resp_one"}]
+	harness.handler.affinities.mu.Unlock()
 	broken := harness.serve(`{"model":"public-alias","previous_response_id":"resp_missing","input":"断链"}`, respond("resp_other"))
 	assertNewSession(t, first, broken)
 	if broken.PreviousResponseID == nil || *broken.PreviousResponseID != "resp_missing" {

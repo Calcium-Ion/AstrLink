@@ -20,14 +20,10 @@ import (
 // CLI chat proxy with the CLI identity headers. AstrLink never embeds a client
 // secret; the client ID below is the public one shipped in the open-source CLI.
 const (
-	DefaultGrokIssuer     = "https://auth.x.ai"
-	DefaultGrokClientID   = "b1a00492-073a-47ea-816f-4c329264a828"
-	DefaultGrokAPIBaseURL = "https://cli-chat-proxy.grok.com"
-	// DefaultGrokCLIClientVersion is the Grok CLI build reported to auth.x.ai
-	// and the chat proxy. It matches the version new-api ships for the same
-	// upstream and is only an identity hint, not a compatibility gate.
-	DefaultGrokCLIClientVersion = "0.2.101"
-	DefaultGrokDeviceCodeTTL    = 15 * time.Minute
+	DefaultGrokIssuer        = "https://auth.x.ai"
+	DefaultGrokClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
+	DefaultGrokAPIBaseURL    = "https://cli-chat-proxy.grok.com"
+	DefaultGrokDeviceCodeTTL = 15 * time.Minute
 
 	grokDeviceGrantType    = "urn:ietf:params:oauth:grant-type:device_code"
 	grokSlowDownIncrement  = 5 * time.Second
@@ -79,7 +75,7 @@ func ApplyGrokAPIHeaders(header http.Header, tokens AccountTokens, clientVersion
 	header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	header.Set("X-XAI-Token-Auth", grokTokenAuthHeader)
 	header.Set("X-Grok-Client-Version", clientVersion)
-	header.Set("User-Agent", "xai-grok-workspace/"+clientVersion)
+	header.Set("User-Agent", grokUserAgentProduct+"/"+clientVersion)
 }
 
 func applyGrokOAuthHeaders(header http.Header, clientVersion string) {
@@ -88,7 +84,7 @@ func applyGrokOAuthHeaders(header http.Header, clientVersion string) {
 	}
 	header.Set("X-Grok-Client-Version", clientVersion)
 	header.Set("X-Grok-Client-Surface", grokClientSurfaceValue)
-	header.Set("User-Agent", "xai-grok-workspace/"+clientVersion)
+	header.Set("User-Agent", grokUserAgentProduct+"/"+clientVersion)
 }
 
 type grokDeviceCodeResponse struct {

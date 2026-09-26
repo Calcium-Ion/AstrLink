@@ -226,19 +226,9 @@ func TestEndpointDeleteChecksETagIgnoresRetiredRoutesAndCascadesCredentials(t *t
 		t.Fatalf("stale DeleteEndpoint error = %v", err)
 	}
 
-	route := contract.Route{
-		ID: "route_01", Name: "default", Enabled: true,
-		Match: contract.RouteMatch{Protocol: contract.ProtocolOpenAIResponses},
-		Targets: []contract.RouteTarget{{
-			ServiceID: created.Endpoint.ID, PlanType: contract.PlanTypeNative,
-			UpstreamProtocol: contract.ProtocolOpenAIResponses,
-		}},
-	}
-	document, err := json.Marshal(route)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.Exec(`INSERT INTO routes (id, document_json, created_at, updated_at) VALUES (?, ?, ?, ?)`, route.ID, document, "now", "now"); err != nil {
+	// A retired route row that still targets the endpoint must not block deletion.
+	document := `{"id":"route_01","name":"default","enabled":true,"priority":0,"match":{"protocol":"openai.responses"},"targets":[{"service_id":"` + string(created.Endpoint.ID) + `","plan_type":"native","upstream_protocol":"openai.responses","priority":0}]}`
+	if _, err := store.db.Exec(`INSERT INTO routes (id, document_json, created_at, updated_at) VALUES (?, ?, ?, ?)`, "route_01", document, "now", "now"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.DeleteEndpoint(ctx, created.Endpoint.ID, created.ETag); err != nil {

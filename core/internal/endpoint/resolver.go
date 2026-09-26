@@ -71,36 +71,24 @@ type ResolveRequest struct {
 	// Continuation keeps eligible targets available for exact affinity binding.
 	// Ingress must bind the response ID before attempting any target.
 	Continuation bool
-	// Category is the classifier label for auto routes. Empty means fail-open
-	// across every category's targets in document order.
-	Category string
 }
 
 type Resolved struct {
-	Path          *RecoveryPathSnapshot
-	Unavailable   string
 	FailurePolicy *contract.FailurePolicy
 	Failover      *contract.FailoverPolicy
 	Service       contract.Service
 	Endpoint      contract.Endpoint // compatibility view for legacy callers
 	BaseURL       string
 	Mode          contract.CapabilityMode
-	// PlanType is explicit for routed candidates. An empty value retains the
-	// historical Mode-derived native/delegated behavior.
+	// PlanType is explicit for converted candidates. An empty value retains the
+	// Mode-derived native/delegated behavior.
 	PlanType contract.PlanType
 	// UpstreamProtocol is the protocol the selected endpoint receives. Empty
 	// retains the ingress protocol.
 	UpstreamProtocol contract.ProtocolID
-	// RouteID is set when an explicit persisted Route produced this candidate.
-	RouteID contract.RouteID
-	// SingleTargetRoute reflects the document before capability/health filtering.
-	SingleTargetRoute bool
-	// Pinned marks a Route that names exactly one distinct Endpoint. A pinned
-	// Endpoint still must be enabled and capable, but may bypass circuit-open
-	// exclusion when the caller explicitly chose it.
-	Pinned bool
-	// UpstreamModel is the per-target model rewrite from an explicit Route
-	// (ADR 0006). Empty means no rewrite.
+	// UpstreamModel is the model id sent upstream. Ingress rewrites the
+	// request's model only when it differs from the client's; empty keeps the
+	// routing model.
 	UpstreamModel  string
 	RequestedModel string
 }
@@ -158,20 +146,25 @@ type CandidateResolver interface {
 	ResolveCandidates(context.Context, ResolveRequest) ([]Resolved, error)
 }
 
-// AliasModelMapping is internal discovery metadata. It lets the aggregate
-// listing replace a route's private upstream model with its public alias.
-type AliasModelMapping struct {
-	ServiceID     contract.ServiceID
-	PublicModel   string
-	UpstreamModel string
+// ServiceResolver looks up one schedulable HTTP service by ID for
+// gateway-owned requests outside protocol routing, such as built-in tool
+// Images API calls. It never selects a different provider.
+type ServiceResolver interface {
+	ResolveService(context.Context, contract.ServiceID) (Resolved, error)
 }
 
-// AliasLister names the public alias models that explicit Routes define for a
-// protocol family (ADR 0006). Mappings stay inside the process and must never
-// be serialized into a discovery response.
-type AliasLister interface {
-	ListAliasModels(ctx context.Context, discovery contract.ProtocolID) ([]string, error)
-	ListAliasModelMappings(ctx context.Context, discovery contract.ProtocolID) ([]AliasModelMapping, error)
+// RankedService is one configured provider in routing priority order. Skip is
+// empty when the provider was eligible for the request.
+type RankedService struct {
+	ServiceID contract.ServiceID
+	Skip      contract.RoutingSkipReason
+}
+
+// RankingResolver also reports every configured provider in priority order and
+// why routing excluded it, so request records can explain the choice. The
+// ranking accompanies resolution errors too.
+type RankingResolver interface {
+	ResolveRankedCandidates(context.Context, ResolveRequest) ([]Resolved, []RankedService, error)
 }
 
 // AttemptController owns transient endpoint health admission and feedback.

@@ -2,18 +2,21 @@ package sqlite
 
 import (
 	"context"
+	"path/filepath"
+	"testing"
+
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
-	"path/filepath"
-	"reflect"
-	"testing"
 )
 
 func pathTestService(id contract.ServiceID) contract.Service {
 	return contract.Service{ID: id, Name: string(id), Kind: contract.ServiceKindOpenAI, Enabled: true, Models: []string{"public", "model_a", "model_b"}, HTTP: &contract.HTTPConnection{BaseURL: "https://example.test", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeNone}}, Capabilities: []contract.Capability{{Protocol: contract.ProtocolOpenAIResponses, Mode: contract.CapabilityModeNative, Streaming: true}}}
 }
-func TestRetiredRoutesAndPathsRemainReadableButInactive(t *testing.T) {
+
+// Retired route and recovery path rows stay in their tables and settings keep
+// their stored default path IDs, but nothing executes or enforces them.
+func TestRetiredRoutesAndPathsRemainStoredButInactive(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "paths.db"))
 	defer store.Close()
@@ -22,59 +25,41 @@ func TestRetiredRoutesAndPathsRemainReadableButInactive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	path := contract.RecoveryPath{ID: "path_old", Name: "Old", Protocol: contract.ProtocolOpenAIResponses, Mode: "automatic", Targets: []contract.RecoveryPathNode{{ID: "node_b", ServiceID: "service_b", PlanType: contract.PlanTypeNative, UpstreamProtocol: contract.ProtocolOpenAIResponses, UpstreamModel: "model_b"}}}
-	if _, err := store.CreateRecoveryPath(ctx, path); err != nil {
+	const pathDocument = `{"id":"path_old","name":"Old","protocol":"openai.responses","mode":"automatic","targets":[{"id":"node_b","service_id":"service_b","upstream_model":"model_b","upstream_protocol":"openai.responses","plan_type":"native"}]}`
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO recovery_paths (id, document_json) VALUES (?, ?)`, "path_old", pathDocument); err != nil {
 		t.Fatal(err)
 	}
-	route := contract.Route{ID: "route_old", Name: "Old", Enabled: true, Match: contract.RouteMatch{Protocol: path.Protocol, Model: "public"}, RecoveryPathID: path.ID}
-	if _, err := store.CreateRoute(ctx, route); err != nil {
+	const routeDocument = `{"recovery_path_id":"path_old","id":"route_old","name":"Old","enabled":true,"priority":0,"match":{"protocol":"openai.responses","model":"public"}}`
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO routes (id, document_json, created_at, updated_at) VALUES (?, ?, ?, ?)`, "route_old", routeDocument, "now", "now"); err != nil {
 		t.Fatal(err)
 	}
 	settings := contract.DefaultRoutingSettings()
-	settings.DefaultRecoveryPaths = map[contract.ProtocolID]contract.RecoveryPathID{path.Protocol: path.ID}
+	settings.DefaultRecoveryPaths = map[contract.ProtocolID]contract.RecoveryPathID{contract.ProtocolOpenAIResponses: "path_old"}
 	if err := store.UpdateRoutingSettings(ctx, settings); err != nil {
 		t.Fatal(err)
 	}
-	unused := path
-	unused.ID, unused.Name = "path_unused", "Unused"
-	if _, err := store.CreateRecoveryPath(ctx, unused); err != nil {
-		t.Fatal(err)
-	}
-	paths, err := store.ListRecoveryPaths(ctx)
-	if err != nil || len(paths) != 2 {
-		t.Fatalf("paths=%+v err=%v", paths, err)
-	}
-	for _, listed := range paths {
-		individual, err := store.GetRecoveryPath(ctx, listed.Path.ID)
-		if err != nil || !reflect.DeepEqual(listed, individual) {
-			t.Fatalf("listed=%+v individual=%+v err=%v", listed, individual, err)
-		}
-	}
-	if len(paths[0].References) != 2 || paths[1].References == nil || len(paths[1].References) != 0 {
-		t.Fatalf("references=%+v", paths)
+	stored, err := store.GetRoutingSettings(ctx)
+	if err != nil || len(stored.DefaultRecoveryPaths) != 1 || stored.DefaultRecoveryPaths[contract.ProtocolOpenAIResponses] != "path_old" {
+		t.Fatalf("default recovery paths = %v, %v", stored.DefaultRecoveryPaths, err)
 	}
 	resolver, _ := endpoint.NewStoreResolver(store)
-	result, err := resolver.ResolveCandidates(ctx, endpoint.ResolveRequest{Protocol: path.Protocol, Model: "public"})
+	result, err := resolver.ResolveCandidates(ctx, endpoint.ResolveRequest{Protocol: contract.ProtocolOpenAIResponses, Model: "public"})
 	if err != nil || len(result) != 2 || result[0].CanonicalService().ID != "service_a" || result[1].CanonicalService().ID != "service_b" {
 		t.Fatalf("retired routing still executed: %v %v", result, err)
 	}
 	for _, candidate := range result {
-		if candidate.Path != nil || candidate.RouteID != "" || candidate.UpstreamModel != "public" {
+		if candidate.UpstreamModel != "public" {
 			t.Fatalf("retired routing still executed: %+v", candidate)
 		}
-	}
-	aliases, err := resolver.ListAliasModels(ctx, contract.ProtocolOpenAIModels)
-	if err != nil || len(aliases) != 0 {
-		t.Fatalf("retired aliases: %v %v", aliases, err)
 	}
 	referenced, _ := store.GetService(ctx, "service_b")
 	if err := store.DeleteService(ctx, "service_b", referenced.ETag); err != nil {
 		t.Fatalf("retired reference blocked deletion: %v", err)
 	}
-	if _, err := store.GetRoute(ctx, route.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.GetRecoveryPath(ctx, path.ID); err != nil {
-		t.Fatal(err)
+	for _, table := range []string{"routes", "recovery_paths"} {
+		var rows int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&rows); err != nil || rows != 1 {
+			t.Fatalf("%s rows = %d, %v", table, rows, err)
+		}
 	}
 }

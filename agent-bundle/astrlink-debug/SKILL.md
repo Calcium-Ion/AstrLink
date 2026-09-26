@@ -68,9 +68,18 @@ Metadata is always present. Treat these fields as the source of truth:
 - `status`: `pending` | `succeeded` | `failed` | `cancelled` | `blocked`
 - `requested_model` (the model the client sent), `input_protocol`, `streaming`
 - `model_redirect` `{from, to}`: a routing-settings redirect replaced
-  `requested_model` with `to` for routing; absent when no rule matched
+  `requested_model` with `to` for routing and in the upstream request; absent
+  when no rule matched. Responses pass through unchanged, so they name the
+  upstream model rather than `from`
 - `recovery.upstream_model`: the model finally sent upstream
 - `service_id`, `route_id`, `plan`
+- `routing_decision` `{selected, skipped[]}`: why routing chose `service_id`.
+  `selected` is `priority`, `session_binding`, `response_affinity`,
+  `websocket_connection`, or `failover`; `skipped` lists the higher-priority
+  providers excluded before any attempt, each with a `reason` such as
+  `disabled`, `model_not_listed`, or `circuit_open`. Without `selected`, no
+  provider could serve the call and `skipped` names every exclusion. Absent on
+  older records, model discovery, and calls still choosing a provider
 - `error` (transport failures include the unwrapped cause — host/URL/IP may be
   present; credentials are redacted; no bodies or header maps)
 - `input_preview` (short, secrets stripped)

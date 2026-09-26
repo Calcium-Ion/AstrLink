@@ -152,7 +152,7 @@ func (manager *SessionManager) beginBrowserAuthorization(
 		return contract.AuthorizationSession{}, err
 	}
 	browserRedirect := fmt.Sprintf("http://localhost:%d%s", port, manager.config.RedirectPath)
-	authURL, err := manager.buildAuthorizeURL(browserRedirect, state, pkce.Challenge)
+	authURL, err := manager.buildAuthorizeURL(ctx, browserRedirect, state, pkce.Challenge)
 	if err != nil {
 		_ = listener.Close()
 		return contract.AuthorizationSession{}, err
@@ -380,7 +380,7 @@ func (manager *SessionManager) listenLoopback() (net.Listener, int, error) {
 	return nil, 0, fmt.Errorf("%w: %v", ErrCallbackPortsUnavailable, lastErr)
 }
 
-func (manager *SessionManager) buildAuthorizeURL(redirectURI, state, challenge string) (string, error) {
+func (manager *SessionManager) buildAuthorizeURL(ctx context.Context, redirectURI, state, challenge string) (string, error) {
 	authorizeURL := manager.config.AuthorizeURL
 	if authorizeURL == "" {
 		authorizeURL = strings.TrimRight(manager.config.Issuer, "/") + "/oauth/authorize"
@@ -417,7 +417,10 @@ func (manager *SessionManager) buildAuthorizeURL(redirectURI, state, challenge s
 				query.Del(key)
 			}
 		}
-		query.Set("originator", DefaultCodexOriginator)
+		// The token exchange that completes this authorization sends the same
+		// originator.
+		identity := manager.config.Identities.CodexIdentityFor(ctx, manager.config.ModelsClientVersion)
+		query.Set("originator", codexOriginator(identity))
 	}
 	endpoint.RawQuery = query.Encode()
 	return endpoint.String(), nil

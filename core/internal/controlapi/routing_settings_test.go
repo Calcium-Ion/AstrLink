@@ -310,3 +310,152 @@ func TestSubscriptionIdentitySettingsAreIndependentAndApplyImmediately(t *testin
 		}
 	}
 }
+
+func TestSubscriptionProtectionSettingsDefaultOnAndPatchIndependently(t *testing.T) {
+	_, handler := newRouteHandler(t)
+	keys := []string{"subscription_risk_protection", "codex_request_normalization", "claude_request_normalization", "subscription_session_isolation"}
+	read := func() map[string]any {
+		t.Helper()
+		response := controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")
+		var settings map[string]any
+		decode(t, response, &settings)
+		return settings
+	}
+	defaults := read()
+	for _, key := range keys {
+		if defaults[key] != true {
+			t.Fatalf("%s defaults to %v", key, defaults[key])
+		}
+	}
+	for _, changed := range keys {
+		for _, invalid := range []string{"null", `"false"`, "0"} {
+			response := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", fmt.Sprintf(`{%q:%s}`, changed, invalid), "")
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("invalid %s accepted", changed)
+			}
+		}
+		for _, enabled := range []bool{false, true} {
+			response := controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", fmt.Sprintf(`{%q:%t}`, changed, enabled), "")
+			if response.Code != http.StatusOK {
+				t.Fatalf("PATCH %s: %d %s", changed, response.Code, response.Body.String())
+			}
+			settings := read()
+			for _, key := range keys {
+				if want := key != changed || enabled; settings[key] != want {
+					t.Fatalf("changing %s=%t left %s=%v", changed, enabled, key, settings[key])
+				}
+			}
+		}
+	}
+}
+
+func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
+	store, handler := newRouteHandler(t)
+	authorizer := endpoint.NewServiceAuthorizer(nil, identityTestTokens{}).
+		WithRoutingSettings(store).WithIdentities(accountauth.NewIdentityRegistry(store, nil))
+	read := func() map[string]any {
+		t.Helper()
+		response := controlRequest(t, handler, http.MethodGet, RoutingSettingsPath, "", "", "")
+		var settings map[string]any
+		decode(t, response, &settings)
+		return settings
+	}
+	patch := func(body string) int {
+		t.Helper()
+		return controlRequest(t, handler, http.MethodPatch, RoutingSettingsPath, "application/merge-patch+json", body, "").Code
+	}
+	outgoing := func(kind contract.ServiceKind) http.Header {
+		t.Helper()
+		headers, err := authorizer.Headers(context.Background(), contract.Endpoint{ID: "service_identity", Kind: kind}, http.Header{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return headers
+	}
+
+	defaults := read()
+	for _, key := range []string{"claude_identity_auto_learn", "codex_identity_auto_learn"} {
+		if defaults[key] != true {
+			t.Fatalf("%s defaults to %v", key, defaults[key])
+		}
+	}
+	for _, key := range []string{"claude_identity_version", "codex_identity_version"} {
+		if _, present := defaults[key]; present {
+			t.Fatalf("%s present without an override: %v", key, defaults[key])
+		}
+	}
+
+	learnKeys := []string{"claude_identity_auto_learn", "codex_identity_auto_learn"}
+	for _, changed := range learnKeys {
+		for _, invalid := range []string{"null", `"false"`, "0"} {
+			if code := patch(fmt.Sprintf(`{%q:%s}`, changed, invalid)); code != http.StatusUnprocessableEntity {
+				t.Fatalf("invalid %s=%s returned %d", changed, invalid, code)
+			}
+		}
+		for _, enabled := range []bool{false, true} {
+			if code := patch(fmt.Sprintf(`{%q:%t}`, changed, enabled)); code != http.StatusOK {
+				t.Fatalf("PATCH %s=%t returned %d", changed, enabled, code)
+			}
+			settings := read()
+			for _, key := range learnKeys {
+				if want := key != changed || enabled; settings[key] != want {
+					t.Fatalf("changing %s=%t left %s=%v", changed, enabled, key, settings[key])
+				}
+			}
+		}
+	}
+
+	for _, test := range []struct {
+		key, invalid string
+	}{
+		{"claude_identity_version", "null"},
+		{"claude_identity_version", "2"},
+		{"claude_identity_version", `"2.1"`},
+		{"claude_identity_version", `"v2.1.400"`},
+		{"claude_identity_version", `"claude-cli/2.1.400"`},
+		{"codex_identity_version", "null"},
+		{"codex_identity_version", `"0.143.9"`},
+		{"codex_identity_version", `"0.170"`},
+	} {
+		if code := patch(fmt.Sprintf(`{%q:%s}`, test.key, test.invalid)); code != http.StatusUnprocessableEntity {
+			t.Fatalf("invalid %s=%s returned %d", test.key, test.invalid, code)
+		}
+	}
+	if code := patch(`{"claude_identity_version":"2.1.400","codex_identity_version":"0.170.0"}`); code != http.StatusOK {
+		t.Fatalf("PATCH versions returned %d", code)
+	}
+	settings := read()
+	if settings["claude_identity_version"] != "2.1.400" || settings["codex_identity_version"] != "0.170.0" {
+		t.Fatalf("versions = %v, %v", settings["claude_identity_version"], settings["codex_identity_version"])
+	}
+	if got := outgoing(contract.ServiceKindClaudeSubscription).Get("User-Agent"); got != "claude-cli/2.1.400 (external, cli)" {
+		t.Fatalf("Claude User-Agent = %q", got)
+	}
+	codex := outgoing(contract.ServiceKindCodexSubscription)
+	if !strings.HasPrefix(codex.Get("User-Agent"), "codex-tui/0.170.0 ") || codex.Get("version") != "0.170.0" {
+		t.Fatalf("Codex identity = %q, version %q", codex.Get("User-Agent"), codex.Get("version"))
+	}
+
+	// A rejected patch leaves the override in place; an empty string clears it.
+	if code := patch(`{"claude_identity_version":"2.1.500","codex_identity_version":"0.1.0"}`); code != http.StatusUnprocessableEntity {
+		t.Fatalf("partially invalid PATCH returned %d", code)
+	}
+	if settings := read(); settings["claude_identity_version"] != "2.1.400" {
+		t.Fatalf("rejected PATCH changed claude_identity_version to %v", settings["claude_identity_version"])
+	}
+	if code := patch(`{"claude_identity_version":"","codex_identity_version":""}`); code != http.StatusOK {
+		t.Fatalf("clearing versions returned %d", code)
+	}
+	settings = read()
+	for _, key := range []string{"claude_identity_version", "codex_identity_version"} {
+		if _, present := settings[key]; present {
+			t.Fatalf("%s not cleared: %v", key, settings[key])
+		}
+	}
+	if got := outgoing(contract.ServiceKindClaudeSubscription).Get("User-Agent"); got != accountauth.DefaultClaudeUserAgent {
+		t.Fatalf("Claude User-Agent after clearing = %q", got)
+	}
+	if got := outgoing(contract.ServiceKindCodexSubscription).Get("version"); got != accountauth.DefaultCodexModelsClientVersion {
+		t.Fatalf("Codex version after clearing = %q", got)
+	}
+}

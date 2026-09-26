@@ -215,6 +215,71 @@ describe("model redirect metadata", () => {
   });
 });
 
+describe("routing decision metadata", () => {
+  const decision = {
+    selected: "failover",
+    skipped: [
+      { service_id: "service_mly", reason: "model_not_listed" },
+      { service_id: "service_codex", reason: "disabled" },
+    ],
+  };
+
+  it("keeps why routing chose the provider and what it skipped", () => {
+    expect(
+      parseRequestRecord({ ...fullRecord, routing_decision: decision })
+        .routing_decision,
+    ).toStrictEqual(decision);
+    // No provider could serve the call: every exclusion, no selection.
+    const unserved = { skipped: decision.skipped };
+    expect(
+      parseRequestRecord({
+        ...nullOptionalRecord,
+        status: "failed",
+        routing_decision: unserved,
+      }).routing_decision,
+    ).toStrictEqual(unserved);
+  });
+
+  it("leaves the key out for records routing did not explain", () => {
+    for (const routing_decision of [null, undefined]) {
+      expect(
+        parseRequestRecord({ ...fullRecord, routing_decision }),
+      ).not.toHaveProperty("routing_decision");
+    }
+    expect(parseRequestRecord(fullRecord)).not.toHaveProperty(
+      "routing_decision",
+    );
+  });
+
+  it("rejects wire values it cannot explain", () => {
+    for (const [routing_decision, message] of [
+      ["priority", "应为对象"],
+      [{ selected: "priority" }, "应为数组"],
+      [{ selected: "cheapest", skipped: [] }, "选择原因无效"],
+      [{ selected: null, skipped: [] }, "选择原因无效"],
+      [
+        { skipped: [{ service_id: "service_a", reason: "slow" }] },
+        "跳过原因无效",
+      ],
+      [{ skipped: [{ reason: "disabled" }] }, "应为字符串"],
+      [{ skipped: ["service_a"] }, "应为对象"],
+      [
+        {
+          skipped: Array.from({ length: 65 }, (_, index) => ({
+            service_id: `service_${index}`,
+            reason: "disabled",
+          })),
+        },
+        "条目过多",
+      ],
+    ] as const) {
+      expect(() =>
+        parseRequestRecord({ ...fullRecord, routing_decision }),
+      ).toThrow(message);
+    }
+  });
+});
+
 describe("request-record IPC contract", () => {
   it("round-trips a valid record and drops plan/extensions", () => {
     const parsed = parseRequestRecord(fullRecord);
@@ -558,7 +623,7 @@ describe("request-record IPC contract", () => {
 
   it("maps status labels and tones", () => {
     expect(statusLabel("pending")).toBe("进行中");
-    expect(statusLabel("succeeded")).toBe("成功");
+    expect(statusLabel("succeeded")).toBe("完成");
     expect(statusLabel("failed")).toBe("失败");
     expect(statusLabel("cancelled")).toBe("已取消");
     expect(statusLabel("blocked")).toBe("已拦截");
@@ -626,4 +691,38 @@ it("parses performance samples and rejects invalid timing and rates", () => {
   expect(() =>
     parseRequestRecord({ ...fullRecord, first_token_ms: -1 }),
   ).toThrow("first_token_ms");
+});
+
+describe("client attribution", () => {
+  it.each([
+    "codex",
+    "claude_code",
+    "cursor",
+    "grok_cli",
+    "gemini_cli",
+    "opencode",
+    "openclaw",
+    "cline",
+    "pi",
+    "unknown",
+  ])("keeps %s on records and summaries", (client_type) => {
+    expect(parseRequestRecord({ ...fullRecord, client_type }).client_type).toBe(
+      client_type,
+    );
+    expect(
+      parseRequestSession({ ...fullSession, client_type }).client_type,
+    ).toBe(client_type);
+  });
+  it("accepts historical records and degrades future labels without guessing from the model", () => {
+    expect(parseRequestRecord(fullRecord).client_type).toBeUndefined();
+    expect(parseRequestSession(fullSession).client_type).toBeUndefined();
+    expect(
+      parseRequestRecord({ ...fullRecord, client_type: "future_client" })
+        .client_type,
+    ).toBe("unknown");
+    expect(
+      parseRequestSession({ ...fullSession, client_type: "future_client" })
+        .client_type,
+    ).toBe("unknown");
+  });
 });

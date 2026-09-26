@@ -1,3 +1,4 @@
+import { BuiltinToolsEditor } from "./components/BuiltinToolsEditor";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getRoutingSettings, updateRoutingSettings } from "./bridge";
@@ -13,9 +14,12 @@ import { Panel, PanelHeader } from "./components/Panel";
 import { Button } from "./components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import {
+  identityLearningKeys,
   identitySettingKeys,
+  identityVersionKeys,
   modelRedirectIssues,
   parseRoutingSettings,
+  subscriptionProtectionKeys,
   type RoutingSettings,
 } from "./failure-policy-model";
 import { useT } from "./i18n";
@@ -31,10 +35,21 @@ const routingSettingKeys = [
   "max_attempts",
   "channel_stickiness",
   "model_redirects",
+  "builtin_tools",
   ...identitySettingKeys,
+  ...subscriptionProtectionKeys,
+  ...identityLearningKeys,
+  ...identityVersionKeys,
 ] as const;
 
-const routingTabs = ["redirects", "recovery", "rules", "session", "identity"];
+const routingTabs = [
+  "redirects",
+  "tools",
+  "recovery",
+  "rules",
+  "session",
+  "identity",
+];
 
 // A document without the key has no redirects; compare and edit it as [].
 function withRedirects(settings: RoutingSettings): RoutingSettings {
@@ -266,6 +281,20 @@ export function RoutingSettingsPanel({
         {draft ? (
           <>
             <TabsContent
+              value="tools"
+              className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1"
+              data-tab-scroller
+            >
+              <BuiltinToolsEditor
+                value={draft.builtin_tools}
+                services={services}
+                disabled={!ready}
+                onChange={(builtin_tools) =>
+                  changeDraft({ ...draft, builtin_tools })
+                }
+              />
+            </TabsContent>
+            <TabsContent
               value="redirects"
               className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1"
               data-tab-scroller
@@ -386,7 +415,7 @@ export function RoutingSettingsPanel({
               className="min-h-0 flex-1 overflow-y-auto pb-1"
               data-tab-scroller
             >
-              <fieldset disabled={!ready} className="min-w-0">
+              <fieldset disabled={!ready} className="grid min-w-0 gap-3">
                 <UpstreamIdentitySettings
                   value={draft}
                   onChange={changeDraft}

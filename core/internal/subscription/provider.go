@@ -20,6 +20,7 @@ import (
 type CodexProvider struct {
 	apiBaseURL string
 	identity   accountauth.CodexIdentityPolicy
+	identities *accountauth.IdentityRegistry
 	httpClient *http.Client
 }
 
@@ -30,6 +31,7 @@ func NewCodexProvider(oauth accountauth.OAuthConfig) *CodexProvider {
 		identity: accountauth.CodexIdentityPolicy{
 			ClientVersion: oauth.ModelsClientVersion,
 		},
+		identities: oauth.Identities,
 		httpClient: oauth.HTTPClient,
 	}
 }
@@ -63,6 +65,15 @@ func (provider *CodexProvider) ModelsClientVersion() string {
 	return provider.identity.ClientVersion
 }
 
+// clientIdentity resolves the identity of one gateway-initiated request.
+func (provider *CodexProvider) clientIdentity(ctx context.Context) accountauth.ClientIdentity {
+	var identities *accountauth.IdentityRegistry
+	if provider != nil {
+		identities = provider.identities
+	}
+	return identities.CodexIdentityFor(ctx, provider.ModelsClientVersion())
+}
+
 func (provider *CodexProvider) Usage(ctx context.Context, tokens accountauth.AccountTokens) (contract.SubscriptionUsage, error) {
 	request, err := http.NewRequestWithContext(
 		ctx,
@@ -73,7 +84,7 @@ func (provider *CodexProvider) Usage(ctx context.Context, tokens accountauth.Acc
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
-	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, provider.clientIdentity(ctx))
 	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
@@ -113,7 +124,7 @@ func (provider *CodexProvider) ConsumeReset(
 	if err != nil {
 		return contract.SubscriptionUsageReset{}, fmt.Errorf("%w: %w", ErrResetUnavailable, err)
 	}
-	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, provider.clientIdentity(ctx))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
@@ -137,16 +148,18 @@ func (provider *CodexProvider) ConsumeReset(
 }
 
 func (provider *CodexProvider) ListModels(ctx context.Context, tokens accountauth.AccountTokens) (ModelList, error) {
+	// The catalog query declares the same version as the request headers.
+	identity := provider.clientIdentity(ctx)
 	request, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
-		CodexModelsURL(provider.apiBaseURL, provider.ModelsClientVersion()),
+		CodexModelsURL(provider.apiBaseURL, identity.Version),
 		nil,
 	)
 	if err != nil {
 		return ModelList{}, err
 	}
-	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, identity)
 	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
@@ -168,7 +181,7 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	applyCodexAuth(request, tokens, provider.ModelsClientVersion())
+	applyCodexAuth(request, tokens, provider.clientIdentity(ctx))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	response, err := provider.httpClient.Do(request)
@@ -184,8 +197,8 @@ func (provider *CodexProvider) CreateResponse(ctx context.Context, tokens accoun
 	return body, response.StatusCode, header, nil
 }
 
-func applyCodexAuth(request *http.Request, tokens accountauth.AccountTokens, clientVersion string) {
-	accountauth.ApplyCodexAPIHeaders(request.Header, tokens, clientVersion)
+func applyCodexAuth(request *http.Request, tokens accountauth.AccountTokens, identity accountauth.ClientIdentity) {
+	accountauth.ApplyCodexAPIHeaders(request.Header, tokens, identity)
 	request.Header.Set("Accept-Encoding", transport.SupportedResponseEncodings)
 }
 

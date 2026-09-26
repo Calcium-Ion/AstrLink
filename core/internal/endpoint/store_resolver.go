@@ -47,21 +47,17 @@ func (adapter endpointReaderAdapter) ListServices(
 	return storage.ServicePage{Items: items, NextCursor: page.NextCursor}, nil
 }
 
-// StoreResolver orders eligible services by persisted priority. Legacy routes
-// are inactive. AttemptController owns transient circuit admission.
+// StoreResolver orders eligible services by persisted priority.
+// AttemptController owns transient circuit admission.
 type StoreResolver struct {
-	paths               storage.RecoveryPathStore
 	routingSettings     storage.RoutingSettingsStore
 	reader              serviceReader
-	routes              storage.RouteReader
 	breaker             *circuitBreaker
 	runtime             contract.RuntimeProfile
 	subscriptionBaseURL string
 }
 
 // WithRuntimeProfile enables candidates backed by optional local runtimes.
-// Persisted RelayKit documents remain readable when disabled so mixed routes
-// can continue serving their native/delegated targets.
 func (resolver *StoreResolver) WithRuntimeProfile(profile contract.RuntimeProfile) *StoreResolver {
 	if resolver != nil {
 		resolver.runtime = profile
@@ -89,14 +85,10 @@ func NewStoreResolver(source any) (*StoreResolver, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("service reader is required")
 	}
-	paths, _ := source.(storage.RecoveryPathStore)
-	routeReader, _ := source.(storage.RouteReader)
 	routingSettings, _ := source.(storage.RoutingSettingsStore)
 	return &StoreResolver{
 		reader:              reader,
-		paths:               paths,
 		routingSettings:     routingSettings,
-		routes:              routeReader,
 		breaker:             newCircuitBreaker(circuitBreakerConfig{}),
 		subscriptionBaseURL: accountauth.DefaultCodexAPIBaseURL,
 	}, nil
@@ -115,22 +107,30 @@ func (resolver *StoreResolver) Resolve(ctx context.Context, request ResolveReque
 // admission happens immediately before each attempt through BeginAttempt so a
 // half-open probe cannot be reserved and then left unused.
 func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request ResolveRequest) ([]Resolved, error) {
+	candidates, _, err := resolver.ResolveRankedCandidates(ctx, request)
+	return candidates, err
+}
+
+// ResolveRankedCandidates is ResolveCandidates plus the ranking of every
+// configured provider, including disabled ones when the service order is
+// available.
+func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, request ResolveRequest) ([]Resolved, []RankedService, error) {
 	if resolver == nil || resolver.reader == nil {
-		return nil, ErrUnavailable
+		return nil, nil, ErrUnavailable
 	}
 	if err := request.Protocol.Validate(); err != nil {
-		return nil, fmt.Errorf("resolve protocol: %w", err)
+		return nil, nil, fmt.Errorf("resolve protocol: %w", err)
 	}
 
-	endpoints, err := resolver.readEnabledServices(ctx)
+	endpoints, ranking, err := resolver.readEnabledServices(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	settings := contract.DefaultRoutingSettings()
 	if resolver.routingSettings != nil && !request.Protocol.IsModelDiscovery() {
 		settings, err = resolver.routingSettings.GetRoutingSettings(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("read routing settings: %w", err)
+			return nil, nil, fmt.Errorf("read routing settings: %w", err)
 		}
 	}
 	applyDefaults := func(candidates []Resolved) []Resolved {
@@ -142,7 +142,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 		}
 		return candidates
 	}
-	candidates := defaultCandidates(endpoints, request, resolver.subscriptionBaseURL, resolver.runtime)
+	candidates := rankCandidates(endpoints, request, resolver.subscriptionBaseURL, resolver.runtime, ranking)
 	if !request.Protocol.IsModelDiscovery() {
 		policy := settings.FailoverPolicy()
 		for index := range candidates {
@@ -150,7 +150,7 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 		}
 	}
 	if len(candidates) == 0 {
-		return nil, &CapabilityUnavailableError{
+		return nil, ranking, &CapabilityUnavailableError{
 			Protocol: request.Protocol,
 			Model:    request.Model,
 			Modes: []contract.CapabilityMode{
@@ -160,22 +160,42 @@ func (resolver *StoreResolver) ResolveCandidates(ctx context.Context, request Re
 			Streaming: request.Streaming,
 		}
 	}
-	candidates, err = resolver.availableCandidates(applyDefaults(candidates))
+	candidates, err = resolver.availableCandidates(applyDefaults(candidates), ranking)
 	if err != nil {
-		return nil, err
+		return nil, ranking, err
 	}
 	if !request.Protocol.IsModelDiscovery() && !request.Continuation && !request.AllCandidates && !settings.AllowUnmatchedFailover {
 		candidates = candidates[:1]
 	}
-	return candidates, nil
+	return candidates, ranking, nil
 }
 
-func (resolver *StoreResolver) availableCandidates(candidates []Resolved) ([]Resolved, error) {
+// ResolveService returns an enabled HTTP service without consulting
+// capabilities or circuit health; the caller owns the single attempt.
+func (resolver *StoreResolver) ResolveService(ctx context.Context, id contract.ServiceID) (Resolved, error) {
+	if resolver == nil || resolver.reader == nil {
+		return Resolved{}, ErrUnavailable
+	}
+	services, _, err := resolver.readEnabledServices(ctx)
+	if err != nil {
+		return Resolved{}, err
+	}
+	for _, service := range services {
+		if service.ID == id && service.Kind.IsHTTP() && service.HTTP != nil {
+			return Resolved{Service: service, BaseURL: service.HTTP.BaseURL, Mode: contract.CapabilityModeNative}, nil
+		}
+	}
+	return Resolved{}, ErrNoEndpoint
+}
+
+func (resolver *StoreResolver) availableCandidates(candidates []Resolved, ranking []RankedService) ([]Resolved, error) {
 	available := make([]Resolved, 0, len(candidates))
 	for _, candidate := range candidates {
-		if resolver.breaker.available(candidate) {
-			available = append(available, candidate)
+		if reason := resolver.breaker.unavailableReason(candidate); reason != "" {
+			MarkSkipped(ranking, candidate.CanonicalService().ID, reason)
+			continue
 		}
+		available = append(available, candidate)
 	}
 	if len(available) == 0 {
 		skipped := make([]contract.ServiceID, 0, len(candidates))
@@ -189,30 +209,42 @@ func (resolver *StoreResolver) availableCandidates(candidates []Resolved) ([]Res
 	return available, nil
 }
 
-func (resolver *StoreResolver) readEnabledServices(ctx context.Context) ([]contract.Service, error) {
+// readEnabledServices returns the schedulable services in priority order and
+// the ranking of every known service, with the reason unschedulable ones are
+// left out. Disabled services are only known through the service order.
+func (resolver *StoreResolver) readEnabledServices(ctx context.Context) ([]contract.Service, []RankedService, error) {
 	enabled := true
 	options := storage.ServiceListOptions{Limit: 200, Enabled: &enabled}
 	byID := make(map[contract.ServiceID]contract.Service)
+	excluded := make(map[contract.ServiceID]contract.RoutingSkipReason)
 	seenCursors := make(map[string]struct{})
 	for {
 		page, err := resolver.reader.ListServices(ctx, options)
 		if err != nil {
-			return nil, fmt.Errorf("read persisted endpoints: %w", err)
+			return nil, nil, fmt.Errorf("read persisted endpoints: %w", err)
 		}
 		for _, record := range page.Items {
 			candidate := record.Service
 			if err := candidate.Validate(); err != nil {
-				return nil, fmt.Errorf("persisted endpoint failed validation: %w", err)
+				return nil, nil, fmt.Errorf("persisted endpoint failed validation: %w", err)
 			}
 			if !candidate.Enabled {
+				excluded[candidate.ID] = contract.RoutingSkipDisabled
 				continue
 			}
 			if candidate.Kind.IsSubscription() &&
 				(candidate.Subscription == nil || candidate.Subscription.Status != contract.SubscriptionStatusConnected) {
+				excluded[candidate.ID] = contract.RoutingSkipNotConnected
+				continue
+			}
+			// Accounts paused by an upstream risk signal stay out of scheduling
+			// until the pause expires or the user restores them.
+			if candidate.Kind.IsSubscription() && candidate.Subscription.Risk.Blocks(resolver.breaker.now()) {
+				excluded[candidate.ID] = contract.RoutingSkipRiskPaused
 				continue
 			}
 			if _, duplicate := byID[candidate.ID]; duplicate {
-				return nil, fmt.Errorf("persisted endpoint %q is duplicated", candidate.ID)
+				return nil, nil, fmt.Errorf("persisted endpoint %q is duplicated", candidate.ID)
 			}
 			byID[candidate.ID] = candidate
 		}
@@ -220,10 +252,10 @@ func (resolver *StoreResolver) readEnabledServices(ctx context.Context) ([]contr
 			break
 		}
 		if page.NextCursor == options.Cursor {
-			return nil, fmt.Errorf("persisted endpoint pagination did not advance")
+			return nil, nil, fmt.Errorf("persisted endpoint pagination did not advance")
 		}
 		if _, duplicate := seenCursors[page.NextCursor]; duplicate {
-			return nil, fmt.Errorf("persisted endpoint pagination repeated a cursor")
+			return nil, nil, fmt.Errorf("persisted endpoint pagination repeated a cursor")
 		}
 		seenCursors[page.NextCursor] = struct{}{}
 		options.Cursor = page.NextCursor
@@ -237,180 +269,58 @@ func (resolver *StoreResolver) readEnabledServices(ctx context.Context) ([]contr
 	if ordered, ok := resolver.reader.(storage.ServiceOrderStore); ok {
 		record, err := ordered.GetServiceOrder(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("read service order: %w", err)
+			return nil, nil, fmt.Errorf("read service order: %w", err)
 		}
 		for index, id := range record.Order.ServiceIDs {
 			positions[id] = index + 1
+			if _, listed := byID[id]; !listed {
+				if _, known := excluded[id]; !known {
+					// The enabled-only listing never returns disabled services.
+					excluded[id] = contract.RoutingSkipDisabled
+				}
+			}
 		}
+	}
+	before := func(a, b contract.ServiceID) bool {
+		left, right := positions[a], positions[b]
+		if left == 0 {
+			left = len(positions) + 1
+		}
+		if right == 0 {
+			right = len(positions) + 1
+		}
+		if left != right {
+			return left < right
+		}
+		return a < b
 	}
 	sort.Slice(endpoints, func(left, right int) bool {
-		a, b := positions[endpoints[left].ID], positions[endpoints[right].ID]
-		if a == 0 {
-			a = len(positions) + 1
-		}
-		if b == 0 {
-			b = len(positions) + 1
-		}
-		if a != b {
-			return a < b
-		}
-		return endpoints[left].ID < endpoints[right].ID
+		return before(endpoints[left].ID, endpoints[right].ID)
 	})
-	return endpoints, nil
-}
-
-func (resolver *StoreResolver) readRoutes(ctx context.Context) ([]contract.Route, error) {
-	if resolver.routes == nil {
-		return nil, nil
-	}
-	records, err := resolver.routes.ListRoutes(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read persisted routes: %w", err)
-	}
-	routes := make([]contract.Route, 0, len(records))
-	seen := make(map[contract.RouteID]struct{}, len(records))
-	for _, record := range records {
-		route := record.Route
-		if err := validateRouteDocument(route); err != nil {
-			return nil, fmt.Errorf("persisted route failed validation: %w", err)
-		}
-		if _, duplicate := seen[route.ID]; duplicate {
-			return nil, fmt.Errorf("persisted route %q is duplicated", route.ID)
-		}
-		seen[route.ID] = struct{}{}
-		routes = append(routes, route)
-	}
-	return routes, nil
-}
-
-func selectMatchingRoute(routes []contract.Route, request ResolveRequest) *contract.Route {
-	matches := make([]contract.Route, 0, len(routes))
-	for _, route := range routes {
-		if !route.Enabled || route.Match.Protocol != request.Protocol {
-			continue
-		}
-		if route.Match.Model != "" && route.Match.Model != request.Model {
-			continue
-		}
-		matches = append(matches, route)
-	}
-	sort.Slice(matches, func(left, right int) bool {
-		a, b := matches[left], matches[right]
-		if a.Priority != b.Priority {
-			return a.Priority < b.Priority
-		}
-		aExact := a.Match.Model != ""
-		bExact := b.Match.Model != ""
-		if aExact != bExact {
-			return aExact
-		}
-		return a.ID < b.ID
-	})
-	if len(matches) == 0 {
-		return nil
-	}
-	selected := matches[0]
-	return &selected
-}
-
-func routeCandidates(
-	route contract.Route,
-	endpoints []contract.Service,
-	request ResolveRequest,
-	runtime contract.RuntimeProfile,
-	subscriptionBaseURL string,
-) []Resolved {
-	targets := route.TargetsForCategory(request.Category)
-	sort.Slice(targets, func(left, right int) bool {
-		a, b := targets[left], targets[right]
-		if a.Priority != b.Priority {
-			return a.Priority < b.Priority
-		}
-		if rankA, rankB := planTypeRank(a.PlanType), planTypeRank(b.PlanType); rankA != rankB {
-			return rankA < rankB
-		}
-		if a.ServiceID != b.ServiceID {
-			return a.ServiceID < b.ServiceID
-		}
-		return a.UpstreamProtocol < b.UpstreamProtocol
-	})
-
-	if route.Failover != nil && !route.Failover.Enabled && !request.Continuation && len(targets) > 1 {
-		targets = targets[:1]
-	}
-
-	byID := make(map[contract.ServiceID]contract.Service, len(endpoints))
+	ranking := make([]RankedService, 0, len(byID)+len(excluded))
 	for _, candidate := range endpoints {
-		byID[candidate.ID] = candidate
+		ranking = append(ranking, RankedService{ServiceID: candidate.ID})
 	}
-	distinctTargets := make(map[contract.ServiceID]struct{}, len(targets))
-	for _, target := range targets {
-		distinctTargets[target.ServiceID] = struct{}{}
+	for id, reason := range excluded {
+		ranking = append(ranking, RankedService{ServiceID: id, Skip: reason})
 	}
-	pinned := len(distinctTargets) == 1
+	sort.SliceStable(ranking, func(left, right int) bool {
+		return before(ranking[left].ServiceID, ranking[right].ServiceID)
+	})
+	return endpoints, ranking, nil
+}
 
-	result := make([]Resolved, 0, len(targets))
-	type candidateKey struct {
-		endpoint contract.ServiceID
-		plan     contract.PlanType
-		protocol contract.ProtocolID
-		model    string
-	}
-	added := make(map[candidateKey]struct{}, len(targets))
-	for _, target := range targets {
-		candidate, exists := byID[target.ServiceID]
-		if !exists {
-			continue
-		}
-		mode, ok := capabilityMode(target.PlanType)
-		upstreamProtocol := target.UpstreamProtocol
-		effectiveRequest := request
-		if target.UpstreamModel != "" {
-			effectiveRequest.Model = target.UpstreamModel
-		}
-		if native := candidate.Kind.ModelNativeProtocol(effectiveRequest.Model); native != "" && !request.Protocol.IsModelDiscovery() {
-			upstreamProtocol = native
-			target.PlanType = contract.PlanTypeNative
-			if native != request.Protocol {
-				if !supportsModelConversion(runtime, request.Protocol, native, request.Streaming) {
-					continue
-				}
-				target.PlanType = contract.PlanTypeRelayKit
+// MarkSkipped records why routing excluded a ranked provider that was still
+// eligible; the first recorded reason wins.
+func MarkSkipped(ranking []RankedService, id contract.ServiceID, reason contract.RoutingSkipReason) {
+	for index := range ranking {
+		if ranking[index].ServiceID == id {
+			if ranking[index].Skip == "" {
+				ranking[index].Skip = reason
 			}
-			mode, ok = contract.CapabilityModeNative, true
+			return
 		}
-		if target.PlanType == contract.PlanTypeRelayKit {
-			if !runtime.RelayKitAvailable ||
-				!supportsProtocol(candidate, upstreamProtocol, effectiveRequest.Model, request.Streaming, contract.CapabilityModeNative) {
-				continue
-			}
-			mode = contract.CapabilityModeNative
-		} else if !ok || !supportsRequest(candidate, effectiveRequest, mode) {
-			continue
-		}
-		key := candidateKey{endpoint: candidate.ID, plan: target.PlanType, protocol: upstreamProtocol, model: effectiveRequest.Model}
-		if _, duplicate := added[key]; duplicate {
-			// Only an identical execution target is redundant.
-			continue
-		}
-		added[key] = struct{}{}
-		legacy, _ := candidate.EndpointView()
-		result = append(result, Resolved{
-			Service:       candidate,
-			FailurePolicy: route.FailurePolicy, Failover: route.Failover,
-			Endpoint:          legacy,
-			BaseURL:           baseURLForService(candidate, subscriptionBaseURL),
-			Mode:              mode,
-			PlanType:          target.PlanType,
-			UpstreamProtocol:  upstreamProtocol,
-			RouteID:           route.ID,
-			SingleTargetRoute: len(route.ExecutableTargets()) == 1,
-			Pinned:            pinned,
-			UpstreamModel:     target.UpstreamModel,
-			RequestedModel:    request.Model,
-		})
 	}
-	return result
 }
 
 func defaultCandidates(endpoints []contract.Service, request ResolveRequest, subscriptionBaseURL string, runtimes ...contract.RuntimeProfile) []Resolved {
@@ -418,39 +328,81 @@ func defaultCandidates(endpoints []contract.Service, request ResolveRequest, sub
 	if len(runtimes) > 0 {
 		runtime = runtimes[0]
 	}
+	return rankCandidates(endpoints, request, subscriptionBaseURL, runtime, nil)
+}
+
+// rankCandidates plans request on each service in order and marks the ranked
+// services that cannot serve it.
+func rankCandidates(endpoints []contract.Service, request ResolveRequest, subscriptionBaseURL string, runtime contract.RuntimeProfile, ranking []RankedService) []Resolved {
 	result := make([]Resolved, 0, len(endpoints))
 	added := make(map[contract.ServiceID]struct{}, len(endpoints))
 	for _, candidate := range endpoints {
-		for _, mode := range []contract.CapabilityMode{contract.CapabilityModeNative, contract.CapabilityModeDelegated} {
-			if _, duplicate := added[candidate.ID]; duplicate {
-				continue
-			}
-			if !supportsRequest(candidate, request, mode) {
-				continue
-			}
-			upstreamProtocol, planType := request.Protocol, contract.PlanType("")
-			if native := candidate.Kind.ModelNativeProtocol(request.Model); native != "" && !request.Protocol.IsModelDiscovery() {
-				if mode != contract.CapabilityModeNative || !supportsProtocol(candidate, native, request.Model, request.Streaming, contract.CapabilityModeNative) {
-					continue
-				}
-				upstreamProtocol = native
-				if native != request.Protocol {
-					if !supportsModelConversion(runtime, request.Protocol, native, request.Streaming) {
-						continue
-					}
-					planType = contract.PlanTypeRelayKit
-				}
-			}
-			added[candidate.ID] = struct{}{}
-			legacy, _ := candidate.EndpointView()
-			result = append(result, Resolved{
-				Service: candidate, Endpoint: legacy,
-				BaseURL: baseURLForService(candidate, subscriptionBaseURL), Mode: mode,
-				UpstreamModel: request.Model, UpstreamProtocol: upstreamProtocol, PlanType: planType,
-			})
+		if _, duplicate := added[candidate.ID]; duplicate {
+			continue
 		}
+		resolved, skip := planService(candidate, request, subscriptionBaseURL, runtime)
+		if skip != "" {
+			MarkSkipped(ranking, candidate.ID, skip)
+			continue
+		}
+		added[candidate.ID] = struct{}{}
+		result = append(result, resolved)
 	}
 	return result
+}
+
+// planService plans request on the first capability mode of service that can
+// serve it, or reports the furthest check every mode failed.
+func planService(candidate contract.Service, request ResolveRequest, subscriptionBaseURL string, runtime contract.RuntimeProfile) (Resolved, contract.RoutingSkipReason) {
+	if !request.Protocol.IsModelDiscovery() && !containsModel(candidate.Models, request.Model) {
+		return Resolved{}, contract.RoutingSkipModelNotListed
+	}
+	skip := contract.RoutingSkipProtocolUnsupported
+	narrow := func(reason contract.RoutingSkipReason) {
+		if reason == contract.RoutingSkipConversionUnavailable || skip == contract.RoutingSkipProtocolUnsupported {
+			skip = reason
+		}
+	}
+	for _, mode := range []contract.CapabilityMode{contract.CapabilityModeNative, contract.CapabilityModeDelegated} {
+		if !supportsRequest(candidate, request, mode) {
+			narrow(capabilitySkip(candidate, request.Protocol, request, mode))
+			continue
+		}
+		upstreamProtocol, planType := request.Protocol, contract.PlanType("")
+		if native := candidate.Kind.ModelNativeProtocol(request.Model); native != "" && !request.Protocol.IsModelDiscovery() {
+			if mode != contract.CapabilityModeNative {
+				continue
+			}
+			if !supportsProtocol(candidate, native, request.Model, request.Streaming, contract.CapabilityModeNative) {
+				narrow(capabilitySkip(candidate, native, request, contract.CapabilityModeNative))
+				continue
+			}
+			upstreamProtocol = native
+			if native != request.Protocol {
+				if !supportsModelConversion(runtime, request.Protocol, native, request.Streaming) {
+					narrow(contract.RoutingSkipConversionUnavailable)
+					continue
+				}
+				planType = contract.PlanTypeRelayKit
+			}
+		}
+		legacy, _ := candidate.EndpointView()
+		return Resolved{
+			Service: candidate, Endpoint: legacy,
+			BaseURL: baseURLForService(candidate, subscriptionBaseURL), Mode: mode,
+			UpstreamModel: request.Model, UpstreamProtocol: upstreamProtocol, PlanType: planType,
+		}, ""
+	}
+	return Resolved{}, skip
+}
+
+// capabilitySkip separates a provider that lacks protocol in mode from one that
+// only cannot stream it.
+func capabilitySkip(candidate contract.Service, protocol contract.ProtocolID, request ResolveRequest, mode contract.CapabilityMode) contract.RoutingSkipReason {
+	if request.Streaming && supportsProtocol(candidate, protocol, request.Model, false, mode) {
+		return contract.RoutingSkipStreamingUnsupported
+	}
+	return contract.RoutingSkipProtocolUnsupported
 }
 
 func supportsModelConversion(runtime contract.RuntimeProfile, from, to contract.ProtocolID, streaming bool) bool {
@@ -481,47 +433,6 @@ func baseURLForService(service contract.Service, subscriptionBaseURL string) str
 	return service.HTTP.BaseURL
 }
 
-func routeCapabilityModes(route contract.Route) []contract.CapabilityMode {
-	present := make(map[contract.CapabilityMode]struct{}, 2)
-	for _, target := range route.ExecutableTargets() {
-		if mode, ok := capabilityMode(target.PlanType); ok {
-			present[mode] = struct{}{}
-		}
-	}
-	result := make([]contract.CapabilityMode, 0, len(present))
-	for _, mode := range []contract.CapabilityMode{
-		contract.CapabilityModeNative,
-		contract.CapabilityModeDelegated,
-	} {
-		if _, ok := present[mode]; ok {
-			result = append(result, mode)
-		}
-	}
-	return result
-}
-
-func capabilityMode(planType contract.PlanType) (contract.CapabilityMode, bool) {
-	switch planType {
-	case contract.PlanTypeNative:
-		return contract.CapabilityModeNative, true
-	case contract.PlanTypeDelegated:
-		return contract.CapabilityModeDelegated, true
-	default:
-		return "", false
-	}
-}
-
-func planTypeRank(planType contract.PlanType) int {
-	switch planType {
-	case contract.PlanTypeNative:
-		return 0
-	case contract.PlanTypeDelegated:
-		return 1
-	default:
-		return 2
-	}
-}
-
 func supportsRequest(endpoint contract.Service, request ResolveRequest, mode contract.CapabilityMode) bool {
 	return supportsProtocol(endpoint, request.Protocol, request.Model, request.Streaming, mode)
 }
@@ -546,21 +457,6 @@ func supportsProtocol(
 		return true
 	}
 	return false
-}
-
-func validateRouteDocument(route contract.Route) error {
-	if err := route.Validate(); err != nil {
-		return err
-	}
-	if !route.Match.Protocol.AvailableInAlpha() {
-		return fmt.Errorf("match protocol %q is not available in Alpha", route.Match.Protocol)
-	}
-	for index, target := range route.ExecutableTargets() {
-		if !target.UpstreamProtocol.AvailableInAlpha() {
-			return fmt.Errorf("targets[%d]: upstream protocol %q is not available in Alpha", index, target.UpstreamProtocol)
-		}
-	}
-	return nil
 }
 
 func containsModel(models []string, requested string) bool {
@@ -597,60 +493,9 @@ func (resolver *StoreResolver) AbandonAttempt(candidate Resolved) {
 	}
 }
 
-// ListAliasModels returns sorted, deduplicated public Match.Model names from
-// enabled Routes that rewrite at least one target for the discovery family.
-func (resolver *StoreResolver) ListAliasModels(
-	ctx context.Context,
-	discovery contract.ProtocolID,
-) ([]string, error) {
-	mappings, err := resolver.ListAliasModelMappings(ctx, discovery)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{}, len(mappings))
-	for _, mapping := range mappings {
-		seen[mapping.PublicModel] = struct{}{}
-	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names, nil
-}
-
-// ListAliasModelMappings returns enabled, model-eligible rewrites for internal
-// discovery filtering. Callers must expose PublicModel only.
-func (resolver *StoreResolver) ListAliasModelMappings(
-	ctx context.Context,
-	discovery contract.ProtocolID,
-) ([]AliasModelMapping, error) {
-	return []AliasModelMapping{}, nil
-}
-
-func aliasRouteMatchesDiscovery(routeProtocol, discovery contract.ProtocolID) bool {
-	switch discovery {
-	case contract.ProtocolGoogleModels:
-		return routeProtocol == contract.ProtocolGoogleGenerateContent
-	case contract.ProtocolOpenAIModels:
-		switch routeProtocol {
-		case contract.ProtocolOpenAIResponses,
-			contract.ProtocolOpenAIResponsesCompact,
-			contract.ProtocolOpenAIChat,
-			contract.ProtocolOpenAICompletions,
-			contract.ProtocolAnthropicMessages:
-			return true
-		default:
-			return false
-		}
-	default:
-		return false
-	}
-}
-
 var (
 	_ Resolver          = (*StoreResolver)(nil)
 	_ CandidateResolver = (*StoreResolver)(nil)
+	_ RankingResolver   = (*StoreResolver)(nil)
 	_ AttemptController = (*StoreResolver)(nil)
-	_ AliasLister       = (*StoreResolver)(nil)
 )

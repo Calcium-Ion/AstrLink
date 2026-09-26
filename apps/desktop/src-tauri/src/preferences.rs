@@ -273,13 +273,23 @@ pub struct PreferencesStore {
 
 impl PreferencesStore {
     pub fn load(config_directory: &Path) -> Self {
+        Self::load_with_fallback_locale(config_directory, Locale::system())
+    }
+
+    /// Loads stored preferences; when none are usable (first run, unreadable or
+    /// unparseable file) the interface starts in `fallback_locale`.
+    fn load_with_fallback_locale(config_directory: &Path, fallback_locale: Locale) -> Self {
         let path = config_directory.join(FILE_NAME);
+        let fallback = |locale| Preferences {
+            locale,
+            ..Preferences::default()
+        };
         let (values, load_warning) = match fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<Preferences>(&bytes) {
                 Ok(values) => match values.validate() {
                     Ok(()) => (values, None),
                     Err(error) => (
-                        Preferences::default(),
+                        fallback(values.locale),
                         Some(i18n::t(
                             values.locale,
                             "host.preferences.invalidSettings",
@@ -288,21 +298,21 @@ impl PreferencesStore {
                     ),
                 },
                 Err(error) => (
-                    Preferences::default(),
+                    fallback(fallback_locale),
                     Some(i18n::t(
-                        Locale::En,
+                        fallback_locale,
                         "host.preferences.unparseable",
                         &[("error", &error.to_string())],
                     )),
                 ),
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                (Preferences::default(), None)
+                (fallback(fallback_locale), None)
             }
             Err(error) => (
-                Preferences::default(),
+                fallback(fallback_locale),
                 Some(i18n::t(
-                    Locale::En,
+                    fallback_locale,
                     "host.preferences.unreadable",
                     &[("error", &error.to_string())],
                 )),
@@ -461,6 +471,11 @@ fn atomic_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    /// Pins the fallback so assertions do not depend on the host's language.
+    fn load(directory: &Path) -> PreferencesStore {
+        PreferencesStore::load_with_fallback_locale(directory, Locale::En)
+    }
+
     fn temporary_directory(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "astrlink-preferences-{name}-{}-{}",
@@ -485,7 +500,7 @@ mod tests {
     #[test]
     fn missing_file_uses_safe_defaults_without_claiming_an_error() {
         let directory = temporary_directory("missing");
-        let store = PreferencesStore::load(&directory);
+        let store = load(&directory);
         let snapshot = store.snapshot();
         assert_eq!(snapshot.values, Preferences::default());
         assert_eq!(snapshot.values.locale, Locale::En);
@@ -500,6 +515,34 @@ mod tests {
     }
 
     #[test]
+    fn first_run_and_unusable_files_start_in_the_system_language() {
+        let directory = temporary_directory("system-locale");
+        let snapshot =
+            PreferencesStore::load_with_fallback_locale(&directory, Locale::ZhCN).snapshot();
+        assert_eq!(snapshot.values.locale, Locale::ZhCN);
+        assert_eq!(snapshot.load_warning, None);
+
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(FILE_NAME), b"{no").unwrap();
+        let snapshot =
+            PreferencesStore::load_with_fallback_locale(&directory, Locale::ZhCN).snapshot();
+        assert_eq!(snapshot.values.locale, Locale::ZhCN);
+        assert!(snapshot.load_warning.is_some());
+
+        // An explicit choice outlives other invalid settings in the same file.
+        fs::write(
+            directory.join(FILE_NAME),
+            br#"{"inference_port":80,"locale":"en"}"#,
+        )
+        .unwrap();
+        let snapshot =
+            PreferencesStore::load_with_fallback_locale(&directory, Locale::ZhCN).snapshot();
+        assert_eq!(snapshot.values.locale, Locale::En);
+        assert_eq!(snapshot.values.inference_port, DEFAULT_INFERENCE_PORT);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn missing_locale_field_defaults_to_english() {
         let directory = temporary_directory("legacy-locale");
         fs::create_dir_all(&directory).unwrap();
@@ -508,7 +551,7 @@ mod tests {
             br#"{"close_behavior":"hide_to_tray","autostart":false,"core_auto_start":true,"core_auto_recover":true,"inference_port":8317}"#,
         )
         .unwrap();
-        let snapshot = PreferencesStore::load(&directory).snapshot();
+        let snapshot = load(&directory).snapshot();
         assert_eq!(snapshot.values.locale, Locale::En);
         assert_eq!(snapshot.values.theme, ThemePreference::System);
         assert_eq!(
@@ -534,13 +577,13 @@ mod tests {
         let directory = temporary_directory("malformed");
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join(FILE_NAME), b"{no").unwrap();
-        assert!(PreferencesStore::load(&directory)
+        assert!(load(&directory)
             .snapshot()
             .load_warning
             .unwrap()
             .contains("could not be parsed"));
         fs::write(directory.join(FILE_NAME), br#"{"inference_port":80}"#).unwrap();
-        assert!(PreferencesStore::load(&directory)
+        assert!(load(&directory)
             .snapshot()
             .load_warning
             .unwrap()
@@ -551,7 +594,7 @@ mod tests {
     #[test]
     fn replacement_is_validated_and_durably_reloadable() {
         let directory = temporary_directory("replace");
-        let store = PreferencesStore::load(&directory);
+        let store = load(&directory);
         let values = Preferences {
             inference_port: 9123,
             max_request_body_mib: 64,
@@ -561,7 +604,7 @@ mod tests {
             ..Preferences::default()
         };
         store.replace(values.clone()).unwrap();
-        assert_eq!(PreferencesStore::load(&directory).snapshot().values, values);
+        assert_eq!(load(&directory).snapshot().values, values);
         let mut invalid = values;
         invalid.max_concurrent_inspections = 200;
         assert!(store
@@ -587,7 +630,7 @@ mod tests {
             br#"{"close_behavior":"hide_to_tray","inference_port":8317}"#,
         )
         .unwrap();
-        let snapshot = PreferencesStore::load(&directory).snapshot();
+        let snapshot = load(&directory).snapshot();
         assert_eq!(snapshot.values.tray, TrayPreferences::default());
         assert_eq!(snapshot.load_warning, None);
         assert_eq!(
@@ -664,7 +707,7 @@ mod tests {
     fn unwritable_destination_is_reported_without_mutating_memory() {
         let directory = temporary_directory("unwritable");
         fs::write(&directory, b"not a directory").unwrap();
-        let store = PreferencesStore::load(&directory);
+        let store = load(&directory);
         let original = store.snapshot().values;
         let mut next = original.clone();
         next.inference_port = 9124;

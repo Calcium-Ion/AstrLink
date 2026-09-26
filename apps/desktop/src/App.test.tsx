@@ -14,11 +14,12 @@ describe("desktop application shell", () => {
     expect(markup).toContain("路由策略");
     expect(markup).toContain("Agent 工具");
     expect(markup).toContain("偏好设置");
-    expect(markup).toContain("overview-welcome");
-    expect(markup).toContain("正在读取工作区");
-    expect(markup).not.toContain("用量概览");
+    expect(markup).toContain("usage-heading");
+    expect(markup).toContain("连接中");
+    expect(markup).toContain("用量概览");
     expect(markup).toContain("请求记录");
     expect(markup).toContain("系统详情");
+    expect(markup).not.toContain("欢迎使用 AstrLink");
     expect(markup).not.toContain("当前为浏览器预览");
 
     expect(markup).not.toContain("统一 API 网关");

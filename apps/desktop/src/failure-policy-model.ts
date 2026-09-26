@@ -1,3 +1,4 @@
+import { parseBuiltinTools, type BuiltinTools } from "./builtin-tools-model";
 export type FailureAction =
   | "stop"
   | "retry"
@@ -38,6 +39,67 @@ export const identitySettingKeys = [
   "grok_identity_enforcement",
 ] as const;
 export type IdentitySettingKey = (typeof identitySettingKeys)[number];
+
+export const subscriptionProtectionKeys = [
+  "official_client_passthrough",
+  "subscription_risk_protection",
+  "codex_request_normalization",
+  "claude_request_normalization",
+  "subscription_session_isolation",
+] as const;
+export type SubscriptionProtectionKey =
+  (typeof subscriptionProtectionKeys)[number];
+
+export const identityLearningKeys = [
+  "codex_identity_auto_learn",
+  "claude_identity_auto_learn",
+] as const;
+export type IdentityLearningKey = (typeof identityLearningKeys)[number];
+
+export const identityVersionKeys = [
+  "codex_identity_version",
+  "claude_identity_version",
+] as const;
+export type IdentityVersionKey = (typeof identityVersionKeys)[number];
+
+// Every Forwarding identity switch is on unless the user turns it off.
+const forwardingSwitchKeys = [
+  ...identitySettingKeys,
+  ...subscriptionProtectionKeys,
+  ...identityLearningKeys,
+] as const;
+
+export const maxIdentityVersionLength = 64;
+const identityVersionPattern =
+  /^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+// The oldest Codex client the Codex backend accepts.
+const minCodexIdentityVersion = [0, 144, 0];
+
+/**
+ * Mirrors the core's version override rules: a bare semantic version whose
+ * release numbers fit 32 bits, and for Codex 0.144.0 or newer. An empty string
+ * clears the override.
+ */
+export function validIdentityVersion(
+  key: IdentityVersionKey,
+  value: string,
+): boolean {
+  if (value === "") return true;
+  const match =
+    value.length <= maxIdentityVersionLength
+      ? identityVersionPattern.exec(value)
+      : null;
+  if (!match) return false;
+  const release = match.slice(1, 4).map(Number);
+  if (release.some((part) => part > 0xffffffff)) return false;
+  if (key !== "codex_identity_version") return true;
+  for (const [index, part] of release.entries()) {
+    if (part !== minCodexIdentityVersion[index])
+      return part > minCodexIdentityVersion[index];
+  }
+  // A pre-release sorts before its release.
+  return match[4] === undefined;
+}
 
 export interface ModelRedirect {
   from: string;
@@ -115,9 +177,20 @@ export function modelRedirectIssues(
 }
 
 export interface RoutingSettings {
+  builtin_tools?: BuiltinTools;
   codex_identity_enforcement?: boolean;
   claude_identity_enforcement?: boolean;
   grok_identity_enforcement?: boolean;
+  official_client_passthrough?: boolean;
+  subscription_risk_protection?: boolean;
+  codex_request_normalization?: boolean;
+  claude_request_normalization?: boolean;
+  subscription_session_isolation?: boolean;
+  codex_identity_auto_learn?: boolean;
+  claude_identity_auto_learn?: boolean;
+  /** Minimum declared client version; absent when no override is set. */
+  codex_identity_version?: string;
+  claude_identity_version?: string;
   model_redirects?: ModelRedirect[];
   channel_stickiness?: ChannelStickiness;
   default_recovery_paths?: Record<string, string>;
@@ -347,7 +420,9 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
       "default_recovery_paths",
       "channel_stickiness",
       "model_redirects",
-      ...identitySettingKeys,
+      "builtin_tools",
+      ...forwardingSwitchKeys,
+      ...identityVersionKeys,
     ],
     "routing_settings",
   );
@@ -357,10 +432,19 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
     strategy: settings.strategy,
     max_attempts: settings.max_attempts,
   });
-  for (const key of identitySettingKeys) {
+  for (const key of forwardingSwitchKeys) {
     if (Object.hasOwn(settings, key) && typeof settings[key] !== "boolean") {
       throw Error(`${key}: expected a boolean`);
     }
+  }
+  // An empty override is only meaningful in a patch, where it clears the value.
+  const versions: Partial<Record<IdentityVersionKey, string>> = {};
+  for (const key of identityVersionKeys) {
+    if (!Object.hasOwn(settings, key)) continue;
+    const version = settings[key];
+    if (typeof version !== "string" || !validIdentityVersion(key, version))
+      throw Error(`${key}: invalid client version`);
+    if (version !== "") versions[key] = version;
   }
   let stickiness: ChannelStickiness | undefined;
   if (settings.channel_stickiness !== undefined) {
@@ -392,13 +476,17 @@ export function parseRoutingSettings(value: unknown): RoutingSettings {
         throw Error("invalid default recovery path");
     }
   return {
-    codex_identity_enforcement:
-      (settings.codex_identity_enforcement as boolean | undefined) ?? true,
-    claude_identity_enforcement:
-      (settings.claude_identity_enforcement as boolean | undefined) ?? true,
-    grok_identity_enforcement:
-      (settings.grok_identity_enforcement as boolean | undefined) ?? true,
+    ...(Object.fromEntries(
+      forwardingSwitchKeys.map((key) => [
+        key,
+        (settings[key] as boolean | undefined) ?? true,
+      ]),
+    ) as Record<(typeof forwardingSwitchKeys)[number], boolean>),
+    ...versions,
     model_redirects: redirects,
+    ...(settings.builtin_tools !== undefined
+      ? { builtin_tools: parseBuiltinTools(settings.builtin_tools) }
+      : {}),
     ...(stickiness ? { channel_stickiness: stickiness } : {}),
     ...(defaults
       ? { default_recovery_paths: defaults as Record<string, string> }

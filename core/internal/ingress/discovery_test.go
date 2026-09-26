@@ -187,111 +187,41 @@ func TestModelDiscoveryAggregatesDeterministicallyWithRoutingOrderConflictWins(t
 	}
 }
 
-func TestModelDiscoveryIgnoresRetiredAliasPublicNames(t *testing.T) {
+func TestModelDiscoveryCompletesConfiguredModelsThroughStoreResolver(t *testing.T) {
 	tests := []struct {
 		name     string
 		path     string
 		protocol contract.ProtocolID
-		routes   []contract.Route
+		models   []string
 		upstream string
 		wantBody string
-		forbid   []string
 	}{
 		{
-			name:     "openai alias appears sorted and wins id collision",
+			name:     "openai configured models appear sorted and upstream wins id collision",
 			path:     "/v1/models",
 			protocol: contract.ProtocolOpenAIModels,
-			routes: []contract.Route{
-				func() contract.Route {
-					route := contract.Route{
-						ID: "route_alias", Name: "alias", Enabled: true,
-						Match: contract.RouteMatch{
-							Protocol: contract.ProtocolOpenAIResponses,
-							Model:    "shared-model",
-						},
-						Targets: []contract.RouteTarget{{
-							ServiceID: "endpoint_b", PlanType: contract.PlanTypeNative,
-							UpstreamProtocol: contract.ProtocolOpenAIResponses,
-							UpstreamModel:    "provider/secret-upstream",
-						}},
-					}
-					return route
-				}(),
-				func() contract.Route {
-					return contract.Route{
-						ID: "route_zeta", Name: "zeta", Enabled: true,
-						Match: contract.RouteMatch{
-							Protocol: contract.ProtocolOpenAIChat,
-							Model:    "zeta-alias",
-						},
-						Targets: []contract.RouteTarget{{
-							ServiceID: "endpoint_b", PlanType: contract.PlanTypeNative,
-							UpstreamProtocol: contract.ProtocolOpenAIChat,
-							UpstreamModel:    "provider/zeta-real",
-						}},
-					}
-				}(),
+			models: []string{
+				"alpha-model", "shared-model",
+				"provider/secret-upstream", "provider/zeta-real",
 			},
 			upstream: `{"object":"list","data":[{"id":"shared-model","owned_by":"native-b"},{"id":"alpha-model"}]}`,
 			wantBody: `{"object":"list","data":[{"id":"alpha-model"},{"id":"provider/secret-upstream","object":"model","created":0,"owned_by":"system"},{"id":"provider/zeta-real","object":"model","created":0,"owned_by":"system"},{"id":"shared-model","owned_by":"native-b"}],"first_id":"alpha-model","has_more":false,"last_id":"shared-model"}`,
-			forbid:   []string{"endpoint_b", "zeta-alias"},
 		},
 		{
-			name:     "gemini alias appears as models/alias",
+			name:     "gemini configured model appears as models/name",
 			path:     "/v1beta/models",
 			protocol: contract.ProtocolGoogleModels,
-			routes: []contract.Route{
-				{
-					ID: "route_gemini_alias", Name: "gemini alias", Enabled: true,
-					Match: contract.RouteMatch{
-						Protocol: contract.ProtocolGoogleGenerateContent,
-						Model:    "public-gemini",
-					},
-					Targets: []contract.RouteTarget{{
-						ServiceID: "endpoint_b", PlanType: contract.PlanTypeNative,
-						UpstreamProtocol: contract.ProtocolGoogleGenerateContent,
-						UpstreamModel:    "gemini-secret",
-					}},
-				},
-			},
+			models:   []string{"alpha", "gemini-secret"},
 			upstream: `{"models":[{"name":"models/alpha"}]}`,
 			wantBody: `{"models":[{"name":"models/alpha"},{"name":"models/gemini-secret","displayName":"gemini-secret"}]}`,
-			forbid:   []string{"public-gemini", "endpoint_b"},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := discoveryAliasStore{
-				endpoints: []contract.Endpoint{
-					discoveryEndpoint("endpoint_b", test.protocol, contract.CapabilityModeNative),
-				},
-				routes: test.routes,
-			}
-			// Endpoints used by OpenAI-family alias routes also need chat/responses
-			// capabilities only for ValidateForAlpha on routes; discovery fans out
-			// on the listing protocol alone.
-			if test.protocol == contract.ProtocolOpenAIModels {
-				candidate := store.endpoints[0]
-				candidate.Models = []string{
-					"alpha-model", "shared-model",
-					"provider/secret-upstream", "provider/zeta-real",
-				}
-				candidate.Capabilities = append(candidate.Capabilities,
-					contract.Capability{Protocol: contract.ProtocolOpenAIResponses, Mode: contract.CapabilityModeNative, Streaming: true},
-					contract.Capability{Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true},
-				)
-				store.endpoints[0] = candidate
-			}
-			if test.protocol == contract.ProtocolGoogleModels {
-				candidate := store.endpoints[0]
-				candidate.Models = []string{"alpha", "gemini-secret"}
-				candidate.Capabilities = append(candidate.Capabilities,
-					contract.Capability{Protocol: contract.ProtocolGoogleGenerateContent, Mode: contract.CapabilityModeNative, Streaming: true},
-				)
-				store.endpoints[0] = candidate
-			}
-			resolver, err := endpoint.NewStoreResolver(store)
+			candidate := discoveryEndpoint("endpoint_b", test.protocol, contract.CapabilityModeNative)
+			candidate.Models = test.models
+			resolver, err := endpoint.NewStoreResolver(discoveryStore{endpoints: []contract.Endpoint{candidate}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -313,21 +243,18 @@ func TestModelDiscoveryIgnoresRetiredAliasPublicNames(t *testing.T) {
 			if response.Body.String() != test.wantBody {
 				t.Fatalf("body = %s\nwant %s", response.Body.String(), test.wantBody)
 			}
-			for _, leaked := range test.forbid {
-				if strings.Contains(response.Body.String(), leaked) {
-					t.Fatalf("response leaked %q: %s", leaked, response.Body.String())
-				}
+			if strings.Contains(response.Body.String(), "endpoint_b") {
+				t.Fatalf("response leaked the service id: %s", response.Body.String())
 			}
 		})
 	}
 }
 
-type discoveryAliasStore struct {
+type discoveryStore struct {
 	endpoints []contract.Endpoint
-	routes    []contract.Route
 }
 
-func (store discoveryAliasStore) ListEndpoints(
+func (store discoveryStore) ListEndpoints(
 	context.Context,
 	storage.EndpointListOptions,
 ) (storage.EndpointPage, error) {
@@ -336,14 +263,6 @@ func (store discoveryAliasStore) ListEndpoints(
 		items = append(items, storage.EndpointRecord{Endpoint: candidate})
 	}
 	return storage.EndpointPage{Items: items}, nil
-}
-
-func (store discoveryAliasStore) ListRoutes(context.Context) ([]storage.RouteRecord, error) {
-	items := make([]storage.RouteRecord, 0, len(store.routes))
-	for _, route := range store.routes {
-		items = append(items, storage.RouteRecord{Route: route})
-	}
-	return items, nil
 }
 
 func TestModelDiscoveryServesPartialAggregateAndRecordsCircuitOutcomes(t *testing.T) {

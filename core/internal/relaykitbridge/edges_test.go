@@ -31,13 +31,14 @@ func TestTwelveEdgesConvertRequestResponseAndStream(t *testing.T) {
 
 			upstreamResponse := sampleResponse(t, edge.To)
 			convertedResponse, err := engine.ConvertResponse(context.Background(), ConvertResponseInput{
-				From: edge.To, To: edge.From, StatusCode: 200, Body: upstreamResponse, PublicModel: "public-model",
+				From: edge.To, To: edge.From, StatusCode: 200, Body: upstreamResponse,
+				PublicModel: "public-model", UpstreamModel: "upstream-model",
 			})
 			if err != nil {
 				t.Fatalf("ConvertResponse: %v", err)
 			}
 			if edge.From != contract.ProtocolGoogleGenerateContent {
-				assertJSONContains(t, convertedResponse.Body, "public-model")
+				assertJSONModel(t, convertedResponse.Body, "upstream-model", edge.From)
 			}
 			assertTerminalMarker(t, edge.From, convertedResponse.Body)
 			assertBillingUsageSurvives(t, convertedResponse.Body)
@@ -75,7 +76,7 @@ func TestTwelveEdgesConvertRequestResponseAndStream(t *testing.T) {
 // assertStreamEventShape checks that a converted stream event is a bare
 // protocol payload (never a RelayKit wrapper such as {"Type","Payload"}), that
 // event-typed protocols carry the SSE event name, and that any model field
-// visible to the client has been restored to the public model.
+// visible to the client is the upstream model rather than a renamed one.
 func assertStreamEventShape(t *testing.T, protocol contract.ProtocolID, event ResponseEvent) {
 	t.Helper()
 	if event.Type == "done" {
@@ -106,13 +107,13 @@ func assertStreamEventShape(t *testing.T, protocol contract.ProtocolID, event Re
 			t.Fatalf("responses event missing sequence_number: %s", event.Data)
 		}
 		if response, ok := payload["response"].(map[string]any); ok {
-			if model, ok := response["model"].(string); ok && model != "" && model != "public-model" {
-				t.Fatalf("responses model = %q, want public-model: %s", model, event.Data)
+			if model, ok := response["model"].(string); ok && model != "" && model != "upstream-model" {
+				t.Fatalf("responses model = %q, want upstream-model: %s", model, event.Data)
 			}
 		}
 	}
-	if model, ok := payload["model"].(string); ok && model != "" && model != "public-model" {
-		t.Fatalf("model = %q, want public-model: %s", model, event.Data)
+	if model, ok := payload["model"].(string); ok && model != "" && model != "upstream-model" {
+		t.Fatalf("model = %q, want upstream-model: %s", model, event.Data)
 	}
 }
 
@@ -240,13 +241,6 @@ func assertJSONModel(t *testing.T, body []byte, want string, protocol contract.P
 	}
 	if payload["model"] != want {
 		t.Fatalf("model = %#v, want %q body=%s", payload["model"], want, body)
-	}
-}
-
-func assertJSONContains(t *testing.T, body []byte, want string) {
-	t.Helper()
-	if !strings.Contains(string(body), want) {
-		t.Fatalf("body missing %q: %s", want, body)
 	}
 }
 

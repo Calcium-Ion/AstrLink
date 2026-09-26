@@ -104,6 +104,14 @@ func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Re
 			handler.resetServiceUsage(writer, request, id)
 			return
 		}
+		if parts[1] == "risk" && parts[2] == "clear" {
+			if request.Method != http.MethodPost {
+				writeMethodNotAllowed(writer, http.MethodPost)
+				return
+			}
+			handler.clearServiceRisk(writer, request, id)
+			return
+		}
 		writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		return
 	}
@@ -145,6 +153,12 @@ func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Re
 				return
 			}
 			handler.getServiceUsage(writer, request, id)
+		case "risk-events":
+			if request.Method != http.MethodGet {
+				writeMethodNotAllowed(writer, http.MethodGet)
+				return
+			}
+			handler.listServiceRiskEvents(writer, request, id)
 		default:
 			writeError(writer, http.StatusNotFound, "not_found", "control API path not found")
 		}
@@ -786,6 +800,85 @@ func (handler *Handler) resetServiceUsage(writer http.ResponseWriter, request *h
 		return
 	}
 	writeJSON(writer, http.StatusOK, result)
+}
+
+const (
+	defaultServiceRiskEventLimit = 20
+	maxServiceRiskEventLimit     = 50
+)
+
+type serviceRiskEventsResponse struct {
+	Items []contract.SubscriptionRiskEvent `json:"items"`
+}
+
+// subscriptionServiceForRisk loads a subscription service for the risk
+// endpoints and writes the error response when it is unavailable.
+func (handler *Handler) subscriptionServiceForRisk(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) bool {
+	if handler.subscriptions == nil {
+		writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
+		return false
+	}
+	record, err := handler.serviceStore.GetService(request.Context(), id)
+	if err != nil {
+		handler.writeStoreError(writer, err)
+		return false
+	}
+	if !record.Service.Kind.IsSubscription() {
+		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription risk controls")
+		return false
+	}
+	return true
+}
+
+func (handler *Handler) clearServiceRisk(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
+	if !handler.subscriptionServiceForRisk(writer, request, id) {
+		return
+	}
+	if _, err := handler.subscriptions.ClearRisk(request.Context(), id); err != nil {
+		if errors.Is(err, subscription.ErrNotFound) {
+			writeError(writer, http.StatusNotFound, "not_found", "service not found")
+		} else {
+			log.Printf("control: clear subscription risk %s failed: %v", id, err)
+			writeError(writer, http.StatusInternalServerError, "internal_error", "failed to restore subscription scheduling")
+		}
+		return
+	}
+	record, err := handler.serviceStore.GetService(request.Context(), id)
+	if err != nil {
+		handler.writeStoreError(writer, err)
+		return
+	}
+	writer.Header().Set("ETag", record.ETag)
+	writeJSON(writer, http.StatusOK, handler.publicService(record.Service))
+}
+
+func (handler *Handler) listServiceRiskEvents(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
+	limit := defaultServiceRiskEventLimit
+	if raw, ok := request.URL.Query()["limit"]; ok {
+		parsed, err := strconv.Atoi(strings.TrimSpace(raw[0]))
+		if len(raw) != 1 || err != nil || parsed < 1 || parsed > maxServiceRiskEventLimit {
+			writeError(writer, http.StatusBadRequest, "invalid_query", "limit must be between 1 and 50")
+			return
+		}
+		limit = parsed
+	}
+	if !handler.subscriptionServiceForRisk(writer, request, id) {
+		return
+	}
+	events, err := handler.subscriptions.RiskEvents(request.Context(), id, limit)
+	if err != nil {
+		if errors.Is(err, subscription.ErrNotFound) {
+			writeError(writer, http.StatusNotFound, "not_found", "service not found")
+		} else {
+			log.Printf("control: list subscription risk events %s failed: %v", id, err)
+			writeError(writer, http.StatusInternalServerError, "internal_error", "failed to list subscription risk events")
+		}
+		return
+	}
+	if events == nil {
+		events = []contract.SubscriptionRiskEvent{}
+	}
+	writeJSON(writer, http.StatusOK, serviceRiskEventsResponse{Items: events})
 }
 
 func writeServiceResetError(writer http.ResponseWriter, err error) {

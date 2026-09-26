@@ -25,12 +25,13 @@ type ConvertRequestOutput struct {
 }
 
 type ConvertResponseInput struct {
-	From        contract.ProtocolID
-	To          contract.ProtocolID
-	StatusCode  int
-	ContentType string
-	Body        []byte
-	PublicModel string
+	From          contract.ProtocolID
+	To            contract.ProtocolID
+	StatusCode    int
+	ContentType   string
+	Body          []byte
+	PublicModel   string
+	UpstreamModel string
 }
 
 type ConvertResponseOutput struct {

@@ -15,6 +15,7 @@ export function PageHeader({
   title,
   titleGroupClassName,
   titleId,
+  titlePrefix,
   titleSuffix,
   variant = "compact",
 }: {
@@ -31,6 +32,7 @@ export function PageHeader({
   title: string;
   titleGroupClassName?: string;
   titleId?: string;
+  titlePrefix?: ReactNode;
   titleSuffix?: ReactNode;
   variant?: "card" | "plain" | "compact";
 }) {
@@ -78,6 +80,7 @@ export function PageHeader({
             /
           </span>
         ) : null}
+        {titlePrefix}
         <Heading
           className={cn(
             "text-sm font-semibold tracking-tight",

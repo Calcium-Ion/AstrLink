@@ -32,7 +32,8 @@ func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSu
 	// A second prefix includes fractional timestamps at the inclusive boundary
 	// and excludes them at the exclusive boundary, including legacy exact seconds.
 	rows, err := store.db.QueryContext(ctx, `SELECT started_at, status, http_status,
-    service_id, requested_model, local_access_token_id, usage_json
+    service_id, requested_model, local_access_token_id, usage_json,
+    streaming, latency_ms, first_token_ms
 FROM request_records
 WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
   AND status IN ('succeeded', 'failed') AND input_protocol NOT IN (?, ?)`,
@@ -44,11 +45,15 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	defer rows.Close()
 	days, hours := map[string]*storage.UsageTimeBucket{}, map[string]*storage.UsageTimeBucket{}
 	services, models, tokens := map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}
+	performance := map[string]*servicePerformance{}
+	tokenPerformance := map[string]*servicePerformance{}
 	for rows.Next() {
 		var startedAt, status string
 		var httpStatus sql.NullInt64
+		var streaming bool
+		var latency, firstToken sql.NullInt64
 		var service, model, localAccessTokenID, usageJSON sql.NullString
-		if err := rows.Scan(&startedAt, &status, &httpStatus, &service, &model, &localAccessTokenID, &usageJSON); err != nil {
+		if err := rows.Scan(&startedAt, &status, &httpStatus, &service, &model, &localAccessTokenID, &usageJSON, &streaming, &latency, &firstToken); err != nil {
 			return result, fmt.Errorf("scan usage summary: %w", err)
 		}
 		started, err := time.Parse(time.RFC3339Nano, startedAt)
@@ -98,6 +103,18 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 				return result, fmt.Errorf("%w: usage token counts", storage.ErrInvalidRecord)
 			}
 		}
+		if service.Valid {
+			if performance[service.String] == nil {
+				performance[service.String] = &servicePerformance{}
+			}
+			performance[service.String].observe(usage, streaming, latency, firstToken)
+		}
+		if _, ok := tokenWhitelist[localAccessTokenID.String]; localAccessTokenID.Valid && ok {
+			if tokenPerformance[localAccessTokenID.String] == nil {
+				tokenPerformance[localAccessTokenID.String] = &servicePerformance{}
+			}
+			tokenPerformance[localAccessTokenID.String].observe(usage, streaming, latency, firstToken)
+		}
 		for _, target := range targets {
 			target.Requests++
 			target.InputTokens += int64(usage.InputTokens)
@@ -125,6 +142,12 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 		a, b := result.ByHour[i], result.ByHour[j]
 		return a.Date < b.Date || (a.Date == b.Date && *a.Hour < *b.Hour)
 	})
+	for id, group := range services {
+		group.Performance = performance[id].summary()
+	}
+	for id, group := range tokens {
+		group.Performance = tokenPerformance[id].summary()
+	}
 	result.ByService = sortedUsageGroups(services)
 	result.ByModel = sortedUsageGroups(models)
 	result.ByToken = sortedUsageGroups(tokens)

@@ -385,6 +385,33 @@ describe("RequestRecords", () => {
     });
   };
 
+  it.each([
+    ["claude_code", "Claude Code"],
+    ["pi", "Pi"],
+  ] as const)(
+    "shows %s beside each session, independently of the model brand",
+    async (clientType, clientName) => {
+      bridgeMocks.listRequestSessions.mockResolvedValue({
+        items: [
+          sessionFromRecord(firstRecord, { client_type: clientType }),
+          sessionFromRecord(secondRecord),
+        ],
+        next_cursor: null,
+      });
+      await renderRecords();
+      const rows = container.querySelectorAll(
+        '[data-testid="request-session-row"]',
+      );
+      expect(rows[0].querySelector('[role="img"]')?.getAttribute("title")).toBe(
+        `客户端：${clientName}`,
+      );
+      expect(rows[1].querySelector('[role="img"]')?.getAttribute("title")).toBe(
+        "客户端：未知客户端",
+      );
+      expect(rows[0].textContent).toContain("gpt-4.1");
+    },
+  );
+
   it("shows explicit reasoning effort beside the model and omits it for legacy sessions", async () => {
     bridgeMocks.listRequestSessions.mockResolvedValue({
       items: [
@@ -2407,7 +2434,7 @@ describe("RequestRecords", () => {
         return 1;
       });
     await renderRecords();
-    await chooseOption("状态筛选", "成功");
+    await chooseOption("状态筛选", "完成");
     const scroller = container.querySelector(
       '[data-testid="request-records-scroll"]',
     );
@@ -2428,7 +2455,7 @@ describe("RequestRecords", () => {
 
     expect(
       document.querySelector('[aria-label="状态筛选"]')?.textContent,
-    ).toContain("成功");
+    ).toContain("完成");
     expect(scroller.scrollTop).toBe(180);
     expect(document.activeElement?.getAttribute("data-session-id")).toBe(
       firstRecord.id,
@@ -2632,7 +2659,7 @@ describe("RequestRecords", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(container.textContent).toContain("成功");
+    expect(container.textContent).toContain("完成");
 
     await act(async () => buttonContaining("实时监控").click());
     expect(buttonContaining("1 条新记录").textContent).toContain("1 条新记录");

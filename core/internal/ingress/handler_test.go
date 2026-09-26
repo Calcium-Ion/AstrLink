@@ -950,7 +950,6 @@ func TestInferencePlaneRecordsMetadataWithoutChangingClientBytes(t *testing.T) {
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
 			Endpoint:      upstream,
 			UpstreamModel: "provider/secret-upstream",
-			RouteID:       "route_alias",
 		}}},
 		RequestRecords: store,
 		Forwarder: forwarderFunc(func(writer http.ResponseWriter, request *http.Request, _ transport.Target) error {
@@ -1395,21 +1394,27 @@ func TestInferencePlaneRecordsFailedCancelledBlockedAndStreaming(t *testing.T) {
 	})
 }
 
-func TestInferencePlaneAliasRestoreStreamingSSEHidesUpstreamModel(t *testing.T) {
+func TestInferencePlaneModelRewriteStreamsUpstreamSSEUnchanged(t *testing.T) {
+	const sse = "event: response.created\n" +
+		"data: {\"type\":\"response.created\",\"response\":{\"model\":\"upstream-model\"}}\n\n" +
+		"data: [DONE]\n"
 	upstream := validEndpoint(contract.ProtocolOpenAIResponses, true)
 	handler := NewWithDependencies(Dependencies{
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
 			Endpoint:      upstream,
-			UpstreamModel: "upstream-secret-model",
+			UpstreamModel: "upstream-model",
 		}}},
-		Forwarder: forwarderFunc(func(writer http.ResponseWriter, _ *http.Request, _ transport.Target) error {
+		Forwarder: forwarderFunc(func(writer http.ResponseWriter, request *http.Request, _ transport.Target) error {
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				return err
+			}
+			if string(body) != `{"model":"upstream-model","stream":true}` {
+				t.Errorf("upstream body = %q", body)
+			}
 			writer.Header().Set("Content-Type", "text/event-stream")
 			writer.WriteHeader(http.StatusOK)
-			_, err := writer.Write([]byte(
-				"event: response.created\n" +
-					"data: {\"type\":\"response.created\",\"response\":{\"model\":\"upstream-secret-model\"}}\n\n" +
-					"data: [DONE]\n",
-			))
+			_, err = writer.Write([]byte(sse))
 			return err
 		}),
 	})
@@ -1419,37 +1424,26 @@ func TestInferencePlaneAliasRestoreStreamingSSEHidesUpstreamModel(t *testing.T) 
 		httptest.NewRequest(
 			http.MethodPost,
 			"/v1/responses",
-			strings.NewReader(`{"model":"public-alias","stream":true}`),
+			strings.NewReader(`{"model":"client-model","stream":true}`),
 		),
 	)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	if strings.Contains(body, "upstream-secret-model") {
-		t.Fatalf("upstream model leaked to client: %q", body)
-	}
-	if !strings.Contains(body, `"model":"public-alias"`) {
-		t.Fatalf("alias missing from SSE body: %q", body)
-	}
-	if !strings.Contains(body, "data: [DONE]\n") {
-		t.Fatalf("DONE line missing: %q", body)
+	if response.Code != http.StatusOK || response.Body.String() != sse {
+		t.Fatalf("client response = %d %q, want upstream SSE unchanged", response.Code, response.Body.String())
 	}
 }
 
-func TestInferencePlaneAliasRestoreRewritesUpstreamErrorBody(t *testing.T) {
+func TestInferencePlaneModelRewriteForwardsUpstreamErrorBodyUnchanged(t *testing.T) {
+	const errorBody = `{"error":{"message":"rate limited","type":"rate_limit"},"model":"upstream-model"}`
 	upstream := validEndpoint(contract.ProtocolOpenAIResponses, false)
 	handler := NewWithDependencies(Dependencies{
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
 			Endpoint:      upstream,
-			UpstreamModel: "upstream-secret-model",
+			UpstreamModel: "upstream-model",
 		}}},
 		Forwarder: forwarderFunc(func(writer http.ResponseWriter, _ *http.Request, _ transport.Target) error {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusTooManyRequests)
-			_, err := writer.Write([]byte(
-				`{"error":{"message":"rate limited","type":"rate_limit"},"model":"upstream-secret-model"}`,
-			))
+			_, err := writer.Write([]byte(errorBody))
 			return err
 		}),
 	})
@@ -1459,23 +1453,16 @@ func TestInferencePlaneAliasRestoreRewritesUpstreamErrorBody(t *testing.T) {
 		httptest.NewRequest(
 			http.MethodPost,
 			"/v1/responses",
-			strings.NewReader(`{"model":"public-alias","input":"hi"}`),
+			strings.NewReader(`{"model":"client-model","input":"hi"}`),
 		),
 	)
-	if response.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
-	}
-	body := response.Body.String()
-	if strings.Contains(body, "upstream-secret-model") {
-		t.Fatalf("upstream model leaked in error body: %q", body)
-	}
-	if !strings.Contains(body, `"model":"public-alias"`) {
-		t.Fatalf("alias missing from error body: %q", body)
+	if response.Code != http.StatusTooManyRequests || response.Body.String() != errorBody {
+		t.Fatalf("client response = %d %q, want upstream error unchanged", response.Code, response.Body.String())
 	}
 }
 
-func TestInferencePlaneAliasRewriteUsesOriginalModelPerFallbackTarget(t *testing.T) {
-	const originalBody = `{"model":"public-alias","input":"preserve me"}`
+func TestInferencePlaneModelRewriteUsesOriginalBodyPerFallbackTarget(t *testing.T) {
+	const originalBody = `{"model":"client-model","input":"preserve me"}`
 	first := validEndpoint(contract.ProtocolOpenAIResponses, false)
 	first.ID = "endpoint_first"
 	first.BaseURL = "https://first.example"
@@ -2031,7 +2018,6 @@ func TestInferencePlaneRecordsInterruptedStreamAsFailed(t *testing.T) {
 	handler := NewWithDependencies(Dependencies{
 		Resolver: candidateResolver{candidates: []endpoint.Resolved{{
 			Endpoint: upstream,
-			RouteID:  "route_stream",
 		}}},
 		RequestRecords: store,
 		Forwarder: transport.New(roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -2080,7 +2066,7 @@ func TestInferencePlaneRecordsInterruptedStreamAsFailed(t *testing.T) {
 	if record.ServiceID == nil || *record.ServiceID != upstream.ID {
 		t.Fatalf("service_id=%v", record.ServiceID)
 	}
-	if record.RouteID == nil || *record.RouteID != "route_stream" {
+	if record.RouteID != nil {
 		t.Fatalf("route_id=%v", record.RouteID)
 	}
 	if record.Plan == nil {

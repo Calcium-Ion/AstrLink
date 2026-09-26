@@ -1,6 +1,7 @@
 import {
   emptyUsageSummary,
   emptyUsageTotals,
+  type ServicePerformance,
   type UsageGroup,
   type UsageSummary,
   type UsageTotals,
@@ -44,7 +45,15 @@ function arrayAt(value: unknown): unknown[] {
 function groupsAt(value: unknown): UsageGroup[] {
   const seen = new Set<string | null>();
   return arrayAt(value).map((value) => {
-    const object = objectAt(value, ["id", ...totalKeys]);
+    const hasPerformance =
+      value !== null &&
+      typeof value === "object" &&
+      Object.hasOwn(value, "performance");
+    const object = objectAt(value, [
+      "id",
+      ...totalKeys,
+      ...(hasPerformance ? ["performance"] : []),
+    ]);
     const id = object.id;
     if (
       id !== null &&
@@ -55,8 +64,51 @@ function groupsAt(value: unknown): UsageGroup[] {
     if (seen.has(id as string | null))
       throw new Error("Duplicate usage summary group");
     seen.add(id as string | null);
-    return { id: id as string | null, ...totalsAt(object) };
+    return {
+      id: id as string | null,
+      ...totalsAt(object),
+      ...(hasPerformance
+        ? { performance: parseUsagePerformance(object.performance) }
+        : {}),
+    };
   });
+}
+
+export function parseUsagePerformance(value: unknown): ServicePerformance {
+  const object = objectAt(value, [
+    "cache_hit_rate",
+    "output_tokens_per_second",
+    "cache_samples",
+    "speed_samples",
+  ]);
+  const rate = (
+    value: unknown,
+    samples: number,
+    maximum = Infinity,
+  ): number | null => {
+    if (value === null && samples === 0) return null;
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      value > maximum ||
+      samples === 0
+    ) {
+      throw new Error("Invalid service performance rate");
+    }
+    return value;
+  };
+  const cache_samples = count(object.cache_samples);
+  const speed_samples = count(object.speed_samples);
+  return {
+    cache_samples,
+    speed_samples,
+    cache_hit_rate: rate(object.cache_hit_rate, cache_samples, 1),
+    output_tokens_per_second: rate(
+      object.output_tokens_per_second,
+      speed_samples,
+    ),
+  };
 }
 
 export function parseUsageSummary(

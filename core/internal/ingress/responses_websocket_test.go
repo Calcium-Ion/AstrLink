@@ -69,7 +69,7 @@ func wsUpstream(t *testing.T, serve func(*websocket.Conn, *http.Request)) *httpt
 	return server
 }
 
-func TestResponsesWebSocketMultiTurnPrivacyAliasAndAuthentication(t *testing.T) {
+func TestResponsesWebSocketMultiTurnPrivacyModelRewriteAndAuthentication(t *testing.T) {
 	var connections, authorizations atomic.Int32
 	bodies := make(chan map[string]any, 2)
 	upstream := wsUpstream(t, func(conn *websocket.Conn, r *http.Request) {
@@ -116,7 +116,7 @@ func TestResponsesWebSocketMultiTurnPrivacyAliasAndAuthentication(t *testing.T) 
 			t.Fatalf("restored delta = %#v", delta)
 		}
 		completed := readWS(t, client)
-		if completed["type"] != "response.completed" || completed["response"].(map[string]any)["model"] != "public-model" {
+		if completed["type"] != "response.completed" || completed["response"].(map[string]any)["model"] != "private-model" {
 			t.Fatalf("completed = %#v", completed)
 		}
 		event := <-bodies
