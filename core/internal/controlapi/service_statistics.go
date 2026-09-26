@@ -2,10 +2,12 @@ package controlapi
 
 import (
 	"context"
-	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
 type serviceStatisticsStore interface {
@@ -31,7 +33,11 @@ func (h *Handler) serviceStatistics(w http.ResponseWriter, r *http.Request, id c
 	}
 	value, err := store.ServiceStatistics(r.Context(), id, from, to)
 	if err != nil {
-		writeError(w, 400, "statistics_error", err.Error())
+		if errors.Is(err, storage.ErrInvalidArgument) {
+			writeError(w, http.StatusBadRequest, "invalid_range", "请选择不超过 31 天的时间范围")
+		} else {
+			h.writeStoreError(w, err)
+		}
 		return
 	}
 	writeJSON(w, 200, value)

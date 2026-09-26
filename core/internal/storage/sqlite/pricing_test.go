@@ -218,6 +218,64 @@ func TestMissingPricesFillAutomaticallyOncePerCatalog(t *testing.T) {
 	}
 }
 
+func TestChannelOverridesFillMissingPricesWithoutCatalogChanges(t *testing.T) {
+	for _, catalogVersion := range []string{"", "existing_v1"} {
+		t.Run("catalog="+catalogVersion, func(t *testing.T) {
+			ctx := context.Background()
+			s := openTestStore(t, filepath.Join(t.TempDir(), "billing.db"))
+			defer s.Close()
+			start := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+			if catalogVersion != "" {
+				catalog := pricing.Catalog{Version: catalogVersion, ActivatedAt: start.Add(-time.Hour), Prices: []pricing.Price{{Provider: "openai", Model: "known", Expression: `tier("standard",p * 1)`}}}
+				if err := s.SavePricingCatalog(ctx, catalog); err != nil {
+					t.Fatal(err)
+				}
+			}
+			service, other := pathTestService("service_override"), pathTestService("service_other")
+			model := `custom.model/"v1"`
+			for _, channel := range []contract.Service{service, other} {
+				if _, err := s.CreateService(ctx, channel, storage.CredentialMutation{}); err != nil {
+					t.Fatal(err)
+				}
+				r := contract.RequestRecord{ID: contract.RequestID("request_" + channel.ID), AttemptIndex: 1, ServiceID: &channel.ID, RequestedModel: &model, StartedAt: start, Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(), Usage: &contract.Usage{InputTokens: 1000000, TotalTokens: 1000000}}
+				if err := s.InsertRequestRecord(ctx, r); err != nil {
+					t.Fatal(err)
+				}
+				// Automatic valuation must work even after request-detail retention expires.
+				if err := s.DeleteRequestRecord(ctx, r.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if n, err := s.PriceUnpriced(ctx); err != nil || n != 0 {
+				t.Fatalf("before override fill=%d err=%v", n, err)
+			}
+			config := pricing.DefaultConfig(service.Kind)
+			config.Overrides = map[string]pricing.ModelRates{model: {Input: "2", Output: "4", CacheRead: "2", CacheWrite: "2"}}
+			if err := s.SavePricingConfig(ctx, service.ID, config); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := s.PriceUnpriced(ctx); err != nil || n != 1 {
+				t.Fatalf("override fill=%d err=%v", n, err)
+			}
+			config.Overrides[model] = pricing.ModelRates{Input: "9", Output: "9", CacheRead: "9", CacheWrite: "9"}
+			if err := s.SavePricingConfig(ctx, service.ID, config); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := s.PriceUnpriced(ctx); err != nil || n != 0 {
+				t.Fatalf("repeated fill=%d err=%v", n, err)
+			}
+			summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
+			if err != nil || summary.Priced != 1 || summary.Unpriced != 0 || summary.Revalued != 1 || summary.AmountUSD != "2.000000000" {
+				t.Fatalf("override summary=%+v err=%v", summary, err)
+			}
+			summary, err = s.BillingSummary(ctx, other.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
+			if err != nil || summary.Priced != 0 || summary.Unpriced != 1 {
+				t.Fatalf("other channel summary=%+v err=%v", summary, err)
+			}
+		})
+	}
+}
+
 func TestInterruptedBillingBecomesUnpricedAndCannotBeBackfilledAsComplete(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t, filepath.Join(t.TempDir(), "billing.db"))

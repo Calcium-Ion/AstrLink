@@ -2540,7 +2540,10 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     if (*method == Method::GET || *method == Method::POST) && is_subscription_usage_path(path) {
         return SUBSCRIPTION_USAGE_TIMEOUT;
     }
-    if *method == Method::GET && is_request_record_list_path(path) {
+    if *method == Method::GET
+        && (is_request_record_list_path(path)
+            || (path.starts_with(&format!("{SERVICES_PATH}/")) && path.ends_with("/statistics")))
+    {
         return REQUEST_LIST_TIMEOUT;
     }
     REQUEST_TIMEOUT
@@ -5450,6 +5453,23 @@ mod tests {
             "message": "device_auth_id=device-secret"
         });
         assert!(parse_authorization_session_value(&device).is_err());
+    }
+
+    #[test]
+    fn service_statistics_allow_aggregation_time_with_query_parameters() {
+        let path = "/control/v1/services/service_test/statistics?from=2026-09-01T00%3A00%3A00Z&to=2026-09-25T00%3A00%3A00Z";
+        assert_eq!(
+            control_request_timeout(&Method::GET, path),
+            REQUEST_LIST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::POST, path),
+            REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/services/service_test"),
+            REQUEST_TIMEOUT
+        );
     }
 
     #[test]
