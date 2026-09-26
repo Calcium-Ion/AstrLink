@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/intelligence"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
@@ -98,6 +99,7 @@ type PrivacyModelRegistry interface {
 }
 
 type Handler struct {
+	intelligence      *intelligence.Manager
 	pricingStore      PricingStore
 	pricingManager    *pricing.Manager
 	recoveryPaths     storage.RecoveryPathStore
@@ -187,6 +189,12 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		mux:             http.NewServeMux(),
 		observers:       newObserverTracker(),
 	}
+	if store, ok := dependencies.ServiceStore.(storage.IntelligenceStore); ok {
+		if executor, ok := dependencies.ServiceTester.(intelligence.Executor); ok {
+			handler.intelligence = intelligence.New(store, dependencies.ServiceStore, executor)
+		}
+	}
+	handler.mux.HandleFunc(IntelligencePath+"/", handler.authenticated(handler.intelligenceResource))
 	handler.mux.HandleFunc(ObserversPath, handler.authenticated(handler.getObservers))
 	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource))

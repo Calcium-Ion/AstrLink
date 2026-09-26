@@ -21,7 +21,20 @@ import (
 
 const Timeout = 60 * time.Second
 const maxResponseBytes = 1 << 20
+
+// Reasoning deltas and SSE framing can greatly exceed the final answer size.
+const maxIntelligenceResponseBytes = 32 << 20
 const maxRawResponseCharacters = 64 << 10
+
+type responseCapture struct{ bytes.Buffer }
+
+func (capture *responseCapture) Write(p []byte) (int, error) {
+	n := len(p)
+	if remaining := maxResponseBytes + 1 - capture.Len(); remaining > 0 {
+		_, _ = capture.Buffer.Write(p[:min(n, remaining)])
+	}
+	return n, nil
+}
 
 type Tester struct {
 	gateway             *ingress.Handler
@@ -43,6 +56,10 @@ func NewWithDependencies(dependencies ingress.Dependencies, subscriptionBaseURL 
 }
 
 func (tester *Tester) Test(ctx context.Context, service contract.Service, input contract.ServiceTestRequest) (result contract.ServiceTestResult) {
+	return tester.test(ctx, service, input, nil)
+}
+
+func (tester *Tester) test(ctx context.Context, service contract.Service, input contract.ServiceTestRequest, intelligence *contract.IntelligenceRequest) (result contract.ServiceTestResult) {
 	started := time.Now()
 	result = contract.ServiceTestResult{ServiceID: service.ID, Protocol: input.Protocol, Model: input.Model, Stream: input.Stream}
 	defer func() { result.DurationMS = time.Since(started).Milliseconds() }()
@@ -53,9 +70,19 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	if err := input.Validate(service); err != nil {
 		return fail("invalid_test", err.Error())
 	}
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	timeout, outputLimit := Timeout, 4096
+	responseLimit := maxResponseBytes
+	if intelligence != nil {
+		timeout = time.Duration(intelligence.TimeoutSeconds) * time.Second
+		outputLimit = maxResponseBytes
+		responseLimit = maxIntelligenceResponseBytes
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	path, payload := testPayload(service.Kind, input)
+	if intelligence != nil {
+		path, payload = intelligencePayload(service.Kind, *intelligence)
+	}
 	body, _ := json.Marshal(payload)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(body))
 	if err != nil {
@@ -72,7 +99,7 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	if service.Kind == contract.ServiceKindClaudeSubscription {
 		request.Header.Set("User-Agent", "claude-cli/2.1.258 (external, cli)")
 	}
-	exchange, err := tester.execute(request, service, input)
+	exchange, err := tester.execute(request, service, input, responseLimit)
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail("timeout", "Provider test timed out or was cancelled.")
@@ -84,16 +111,16 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 	headers := exchange.credentials
 	// Only credential-redacted, bounded output crosses the control boundary.
 	defer func() {
-		result.Output = redact(result.Output, headers, 4096)
+		result.Output = redact(result.Output, headers, outputLimit)
 		result.Message = redact(result.Message, headers, 1000)
 	}()
 	result.StatusCode = exchange.upstreamStatus
 	result.ResponseHeadersMS = exchange.headersMS
 	result.ResponseContentType = redact(response.Header.Get("Content-Type"), headers, 256)
-	var captured bytes.Buffer
+	var captured responseCapture
 	// Capture the actual bytes consumed by the parser, including SSE framing,
 	// error envelopes and malformed data. Never reconstruct raw data from text.
-	responseBody := io.TeeReader(io.LimitReader(response.Body, maxResponseBytes+1), &captured)
+	responseBody := io.TeeReader(io.LimitReader(response.Body, int64(responseLimit)+1), &captured)
 	readFailed := false
 	defer func() {
 		// A parser can reject an early event or the content type. Still retain
@@ -115,7 +142,7 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 			}
 			return fail("interrupted", "Provider response was interrupted.")
 		}
-		if len(raw) > maxResponseBytes {
+		if len(raw) > responseLimit {
 			return fail("response_too_large", errResponseTooLarge.Error())
 		}
 		message := upstreamError(raw)
@@ -143,7 +170,7 @@ func (tester *Tester) Test(ctx context.Context, service contract.Service, input 
 		}
 		return fail(code, message)
 	}
-	result.Output, err = decodeResponse(responseBody, input.Protocol, input.Stream, response.Header.Get("Content-Type"), func() {
+	result.Output, err = decodeResponseWithLimit(responseBody, input.Protocol, input.Stream, responseLimit, func() {
 		firstTokenMS := time.Since(exchange.sentAt).Milliseconds()
 		result.FirstTokenMS = &firstTokenMS
 	})

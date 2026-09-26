@@ -655,5 +655,9 @@ WHERE id = 'policy_privacy_default'
 		{Version: 35, Name: "request_model_redirect", Statements: []string{
 			`ALTER TABLE request_records ADD COLUMN model_redirect_json TEXT`,
 		}},
+		{Version: 36, Name: "intelligence_evaluations", Statements: []string{
+			`CREATE TABLE intelligence_documents (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, service_id TEXT NOT NULL, kind TEXT NOT NULL, document_json TEXT NOT NULL)`,
+			`CREATE INDEX intelligence_runs_service ON intelligence_documents(service_id,kind,seq DESC)`,
+		}},
 	}
 }

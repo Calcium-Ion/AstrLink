@@ -44,6 +44,15 @@ security:
 x-astrlink-implementation:
   milestone: M3-unified-service-slice
   implemented_operations:
+    - "GET /control/v1/intelligence/settings"
+    - "PUT /control/v1/intelligence/settings"
+    - "GET /control/v1/intelligence/channels/{service_id}"
+    - "PUT /control/v1/intelligence/channels/{service_id}"
+    - "GET /control/v1/intelligence/channels/{service_id}/runs"
+    - "POST /control/v1/intelligence/channels/{service_id}/runs"
+    - "GET /control/v1/intelligence/runs/{run_id}"
+    - "POST /control/v1/intelligence/runs/{run_id}/render"
+    - "POST /control/v1/intelligence/runs/{run_id}/cancel"
     - GET /control/v1/pricing/status
     - GET /control/v1/pricing/catalog
     - POST /control/v1/pricing/sync
@@ -126,6 +135,329 @@ tags:
   - name: Requests
     description: Request metadata and explicitly enabled encrypted audit content.
 paths:
+  "/control/v1/intelligence/settings":
+    {
+      "get":
+        {
+          "operationId": "getIntelligenceSettings",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "$ref": "#/components/schemas/IntelligenceSettings",
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+        },
+      "put":
+        {
+          "operationId": "saveIntelligenceSettings",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "required": ["ok"],
+                              "properties": { "ok": { "type": "boolean" } },
+                              "additionalProperties": false,
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/IntelligenceSettings" },
+                    },
+                },
+            },
+        },
+    }
+  "/control/v1/intelligence/channels/{service_id}":
+    {
+      "parameters": [{ "$ref": "#/components/parameters/ServiceId" }],
+      "get":
+        {
+          "operationId": "getIntelligenceChannel",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "$ref": "#/components/schemas/IntelligenceChannel",
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+        },
+      "put":
+        {
+          "operationId": "saveIntelligenceChannel",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "required": ["ok"],
+                              "properties": { "ok": { "type": "boolean" } },
+                              "additionalProperties": false,
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/IntelligenceChannel" },
+                    },
+                },
+            },
+        },
+    }
+  "/control/v1/intelligence/channels/{service_id}/runs":
+    {
+      "parameters": [{ "$ref": "#/components/parameters/ServiceId" }],
+      "get":
+        {
+          "operationId": "listIntelligenceRuns",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "array",
+                              "items":
+                                {
+                                  "$ref": "#/components/schemas/IntelligenceRun",
+                                },
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+        },
+      "post":
+        {
+          "operationId": "startIntelligenceRun",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/IntelligenceRun" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/IntelligenceStart" },
+                    },
+                },
+            },
+        },
+    }
+  "/control/v1/intelligence/runs/{run_id}":
+    {
+      "parameters":
+        [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{32}$" },
+          },
+        ],
+      "get":
+        {
+          "operationId": "getIntelligenceRun",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            { "$ref": "#/components/schemas/IntelligenceRun" },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+        },
+    }
+  "/control/v1/intelligence/runs/{run_id}/render":
+    {
+      "parameters":
+        [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{32}$" },
+          },
+        ],
+      "post":
+        {
+          "operationId": "renderIntelligenceQuestion",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "required": ["ok"],
+                              "properties": { "ok": { "type": "boolean" } },
+                              "additionalProperties": false,
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+          "requestBody":
+            {
+              "required": true,
+              "content":
+                {
+                  "application/json":
+                    {
+                      "schema":
+                        { "$ref": "#/components/schemas/IntelligenceRender" },
+                    },
+                },
+            },
+        },
+    }
+  "/control/v1/intelligence/runs/{run_id}/cancel":
+    {
+      "parameters":
+        [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{32}$" },
+          },
+        ],
+      "post":
+        {
+          "operationId": "cancelIntelligenceRun",
+          "x-astrlink-implementation-status": "implemented",
+          "responses":
+            {
+              "200":
+                {
+                  "description": "Success",
+                  "content":
+                    {
+                      "application/json":
+                        {
+                          "schema":
+                            {
+                              "type": "object",
+                              "required": ["ok"],
+                              "properties": { "ok": { "type": "boolean" } },
+                              "additionalProperties": false,
+                            },
+                        },
+                    },
+                },
+              "400": { "$ref": "#/components/responses/BadRequest" },
+              "401": { "$ref": "#/components/responses/Unauthorized" },
+            },
+        },
+    }
   /control/v1/pricing/status:
     get:
       x-astrlink-implementation-status: implemented
@@ -2679,6 +3011,135 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    "IntelligenceQuestion":
+      {
+        "type": "object",
+        "required": ["id", "name", "kind", "prompt", "answer", "model"],
+        "properties":
+          {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "kind": { "enum": ["number", "text", "svg"] },
+            "prompt": { "type": "string" },
+            "answer": { "type": "string" },
+            "model": { "type": "string" },
+            "reference_png": { "type": "string" },
+          },
+        "additionalProperties": false,
+      }
+    "IntelligenceSettings":
+      {
+        "type": "object",
+        "required":
+          [
+            "default_model",
+            "judge_service_id",
+            "judge_model",
+            "timeout_seconds",
+            "questions",
+            "default_question_ids",
+          ],
+        "properties":
+          {
+            "default_model": { "type": "string" },
+            "judge_service_id": { "type": "string" },
+            "judge_model": { "type": "string" },
+            "timeout_seconds":
+              { "type": "integer", "minimum": 1, "maximum": 300 },
+            "questions":
+              {
+                "type": "array",
+                "items":
+                  { "$ref": "#/components/schemas/IntelligenceQuestion" },
+              },
+            "default_question_ids":
+              { "type": "array", "items": { "type": "string" } },
+          },
+        "additionalProperties": false,
+      }
+    "IntelligenceChannel":
+      {
+        "type": "object",
+        "required": ["use_default", "model", "question_ids"],
+        "properties":
+          {
+            "use_default": { "type": "boolean" },
+            "model": { "type": "string" },
+            "question_ids": { "type": "array", "items": { "type": "string" } },
+          },
+        "additionalProperties": false,
+      }
+    "IntelligenceStart":
+      {
+        "type": "object",
+        "required": ["mode"],
+        "properties":
+          {
+            "mode": { "enum": ["all", "random"] },
+            "count": { "type": "integer" },
+          },
+        "additionalProperties": false,
+      }
+    "IntelligenceRender":
+      {
+        "type": "object",
+        "required": ["question_id"],
+        "properties":
+          {
+            "question_id": { "type": "string" },
+            "png": { "type": "string" },
+            "error": { "type": "string" },
+          },
+        "additionalProperties": false,
+      }
+    "IntelligenceItem":
+      {
+        "type": "object",
+        "required":
+          ["question", "model", "status", "output", "reason", "duration_ms"],
+        "properties":
+          {
+            "question": { "$ref": "#/components/schemas/IntelligenceQuestion" },
+            "model": { "type": "string" },
+            "status": { "type": "string" },
+            "output": { "type": "string" },
+            "reason": { "type": "string" },
+            "duration_ms": { "type": "integer" },
+            "started_at": { "type": "string", "format": "date-time" },
+            "png": { "type": "string" },
+            "judge_output": { "type": "string" },
+          },
+        "additionalProperties": false,
+      }
+    "IntelligenceRun":
+      {
+        "type": "object",
+        "required":
+          [
+            "id",
+            "service_id",
+            "started_at",
+            "status",
+            "items",
+            "judge_service_id",
+            "judge_model",
+          ],
+        "properties":
+          {
+            "id": { "type": "string" },
+            "service_id": { "type": "string" },
+            "started_at": { "type": "string", "format": "date-time" },
+            "status": { "type": "string" },
+            "items":
+              {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/IntelligenceItem" },
+              },
+            "judge_service_id": { "type": "string" },
+            "judge_model": { "type": "string" },
+          },
+        "additionalProperties": false,
+      }
     PricingStatus:
       type: object
       required:

@@ -41,6 +41,7 @@ import { defaultFailurePolicy } from "./failure-policy-model";
 import { ServiceManager } from "./ServiceManager";
 import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
+import { setIntelligenceEnabled } from "./intelligence-preference";
 import { parseService, type Service } from "./service-model";
 import { httpServicePreset } from "./service-presets";
 import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
@@ -185,6 +186,7 @@ describe("ServiceManager", () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
+    setIntelligenceEnabled(true);
     // Existing editor/action tests represent returning users.
     localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
     localStorage.setItem(PROTOCOL_MODE_GUIDE_KEY, "seen");
@@ -208,6 +210,40 @@ describe("ServiceManager", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    setIntelligenceEnabled(true);
+  });
+
+  it("one persisted switch hides both the intelligence result column and action", async () => {
+    await act(async () =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          services={[gatewayService]}
+          protocols={[]}
+          view={{ kind: "list" }}
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+        />,
+      ),
+    );
+    expect(
+      container.querySelector('[aria-label^="智力测试 ·"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label^="智力结果 ·"]'),
+    ).not.toBeNull();
+    await act(async () => setIntelligenceEnabled(false));
+    expect(container.querySelector('[aria-label^="智力测试 ·"]')).toBeNull();
+    expect(container.querySelector('[aria-label^="智力结果 ·"]')).toBeNull();
+    expect(container.textContent).not.toContain("智力结果");
+    expect(localStorage.getItem("astrlink.intelligence.enabled.v1")).toBe(
+      "false",
+    );
   });
 
   it("tests the selected saved provider without changing its configuration", async () => {

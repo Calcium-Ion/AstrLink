@@ -22,7 +22,7 @@ type gatewayExchange struct {
 	credentials    http.Header
 }
 
-func (tester *Tester) execute(request *http.Request, service contract.Service, input contract.ServiceTestRequest) (*gatewayExchange, error) {
+func (tester *Tester) execute(request *http.Request, service contract.Service, input contract.ServiceTestRequest, responseLimit int) (*gatewayExchange, error) {
 	ctx, cancel := context.WithCancel(request.Context())
 	request = request.WithContext(ctx)
 	reader, writer := io.Pipe()
@@ -50,7 +50,7 @@ func (tester *Tester) execute(request *http.Request, service contract.Service, i
 				exchange.headersMS = &elapsed
 			},
 			WrapResponseBody: func(body io.ReadCloser) io.ReadCloser {
-				return &boundedGatewayBody{ReadCloser: body, remaining: maxResponseBytes + 1}
+				return &boundedGatewayBody{ReadCloser: body, remaining: responseLimit + 1}
 			},
 		})
 		if !capture.committed {
