@@ -6,6 +6,7 @@ import {
   validProxyDraft,
   type ProxyDraft,
 } from "./service-proxy-model";
+import { ServiceStatisticsEntry } from "./ServiceStatisticsDialog";
 import { ServiceTestDialog } from "./ServiceTestDialog";
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
@@ -1869,6 +1870,10 @@ export function ServiceManager({
                         }
                         actions={
                           <>
+                            <ServiceStatisticsEntry
+                              service={service}
+                              disabled={!isReady || acting}
+                            />
                             <IconButton
                               label={t("serviceTest.testNamed", {
                                 name: service.name,

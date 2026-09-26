@@ -3,10 +3,10 @@ import type { ReactNode } from "react";
 import { DataRow } from "@/components/DataRow";
 import { cn } from "@/lib/utils";
 
-// Share spare width across the content columns and reserve all three actions.
+// Share spare width across the content columns and reserve all four actions.
 // Query the scroller itself, including the space taken by its scrollbar.
 const columns =
-  "@[860px]/service-list:grid-cols-[3.25rem_minmax(0,1.25fr)_minmax(6rem,0.5fr)_minmax(9.5rem,0.95fr)_minmax(6.5rem,0.6fr)_3.75rem_6.25rem]";
+  "@[860px]/service-list:grid-cols-[3.25rem_minmax(0,1.25fr)_minmax(6rem,0.5fr)_minmax(9.5rem,0.95fr)_minmax(6.5rem,0.6fr)_3.75rem_8.75rem]";
 
 export function ServiceListHeader({ labels }: { labels: readonly string[] }) {
   return (
@@ -77,7 +77,7 @@ export function ServiceListRow({
     <DataRow
       asChild
       className={cn(
-        "grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-2 py-3 transition-colors hover:bg-muted/30 @[640px]/service-list:grid-cols-[3.25rem_minmax(0,1fr)_minmax(10rem,0.85fr)_6.25rem] @[640px]/service-list:px-3 @[860px]/service-list:min-h-20 @[860px]/service-list:gap-x-4",
+        "grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-2 py-3 transition-colors hover:bg-muted/30 @[640px]/service-list:grid-cols-[3.25rem_minmax(0,1fr)_minmax(10rem,0.85fr)_8.75rem] @[640px]/service-list:px-3 @[860px]/service-list:min-h-20 @[860px]/service-list:gap-x-4",
         columns,
       )}
     >

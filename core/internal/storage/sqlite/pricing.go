@@ -208,6 +208,14 @@ WHERE root_id = ? AND attempt = ? AND local_access_token_id IS NULL`,
 		if len(matches) == 1 {
 			priceJSON = matches[0]
 		}
+		if rates, ok := c.Overrides[model]; ok {
+			raw, e := json.Marshal(rates.Price(model))
+			if e != nil {
+				return e
+			}
+			priceJSON = string(raw)
+			version = "channel"
+		}
 	}
 	terminal = 0
 	amount = "0.000000000"

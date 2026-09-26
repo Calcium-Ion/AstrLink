@@ -880,6 +880,16 @@ async fn delete_service(
 }
 
 #[tauri::command]
+async fn service_statistics(
+    service_id: String,
+    from: String,
+    to: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.service_statistics(&service_id, &from, &to).await
+}
+
+#[tauri::command]
 async fn pricing(
     operation: String,
     service_id: Option<String>,
@@ -1442,6 +1452,7 @@ pub fn run() {
             delete_service,
             get_service_usage,
             pricing,
+            service_statistics,
             reset_service_usage,
             test_service,
             probe_service_models,

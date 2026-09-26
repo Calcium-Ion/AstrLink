@@ -1659,6 +1659,24 @@ impl CoreManager {
         Ok(())
     }
 
+    pub async fn service_statistics(
+        &self,
+        service_id: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let path = format!(
+            "/control/v1/services/{service_id}/statistics?from={}&to={}",
+            percent_encode_query(from),
+            percent_encode_query(to)
+        );
+        let (_, body) = self
+            .authenticated_control(Method::GET, &path, None, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "statistics returned invalid JSON".into())
+    }
+
     pub async fn pricing(
         &self,
         operation: &str,

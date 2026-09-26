@@ -54,11 +54,12 @@ type Binding struct {
 	Model    string `json:"model"`
 }
 type Config struct {
-	Provider         string             `json:"provider"`
-	Bindings         map[string]Binding `json:"bindings"`
-	MonthlyBudgetUSD string             `json:"monthly_budget_usd"`
-	BillingDay       int                `json:"billing_day"`
-	TimeZone         string             `json:"time_zone"`
+	Overrides        map[string]ModelRates `json:"overrides,omitempty"`
+	Provider         string                `json:"provider"`
+	Bindings         map[string]Binding    `json:"bindings"`
+	MonthlyBudgetUSD string                `json:"monthly_budget_usd"`
+	BillingDay       int                   `json:"billing_day"`
+	TimeZone         string                `json:"time_zone"`
 }
 
 func DefaultConfig(kind contract.ServiceKind) Config {
@@ -81,6 +82,19 @@ func ParseUSD(s string) (*big.Rat, error) {
 	return v, nil
 }
 func (c Config) Validate() error {
+	if len(c.Overrides) > 1000 {
+		return fmt.Errorf("too many model prices")
+	}
+	for model, rates := range c.Overrides {
+		if model == "" || len(model) > 256 {
+			return fmt.Errorf("invalid price model")
+		}
+		for _, value := range []string{rates.Input, rates.Output, rates.CacheRead, rates.CacheWrite} {
+			if _, err := ParseUSD(value); err != nil {
+				return fmt.Errorf("invalid model price: %s", model)
+			}
+		}
+	}
 	if c.Provider != "" && Providers[c.Provider] == "" {
 		return fmt.Errorf("select a canonical official provider")
 	}
@@ -109,6 +123,9 @@ func (c Config) Validate() error {
 	return nil
 }
 func (c Config) Resolve(model string, prices []Price) (Price, bool) {
+	if rates, ok := c.Overrides[model]; ok {
+		return rates.Price(model), true
+	}
 	b, ok := c.Bindings[model]
 	if !ok {
 		b = Binding{Provider: c.Provider, Model: model}
