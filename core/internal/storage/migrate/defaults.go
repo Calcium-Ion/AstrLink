@@ -794,5 +794,9 @@ CHECK(sealed IN (0, 1) AND (sealed = 0 OR length(credential_value) >= 30))`,
 		{Version: 47, Name: "request_conversion_diagnostics", Statements: []string{
 			`ALTER TABLE request_records ADD COLUMN conversion_diagnostics_json TEXT`,
 		}},
+		{Version: 48, Name: "intelligence_evaluations", Statements: []string{
+			`CREATE TABLE intelligence_documents (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, service_id TEXT NOT NULL, kind TEXT NOT NULL, document_json TEXT NOT NULL)`,
+			`CREATE INDEX intelligence_runs_service ON intelligence_documents(service_id,kind,seq DESC)`,
+		}},
 	}
 }

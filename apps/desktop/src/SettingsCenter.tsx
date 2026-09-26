@@ -1,4 +1,9 @@
+import { IntelligenceQuestionManager } from "./IntelligenceQuestionManager";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
+import {
+  useIntelligenceEnabled,
+  setIntelligenceEnabled,
+} from "./intelligence-preference";
 import {
   useEffect,
   useId,
@@ -66,7 +71,7 @@ const TRAY_PREVIEW_REFRESH_MS = 30_000;
 /** Time for a requested usage collection to land before the preview re-reads. */
 const TRAY_PREVIEW_SETTLE_MS = 2_500;
 
-type SettingsTab = "general" | "tray";
+type SettingsTab = "general" | "tray" | "intelligence";
 
 type InstantPatch = Omit<
   Preferences,
@@ -242,6 +247,9 @@ export function SettingsCenter({
     "prefs" | "port" | "start" | "stop" | "restart" | null
   >(null);
   const [tab, setTab] = useState<SettingsTab>("general");
+  const intelligenceEnabled = useIntelligenceEnabled();
+  const [questionsVisited, setQuestionsVisited] = useState(false);
+  const [questionsDirty, setQuestionsDirty] = useState(false);
   const [trayState, setTrayState] = useState<TrayState | null>(null);
   const [trayStateError, setTrayStateError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -364,9 +372,9 @@ export function SettingsCenter({
     portDirty || concurrencyDirty || timeoutDirty || bodyLimitDirty;
   entryDirtyRef.current = entryDirty;
   useEffect(() => {
-    onDirtyChange(entryDirty);
+    onDirtyChange(entryDirty || questionsDirty);
     return () => onDirtyChange(false);
-  }, [entryDirty, onDirtyChange]);
+  }, [entryDirty, questionsDirty, onDirtyChange]);
 
   const applyInstant = async (patch: Partial<InstantPatch>): Promise<void> => {
     if (!settings || busy !== null) return;
@@ -573,7 +581,10 @@ export function SettingsCenter({
 
         <Tabs
           className="min-h-0 min-w-0 flex-1 gap-3 overflow-y-clip"
-          onValueChange={(value) => setTab(value as SettingsTab)}
+          onValueChange={(value) => {
+            if (value === "intelligence") setQuestionsVisited(true);
+            setTab(value as SettingsTab);
+          }}
           value={tab}
         >
           <TabsList aria-label={t("settings.tabsLabel")} className="shrink-0">
@@ -585,6 +596,7 @@ export function SettingsCenter({
               <Menu aria-hidden="true" />
               {t("settings.tabs.tray")}
             </TabsTrigger>
+            <TabsTrigger value="intelligence">智力题管理</TabsTrigger>
           </TabsList>
 
           <TabsContent
@@ -726,6 +738,17 @@ export function SettingsCenter({
                   onChange={(autostart) => void applyInstant({ autostart })}
                 />
 
+                <SettingsToggle
+                  checked={intelligenceEnabled}
+                  label="启用智力测试"
+                  onChange={(value) => {
+                    try {
+                      setIntelligenceEnabled(value);
+                    } catch {
+                      notify.error("智力测试显示设置保存失败");
+                    }
+                  }}
+                />
                 <p className="px-4 py-2.5 text-xs text-muted-foreground">
                   {t("settings.trayHint")}
                 </p>
@@ -1082,6 +1105,15 @@ export function SettingsCenter({
               </Panel>
             </div>
           </TabsContent>
+          {questionsVisited && (
+            <TabsContent
+              forceMount
+              value="intelligence"
+              className="flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
+            >
+              <IntelligenceQuestionManager onDirtyChange={setQuestionsDirty} />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </section>
