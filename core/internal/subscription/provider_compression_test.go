@@ -38,7 +38,7 @@ func TestProviderReadsCompressedCatalogAndNormalizesResponseHeaders(t *testing.T
 	provider := NewCodexProvider(accountauth.OAuthConfig{APIBaseURL: upstream.URL, HTTPClient: client})
 	tokens := accountauth.AccountTokens{AccessToken: "test-token"}
 	models, err := provider.ListModels(context.Background(), tokens)
-	if err != nil || len(models.Data) != 1 || models.Data[0].ID != "test-model" {
+	if err != nil || modelIDs(models) != "test-model,codex-auto-review" {
 		t.Fatalf("models = %#v, err = %v", models, err)
 	}
 	body, status, headers, err := provider.CreateResponse(context.Background(), tokens, []byte(`{"input":"test"}`))
