@@ -134,7 +134,7 @@ func (prober *Prober) probeSubscription(
 	serviceID contract.ServiceID,
 	protocol contract.ProtocolID,
 ) ([]string, error) {
-	if protocol != contract.ProtocolOpenAIModels || prober == nil || prober.subscriptions == nil {
+	if !protocol.IsModelDiscovery() || prober == nil || prober.subscriptions == nil {
 		return nil, ErrUnsupported
 	}
 	probeContext, cancel := context.WithTimeout(ctx, probeTimeout)
@@ -153,6 +153,12 @@ func (prober *Prober) probeSubscription(
 	account, err := prober.subscriptions.Get(probeContext, serviceID)
 	if err != nil {
 		return nil, ErrNotConnected
+	}
+	if account.Provider == contract.SubscriptionProviderAntigravity {
+		return prober.subscriptions.AntigravityModels(probeContext, tokens)
+	}
+	if protocol != contract.ProtocolOpenAIModels {
+		return nil, ErrUnsupported
 	}
 	if account.Provider == contract.SubscriptionProviderClaudeCode {
 		headers := make(http.Header)

@@ -87,10 +87,11 @@ const POPOVER_REOPEN_GUARD: Duration = Duration::from_millis(350);
 /// A blur delivered this soon after showing is the show itself settling.
 const POPOVER_BLUR_GUARD: Duration = Duration::from_millis(150);
 
-const SUBSCRIPTION_KINDS: [&str; 7] = [
+const SUBSCRIPTION_KINDS: [&str; 8] = [
     "codex_subscription",
     "claude_subscription",
     "grok_subscription",
+    "antigravity_subscription",
     "kimi_coding",
     "glm_coding",
     "minimax_coding",

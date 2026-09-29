@@ -1,10 +1,11 @@
-package providerapi
+package providerapi_test
 
 import (
 	"net/url"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/transport"
 )
 
@@ -26,7 +27,7 @@ func TestProviderSurfacePreservesOriginPrefixAndInput(t *testing.T) {
 				t.Fatal(err)
 			}
 			incoming, _ := url.Parse("/v1/messages?trace=a%2Fb")
-			target := transport.JoinTargetURL(BaseURL(tt.kind, contract.ProtocolAnthropicMessages, base), RequestURL(tt.kind, contract.ProtocolAnthropicMessages, incoming))
+			target := transport.JoinTargetURL(providerapi.BaseURL(tt.kind, contract.ProtocolAnthropicMessages, base), providerapi.RequestURL(tt.kind, contract.ProtocolAnthropicMessages, incoming))
 			if target.String() != tt.want {
 				t.Fatalf("target = %s, want %s", target, tt.want)
 			}
@@ -44,12 +45,12 @@ func TestProviderAuthPreservesExplicitOverridesAndOtherProtocols(t *testing.T) {
 			{Scheme: contract.AuthSchemeCustomHeader, HeaderName: "X-Provider-Key"},
 			{Scheme: contract.AuthSchemeAnthropicAPIKey},
 		} {
-			if got := Auth(kind, contract.ProtocolAnthropicMessages, configured); got != configured {
+			if got := providerapi.Auth(kind, contract.ProtocolAnthropicMessages, configured); got != configured {
 				t.Fatalf("overrode explicit auth: %#v", got)
 			}
 		}
 		configured := contract.ServiceAuth{Scheme: contract.AuthSchemeBearer}
-		if got := Auth(kind, contract.ProtocolOpenAIChat, configured); got != configured {
+		if got := providerapi.Auth(kind, contract.ProtocolOpenAIChat, configured); got != configured {
 			t.Fatalf("overrode Chat auth: %#v", got)
 		}
 	}

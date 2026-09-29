@@ -55,7 +55,8 @@ export type ModelDiscoveryProtocol = "openai.models" | "google.models";
 export type SubscriptionServiceKind =
   | "codex_subscription"
   | "claude_subscription"
-  | "grok_subscription";
+  | "grok_subscription"
+  | "antigravity_subscription";
 export type ServiceKind = SubscriptionServiceKind | HTTPServiceKind;
 
 /** Provider owning each subscription kind; mirrors contract.ServiceKind.SubscriptionProvider. */
@@ -66,6 +67,7 @@ export const subscriptionKindProviders: Record<
   codex_subscription: "openai_codex",
   claude_subscription: "claude_code",
   grok_subscription: "xai_grok",
+  antigravity_subscription: "antigravity",
 };
 
 /** Fixed native capabilities; mirrors contract.SubscriptionProvider.Capabilities. */
@@ -80,6 +82,11 @@ export const subscriptionNativeCapabilities: Record<
   ],
   claude_subscription: [
     { protocol: "anthropic.messages", mode: "native", streaming: true },
+    { protocol: "openai.models", mode: "native", streaming: false },
+  ],
+  antigravity_subscription: [
+    { protocol: "google.generate_content", mode: "native", streaming: true },
+    { protocol: "google.models", mode: "native", streaming: false },
     { protocol: "openai.models", mode: "native", streaming: false },
   ],
   grok_subscription: [
@@ -100,6 +107,7 @@ export const subscriptionConversionTargets: Record<
   codex_subscription: ["openai.responses"],
   claude_subscription: ["anthropic.messages"],
   grok_subscription: ["openai.responses", "openai.chat"],
+  antigravity_subscription: ["google.generate_content"],
 };
 
 export const subscriptionKinds = Object.keys(
@@ -724,7 +732,8 @@ function parseSubscriptionConnection(
   if (
     subscription.provider !== "openai_codex" &&
     subscription.provider !== "claude_code" &&
-    subscription.provider !== "xai_grok"
+    subscription.provider !== "xai_grok" &&
+    subscription.provider !== "antigravity"
   ) {
     invalid(`${path}.provider`, "unknown subscription provider");
   }

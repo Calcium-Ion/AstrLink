@@ -418,6 +418,9 @@ func supportsModelConversion(runtime contract.RuntimeProfile, from, to contract.
 }
 
 func baseURLForService(service contract.Service, subscriptionBaseURL string) string {
+	if service.Kind == contract.ServiceKindAntigravitySubscription {
+		return accountauth.DefaultAntigravityAPIBaseURL
+	}
 	if service.Kind == contract.ServiceKindClaudeSubscription {
 		return accountauth.DefaultClaudeAPIBaseURL
 	}

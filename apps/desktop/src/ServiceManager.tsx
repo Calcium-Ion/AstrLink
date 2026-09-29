@@ -157,6 +157,7 @@ import {
   isSubscriptionKind,
   serviceStatusLabel,
   subscriptionConversionTargets,
+  subscriptionKindProviders,
   subscriptionNativeCapabilities,
   type HTTPServiceKind,
   type ModelDiscoveryProtocol,
@@ -175,6 +176,7 @@ import {
   type SubscriptionUsageStatus,
 } from "./SubscriptionUsageMeter";
 import {
+  providerAuthorizationFlows,
   type AuthorizationFlow,
   type AuthorizationSession,
   type SubscriptionProvider,
@@ -323,30 +325,36 @@ function serviceKindPickerGroups(): DialogPickerGroup<ServiceKind>[] {
 
 /** The only login transport a single-flow provider offers; null when the user must pick. */
 function defaultAuthorizationFlow(kind: ServiceKind): AuthorizationFlow | null {
-  if (kind === "claude_subscription") return "authorization_code";
-  if (kind === "grok_subscription") return "device_code";
-  return null;
+  if (!isSubscriptionKind(kind)) return null;
+  const flows = providerAuthorizationFlows[subscriptionKindProviders[kind]];
+  return flows.length === 1 ? flows[0] : null;
 }
 
 function subscriptionDefaultName(kind: SubscriptionServiceKind): string {
+  if (kind === "antigravity_subscription") return "Antigravity";
   if (kind === "claude_subscription") return "Claude Code";
   if (kind === "grok_subscription") return i18n.t("services.grokName");
   return i18n.t("services.codexName");
 }
 
 function subscriptionKindHint(kind: SubscriptionServiceKind): string {
+  if (kind === "antigravity_subscription")
+    return i18n.t("services.antigravityHint");
   if (kind === "claude_subscription") return i18n.t("services.claudeOauthHint");
   if (kind === "grok_subscription") return i18n.t("services.grokHint");
   return i18n.t("services.codexHint");
 }
 
 function subscriptionOauthLabel(kind: ServiceKind): string {
+  if (kind === "antigravity_subscription") return "Antigravity OAuth";
   if (kind === "claude_subscription") return "Claude Code OAuth";
   if (kind === "grok_subscription") return i18n.t("services.xaiGrokOauth");
   return i18n.t("services.openaiCodexOauth");
 }
 
 function subscriptionAccountLabel(kind: ServiceKind, hint: string): string {
+  if (kind === "antigravity_subscription")
+    return i18n.t("services.googleAccount", { hint });
   if (kind === "claude_subscription")
     return i18n.t("services.claudeAccount", { hint });
   if (kind === "grok_subscription")
@@ -2419,7 +2427,9 @@ export function ServiceManager({
                   ? t("services.grokDeviceCodeHint")
                   : shownLoginChoice?.kind === "claude_subscription"
                     ? t("services.claudeOauthHint")
-                    : t("services.chooseOauthHint")}
+                    : shownLoginChoice?.kind === "antigravity_subscription"
+                      ? t("services.antigravityHint")
+                      : t("services.chooseOauthHint")}
               </DialogDescription>
             </DialogHeader>
             <RadioGroup
@@ -2443,6 +2453,13 @@ export function ServiceManager({
                   description={t("services.grokDeviceCodeHint")}
                   selected={shownLoginChoiceFlow === "device_code"}
                   value="device_code"
+                />
+              ) : shownLoginChoice?.kind === "antigravity_subscription" ? (
+                <ChoiceCard
+                  label={t("services.browserOauth")}
+                  description={t("services.antigravityHint")}
+                  selected={shownLoginChoiceFlow === "browser"}
+                  value="browser"
                 />
               ) : (
                 <>
@@ -2907,7 +2924,9 @@ export function ServiceManager({
         ? "https://api.anthropic.com"
         : draft.kind === "grok_subscription"
           ? "https://api.x.ai"
-          : draft.baseURL.trim();
+          : draft.kind === "antigravity_subscription"
+            ? "https://daily-cloudcode-pa.googleapis.com"
+            : draft.baseURL.trim();
   const connectionFields = (
     <div className="grid min-w-0 items-start gap-4 pb-2 @[760px]:grid-cols-2">
       <Panel>
@@ -2954,9 +2973,11 @@ export function ServiceManager({
               placeholder={
                 draft.kind === "grok_subscription"
                   ? t("services.namePlaceholderGrok")
-                  : isSubscriptionKind(draft.kind)
-                    ? t("services.namePlaceholderCodex")
-                    : t("services.namePlaceholderHttp")
+                  : draft.kind === "antigravity_subscription"
+                    ? "Antigravity"
+                    : isSubscriptionKind(draft.kind)
+                      ? t("services.namePlaceholderCodex")
+                      : t("services.namePlaceholderHttp")
               }
               required
               value={draft.name}
@@ -3043,6 +3064,13 @@ export function ServiceManager({
                         description={t("services.grokDeviceCodeHint")}
                         selected
                         value="device_code"
+                      />
+                    ) : draft.kind === "antigravity_subscription" ? (
+                      <ChoiceCard
+                        label={t("services.browserOauth")}
+                        description={t("services.antigravityHint")}
+                        selected
+                        value="browser"
                       />
                     ) : (
                       <>

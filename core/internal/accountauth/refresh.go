@@ -187,6 +187,7 @@ func (source *TokenSource) refresh(ctx context.Context, accountID contract.Subsc
 	if refreshed.AccountID == "" {
 		refreshed.AccountID = current.AccountID
 	}
+	refreshed.ProjectID, refreshed.PlanType = current.ProjectID, current.PlanType
 	if err := source.store.Put(ctx, accountID, refreshed); err != nil {
 		return source.finishRefresh(accountID, call, AccountTokens{}, err)
 	}

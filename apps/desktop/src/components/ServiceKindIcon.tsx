@@ -92,6 +92,7 @@ function renderMark(mark: Mark, size: number): ReactNode {
       return <OpenAIMono size={size} />;
     case "anthropic":
       return <AnthropicMono size={size} />;
+    case "antigravity_subscription":
     case "gemini":
       return <GeminiColor size={size} />;
     case "deepseek":

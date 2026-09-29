@@ -95,6 +95,9 @@ func (manager *SessionManager) Begin(
 	if manager.config.Provider == contract.SubscriptionProviderXAIGrok && flow != contract.AuthorizationFlowDeviceCode {
 		return contract.AuthorizationSession{}, fmt.Errorf("Grok requires device_code flow")
 	}
+	if manager.config.Provider == contract.SubscriptionProviderAntigravity && flow != contract.AuthorizationFlowBrowser {
+		return contract.AuthorizationSession{}, fmt.Errorf("Antigravity requires browser flow")
+	}
 	if manager.config.ResolveProxy != nil {
 		var err error
 		ctx, err = manager.config.ResolveProxy(ctx, serviceID)
@@ -114,7 +117,7 @@ func (manager *SessionManager) Begin(
 		return manager.beginCodeAuthorization(ctx, serviceID)
 	case contract.AuthorizationFlowBrowser:
 		session, err := manager.beginBrowserAuthorization(ctx, serviceID)
-		if !errors.Is(err, ErrCallbackPortsUnavailable) {
+		if !errors.Is(err, ErrCallbackPortsUnavailable) || manager.config.Provider != contract.SubscriptionProviderOpenAICodex {
 			return session, err
 		}
 		fallback, fallbackErr := manager.beginDeviceCodeAuthorization(ctx, serviceID)
@@ -164,7 +167,7 @@ func (manager *SessionManager) beginBrowserAuthorization(
 	}
 	now := manager.config.Now().UTC()
 	public := contract.AuthorizationSession{
-		ID: sessionID, Provider: contract.SubscriptionProviderOpenAICodex,
+		ID: sessionID, Provider: manager.config.Provider,
 		Status: contract.AuthorizationSessionStatusPending,
 		Flow:   contract.AuthorizationFlowBrowser, AuthorizationURL: authURL,
 		ServiceID: serviceID, ExpiresAt: now.Add(manager.config.SessionTTL),
@@ -216,7 +219,7 @@ func (manager *SessionManager) beginDeviceCodeAuthorization(
 	}
 	now := manager.config.Now().UTC()
 	public := contract.AuthorizationSession{
-		ID: sessionID, Provider: contract.SubscriptionProviderOpenAICodex,
+		ID: sessionID, Provider: manager.config.Provider,
 		Status: contract.AuthorizationSessionStatusPending,
 		Flow:   contract.AuthorizationFlowDeviceCode,
 		DeviceCode: &contract.AuthorizationDeviceCode{
@@ -399,6 +402,9 @@ func (manager *SessionManager) buildAuthorizeURL(ctx context.Context, redirectUR
 	query.Set("state", state)
 	if manager.config.Provider == contract.SubscriptionProviderClaudeCode {
 		query.Set("code", "true")
+	} else if manager.config.Provider == contract.SubscriptionProviderAntigravity {
+		query.Set("access_type", "offline")
+		query.Set("prompt", "consent")
 	} else {
 		query.Set("id_token_add_organizations", "true")
 		query.Set("codex_cli_simplified_flow", "true")

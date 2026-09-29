@@ -4183,6 +4183,7 @@ components:
         - codex_subscription
         - claude_subscription
         - grok_subscription
+        - antigravity_subscription
         - opencode_go
         - opencode_zen
         - kimi_coding
@@ -4239,7 +4240,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [openai_codex, claude_code, xai_grok]
+          enum: [openai_codex, claude_code, xai_grok, antigravity]
         status:
           type: string
           enum: [disconnected, authorizing, connected, needs_reauth, error]
@@ -4378,7 +4379,13 @@ components:
       oneOf:
         - properties:
             kind:
-              enum: [codex_subscription, claude_subscription, grok_subscription]
+              enum:
+                [
+                  codex_subscription,
+                  claude_subscription,
+                  grok_subscription,
+                  antigravity_subscription,
+                ]
           required: [subscription]
           not:
             required: [http]
@@ -4440,7 +4447,13 @@ components:
       oneOf:
         - properties:
             kind:
-              enum: [codex_subscription, claude_subscription, grok_subscription]
+              enum:
+                [
+                  codex_subscription,
+                  claude_subscription,
+                  grok_subscription,
+                  antigravity_subscription,
+                ]
           not:
             required: [http]
         - properties:
@@ -7100,7 +7113,7 @@ components:
     AuthorizationFlow:
       type: string
       enum: [browser, device_code, authorization_code]
-      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai).
+      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai). Antigravity supports browser authorization with Google OAuth and a loopback callback.
     AuthorizationStartRequest:
       type: object
       required: [flow]
@@ -7138,7 +7151,7 @@ components:
           $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
         provider:
           type: string
-          enum: [openai_codex, claude_code, xai_grok]
+          enum: [openai_codex, claude_code, xai_grok, antigravity]
         status:
           type: string
           enum: [pending, completed, cancelled, expired, failed]

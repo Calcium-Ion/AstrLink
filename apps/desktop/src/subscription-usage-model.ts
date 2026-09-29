@@ -393,6 +393,7 @@ export function parseSubscriptionUsageReset(
 }
 
 const planTypeLabels: Record<SubscriptionProvider, Record<string, string>> = {
+  antigravity: {},
   openai_codex: {
     plus: "Plus",
     pro: "Pro 20×",

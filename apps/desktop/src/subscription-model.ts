@@ -1,4 +1,8 @@
-export type SubscriptionProvider = "openai_codex" | "claude_code" | "xai_grok";
+export type SubscriptionProvider =
+  | "openai_codex"
+  | "claude_code"
+  | "xai_grok"
+  | "antigravity";
 
 export type SubscriptionStatus =
   | "disconnected"
@@ -61,6 +65,7 @@ const providers = new Set<SubscriptionProvider>([
   "openai_codex",
   "claude_code",
   "xai_grok",
+  "antigravity",
 ]);
 
 /** Login transports each provider accepts; mirrors contract.AuthorizationFlow.SupportedBy. */
@@ -71,6 +76,7 @@ export const providerAuthorizationFlows: Record<
   openai_codex: ["browser", "device_code"],
   claude_code: ["authorization_code"],
   xai_grok: ["device_code"],
+  antigravity: ["browser"],
 };
 
 export function flowSupportedByProvider(

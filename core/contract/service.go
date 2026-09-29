@@ -20,34 +20,35 @@ type ServiceID string
 type ServiceKind string
 
 const (
-	ServiceKindCodexSubscription  ServiceKind = "codex_subscription"
-	ServiceKindClaudeSubscription ServiceKind = "claude_subscription"
-	ServiceKindGrokSubscription   ServiceKind = "grok_subscription"
-	ServiceKindOpenCodeGo         ServiceKind = "opencode_go"
-	ServiceKindOpenCodeZen        ServiceKind = "opencode_zen"
-	ServiceKindKimiCoding         ServiceKind = "kimi_coding"
-	ServiceKindGLMCoding          ServiceKind = "glm_coding"
-	ServiceKindMiniMaxCoding      ServiceKind = "minimax_coding"
-	ServiceKindNewAPI             ServiceKind = "newapi"
-	ServiceKindOpenAI             ServiceKind = "openai"
-	ServiceKindAnthropic          ServiceKind = "anthropic"
-	ServiceKindGemini             ServiceKind = "gemini"
-	ServiceKindOpenAICompatible   ServiceKind = "openai_compatible"
-	ServiceKindDeepSeek           ServiceKind = "deepseek"
-	ServiceKindQwen               ServiceKind = "qwen"
-	ServiceKindMoonshot           ServiceKind = "moonshot"
-	ServiceKindGLM                ServiceKind = "glm"
-	ServiceKindMiniMax            ServiceKind = "minimax"
-	ServiceKindDoubao             ServiceKind = "doubao"
-	ServiceKindXAI                ServiceKind = "xai"
-	ServiceKindCustom             ServiceKind = "custom"
+	ServiceKindCodexSubscription       ServiceKind = "codex_subscription"
+	ServiceKindClaudeSubscription      ServiceKind = "claude_subscription"
+	ServiceKindGrokSubscription        ServiceKind = "grok_subscription"
+	ServiceKindAntigravitySubscription ServiceKind = "antigravity_subscription"
+	ServiceKindOpenCodeGo              ServiceKind = "opencode_go"
+	ServiceKindOpenCodeZen             ServiceKind = "opencode_zen"
+	ServiceKindKimiCoding              ServiceKind = "kimi_coding"
+	ServiceKindGLMCoding               ServiceKind = "glm_coding"
+	ServiceKindMiniMaxCoding           ServiceKind = "minimax_coding"
+	ServiceKindNewAPI                  ServiceKind = "newapi"
+	ServiceKindOpenAI                  ServiceKind = "openai"
+	ServiceKindAnthropic               ServiceKind = "anthropic"
+	ServiceKindGemini                  ServiceKind = "gemini"
+	ServiceKindOpenAICompatible        ServiceKind = "openai_compatible"
+	ServiceKindDeepSeek                ServiceKind = "deepseek"
+	ServiceKindQwen                    ServiceKind = "qwen"
+	ServiceKindMoonshot                ServiceKind = "moonshot"
+	ServiceKindGLM                     ServiceKind = "glm"
+	ServiceKindMiniMax                 ServiceKind = "minimax"
+	ServiceKindDoubao                  ServiceKind = "doubao"
+	ServiceKindXAI                     ServiceKind = "xai"
+	ServiceKindCustom                  ServiceKind = "custom"
 )
 
 func (kind ServiceKind) Valid() bool {
 	switch kind {
 	case ServiceKindCodexSubscription, ServiceKindNewAPI, ServiceKindOpenAI,
 		ServiceKindAnthropic, ServiceKindGemini, ServiceKindOpenAICompatible,
-		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindGrokSubscription, ServiceKindOpenCodeGo,
+		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindGrokSubscription, ServiceKindAntigravitySubscription, ServiceKindOpenCodeGo,
 		ServiceKindOpenCodeZen, ServiceKindKimiCoding, ServiceKindGLMCoding, ServiceKindMiniMaxCoding,
 		ServiceKindDeepSeek, ServiceKindQwen, ServiceKindMoonshot, ServiceKindGLM, ServiceKindMiniMax, ServiceKindDoubao, ServiceKindXAI:
 		return true
@@ -57,13 +58,15 @@ func (kind ServiceKind) Valid() bool {
 }
 
 func (kind ServiceKind) IsSubscription() bool {
-	return kind == ServiceKindCodexSubscription || kind == ServiceKindClaudeSubscription || kind == ServiceKindGrokSubscription
+	return kind == ServiceKindCodexSubscription || kind == ServiceKindClaudeSubscription || kind == ServiceKindGrokSubscription || kind == ServiceKindAntigravitySubscription
 }
 
 func (kind ServiceKind) SubscriptionProvider() SubscriptionProvider {
 	switch kind {
 	case ServiceKindClaudeSubscription:
 		return SubscriptionProviderClaudeCode
+	case ServiceKindAntigravitySubscription:
+		return SubscriptionProviderAntigravity
 	case ServiceKindGrokSubscription:
 		return SubscriptionProviderXAIGrok
 	case ServiceKindCodexSubscription:

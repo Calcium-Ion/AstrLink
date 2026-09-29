@@ -976,6 +976,105 @@ describe("ServiceManager", () => {
     );
   });
 
+  it.each(["create", "list"] as const)(
+    "offers Antigravity browser authorization from the %s view",
+    async (view) => {
+      const service = parseService({
+        ...codexService,
+        id: "service_antigravity",
+        name: "Antigravity",
+        kind: "antigravity_subscription",
+        capabilities: [
+          {
+            protocol: "google.generate_content",
+            mode: "native",
+            streaming: true,
+          },
+          { protocol: "google.models", mode: "native", streaming: false },
+          { protocol: "openai.models", mode: "native", streaming: false },
+        ],
+        subscription: { provider: "antigravity", status: "disconnected" },
+      });
+      const authorizationURL = "https://accounts.google.com/o/oauth2/v2/auth";
+      bridgeMocks.createService.mockResolvedValue({ service, etag });
+      bridgeMocks.beginServiceAuthorization.mockResolvedValue({
+        kind: "session",
+        session: {
+          id: "authorization_antigravity",
+          provider: "antigravity",
+          status: "pending",
+          flow: "browser",
+          authorization_url: authorizationURL,
+          service_id: service.id,
+          expires_at: "2099-09-18T00:00:00Z",
+        },
+      });
+      await act(async () =>
+        root.render(
+          <ServiceManager
+            catalogError={null}
+            catalogStatus="ready"
+            isReady
+            onDirtyChange={() => {}}
+            onRefresh={() => {}}
+            onServiceRemoved={() => {}}
+            onServiceSaved={() => {}}
+            onViewChange={() => {}}
+            protocols={[]}
+            services={view === "list" ? [service] : []}
+            view={{ kind: view }}
+          />,
+        ),
+      );
+      if (view === "create") {
+        await chooseServiceKind("Antigravity 订阅");
+        expect(
+          container.querySelector<HTMLInputElement>("#service-name")?.value,
+        ).toBe("Antigravity");
+      } else {
+        expect(container.textContent).toContain("Antigravity OAuth");
+        await openServiceOverflow("Antigravity");
+        await chooseMenuItem("登录");
+      }
+      expect(
+        document.querySelector('[role="radio"][aria-label="Device Code"]'),
+      ).toBeNull();
+      expect(
+        document.querySelector('[role="radio"][value="browser"]'),
+      ).not.toBeNull();
+      if (view === "create") {
+        await act(async () =>
+          container
+            .querySelector("form")!
+            .dispatchEvent(
+              new Event("submit", { bubbles: true, cancelable: true }),
+            ),
+        );
+        expect(bridgeMocks.createService).toHaveBeenCalledWith({
+          name: "Antigravity",
+          kind: "antigravity_subscription",
+          enabled: true,
+          responses_websocket_enabled: false,
+          models: [],
+        });
+      } else {
+        const start = [...document.querySelectorAll("button")].find(
+          (button) => button.textContent === "开始登录",
+        );
+        expect(start?.disabled).toBe(false);
+        await act(async () => start!.click());
+      }
+      expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
+        service.id,
+        "browser",
+      );
+      // The native begin command opens the browser; React reports its result.
+      expect(notifyMocks.success).toHaveBeenCalledWith(
+        expect.stringContaining("Antigravity"),
+      );
+    },
+  );
+
   it("creates a Grok subscription that only offers Device Code", async () => {
     const grok: Service = {
       ...codexService,

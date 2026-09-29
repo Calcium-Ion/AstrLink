@@ -942,7 +942,9 @@
     "riskRestored": "Scheduling restored for “{{name}}”.",
     "riskRestoreFailed": "Could not restore scheduling.",
     "riskSuspendedSummary_one": "{{count}} subscription account is paused by an upstream risk signal.",
-    "riskSuspendedSummary_other": "{{count}} subscription accounts are paused by upstream risk signals."
+    "riskSuspendedSummary_other": "{{count}} subscription accounts are paused by upstream risk signals.",
+    "antigravityHint": "Connect Antigravity with browser authorization using the native Gemini protocol.",
+    "googleAccount": "Google account {{hint}}"
   },
   "models": {
     "deleteNamed": "Delete {{label}}",
@@ -1063,7 +1065,8 @@
     "glm": "GLM (Zhipu) API",
     "minimax": "MiniMax API",
     "doubao": "Doubao (Volcengine Ark) API",
-    "xai": "xAI (Grok) API"
+    "xai": "xAI (Grok) API",
+    "antigravity_subscription": "Antigravity subscription"
   },
   "subscription": {
     "tag": "Sub",

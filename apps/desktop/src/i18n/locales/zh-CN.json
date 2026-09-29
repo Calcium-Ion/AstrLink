@@ -942,7 +942,9 @@
     "riskRestored": "已恢复“{{name}}”的调度。",
     "riskRestoreFailed": "无法恢复调度。",
     "riskSuspendedSummary_one": "{{count}} 个订阅账号因上游风控已暂停调度。",
-    "riskSuspendedSummary_other": "{{count}} 个订阅账号因上游风控已暂停调度。"
+    "riskSuspendedSummary_other": "{{count}} 个订阅账号因上游风控已暂停调度。",
+    "antigravityHint": "通过浏览器授权连接 Antigravity，使用 Gemini 原生协议。",
+    "googleAccount": "Google 账号 {{hint}}"
   },
   "models": {
     "deleteNamed": "删除 {{label}}",
@@ -1063,7 +1065,8 @@
     "glm": "智谱 GLM API",
     "minimax": "MiniMax API",
     "doubao": "豆包（火山方舟） API",
-    "xai": "xAI（Grok） API"
+    "xai": "xAI（Grok） API",
+    "antigravity_subscription": "Antigravity 订阅"
   },
   "subscription": {
     "tag": "订阅",

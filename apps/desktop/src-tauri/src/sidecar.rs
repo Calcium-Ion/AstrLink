@@ -4446,7 +4446,7 @@ fn validate_resource_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-const SUBSCRIPTION_PROVIDERS: &[&str] = &["openai_codex", "claude_code", "xai_grok"];
+const SUBSCRIPTION_PROVIDERS: &[&str] = &["openai_codex", "claude_code", "xai_grok", "antigravity"];
 const AUTHORIZATION_SESSION_STATUSES: &[&str] =
     &["pending", "completed", "cancelled", "expired", "failed"];
 const AUTHORIZATION_FLOWS: &[&str] = &["browser", "device_code", "authorization_code"];
@@ -4638,6 +4638,9 @@ fn parse_authorization_session_value(
     validate_authorization_flow(flow)?;
 
     if (provider == "claude_code") != (flow == "authorization_code") {
+        return Err("authorization flow is unsupported by provider".to_string());
+    }
+    if provider == "antigravity" && flow != "browser" {
         return Err("authorization flow is unsupported by provider".to_string());
     }
     if provider == "xai_grok" && flow != "device_code" {
@@ -5579,6 +5582,22 @@ mod tests {
         browser["flow"] = serde_json::json!("browser");
         browser["authorization_url"] = serde_json::json!("https://auth.openai.com/oauth/authorize");
         assert!(parse_authorization_session_value(&browser).is_ok());
+
+        let mut antigravity = browser.clone();
+        antigravity["provider"] = serde_json::json!("antigravity");
+        antigravity["authorization_url"] =
+            serde_json::json!("https://accounts.google.com/o/oauth2/v2/auth");
+        assert!(parse_authorization_session_value(&antigravity).is_ok());
+        antigravity["flow"] = serde_json::json!("device_code");
+        antigravity
+            .as_object_mut()
+            .unwrap()
+            .remove("authorization_url");
+        antigravity["device_code"] = serde_json::json!({
+            "verification_url": "https://accounts.google.com/device",
+            "user_code": "ABCD-EFGH"
+        });
+        assert!(parse_authorization_session_value(&antigravity).is_err());
 
         let mut claude = browser.clone();
         claude["provider"] = serde_json::json!("claude_code");

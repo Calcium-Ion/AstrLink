@@ -25,6 +25,8 @@ type AccountTokens struct {
 	TokenType        string    `json:"token_type,omitempty"`
 	Scope            string    `json:"scope,omitempty"`
 	AccountID        string    `json:"account_id,omitempty"`
+	ProjectID        string    `json:"project_id,omitempty"`
+	PlanType         string    `json:"plan_type,omitempty"`
 	ExpiresAt        time.Time `json:"expires_at"`
 	RawIDTokenClaims string    `json:"-"`
 }

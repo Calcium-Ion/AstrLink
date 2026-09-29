@@ -40,6 +40,9 @@ type Manager struct {
 	grokSessions            *accountauth.SessionManager
 	grokTokens              *accountauth.TokenSource
 	grokConfig              accountauth.OAuthConfig
+	antigravitySessions     *accountauth.SessionManager
+	antigravityTokens       *accountauth.TokenSource
+	antigravityConfig       accountauth.OAuthConfig
 	provider                *CodexProvider
 	now                     func() time.Time
 	newID                   func() (contract.SubscriptionAccountID, error)
@@ -101,6 +104,11 @@ func NewManager(accounts AccountStore, credentials accountauth.AccountCredential
 	manager.grokSessions = accountauth.NewSessionManager(grok, credentials, manager.persistAuthorizedTokens)
 	manager.grokTokens = accountauth.NewTokenSource(credentials, accountauth.NewTokenClient(grok), grok.RefreshSkew, now)
 	manager.grokTokens.SetHooks(manager.onTokenRotated, manager.onInvalidGrant)
+	antigravity := providerOverride(overrides, contract.SubscriptionProviderAntigravity, 2, oauth)
+	manager.antigravityConfig = antigravity
+	manager.antigravitySessions = accountauth.NewSessionManager(antigravity, credentials, manager.persistAuthorizedTokens)
+	manager.antigravityTokens = accountauth.NewTokenSource(credentials, accountauth.NewTokenClient(antigravity), antigravity.RefreshSkew, now)
+	manager.antigravityTokens.SetHooks(manager.onTokenRotated, manager.onInvalidGrant)
 	return manager, nil
 }
 
@@ -138,6 +146,8 @@ func (manager *Manager) sessionsFor(provider contract.SubscriptionProvider) *acc
 		return manager.claudeSessions
 	case contract.SubscriptionProviderXAIGrok:
 		return manager.grokSessions
+	case contract.SubscriptionProviderAntigravity:
+		return manager.antigravitySessions
 	default:
 		return manager.sessions
 	}
@@ -149,25 +159,29 @@ func (manager *Manager) tokensFor(provider contract.SubscriptionProvider) *accou
 		return manager.claudeTokens
 	case contract.SubscriptionProviderXAIGrok:
 		return manager.grokTokens
+	case contract.SubscriptionProviderAntigravity:
+		return manager.antigravityTokens
 	default:
 		return manager.tokens
 	}
 }
 
 func (manager *Manager) allSessions() []*accountauth.SessionManager {
-	return []*accountauth.SessionManager{manager.sessions, manager.claudeSessions, manager.grokSessions}
+	return []*accountauth.SessionManager{manager.sessions, manager.claudeSessions, manager.grokSessions, manager.antigravitySessions}
 }
 
 func (manager *Manager) invalidateTokens(id contract.ServiceID) {
 	manager.tokens.Invalidate(id)
 	manager.claudeTokens.Invalidate(id)
 	manager.grokTokens.Invalidate(id)
+	manager.antigravityTokens.Invalidate(id)
 }
 
 func (manager *Manager) activateTokens(id contract.ServiceID) {
 	manager.tokens.Activate(id)
 	manager.claudeTokens.Activate(id)
 	manager.grokTokens.Activate(id)
+	manager.antigravityTokens.Activate(id)
 }
 
 func (manager *Manager) AuthorizationBoundary() string {
@@ -439,6 +453,8 @@ func (manager *Manager) Usage(ctx context.Context, id contract.ServiceID) (contr
 		usage, err = manager.claudeUsage(ctx, tokens)
 	case contract.SubscriptionProviderXAIGrok:
 		usage, err = manager.grokUsage(ctx, tokens)
+	case contract.SubscriptionProviderAntigravity:
+		usage, err = manager.antigravityUsage(ctx, tokens)
 	default:
 		usage, err = manager.provider.Usage(ctx, tokens)
 	}
@@ -520,6 +536,8 @@ func usageProviderLabel(provider contract.SubscriptionProvider) string {
 		return "claude"
 	case contract.SubscriptionProviderXAIGrok:
 		return "grok"
+	case contract.SubscriptionProviderAntigravity:
+		return "antigravity"
 	default:
 		return "codex"
 	}
@@ -541,6 +559,8 @@ func (manager *Manager) APIBaseURLFor(provider contract.SubscriptionProvider) st
 		return manager.claudeConfig.APIBaseURL
 	case contract.SubscriptionProviderXAIGrok:
 		return manager.grokConfig.APIBaseURL
+	case contract.SubscriptionProviderAntigravity:
+		return manager.antigravityConfig.APIBaseURL
 	default:
 		return manager.APIBaseURL()
 	}

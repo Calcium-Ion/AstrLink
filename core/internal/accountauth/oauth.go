@@ -66,6 +66,9 @@ type OAuthConfig struct {
 	TokenURL              string
 	CodeRedirectURI       string
 	ClientID              string
+	ClientSecret          string
+	ProjectBaseURL        string
+	UserInfoURL           string
 	Issuer                string
 	APIBaseURL            string
 	Scopes                []string
@@ -101,6 +104,9 @@ func (config OAuthConfig) normalized() OAuthConfig {
 	}
 	if config.Provider == contract.SubscriptionProviderXAIGrok {
 		config = normalizeGrokConfig(config)
+	}
+	if config.Provider == contract.SubscriptionProviderAntigravity {
+		config = normalizeAntigravityConfig(config)
 	}
 	if strings.TrimSpace(config.ClientID) == "" {
 		config.ClientID = DefaultCodexOAuthClientID
@@ -216,7 +222,11 @@ func (client *TokenClient) ExchangeCode(ctx context.Context, code, verifier, red
 			values.Set("state", parts[1])
 		}
 	}
-	return client.requestToken(ctx, values)
+	tokens, err := client.requestToken(ctx, values)
+	if err == nil && client.config.Provider == contract.SubscriptionProviderAntigravity {
+		err = client.completeAntigravityAccount(ctx, &tokens)
+	}
+	return tokens, err
 }
 
 func (client *TokenClient) Refresh(ctx context.Context, refreshToken string) (AccountTokens, error) {
@@ -228,6 +238,9 @@ func (client *TokenClient) Refresh(ctx context.Context, refreshToken string) (Ac
 }
 
 func (client *TokenClient) requestToken(ctx context.Context, values url.Values) (AccountTokens, error) {
+	if client.config.ClientSecret != "" {
+		values.Set("client_secret", client.config.ClientSecret)
+	}
 	endpoint := strings.TrimRight(client.config.Issuer, "/") + "/oauth/token"
 	if client.config.TokenURL != "" {
 		endpoint = client.config.TokenURL
@@ -252,7 +265,9 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	}
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Accept", "application/json")
-	if client.config.Provider == contract.SubscriptionProviderXAIGrok {
+	if client.config.Provider == contract.SubscriptionProviderAntigravity {
+		request.Header.Set("User-Agent", AntigravityUserAgent())
+	} else if client.config.Provider == contract.SubscriptionProviderXAIGrok {
 		applyGrokOAuthHeaders(request.Header, client.config.ModelsClientVersion)
 	} else if client.config.Provider == contract.SubscriptionProviderOpenAICodex {
 		ApplyCodexAuthIdentity(request.Header, client.config.Identities.CodexIdentityFor(ctx, client.config.ModelsClientVersion))

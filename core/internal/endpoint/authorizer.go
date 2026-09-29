@@ -95,6 +95,8 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 		official := settings.OfficialClientPassthrough &&
 			accountauth.ClientClassFrom(ctx) == accountauth.ClientClassOfficial
 		switch endpoint.Kind {
+		case contract.ServiceKindAntigravitySubscription:
+			accountauth.ApplyAntigravityHeaders(headers, tokens)
 		case contract.ServiceKindClaudeSubscription:
 			if official {
 				accountauth.ApplyClaudeOfficialForwardHeaders(headers, tokens, clientHeaders)

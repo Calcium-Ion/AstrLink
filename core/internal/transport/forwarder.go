@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
+	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 )
 
@@ -144,6 +145,13 @@ func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*ht
 	removeHopByHopHeaders(outbound.Header)
 	removeInboundCredentials(outbound.Header)
 	overlayHeaders(outbound.Header, target.RequestHeaders)
+	antigravityMode := ""
+	if target.Service.Kind == contract.ServiceKindAntigravitySubscription {
+		antigravityMode, err = providerapi.AntigravityRequest(outbound, target.RequestHeaders.Get(providerapi.AntigravityProjectHeader))
+		if err != nil {
+			return nil, &TargetError{err: err}
+		}
+	}
 	removeHopByHopHeaders(outbound.Header)
 	removeGatewayHeaders(outbound.Header)
 
@@ -176,6 +184,12 @@ func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*ht
 	}
 	response.Header = responseHeaders
 	response.Body = body
+	if antigravityMode != "" {
+		if err := providerapi.AntigravityResponse(response, antigravityMode); err != nil {
+			_ = response.Body.Close()
+			return nil, &UpstreamError{err: err}
+		}
+	}
 	return response, nil
 }
 
