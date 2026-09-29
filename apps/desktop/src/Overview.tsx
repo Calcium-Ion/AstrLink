@@ -21,6 +21,7 @@ import {
   RefreshCw,
   RotateCcw,
   SlidersHorizontal,
+  SquareStack,
 } from "@/components/icons";
 
 import { ActionHint } from "@/components/ActionHint";
@@ -356,7 +357,7 @@ export function Overview({
                 />
               </UsageMetric>
               <UsageMetric
-                icon={<RefreshCw />}
+                icon={<SquareStack />}
                 label={t("overview.cacheHits")}
                 metric={{
                   text: cacheHitMetric(totals, usage.status),
