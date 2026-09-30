@@ -1125,6 +1125,8 @@
     "xaiDescription": "xAI platform API key with usage-based billing; supports Grok Chat, Responses, and model discovery."
   },
   "usage": {
+    "allLimits": "All quotas",
+    "viewAllLimits": "View all ({{count}})",
     "hours5": "5 hours",
     "days7": "7 days",
     "daily": "Daily",

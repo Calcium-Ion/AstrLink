@@ -496,7 +496,7 @@ const (
 	maxUsageLimitNameLength        = 128
 	maxUsageFeatureLength          = 128
 	maxUsageBalanceLength          = 32
-	maxUsageAdditionalLimits       = 16
+	maxUsageAdditionalLimits       = 256
 	maxUsageUsedPercent            = 1000
 	maxUsageResetCredits           = 1000
 	maxUsageWindowSeconds    int64 = 366 * 24 * 3600

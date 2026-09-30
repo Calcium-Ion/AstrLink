@@ -3,6 +3,7 @@
 // Avatar/Combine variants that pull in every other brand, `@lobehub/ui`, and
 // `antd-style`, which nearly doubles the production bundle.
 export { default as AnthropicMono } from "@lobehub/icons/es/Anthropic/components/Mono";
+export { default as AntigravityColor } from "@lobehub/icons/es/Antigravity/components/Color";
 export { default as ByteDanceColor } from "@lobehub/icons/es/ByteDance/components/Color";
 export { default as ClaudeCodeColor } from "@lobehub/icons/es/ClaudeCode/components/Color";
 export { default as ClaudeColor } from "@lobehub/icons/es/Claude/components/Color";

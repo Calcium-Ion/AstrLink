@@ -2202,13 +2202,17 @@ describe("ServiceManager", () => {
     expect(weeklyQuota?.getAttribute("aria-valuetext")).toBe("剩余 88%");
     expect(container.textContent).toMatch(/重置/);
     expect(container.textContent).toContain("重置 ×2");
-    expect(container.textContent).toContain("GPT-5.3-Codex-Spark");
-    expect(container.textContent).toContain("gpt-reserve");
+    expect(container.textContent).not.toContain("GPT-5.3-Codex-Spark");
+    expect(container.textContent).not.toContain("gpt-reserve");
+    expect(container.textContent).not.toContain("查看全部");
+    expect(
+      container.querySelector('button[aria-label="查看全部（5）"]'),
+    ).not.toBeNull();
     expect(
       container.querySelectorAll('[data-testid="subscription-usage"]'),
     ).toHaveLength(1);
     expect(container.querySelector('[data-tone="ok"]')).not.toBeNull();
-    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(5);
+    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(2);
   });
 
   it("shows extra limits inline and confirms a manual reset", async () => {
@@ -2266,15 +2270,13 @@ describe("ServiceManager", () => {
     });
 
     const extras = container.querySelector<HTMLElement>(
-      '[data-testid="subscription-usage-extras"]',
+      '[data-testid="subscription-usage"]',
     );
     if (!extras) throw new Error("missing extra limits");
     expect(extras.textContent).toContain("GPT-5.3-Codex-Spark");
     expect(extras.textContent).toContain("5 小时");
     expect(
-      container.querySelector(
-        '[data-testid="subscription-usage-extras"] button',
-      ),
+      container.querySelector('[data-testid="subscription-usage"] button'),
     ).toBeNull();
 
     const reset = container.querySelector<HTMLButtonElement>(

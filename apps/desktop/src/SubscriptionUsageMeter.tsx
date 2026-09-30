@@ -1,8 +1,14 @@
+import { useId } from "react";
 import { RefreshCw, RotateCcw } from "@/components/icons";
 import { useT } from "./i18n";
 
 import { IconButton } from "@/components/IconButton";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { SubscriptionQuotaMeter } from "@/components/SubscriptionQuotaMeter";
 import { HelpDisclosure } from "@/components/HelpDisclosure";
 import { UsageMeterPlaceholder } from "@/components/UsageMeter";
@@ -15,7 +21,6 @@ import {
   usageWindowTone,
   usageBarPercent,
   windowLabel,
-  type AdditionalRateLimit,
   type RateLimitWindow,
   type SubscriptionUsage,
   type UsageQuota,
@@ -39,6 +44,8 @@ export function SubscriptionUsageMeter({
   usage?: SubscriptionUsage;
 }) {
   const t = useT();
+  const titleId = useId();
+  const summaryId = `${titleId}-summary`;
   if (status === "loading" && !usage) {
     return (
       <div
@@ -91,26 +98,76 @@ export function SubscriptionUsageMeter({
   }
   if (!usage) return null;
 
-  const extras = usage.additional_rate_limits ?? [];
+  const windows = [
+    { limit_name: "", primary: usage.primary, secondary: usage.secondary },
+    ...(usage.additional_rate_limits ?? []),
+  ]
+    .flatMap((limit, index) =>
+      (["primary", "secondary"] as const).flatMap((kind) => {
+        const window = limit[kind];
+        return window
+          ? [
+              {
+                key: `${index}-${kind}`,
+                name: limit.limit_name,
+                window,
+                isSecondary: kind === "secondary",
+                limitReached: index === 0 ? usage.limit_reached : undefined,
+              },
+            ]
+          : [];
+      }),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.window.used_percent > 0) - Number(a.window.used_percent > 0),
+    );
+  const summary = windows
+    .slice(0, 2)
+    .map(({ key, ...row }) => (
+      <UsageWindowRow
+        key={key}
+        {...row}
+        compact={windows.length > 1}
+        now={now}
+      />
+    ));
   return (
     <div className="grid min-w-0 gap-2" data-testid="subscription-usage">
-      {usage.primary || usage.secondary ? (
-        <div className="grid gap-2">
-          <UsageWindowRow
-            compact={Boolean(usage.primary && usage.secondary)}
-            limitReached={usage.limit_reached}
-            now={now}
-            window={usage.primary}
-            isSecondary={false}
-          />
-          <UsageWindowRow
-            compact={Boolean(usage.primary && usage.secondary)}
-            limitReached={usage.limit_reached}
-            now={now}
-            window={usage.secondary}
-            isSecondary
-          />
-        </div>
+      {windows.length > 2 ? (
+        <Popover>
+          <div className="relative min-w-0">
+            <div id={summaryId} className="grid gap-2">
+              {summary}
+            </div>
+            <PopoverTrigger asChild>
+              <Button
+                aria-label={t("usage.viewAllLimits", { count: windows.length })}
+                aria-describedby={summaryId}
+                title={t("usage.viewAllLimits", { count: windows.length })}
+                className="absolute inset-0 h-full w-full cursor-pointer rounded-sm p-0 hover:bg-transparent hover:ring-1 hover:ring-border"
+                variant="ghost"
+                type="button"
+              />
+            </PopoverTrigger>
+          </div>
+          <PopoverContent
+            align="start"
+            className="w-80 max-h-[min(24rem,var(--radix-popover-content-available-height))]"
+            aria-labelledby={titleId}
+          >
+            <h3 id={titleId} className="mb-3 text-sm font-semibold">
+              {t("usage.allLimits")}
+            </h3>
+            <div className="grid gap-3">
+              {windows.map(({ key, ...row }) => (
+                <UsageWindowRow key={key} {...row} now={now} />
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : windows.length > 0 ? (
+        summary
       ) : usage.quota ? (
         <QuotaRow
           limitReached={usage.limit_reached}
@@ -119,18 +176,6 @@ export function SubscriptionUsageMeter({
         />
       ) : usage.limit_reached ? (
         <p className="text-micro text-destructive">{t("usage.limitReached")}</p>
-      ) : null}
-      {extras.length > 0 ? (
-        <div className="grid gap-2.5" data-testid="subscription-usage-extras">
-          {extras.map((extra) => (
-            <div
-              className="grid min-w-0 gap-2 border-t pt-2"
-              key={extra.limit_name}
-            >
-              <AdditionalLimitRows extra={extra} now={now} />
-            </div>
-          ))}
-        </div>
       ) : null}
     </div>
   );
@@ -169,34 +214,6 @@ export function SubscriptionResetButton({
         ? t("usage.resetting")
         : t("usage.resetCount", { count: resetCount })}
     </Button>
-  );
-}
-
-function AdditionalLimitRows({
-  extra,
-  now,
-}: {
-  extra: AdditionalRateLimit;
-  now: Date;
-}) {
-  return (
-    <>
-      <p className="text-micro font-medium text-muted-foreground break-words [overflow-wrap:anywhere]">
-        {extra.limit_name}
-      </p>
-      <UsageWindowRow
-        compact={Boolean(extra.primary && extra.secondary)}
-        now={now}
-        window={extra.primary}
-        isSecondary={false}
-      />
-      <UsageWindowRow
-        compact={Boolean(extra.primary && extra.secondary)}
-        now={now}
-        window={extra.secondary}
-        isSecondary
-      />
-    </>
   );
 }
 
@@ -260,17 +277,24 @@ function UsageWindowRow({
   compact = false,
   isSecondary,
   limitReached,
+  name,
   now,
   window,
 }: {
   compact?: boolean;
   isSecondary: boolean;
   limitReached?: boolean;
+  name?: string;
   now: Date;
   window?: RateLimitWindow;
 }) {
   if (!window) return null;
-  const label = windowLabel(window.limit_window_seconds, isSecondary);
+  const period = windowLabel(window.limit_window_seconds, isSecondary);
+  const label = name
+    ? window.limit_window_seconds || isSecondary
+      ? `${name} · ${period}`
+      : name
+    : period;
   const reset = formatResetCountdown(window, now);
   const tone = usageWindowTone(window.used_percent, limitReached);
   const usedPercent = usageBarPercent(window.used_percent);

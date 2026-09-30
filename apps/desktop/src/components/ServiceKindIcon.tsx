@@ -1,5 +1,6 @@
 import {
   AnthropicMono,
+  AntigravityColor,
   ClaudeColor,
   CodexColor,
   DeepSeekColor,
@@ -26,6 +27,7 @@ type Mark =
   | "codex"
   | "claude"
   | "grok"
+  | "antigravity"
   | "opencode"
   | "kimi"
   | "zhipu"
@@ -43,6 +45,7 @@ const kindMarks: Record<ServiceKind, Mark> = {
   codex_subscription: "codex",
   claude_subscription: "claude",
   grok_subscription: "grok",
+  antigravity_subscription: "antigravity",
   opencode_go: "opencode",
   opencode_zen: "opencode",
   moonshot: "kimi",
@@ -92,7 +95,8 @@ function renderMark(mark: Mark, size: number): ReactNode {
       return <OpenAIMono size={size} />;
     case "anthropic":
       return <AnthropicMono size={size} />;
-    case "antigravity_subscription":
+    case "antigravity":
+      return <AntigravityColor size={size} />;
     case "gemini":
       return <GeminiColor size={size} />;
     case "deepseek":

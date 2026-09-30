@@ -7438,7 +7438,7 @@ components:
           $ref: "#/components/schemas/RateLimitWindow"
         additional_rate_limits:
           type: array
-          maxItems: 16
+          maxItems: 256
           items:
             $ref: "#/components/schemas/AdditionalRateLimit"
         credits:

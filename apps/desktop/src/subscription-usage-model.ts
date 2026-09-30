@@ -300,11 +300,11 @@ export function parseSubscriptionUsage(value: unknown): SubscriptionUsage {
   if (Object.hasOwn(usage, "additional_rate_limits")) {
     if (
       !Array.isArray(usage.additional_rate_limits) ||
-      usage.additional_rate_limits.length > 16
+      usage.additional_rate_limits.length > 256
     ) {
       invalid(
         "$.additional_rate_limits",
-        "expected an array with at most 16 items",
+        "expected an array with at most 256 items",
       );
     }
     parsed.additional_rate_limits = usage.additional_rate_limits.map(

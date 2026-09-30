@@ -1125,6 +1125,8 @@
     "xaiDescription": "xAI 开放平台 API Key，按量付费；支持 Grok Chat、Responses 与模型列表。"
   },
   "usage": {
+    "allLimits": "全部额度",
+    "viewAllLimits": "查看全部（{{count}}）",
     "hours5": "5 小时",
     "days7": "7 天",
     "daily": "每日",

@@ -19,6 +19,7 @@ import (
 func TestAntigravityAuthorizedForwarding(t *testing.T) {
 	const payload = `{"contents":[{"role":"user","parts":[{"text":"Explain AstrLink"}]}]}`
 	const gemini = `{"candidates":[{"content":{"parts":[{"text":"reply"}]}}]}`
+	const catalog = `{"models":{"gemini-test":{"displayName":"Gemini"},"chat_20706":{},"tab_flash_lite_preview":{},"gemini-2.5-flash-thinking":{},"gemini-2.5-pro":{}}}`
 	for _, tt := range []struct {
 		name, method, path, upstreamPath, response, contentType, want string
 		status                                                        int
@@ -28,9 +29,9 @@ func TestAntigravityAuthorizedForwarding(t *testing.T) {
 		{"stream", "POST", "/v1beta/models/gemini-test:streamGenerateContent?alt=sse", "/v1internal:streamGenerateContent",
 			"data: {\"response\":" + gemini + "}\n\ndata: [DONE]\n\n", "text/event-stream", "data: " + gemini + "\n\n", 200},
 		{"openai models", "GET", "/v1/models", "/v1internal:fetchAvailableModels",
-			`{"models":{"gemini-test":{"displayName":"Gemini"}}}`, "application/json", `"id":"gemini-test"`, 200},
+			catalog, "application/json", `"id":"gemini-test"`, 200},
 		{"google models", "GET", "/v1beta/models", "/v1internal:fetchAvailableModels",
-			`{"models":{"gemini-test":{"displayName":"Gemini"}}}`, "application/json", `"name":"models/gemini-test"`, 200},
+			catalog, "application/json", `"name":"models/gemini-test"`, 200},
 		{"upstream failure", "POST", "/v1beta/models/gemini-test:generateContent", "/v1internal:generateContent",
 			`{"error":{"code":429}}`, "application/json", `{"error":{"code":429}}`, 429},
 	} {
@@ -104,6 +105,18 @@ func TestAntigravityAuthorizedForwarding(t *testing.T) {
 			body, err := io.ReadAll(response.Body)
 			if err != nil || response.StatusCode != tt.status || !strings.Contains(string(body), tt.want) {
 				t.Fatalf("response status=%d body=%s err=%v", response.StatusCode, body, err)
+			}
+			if tt.method == "GET" {
+				for _, hidden := range []string{"chat_20706", "tab_flash_lite_preview"} {
+					if strings.Contains(string(body), hidden) {
+						t.Errorf("model list includes non-chat model %q", hidden)
+					}
+				}
+				for _, model := range []string{"gemini-2.5-flash-thinking", "gemini-2.5-pro"} {
+					if !strings.Contains(string(body), model) {
+						t.Errorf("model list dropped %q", model)
+					}
+				}
 			}
 		})
 	}

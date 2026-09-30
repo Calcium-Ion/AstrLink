@@ -98,7 +98,7 @@ func TestCodingPlanSurfacesAcceptSavedAndDocumentedBases(t *testing.T) {
 					t.Fatal(err)
 				}
 				incoming, _ := url.Parse(tt.path)
-				target := transport.JoinTargetURL(BaseURL(tt.kind, tt.protocol, base), RequestURL(tt.kind, tt.protocol, incoming))
+				target := transport.JoinTargetURL(providerapi.BaseURL(tt.kind, tt.protocol, base), providerapi.RequestURL(tt.kind, tt.protocol, incoming))
 				if target.String() != tt.want {
 					t.Fatalf("target = %s, want %s", target, tt.want)
 				}
@@ -112,17 +112,17 @@ func TestKimiCodingAuthFollowsProtocolForEitherSavedScheme(t *testing.T) {
 		{Scheme: contract.AuthSchemeBearer},
 		{Scheme: contract.AuthSchemeAnthropicAPIKey},
 	} {
-		if got := Auth(contract.ServiceKindKimiCoding, contract.ProtocolAnthropicMessages, configured); got.Scheme != contract.AuthSchemeAnthropicAPIKey {
+		if got := providerapi.Auth(contract.ServiceKindKimiCoding, contract.ProtocolAnthropicMessages, configured); got.Scheme != contract.AuthSchemeAnthropicAPIKey {
 			t.Fatalf("Messages auth = %#v", got)
 		}
 		for _, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIChat, contract.ProtocolOpenAIModels} {
-			if got := Auth(contract.ServiceKindKimiCoding, protocol, configured); got.Scheme != contract.AuthSchemeBearer {
+			if got := providerapi.Auth(contract.ServiceKindKimiCoding, protocol, configured); got.Scheme != contract.AuthSchemeBearer {
 				t.Fatalf("%s auth = %#v", protocol, got)
 			}
 		}
 	}
 	custom := contract.ServiceAuth{Scheme: contract.AuthSchemeCustomHeader, HeaderName: "X-Provider-Key"}
-	if got := Auth(contract.ServiceKindKimiCoding, contract.ProtocolOpenAIChat, custom); got != custom {
+	if got := providerapi.Auth(contract.ServiceKindKimiCoding, contract.ProtocolOpenAIChat, custom); got != custom {
 		t.Fatalf("overrode custom auth: %#v", got)
 	}
 }

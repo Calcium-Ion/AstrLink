@@ -46,6 +46,30 @@ const snapshot = {
 };
 
 describe("subscription usage contract", () => {
+  it.each([17, 33, 256])("keeps all %i per-model quota windows", (count) => {
+    const usage = {
+      service_id: "service_antigravity",
+      fetched_at: snapshot.fetched_at,
+      additional_rate_limits: Array.from({ length: count }, (_, index) => ({
+        limit_name: `gemini-test-${index}`,
+        primary: { used_percent: 25 },
+      })),
+    };
+    expect(parseSubscriptionUsage(usage)).toEqual(usage);
+  });
+
+  it("rejects more than 256 quota windows", () => {
+    expect(() =>
+      parseSubscriptionUsage({
+        ...snapshot,
+        additional_rate_limits: Array.from(
+          { length: 257 },
+          () => snapshot.additional_rate_limits[0],
+        ),
+      }),
+    ).toThrow(/at most 256/);
+  });
+
   it("parses a sanitized official snapshot", () => {
     expect(parseSubscriptionUsage(snapshot)).toEqual(snapshot);
     expect(windowLabel(18_000, false)).toBe("5 小时");

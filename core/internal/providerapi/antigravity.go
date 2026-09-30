@@ -36,9 +36,10 @@ type AntigravityCatalog struct {
 func (catalog AntigravityCatalog) IDs() []string {
 	ids := make([]string, 0, len(catalog.Models))
 	for id := range catalog.Models {
-		if strings.TrimSpace(id) != "" {
-			ids = append(ids, id)
+		if strings.TrimSpace(id) == "" || strings.HasPrefix(id, "chat_") || strings.HasPrefix(id, "tab_") {
+			continue
 		}
+		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	return ids

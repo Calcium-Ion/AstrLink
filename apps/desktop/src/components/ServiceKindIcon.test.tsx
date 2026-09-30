@@ -25,6 +25,7 @@ describe("ServiceKindIcon", () => {
     ["newapi", "New API"],
     ["codex_subscription", "Codex 订阅"],
     ["grok_subscription", "Grok 订阅"],
+    ["antigravity_subscription", "Antigravity 订阅"],
     ["custom", "自定义 API"],
   ] as const)("renders a labeled icon for %s", async (kind, label) => {
     await act(async () => {
@@ -42,6 +43,7 @@ describe("ServiceKindIcon", () => {
     ["grok_subscription", true],
     ["codex_subscription", false],
     ["claude_subscription", false],
+    ["antigravity_subscription", false],
   ] as const)("reports whether %s shares its logo", (kind, shared) => {
     expect(kindMarkIsShared(kind)).toBe(shared);
   });
