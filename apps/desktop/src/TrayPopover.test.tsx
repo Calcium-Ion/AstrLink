@@ -101,6 +101,41 @@ describe("TrayPopoverPanel", () => {
     expect(bridge.trayAction).not.toHaveBeenCalled();
   });
 
+  it("opens the popover when the host snapshot includes Antigravity usage", async () => {
+    const snapshot = {
+      ...readyTrayState,
+      digest: {
+        ...readyTrayState.digest,
+        subscriptions: [
+          ...readyTrayState.digest.subscriptions,
+          {
+            name: "Antigravity",
+            kind: "antigravity_subscription",
+            windows: [
+              {
+                label: "claude-sonnet-4-6",
+                limit_window_seconds: null,
+                secondary: false,
+                used_percent: 0.01,
+                reset_at: null,
+              },
+            ],
+          },
+        ],
+      },
+    };
+    bridge.getTrayState.mockImplementation(async () =>
+      parseTrayState(snapshot),
+    );
+    bridge.trayPopoverResize.mockResolvedValue(undefined);
+
+    await act(async () => root.render(<TrayPopoverWindow />));
+
+    expect(container.querySelector('[data-slot="tray-panel"]')).not.toBeNull();
+    expect(container.textContent).toContain("Antigravity");
+    expect(container.textContent).toContain("claude-sonnet-4-6");
+  });
+
   it("lists running raw grants and revokes one", async () => {
     const running = {
       grant_id: "rawgrant_2222222222222222",

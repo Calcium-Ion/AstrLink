@@ -3,7 +3,10 @@ import {
   parseTrayPreferences,
   type TrayPreferences,
 } from "./preferences-model";
-import type { ServiceKind } from "./service-model";
+import {
+  subscriptionKinds as subscriptionServiceKinds,
+  type ServiceKind,
+} from "./service-model";
 
 /**
  * What the tray popover renders. Mirrors `TrayStateSnapshot` in
@@ -101,9 +104,7 @@ export interface TraySubscription {
 
 /** Plan-backed kinds the host lists; mirrors `SUBSCRIPTION_KINDS` in `tray.rs`. */
 const subscriptionKinds = new Set<ServiceKind>([
-  "codex_subscription",
-  "claude_subscription",
-  "grok_subscription",
+  ...subscriptionServiceKinds,
   "kimi_coding",
   "glm_coding",
   "minimax_coding",

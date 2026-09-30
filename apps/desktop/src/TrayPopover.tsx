@@ -19,6 +19,7 @@ import {
   X,
 } from "@/components/icons";
 import { IconButton } from "@/components/IconButton";
+import { Metric, MetricGroup } from "@/components/Metric";
 import { SectionKicker } from "@/components/SectionKicker";
 import { ServiceKindIcon } from "@/components/ServiceKindIcon";
 import { StatusDot, type StatusTone } from "@/components/StatusDot";
@@ -207,38 +208,6 @@ function HourlySparkline({ tokens, now }: { tokens: number[]; now: Date }) {
           />
         );
       })}
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  badge,
-}: {
-  label: string;
-  value: string;
-  badge?: string;
-}) {
-  return (
-    <div className="min-w-0 space-y-1 border-l pl-3 first:border-l-0 first:pl-0">
-      <div
-        className="truncate text-2xl leading-8 font-semibold tracking-tight tabular-nums"
-        title={value}
-      >
-        {value}
-      </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-muted-foreground">
-        <span className="truncate">{label}</span>
-        {badge ? (
-          <Badge
-            className="border-destructive/30 text-destructive"
-            variant="outline"
-          >
-            {badge}
-          </Badge>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -571,7 +540,17 @@ export function TrayPopoverPanel({
           {showToday ? (
             <div className="grid gap-3">
               <div className="flex items-center justify-between gap-2">
-                <SectionKicker>{t("tray.today")}</SectionKicker>
+                <div className="flex items-center gap-2">
+                  <SectionKicker>{t("tray.today")}</SectionKicker>
+                  {usage.today && digest?.today && digest.today.failed > 0 ? (
+                    <Badge
+                      className="border-destructive/30 text-destructive"
+                      variant="outline"
+                    >
+                      {t("tray.failedCount", { count: digest.today.failed })}
+                    </Badge>
+                  ) : null}
+                </div>
                 <div className="flex items-center gap-1 text-micro text-muted-foreground">
                   {digestAt ? (
                     <span>
@@ -596,33 +575,32 @@ export function TrayPopoverPanel({
                   {t("tray.noCallsToday")}
                 </p>
               ) : (
-                <div className="grid auto-cols-fr grid-flow-col gap-3">
+                <MetricGroup className="auto-cols-fr grid-flow-col grid-cols-none rounded-md [overflow-wrap:anywhere] @min-[640px]/workspace-surface:grid-cols-none">
                   {usage.today && digest.today ? (
                     <>
-                      <Stat
-                        badge={
-                          digest.today.failed > 0
-                            ? t("tray.failedCount", {
-                                count: digest.today.failed,
-                              })
-                            : undefined
-                        }
+                      <Metric
                         label={t("tray.requests")}
+                        size="sm"
+                        title={digest.today.requests.toLocaleString()}
                         value={digest.today.requests.toLocaleString()}
                       />
-                      <Stat
+                      <Metric
                         label={t("tray.tokens")}
+                        size="sm"
+                        title={digest.today.total_tokens.toLocaleString()}
                         value={formatCompactTokens(digest.today.total_tokens)}
                       />
                     </>
                   ) : null}
                   {usage.cost && digest.cost_today ? (
-                    <Stat
+                    <Metric
                       label={t("tray.cost")}
+                      size="sm"
+                      title={`$${formatUsd(digest.cost_today.amount_usd)}`}
                       value={`$${formatUsd(digest.cost_today.amount_usd)}`}
                     />
                   ) : null}
-                </div>
+                </MetricGroup>
               )}
               {usage.today && digest ? (
                 <HourlySparkline now={now} tokens={digest.hourly_tokens} />
