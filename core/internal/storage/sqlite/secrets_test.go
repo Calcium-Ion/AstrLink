@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -46,6 +47,105 @@ func TestSealedValuesAreBoundToTheirRow(t *testing.T) {
 	}
 	if status, err := store.LocalDataStatus(ctx); err != nil || status.UnreadableCredentials != 2 {
 		t.Fatalf("LocalDataStatus with an unsealed row = %+v, %v", status, err)
+	}
+}
+
+func TestLegacyPlaintextRowsAreSealedOnOpen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "astrlink.db")
+	localKey := testLocalKey(t, 0x41)
+	store := openWithKey(t, path, localKey, nil)
+	const serviceID = contract.ServiceID("service_legacy_plaintext")
+	secret := []byte("sk-legacy-plaintext-0123456789abcdef0123456789")
+	toolKey := []byte("tvly-legacy-tool-key-0123456789abcdef")
+	if _, err := store.CreateService(ctx, contract.ServiceFromEndpoint(testEndpoint(serviceID)), storagecontract.CredentialMutation{
+		Present: true, Secret: secret,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, "local://builtin-tool/web_search", toolKey); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := accesstoken.NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.Create(ctx, "legacy token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Recreate what the sealed_secrets migration (v45) left behind: values
+	// saved before encryption were copied into the rebuilt tables with
+	// sealed = 0, which openSecret refuses to read.
+	mustExec(t, store, `UPDATE service_credentials SET credential_value = ?, sealed = 0 WHERE service_id = ?`, secret, serviceID)
+	mustExec(t, store, `UPDATE builtin_tool_credentials SET credential_value = ?, sealed = 0 WHERE kind = 'web_search'`, toolKey)
+	mustExec(t, store, `UPDATE local_access_token_secrets SET token_value = ?, sealed = 0 WHERE token_id = ?`, []byte(created.Value), created.Token.ID)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs []string
+	store = openWithKey(t, path, localKey, &logs)
+	defer store.Close()
+	if got, err := store.Get(ctx, secretstore.Ref(localRef(serviceID))); err != nil || !bytes.Equal(got, secret) {
+		t.Fatalf("service credential after resealing = %q, %v", got, err)
+	}
+	if got, err := store.Get(ctx, "local://builtin-tool/web_search"); err != nil || !bytes.Equal(got, toolKey) {
+		t.Fatalf("tool credential after resealing = %q, %v", got, err)
+	}
+	manager, err = accesstoken.NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, err := manager.Reveal(ctx, created.Token.ID); err != nil || value != created.Value {
+		t.Fatalf("Reveal after resealing = %q, %v", value, err)
+	}
+	for _, row := range []struct {
+		query     string
+		argument  any
+		plaintext []byte
+	}{
+		{`SELECT credential_value, sealed FROM service_credentials WHERE service_id = ?`, serviceID, secret},
+		{`SELECT credential_value, sealed FROM builtin_tool_credentials WHERE kind = 'web_search'`, nil, toolKey},
+		{`SELECT token_value, sealed FROM local_access_token_secrets WHERE token_id = ?`, created.Token.ID, []byte(created.Value)},
+	} {
+		var stored []byte
+		var sealed int
+		if err := store.db.QueryRow(row.query, row.argument).Scan(&stored, &sealed); err != nil {
+			t.Fatal(err)
+		}
+		if sealed != 1 || len(stored) != len(row.plaintext)+29 || bytes.Contains(stored, row.plaintext) {
+			t.Fatalf("stored row for %q is not sealed (%d bytes, sealed = %d)", row.query, len(stored), sealed)
+		}
+	}
+	if status, err := store.LocalDataStatus(ctx); err != nil || status != (contract.LocalDataStatus{}) {
+		t.Fatalf("LocalDataStatus after resealing = %+v, %v", status, err)
+	}
+	legacyLogs := 0
+	for _, line := range logs {
+		if strings.Contains(line, "legacy") {
+			legacyLogs++
+		}
+	}
+	if legacyLogs < 3 {
+		t.Fatalf("resealing log lines = %d in %v", legacyLogs, logs)
+	}
+
+	// Reopening again is a no-op and leaves everything readable.
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = openWithKey(t, path, localKey, nil)
+	defer store.Close()
+	manager, err = accesstoken.NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, err := manager.Reveal(ctx, created.Token.ID); err != nil || value != created.Value {
+		t.Fatalf("Reveal after reopening twice = %q, %v", value, err)
+	}
+	if status, err := store.LocalDataStatus(ctx); err != nil || status != (contract.LocalDataStatus{}) {
+		t.Fatalf("LocalDataStatus after reopening twice = %+v, %v", status, err)
 	}
 }
 

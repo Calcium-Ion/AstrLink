@@ -249,6 +249,7 @@ func initialize(ctx context.Context, database *sql.DB, settings openOptions) (*S
 		keys.clear()
 		return nil, fmt.Errorf("open raw sealing key: %w", err)
 	}
+	store.sealLegacyPlaintext(ctx, settings.logf)
 	manager, err := accesstoken.NewManager(store)
 	if err != nil {
 		keys.clear()
