@@ -684,6 +684,16 @@ type RateLimitResetCredits struct {
 	AvailableCount int `json:"available_count"`
 }
 
+// ResetCreditDetails exposes expiry information without upstream credit or user IDs.
+type ResetCreditDetails struct {
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+type ResetCreditsDetails struct {
+	AvailableCount int                  `json:"available_count"`
+	Credits        []ResetCreditDetails `json:"credits"`
+}
+
 const (
 	UsageResetOutcomeReset           = "reset"
 	UsageResetOutcomeNothingToReset  = "nothing_to_reset"

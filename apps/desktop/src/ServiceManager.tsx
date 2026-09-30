@@ -40,6 +40,7 @@ import {
   type DialogPickerGroup,
   type DialogPickerOption,
 } from "@/components/DialogPicker";
+import { SubscriptionResetDialog } from "./SubscriptionResetDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { ModelBrandIcon } from "@/components/ModelBrandIcon";
@@ -243,7 +244,7 @@ type Draft = {
 type ConfirmAction =
   | { kind: "delete"; service: Service }
   | { kind: "logout"; service: Service }
-  | { kind: "reset-usage"; service: Service; availableCount: number }
+  | { kind: "reset-usage"; service: Service }
   | { kind: "clear-risk"; service: Service }
   | null;
 
@@ -2170,10 +2171,6 @@ export function ServiceManager({
                                   setConfirmAction({
                                     kind: "reset-usage",
                                     service,
-                                    availableCount:
-                                      usageByService[service.id]?.usage
-                                        ?.rate_limit_reset_credits
-                                        ?.available_count ?? 0,
                                   })
                                 }
                                 resetting={actionID === service.id}
@@ -2347,13 +2344,20 @@ export function ServiceManager({
             onClose={() => setTestingService(null)}
           />
         ) : null}
+        {confirmAction?.kind === "reset-usage" ? (
+          <SubscriptionResetDialog
+            key={confirmAction.service.id}
+            serviceId={confirmAction.service.id}
+            serviceName={confirmAction.service.name}
+            onCancel={() => setConfirmAction(null)}
+            onConfirm={() => void confirmDestructiveAction()}
+          />
+        ) : null}
         <ConfirmDialog
           confirmLabel={
-            confirmAction?.kind === "reset-usage"
-              ? t("services.reset")
-              : confirmAction?.kind === "clear-risk"
-                ? t("services.riskRestore")
-                : t("common.confirm")
+            confirmAction?.kind === "clear-risk"
+              ? t("services.riskRestore")
+              : t("common.confirm")
           }
           description={
             <p>
@@ -2361,32 +2365,25 @@ export function ServiceManager({
                 ? t("services.deleteBody", {
                     name: confirmAction.service.name,
                   })
-                : confirmAction?.kind === "reset-usage"
-                  ? t("services.resetBody", {
+                : confirmAction?.kind === "clear-risk"
+                  ? t("services.riskRestoreBody", {
                       name: confirmAction.service.name,
-                      count: confirmAction.availableCount,
                     })
-                  : confirmAction?.kind === "clear-risk"
-                    ? t("services.riskRestoreBody", {
-                        name: confirmAction.service.name,
-                      })
-                    : t("services.logoutBody", {
-                        name: confirmAction?.service.name ?? "",
-                      })}
+                  : t("services.logoutBody", {
+                      name: confirmAction?.service.name ?? "",
+                    })}
             </p>
           }
           destructive={confirmAction?.kind !== "clear-risk"}
           onCancel={() => setConfirmAction(null)}
           onConfirm={() => void confirmDestructiveAction()}
-          open={confirmAction !== null}
+          open={confirmAction !== null && confirmAction.kind !== "reset-usage"}
           title={
             confirmAction?.kind === "delete"
               ? t("services.confirmDelete")
-              : confirmAction?.kind === "reset-usage"
-                ? t("services.confirmReset")
-                : confirmAction?.kind === "clear-risk"
-                  ? t("services.confirmRiskRestore")
-                  : t("services.confirmLogout")
+              : confirmAction?.kind === "clear-risk"
+                ? t("services.confirmRiskRestore")
+                : t("services.confirmLogout")
           }
         />
         <Dialog

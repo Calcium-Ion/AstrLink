@@ -2063,6 +2063,18 @@ impl CoreManager {
         })
     }
 
+    pub async fn get_service_reset_credits(
+        &self,
+        service_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        validate_resource_id(service_id)?;
+        let path = format!("{SERVICES_PATH}/{service_id}/usage/reset-credits");
+        let (_, body) = self
+            .authenticated_control(Method::GET, &path, None, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "reset credits returned invalid JSON".into())
+    }
+
     pub async fn reset_service_usage(&self, service_id: &str) -> Result<serde_json::Value, String> {
         validate_resource_id(service_id)?;
         let path = format!("{SERVICES_PATH}/{service_id}/usage/reset");

@@ -19,6 +19,7 @@ const bridgeMocks = vi.hoisted(() => ({
   getRoutingSettings: vi.fn(),
   getServiceAuthorization: vi.fn(),
   getServiceUsage: vi.fn(),
+  getServiceResetCredits: vi.fn(),
   getUsageSummary: vi.fn(),
   listServiceRiskEvents: vi.fn(),
   logoutService: vi.fn(),
@@ -265,6 +266,10 @@ describe("ServiceManager", () => {
       }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
+    bridgeMocks.getServiceResetCredits.mockResolvedValue({
+      available_count: 1,
+      credits: [{}],
+    });
     bridgeMocks.getUsageSummary.mockResolvedValue({ by_service: [] });
     container = document.createElement("div");
     document.body.append(container);
@@ -2149,6 +2154,10 @@ describe("ServiceManager", () => {
         },
       ],
       rate_limit_reset_credits: { available_count: 2 },
+    });
+    bridgeMocks.getServiceResetCredits.mockResolvedValue({
+      available_count: 2,
+      credits: [{}, {}],
     });
 
     await act(async () => {

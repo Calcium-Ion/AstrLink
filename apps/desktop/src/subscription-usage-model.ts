@@ -43,6 +43,58 @@ export interface RateLimitResetCredits {
   available_count: number;
 }
 
+export interface ResetCreditsDetails extends RateLimitResetCredits {
+  credits: { expires_at?: string }[];
+}
+
+export function resetCreditExpiryWarning(
+  details: ResetCreditsDetails,
+  now: number,
+) {
+  const day = 24 * 60 * 60_000;
+  const expiries = details.credits
+    .map((credit) =>
+      credit.expires_at ? Date.parse(credit.expires_at) : Infinity,
+    )
+    .filter((expiry) => expiry > now && expiry <= now + 3 * day);
+  const count = Math.min(details.available_count, expiries.length);
+  if (count === 0) return null;
+  const expiresAt = Math.min(...expiries);
+  return { count, expiresAt, urgent: expiresAt <= now + day };
+}
+
+export function formatResetCreditExpiry(expiresAt: number, now: number) {
+  const minutes = Math.max(1, Math.ceil((expiresAt - now) / 60_000));
+  const unit = minutes >= 1440 ? "day" : minutes >= 60 ? "hour" : "minute";
+  const value = Math.ceil(
+    minutes / (unit === "day" ? 1440 : unit === "hour" ? 60 : 1),
+  );
+  return new Intl.RelativeTimeFormat(i18n.language).format(value, unit);
+}
+
+export function parseResetCreditsDetails(value: unknown): ResetCreditsDetails {
+  const details = objectAt(value, "$");
+  keysAt(details, ["available_count", "credits"], [], "$");
+  if (!Array.isArray(details.credits) || details.credits.length > 1000)
+    return invalid("$.credits", "expected at most 1000 credits");
+  return {
+    available_count: intAt(
+      details.available_count,
+      "$.available_count",
+      0,
+      1000,
+    ),
+    credits: details.credits.map((value, index) => {
+      const path = `$.credits[${index}]`;
+      const credit = objectAt(value, path);
+      keysAt(credit, [], ["expires_at"], path);
+      return Object.hasOwn(credit, "expires_at")
+        ? { expires_at: timestampAt(credit.expires_at, `${path}.expires_at`) }
+        : {};
+    }),
+  };
+}
+
 export interface SubscriptionUsage {
   service_id: string;
   fetched_at: string;

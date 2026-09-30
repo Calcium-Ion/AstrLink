@@ -160,6 +160,14 @@ func (handler *Handler) serviceItem(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	if len(parts) == 3 {
+		if parts[1] == "usage" && parts[2] == "reset-credits" {
+			if request.Method != http.MethodGet {
+				writeMethodNotAllowed(writer, http.MethodGet)
+				return
+			}
+			handler.getServiceResetCredits(writer, request, id)
+			return
+		}
 		if parts[1] == "usage" && parts[2] == "reset" {
 			if request.Method != http.MethodPost {
 				writeMethodNotAllowed(writer, http.MethodPost)
@@ -843,6 +851,18 @@ func (handler *Handler) getServiceUsage(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusOK, usage)
 }
 
+func (handler *Handler) getServiceResetCredits(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
+	if !handler.requireSubscriptionService(writer, request, id) {
+		return
+	}
+	result, err := handler.subscriptions.ResetCredits(request.Context(), id)
+	if err != nil {
+		writeServiceResetError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
 func (handler *Handler) resetServiceUsage(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
 	if handler.subscriptions == nil {
 		writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
@@ -875,9 +895,9 @@ type serviceRiskEventsResponse struct {
 	Items []contract.SubscriptionRiskEvent `json:"items"`
 }
 
-// subscriptionServiceForRisk loads a subscription service for the risk
+// requireSubscriptionService loads a subscription service for subscription
 // endpoints and writes the error response when it is unavailable.
-func (handler *Handler) subscriptionServiceForRisk(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) bool {
+func (handler *Handler) requireSubscriptionService(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) bool {
 	if handler.subscriptions == nil {
 		writeError(writer, http.StatusServiceUnavailable, "subscription_unavailable", "subscription services are unavailable")
 		return false
@@ -888,14 +908,14 @@ func (handler *Handler) subscriptionServiceForRisk(writer http.ResponseWriter, r
 		return false
 	}
 	if !record.Service.Kind.IsSubscription() {
-		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription risk controls")
+		writeError(writer, http.StatusConflict, "service_not_subscription", "service does not support subscription controls")
 		return false
 	}
 	return true
 }
 
 func (handler *Handler) clearServiceRisk(writer http.ResponseWriter, request *http.Request, id contract.ServiceID) {
-	if !handler.subscriptionServiceForRisk(writer, request, id) {
+	if !handler.requireSubscriptionService(writer, request, id) {
 		return
 	}
 	if _, err := handler.subscriptions.ClearRisk(request.Context(), id); err != nil {
@@ -926,7 +946,7 @@ func (handler *Handler) listServiceRiskEvents(writer http.ResponseWriter, reques
 		}
 		limit = parsed
 	}
-	if !handler.subscriptionServiceForRisk(writer, request, id) {
+	if !handler.requireSubscriptionService(writer, request, id) {
 		return
 	}
 	events, err := handler.subscriptions.RiskEvents(request.Context(), id, limit)

@@ -133,6 +133,8 @@ import {
 import {
   parseSubscriptionUsage,
   parseSubscriptionUsageReset,
+  parseResetCreditsDetails,
+  type ResetCreditsDetails,
   type SubscriptionUsage,
   type SubscriptionUsageReset,
 } from "./subscription-usage-model";
@@ -366,6 +368,15 @@ export async function getServiceUsage(
       serviceId,
       fresh: options.fresh ?? false,
     }),
+  );
+}
+
+export async function getServiceResetCredits(
+  serviceId: string,
+): Promise<ResetCreditsDetails> {
+  requireNativeBridge();
+  return parseResetCreditsDetails(
+    await invoke<unknown>("get_service_reset_credits", { serviceId }),
   );
 }
 

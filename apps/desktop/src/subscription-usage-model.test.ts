@@ -7,6 +7,8 @@ import {
   formatSubscriptionUsageError,
   parseSubscriptionUsage,
   parseSubscriptionUsageReset,
+  parseResetCreditsDetails,
+  resetCreditExpiryWarning,
   planTypeLabel,
   quotaUsedPercent,
   resetOutcomeMessage,
@@ -46,6 +48,54 @@ const snapshot = {
 };
 
 describe("subscription usage contract", () => {
+  it("warns within three days and escalates within 24 hours, excluding expired credits", () => {
+    const now = Date.parse("2026-09-30T12:00:00Z");
+    const details = {
+      available_count: 5,
+      credits: [
+        { expires_at: "2026-10-04T12:00:00Z" },
+        { expires_at: "2026-10-03T12:00:00Z" },
+        { expires_at: "2026-10-01T12:00:00Z" },
+        { expires_at: "2026-09-30T12:00:00Z" },
+        {},
+      ],
+    };
+    expect(resetCreditExpiryWarning(details, now)).toEqual({
+      count: 2,
+      expiresAt: Date.parse("2026-10-01T12:00:00Z"),
+      urgent: true,
+    });
+    expect(
+      resetCreditExpiryWarning(
+        { available_count: 1, credits: [details.credits[1]] },
+        now,
+      )?.urgent,
+    ).toBe(false);
+    expect(
+      resetCreditExpiryWarning({ ...details, available_count: 0 }, now),
+    ).toBeNull();
+    expect(
+      resetCreditExpiryWarning(
+        { available_count: 1, credits: [details.credits[0], {}] },
+        now,
+      ),
+    ).toBeNull();
+  });
+  it("validates reset expiry details and rejects unexpected upstream fields", () => {
+    const details = {
+      available_count: 2,
+      credits: [{ expires_at: "2026-10-15T12:00:00Z" }, {}],
+    };
+    expect(parseResetCreditsDetails(details)).toEqual(details);
+    for (const invalid of [
+      null,
+      { ...details, available_count: -1 },
+      { ...details, credits: [{ expires_at: "invalid" }] },
+      { ...details, credits: [{ id: "private-id" }] },
+    ]) {
+      expect(() => parseResetCreditsDetails(invalid)).toThrow();
+    }
+  });
   it.each([17, 33, 256])("keeps all %i per-model quota windows", (count) => {
     const usage = {
       service_id: "service_antigravity",

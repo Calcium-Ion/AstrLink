@@ -990,6 +990,14 @@ async fn get_service_usage(
 }
 
 #[tauri::command]
+async fn get_service_reset_credits(
+    service_id: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_service_reset_credits(&service_id).await
+}
+
+#[tauri::command]
 async fn reset_service_usage(
     service_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -1880,6 +1888,7 @@ pub fn run() {
             update_service,
             delete_service,
             get_service_usage,
+            get_service_reset_credits,
             pricing,
             reset_service_usage,
             test_service,

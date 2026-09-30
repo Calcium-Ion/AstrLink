@@ -1,6 +1,8 @@
 import { useId } from "react";
 import { RefreshCw, RotateCcw } from "@/components/icons";
 import { useT } from "./i18n";
+import { useResetCredits } from "./use-reset-credits";
+import { StatusBadge } from "@/components/StatusBadge";
 
 import { IconButton } from "@/components/IconButton";
 import { Button } from "@/components/ui/button";
@@ -17,6 +19,8 @@ import {
   formatQuotaExpiry,
   formatQuotaUSD,
   formatResetCountdown,
+  formatResetCreditExpiry,
+  resetCreditExpiryWarning,
   quotaUsedPercent,
   usageWindowTone,
   usageBarPercent,
@@ -192,28 +196,64 @@ export function SubscriptionResetButton({
 }) {
   const t = useT();
   const resetCount = usage?.rate_limit_reset_credits?.available_count ?? 0;
-  if (resetCount <= 0) return null;
+  const { state, now } = useResetCredits(
+    onReset && resetCount > 0 ? usage?.service_id : undefined,
+    resetCount,
+  );
+  const warning =
+    state.status === "ready"
+      ? resetCreditExpiryWarning(state.details, now)
+      : null;
+  const displayCount =
+    state.status === "ready" ? state.details.available_count : resetCount;
+  if (displayCount <= 0) return null;
   if (!onReset) {
     return (
       <p className="text-xs text-muted-foreground">
-        {t("usage.resetAvailable", { count: resetCount })}
+        {t("usage.resetAvailable", { count: displayCount })}
       </p>
     );
   }
   return (
-    <Button
-      data-testid="subscription-usage-reset"
-      disabled={resetting}
-      onClick={onReset}
-      size="xs"
-      type="button"
-      variant="outline"
-    >
-      <RotateCcw aria-hidden="true" />
-      {resetting
-        ? t("usage.resetting")
-        : t("usage.resetCount", { count: resetCount })}
-    </Button>
+    <div className="flex max-w-full flex-wrap items-center gap-1.5">
+      <Button
+        data-testid="subscription-usage-reset"
+        disabled={resetting}
+        onClick={onReset}
+        size="xs"
+        type="button"
+        variant="outline"
+      >
+        <RotateCcw aria-hidden="true" />
+        {resetting
+          ? t("usage.resetting")
+          : t("usage.resetCount", { count: displayCount })}
+      </Button>
+      {warning ? (
+        <Button
+          size="xs"
+          variant="ghost"
+          className="h-auto min-w-0 max-w-full p-0"
+          disabled={resetting}
+          onClick={onReset}
+          title={t("usage.resetExpiryOpen")}
+        >
+          <StatusBadge
+            tone={warning.urgent ? "negative" : "pending"}
+            className="whitespace-normal text-left"
+          >
+            {t("usage.resetExpiryWarning", {
+              count: warning.count,
+              time: formatResetCreditExpiry(warning.expiresAt, now),
+            })}
+          </StatusBadge>
+        </Button>
+      ) : state.status === "error" ? (
+        <span className="text-micro text-muted-foreground">
+          {t("usage.resetExpiryUnavailable")}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

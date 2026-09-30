@@ -158,6 +158,11 @@ func TestResetServiceUsageRedeemsOfficialCredit(t *testing.T) {
 	var consumeBody string
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/backend-api/wham/rate-limit-reset-credits":
+			if request.Header.Get("Authorization") != "Bearer access-secret-token-value" || strings.Contains(strings.ToLower(request.UserAgent()), "astrlink") || strings.Contains(strings.ToLower(request.Header.Get("originator")), "astrlink") {
+				t.Error("reset details request did not preserve upstream authentication/identity")
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"available_count": 1, "credits": []map[string]any{{"id": "private-credit", "reset_type": "codex_rate_limits", "status": "available", "expires_at": "2026-10-15T12:00:00Z"}}})
 		case request.Method == http.MethodGet && request.URL.Path == "/backend-api/wham/usage":
 			_ = json.NewEncoder(writer).Encode(map[string]any{
 				"plan_type":                "plus",
@@ -184,6 +189,13 @@ func TestResetServiceUsageRedeemsOfficialCredit(t *testing.T) {
 	store, credentials, handler := newUsageHandler(t, upstream, "service_codex_usage_reset")
 	service := createServiceForTest(t, handler, `{"name":"Codex usage","kind":"codex_subscription"}`)
 	connectSubscriptionForTest(t, store, credentials, service.ID)
+
+	detailsResponse := serviceRequestForTest(t, handler, http.MethodGet, ServicesPath+"/"+string(service.ID)+"/usage/reset-credits", "", "", "")
+	var details contract.ResetCreditsDetails
+	decode(t, detailsResponse, &details)
+	if detailsResponse.Code != http.StatusOK || details.AvailableCount != 1 || len(details.Credits) != 1 || details.Credits[0].ExpiresAt == nil || consumeBody != "" || strings.Contains(detailsResponse.Body.String(), "private-credit") {
+		t.Fatalf("reset details status=%d body=%s consumed=%s", detailsResponse.Code, detailsResponse.Body.String(), consumeBody)
+	}
 
 	response := serviceRequestForTest(t, handler, http.MethodPost, ServicesPath+"/"+string(service.ID)+"/usage/reset", "", "", "")
 	if response.Code != http.StatusOK {
