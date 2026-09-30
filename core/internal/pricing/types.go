@@ -108,11 +108,24 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
-func (c Config) Resolve(model string, prices []Price) (Price, bool) {
-	b, ok := c.Bindings[model]
-	if !ok {
-		b = Binding{Provider: c.Provider, Model: model}
+
+// Add built-in price aliases here; explicit service bindings take precedence.
+var defaultBindings = map[string]Binding{
+	"codex-auto-review": {Provider: "openai", Model: "gpt-5.6-luna"},
+}
+
+func (c Config) ResolveBinding(model string) Binding {
+	if b, ok := c.Bindings[model]; ok {
+		return b
 	}
+	if b, ok := defaultBindings[model]; ok && (c.Provider == b.Provider || c.Provider == "") {
+		return b
+	}
+	return Binding{Provider: c.Provider, Model: model}
+}
+
+func (c Config) Resolve(model string, prices []Price) (Price, bool) {
+	b := c.ResolveBinding(model)
 	var match Price
 	count := 0
 	for _, p := range prices {

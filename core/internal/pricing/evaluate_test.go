@@ -65,6 +65,32 @@ func TestOfficialProviderAndMonth(t *testing.T) {
 	}
 }
 
+func TestCodexAutoReviewPriceBinding(t *testing.T) {
+	luna := Price{Provider: "openai", Model: "gpt-5.6-luna", Expression: `tier("standard",p * 0.2 + c * 1.2)`}
+	override := Price{Provider: "anthropic", Model: "custom", Expression: `tier("standard",p)`}
+	for _, tt := range []struct {
+		name   string
+		config Config
+		prices []Price
+		want   Price
+		ok     bool
+	}{
+		{"codex default", DefaultConfig(contract.ServiceKindCodexSubscription), []Price{luna}, luna, true},
+		{"openai default", DefaultConfig(contract.ServiceKindOpenAI), []Price{luna}, luna, true},
+		{"unspecified provider", Config{}, []Price{luna}, luna, true},
+		{"other provider", Config{Provider: "anthropic"}, []Price{luna}, Price{}, false},
+		{"missing luna", Config{Provider: "openai"}, nil, Price{}, false},
+		{"explicit binding", Config{Provider: "openai", Bindings: map[string]Binding{"codex-auto-review": {Provider: override.Provider, Model: override.Model}}}, []Price{luna, override}, override, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.config.Resolve("codex-auto-review", tt.prices)
+			if ok != tt.ok || got != tt.want {
+				t.Fatalf("price=%+v matched=%t, want %+v matched=%t", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 func TestAudioBreakdownRequiredOnlyWhenItChangesCost(t *testing.T) {
 	const geminiFlash = `tier("standard", p * 0.75 + cr * 0.075 + ai * 0.75 + c * 3.75)`
 	tests := []struct {

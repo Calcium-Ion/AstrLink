@@ -218,6 +218,34 @@ func TestMissingPricesFillAutomaticallyOncePerCatalog(t *testing.T) {
 	}
 }
 
+func TestBillingDefaultPriceBinding(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t, filepath.Join(t.TempDir(), "billing.db"))
+	defer s.Close()
+	service := pathTestService("service_codex_price")
+	if _, err := s.CreateService(ctx, service, storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	// Persisted configurations with no explicit binding must also use the alias.
+	if err := s.SavePricingConfig(ctx, service.ID, pricing.DefaultConfig(service.Kind)); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().UTC().Add(-time.Minute)
+	price := pricing.Price{Provider: "openai", Model: "gpt-5.6-luna", Expression: `tier("standard", p * 0.2)`}
+	if err := s.SavePricingCatalog(ctx, pricing.Catalog{Version: "luna_v1", ActivatedAt: start.Add(-time.Hour), Prices: []pricing.Price{price}}); err != nil {
+		t.Fatal(err)
+	}
+	model := "codex-auto-review"
+	r := contract.RequestRecord{ID: "request_codex_price", AttemptIndex: 1, ServiceID: &service.ID, RequestedModel: &model, StartedAt: start, Status: contract.RequestStatusSucceeded, InputProtocol: contract.ProtocolOpenAIResponses, Audit: contract.NotCapturedAuditSummary(), Usage: &contract.Usage{InputTokens: 1000000, TotalTokens: 1000000}}
+	if err := s.InsertRequestRecord(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := s.BillingSummary(ctx, service.ID, "", start, start.Add(time.Hour), pricing.BillingSummaryOptions{})
+	if err != nil || summary.Priced != 1 || summary.Unpriced != 0 || summary.AmountUSD != "0.200000000" {
+		t.Fatalf("summary=%+v err=%v", summary, err)
+	}
+}
+
 func TestInterruptedBillingBecomesUnpricedAndCannotBeBackfilledAsComplete(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t, filepath.Join(t.TempDir(), "billing.db"))

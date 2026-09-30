@@ -183,10 +183,7 @@ WHERE root_id = ? AND attempt = ? AND local_access_token_id IS NULL`,
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		b, ok := c.Bindings[model]
-		if !ok {
-			b = pricing.Binding{Provider: c.Provider, Model: model}
-		}
+		b := c.ResolveBinding(model)
 		rows, err := tx.QueryContext(ctx, `SELECT document_json FROM pricing_rates WHERE version=? AND model=? AND (?='' OR provider=?) LIMIT 2`, version, b.Model, b.Provider, b.Provider)
 		if err != nil {
 			return err
