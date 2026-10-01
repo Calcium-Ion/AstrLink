@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import { resumeIntelligenceRuns } from "./intelligence-background";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Activity,
@@ -643,6 +644,14 @@ export default function App() {
         : { kind: "edit", serviceId: service.id, tab: "models" },
     );
   };
+
+  const intelligenceServices = catalog.items
+    .map((service) => service.id)
+    .join(",");
+  useEffect(() => {
+    if (intelligenceServices)
+      void resumeIntelligenceRuns(intelligenceServices.split(","));
+  }, [intelligenceServices]);
 
   return (
     <AppShell

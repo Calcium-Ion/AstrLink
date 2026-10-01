@@ -2005,6 +2005,46 @@ impl CoreManager {
         Ok(())
     }
 
+    pub async fn intelligence(
+        &self,
+        operation: &str,
+        service_id: Option<&str>,
+        run_id: Option<&str>,
+        input: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let base = "/control/v1/intelligence";
+        let (method, path) = match operation {
+            "settings" => (Method::GET, format!("{base}/settings")),
+            "save_settings" => (Method::PUT, format!("{base}/settings")),
+            "channel" | "save_channel" | "history" | "start" => {
+                let id = service_id.ok_or("service ID is required")?;
+                validate_resource_id(id)?;
+                let path = format!("{base}/channels/{id}");
+                match operation {
+                    "channel" => (Method::GET, path),
+                    "save_channel" => (Method::PUT, path),
+                    "history" => (Method::GET, format!("{path}/runs")),
+                    _ => (Method::POST, format!("{path}/runs")),
+                }
+            }
+            "run" | "render" | "cancel" => {
+                let id = run_id.ok_or("run ID is required")?;
+                validate_intelligence_run_id(id)?;
+                let path = format!("{base}/runs/{id}");
+                if operation == "run" {
+                    (Method::GET, path)
+                } else {
+                    (Method::POST, format!("{path}/{operation}"))
+                }
+            }
+            _ => return Err("unsupported intelligence operation".into()),
+        };
+        let (_, body) = self
+            .authenticated_control(method, &path, input, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "intelligence returned invalid JSON".into())
+    }
+
     pub async fn pricing(
         &self,
         operation: &str,
@@ -4490,6 +4530,32 @@ fn service_risk_events_path(service_id: &str, limit: Option<u32>) -> Result<Stri
             Ok(format!("{path}?limit={limit}"))
         }
         Some(_) => Err("risk event limit must be between 1 and 50".to_string()),
+    }
+}
+
+fn validate_intelligence_run_id(value: &str) -> Result<(), String> {
+    if value.len() == 32 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("intelligence run ID is invalid".into())
+    }
+}
+
+#[cfg(test)]
+mod intelligence_id_tests {
+    use super::validate_intelligence_run_id;
+    #[test]
+    fn accepts_generated_numeric_run_ids_but_rejects_path_injection() {
+        assert!(validate_intelligence_run_id("12c54b9cbf126f6ced65663760326f6a").is_ok());
+        assert!(validate_intelligence_run_id("a2c54b9cbf126f6ced65663760326f6a").is_ok());
+        for invalid in [
+            "../settings",
+            "12c54b9cbf126f6ced65663760326f6a/render",
+            "",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        ] {
+            assert!(validate_intelligence_run_id(invalid).is_err());
+        }
     }
 }
 

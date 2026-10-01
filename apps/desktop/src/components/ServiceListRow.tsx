@@ -23,11 +23,12 @@ export type ServiceListLabels = Record<
 // minimums are what each cell needs to stay legible in the narrowest table.
 // The switch and action buttons keep exact tracks: spare width there would
 // open a wider gap between the controls than between the buttons themselves.
-const tracks: Record<ServiceListColumn, string> = {
+const tracks: Record<ServiceListColumn | "intelligence", string> = {
   models: "minmax(6rem,0.6fr)",
   usage: "minmax(7.5rem,1.2fr)",
   billing: "minmax(4.75rem,0.7fr)",
   performance: "minmax(5.25rem,0.7fr)",
+  intelligence: "5.5rem",
   status: "2.25rem",
 };
 
@@ -38,14 +39,34 @@ const tracks: Record<ServiceListColumn, string> = {
 const columns =
   "@[640px]/service-list:grid-cols-(--service-list-columns) @[1080px]/service-list:grid-cols-(--service-list-expanded-columns)";
 
-function columnsStyle(hidden: readonly ServiceListColumn[]): CSSProperties {
-  const visible = SERVICE_LIST_COLUMNS.filter((id) => !hidden.includes(id));
-  const template = (ids: readonly ServiceListColumn[]) =>
+function visibleColumns(
+  hidden: readonly ServiceListColumn[],
+  intelligence: boolean,
+): (ServiceListColumn | "intelligence")[] {
+  const visible: (ServiceListColumn | "intelligence")[] =
+    SERVICE_LIST_COLUMNS.filter((id) => !hidden.includes(id));
+  if (intelligence)
+    visible.splice(
+      visible.indexOf("status") < 0
+        ? visible.length
+        : visible.indexOf("status"),
+      0,
+      "intelligence",
+    );
+  return visible;
+}
+
+function columnsStyle(
+  hidden: readonly ServiceListColumn[],
+  intelligence = false,
+): CSSProperties {
+  const visible = visibleColumns(hidden, intelligence);
+  const template = (ids: readonly (ServiceListColumn | "intelligence")[]) =>
     [
       "1.75rem",
       "minmax(0,1.4fr)",
       ...ids.map((id) => tracks[id]),
-      "5.75rem",
+      intelligence ? "7.75rem" : "5.75rem",
     ].join(" ");
   return {
     "--service-list-columns": template(visible.filter((id) => id !== "models")),
@@ -55,9 +76,11 @@ function columnsStyle(hidden: readonly ServiceListColumn[]): CSSProperties {
 
 export function ServiceListHeader({
   labels,
+  intelligence = false,
   hidden = [],
 }: {
   labels: ServiceListLabels;
+  intelligence?: boolean;
   hidden?: readonly ServiceListColumn[];
 }) {
   return (
@@ -67,11 +90,11 @@ export function ServiceListHeader({
         "sticky top-0 z-10 hidden shrink-0 items-center gap-2 border-y bg-muted px-2 py-2 text-micro font-medium text-muted-foreground transition-opacity group-has-[[data-sorting=true]]/service-list:opacity-0 motion-reduce:transition-none @[640px]/service-list:grid @[640px]/service-list:gap-3 @[1040px]/service-list:px-3",
         columns,
       )}
-      style={columnsStyle(hidden)}
+      style={columnsStyle(hidden, !!intelligence)}
     >
       <span />
       <span>{labels.service}</span>
-      {SERVICE_LIST_COLUMNS.filter((id) => !hidden.includes(id)).map((id) => (
+      {visibleColumns(hidden, intelligence).map((id) => (
         <span
           className={cn(
             id === "models" &&
@@ -83,7 +106,7 @@ export function ServiceListHeader({
           )}
           key={id}
         >
-          {labels[id]}
+          {id === "intelligence" ? "智力结果" : labels[id]}
         </span>
       ))}
       <span className="text-center">{labels.actions}</span>
@@ -99,6 +122,7 @@ export function ServiceListRow({
   usage,
   billing,
   performance,
+  intelligence,
   status,
   actions,
   hidden = [],
@@ -113,6 +137,7 @@ export function ServiceListRow({
   usage?: ReactNode;
   billing?: ReactNode;
   performance?: ReactNode;
+  intelligence?: ReactNode;
   status: ReactNode;
   actions: ReactNode;
   hidden?: readonly ServiceListColumn[];
@@ -153,7 +178,7 @@ export function ServiceListRow({
         "grid grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-x-2 gap-y-2 px-2 py-2.5 transition-colors hover:bg-muted/30 @[480px]/service-list:grid-cols-[1.75rem_minmax(0,1fr)_auto] @[640px]/service-list:min-h-20 @[640px]/service-list:gap-y-3 @[640px]/service-list:gap-x-3 @[640px]/service-list:py-3 @[1040px]/service-list:px-3",
         columns,
       )}
-      style={columnsStyle(hidden)}
+      style={columnsStyle(hidden, !!intelligence)}
     >
       <article aria-label={name} data-testid="service-card">
         <div className="col-start-1 row-start-1 self-start pt-1 @[640px]/service-list:self-center @[640px]/service-list:pt-0">
@@ -182,6 +207,7 @@ export function ServiceListRow({
             !(showUsage && usage) &&
               !(showBilling && billing) &&
               !(showPerformance && performance) &&
+              !intelligence &&
               "hidden",
           )}
         >
@@ -221,6 +247,14 @@ export function ServiceListRow({
               </div>
             ) : null}
           </div>
+          {intelligence ? (
+            <div className="flex min-w-0 items-center gap-2 @[640px]/service-list:row-start-1">
+              <span className="text-xs text-muted-foreground @[640px]/service-list:hidden">
+                智力结果
+              </span>
+              {intelligence}
+            </div>
+          ) : null}
         </div>
         <div className="col-span-full row-start-3 flex min-w-0 items-center justify-between gap-3 @[480px]/service-list:col-span-1 @[480px]/service-list:col-start-3 @[480px]/service-list:row-start-1 @[640px]/service-list:contents">
           {!hidden.includes("status") ? (

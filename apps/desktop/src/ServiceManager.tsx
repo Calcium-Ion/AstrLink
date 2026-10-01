@@ -7,6 +7,12 @@ import {
   type ProxyDraft,
 } from "./service-proxy-model";
 import { ServiceTestDialog } from "./ServiceTestDialog";
+import {
+  IntelligenceStartButton,
+  IntelligenceResult,
+  IntelligenceWorkspace,
+} from "./IntelligenceWorkspace";
+import { useIntelligenceEnabled } from "./intelligence-preference";
 import { PricingWorkspace, ServiceBillingMeter } from "./PricingWorkspace";
 import { useServiceOrder } from "./use-service-order";
 import { useServiceListColumns } from "./service-list-columns";
@@ -195,7 +201,8 @@ export type ServiceEditorTab =
   | "connection"
   | "models"
   | "protocols"
-  | "failure";
+  | "failure"
+  | "intelligence";
 
 export type ServiceManagerView =
   | { kind: "list" }
@@ -875,6 +882,7 @@ export function ServiceManager({
     snapshot: UpstreamModelSnapshot;
   } | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>("connection");
+  const intelligenceEnabled = useIntelligenceEnabled();
   const [usageByService, setUsageByService] = useWorkspaceSnapshot<
     Record<
       string,
@@ -1952,6 +1960,7 @@ export function ServiceManager({
                 <ServiceListHeader
                   hidden={listColumns.hidden}
                   labels={columnLabels}
+                  intelligence={intelligenceEnabled}
                 />
                 {visibleServices.length === 0 ? (
                   <EmptyState
@@ -2211,8 +2220,22 @@ export function ServiceManager({
                             ) : null}
                           </span>
                         }
+                        intelligence={
+                          intelligenceEnabled ? (
+                            <IntelligenceResult
+                              service={service}
+                              services={services}
+                            />
+                          ) : undefined
+                        }
                         actions={
                           <>
+                            {intelligenceEnabled && (
+                              <IntelligenceStartButton
+                                service={service}
+                                disabled={!isReady || acting}
+                              />
+                            )}
                             <IconButton
                               label={t("serviceTest.testNamed", {
                                 name: service.name,
@@ -3344,7 +3367,26 @@ export function ServiceManager({
                 >
                   {t("failure.title")}
                 </TabsTrigger>
+                {editing && (
+                  <TabsTrigger type="button" value="intelligence">
+                    智力测试
+                  </TabsTrigger>
+                )}
               </TabsList>
+              {editing && (
+                <TabsContent
+                  value="intelligence"
+                  className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+                >
+                  <IntelligenceWorkspace
+                    embedded
+                    service={editing.service}
+                    services={services}
+                    onClose={() => setEditorTab("connection")}
+                    onResult={() => {}}
+                  />
+                </TabsContent>
+              )}
               <TabsContent
                 className="gutter-scroller min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
                 data-tab-scroller=""
