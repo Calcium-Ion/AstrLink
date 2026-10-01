@@ -69,22 +69,19 @@ func ApplyGrokAPIHeaders(header http.Header, tokens AccountTokens, clientVersion
 	if header == nil {
 		return
 	}
-	if strings.TrimSpace(clientVersion) == "" {
-		clientVersion = DefaultGrokCLIClientVersion
-	}
+	identity := grokIdentityAt(clientVersion)
 	header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	header.Set("X-XAI-Token-Auth", grokTokenAuthHeader)
-	header.Set("X-Grok-Client-Version", clientVersion)
-	header.Set("User-Agent", grokUserAgentProduct+"/"+clientVersion)
+	header.Set("X-Grok-Client-Version", identity.Version)
+	header.Set("X-Grok-Client-Identifier", grokUserAgentProduct)
+	header.Set("User-Agent", identity.UserAgent)
 }
 
 func applyGrokOAuthHeaders(header http.Header, clientVersion string) {
-	if strings.TrimSpace(clientVersion) == "" {
-		clientVersion = DefaultGrokCLIClientVersion
-	}
-	header.Set("X-Grok-Client-Version", clientVersion)
+	identity := grokIdentityAt(clientVersion)
+	header.Set("X-Grok-Client-Version", identity.Version)
 	header.Set("X-Grok-Client-Surface", grokClientSurfaceValue)
-	header.Set("User-Agent", grokUserAgentProduct+"/"+clientVersion)
+	header.Set("User-Agent", identity.UserAgent)
 }
 
 type grokDeviceCodeResponse struct {
@@ -172,7 +169,7 @@ func (manager *SessionManager) requestGrokDeviceAuthorization(ctx context.Contex
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Accept", "application/json")
-	applyGrokOAuthHeaders(request.Header, manager.config.ModelsClientVersion)
+	applyGrokOAuthHeaders(request.Header, manager.config.Identities.GrokIdentityFor(ctx, manager.config.ModelsClientVersion).Version)
 	response, err := manager.config.HTTPClient.Do(request)
 	if err != nil {
 		return grokDeviceAuthorization{}, fmt.Errorf("%w", ErrDeviceCodeRequestFailed)
@@ -297,7 +294,7 @@ func (manager *SessionManager) pollGrokDeviceAuthorizationOnce(
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Accept", "application/json")
-	applyGrokOAuthHeaders(request.Header, manager.config.ModelsClientVersion)
+	applyGrokOAuthHeaders(request.Header, manager.config.Identities.GrokIdentityFor(ctx, manager.config.ModelsClientVersion).Version)
 	response, err := manager.config.HTTPClient.Do(request)
 	if err != nil {
 		return AccountTokens{}, false, false, err

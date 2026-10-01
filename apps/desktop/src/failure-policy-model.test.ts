@@ -106,10 +106,11 @@ describe("failure policies", () => {
     const identities = {
       codex: { learned_version: "0.160.0", builtin_version: "0.155.1" },
       claude: { builtin_version: "2.1.258" },
+      grok: { builtin_version: "1.0.45", learned_version: "1.0.50" },
     };
     expect(parseClientIdentities(identities)).toEqual(identities);
     for (const invalid of [
-      { ...identities, grok: { builtin_version: "1.0.0" } },
+      { ...identities, unknown: { builtin_version: "1.0.0" } },
       { codex: identities.codex },
       { ...identities, claude: { builtin_version: "2.1.258", source: "x" } },
       { ...identities, claude: {} },

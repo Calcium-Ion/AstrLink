@@ -192,8 +192,9 @@ pub(crate) fn validate_routing_settings(
             | "subscription_session_isolation"
             | "claude_identity_auto_learn"
             | "codex_identity_auto_learn"
+            | "grok_identity_auto_learn"
                 if value.is_boolean() => {}
-            "claude_identity_version" | "codex_identity_version" => {
+            "claude_identity_version" | "codex_identity_version" | "grok_identity_version" => {
                 validate_identity_version(value)?
             }
             "strategy" => validate_strategy(value)?,
@@ -365,6 +366,7 @@ mod tests {
             "subscription_session_isolation",
             "claude_identity_auto_learn",
             "codex_identity_auto_learn",
+            "grok_identity_auto_learn",
         ] {
             for enabled in [true, false] {
                 assert!(validate_routing_settings(&json!({key: enabled}), true).is_ok());
@@ -373,7 +375,11 @@ mod tests {
                 assert!(validate_routing_settings(&json!({key: invalid}), true).is_err());
             }
         }
-        for key in ["claude_identity_version", "codex_identity_version"] {
+        for key in [
+            "claude_identity_version",
+            "codex_identity_version",
+            "grok_identity_version",
+        ] {
             for version in ["", "2.1.300", "0.160.0", "2.2.0-beta.1", "1.0.0+build.5"] {
                 assert_eq!(
                     validate_routing_settings(&json!({key: version}), true),

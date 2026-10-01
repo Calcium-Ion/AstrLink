@@ -19,6 +19,7 @@ type subscriptionProtection struct {
 	officialPassthrough bool
 	claudeAutoLearn     bool
 	codexAutoLearn      bool
+	grokAutoLearn       bool
 }
 
 func subscriptionProtectionFrom(settings contract.RoutingSettings) subscriptionProtection {
@@ -31,6 +32,7 @@ func subscriptionProtectionFrom(settings contract.RoutingSettings) subscriptionP
 		officialPassthrough: settings.OfficialClientPassthrough,
 		claudeAutoLearn:     settings.ClaudeIdentityAutoLearn,
 		codexAutoLearn:      settings.CodexIdentityAutoLearn,
+		grokAutoLearn:       settings.GrokIdentityAutoLearn,
 	}
 }
 
@@ -41,6 +43,8 @@ func (handler *Handler) learnClientIdentity(ctx context.Context, provider contra
 	learn := handler.identities.LearnClaude
 	if provider == contract.SubscriptionProviderOpenAICodex {
 		learn = handler.identities.LearnCodex
+	} else if provider == contract.SubscriptionProviderXAIGrok {
+		learn = handler.identities.LearnGrok
 	}
 	if _, err := learn(ctx, header); err != nil {
 		logf := handler.recordLogger

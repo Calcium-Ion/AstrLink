@@ -278,7 +278,7 @@ func TestSubscriptionIdentitySettingsAreIndependentAndApplyImmediately(t *testin
 	}{
 		{"codex_identity_enforcement", contract.ServiceKindCodexSubscription, "codex_cli_rs/0.156.0", accountauth.CodexUserAgent("")},
 		{"claude_identity_enforcement", contract.ServiceKindClaudeSubscription, "claude-cli/2.2.0 (external, cli)", accountauth.DefaultClaudeUserAgent},
-		{"grok_identity_enforcement", contract.ServiceKindGrokSubscription, "xai-grok-workspace/0.2.102", "xai-grok-workspace/" + accountauth.DefaultGrokCLIClientVersion},
+		{"grok_identity_enforcement", contract.ServiceKindGrokSubscription, "xai-grok-workspace/0.2.102", accountauth.DefaultGrokIdentity().UserAgent},
 	}
 	for _, changed := range providers {
 		for _, invalid := range []string{"null", `"false"`, "0"} {
@@ -374,18 +374,18 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 	}
 
 	defaults := read()
-	for _, key := range []string{"claude_identity_auto_learn", "codex_identity_auto_learn"} {
+	for _, key := range []string{"claude_identity_auto_learn", "codex_identity_auto_learn", "grok_identity_auto_learn"} {
 		if defaults[key] != true {
 			t.Fatalf("%s defaults to %v", key, defaults[key])
 		}
 	}
-	for _, key := range []string{"claude_identity_version", "codex_identity_version"} {
+	for _, key := range []string{"claude_identity_version", "codex_identity_version", "grok_identity_version"} {
 		if _, present := defaults[key]; present {
 			t.Fatalf("%s present without an override: %v", key, defaults[key])
 		}
 	}
 
-	learnKeys := []string{"claude_identity_auto_learn", "codex_identity_auto_learn"}
+	learnKeys := []string{"claude_identity_auto_learn", "codex_identity_auto_learn", "grok_identity_auto_learn"}
 	for _, changed := range learnKeys {
 		for _, invalid := range []string{"null", `"false"`, "0"} {
 			if code := patch(fmt.Sprintf(`{%q:%s}`, changed, invalid)); code != http.StatusUnprocessableEntity {
@@ -414,6 +414,8 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 		{"claude_identity_version", `"v2.1.400"`},
 		{"claude_identity_version", `"claude-cli/2.1.400"`},
 		{"codex_identity_version", "null"},
+		{"grok_identity_version", "null"},
+		{"grok_identity_version", `"1.0"`},
 		{"codex_identity_version", `"0.143.9"`},
 		{"codex_identity_version", `"0.170"`},
 	} {
@@ -421,7 +423,7 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 			t.Fatalf("invalid %s=%s returned %d", test.key, test.invalid, code)
 		}
 	}
-	if code := patch(`{"claude_identity_version":"2.1.400","codex_identity_version":"0.170.0"}`); code != http.StatusOK {
+	if code := patch(`{"claude_identity_version":"2.1.400","codex_identity_version":"0.170.0","grok_identity_version":"1.0.50"}`); code != http.StatusOK {
 		t.Fatalf("PATCH versions returned %d", code)
 	}
 	settings := read()
@@ -430,6 +432,10 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 	}
 	if got := outgoing(contract.ServiceKindClaudeSubscription).Get("User-Agent"); got != "claude-cli/2.1.400 (external, cli)" {
 		t.Fatalf("Claude User-Agent = %q", got)
+	}
+	grok := outgoing(contract.ServiceKindGrokSubscription)
+	if !strings.HasPrefix(grok.Get("User-Agent"), "grok-shell/1.0.50 (") || grok.Get("X-Grok-Client-Version") != "1.0.50" {
+		t.Fatalf("Grok identity = %q, version %q", grok.Get("User-Agent"), grok.Get("X-Grok-Client-Version"))
 	}
 	codex := outgoing(contract.ServiceKindCodexSubscription)
 	if !strings.HasPrefix(codex.Get("User-Agent"), "codex-tui/0.170.0 ") || codex.Get("version") != "0.170.0" {
@@ -443,11 +449,11 @@ func TestClientIdentityLearningSettingsPatchAndApplyImmediately(t *testing.T) {
 	if settings := read(); settings["claude_identity_version"] != "2.1.400" {
 		t.Fatalf("rejected PATCH changed claude_identity_version to %v", settings["claude_identity_version"])
 	}
-	if code := patch(`{"claude_identity_version":"","codex_identity_version":""}`); code != http.StatusOK {
+	if code := patch(`{"claude_identity_version":"","codex_identity_version":"","grok_identity_version":""}`); code != http.StatusOK {
 		t.Fatalf("clearing versions returned %d", code)
 	}
 	settings = read()
-	for _, key := range []string{"claude_identity_version", "codex_identity_version"} {
+	for _, key := range []string{"claude_identity_version", "codex_identity_version", "grok_identity_version"} {
 		if _, present := settings[key]; present {
 			t.Fatalf("%s not cleared: %v", key, settings[key])
 		}

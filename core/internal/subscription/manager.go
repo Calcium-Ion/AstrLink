@@ -567,8 +567,8 @@ func (manager *Manager) APIBaseURLFor(provider contract.SubscriptionProvider) st
 }
 
 // GrokClientVersion is the Grok CLI version reported on proxy requests.
-func (manager *Manager) GrokClientVersion() string {
-	return manager.grokConfig.ModelsClientVersion
+func (manager *Manager) GrokClientVersion(ctx context.Context) string {
+	return manager.grokConfig.Identities.GrokIdentityFor(ctx, manager.grokConfig.ModelsClientVersion).Version
 }
 
 // ClaudeIdentity resolves the Claude Code identity of a gateway-initiated

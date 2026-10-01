@@ -32,11 +32,12 @@ type LocalDataStatus struct {
 	AuditKeyMissing bool `json:"audit_key_missing"`
 }
 
-// ClientIdentities reports the Codex and Claude Code identities AstrLink
+// ClientIdentities reports the subscription client identities AstrLink
 // supplies when it must provide one itself.
 type ClientIdentities struct {
 	Codex  ClientIdentityStatus `json:"codex"`
 	Claude ClientIdentityStatus `json:"claude"`
+	Grok   ClientIdentityStatus `json:"grok"`
 }
 
 // ClientIdentityStatus pairs the version learned from official client

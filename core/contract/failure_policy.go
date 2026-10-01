@@ -156,17 +156,19 @@ type RoutingSettings struct {
 	// other identity and request protections then apply to third-party and
 	// converted requests only.
 	OfficialClientPassthrough bool `json:"official_client_passthrough"`
-	// ClaudeIdentityAutoLearn and CodexIdentityAutoLearn let recognized
+	// The identity learning switches let recognized
 	// official client requests replace the baseline identity that AstrLink
 	// sends when it must supply one: converted requests, discovery, tests,
-	// OAuth and usage requests. Both default on.
+	// OAuth and usage requests. All default on.
 	ClaudeIdentityAutoLearn bool `json:"claude_identity_auto_learn"`
 	CodexIdentityAutoLearn  bool `json:"codex_identity_auto_learn"`
+	GrokIdentityAutoLearn   bool `json:"grok_identity_auto_learn"`
 	// ClaudeIdentityVersion and CodexIdentityVersion are optional floors for
 	// the version that identity declares: a higher value replaces it, a lower
 	// one never downgrades it. Empty sets no floor.
 	ClaudeIdentityVersion string `json:"claude_identity_version,omitempty"`
 	CodexIdentityVersion  string `json:"codex_identity_version,omitempty"`
+	GrokIdentityVersion   string `json:"grok_identity_version,omitempty"`
 	// ModelRedirects is always emitted; nil documents load as an empty table.
 	ModelRedirects         []ModelRedirect               `json:"model_redirects"`
 	ChannelStickiness      *ChannelStickiness            `json:"channel_stickiness,omitempty"`
@@ -189,6 +191,7 @@ func DefaultRoutingSettings() RoutingSettings {
 		OfficialClientPassthrough:    true,
 		ClaudeIdentityAutoLearn:      true,
 		CodexIdentityAutoLearn:       true,
+		GrokIdentityAutoLearn:        true,
 		ModelRedirects:               []ModelRedirect{},
 		ChannelStickiness:            &ChannelStickiness{Enabled: true, TTLSeconds: 3600},
 		DefaultFailurePolicy:         DefaultFailurePolicy(),
@@ -201,6 +204,9 @@ func (settings RoutingSettings) FailoverPolicy() FailoverPolicy {
 	return FailoverPolicy{Enabled: settings.AllowUnmatchedFailover, Strategy: settings.Strategy, MaxAttempts: settings.MaxAttempts}
 }
 func (settings RoutingSettings) Validate() error {
+	if settings.GrokIdentityVersion != "" && !ValidClientVersion(settings.GrokIdentityVersion) {
+		return fmt.Errorf("grok_identity_version must be a version such as 1.0.45")
+	}
 	if settings.ClaudeIdentityVersion != "" && !ValidClientVersion(settings.ClaudeIdentityVersion) {
 		return fmt.Errorf("claude_identity_version must be a version such as 2.1.258")
 	}

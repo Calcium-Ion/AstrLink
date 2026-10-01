@@ -64,10 +64,14 @@ func (handler *Handler) routingSettingsResource(writer http.ResponseWriter, requ
 				destination = &settings.ClaudeIdentityAutoLearn
 			case "codex_identity_auto_learn":
 				destination = &settings.CodexIdentityAutoLearn
+			case "grok_identity_auto_learn":
+				destination = &settings.GrokIdentityAutoLearn
 			case "claude_identity_version":
 				destination = &settings.ClaudeIdentityVersion
 			case "codex_identity_version":
 				destination = &settings.CodexIdentityVersion
+			case "grok_identity_version":
+				destination = &settings.GrokIdentityVersion
 			case "default_recovery_paths":
 				writeError(writer, http.StatusGone, "routing_feature_retired", "default call paths are retired")
 				return

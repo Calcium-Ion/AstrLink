@@ -25,7 +25,7 @@ func (manager *Manager) grokUsage(ctx context.Context, tokens accountauth.Accoun
 	if err != nil {
 		return contract.SubscriptionUsage{}, fmt.Errorf("%w: %w", ErrUsageUnavailable, err)
 	}
-	accountauth.ApplyGrokAPIHeaders(request.Header, tokens, manager.grokConfig.ModelsClientVersion)
+	accountauth.ApplyGrokAPIHeaders(request.Header, tokens, manager.GrokClientVersion(ctx))
 	request.Header.Set("Accept", "application/json")
 	response, err := manager.grokConfig.HTTPClient.Do(request)
 	if err != nil {

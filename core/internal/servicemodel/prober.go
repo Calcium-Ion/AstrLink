@@ -167,7 +167,7 @@ func (prober *Prober) probeSubscription(
 	}
 	if account.Provider == contract.SubscriptionProviderXAIGrok {
 		headers := make(http.Header)
-		accountauth.ApplyGrokAPIHeaders(headers, tokens, prober.subscriptions.GrokClientVersion())
+		accountauth.ApplyGrokAPIHeaders(headers, tokens, prober.subscriptions.GrokClientVersion(probeContext))
 		return prober.probeHTTPPages(probeContext, prober.subscriptions.APIBaseURLFor(account.Provider), headers, protocol, false)
 	}
 	models, err := prober.subscriptions.Provider().ListModels(probeContext, tokens)

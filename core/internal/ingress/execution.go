@@ -153,7 +153,7 @@ func (handler *Handler) executeCandidatesWithTest(
 	schedule := newRecoverySchedule(candidates, body.Replayable())
 	protection := handler.subscriptionProtection(request.Context())
 	// Each official client identity is learned at most once per request.
-	learnedClaude, learnedCodex := false, false
+	learnedClaude, learnedCodex, learnedGrok := false, false, false
 	repairedTargets := map[string][]byte{}
 	var last executionFailure
 	var lastNetworkFailure executionFailure
@@ -416,6 +416,14 @@ func (handler *Handler) executeCandidatesWithTest(
 					records.noteCandidateRejected(last.endpointID, last.code())
 					continue
 				}
+			}
+		}
+		if candidate.Service.Kind == contract.ServiceKindGrokSubscription {
+			if plan.Type == contract.PlanTypeRelayKit {
+				clientClass = accountauth.ClientClassConverted
+			} else if protection.grokAutoLearn && !learnedGrok {
+				learnedGrok = true
+				handler.learnClientIdentity(request.Context(), contract.SubscriptionProviderXAIGrok, attemptRequest.Header)
 			}
 		}
 		var headers http.Header

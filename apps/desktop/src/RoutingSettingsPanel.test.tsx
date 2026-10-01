@@ -160,6 +160,7 @@ describe("shared global recovery settings", () => {
   it.each([
     ["codex_identity_auto_learn", "从 Codex CLI 请求学习身份"],
     ["claude_identity_auto_learn", "从 Claude Code 请求学习身份"],
+    ["grok_identity_auto_learn", "从 Grok CLI 请求学习身份"],
   ])("defaults %s on and saves it independently", async (key, label) => {
     const dirty = vi.fn();
     await act(async () =>
@@ -192,6 +193,7 @@ describe("shared global recovery settings", () => {
     bridge.getClientIdentities.mockResolvedValue({
       codex: { learned_version: "0.160.0", builtin_version: "0.155.1" },
       claude: { builtin_version: "2.1.258" },
+      grok: { builtin_version: "1.0.45", learned_version: "1.0.50" },
     });
     await act(async () =>
       root.render(
@@ -204,6 +206,7 @@ describe("shared global recovery settings", () => {
       const [, id] = toggle.getAttribute("aria-describedby")!.split(" ");
       return document.getElementById(id)?.textContent;
     };
+    expect(status("从 Grok CLI 请求学习身份")).toBe("已学到版本 1.0.50");
     expect(status("从 Codex CLI 请求学习身份")).toBe("已学到版本 0.160.0");
     expect(status("从 Claude Code 请求学习身份")).toBe(
       "尚未学到，内置版本 2.1.258",
@@ -213,6 +216,7 @@ describe("shared global recovery settings", () => {
   it.each([
     ["codex_identity_version", "Codex 最低版本", "0.160.0", "0.143.9"],
     ["claude_identity_version", "Claude Code 最低版本", "2.1.300", "2.1"],
+    ["grok_identity_version", "Grok 最低版本", "1.0.50", "1.0"],
   ])(
     "commits the %s override on blur or Enter and clears it with an empty value",
     async (key, label, version, invalid) => {
@@ -304,7 +308,11 @@ describe("shared global recovery settings", () => {
     );
     await selectTab("转发身份");
     const toggles = container.querySelectorAll('[role="switch"]');
-    expect(toggles).toHaveLength(10);
+    expect(toggles).toHaveLength(
+      identitySettingKeys.length +
+        subscriptionProtectionKeys.length +
+        identityLearningKeys.length,
+    );
     for (const toggle of toggles)
       expect(toggle.getAttribute("aria-checked")).toBe("false");
     await act(async () =>

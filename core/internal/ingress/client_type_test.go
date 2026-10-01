@@ -21,6 +21,8 @@ func TestDetectClientType(t *testing.T) {
 		{name: "Codex originator", ua: "openai-python/2.0", originator: "codex_vscode", want: contract.ClientCodex},
 		{name: "Claude Code", ua: "claude-cli/2.1.2 (external, cli)", want: contract.ClientClaudeCode},
 		{name: "Cursor", ua: "Mozilla/5.0 Cursor/1.0.0", want: contract.ClientCursor},
+		{name: "Grok shell", ua: "grok-shell/1.0.45", want: contract.ClientGrokCLI},
+		{name: "Grok in Lody", ua: "lody/1.0.45 grok-shell/1.0.40", want: contract.ClientGrokCLI},
 		{name: "Grok", ua: "xai-grok-workspace/1.0.0", want: contract.ClientGrokCLI},
 		{name: "Gemini", ua: "GeminiCLI/0.34.0/gemini-pro (linux; x64)", want: contract.ClientGeminiCLI},
 		{name: "Gemini server", ua: "GeminiCLI-a2a-server/0.34.0", want: contract.ClientGeminiCLI},

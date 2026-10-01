@@ -2327,6 +2327,11 @@
     "learningTitle": "学习官方客户端身份",
     "learningHint": "AstrLink 需要自行提供订阅客户端身份时（协议转换、模型发现、连接测试、授权与额度查询），使用从官方客户端请求中学到的身份，未学到时使用内置身份。只接受更新的版本，重启后保留；官方客户端请求的原样转发不受影响。修改自动保存，对新请求生效。",
     "learning": {
+      "grok": "从 Grok CLI 请求学习身份",
+      "grokHint": "识别到 Grok CLI 请求时学习版本：优先读取版本头，其次读取 grok-shell User-Agent，兼容 workspace 工具请求。仅接受不低于内置基线的更新版本，重启后保留；关闭后不再学习或使用已学版本。",
+      "grokVersion": "Grok 最低版本",
+      "grokVersionHint": "高于内置或已学版本时，同步提高 User-Agent 与 x-grok-client-version；低于时不会降级。关闭强制身份时，已识别客户端仍使用自己的版本。",
+      "grokVersionInvalid": "请输入形如 1.0.45 的版本号。",
       "codex": "从 Codex CLI 请求学习身份",
       "codexHint": "识别到 Codex CLI 请求时，记录其 User-Agent、originator 与版本。关闭后改用内置身份；已学到的身份会保留，但不再使用。",
       "claude": "从 Claude Code 请求学习身份",

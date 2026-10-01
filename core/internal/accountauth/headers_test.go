@@ -120,7 +120,9 @@ func TestOtherSubscriptionForwardIdentity(t *testing.T) {
 		{"claude", "claude-cli", "2.2.0", DefaultClaudeUserAgent, func(header http.Header, tokens AccountTokens, client http.Header, enforce bool) {
 			ApplyClaudeForwardHeaders(header, tokens, client, ClientIdentity{}, enforce)
 		}},
-		{"grok", "xai-grok-workspace", "0.2.102", "xai-grok-workspace/" + DefaultGrokCLIClientVersion, ApplyGrokForwardHeaders},
+		{"grok", "xai-grok-workspace", "0.2.102", grokIdentityAt("").UserAgent, func(header http.Header, tokens AccountTokens, client http.Header, enforce bool) {
+			ApplyGrokForwardHeaders(header, tokens, client, ClientIdentity{}, enforce)
+		}},
 	} {
 		t.Run(provider.name, func(t *testing.T) {
 			validUA := provider.product + "/" + provider.version + " (Mac OS; arm64)"
@@ -129,7 +131,7 @@ func TestOtherSubscriptionForwardIdentity(t *testing.T) {
 					client := make(http.Header)
 					client.Set("User-Agent", ua)
 					client.Set("Authorization", "Bearer client-secret")
-					client.Set("X-Grok-Client-Version", "0.0.1")
+					client.Set("X-Grok-Client-Version", "invalid")
 					client.Set("Anthropic-Version", "invalid")
 					client.Add("Anthropic-Beta", "client-feature,oauth-2025-04-20")
 					client.Add("Anthropic-Beta", "another-feature, client-feature")

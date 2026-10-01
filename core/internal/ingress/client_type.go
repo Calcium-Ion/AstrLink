@@ -49,7 +49,7 @@ func clientProduct(product string) contract.ClientType {
 		return contract.ClientClaudeCode
 	case "cursor", "cursor-agent":
 		return contract.ClientCursor
-	case "grok-cli", "xai-grok-workspace":
+	case "grok-cli", "grok-shell", "xai-grok-workspace":
 		return contract.ClientGrokCLI
 	case "gemini-cli", "geminicli", "geminicli-a2a-server":
 		return contract.ClientGeminiCLI

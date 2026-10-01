@@ -1,6 +1,10 @@
 package accountauth
 
-import "runtime"
+import (
+	"runtime"
+
+	"github.com/QuantumNous/astrlink/core/contract"
+)
 
 // Baseline subscription client identities, used when a request must carry a
 // client identity that the caller did not supply and none has been learned.
@@ -24,10 +28,10 @@ const (
 	codexUserAgentSuffix            = " (Ubuntu 22.4.0; x86_64) xterm-256color"
 
 	// DefaultGrokCLIClientVersion is the Grok CLI build reported to auth.x.ai
-	// and the chat proxy. It matches the version new-api ships for the same
-	// upstream and is only an identity hint, not a compatibility gate.
-	DefaultGrokCLIClientVersion = "0.2.101"
-	grokUserAgentProduct        = "xai-grok-workspace"
+	// and the chat proxy. The proxy enforces a minimum client version; keep
+	// this baseline aligned with observed Grok CLI releases.
+	DefaultGrokCLIClientVersion = "1.0.45"
+	grokUserAgentProduct        = "grok-shell"
 )
 
 // ClientIdentity is one subscription client's upstream identity: its
@@ -64,6 +68,31 @@ func DefaultClaudeIdentity() ClientIdentity {
 // DefaultCodexIdentity is the Codex TUI of DefaultCodexModelsClientVersion.
 func DefaultCodexIdentity() ClientIdentity {
 	return codexIdentityAt(DefaultCodexModelsClientVersion)
+}
+
+// DefaultGrokIdentity mirrors Grok Build's shell User-Agent on this host.
+func DefaultGrokIdentity() ClientIdentity {
+	return grokIdentityAt(DefaultGrokCLIClientVersion)
+}
+
+func grokIdentityAt(version string) ClientIdentity {
+	if !contract.ValidClientVersion(version) {
+		version = DefaultGrokCLIClientVersion
+	}
+	// Grok Build uses Rust's platform names in its shell User-Agent.
+	os, arch := runtime.GOOS, runtime.GOARCH
+	if os == "darwin" {
+		os = "macos"
+	}
+	switch arch {
+	case "arm64":
+		arch = "aarch64"
+	case "amd64":
+		arch = "x86_64"
+	case "386":
+		arch = "x86"
+	}
+	return ClientIdentity{UserAgent: grokUserAgentProduct + "/" + version + " (" + os + "; " + arch + ")", Version: version}
 }
 
 // codexIdentityAt is the baseline Codex TUI identity of one release; an

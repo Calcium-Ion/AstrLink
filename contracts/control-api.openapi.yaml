@@ -4048,11 +4048,13 @@ components:
         usage: { type: [object, "null"], additionalProperties: true }
     ClientIdentities:
       type: object
-      required: [codex, claude]
+      required: [codex, claude, grok]
       properties:
         codex:
           $ref: "#/components/schemas/ClientIdentityStatus"
         claude:
+          $ref: "#/components/schemas/ClientIdentityStatus"
+        grok:
           $ref: "#/components/schemas/ClientIdentityStatus"
       additionalProperties: false
     ClientIdentityStatus:
@@ -4092,7 +4094,7 @@ components:
         grok_identity_enforcement:
           type: boolean
           default: true
-          description: Use the default Grok client identity. When disabled, preserve recognized Grok client identities with a matching version header.
+          description: Use the resolved Grok shell identity, raising its version from the version header or Grok User-Agent when newer. When disabled, preserve recognized Grok client identities with a matching version header.
         subscription_risk_protection:
           type: boolean
           default: true
@@ -4117,11 +4119,17 @@ components:
           type: boolean
           default: true
           description: Let recognized Claude Code requests replace the built-in Claude identity used for converted requests, model discovery, connection tests, OAuth and usage requests. When disabled, the built-in identity is used and nothing new is learned.
+        grok_identity_auto_learn:
+          type: boolean
+          default: true
+          description: Learn newer versions from recognized Grok CLI requests and persist them for forwarding, model discovery, connection tests, OAuth and usage requests. Never learn below the built-in baseline. When disabled, ignore learned versions and stop learning.
         codex_identity_auto_learn:
           type: boolean
           default: true
           description: Let recognized Codex CLI requests replace the built-in Codex identity used for converted requests, model discovery, connection tests, OAuth and usage requests. When disabled, the built-in identity is used and nothing new is learned.
         claude_identity_version:
+          $ref: "#/components/schemas/ClientIdentityVersion"
+        grok_identity_version:
           $ref: "#/components/schemas/ClientIdentityVersion"
         codex_identity_version:
           $ref: "#/components/schemas/CodexIdentityVersion"
@@ -4188,7 +4196,14 @@ components:
           type: boolean
         codex_identity_auto_learn:
           type: boolean
+        grok_identity_auto_learn:
+          type: boolean
         claude_identity_version:
+          description: An empty string removes the override; null is rejected.
+          oneOf:
+            - $ref: "#/components/schemas/ClientIdentityVersion"
+            - { type: string, const: "" }
+        grok_identity_version:
           description: An empty string removes the override; null is rejected.
           oneOf:
             - $ref: "#/components/schemas/ClientIdentityVersion"

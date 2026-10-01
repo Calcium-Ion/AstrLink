@@ -104,7 +104,10 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 				accountauth.ApplyClaudeForwardHeaders(headers, tokens, clientHeaders, authorizer.identities.ClaudeIdentity(settings), settings.ClaudeIdentityEnforcement)
 			}
 		case contract.ServiceKindGrokSubscription:
-			accountauth.ApplyGrokForwardHeaders(headers, tokens, clientHeaders, settings.GrokIdentityEnforcement)
+			if accountauth.ClientClassFrom(ctx) == accountauth.ClientClassConverted {
+				clientHeaders = nil
+			}
+			accountauth.ApplyGrokForwardHeaders(headers, tokens, clientHeaders, authorizer.identities.GrokIdentity(settings, ""), settings.GrokIdentityEnforcement)
 		default:
 			if official {
 				accountauth.ApplyCodexOfficialForwardHeaders(headers, tokens)

@@ -213,7 +213,7 @@ routing_patch = openapi.dig("components", "schemas", "RoutingSettingsPatch", "pr
 raise "RoutingSettingsPatch must cover every routing setting" unless routing_patch.keys.sort == routing_settings.keys.sort
 routing_patch_defaults = routing_patch.select { |_, definition| definition.is_a?(Hash) && definition.key?("default") }.keys
 raise "RoutingSettingsPatch must not materialize defaults: #{routing_patch_defaults.join(', ')}" unless routing_patch_defaults.empty?
-%w[official_client_passthrough claude_identity_auto_learn codex_identity_auto_learn].each do |setting|
+%w[official_client_passthrough claude_identity_auto_learn codex_identity_auto_learn grok_identity_auto_learn].each do |setting|
   raise "#{setting} must default to true" unless routing_settings.dig(setting, "default") == true
 end
 identity_version = Regexp.new(openapi.dig("components", "schemas", "ClientIdentityVersion", "pattern"))
@@ -223,7 +223,7 @@ end
 ["", "2.1", "v2.1.300", "claude-cli/2.1.300", "2.1.300 (external, cli)", "2.1.300\n"].each do |version|
   raise "client identity version accepts #{version.inspect}" if identity_version.match?(version)
 end
-%w[claude_identity_version codex_identity_version].each do |setting|
+%w[claude_identity_version codex_identity_version grok_identity_version].each do |setting|
   choices = routing_patch.dig(setting, "oneOf")
   raise "#{setting} patch must accept an empty string to clear the override" unless choices.is_a?(Array) &&
                                                                                   choices.include?({ "type" => "string", "const" => "" })

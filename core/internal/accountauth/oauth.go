@@ -268,7 +268,7 @@ func (client *TokenClient) requestToken(ctx context.Context, values url.Values) 
 	if client.config.Provider == contract.SubscriptionProviderAntigravity {
 		request.Header.Set("User-Agent", AntigravityUserAgent())
 	} else if client.config.Provider == contract.SubscriptionProviderXAIGrok {
-		applyGrokOAuthHeaders(request.Header, client.config.ModelsClientVersion)
+		applyGrokOAuthHeaders(request.Header, client.config.Identities.GrokIdentityFor(ctx, client.config.ModelsClientVersion).Version)
 	} else if client.config.Provider == contract.SubscriptionProviderOpenAICodex {
 		ApplyCodexAuthIdentity(request.Header, client.config.Identities.CodexIdentityFor(ctx, client.config.ModelsClientVersion))
 	}

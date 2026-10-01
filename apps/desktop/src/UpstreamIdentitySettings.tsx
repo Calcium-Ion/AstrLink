@@ -44,6 +44,11 @@ const learnedClients: readonly {
     learn: "claude_identity_auto_learn",
     version: "claude_identity_version",
   },
+  {
+    client: "grok",
+    learn: "grok_identity_auto_learn",
+    version: "grok_identity_version",
+  },
 ];
 
 /**

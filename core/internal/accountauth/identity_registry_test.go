@@ -261,6 +261,55 @@ func TestIdentityRegistryRefreshesSameVersionAtBoundedRate(t *testing.T) {
 	}
 }
 
+func TestGrokIdentityLearningAndResolution(t *testing.T) {
+	ctx := context.Background()
+	store := &memoryIdentityStore{}
+	registry := NewIdentityRegistry(nil, store)
+	for _, test := range []struct {
+		ua, version string
+		learn       bool
+	}{
+		{"lody/1.0.45 grok-shell/1.0.40", "1.0.50", true},
+		{"grok-shell/1.0.49", "", false},
+		{"grok-shell/1.0.51", "bad", true},
+		{"xai-grok-workspace/1.0.52", "", true},
+		{"other/1.0.0", "1.0.53", false},
+		{"grok-shell/1.0.40", "", false},
+		{"grok-shell/99.0.0", "", false},
+		{"grok-shell/1.0.53 AstrLink", "", false},
+		{"grok-shell/1.0.53", "1.0.54-astrlink", true}, // Invalid header falls back to the shell version.
+	} {
+		header := http.Header{"User-Agent": {test.ua}, "X-Grok-Client-Version": {test.version}, "Authorization": {"not-persisted"}}
+		changed, err := registry.LearnGrok(ctx, header)
+		if err != nil || changed != test.learn {
+			t.Fatalf("LearnGrok(%q, %q) = %t, %v", test.ua, test.version, changed, err)
+		}
+	}
+	restarted := NewIdentityRegistry(nil, store)
+	if err := restarted.Hydrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	settings := contract.DefaultRoutingSettings()
+	if got := restarted.GrokIdentity(settings, ""); got.Version != "1.0.53" || !strings.HasPrefix(got.UserAgent, "grok-shell/1.0.53 (") || len(got.Headers) != 0 {
+		t.Fatalf("hydrated Grok identity = %+v", got)
+	}
+	settings.GrokIdentityVersion = "1.0.60"
+	if got := restarted.GrokIdentity(settings, ""); got.Version != "1.0.60" || !strings.HasPrefix(got.UserAgent, "grok-shell/1.0.60 (") {
+		t.Fatalf("floored Grok identity = %+v", got)
+	}
+	settings.GrokIdentityVersion = "0.2.101"
+	if got := restarted.GrokIdentity(settings, ""); got.Version != "1.0.53" {
+		t.Fatalf("stale floor downgraded Grok = %+v", got)
+	}
+	settings.GrokIdentityAutoLearn = false
+	if got := restarted.GrokIdentity(settings, "0.2.101"); got.Version != DefaultGrokCLIClientVersion {
+		t.Fatalf("disabled learning did not use baseline = %+v", got)
+	}
+	if got := restarted.ClientIdentities().Grok.LearnedVersion; got != "1.0.53" {
+		t.Fatalf("disabled learning forgot version = %q", got)
+	}
+}
+
 func TestIdentityRegistryResolutionLayers(t *testing.T) {
 	ctx := context.Background()
 	registry := NewIdentityRegistry(nil, nil)
@@ -351,6 +400,7 @@ func TestIdentityRegistryReportsLearnedAndBuiltinVersions(t *testing.T) {
 	builtin := contract.ClientIdentities{
 		Codex:  contract.ClientIdentityStatus{BuiltinVersion: DefaultCodexIdentity().Version},
 		Claude: contract.ClientIdentityStatus{BuiltinVersion: DefaultClaudeIdentity().Version},
+		Grok:   contract.ClientIdentityStatus{BuiltinVersion: DefaultGrokCLIClientVersion},
 	}
 	var none *IdentityRegistry
 	if got := none.ClientIdentities(); got != builtin {

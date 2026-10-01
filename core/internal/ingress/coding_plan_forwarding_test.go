@@ -110,7 +110,7 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 						}
 						if test.kind == contract.ServiceKindGrokSubscription {
 							if request.Header.Get("X-XAI-Token-Auth") != "xai-grok-cli" || request.Header.Get("X-Grok-Client-Version") == "" ||
-								!strings.HasPrefix(request.UserAgent(), "xai-grok-workspace/") {
+								!strings.HasPrefix(request.UserAgent(), "grok-shell/") {
 								t.Errorf("missing Grok CLI identity: %v", request.Header)
 							}
 						} else if request.Header.Get("X-XAI-Token-Auth") != "" {
@@ -220,7 +220,7 @@ func TestSubscriptionIdentityOptOutReachesUpstream(t *testing.T) {
 			request.Header.Set("User-Agent", test.clientUA)
 			request.Header.Set("Authorization", "Bearer local-token")
 			request.Header.Set("X-Api-Key", "local-key")
-			request.Header.Set("X-Grok-Client-Version", "0.0.1")
+			request.Header.Set("X-Grok-Client-Version", "invalid")
 			request.Header.Set("X-AstrLink-Debug", "local-only")
 			request.Header.Set("X-Client-Feature", "keep")
 			request.Header.Set("Anthropic-Beta", "client-feature,oauth-2025-04-20")

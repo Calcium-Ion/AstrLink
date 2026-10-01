@@ -70,7 +70,7 @@ func TestLearnedIdentityStoreUpgradesAndRoundTrips(t *testing.T) {
 		provider contract.SubscriptionProvider
 		document string
 	}{
-		{contract.SubscriptionProviderXAIGrok, `{}`},
+		{contract.SubscriptionProviderAntigravity, `{}`},
 		{"unknown", `{}`},
 		{contract.SubscriptionProviderClaudeCode, `{`},
 	} {
@@ -78,7 +78,7 @@ func TestLearnedIdentityStoreUpgradesAndRoundTrips(t *testing.T) {
 			t.Fatalf("put %s %s error = %v", invalid.provider, invalid.document, err)
 		}
 	}
-	if _, err := store.GetLearnedIdentity(ctx, contract.SubscriptionProviderXAIGrok); !errors.Is(err, storagecontract.ErrInvalidArgument) {
+	if _, err := store.GetLearnedIdentity(ctx, contract.SubscriptionProviderAntigravity); !errors.Is(err, storagecontract.ErrInvalidArgument) {
 		t.Fatalf("get unsupported provider error = %v", err)
 	}
 	var updatedAt string
@@ -90,7 +90,7 @@ func TestLearnedIdentityStoreUpgradesAndRoundTrips(t *testing.T) {
 	}
 	// A row written by a newer build for a provider this build does not learn
 	// is left alone.
-	if _, err := store.db.Exec(`INSERT INTO learned_client_identity (provider, document_json, updated_at) VALUES ('xai_grok', '{}', '2026-09-25T00:00:00Z')`); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO learned_client_identity (provider, document_json, updated_at) VALUES ('antigravity', '{}', '2026-09-25T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -143,6 +143,9 @@ func TestLearnedIdentitySurvivesRestart(t *testing.T) {
 	if changed, err := registry.LearnCodex(ctx, codex); !changed || err != nil {
 		t.Fatalf("LearnCodex = %t, %v", changed, err)
 	}
+	if changed, err := registry.LearnGrok(ctx, http.Header{"User-Agent": {"grok-shell/1.0.50"}}); !changed || err != nil {
+		t.Fatalf("LearnGrok = %t, %v", changed, err)
+	}
 	wantClaude := registry.ClaudeIdentityFor(ctx)
 	wantCodex := registry.CodexIdentityFor(ctx, "")
 	if err := store.Close(); err != nil {
@@ -163,6 +166,10 @@ func TestLearnedIdentitySurvivesRestart(t *testing.T) {
 	}
 	if got := restarted.CodexIdentityFor(ctx, ""); got.UserAgent != wantCodex.UserAgent || got.Version != "0.160.0" {
 		t.Fatalf("hydrated Codex = %+v, want %+v", got, wantCodex)
+	}
+
+	if got := restarted.GrokIdentityFor(ctx, ""); got.Version != "1.0.50" {
+		t.Fatalf("hydrated Grok = %+v", got)
 	}
 
 	// The persisted settings still decide whether the learned identity is used.

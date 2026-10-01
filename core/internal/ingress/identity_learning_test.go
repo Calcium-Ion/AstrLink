@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -105,6 +106,120 @@ func officialClaudeHeaders(userAgent string) http.Header {
 		"X-Stainless-Retry-Count":     {"2"},
 		"X-Stainless-Helper-Method":   {"stream"},
 		"X-Astrlink-Debug":            {"local-only"},
+	}
+}
+
+func TestGrokClientVersionReachesUpstream(t *testing.T) {
+	for _, test := range []struct{ name, ua, version, want string }{
+		{"header first", "lody/1.0.45 grok-shell/1.0.40", "1.0.45", "1.0.45"},
+		{"shell fallback", "lody/1.0.45 grok-shell/1.0.46", "", "1.0.46"},
+		{"invalid header", "grok-shell/1.0.46", "invalid", "1.0.46"},
+		{"header only", "other/1.0.0", "1.0.47", "1.0.47"},
+		{"old client", "grok-shell/1.0.13", "", "1.0.45"},
+		{"baseline", "other/1.0.0", "", "1.0.45"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasPrefix(r.UserAgent(), "grok-shell/"+test.want+" (") || r.Header.Get("X-Grok-Client-Version") != test.want {
+					t.Errorf("upstream identity = %q / %q, want grok-shell/%s", r.UserAgent(), r.Header.Get("X-Grok-Client-Version"), test.want)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"chat_1","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`))
+			}))
+			defer upstream.Close()
+			candidate := grokIdentityCandidate(upstream.URL)
+			harness := newIdentityHarness(t, contract.DefaultRoutingSettings(), &memoryLearnedIdentities{}, candidate)
+			harness.serve(t, "/v1/chat/completions", `{"model":"grok-composer-2.5-fast","messages":[{"role":"user","content":"hello"}]}`, http.Header{
+				"User-Agent": {test.ua}, "X-Grok-Client-Version": {test.version},
+			})
+			if test.name == "shell fallback" {
+				// Once learned, a caller without an identity uses the same version.
+				harness.serve(t, "/v1/chat/completions", `{"model":"grok-composer-2.5-fast","messages":[{"role":"user","content":"hello"}]}`, nil)
+				if got := harness.registry.ClientIdentities().Grok.LearnedVersion; got != test.want {
+					t.Fatalf("learned Grok version = %q", got)
+				}
+			}
+		})
+	}
+}
+
+func grokIdentityCandidate(baseURL string) endpoint.Resolved {
+	return endpoint.Resolved{
+		Service: contract.Service{ID: "service_grok_identity", Name: "Grok", Kind: contract.ServiceKindGrokSubscription, Enabled: true,
+			Models: []string{"grok-composer-2.5-fast"}, Capabilities: contract.SubscriptionProviderXAIGrok.Capabilities(),
+			Subscription: &contract.SubscriptionConnection{Provider: contract.SubscriptionProviderXAIGrok, Status: contract.SubscriptionStatusConnected, CredentialRef: "keyring://subscription/service_grok_identity"}},
+		BaseURL: baseURL, UpstreamProtocol: contract.ProtocolOpenAIChat,
+	}
+}
+
+func TestGrokLearningSwitchAndConvertedRequests(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		upstream := newCapturedUpstream(t, http.StatusOK, "application/json", `{"id":"chat_1","object":"chat.completion","model":"grok-composer-2.5-fast","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+		settings := contract.DefaultRoutingSettings()
+		settings.GrokIdentityAutoLearn = enabled
+		candidate := grokIdentityCandidate(upstream.url)
+		candidate.Service.Capabilities = append(candidate.Service.Capabilities, contract.Capability{
+			Protocol: contract.ProtocolAnthropicMessages, Mode: contract.CapabilityModeNative, Streaming: true, ConvertTo: contract.ProtocolOpenAIChat,
+		})
+		harness := newIdentityHarness(t, settings, &memoryLearnedIdentities{}, candidate)
+		body := `{"model":"grok-composer-2.5-fast","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`
+		harness.serve(t, "/v1/chat/completions", body, http.Header{"User-Agent": {"grok-shell/1.0.50"}})
+		forwarded, _ := upstream.request(t)
+		if forwarded.Get("X-Grok-Client-Version") != "1.0.50" {
+			t.Fatal("native caller version was lost")
+		}
+		want := accountauth.DefaultGrokCLIClientVersion
+		if enabled {
+			want = "1.0.50"
+		}
+		// Conversion must neither forward nor learn the inbound client identity.
+		harness.serve(t, "/v1/messages", body, http.Header{"User-Agent": {"grok-shell/1.0.60"}, "X-Grok-Client-Version": {"1.0.60"}})
+		forwarded, _ = upstream.request(t)
+		if forwarded.Get("X-Grok-Client-Version") != want || !strings.HasPrefix(forwarded.Get("User-Agent"), "grok-shell/"+want+" (") {
+			t.Fatalf("learning=%t: converted identity = %q / %q", enabled, forwarded.Get("User-Agent"), forwarded.Get("X-Grok-Client-Version"))
+		}
+		learned := harness.registry.ClientIdentities().Grok.LearnedVersion
+		if (enabled && learned != "1.0.50") || (!enabled && learned != "") {
+			t.Fatalf("learning=%t: learned version = %q", enabled, learned)
+		}
+	}
+}
+
+func TestGrokForwardHeadersMatchShellAndACPClients(t *testing.T) {
+	for _, enforce := range []bool{false, true} {
+		upstream := newCapturedUpstream(t, http.StatusOK, "application/json", `{"id":"chat_1","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`)
+		settings := contract.DefaultRoutingSettings()
+		settings.GrokIdentityEnforcement = enforce
+		harness := newIdentityHarness(t, settings, nil, grokIdentityCandidate(upstream.url))
+		for _, test := range []struct{ ua, version, identifier, wantUA, wantVersion string }{
+			{"lody:session/2.0.0 grok-shell/1.0.40 (macos; aarch64)", "1.0.50", "lody:session", "lody:session/2.0.0 grok-shell/1.0.50 (macos; aarch64)", "1.0.50"},
+			{"grok-desktop/9.9.9 grok-shell/1.0.51 (macos; aarch64)", "bad", "grok-desktop", "grok-desktop/9.9.9 grok-shell/1.0.51 (macos; aarch64)", "1.0.51"},
+			{"xai-grok-workspace/1.0.52", "", "grok-shell", "xai-grok-workspace/1.0.52", "1.0.52"},
+		} {
+			// HTTP parsing canonicalizes the lowercase names actually sent by Grok.
+			raw := "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nuser-agent: " + test.ua +
+				"\r\nx-grok-client-version: " + test.version + "\r\nx-grok-client-identifier: " + test.identifier + "\r\n\r\n"
+			request, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Authorization", "Bearer local-secret")
+			request.Header.Set("X-XAI-Token-Auth", "wrong-client-value")
+			request.Header.Set("X-AstrLink-Debug", "local-only")
+			harness.serve(t, "/v1/chat/completions", `{"model":"grok-composer-2.5-fast","messages":[{"role":"user","content":"hello"}]}`, request.Header)
+			forwarded, _ := upstream.request(t)
+			wantUA, wantIdentifier := test.wantUA, test.identifier
+			if enforce {
+				wantUA = strings.Replace(accountauth.DefaultGrokIdentity().UserAgent, accountauth.DefaultGrokCLIClientVersion, test.wantVersion, 1)
+				wantIdentifier = "grok-shell"
+			}
+			if forwarded.Get("User-Agent") != wantUA || forwarded.Get("X-Grok-Client-Version") != test.wantVersion || forwarded.Get("X-Grok-Client-Identifier") != wantIdentifier {
+				t.Fatalf("enforce=%t: got %q / %q / %q; want %q / %q / %q", enforce, forwarded.Get("User-Agent"), forwarded.Get("X-Grok-Client-Version"), forwarded.Get("X-Grok-Client-Identifier"), wantUA, test.wantVersion, wantIdentifier)
+			}
+			if forwarded.Get("Authorization") != "Bearer subscription-token" || forwarded.Get("X-XAI-Token-Auth") != "xai-grok-cli" || forwarded.Get("X-AstrLink-Debug") != "" {
+				t.Fatal("upstream authentication or local header filtering is incorrect")
+			}
+		}
 	}
 }
 

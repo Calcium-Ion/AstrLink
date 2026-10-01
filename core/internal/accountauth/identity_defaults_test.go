@@ -46,7 +46,7 @@ func TestBaselineIdentitySnapshot(t *testing.T) {
 		CodexUserAgent("") != wantCodex.UserAgent {
 		t.Fatalf("Codex baseline constants drifted: %q %q %q", DefaultCodexOriginator, DefaultCodexModelsClientVersion, CodexUserAgent(""))
 	}
-	if DefaultGrokCLIClientVersion != "0.2.101" || grokUserAgentProduct != "xai-grok-workspace" {
+	if DefaultGrokCLIClientVersion != "1.0.45" || grokUserAgentProduct != "grok-shell" {
 		t.Fatalf("Grok baseline = %q/%q", grokUserAgentProduct, DefaultGrokCLIClientVersion)
 	}
 }

@@ -2327,6 +2327,11 @@
     "learningTitle": "Learn official client identities",
     "learningHint": "When AstrLink must supply a subscription client identity itself (converted requests, model discovery, connection tests, authorization, and quota requests), it uses the identity learned from official client requests, or the built-in identity until one is learned. Only newer versions are accepted, and they persist across restarts. Official client requests forwarded unchanged are not affected. Changes save automatically and apply to new requests.",
     "learning": {
+      "grok": "Learn identity from Grok CLI requests",
+      "grokHint": "Learn the version from recognized Grok CLI requests: prefer the version header, then grok-shell in the User-Agent; workspace tool clients are also recognized. Only newer versions at or above the built-in baseline are learned and kept across restarts. Disabling stops learning and using learned versions.",
+      "grokVersion": "Grok minimum version",
+      "grokVersionHint": "Raise the User-Agent and x-grok-client-version together when this is newer than the built-in or learned version. Lower values never downgrade it. With identity enforcement off, recognized clients keep their own version.",
+      "grokVersionInvalid": "Enter a version such as 1.0.45.",
       "codex": "Learn identity from Codex CLI requests",
       "codexHint": "Record the User-Agent, originator, and version of recognized Codex CLI requests. When disabled, the built-in identity is used; a learned identity is kept but no longer used.",
       "claude": "Learn identity from Claude Code requests",

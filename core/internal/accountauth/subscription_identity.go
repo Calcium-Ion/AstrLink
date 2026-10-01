@@ -110,13 +110,59 @@ func ApplyClaudeOfficialForwardHeaders(header http.Header, tokens AccountTokens,
 	}
 }
 
-func ApplyGrokForwardHeaders(header http.Header, tokens AccountTokens, clientHeaders http.Header, enforce bool) {
-	ApplyGrokAPIHeaders(header, tokens, "")
-	if header == nil || enforce {
+// grokIdentityFromHeaders recognizes the shell's product even behind a host
+// product (for example Lody), and the older workspace tool client. The explicit
+// version header wins over the embedded shell version.
+func grokIdentityFromHeaders(header http.Header) (ClientIdentity, bool) {
+	ua := header.Get("User-Agent")
+	if len(header.Values("User-Agent")) != 1 || len(ua) > maxLearnedUserAgent || !learnedText(ua) {
+		return ClientIdentity{}, false
+	}
+	fields := strings.Fields(ua)
+	for _, product := range []string{grokUserAgentProduct, "xai-grok-workspace"} {
+		for index, token := range fields {
+			name, version, found := strings.Cut(token, "/")
+			if !found || name != product || !contract.ValidClientVersion(version) {
+				continue
+			}
+			if explicit := grokHeaderVersion(header); explicit != "" {
+				version = explicit
+				fields[index] = product + "/" + version
+			}
+			return ClientIdentity{UserAgent: strings.Join(fields, " "), Version: version}, true
+		}
+	}
+	return ClientIdentity{}, false
+}
+
+func grokHeaderVersion(header http.Header) string {
+	if len(header.Values("X-Grok-Client-Version")) == 1 {
+		version := strings.TrimSpace(header.Get("X-Grok-Client-Version"))
+		if contract.ValidClientVersion(version) && learnedText(version) {
+			return version
+		}
+	}
+	return ""
+}
+
+func ApplyGrokForwardHeaders(header http.Header, tokens AccountTokens, clientHeaders http.Header, identity ClientIdentity, enforce bool) {
+	if header == nil {
 		return
 	}
-	if ua, version := recognizedClientIdentity(clientHeaders, grokUserAgentProduct); ua != "" {
-		header.Set("User-Agent", ua)
-		header.Set("X-Grok-Client-Version", version)
+	identity = grokIdentityAt(identity.Version)
+	client, recognized := grokIdentityFromHeaders(clientHeaders)
+	version := grokHeaderVersion(clientHeaders)
+	if version == "" && recognized {
+		version = client.Version
+	}
+	identity = withVersionFloor(identity, version)
+	ApplyGrokAPIHeaders(header, tokens, identity.Version)
+	if !enforce && recognized {
+		header.Set("User-Agent", client.UserAgent)
+		header.Set("X-Grok-Client-Version", client.Version)
+		identifier := strings.TrimSpace(clientHeaders.Get("X-Grok-Client-Identifier"))
+		if len(clientHeaders.Values("X-Grok-Client-Identifier")) == 1 && len(identifier) <= maxLearnedValue && identifier != "" && learnedText(identifier) {
+			header.Set("X-Grok-Client-Identifier", identifier)
+		}
 	}
 }

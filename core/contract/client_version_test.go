@@ -44,8 +44,8 @@ func TestCompareClientVersions(t *testing.T) {
 func TestRoutingSettingsIdentityDefaultsAndValidation(t *testing.T) {
 	defaults := DefaultRoutingSettings()
 	if !defaults.OfficialClientPassthrough ||
-		!defaults.ClaudeIdentityAutoLearn || !defaults.CodexIdentityAutoLearn ||
-		defaults.ClaudeIdentityVersion != "" || defaults.CodexIdentityVersion != "" {
+		!defaults.ClaudeIdentityAutoLearn || !defaults.CodexIdentityAutoLearn || !defaults.GrokIdentityAutoLearn ||
+		defaults.ClaudeIdentityVersion != "" || defaults.CodexIdentityVersion != "" || defaults.GrokIdentityVersion != "" {
 		t.Fatalf("identity defaults = %+v", defaults)
 	}
 	encoded, err := json.Marshal(defaults)
@@ -61,7 +61,7 @@ func TestRoutingSettingsIdentityDefaultsAndValidation(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"official_client_passthrough":false}`), &legacy); err != nil {
 		t.Fatal(err)
 	}
-	if !legacy.ClaudeIdentityAutoLearn || !legacy.CodexIdentityAutoLearn {
+	if !legacy.ClaudeIdentityAutoLearn || !legacy.CodexIdentityAutoLearn || !legacy.GrokIdentityAutoLearn {
 		t.Fatalf("legacy document disabled learning: %+v", legacy)
 	}
 

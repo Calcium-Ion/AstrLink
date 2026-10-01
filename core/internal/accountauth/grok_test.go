@@ -194,7 +194,7 @@ func TestApplyGrokAPIHeadersUsesCLIIdentity(t *testing.T) {
 	accountauth.ApplyGrokAPIHeaders(headers, accountauth.AccountTokens{AccessToken: "tok"}, "")
 	if headers.Get("Authorization") != "Bearer tok" || headers.Get("X-XAI-Token-Auth") != "xai-grok-cli" ||
 		headers.Get("X-Grok-Client-Version") != accountauth.DefaultGrokCLIClientVersion ||
-		!strings.HasPrefix(headers.Get("User-Agent"), "xai-grok-workspace/") {
+		!strings.HasPrefix(headers.Get("User-Agent"), "grok-shell/") {
 		t.Fatalf("headers = %v", headers)
 	}
 	normalized := accountauth.OAuthConfig{Provider: contract.SubscriptionProviderXAIGrok}.Normalize()

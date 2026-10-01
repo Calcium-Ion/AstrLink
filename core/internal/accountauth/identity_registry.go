@@ -40,7 +40,7 @@ type LearnedIdentityStore interface {
 	PutLearnedIdentity(context.Context, contract.SubscriptionProvider, []byte) error
 }
 
-// IdentityRegistry resolves the Claude Code and Codex identity AstrLink sends
+// IdentityRegistry resolves the subscription client identity AstrLink sends
 // when it must supply one, and learns it from recognized official clients.
 // The base identity is the learned one when auto-learn is on, otherwise the
 // baseline; the configured version is a floor on the version it declares. A
@@ -122,18 +122,38 @@ func (registry *IdentityRegistry) CodexIdentityFor(ctx context.Context, baseline
 	return registry.CodexIdentity(registry.routingSettings(ctx), baselineVersion)
 }
 
+// GrokIdentity keeps the built-in version as a floor: older clients must not
+// reintroduce a version that the chat proxy rejects.
+func (registry *IdentityRegistry) GrokIdentity(settings contract.RoutingSettings, baselineVersion string) ClientIdentity {
+	base := withVersionFloor(grokIdentityAt(baselineVersion), DefaultGrokCLIClientVersion)
+	if settings.GrokIdentityAutoLearn {
+		if learned, ok := registry.learnedIdentity(contract.SubscriptionProviderXAIGrok); ok {
+			base = withVersionFloor(base, learned.Version)
+		}
+	}
+	return withVersionFloor(base, settings.GrokIdentityVersion)
+}
+
+func (registry *IdentityRegistry) GrokIdentityFor(ctx context.Context, baselineVersion string) ClientIdentity {
+	return registry.GrokIdentity(registry.routingSettings(ctx), baselineVersion)
+}
+
 // ClientIdentities reports each learned client's learned and built-in
 // version, whatever the settings select.
 func (registry *IdentityRegistry) ClientIdentities() contract.ClientIdentities {
 	identities := contract.ClientIdentities{
 		Codex:  contract.ClientIdentityStatus{BuiltinVersion: DefaultCodexModelsClientVersion},
 		Claude: contract.ClientIdentityStatus{BuiltinVersion: claudeCLIVersion},
+		Grok:   contract.ClientIdentityStatus{BuiltinVersion: DefaultGrokCLIClientVersion},
 	}
 	if learned, ok := registry.learnedIdentity(contract.SubscriptionProviderOpenAICodex); ok {
 		identities.Codex.LearnedVersion = learned.Version
 	}
 	if learned, ok := registry.learnedIdentity(contract.SubscriptionProviderClaudeCode); ok {
 		identities.Claude.LearnedVersion = learned.Version
+	}
+	if learned, ok := registry.learnedIdentity(contract.SubscriptionProviderXAIGrok); ok {
+		identities.Grok.LearnedVersion = learned.Version
 	}
 	return identities
 }
@@ -162,6 +182,19 @@ func (registry *IdentityRegistry) LearnCodex(ctx context.Context, header http.He
 		return false, nil
 	}
 	return registry.learn(ctx, contract.SubscriptionProviderOpenAICodex, identity)
+}
+
+// LearnGrok learns only the version from a recognized Grok client, without
+// persisting wrapper identities, credentials, or request-specific headers.
+func (registry *IdentityRegistry) LearnGrok(ctx context.Context, header http.Header) (bool, error) {
+	if registry == nil {
+		return false, nil
+	}
+	identity, ok := grokIdentityFromHeaders(header)
+	if !ok {
+		return false, nil
+	}
+	return registry.learn(ctx, contract.SubscriptionProviderXAIGrok, grokIdentityAt(identity.Version))
 }
 
 func (registry *IdentityRegistry) routingSettings(ctx context.Context) contract.RoutingSettings {
@@ -332,6 +365,11 @@ func decodeLearnedIdentity(provider contract.SubscriptionProvider, document []by
 func validLearnedIdentity(provider contract.SubscriptionProvider, identity ClientIdentity) bool {
 	var product, floor, baseline string
 	switch provider {
+	case contract.SubscriptionProviderXAIGrok:
+		product, floor, baseline = grokUserAgentProduct, DefaultGrokCLIClientVersion, DefaultGrokCLIClientVersion
+		if len(identity.Headers) != 0 || identity.UserAgent != grokIdentityAt(identity.Version).UserAgent {
+			return false
+		}
 	case contract.SubscriptionProviderClaudeCode:
 		product, floor, baseline = strings.TrimSuffix(ClaudeUserAgentPrefix, "/"), minLearnedClaudeVersion, claudeCLIVersion
 		// A replayed User-Agent needs the SDK fingerprint it shipped with.
