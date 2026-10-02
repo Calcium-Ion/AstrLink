@@ -3640,6 +3640,9 @@ describe("ServiceManager", () => {
         http: {
           base_url: customService.http?.base_url,
           auth: { scheme: "none" },
+          // A custom provider always patches its model list path; an empty
+          // field clears a previously saved one.
+          model_list_path: null,
         },
         capabilities: customService.capabilities.map((capability) => ({
           ...capability,

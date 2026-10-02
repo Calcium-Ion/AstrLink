@@ -24,6 +24,7 @@ import { parseFailurePolicy, type FailurePolicy } from "./failure-policy-model";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Boxes,
+  ChevronRight,
   Flask,
   Connect as Cable,
   Menu as Ellipsis,
@@ -110,6 +111,7 @@ import {
   completeServiceAuthorization,
   createService,
   deleteService,
+  fetchCustomModelList,
   getService,
   getServiceAuthorization,
   getServiceUsage,
@@ -243,6 +245,7 @@ type Draft = {
   models: string[];
   capabilities: ServiceCapability[];
   authorizationFlow: AuthorizationFlow | null;
+  modelListPath: string;
 };
 
 type ConfirmAction =
@@ -467,6 +470,7 @@ function draftForKind(
         ...capability,
       })),
       authorizationFlow: defaultAuthorizationFlow(kind),
+      modelListPath: "",
     };
   }
   const preset = httpServicePreset(
@@ -488,6 +492,7 @@ function draftForKind(
     models: [...(preset.models ?? [])],
     capabilities: preset.capabilities.map((capability) => ({ ...capability })),
     authorizationFlow: null,
+    modelListPath: "",
   };
 }
 
@@ -525,6 +530,7 @@ function draftFromRecord(record: ServiceRecord): Draft {
     capabilities: service.capabilities.map((capability) =>
       wireCapability(capability),
     ),
+    modelListPath: service.http.model_list_path ?? "",
   };
 }
 
@@ -908,6 +914,7 @@ export function ServiceManager({
     snapshot: UpstreamModelSnapshot;
   } | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>("connection");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [usageByService, setUsageByService] = useWorkspaceSnapshot<
     Record<
       string,
@@ -1078,6 +1085,7 @@ export function ServiceManager({
         const next = draftFromRecord(record);
         setEditing(record);
         setDraft(next);
+        setAdvancedOpen(next.modelListPath.trim() !== "");
         setBaseline(draftSignature(next));
       })
       .catch((cause) => {
@@ -1370,6 +1378,53 @@ export function ServiceManager({
       setError(t("services.saveBeforeFetch"));
       return;
     }
+
+    // Custom kind with model_list_path uses a dedicated fetch command
+    if (draft.kind === "custom" && draft.modelListPath.trim() !== "") {
+      setProbingModels(true);
+      setError(null);
+      try {
+        const result = await fetchCustomModelList({
+          ...(draft.proxy.mode !== "inherit" || editing?.service.proxy
+            ? { proxy: proxyInput(draft.proxy) }
+            : {}),
+          ...(editing ? { service_id: editing.service.id } : {}),
+          kind: draft.kind,
+          http: {
+            base_url: draft.baseURL.trim(),
+            auth: authForDraft(draft),
+            ...(draft.secret.trim()
+              ? { credential: { secret: draft.secret } }
+              : {}),
+            model_list_path: draft.modelListPath.trim(),
+          },
+        });
+        const models = [
+          ...new Set([...draft.models, ...result.model_ids]),
+        ].sort();
+        if (models.length > 2_000) {
+          setError(t("services.mergeTooMany"));
+          return;
+        }
+        setModelPreviewQuery("");
+        setModelPreview({
+          models,
+          selected: initialModelPreviewSelection(draft.models, models),
+          missing: [],
+          warnings: result.warnings ?? [],
+        });
+      } catch (cause) {
+        setError(
+          t("services.fetchFailedDetail", {
+            warnings: errorMessage(cause, t("services.fetchFailed")),
+          }),
+        );
+      } finally {
+        setProbingModels(false);
+      }
+      return;
+    }
+
     const discoveryProtocols = modelDiscoveryProtocols(draft);
     if (discoveryProtocols.length === 0) {
       setError(t("services.enableDiscovery"));
@@ -1507,6 +1562,9 @@ export function ServiceManager({
               : draft.removeCredential
                 ? { credential: null }
                 : {}),
+            ...(draft.kind === "custom"
+              ? { model_list_path: draft.modelListPath.trim() || null }
+              : {}),
           };
         }
         patch.capabilities = isSubscriptionKind(draft.kind)
@@ -1556,6 +1614,9 @@ export function ServiceManager({
               auth: authForDraft(draft),
               ...(draft.secret.trim()
                 ? { credential: { secret: draft.secret } }
+                : {}),
+              ...(draft.kind === "custom" && draft.modelListPath.trim()
+                ? { model_list_path: draft.modelListPath.trim() }
                 : {}),
             },
             capabilities: draft.capabilities.map(wireCapability),
@@ -2771,7 +2832,8 @@ export function ServiceManager({
         }))
       }
       onDiscoverModels={
-        modelDiscoveryProtocols(draft).length > 0
+        modelDiscoveryProtocols(draft).length > 0 ||
+        (draft.kind === "custom" && draft.modelListPath.trim() !== "")
           ? () => void discoverModels()
           : undefined
       }
@@ -2968,7 +3030,7 @@ export function ServiceManager({
             ? "https://daily-cloudcode-pa.googleapis.com"
             : draft.baseURL.trim();
   const connectionFields = (
-    <div className="grid min-w-0 items-start gap-4 pb-2 @[760px]:grid-cols-2">
+    <div className="grid min-w-0 gap-4 pb-2 @[760px]:grid-cols-2">
       <Panel>
         <PanelHeader>
           <h2 className="flex items-center gap-2 text-sm font-semibold">
@@ -3303,6 +3365,46 @@ export function ServiceManager({
           })
         }
       />
+      {draft.kind === "custom" ? (
+        <Panel className="@[760px]:col-span-2" data-testid="service-advanced">
+          <details
+            className="group/advanced min-w-0"
+            open={advancedOpen}
+          >
+            <summary
+              className="flex cursor-pointer list-none items-center gap-2 p-4 text-sm font-semibold transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden"
+              onClick={(event) => {
+                event.preventDefault();
+                setAdvancedOpen((current) => !current);
+              }}
+            >
+              <ChevronRight
+                aria-hidden="true"
+                className="size-4 shrink-0 text-primary transition-transform group-open/advanced:rotate-90"
+              />
+              {t("services.advancedSettings")}
+            </summary>
+            <div className="grid min-w-0 gap-4 px-4 pb-4">
+              <Field
+                label={t("services.modelListPath")}
+                hint={t("services.modelListPathHint")}
+              >
+                <Input
+                  maxLength={512}
+                  placeholder="/v1/models"
+                  value={draft.modelListPath}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      modelListPath: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+            </div>
+          </details>
+        </Panel>
+      ) : null}
     </div>
   );
   return (

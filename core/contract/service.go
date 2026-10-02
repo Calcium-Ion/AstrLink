@@ -86,6 +86,26 @@ type HTTPConnection struct {
 	BaseURL       string      `json:"base_url"`
 	Auth          ServiceAuth `json:"auth"`
 	CredentialRef string      `json:"credential_ref,omitempty"`
+	ModelListPath string      `json:"model_list_path,omitempty"`
+}
+
+// ValidateModelListPath accepts an absolute URL path appended to base_url for
+// model discovery. Query strings and fragments are rejected because the prober
+// builds its own pagination query.
+func ValidateModelListPath(path string) error {
+	if len(path) > 2048 {
+		return fmt.Errorf("model_list_path exceeds 2048 characters")
+	}
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("model_list_path must start with /")
+	}
+	if strings.ContainsAny(path, "?#") {
+		return fmt.Errorf("model_list_path must not contain a query or fragment")
+	}
+	if strings.TrimSpace(path) != path || strings.ContainsAny(path, " \t\r\n") {
+		return fmt.Errorf("model_list_path must not contain whitespace")
+	}
+	return nil
 }
 
 func (connection HTTPConnection) Validate(serviceID ServiceID) error {
@@ -107,6 +127,11 @@ func (connection HTTPConnection) Validate(serviceID ServiceID) error {
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("base_url must not contain a query or fragment")
+	}
+	if connection.ModelListPath != "" {
+		if err := ValidateModelListPath(connection.ModelListPath); err != nil {
+			return err
+		}
 	}
 	if connection.CredentialRef != "" {
 		if err := ValidateCredentialRef(connection.CredentialRef); err != nil {
@@ -208,6 +233,9 @@ func (service Service) Validate() error {
 		}
 		if err := service.HTTP.Validate(service.ID); err != nil {
 			return fmt.Errorf("http: %w", err)
+		}
+		if service.HTTP.ModelListPath != "" && service.Kind != ServiceKindCustom {
+			return fmt.Errorf("http: model_list_path is only supported for custom services")
 		}
 	case service.Kind.IsSubscription():
 		if service.Subscription == nil || service.HTTP != nil {
