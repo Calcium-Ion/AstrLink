@@ -181,6 +181,7 @@ export interface HTTPServiceConnection {
   base_url: string;
   auth: ServiceAuth;
   credential_ref?: string;
+  model_list_path?: string;
   /** Saved key's last characters ("…a1b2"); only on a single-service read. */
   credential_hint?: string;
 }
@@ -289,6 +290,7 @@ export type HTTPServiceCreateInput = {
     base_url: string;
     auth: ServiceAuth;
     credential?: { secret: string };
+    model_list_path?: string;
   };
   capabilities: ServiceCapability[];
 };
@@ -308,6 +310,7 @@ export type ServicePatchInput = {
     base_url?: string;
     auth?: ServiceAuth;
     credential?: { secret: string } | null;
+    model_list_path?: string | null;
   };
   capabilities?: ServiceCapability[];
 };
@@ -512,7 +515,7 @@ function parseHTTPConnection(
   keysAt(
     connection,
     ["base_url", "auth"],
-    ["credential_ref", "credential_hint"],
+    ["credential_ref", "model_list_path", "credential_hint"],
     path,
   );
   const baseURL = stringAt(connection.base_url, `${path}.base_url`, 1, 2048);
@@ -543,6 +546,15 @@ function parseHTTPConnection(
       invalid(`${path}.credential_ref`, "must use local://service/<id>");
     }
   }
+  let modelListPath: string | undefined;
+  if (Object.hasOwn(connection, "model_list_path")) {
+    modelListPath = stringAt(
+      connection.model_list_path,
+      `${path}.model_list_path`,
+      1,
+      512,
+    );
+  }
   let credentialHint: string | undefined;
   if (Object.hasOwn(connection, "credential_hint")) {
     credentialHint = stringAt(
@@ -559,6 +571,7 @@ function parseHTTPConnection(
     base_url: baseURL,
     auth: parseAuth(connection.auth, `${path}.auth`),
     ...(credentialRef ? { credential_ref: credentialRef } : {}),
+    ...(modelListPath ? { model_list_path: modelListPath } : {}),
     ...(credentialHint ? { credential_hint: credentialHint } : {}),
   };
 }

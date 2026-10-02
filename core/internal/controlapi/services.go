@@ -43,9 +43,10 @@ type serviceCreateRequest struct {
 }
 
 type serviceHTTPInput struct {
-	BaseURL    string          `json:"base_url"`
-	Auth       json.RawMessage `json:"auth"`
-	Credential json.RawMessage `json:"credential,omitempty"`
+	BaseURL       string          `json:"base_url"`
+	Auth          json.RawMessage `json:"auth"`
+	Credential    json.RawMessage `json:"credential,omitempty"`
+	ModelListPath string          `json:"model_list_path,omitempty"`
 }
 
 type servicePageResponse struct {
@@ -725,7 +726,17 @@ func (handler *Handler) probeDraftServiceModels(writer http.ResponseWriter, requ
 	}
 	serviceID := contract.ServiceID("service_model_probe")
 	proxyService := contract.Service{ID: serviceID}
-	connection := contract.HTTPConnection{BaseURL: httpInput.BaseURL, Auth: auth}
+	connection := contract.HTTPConnection{BaseURL: httpInput.BaseURL, Auth: auth, ModelListPath: httpInput.ModelListPath}
+	if connection.ModelListPath != "" {
+		if *input.Kind != contract.ServiceKindCustom {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "model_list_path is only supported for custom services")
+			return
+		}
+		if err := contract.ValidateModelListPath(connection.ModelListPath); err != nil {
+			writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", err.Error())
+			return
+		}
+	}
 	var secret []byte
 	if httpInput.Credential != nil {
 		if isJSONNull(httpInput.Credential) {
@@ -1071,7 +1082,7 @@ func decodeServiceHTTP(
 	if err != nil {
 		return connection, nil, mutation, err
 	}
-	connection = contract.HTTPConnection{BaseURL: input.BaseURL, Auth: auth}
+	connection = contract.HTTPConnection{BaseURL: input.BaseURL, Auth: auth, ModelListPath: input.ModelListPath}
 	if input.Credential != nil {
 		if isJSONNull(input.Credential) {
 			return connection, nil, mutation, fmt.Errorf("credential must be an object")
@@ -1151,7 +1162,7 @@ func applyServicePatch(
 			return service, credential, fmt.Errorf("invalid http patch")
 		}
 		for name := range fields {
-			if name != "base_url" && name != "auth" && name != "credential" {
+			if name != "base_url" && name != "auth" && name != "credential" && name != "model_list_path" {
 				return service, credential, fmt.Errorf("unknown http field %q", name)
 			}
 		}
@@ -1166,6 +1177,12 @@ func applyServicePatch(
 				return service, credential, err
 			}
 			service.HTTP.Auth = auth
+		}
+		if value, ok := fields["model_list_path"]; ok {
+			service.HTTP.ModelListPath = ""
+			if !isJSONNull(value) && strictUnmarshal(value, &service.HTTP.ModelListPath) != nil {
+				return service, credential, fmt.Errorf("invalid model_list_path")
+			}
 		}
 		if value, ok := fields["credential"]; ok {
 			credential.Present = true

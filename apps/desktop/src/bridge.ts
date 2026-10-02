@@ -423,6 +423,39 @@ export async function probeDraftServiceModels(
   );
 }
 
+export interface CustomModelListInput {
+  proxy?: import("./service-proxy-model").ServiceProxyInput | null;
+  service_id?: string;
+  kind: import("./service-model").HTTPServiceKind;
+  http: {
+    base_url: string;
+    auth: import("./service-model").ServiceAuth;
+    credential?: { secret: string };
+    model_list_path: string;
+  };
+}
+
+export interface CustomModelListResult {
+  model_ids: string[];
+  warnings?: string[];
+}
+
+export async function fetchCustomModelList(
+  input: CustomModelListInput,
+): Promise<CustomModelListResult> {
+  // Route through the existing probe_draft_service_models command rather than
+  // a separate Tauri command. The prober already handles custom kind with any
+  // OpenAI-compatible /v1/models endpoint via ProtocolOpenAIModels.
+  const probe = await probeDraftServiceModels({
+    ...(input.proxy !== undefined ? { proxy: input.proxy } : {}),
+    ...(input.service_id !== undefined ? { service_id: input.service_id } : {}),
+    kind: input.kind,
+    http: input.http,
+    protocol: "openai.models",
+  });
+  return { model_ids: probe.model_ids };
+}
+
 export async function probeServiceProxy(
   input: ServiceProxyProbeInput,
 ): Promise<ServiceProxyProbeResult> {
