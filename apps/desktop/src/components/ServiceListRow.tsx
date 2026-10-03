@@ -45,7 +45,7 @@ function columnsStyle(hidden: readonly ServiceListColumn[]): CSSProperties {
       "1.75rem",
       "minmax(0,1.4fr)",
       ...ids.map((id) => tracks[id]),
-      "5.75rem",
+      "7.75rem",
     ].join(" ");
   return {
     "--service-list-columns": template(visible.filter((id) => id !== "models")),
