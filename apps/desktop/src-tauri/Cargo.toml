@@ -56,7 +56,12 @@ mac-notification-sys = "=0.6.15"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "std",
   "libc",
+  "objc2-core-foundation",
+  "NSAnimation",
+  "NSAnimationContext",
+  "NSResponder",
   "NSRunningApplication",
+  "NSWindow",
   "NSWorkspace",
 ] }
 security-framework = "=3.7.0"

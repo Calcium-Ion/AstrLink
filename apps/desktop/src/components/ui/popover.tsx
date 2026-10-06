@@ -20,6 +20,19 @@ export function PopoverAnchor(
   return <PopoverPrimitive.Anchor {...props} />;
 }
 
+/** Points the content at its anchor; filled to blend with the content. */
+export function PopoverArrow({
+  className,
+  ...props
+}: ComponentProps<typeof PopoverPrimitive.Arrow>) {
+  return (
+    <PopoverPrimitive.Arrow
+      className={cn("fill-popover", className)}
+      {...props}
+    />
+  );
+}
+
 export function PopoverContent({
   className,
   align = "end",

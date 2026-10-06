@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # Tag pushes run the Release workflow, which tests and packages every
+  # platform itself; repeating that here doubles the macOS runner load.
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -13,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ASTRLINK_CI_BUILD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+  ASTRLINK_CI_BUILD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' }}
   ASTRLINK_CI_NO_REMOTE_MODELS: "1"
   ASTRLINK_CI_SYNTHETIC_MODELS_ONLY: "1"
   CARGO_TERM_COLOR: always
@@ -180,20 +183,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo deny --locked --manifest-path apps/desktop/src-tauri/Cargo.toml check advisories bans sources
 
+  # The suite runs in Node with stubbed platforms, so one OS is enough here;
+  # the package workflows still run it on every release platform.
   frontend:
-    name: Frontend (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          [
-            ubuntu-24.04,
-            ubuntu-22.04,
-            macos-latest,
-            macos-15-intel,
-            windows-latest,
-          ]
-    runs-on: ${{ matrix.os }}
+    name: Frontend
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/desktop
@@ -301,7 +295,10 @@ jobs:
         with:
           shared-key: astrlink-native
           env-vars: ImageOS ImageVersion MACOSX_DEPLOYMENT_TARGET
-          cache-on-failure: true
+          # Only successful main runs save: other refs' caches are unreachable
+          # elsewhere and evict main's, and an exact hit is never re-saved, so
+          # a job that failed before tests would pin a cache without them.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             apps/desktop/src-tauri
             apps/privacy-worker

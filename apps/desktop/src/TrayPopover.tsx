@@ -775,9 +775,18 @@ export function TrayPopoverPanel({
           >
             {t("tray.quit")}
           </Button>
-          <Button onClick={() => onAction({ kind: "open" })} type="button">
+          {/* Outlined, not filled: a solid primary block outweighs the
+              whole panel it closes. */}
+          <Button
+            onClick={() => onAction({ kind: "open" })}
+            type="button"
+            variant="outline"
+          >
             {t("tray.open")}
-            <ArrowUpRight aria-hidden="true" />
+            <ArrowUpRight
+              aria-hidden="true"
+              className="text-muted-foreground"
+            />
           </Button>
         </div>
       </footer>

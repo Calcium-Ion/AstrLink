@@ -49,6 +49,22 @@ func TestRequestRecordValidation(t *testing.T) {
 			value := -1
 			record.Streaming, record.FirstTokenMs = true, &value
 		}, wantErr: "first_token_ms"},
+		{name: "accepts first answer at the first token", mutate: func(record *RequestRecord) {
+			token, answer := 3, 3
+			record.Streaming, record.FirstTokenMs, record.FirstAnswerMs = true, &token, &answer
+		}},
+		{name: "rejects first answer without first token", mutate: func(record *RequestRecord) {
+			answer := 3
+			record.Streaming, record.FirstAnswerMs = true, &answer
+		}, wantErr: "first_answer_ms"},
+		{name: "rejects first answer before first token", mutate: func(record *RequestRecord) {
+			token, answer := 5, 4
+			record.Streaming, record.FirstTokenMs, record.FirstAnswerMs = true, &token, &answer
+		}, wantErr: "first_answer_ms"},
+		{name: "rejects first answer after completion", mutate: func(record *RequestRecord) {
+			token, answer := 5, 13
+			record.Streaming, record.FirstTokenMs, record.FirstAnswerMs = true, &token, &answer
+		}, wantErr: "first_answer_ms"},
 		{
 			name: "rejects invalid status",
 			mutate: func(record *RequestRecord) {

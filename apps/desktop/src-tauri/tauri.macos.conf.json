@@ -2,7 +2,14 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "macOS": {
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "dmg": {
+        "background": "installer/macos-dmg-background.tiff",
+        "windowPosition": { "x": 400, "y": 200 },
+        "windowSize": { "width": 660, "height": 432 },
+        "appPosition": { "x": 170, "y": 190 },
+        "applicationFolderPosition": { "x": 490, "y": 190 }
+      }
     }
   },
   "app": {

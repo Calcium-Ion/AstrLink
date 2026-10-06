@@ -123,7 +123,9 @@ jobs:
         with:
           shared-key: astrlink-native
           env-vars: ImageOS ImageVersion MACOSX_DEPLOYMENT_TARGET
-          cache-on-failure: true
+          # Restore main's cache only; a release-profile cache on a tag ref is
+          # unreachable from later tags and evicts main's entries.
+          save-if: false
           workspaces: |
             apps/desktop/src-tauri
             apps/privacy-worker
@@ -160,6 +162,10 @@ jobs:
       - name: Stage Core and worker sidecars
         run: bun run sidecar:build
       - name: Build Developer ID signed app and DMG
+        env:
+          # With CI=true Tauri skips the Finder script that applies the DMG
+          # background and icon positions.
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
         run: bun run tauri build --ci --bundles app,dmg
       - name: Notarize, staple and verify app and DMG
         run: bun run macos:notarize

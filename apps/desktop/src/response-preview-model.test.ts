@@ -71,6 +71,102 @@ describe("client response preview", () => {
     expect(result.incomplete).toBe(false);
   });
 
+  it("keeps streamed reasoning through a final snapshot that carries none", async () => {
+    const result = await preview(
+      [
+        {
+          type: "response.output_item.added",
+          output_index: 0,
+          item: { id: "rs_1", type: "reasoning", summary: [] },
+        },
+        {
+          type: "response.reasoning_summary_part.added",
+          item_id: "rs_1",
+          output_index: 0,
+          summary_index: 0,
+          part: { type: "summary_text", text: "" },
+        },
+        {
+          type: "response.reasoning_text.delta",
+          item_id: "rs_1",
+          output_index: 0,
+          content_index: 0,
+          delta: "The user asks ",
+        },
+        {
+          type: "response.reasoning_text.delta",
+          item_id: "rs_1",
+          output_index: 0,
+          content_index: 0,
+          delta: "who that is.",
+        },
+        {
+          type: "response.reasoning_text.done",
+          item_id: "rs_1",
+          output_index: 0,
+          content_index: 0,
+          text: "",
+        },
+        {
+          type: "response.output_item.done",
+          output_index: 0,
+          item: { id: "rs_1", type: "reasoning", summary: [] },
+        },
+        {
+          type: "response.output_item.added",
+          output_index: 1,
+          item: { id: "msg_1", type: "message", content: [] },
+        },
+        {
+          type: "response.output_text.delta",
+          item_id: "msg_1",
+          output_index: 1,
+          content_index: 0,
+          delta: "知道的。",
+        },
+        {
+          type: "response.completed",
+          response: {
+            output: [
+              { id: "rs_1", type: "reasoning", summary: [] },
+              {
+                id: "msg_1",
+                type: "message",
+                content: [{ type: "output_text", text: "知道的。" }],
+              },
+            ],
+          },
+        },
+      ],
+      true,
+    );
+    expect(result.outputs).toEqual([
+      {
+        kind: "reasoning",
+        name: undefined,
+        text: "The user asks who that is.",
+      },
+      { kind: "text", name: undefined, text: "知道的。" },
+    ]);
+  });
+
+  it("reads reasoning that a response item carries as content blocks", async () => {
+    const result = await preview({
+      output: [
+        {
+          type: "reasoning",
+          summary: [],
+          content: [{ type: "reasoning_text", text: "Think first." }],
+        },
+        { type: "message", content: [{ type: "output_text", text: "Done." }] },
+      ],
+    });
+    expect(result.outputs).toEqual([
+      { kind: "reasoning", name: undefined, text: "Think first." },
+      { kind: "text", name: undefined, text: "Done." },
+    ]);
+  });
+
   it("keeps tool-only Responses output and reasoning separate from text", async () => {
     const result = await preview(
       [
@@ -123,7 +219,12 @@ describe("client response preview", () => {
       true,
     );
     expect(result.outputs).toEqual([
-      { kind: "tool", name: "search", text: '{"query":"OpenAI"}' },
+      {
+        kind: "tool",
+        name: "search",
+        text: '{"query":"OpenAI"}',
+        id: "tool_1",
+      },
       { kind: "reasoning", name: undefined, text: "Checking sources" },
       {
         kind: "tool",

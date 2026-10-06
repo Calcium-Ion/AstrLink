@@ -549,6 +549,14 @@ const TRAJECTORY_INSPECTOR_GAP: f64 = 12.0;
 /// Diagonal offset per extra inspector, so a second window is grabbable rather
 /// than exactly beneath the first.
 const TRAJECTORY_INSPECTOR_CASCADE: f64 = 28.0;
+/// Width a widened inspector aims for: a captured JSON body and its headers
+/// read without wrapping, and the window still fits a 13-inch display.
+const TRAJECTORY_INSPECTOR_WIDE_WIDTH: f64 = 1120.0;
+/// Room a widened inspector leaves at the edges of the work area.
+const TRAJECTORY_INSPECTOR_SCREEN_MARGIN: f64 = 16.0;
+/// Long enough to read as the window stretching, short enough not to wait on.
+#[cfg(target_os = "macos")]
+const TRAJECTORY_INSPECTOR_RESIZE_SECONDS: f64 = 0.32;
 
 /// One inspector window. `selection` is the phase it currently shows, kept here
 /// rather than only in its React state so a window repopulates itself after the
@@ -557,6 +565,16 @@ struct InspectorEntry {
     label: String,
     pinned: bool,
     selection: Option<serde_json::Value>,
+    /// Set while the window is widened: how to put it back.
+    narrow: Option<NarrowFrame>,
+}
+
+/// How a widened inspector goes back: to its earlier width, against the edge
+/// it grew away from, so it returns to where it was rather than to a default.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct NarrowFrame {
+    width: f64,
+    anchor_right: bool,
 }
 
 /// Every live inspector window, in creation order.
@@ -586,6 +604,7 @@ impl InspectorRegistry {
             label: label.clone(),
             pinned: false,
             selection: None,
+            narrow: None,
         });
         label
     }
@@ -615,6 +634,7 @@ impl InspectorRegistry {
             Some(entry) => InspectorWindowState {
                 selection: entry.selection.clone(),
                 pinned: entry.pinned,
+                wide: entry.narrow.is_some(),
             },
             None => InspectorWindowState::default(),
         }
@@ -641,6 +661,7 @@ impl InspectorRegistry {
 struct InspectorWindowState {
     selection: Option<serde_json::Value>,
     pinned: bool,
+    wide: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -673,21 +694,42 @@ fn inspector_placement(
     (x, y)
 }
 
+/// A window's outer frame in logical pixels.
+fn logical_frame(window: &tauri::WebviewWindow) -> Option<WindowBox> {
+    let scale = window.scale_factor().ok()?;
+    let position = window.outer_position().ok()?.to_logical::<f64>(scale);
+    let size = window.outer_size().ok()?.to_logical::<f64>(scale);
+    Some(WindowBox {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+/// The part of the window's monitor that the menu bar and Dock leave free.
+fn logical_work_area(window: &tauri::WebviewWindow) -> Option<WindowBox> {
+    let monitor = window.current_monitor().ok()??;
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let position = area.position.to_logical::<f64>(scale);
+    let size = area.size.to_logical::<f64>(scale);
+    Some(WindowBox {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
 fn inspector_anchor(main: &tauri::WebviewWindow, cascade: u32) -> Option<(f64, f64)> {
-    let scale = main.scale_factor().ok()?;
-    let position = main.outer_position().ok()?.to_logical::<f64>(scale);
-    let size = main.outer_size().ok()?.to_logical::<f64>(scale);
+    let frame = logical_frame(main)?;
     let monitor = main.current_monitor().ok()??;
     let monitor_scale = monitor.scale_factor();
     let monitor_position = monitor.position().to_logical::<f64>(monitor_scale);
     let monitor_size = monitor.size().to_logical::<f64>(monitor_scale);
     Some(inspector_placement(
-        WindowBox {
-            x: position.x,
-            y: position.y,
-            width: size.width,
-            height: size.height,
-        },
+        frame,
         WindowBox {
             x: monitor_position.x,
             y: monitor_position.y,
@@ -697,6 +739,50 @@ fn inspector_anchor(main: &tauri::WebviewWindow, cascade: u32) -> Option<(f64, f
         (TRAJECTORY_INSPECTOR_WIDTH, TRAJECTORY_INSPECTOR_HEIGHT),
         cascade,
     ))
+}
+
+/// The frame a widened inspector takes: as wide as the work area allows, up to
+/// the target, growing away from the screen edge it sits nearer. An inspector
+/// parked to the right of the main window grows leftward instead of off the
+/// display, and comes back to the same spot when narrowed.
+fn inspector_wide_frame(current: WindowBox, work: WindowBox) -> (WindowBox, NarrowFrame) {
+    let room = work.width - 2.0 * TRAJECTORY_INSPECTOR_SCREEN_MARGIN;
+    let width = TRAJECTORY_INSPECTOR_WIDE_WIDTH.min(room).max(current.width);
+    let anchor_right = current.x + current.width / 2.0 > work.x + work.width / 2.0;
+    let frame = WindowBox {
+        x: anchored_x(current, width, anchor_right, work),
+        width,
+        ..current
+    };
+    (
+        frame,
+        NarrowFrame {
+            width: current.width,
+            anchor_right,
+        },
+    )
+}
+
+/// The frame a widened inspector goes back to. It never grows: a window the
+/// operator shrank by hand while wide keeps that width.
+fn inspector_narrow_frame(current: WindowBox, work: WindowBox, narrow: NarrowFrame) -> WindowBox {
+    let width = narrow.width.min(current.width);
+    WindowBox {
+        x: anchored_x(current, width, narrow.anchor_right, work),
+        width,
+        ..current
+    }
+}
+
+/// Where a window of `width` starts when it keeps one edge of `current`,
+/// pulled back inside the work area where it would cross it.
+fn anchored_x(current: WindowBox, width: f64, anchor_right: bool, work: WindowBox) -> f64 {
+    let x = if anchor_right {
+        current.x + current.width - width
+    } else {
+        current.x
+    };
+    x.min(work.x + work.width - width).max(work.x)
 }
 
 fn inspector_registry<'a>(
@@ -828,6 +914,88 @@ fn set_trajectory_inspector_pinned(
         .unwrap_or_default();
     let _ = window.set_title(&inspector_window_title(locale, pinned));
     Ok(pinned)
+}
+
+/// Widens the inspector for long bodies, or puts it back. Only the width and
+/// the horizontal position change, so the window keeps its height and stays
+/// where the operator left it vertically. Returns the state that took effect.
+#[tauri::command]
+fn set_trajectory_inspector_wide(
+    window: tauri::WebviewWindow,
+    registry: State<'_, Mutex<InspectorRegistry>>,
+    wide: bool,
+) -> Result<bool, String> {
+    if window.is_fullscreen().unwrap_or(false) {
+        return Err("a full-screen inspector window cannot change its width".to_string());
+    }
+    let narrow = inspector_registry(&registry)?
+        .find_mut(window.label())
+        .and_then(|entry| entry.narrow);
+    let current = logical_frame(&window).ok_or("the inspector window has no frame")?;
+    let work = logical_work_area(&window).ok_or("the inspector window has no monitor")?;
+    let (target, next) = match (wide, narrow) {
+        (true, Some(_)) | (false, None) => return Ok(wide),
+        (true, None) => {
+            let (frame, narrow) = inspector_wide_frame(current, work);
+            (frame, Some(narrow))
+        }
+        (false, Some(narrow)) => (inspector_narrow_frame(current, work, narrow), None),
+    };
+    move_window_frame(&window, current, target)?;
+    if let Some(entry) = inspector_registry(&registry)?.find_mut(window.label()) {
+        entry.narrow = next;
+    }
+    Ok(wide)
+}
+
+/// Moves a window to `target` with AppKit's own animation, so the window is
+/// seen to stretch rather than jump. Only x and width change, and both run
+/// left to right in points on either side, so the Cocoa frame needs no flip
+/// from the top-left coordinates `target` is in.
+#[cfg(target_os = "macos")]
+fn move_window_frame(
+    window: &tauri::WebviewWindow,
+    current: WindowBox,
+    target: WindowBox,
+) -> Result<(), String> {
+    use objc2_app_kit::{NSAnimatablePropertyContainer, NSAnimationContext, NSWindow};
+
+    let handle = window.clone();
+    let shift = target.x - current.x;
+    let width = target.width;
+    window
+        .run_on_main_thread(move || {
+            let Ok(pointer) = handle.ns_window() else {
+                eprintln!("the inspector window has no native window to resize");
+                return;
+            };
+            // SAFETY: tao owns this NSWindow for as long as `handle` lives, and
+            // this closure runs on the main thread, where AppKit requires it.
+            let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+            let mut frame = ns_window.frame();
+            frame.origin.x += shift;
+            frame.size.width = width;
+            NSAnimationContext::beginGrouping();
+            NSAnimationContext::currentContext().setDuration(TRAJECTORY_INSPECTOR_RESIZE_SECONDS);
+            ns_window.animator().setFrame_display(frame, true);
+            NSAnimationContext::endGrouping();
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn move_window_frame(
+    window: &tauri::WebviewWindow,
+    _current: WindowBox,
+    target: WindowBox,
+) -> Result<(), String> {
+    window
+        .set_position(tauri::LogicalPosition::new(target.x, target.y))
+        .map_err(|error| error.to_string())?;
+    // Undecorated, so the inner size is the whole window.
+    window
+        .set_size(tauri::LogicalSize::new(target.width, target.height))
+        .map_err(|error| error.to_string())
 }
 
 /// Closes the unpinned inspectors and leaves the pinned ones alone: pinning is
@@ -1984,6 +2152,7 @@ pub fn run() {
             update_trajectory_inspector,
             trajectory_inspector_state,
             set_trajectory_inspector_pinned,
+            set_trajectory_inspector_wide,
             close_trajectory_inspectors
         ])
         .setup(move |app| {
@@ -2584,6 +2753,112 @@ mod tests {
             ),
             (-1920.0, 0.0)
         );
+    }
+
+    fn laptop_work_area() -> WindowBox {
+        WindowBox {
+            x: 0.0,
+            y: 25.0,
+            width: 1440.0,
+            height: 800.0,
+        }
+    }
+
+    #[test]
+    fn a_wide_inspector_grows_away_from_the_nearer_screen_edge() {
+        let right = WindowBox {
+            x: 960.0,
+            y: 80.0,
+            width: TRAJECTORY_INSPECTOR_WIDTH,
+            height: 680.0,
+        };
+        let (frame, narrow) = inspector_wide_frame(right, laptop_work_area());
+
+        // Parked on the right, it grows leftward and keeps its right edge.
+        assert_eq!(frame.width, TRAJECTORY_INSPECTOR_WIDE_WIDTH);
+        assert_eq!(frame.x + frame.width, right.x + right.width);
+        assert_eq!((frame.y, frame.height), (right.y, right.height));
+        assert!(narrow.anchor_right);
+
+        let left = WindowBox { x: 40.0, ..right };
+        let (frame, narrow) = inspector_wide_frame(left, laptop_work_area());
+        assert_eq!(frame.x, 40.0);
+        assert!(!narrow.anchor_right);
+    }
+
+    #[test]
+    fn a_wide_inspector_fits_a_small_display() {
+        let work = WindowBox {
+            x: 0.0,
+            y: 25.0,
+            width: 1024.0,
+            height: 600.0,
+        };
+        let current = WindowBox {
+            x: 560.0,
+            y: 40.0,
+            width: TRAJECTORY_INSPECTOR_WIDTH,
+            height: 520.0,
+        };
+
+        let (frame, _) = inspector_wide_frame(current, work);
+
+        assert_eq!(
+            frame.width,
+            1024.0 - 2.0 * TRAJECTORY_INSPECTOR_SCREEN_MARGIN
+        );
+        assert!(frame.x >= work.x);
+        assert!(frame.x + frame.width <= work.x + work.width);
+    }
+
+    #[test]
+    fn a_wide_inspector_never_shrinks_a_window_already_wider() {
+        let current = WindowBox {
+            x: 0.0,
+            y: 25.0,
+            width: 1300.0,
+            height: 700.0,
+        };
+
+        let (frame, _) = inspector_wide_frame(current, laptop_work_area());
+
+        assert_eq!(frame.width, 1300.0);
+    }
+
+    #[test]
+    fn narrowing_returns_the_inspector_to_where_it_was() {
+        let before = WindowBox {
+            x: 960.0,
+            y: 80.0,
+            width: TRAJECTORY_INSPECTOR_WIDTH,
+            height: 680.0,
+        };
+        let (wide, narrow) = inspector_wide_frame(before, laptop_work_area());
+        // The operator dragged it down while it was wide.
+        let moved = WindowBox { y: 120.0, ..wide };
+
+        let after = inspector_narrow_frame(moved, laptop_work_area(), narrow);
+
+        assert_eq!((after.x, after.width), (before.x, before.width));
+        assert_eq!(after.y, 120.0);
+    }
+
+    #[test]
+    fn narrowing_keeps_a_width_shrunk_by_hand() {
+        let current = WindowBox {
+            x: 100.0,
+            y: 80.0,
+            width: 380.0,
+            height: 680.0,
+        };
+        let narrow = NarrowFrame {
+            width: TRAJECTORY_INSPECTOR_WIDTH,
+            anchor_right: false,
+        };
+
+        let after = inspector_narrow_frame(current, laptop_work_area(), narrow);
+
+        assert_eq!(after.width, 380.0);
     }
 
     #[test]

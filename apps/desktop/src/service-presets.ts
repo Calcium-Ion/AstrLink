@@ -1,4 +1,5 @@
 import { i18n } from "./i18n";
+import type { ClientType } from "./request-record-model";
 import {
   bestConversionTarget,
   type HTTPServiceKind,
@@ -187,6 +188,16 @@ export const protocolClients: Readonly<Record<string, string>> = {
   "openai.chat": "services.protocolClients.chat",
   "anthropic.messages": "services.protocolClients.messages",
   "google.generate_content": "services.protocolClients.gemini",
+};
+
+/** Marks for the clients named in `protocolClients`, in the same order. */
+export const protocolClientTypes: Readonly<
+  Record<string, readonly ClientType[]>
+> = {
+  "openai.responses": ["codex"],
+  "openai.chat": ["opencode", "openclaw"],
+  "anthropic.messages": ["claude_code"],
+  "google.generate_content": ["gemini_cli"],
 };
 
 /** Client entry path on the local inference plane. Gemini keeps the action suffix. */

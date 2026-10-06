@@ -493,4 +493,77 @@ describe("RequestTrajectory in a window host", () => {
     ).toBeNull();
     expect(hostMocks.invoke).not.toHaveBeenCalled();
   });
+
+  it("finds the turns that mention a query and opens the one it lands on", async () => {
+    const turn = (id: string, index: number, preview: string) => ({
+      ...record,
+      id,
+      turn_index: index,
+      input_preview: preview,
+    });
+    await renderTrajectory([
+      turn("req_t1", 1, "Quote the first line"),
+      turn("req_t2", 2, "Summarize the diff"),
+      turn("req_t3", 3, "quote it again"),
+    ]);
+    const header = (id: string) =>
+      container.querySelector<HTMLElement>(
+        `[data-testid="trajectory-row"][data-row-id="${id}:turn"]`,
+      )!;
+    const calls = (id: string) =>
+      container.querySelectorAll(
+        `[data-testid="trajectory-row"][data-request-id="${id}"]:not([data-chip="TURN"])`,
+      ).length;
+    const count = () =>
+      container.querySelector('[data-testid="find-count"]')?.textContent;
+    // Only the latest turn starts open.
+    expect(calls("req_t1")).toBe(0);
+    expect(calls("req_t3")).toBeGreaterThan(0);
+
+    // The search box is always in the list header.
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-testid="find-input"]',
+    )!;
+    expect(input).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, "QUOTE");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Two turns mention it; find lands on the first and opens it.
+    expect(count()).toBe("1/2");
+    expect(header("req_t1").getAttribute("data-find-stop")).toBe("active");
+    expect(header("req_t3").getAttribute("data-find-stop")).toBe("stop");
+    expect(header("req_t2").hasAttribute("data-find-stop")).toBe(false);
+    expect(calls("req_t1")).toBeGreaterThan(0);
+    expect(
+      header("req_t1").querySelector('[data-testid="find-mark"]')?.textContent,
+    ).toBe("Quote");
+
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+
+    // The next stop takes over, and the turn find opened folds back.
+    expect(count()).toBe("2/2");
+    expect(header("req_t3").getAttribute("data-find-stop")).toBe("active");
+    expect(calls("req_t1")).toBe(0);
+    // Finding never opens the inspector on its own.
+    expect(invoked("show_trajectory_inspector")).toBe(false);
+
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    // Escape clears the search and every mark it left.
+    expect(input.value).toBe("");
+    expect(container.querySelector("[data-find-stop]")).toBeNull();
+    expect(container.querySelector('[data-testid="find-mark"]')).toBeNull();
+  });
 });

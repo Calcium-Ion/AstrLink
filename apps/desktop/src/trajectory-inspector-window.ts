@@ -41,6 +41,8 @@ export interface TrajectoryInspectorSelection {
 export interface TrajectoryInspectorWindowState {
   selection: TrajectoryInspectorSelection | null;
   pinned: boolean;
+  /** Widened by its toggle; absent from a host that predates it. */
+  wide?: boolean;
 }
 
 function windowLabel(): string | null {
@@ -97,6 +99,14 @@ export function setTrajectoryInspectorPinned(
   pinned: boolean,
 ): Promise<boolean> {
   return invoke<boolean>("set_trajectory_inspector_pinned", { pinned });
+}
+
+/**
+ * Widens the window for long bodies, or puts it back where it was. Resolves
+ * to the state the host settled on.
+ */
+export function setTrajectoryInspectorWide(wide: boolean): Promise<boolean> {
+  return invoke<boolean>("set_trajectory_inspector_wide", { wide });
 }
 
 export function listenInspectorSelection(

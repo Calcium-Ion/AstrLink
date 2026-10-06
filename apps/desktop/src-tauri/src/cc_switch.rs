@@ -12,6 +12,10 @@ fn import_url(
     models: &Models,
     access_token: &str,
 ) -> Result<Url, String> {
+    // CC Switch has no Pi app; AstrLink writes Pi's config itself.
+    if client == Client::Pi {
+        return Err("CC Switch cannot import this client".into());
+    }
     let origin = client_config::local_origin(inference_url)?;
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 128 || name.chars().any(char::is_control) {
@@ -234,6 +238,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn pi_is_never_sent_to_cc_switch() {
+        let models = Models {
+            model: Some("pi-route".into()),
+            ..Default::default()
+        };
+        let error = import_url(
+            Client::Pi,
+            "http://127.0.0.1:8317",
+            "AstrLink",
+            &models,
+            "test-token",
+        )
+        .unwrap_err();
+        assert!(!error.contains("test-token"));
     }
 
     #[test]

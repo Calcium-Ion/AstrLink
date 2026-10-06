@@ -10,6 +10,26 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
+const listOffset = 4;
+const listCollisionPadding = 12;
+
+/**
+ * The side with room for `count` rows, up to the list's 16rem cap. Below
+ * is preferred; the list only opens upward when it would be cut short there.
+ */
+function listSide(anchor: HTMLElement, count: number): "top" | "bottom" {
+  const rem =
+    Number.parseFloat(getComputedStyle(document.documentElement).fontSize) ||
+    16;
+  // Rows are 2rem tall, plus the list's padding and border.
+  const wanted = Math.min(16, Math.max(count, 1) * 2 + 0.75) * rem;
+  const { top, bottom } = anchor.getBoundingClientRect();
+  const margin = listOffset + listCollisionPadding;
+  const below = window.innerHeight - bottom - margin;
+  const above = top - margin;
+  return below < wanted && above > below ? "top" : "bottom";
+}
+
 /** Editable selection: opening shows every option; only typing filters the list. */
 export function Combobox({
   id,
@@ -52,19 +72,29 @@ export function Combobox({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [side, setSide] = useState<"top" | "bottom">("bottom");
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
-  const filtered = options.filter((option) =>
-    option.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  const matches = (text: string) =>
+    options.filter((option) =>
+      option.toLowerCase().includes(text.trim().toLowerCase()),
+    );
+  const filtered = matches(query);
   const expanded = open && !disabled;
   const clearable = !!clearLabel && !!value && !disabled;
+
+  // The side is chosen once per opening, so filtering never moves the list.
+  function openList(text: string) {
+    if (!expanded && anchorRef.current)
+      setSide(listSide(anchorRef.current, matches(text).length));
+    setOpen(true);
+  }
 
   function showOptions() {
     if (disabled) return;
     setQuery("");
     setActiveIndex(options.indexOf(value));
-    setOpen(true);
+    openList("");
   }
 
   function choose(option: string) {
@@ -140,7 +170,7 @@ export function Combobox({
                 (event.nativeEvent as InputEvent).inputType !==
                 "insertReplacementText"
               )
-                setOpen(true);
+                openList(event.target.value);
             }}
             onBlur={(event) =>
               onValueCommit?.(
@@ -226,7 +256,11 @@ export function Combobox({
         role="listbox"
         aria-label={ariaLabel}
         align="start"
-        sideOffset={4}
+        side={side}
+        sideOffset={listOffset}
+        collisionPadding={listCollisionPadding}
+        // The side is picked on opening; flipping would fight the height cap.
+        avoidCollisions={false}
         className="z-110 max-h-[min(16rem,var(--radix-popover-content-available-height))] w-(--radix-popover-trigger-width) overscroll-contain p-1"
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}

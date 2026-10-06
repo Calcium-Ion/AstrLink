@@ -116,6 +116,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.useRealTimers();
 });
 
 async function render() {
@@ -289,6 +290,8 @@ describe("RawAccessApprovalWindow", () => {
   });
 
   it("keeps the request after a wrong password or a backoff", async () => {
+    // A frozen clock keeps a slow runner from counting the backoff down.
+    vi.useFakeTimers({ toFake: ["Date"] });
     mocks.listRawAccess.mockResolvedValue(
       list({ pending: [grant()], unlocked: false }),
     );

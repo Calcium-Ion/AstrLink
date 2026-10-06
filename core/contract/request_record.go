@@ -475,7 +475,12 @@ type RequestRecord struct {
 	LatencyMs             *int                   `json:"latency_ms"`
 	// FirstTokenMs measures upstream send to first generated stream content
 	// (text, reasoning, or tool call). Nil for non-streaming and historical calls.
-	FirstTokenMs   *int                   `json:"first_token_ms"`
+	FirstTokenMs *int `json:"first_token_ms"`
+	// FirstAnswerMs measures upstream send to the first generated content that
+	// is not reasoning: text, a refusal, a tool call, or media. It is at least
+	// FirstTokenMs; the difference is how long the model thought before it
+	// answered. Nil without FirstTokenMs and for calls that only reasoned.
+	FirstAnswerMs  *int                   `json:"first_answer_ms"`
 	Usage          *Usage                 `json:"usage"`
 	Error          *ErrorSummary          `json:"error"`
 	Audit          AuditRecordSummary     `json:"audit"`
@@ -598,6 +603,10 @@ func (record RequestRecord) Validate() error {
 	if record.FirstTokenMs != nil && (!record.Streaming || *record.FirstTokenMs < 0 ||
 		(record.LatencyMs != nil && *record.FirstTokenMs > *record.LatencyMs)) {
 		return fmt.Errorf("first_token_ms requires streaming and must be between zero and latency_ms")
+	}
+	if record.FirstAnswerMs != nil && (record.FirstTokenMs == nil || *record.FirstAnswerMs < *record.FirstTokenMs ||
+		(record.LatencyMs != nil && *record.FirstAnswerMs > *record.LatencyMs)) {
+		return fmt.Errorf("first_answer_ms requires first_token_ms and must be between it and latency_ms")
 	}
 	if record.Usage != nil {
 		if err := record.Usage.Validate(); err != nil {

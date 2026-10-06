@@ -2,8 +2,9 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { FindRequest } from "@/find-model";
 import { parseJsonTree } from "@/json-tree-model";
 
 import { JsonTreeView } from "./JsonTreeView";
@@ -126,5 +127,64 @@ describe("JsonTreeView", () => {
     await act(async () => button("全部折叠").click());
     await renderTree(JSON.stringify({ other: { nested: true } }));
     expect(container.textContent).toContain('"nested": true');
+  });
+
+  it("finds into folded text and paged arrays and marks the hit in view", async () => {
+    const items = Array.from({ length: 130 }, (_, index) =>
+      index === 120 ? "the 结尾标记 again" : `item ${index}`,
+    );
+    const onResult = vi.fn();
+    const find = (active: number, seq: number): FindRequest => ({
+      query: "结尾标记",
+      active,
+      seq,
+      onResult,
+    });
+    const tree = parseJsonTree(JSON.stringify({ ...request, items })).root!;
+    const scrolled = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+
+    await act(async () => {
+      root.render(<JsonTreeView find={find(0, 1)} root={tree} />);
+    });
+
+    // Both hits count, though one is folded in the prompt and one is paged out.
+    expect(onResult).toHaveBeenLastCalledWith({ count: 2, capped: false });
+    // The first hit unfolds the prompt, is marked as the one in view, and is
+    // scrolled to.
+    const active = container.querySelector('mark[data-find-active="true"]');
+    expect(active?.textContent).toBe("结尾标记");
+    expect(button("折叠 text").getAttribute("aria-expanded")).toBe("true");
+    expect(scrolled).toHaveBeenCalled();
+
+    await act(async () => {
+      root.render(<JsonTreeView find={find(1, 2)} root={tree} />);
+    });
+
+    // The second hit pages the array far enough to show item 120.
+    const marks = [...container.querySelectorAll('[data-testid="find-mark"]')];
+    expect(marks).toHaveLength(2);
+    expect(
+      container
+        .querySelector('mark[data-find-active="true"]')
+        ?.closest("[data-path]")?.textContent,
+    ).toContain("120:");
+    scrolled.mockRestore();
+  });
+
+  it("marks matching keys as printed", async () => {
+    await act(async () => {
+      root.render(
+        <JsonTreeView
+          find={{ query: "MODEL", active: 0, seq: 1, onResult: () => {} }}
+          root={parseJsonTree(JSON.stringify(request)).root!}
+        />,
+      );
+    });
+
+    const mark = container.querySelector('[data-testid="find-mark"]');
+    expect(mark?.textContent).toBe("model");
+    expect(mark?.parentElement?.textContent).toBe('"model"');
   });
 });

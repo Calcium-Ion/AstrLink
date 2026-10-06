@@ -23,6 +23,7 @@ import {
   type RoutingSettings,
 } from "./failure-policy-model";
 import { useT } from "./i18n";
+import { PageHeader } from "./PageHeader";
 import type { RoutableService } from "./service-model";
 import { UpstreamIdentitySettings } from "./UpstreamIdentitySettings";
 
@@ -58,10 +59,12 @@ function withRedirects(settings: RoutingSettings): RoutingSettings {
 export function RoutingSettingsPanel({
   ready,
   services,
+  titleId,
   onDirtyChange,
 }: {
   ready: boolean;
   services: readonly RoutableService[];
+  titleId?: string;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const t = useT();
@@ -209,6 +212,31 @@ export function RoutingSettingsPanel({
       className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-clip"
       data-testid="routing-defaults-panel"
     >
+      <PageHeader
+        variant="compact"
+        className="mb-0"
+        title={t("nav.routing")}
+        titleId={titleId}
+        actions={
+          <span
+            role="status"
+            className="shrink-0 text-xs text-muted-foreground"
+            aria-live="polite"
+          >
+            {error || validationError
+              ? t("routing.notSaved")
+              : !ready && dirty
+                ? t("routing.waitingConnection")
+                : editingRedirect && dirty
+                  ? t("routing.editing")
+                  : saving || dirty
+                    ? t("common.saving")
+                    : savedOnce
+                      ? t("routing.autoSaved")
+                      : t("routing.autosave")}
+          </span>
+        }
+      />
       {loadError ? (
         <FormMessage tone="error">
           {loadError}
@@ -243,40 +271,21 @@ export function RoutingSettingsPanel({
         onValueChange={setTab}
         className="min-h-0 min-w-0 flex-1 gap-3 overflow-y-clip"
       >
-        <div className="flex min-w-0 shrink-0 items-center justify-between gap-3">
-          <TabsList
-            scrollable
-            aria-label={t("nav.routing")}
-            className="min-w-0"
-          >
-            {routingTabs.map((value) => (
-              <TabsTrigger
-                key={value}
-                value={value}
-                onClick={() => setTab(value)}
-              >
-                {t(`routing.tabs.${value}`)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-          <span
-            role="status"
-            className="shrink-0 text-xs text-muted-foreground"
-            aria-live="polite"
-          >
-            {error || validationError
-              ? t("routing.notSaved")
-              : !ready && dirty
-                ? t("routing.waitingConnection")
-                : editingRedirect && dirty
-                  ? t("routing.editing")
-                  : saving || dirty
-                    ? t("common.saving")
-                    : savedOnce
-                      ? t("routing.autoSaved")
-                      : t("routing.autosave")}
-          </span>
-        </div>
+        <TabsList
+          scrollable
+          aria-label={t("nav.routing")}
+          className="min-w-0 shrink-0"
+        >
+          {routingTabs.map((value) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              onClick={() => setTab(value)}
+            >
+              {t(`routing.tabs.${value}`)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
         {draft ? (
           <>
             <TabsContent

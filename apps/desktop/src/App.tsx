@@ -119,6 +119,25 @@ const blockedUsage: UsageState = {
   error: null,
 };
 
+/** How often the overview picks up new traffic while it is on screen. */
+const OVERVIEW_REVALIDATE_MS = 60_000;
+
+/**
+ * A silent refresh shows no loading state and keeps the last good data when it
+ * fails, so the panels never flash. It only runs over settled data: a visible
+ * load or a starting gateway owns the panel until then.
+ */
+type RefreshOptions = { silent?: boolean };
+
+function revalidatable(status: UsageState["status"]): boolean {
+  return status === "ready" || status === "error";
+}
+
+/** Unchanged results keep their old object, so nothing re-renders. */
+function sameData(current: unknown, next: unknown): boolean {
+  return JSON.stringify(current) === JSON.stringify(next);
+}
+
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -319,46 +338,74 @@ export default function App() {
     passwordReady: rawSealing.status !== null && !rawSetupNeeded,
   });
 
-  const refreshServices = useCallback(async () => {
-    const generation = catalogGeneration.current + 1;
-    catalogGeneration.current = generation;
-    if (!isReady) {
-      setCatalog((current) => ({
-        ...current,
-        status: "blocked",
-        error: null,
-        stale: current.items.length > 0,
-      }));
-      return;
-    }
+  // Silent refreshes read the rendered state to stay out of a visible load.
+  const catalogRef = useRef(catalog);
+  catalogRef.current = catalog;
+  const tokenCatalogRef = useRef(tokenCatalog);
+  tokenCatalogRef.current = tokenCatalog;
+  const usageRef = useRef(usage);
+  usageRef.current = usage;
 
-    setCatalog((current) => ({
-      ...current,
-      status: "loading",
-      error: null,
-      stale: current.items.length > 0,
-    }));
-    try {
-      const result = await listServices();
-      if (catalogGeneration.current === generation) {
-        setCatalog({
-          status: "ready",
-          items: result.items,
-          error: null,
-          stale: false,
-        });
-      }
-    } catch (error) {
-      if (catalogGeneration.current === generation) {
+  const refreshServices = useCallback(
+    async ({ silent = false }: RefreshOptions = {}) => {
+      if (silent && (!isReady || !revalidatable(catalogRef.current.status)))
+        return;
+      const generation = catalogGeneration.current + 1;
+      catalogGeneration.current = generation;
+      if (!isReady) {
         setCatalog((current) => ({
           ...current,
-          status: "error",
-          error: messageOf(error, i18n.t("overview.readServicesFailed")),
+          status: "blocked",
+          error: null,
+          stale: current.items.length > 0,
+        }));
+        return;
+      }
+
+      if (!silent) {
+        setCatalog((current) => ({
+          ...current,
+          status: "loading",
+          error: null,
           stale: current.items.length > 0,
         }));
       }
-    }
-  }, [isReady]);
+      try {
+        const result = await listServices();
+        if (catalogGeneration.current === generation) {
+          setCatalog((current) =>
+            current.status === "ready" &&
+            !current.stale &&
+            sameData(current.items, result.items)
+              ? current
+              : {
+                  status: "ready",
+                  items: result.items,
+                  error: null,
+                  stale: false,
+                },
+          );
+        }
+      } catch (error) {
+        if (catalogGeneration.current === generation) {
+          setCatalog((current) =>
+            silent && current.status !== "loading"
+              ? current
+              : {
+                  ...current,
+                  status: "error",
+                  error: messageOf(
+                    error,
+                    i18n.t("overview.readServicesFailed"),
+                  ),
+                  stale: current.items.length > 0,
+                },
+          );
+        }
+      }
+    },
+    [isReady],
+  );
 
   useEffect(() => {
     if (!isReady) {
@@ -374,46 +421,66 @@ export default function App() {
     void refreshServices();
   }, [coreSessionKey, isReady, refreshServices]);
 
-  const refreshAccessTokens = useCallback(async () => {
-    const generation = tokenCatalogGeneration.current + 1;
-    tokenCatalogGeneration.current = generation;
-    if (!isReady) {
-      setTokenCatalog((current) => ({
-        ...current,
-        status: "blocked",
-        error: null,
-        stale: current.items.length > 0,
-      }));
-      return;
-    }
-
-    setTokenCatalog((current) => ({
-      ...current,
-      status: "loading",
-      error: null,
-      stale: current.items.length > 0,
-    }));
-    try {
-      const result = await listAccessTokens();
-      if (tokenCatalogGeneration.current === generation) {
-        setTokenCatalog({
-          status: "ready",
-          items: result.items,
-          error: null,
-          stale: false,
-        });
-      }
-    } catch (error) {
-      if (tokenCatalogGeneration.current === generation) {
+  const refreshAccessTokens = useCallback(
+    async ({ silent = false }: RefreshOptions = {}) => {
+      if (
+        silent &&
+        (!isReady || !revalidatable(tokenCatalogRef.current.status))
+      )
+        return;
+      const generation = tokenCatalogGeneration.current + 1;
+      tokenCatalogGeneration.current = generation;
+      if (!isReady) {
         setTokenCatalog((current) => ({
           ...current,
-          status: "error",
-          error: messageOf(error, i18n.t("app.readTokensFailed")),
+          status: "blocked",
+          error: null,
+          stale: current.items.length > 0,
+        }));
+        return;
+      }
+
+      if (!silent) {
+        setTokenCatalog((current) => ({
+          ...current,
+          status: "loading",
+          error: null,
           stale: current.items.length > 0,
         }));
       }
-    }
-  }, [isReady]);
+      try {
+        const result = await listAccessTokens();
+        if (tokenCatalogGeneration.current === generation) {
+          setTokenCatalog((current) =>
+            current.status === "ready" &&
+            !current.stale &&
+            sameData(current.items, result.items)
+              ? current
+              : {
+                  status: "ready",
+                  items: result.items,
+                  error: null,
+                  stale: false,
+                },
+          );
+        }
+      } catch (error) {
+        if (tokenCatalogGeneration.current === generation) {
+          setTokenCatalog((current) =>
+            silent && current.status !== "loading"
+              ? current
+              : {
+                  ...current,
+                  status: "error",
+                  error: messageOf(error, i18n.t("app.readTokensFailed")),
+                  stale: current.items.length > 0,
+                },
+          );
+        }
+      }
+    },
+    [isReady],
+  );
 
   useEffect(() => {
     if (!isReady) {
@@ -429,40 +496,51 @@ export default function App() {
     void refreshAccessTokens();
   }, [coreSessionKey, isReady, refreshAccessTokens]);
 
-  const refreshUsage = useCallback(async () => {
-    const generation = usageGeneration.current + 1;
-    usageGeneration.current = generation;
-    if (!isReady) {
-      setUsage(blockedUsage);
-      return;
-    }
+  const refreshUsage = useCallback(
+    async ({ silent = false }: RefreshOptions = {}) => {
+      if (silent && (!isReady || !revalidatable(usageRef.current.status)))
+        return;
+      const generation = usageGeneration.current + 1;
+      usageGeneration.current = generation;
+      if (!isReady) {
+        setUsage(blockedUsage);
+        return;
+      }
 
-    // Keep the previous summary visible while a wider range loads, so
-    // switching presets never blanks the panel.
-    setUsage((current) => ({
-      status: "loading",
-      summary: current.summary,
-      error: null,
-    }));
-    try {
-      const usageWindow = resolveUsageWindow(usagePreset, new Date());
-      const summary = await getUsageSummary(usageWindow);
-      if (usageGeneration.current !== generation) return;
-      setUsage({
-        status: "ready",
-        summary,
-        error: null,
-      });
-    } catch (error) {
-      if (usageGeneration.current === generation) {
+      // Keep the previous summary visible while a wider range loads, so
+      // switching presets never blanks the panel.
+      if (!silent) {
         setUsage((current) => ({
-          status: "error",
+          status: "loading",
           summary: current.summary,
-          error: messageOf(error, i18n.t("app.usageFailed")),
+          error: null,
         }));
       }
-    }
-  }, [isReady, usagePreset]);
+      try {
+        const usageWindow = resolveUsageWindow(usagePreset, new Date());
+        const summary = await getUsageSummary(usageWindow);
+        if (usageGeneration.current !== generation) return;
+        setUsage((current) =>
+          current.status === "ready" && sameData(current.summary, summary)
+            ? current
+            : { status: "ready", summary, error: null },
+        );
+      } catch (error) {
+        if (usageGeneration.current === generation) {
+          setUsage((current) =>
+            silent && current.status !== "loading"
+              ? current
+              : {
+                  status: "error",
+                  summary: current.summary,
+                  error: messageOf(error, i18n.t("app.usageFailed")),
+                },
+          );
+        }
+      }
+    },
+    [isReady, usagePreset],
+  );
 
   useEffect(() => {
     if (!isReady) {
@@ -472,6 +550,29 @@ export default function App() {
     }
     void refreshUsage();
   }, [coreSessionKey, isReady, refreshUsage]);
+
+  // Returning to the overview, a periodic tick, and the window coming back to
+  // the foreground pick up new traffic without a manual refresh.
+  const revalidateOverviewRef = useRef(() => {});
+  revalidateOverviewRef.current = () => {
+    void refreshServices({ silent: true });
+    void refreshAccessTokens({ silent: true });
+    void refreshUsage({ silent: true });
+  };
+  const onOverview = page.kind === "overview";
+  useEffect(() => {
+    if (!onOverview || !isReady) return;
+    const revalidate = () => {
+      if (!document.hidden) revalidateOverviewRef.current();
+    };
+    revalidate();
+    const timer = window.setInterval(revalidate, OVERVIEW_REVALIDATE_MS);
+    document.addEventListener("visibilitychange", revalidate);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", revalidate);
+    };
+  }, [isReady, onOverview]);
 
   useEffect(
     () => () => {
@@ -575,7 +676,9 @@ export default function App() {
     handleEditorDirtyChange(false);
   };
 
+  // A local change supersedes any catalog read that started before it.
   const rememberService = (service: Service) => {
+    catalogGeneration.current += 1;
     setCatalog((current) => {
       const existingIndex = current.items.findIndex(
         (item) => item.id === service.id,
@@ -597,6 +700,7 @@ export default function App() {
   };
 
   const handleServiceRemoved = (serviceId: string) => {
+    catalogGeneration.current += 1;
     setCatalog((current) => ({
       status: "ready",
       items: current.items.filter((service) => service.id !== serviceId),
@@ -606,6 +710,7 @@ export default function App() {
   };
 
   const handleTokenCreated = (token: AccessTokenSummary) => {
+    tokenCatalogGeneration.current += 1;
     setTokenCatalog((current) => ({
       status: "ready",
       items: [token, ...current.items.filter((item) => item.id !== token.id)],
@@ -616,6 +721,7 @@ export default function App() {
   };
 
   const handleTokenDeleted = (tokenId: string) => {
+    tokenCatalogGeneration.current += 1;
     setTokenCatalog((current) => ({
       status: "ready",
       items: current.items.filter((token) => token.id !== tokenId),
@@ -861,7 +967,11 @@ export default function App() {
                   navigate({ kind: "records", tokenId })
                 }
                 onRefreshServices={() => void refreshServices()}
-                onRefreshUsage={() => void refreshUsage()}
+                onRefresh={() => {
+                  void refreshUsage();
+                  void refreshServices({ silent: true });
+                  void refreshAccessTokens({ silent: true });
+                }}
                 onRestart={() => void handleRestart()}
                 onUsagePresetChange={setUsagePreset}
                 snapshot={snapshot}

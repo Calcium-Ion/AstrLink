@@ -1,19 +1,25 @@
-/** Clients the setup dialog lists; CC Switch can import every one. */
+/** Clients the setup dialog lists. */
 export type ClientConfigClient =
   | "claude"
   | "codex"
   | "gemini"
   | "opencode"
-  | "openclaw";
+  | "openclaw"
+  | "pi";
 
 /** Clients AstrLink writes itself; the others go through CC Switch. */
-export const directClients = ["claude", "codex"] as const;
+export const directClients = ["claude", "codex", "pi"] as const;
 export type DirectClient = (typeof directClients)[number];
 
 export function isDirectClient(
   client: ClientConfigClient,
 ): client is DirectClient {
   return (directClients as readonly string[]).includes(client);
+}
+
+/** CC Switch has no Pi app, so only AstrLink can configure Pi. */
+export function ccSwitchImports(client: ClientConfigClient): boolean {
+  return client !== "pi";
 }
 
 export interface ClientConfigModels {
@@ -126,7 +132,7 @@ function parseStatus(value: unknown, path: string): ClientConfigStatus {
     typeof status.client !== "string" ||
     !(directClients as readonly string[]).includes(status.client)
   ) {
-    invalid(`${path}.client`, "expected claude or codex");
+    invalid(`${path}.client`, "expected claude, codex, or pi");
   }
   if (typeof status.detected !== "boolean") {
     invalid(`${path}.detected`, "expected a boolean");
@@ -173,7 +179,7 @@ export function parseClientConfigStatuses(
     statuses.length !== directClients.length ||
     statuses.some((status, index) => status.client !== directClients[index])
   ) {
-    invalid("$", "expected claude and codex");
+    invalid("$", "expected claude, codex, and pi");
   }
   return statuses;
 }

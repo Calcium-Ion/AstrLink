@@ -48,6 +48,7 @@ import {
 } from "./lib/test-dialog-animations";
 import { ServiceManager } from "./ServiceManager";
 import { PROTOCOL_MODE_GUIDE_KEY } from "./ProtocolModeHelp";
+import { SERVICE_EDITOR_TOUR_KEY } from "./ServiceEditorTour";
 import { SERVICE_ORDER_GUIDE_KEY } from "./ServiceOrderHelp";
 import { SERVICE_LIST_COLUMNS_STORAGE_KEY } from "./service-list-columns";
 import { parseService, type Service } from "./service-model";
@@ -253,6 +254,7 @@ describe("ServiceManager", () => {
     // Existing editor/action tests represent returning users.
     localStorage.setItem(SERVICE_ORDER_GUIDE_KEY, "seen");
     localStorage.setItem(PROTOCOL_MODE_GUIDE_KEY, "seen");
+    localStorage.setItem(SERVICE_EDITOR_TOUR_KEY, "seen");
     localStorage.removeItem(SERVICE_LIST_COLUMNS_STORAGE_KEY);
     bridgeMocks.getRoutingSettings.mockResolvedValue({
       default_failure_policy: defaultFailurePolicy(),
@@ -4298,6 +4300,81 @@ describe("ServiceManager", () => {
       );
     },
   );
+
+  it("passes through a protocol the preset upstream serves natively", async () => {
+    const listed: Service = {
+      ...gatewayService,
+      kind: "minimax_coding",
+      capabilities: [
+        { protocol: "anthropic.messages", mode: "native", streaming: true },
+      ],
+    };
+    bridgeMocks.getService.mockResolvedValue({ service: listed, etag });
+    bridgeMocks.updateService.mockResolvedValue({ service: listed, etag });
+    await act(async () =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          conversionEngine={{
+            name: "relaykit",
+            version: null,
+            available: true,
+            edges: [
+              {
+                from: "openai.responses",
+                to: "anthropic.messages",
+                quality: "fair",
+                streaming: true,
+              },
+            ],
+          }}
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[listed]}
+          view={{ kind: "edit", serviceId: listed.id }}
+        />,
+      ),
+    );
+    await openEditorTab("protocols");
+    const row = [
+      ...container.querySelectorAll<HTMLElement>(
+        '[data-testid="service-capability-row"]',
+      ),
+    ].find(
+      (item) =>
+        item.querySelector("span.font-medium")?.textContent ===
+        "OpenAI Responses",
+    )!;
+    await act(async () =>
+      row.querySelector<HTMLButtonElement>('[role="switch"]')!.click(),
+    );
+    expect(row.querySelector('button[role="combobox"]')?.textContent).toContain(
+      "原样转发",
+    );
+    await act(async () =>
+      container
+        .querySelector("form")!
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        ),
+    );
+    expect(bridgeMocks.updateService).toHaveBeenCalledWith(
+      listed.id,
+      etag,
+      expect.objectContaining({
+        capabilities: [
+          ...listed.capabilities,
+          { protocol: "openai.responses", mode: "native", streaming: true },
+        ],
+      }),
+    );
+  });
 
   it("shows conversion quality on a flattened protocol row when the engine is available", async () => {
     const converting: Service = {

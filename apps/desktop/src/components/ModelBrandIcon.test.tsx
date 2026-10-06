@@ -6,7 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ModelIcon } from "@lobehub/icons";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ModelBrandIcon } from "./ModelBrandIcon";
+import { ModelBrandIcon, modelVendor } from "./ModelBrandIcon";
+import { ServiceKindIcon } from "./ServiceKindIcon";
 
 describe("ModelBrandIcon", () => {
   let container: HTMLDivElement;
@@ -26,12 +27,13 @@ describe("ModelBrandIcon", () => {
     container.remove();
   });
 
+  // Kimi and GLM are absent on purpose: @lobehub/icons draws them with the
+  // Moonshot and Z.ai marks, while this app shows the vendor marks used by the
+  // Kimi and 智谱 provider kinds (see the provider-kind test below).
   it.each([
     "gpt-4o",
     "claude-sonnet-4",
     "gemini-2.5-pro",
-    "kimi-k2",
-    "glm-4.5",
     "minimax-m2",
     "deepseek-v3.1",
     "qwen3-coder-plus",
@@ -59,6 +61,38 @@ describe("ModelBrandIcon", () => {
     );
     expect(container.querySelector("[data-animated-icon]")).toBeNull();
   });
+
+  it.each([
+    ["gpt-4o", "openai"],
+    ["claude-sonnet-4", "claude_subscription"],
+    ["gemini-2.5-pro", "gemini"],
+    ["kimi-k2", "kimi_coding"],
+    ["moonshot-v1-8k", "moonshot"],
+    ["glm-4.5", "glm"],
+    ["glm-5.3-flash", "glm_coding"],
+    ["minimax-m2", "minimax"],
+    ["deepseek-v3.1", "deepseek"],
+    ["qwen3-coder-plus", "qwen"],
+    ["doubao-seed-1.6", "doubao"],
+    ["grok-4", "xai"],
+  ] as const)(
+    "draws %s with the same mark as the %s provider kind",
+    (model, kind) => {
+      const modelMark = document.createElement("div");
+      modelMark.innerHTML = renderToStaticMarkup(
+        <ModelBrandIcon model={model} size={16} />,
+      );
+      const kindMark = document.createElement("div");
+      kindMark.innerHTML = renderToStaticMarkup(
+        <ServiceKindIcon kind={kind} size={16} />,
+      );
+
+      expect(modelVendor(model)).not.toBeNull();
+      expect(modelMark.querySelector("svg")?.innerHTML).toBe(
+        kindMark.querySelector("svg")?.innerHTML,
+      );
+    },
+  );
 
   it("renders a fallback svg for an unknown model id", async () => {
     await act(async () => {

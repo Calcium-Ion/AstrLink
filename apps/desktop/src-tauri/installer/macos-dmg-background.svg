@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="420" viewBox="0 0 660 420" fill="none">
+  <!-- After editing, render at 660x420 and 1320x840 in a browser (rsvg-convert bands the glows), then
+       tiffutil -cathidpicheck bg.png bg@2x.png -out macos-dmg-background.tiff -->
+  <title>AstrLink macOS DMG background</title>
+  <desc>Finder draws icon labels in black over any background picture, even in Dark Mode, so the canvas stays light. Icons are centred at (170, 190) and (490, 190) as set in tauri.macos.conf.json. The Finder title bar takes 28–32 pt of the window height, so the last 20 pt only extend the canvas.</desc>
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="0" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FCFDFF"/>
+      <stop offset="1" stop-color="#F1F3FB"/>
+    </linearGradient>
+    <radialGradient id="glow-teal" cx="70" cy="30" r="300" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20BBC7" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#20BBC7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-pink" cx="620" cy="400" r="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DA7BAF" stop-opacity=".15"/>
+      <stop offset="1" stop-color="#DA7BAF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-lavender" cx="330" cy="190" r="240" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7F8FE8" stop-opacity=".09"/>
+      <stop offset="1" stop-color="#7F8FE8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="trail" x1="256" y1="0" x2="402" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#20BBC7" stop-opacity="0"/>
+      <stop offset=".24" stop-color="#20BBC7"/>
+      <stop offset=".62" stop-color="#7F8FE8"/>
+      <stop offset="1" stop-color="#DA7BAF"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="660" height="420" fill="url(#canvas)"/>
+  <rect width="660" height="420" fill="url(#glow-teal)"/>
+  <rect width="660" height="420" fill="url(#glow-pink)"/>
+  <rect width="660" height="420" fill="url(#glow-lavender)"/>
+
+  <g fill="#8B88DD">
+    <path d="M560 50C562 58 565 61 573 63C565 65 562 68 560 76C558 68 555 65 547 63C555 61 558 58 560 50Z" opacity=".5"/>
+    <path d="M100 318C101 323 103 325 108 326C103 327 101 329 100 334C99 329 97 327 92 326C97 325 99 323 100 318Z" opacity=".35"/>
+    <circle cx="596" cy="92" r="2" opacity=".35"/>
+    <circle cx="70" cy="284" r="1.6" opacity=".3"/>
+  </g>
+
+  <text x="330" y="62" text-anchor="middle" fill="#304074" font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif" font-size="26" font-weight="600" letter-spacing=".3">AstrLink</text>
+  <text x="330" y="87" text-anchor="middle" fill="#6E769A" font-family="'PingFang SC', -apple-system, 'Helvetica Neue', sans-serif" font-size="13">为 AI Agent 打造的本地隐私网关</text>
+
+  <g stroke-linecap="round" stroke-linejoin="round" stroke-width="5">
+    <path d="M258 200C298 170 356 172 397 189" stroke="url(#trail)"/>
+    <path d="M391 176L400 191L384 196" stroke="#DA7BAF"/>
+  </g>
+  <circle cx="302" cy="166" r="2.6" fill="#7F8FE8" opacity=".7"/>
+  <path d="M330 136C332 144 335 147 343 149C335 151 332 154 330 162C328 154 325 151 317 149C325 147 328 144 330 136Z" fill="#8B88DD"/>
+
+  <text x="330" y="330" text-anchor="middle" fill="#46507A" font-family="'PingFang SC', -apple-system, 'Helvetica Neue', sans-serif" font-size="14" font-weight="500">拖到 Applications 文件夹即可完成安装</text>
+  <text x="330" y="351" text-anchor="middle" fill="#8890AE" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif" font-size="12">Drag to Applications to install</text>
+</svg>

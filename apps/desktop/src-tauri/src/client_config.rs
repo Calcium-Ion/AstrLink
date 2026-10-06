@@ -3,8 +3,8 @@
 //!
 //! Only the keys listed in `~/.astrlink/client-configs.json` belong to
 //! AstrLink. Each edit is made in place, keeping the rest of the file's keys,
-//! comments, and layout. Verified against Claude Code 2.1.283 and Codex CLI
-//! 0.159.2.
+//! comments, and layout. Verified against Claude Code 2.1.283, Codex CLI
+//! 0.159.2, and Pi 0.99.2.
 
 use std::{
     collections::BTreeMap,
@@ -13,8 +13,8 @@ use std::{
 };
 
 use jsonc_parser::{
-    cst::{CstInputValue, CstObject, CstRootNode},
-    ParseOptions,
+    cst::{CstInputValue, CstNode, CstObject, CstRootNode},
+    JsonValue, ParseOptions,
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,12 @@ use crate::{
 const RECORDS_VERSION: u32 = 1;
 const CODEX_PROVIDER: &str = "astrlink";
 const CODEX_PROVIDER_PREFIX: &str = "model_providers.astrlink.";
+const PI_PROVIDER: &str = "astrlink";
+const PI_PROVIDER_PREFIX: &str = "providers.astrlink.";
+/// Pi's model list for the provider, written as `[{"id": <model>}]`.
+const PI_MODELS_KEY: &str = "providers.astrlink.models";
+/// The model Pi starts with, which its `/model` picker can save over.
+const PI_STARTUP_KEYS: [&str; 2] = ["defaultProvider", "defaultModel"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -39,6 +45,7 @@ pub enum Client {
     Gemini,
     Opencode,
     Openclaw,
+    Pi,
 }
 
 impl Client {
@@ -49,11 +56,12 @@ impl Client {
             Self::Gemini => "gemini",
             Self::Opencode => "opencode",
             Self::Openclaw => "openclaw",
+            Self::Pi => "pi",
         }
     }
 
     /// Clients AstrLink configures itself; the rest go through CC Switch.
-    const WRITABLE: [Self; 2] = [Self::Claude, Self::Codex];
+    const WRITABLE: [Self; 3] = [Self::Claude, Self::Codex, Self::Pi];
 
     fn writable(self) -> Result<Self, String> {
         if Self::WRITABLE.contains(&self) {
@@ -67,21 +75,29 @@ impl Client {
         match self {
             Self::Claude => home.join(".claude").is_dir() || home.join(".claude.json").is_file(),
             Self::Codex => home.join(".codex").is_dir(),
+            Self::Pi => home.join(".pi").is_dir(),
             Self::Gemini | Self::Opencode | Self::Openclaw => false,
         }
     }
 
-    fn config_path(self, home: &Path) -> PathBuf {
+    /// The files the connection is written to, main file first.
+    fn files(self) -> &'static [ConfigFile] {
         match self {
-            Self::Codex => home.join(".codex").join("config.toml"),
-            _ => home.join(".claude").join("settings.json"),
+            Self::Codex => &[ConfigFile::Codex],
+            Self::Pi => &[ConfigFile::PiModels, ConfigFile::PiSettings],
+            _ => &[ConfigFile::Claude],
         }
     }
 
-    /// Claude Code appends its own API path; Codex needs the OpenAI `/v1` root.
+    fn config_paths(self, home: &Path) -> Vec<PathBuf> {
+        self.files().iter().map(|file| file.path(home)).collect()
+    }
+
+    /// Claude Code appends its own API path; Codex and Pi need the OpenAI
+    /// `/v1` root.
     fn base_url(self, origin: &str) -> String {
         match self {
-            Self::Codex => format!("{origin}/v1"),
+            Self::Codex | Self::Pi => format!("{origin}/v1"),
             _ => origin.to_string(),
         }
     }
@@ -89,12 +105,14 @@ impl Client {
     fn base_url_key(self) -> &'static str {
         match self {
             Self::Codex => "model_providers.astrlink.base_url",
+            Self::Pi => "providers.astrlink.baseUrl",
             _ => "env.ANTHROPIC_BASE_URL",
         }
     }
 
     /// Keys that decide where requests go and how they authenticate. A model
-    /// the client rewrote itself, like Codex's `/model`, is not among them.
+    /// the client rewrote itself, like Codex's or Pi's `/model`, is not
+    /// among them.
     fn connection_keys(self) -> &'static [&'static str] {
         match self {
             Self::Codex => &[
@@ -103,8 +121,59 @@ impl Client {
                 "model_providers.astrlink.wire_api",
                 "model_providers.astrlink.experimental_bearer_token",
             ],
+            Self::Pi => &[
+                "providers.astrlink.baseUrl",
+                "providers.astrlink.api",
+                "providers.astrlink.apiKey",
+            ],
             _ => &["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN"],
         }
+    }
+}
+
+/// One file a client reads its connection from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigFile {
+    Claude,
+    Codex,
+    /// Pi's endpoints; Pi reads it with line comments and trailing commas.
+    PiModels,
+    /// Pi's preferences, including the model it starts with.
+    PiSettings,
+}
+
+impl ConfigFile {
+    fn path(self, home: &Path) -> PathBuf {
+        let pi = home.join(".pi").join("agent");
+        match self {
+            Self::Claude => home.join(".claude").join("settings.json"),
+            Self::Codex => home.join(".codex").join("config.toml"),
+            Self::PiModels => pi.join("models.json"),
+            Self::PiSettings => pi.join("settings.json"),
+        }
+    }
+
+    /// Whether this file of its client holds the key.
+    fn holds(self, path: &str) -> bool {
+        match self {
+            Self::PiModels => !PI_STARTUP_KEYS.contains(&path),
+            Self::PiSettings => PI_STARTUP_KEYS.contains(&path),
+            Self::Claude | Self::Codex => true,
+        }
+    }
+}
+
+/// Why one of a client's config files cannot be edited, by the file's
+/// position in `Client::files`.
+#[derive(Debug)]
+pub struct FileError {
+    pub file: usize,
+    pub message: String,
+}
+
+impl FileError {
+    fn at(self, paths: &[PathBuf]) -> String {
+        format!("{} {}", paths[self.file].display(), self.message)
     }
 }
 
@@ -264,12 +333,15 @@ struct Records {
     claude: Option<ClientRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     codex: Option<ClientRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pi: Option<ClientRecord>,
 }
 
 impl Records {
     fn slot(&mut self, client: Client) -> &mut Option<ClientRecord> {
         match client {
             Client::Codex => &mut self.codex,
+            Client::Pi => &mut self.pi,
             _ => &mut self.claude,
         }
     }
@@ -278,6 +350,7 @@ impl Records {
         match client {
             Client::Claude => self.claude.as_ref(),
             Client::Codex => self.codex.as_ref(),
+            Client::Pi => self.pi.as_ref(),
             _ => None,
         }
     }
@@ -302,7 +375,7 @@ fn read_records(home: &Path) -> Result<Records, String> {
 
 fn write_records(home: &Path, records: &mut Records) -> Result<(), String> {
     let path = records_path(home);
-    if records.claude.is_none() && records.codex.is_none() {
+    if records.claude.is_none() && records.codex.is_none() && records.pi.is_none() {
         return host_files::remove_path(&path);
     }
     records.version = RECORDS_VERSION;
@@ -333,7 +406,8 @@ fn unix_now() -> u64 {
 /// A client config file opened for in-place editing. Keys are dotted paths
 /// from the file's root; `None` in a lookup result is a non-string value.
 enum Document {
-    Claude {
+    Json {
+        file: ConfigFile,
         root: CstRootNode,
         object: CstObject,
     },
@@ -341,6 +415,89 @@ enum Document {
         document: DocumentMut,
         crlf: bool,
     },
+}
+
+/// Splits a JSON key into the objects holding it and its property name:
+/// `env.ANTHROPIC_MODEL`, `providers.astrlink.baseUrl`, or a root key.
+fn json_key(path: &str) -> (&'static [&'static str], &str) {
+    if let Some(name) = path.strip_prefix("env.") {
+        (&["env"], name)
+    } else if let Some(name) = path.strip_prefix(PI_PROVIDER_PREFIX) {
+        (&["providers", PI_PROVIDER], name)
+    } else if let Some(name) = path.strip_prefix("providers.") {
+        (&["providers"], name)
+    } else {
+        (&[], path)
+    }
+}
+
+fn json_parent(object: &CstObject, parents: &[&str]) -> Option<CstObject> {
+    parents
+        .iter()
+        .try_fold(object.clone(), |parent, name| parent.object_value(name))
+}
+
+/// The model a Pi model list names when it is exactly `[{"id": <model>}]`;
+/// any other list is not one AstrLink wrote.
+fn single_model(value: &CstNode) -> Option<String> {
+    let entries = value.as_array()?.elements();
+    let [entry] = entries.as_slice() else {
+        return None;
+    };
+    let properties = entry.as_object()?.properties();
+    let [id] = properties.as_slice() else {
+        return None;
+    };
+    if id.decoded_name()? != "id" {
+        return None;
+    }
+    id.value()?.as_string_lit()?.decoded_value().ok()
+}
+
+/// Rejects what the client itself cannot read. Claude Code and Pi's
+/// settings take strict JSON; Pi strips line comments and trailing commas
+/// from models.json first.
+fn validate_json(file: ConfigFile, text: &str) -> Result<(), String> {
+    if file == ConfigFile::PiModels {
+        let options = ParseOptions {
+            allow_comments: true,
+            allow_trailing_commas: true,
+            allow_loose_object_property_names: false,
+            allow_missing_commas: false,
+            allow_single_quoted_strings: false,
+            allow_hexadecimal_numbers: false,
+            allow_unary_plus_numbers: false,
+            allow_bare_decimal_point_numbers: false,
+            allow_non_finite_numbers: false,
+            allow_extended_string_escapes: false,
+        };
+        let value = jsonc_parser::parse_to_value(text, &options)
+            .map_err(|error| format!("is not valid JSON ({error})"))?;
+        let Some(JsonValue::Object(root)) = value else {
+            return Err("is not a JSON object".into());
+        };
+        if root
+            .get("providers")
+            .is_some_and(|providers| !matches!(providers, JsonValue::Object(_)))
+        {
+            return Err("has a providers value that is not an object".into());
+        }
+        return Ok(());
+    }
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|error| {
+        format!(
+            "is not valid JSON (line {}, column {})",
+            error.line(),
+            error.column()
+        )
+    })?;
+    if !value.is_object() {
+        return Err("is not a JSON object".into());
+    }
+    if file == ConfigFile::Claude && value.get("env").is_some_and(|env| !env.is_object()) {
+        return Err("has an env value that is not an object".into());
+    }
+    Ok(())
 }
 
 /// Claude Code settings keys that choose the endpoint, credential, or model.
@@ -423,52 +580,36 @@ fn remove_toml_root_key(document: &mut DocumentMut, key: &str) {
 }
 
 impl Document {
-    fn parse(client: Client, existing: Option<&str>) -> Result<Self, String> {
+    fn parse(file: ConfigFile, existing: Option<&str>) -> Result<Self, String> {
         let text = existing.unwrap_or_default();
-        match client {
-            Client::Codex => Ok(Self::Codex {
+        if file == ConfigFile::Codex {
+            return Ok(Self::Codex {
                 document: text.parse().map_err(|_| "is not valid TOML".to_string())?,
                 crlf: text.contains("\r\n"),
-            }),
-            _ => {
-                // Claude Code reads strict JSON; the CST parser also takes
-                // comments, so validate strictly first.
-                if !text.trim().is_empty() {
-                    let value: serde_json::Value = serde_json::from_str(text).map_err(|error| {
-                        format!(
-                            "is not valid JSON (line {}, column {})",
-                            error.line(),
-                            error.column()
-                        )
-                    })?;
-                    if !value.is_object() {
-                        return Err("is not a JSON object".into());
-                    }
-                    if value.get("env").is_some_and(|env| !env.is_object()) {
-                        return Err("has an env value that is not an object".into());
-                    }
-                }
-                let root = CstRootNode::parse(text, &ParseOptions::default())
-                    .map_err(|_| "is not valid JSON".to_string())?;
-                let object = root.object_value_or_set();
-                Ok(Self::Claude { root, object })
-            }
+            });
         }
+        // The CST parser takes more than the clients do, so validate first.
+        if !text.trim().is_empty() {
+            validate_json(file, text)?;
+        }
+        let root = CstRootNode::parse(text, &ParseOptions::default())
+            .map_err(|_| "is not valid JSON".to_string())?;
+        let object = root.object_value_or_set();
+        Ok(Self::Json { file, root, object })
     }
 
     fn get(&self, path: &str) -> Option<Option<String>> {
         match self {
-            Self::Claude { object, .. } => {
-                let property = match path.split_once('.') {
-                    Some(("env", name)) => object.object_value("env")?.get(name)?,
-                    _ => object.get(path)?,
-                };
-                Some(
-                    property
-                        .value()
+            Self::Json { object, .. } => {
+                let (parents, name) = json_key(path);
+                let value = json_parent(object, parents)?.get(name)?.value();
+                Some(if path == PI_MODELS_KEY {
+                    value.as_ref().and_then(single_model)
+                } else {
+                    value
                         .and_then(|value| value.as_string_lit())
-                        .and_then(|value| value.decoded_value().ok()),
-                )
+                        .and_then(|value| value.decoded_value().ok())
+                })
             }
             Self::Codex { document, .. } => {
                 let Some(key) = path.strip_prefix(CODEX_PROVIDER_PREFIX) else {
@@ -489,7 +630,11 @@ impl Document {
     fn group(&self) -> Vec<(String, Option<String>)> {
         let mut keys = Vec::new();
         match self {
-            Self::Claude { object, .. } => {
+            Self::Json {
+                file: ConfigFile::Claude,
+                object,
+                ..
+            } => {
                 if let Some(env) = object.object_value("env") {
                     for property in env.properties() {
                         let Some(name) = property.decoded_name() else {
@@ -504,6 +649,37 @@ impl Document {
                 }
                 if object.get("apiKeyHelper").is_some() {
                     keys.push(("apiKeyHelper".into(), self.get("apiKeyHelper").flatten()));
+                }
+            }
+            Self::Json {
+                file: ConfigFile::PiModels,
+                object,
+                ..
+            } => {
+                let provider = object
+                    .object_value("providers")
+                    .and_then(|providers| providers.get(PI_PROVIDER));
+                match provider.map(|provider| provider.object_value()) {
+                    Some(Some(provider)) => {
+                        for property in provider.properties() {
+                            let Some(name) = property.decoded_name() else {
+                                continue;
+                            };
+                            let path = format!("{PI_PROVIDER_PREFIX}{name}");
+                            let value = self.get(&path).flatten();
+                            keys.push((path, value));
+                        }
+                    }
+                    Some(None) => keys.push(("providers.astrlink".into(), None)),
+                    None => {}
+                }
+            }
+            // Pi's settings: only the startup model is AstrLink's to take over.
+            Self::Json { object, .. } => {
+                for key in PI_STARTUP_KEYS {
+                    if object.get(key).is_some() {
+                        keys.push((key.into(), self.get(key).flatten()));
+                    }
                 }
             }
             Self::Codex { document, .. } => {
@@ -532,17 +708,26 @@ impl Document {
 
     fn set(&mut self, path: &str, value: &str) -> Result<(), String> {
         match self {
-            Self::Claude { object, .. } => {
-                let Some(("env", name)) = path.split_once('.') else {
-                    return Err(format!("unable to set {path}"));
+            Self::Json { object, .. } => {
+                let (parents, name) = json_key(path);
+                let mut parent = object.clone();
+                for segment in parents {
+                    parent = parent
+                        .object_value_or_create(segment)
+                        .ok_or_else(|| format!("has a {segment} value that is not an object"))?;
+                }
+                let value = if path == PI_MODELS_KEY {
+                    CstInputValue::Array(vec![CstInputValue::Object(vec![(
+                        "id".into(),
+                        CstInputValue::String(value.into()),
+                    )])])
+                } else {
+                    CstInputValue::String(value.into())
                 };
-                let env = object
-                    .object_value_or_create("env")
-                    .ok_or("has an env value that is not an object")?;
-                match env.get(name) {
-                    Some(property) => property.set_value(CstInputValue::String(value.into())),
+                match parent.get(name) {
+                    Some(property) => property.set_value(value),
                     None => {
-                        env.append(name, CstInputValue::String(value.into()));
+                        parent.append(name, value);
                     }
                 }
             }
@@ -586,12 +771,11 @@ impl Document {
 
     fn remove(&mut self, path: &str) {
         match self {
-            Self::Claude { object, .. } => {
-                let property = match path.split_once('.') {
-                    Some(("env", name)) => object.object_value("env").and_then(|env| env.get(name)),
-                    _ => object.get(path),
-                };
-                if let Some(property) = property {
+            Self::Json { object, .. } => {
+                let (parents, name) = json_key(path);
+                if let Some(property) =
+                    json_parent(object, parents).and_then(|parent| parent.get(name))
+                {
                     property.remove();
                 }
             }
@@ -620,12 +804,22 @@ impl Document {
     /// Drops the containers a removal left empty.
     fn tidy(&mut self) {
         match self {
-            Self::Claude { object, .. } => {
-                if object
-                    .object_value("env")
-                    .is_some_and(|env| env.properties().is_empty())
+            Self::Json { file, object, .. } => {
+                let container = match file {
+                    ConfigFile::Claude => "env",
+                    ConfigFile::PiModels => "providers.astrlink",
+                    _ => return,
+                };
+                let (parents, name) = json_key(container);
+                if let Some(property) =
+                    json_parent(object, parents).and_then(|parent| parent.get(name))
                 {
-                    self.remove("env");
+                    if property
+                        .object_value()
+                        .is_some_and(|value| value.properties().is_empty())
+                    {
+                        property.remove();
+                    }
                 }
             }
             Self::Codex { document, .. } => {
@@ -650,14 +844,21 @@ impl Document {
 
     fn is_empty(&self) -> bool {
         match self {
-            Self::Claude { object, .. } => object.properties().is_empty(),
+            // Pi requires `providers`, so an emptied one stays until the file goes.
+            Self::Json { file, object, .. } => object.properties().iter().all(|property| {
+                *file == ConfigFile::PiModels
+                    && property.decoded_name().as_deref() == Some("providers")
+                    && property
+                        .object_value()
+                        .is_some_and(|providers| providers.properties().is_empty())
+            }),
             Self::Codex { document, .. } => document.to_string().trim().is_empty(),
         }
     }
 
     fn render(&self) -> String {
         match self {
-            Self::Claude { root, .. } => {
+            Self::Json { root, .. } => {
                 let mut text = root.to_string();
                 if !text.ends_with('\n') {
                     text.push('\n');
@@ -674,6 +875,88 @@ impl Document {
                 }
             }
         }
+    }
+}
+
+/// Every config file of one client, opened together. Each key lives in
+/// exactly one of them.
+struct Config {
+    files: &'static [ConfigFile],
+    documents: Vec<Document>,
+    changed: Vec<bool>,
+}
+
+impl Config {
+    fn parse(client: Client, existing: &[Option<&str>]) -> Result<Self, FileError> {
+        let files = client.files();
+        if existing.len() != files.len() {
+            return Err(FileError {
+                file: 0,
+                message: "was read without its companion files".into(),
+            });
+        }
+        let documents = files
+            .iter()
+            .zip(existing)
+            .enumerate()
+            .map(|(index, (file, text))| {
+                Document::parse(*file, *text).map_err(|message| FileError {
+                    file: index,
+                    message,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            files,
+            documents,
+            changed: vec![false; files.len()],
+        })
+    }
+
+    fn index(&self, path: &str) -> usize {
+        self.files
+            .iter()
+            .position(|file| file.holds(path))
+            .unwrap_or(0)
+    }
+
+    fn get(&self, path: &str) -> Option<Option<String>> {
+        self.documents[self.index(path)].get(path)
+    }
+
+    fn group(&self) -> Vec<(String, Option<String>)> {
+        self.documents.iter().flat_map(Document::group).collect()
+    }
+
+    fn set(&mut self, path: &str, value: &str) -> Result<(), FileError> {
+        let file = self.index(path);
+        self.changed[file] = true;
+        self.documents[file]
+            .set(path, value)
+            .map_err(|message| FileError { file, message })
+    }
+
+    fn remove(&mut self, path: &str) {
+        let file = self.index(path);
+        self.changed[file] = true;
+        self.documents[file].remove(path);
+    }
+
+    /// New contents per file; a file left alone keeps its text, and a
+    /// missing one stays empty.
+    fn render(&self, existing: &[Option<&str>]) -> Vec<String> {
+        self.documents
+            .iter()
+            .zip(&self.changed)
+            .zip(existing)
+            .map(|((document, changed), text)| {
+                if *changed {
+                    document.render()
+                } else {
+                    text.unwrap_or_default().to_string()
+                }
+            })
+            .collect()
     }
 }
 
@@ -711,6 +994,22 @@ fn desired_keys(client: Client, connection: &Connection) -> Vec<(String, String)
                 keys.push((format!("{CODEX_PROVIDER_PREFIX}{key}"), value.into()));
             }
         }
+        Client::Pi => {
+            // The display name is local UI in Pi's model picker.
+            for (key, value) in [
+                ("name", "AstrLink"),
+                ("baseUrl", base_url.as_str()),
+                ("api", "openai-responses"),
+                ("apiKey", connection.token),
+            ] {
+                keys.push((format!("{PI_PROVIDER_PREFIX}{key}"), value.into()));
+            }
+            if let Some(model) = model("model") {
+                keys.push((PI_MODELS_KEY.into(), model.clone()));
+                keys.push(("defaultProvider".into(), PI_PROVIDER.into()));
+                keys.push(("defaultModel".into(), model));
+            }
+        }
         _ => {
             keys.push(("env.ANTHROPIC_BASE_URL".into(), base_url));
             // AUTH_TOKEN, not API_KEY: an API key asks for approval in the
@@ -741,23 +1040,26 @@ fn written_by_us(record: Option<&ClientRecord>, path: &str, value: Option<&str>)
 
 #[derive(Debug)]
 pub struct WritePlan {
-    pub contents: String,
+    /// New contents for each of the client's files, in `Client::files`
+    /// order; a file the plan leaves alone keeps its text.
+    pub contents: Vec<String>,
     /// Keys holding values AstrLink did not write, which the plan replaces
     /// or removes. Names only; values never leave the file.
     pub conflicts: Vec<String>,
     pub record: ClientRecord,
 }
 
+/// `existing` holds each of the client's files, in `Client::files` order.
 pub fn plan_write(
     client: Client,
-    existing: Option<&str>,
+    existing: &[Option<&str>],
     connection: &Connection,
     previous: Option<&ClientRecord>,
-) -> Result<WritePlan, String> {
-    let mut document = Document::parse(client, existing)?;
+) -> Result<WritePlan, FileError> {
+    let mut config = Config::parse(client, existing)?;
     let desired = desired_keys(client, connection);
     let mut conflicts = Vec::new();
-    for (path, value) in document.group() {
+    for (path, value) in config.group() {
         let wanted = desired.iter().find(|(key, _)| *key == path);
         if wanted.is_some_and(|(_, wanted)| Some(wanted) == value.as_ref()) {
             continue;
@@ -766,14 +1068,14 @@ pub fn plan_write(
             conflicts.push(path.clone());
         }
         if wanted.is_none() {
-            document.remove(&path);
+            config.remove(&path);
         }
     }
     for (path, value) in &desired {
-        document.set(path, value)?;
+        config.set(path, value)?;
     }
     Ok(WritePlan {
-        contents: document.render(),
+        contents: config.render(existing),
         conflicts,
         record: ClientRecord {
             token_id: connection.token_id.to_string(),
@@ -783,7 +1085,8 @@ pub fn plan_write(
                 .iter()
                 .map(|(path, value)| (path.clone(), sha256_hex(value)))
                 .collect(),
-            created_file: existing.is_none() || previous.is_some_and(|record| record.created_file),
+            created_file: existing[0].is_none()
+                || previous.is_some_and(|record| record.created_file),
             written_at_unix: unix_now(),
         },
     })
@@ -796,51 +1099,55 @@ pub enum Removal {
     Delete,
 }
 
+/// One removal per file, in `Client::files` order.
 pub fn plan_remove(
     client: Client,
-    existing: Option<&str>,
+    existing: &[Option<&str>],
     record: &ClientRecord,
-) -> Result<Removal, String> {
-    let Some(existing) = existing else {
-        return Ok(Removal::Unchanged);
-    };
-    let mut document = Document::parse(client, Some(existing))?;
-    let mut removed = false;
+) -> Result<Vec<Removal>, FileError> {
+    let mut config = Config::parse(client, existing)?;
     for path in record.keys.keys() {
-        let value = document.get(path).flatten();
+        let value = config.get(path).flatten();
         if written_by_us(Some(record), path, value.as_deref()) {
-            document.remove(path);
-            removed = true;
+            config.remove(path);
         }
     }
-    if !removed {
-        return Ok(Removal::Unchanged);
-    }
-    document.tidy();
-    if record.created_file && document.is_empty() {
-        return Ok(Removal::Delete);
-    }
-    Ok(Removal::Write(document.render()))
+    Ok(config
+        .documents
+        .iter_mut()
+        .zip(&config.changed)
+        .enumerate()
+        .map(|(index, (document, changed))| {
+            if !changed {
+                return Removal::Unchanged;
+            }
+            document.tidy();
+            // `created_file` is about the main file; companions stay.
+            if index == 0 && record.created_file && document.is_empty() {
+                Removal::Delete
+            } else {
+                Removal::Write(document.render())
+            }
+        })
+        .collect())
 }
 
 pub fn inspect(
     client: Client,
-    existing: Option<&str>,
+    existing: &[Option<&str>],
     record: Option<&ClientRecord>,
     origin: Option<&str>,
 ) -> ClientState {
-    let Ok(document) = Document::parse(client, existing) else {
+    let Ok(config) = Config::parse(client, existing) else {
         return ClientState::Invalid;
     };
     let Some(record) = record else {
         return ClientState::NotConfigured;
     };
-    if existing.is_none()
-        || client.connection_keys().iter().any(|path| {
-            let value = document.get(path).flatten();
-            !written_by_us(Some(record), path, value.as_deref())
-        })
-    {
+    if client.connection_keys().iter().any(|path| {
+        let value = config.get(path).flatten();
+        !written_by_us(Some(record), path, value.as_deref())
+    }) {
         return ClientState::Modified;
     }
     match origin {
@@ -853,31 +1160,91 @@ pub fn inspect(
 /// as written, so the sync never needs to reveal it.
 pub fn plan_sync(
     client: Client,
-    existing: Option<&str>,
+    existing: &[Option<&str>],
     record: &ClientRecord,
     origin: &str,
-) -> Result<Option<(String, ClientRecord)>, String> {
+) -> Result<Option<(Vec<String>, ClientRecord)>, FileError> {
     if inspect(client, existing, Some(record), Some(origin)) != ClientState::Outdated {
         return Ok(None);
     }
-    let mut document = Document::parse(client, existing)?;
+    let mut config = Config::parse(client, existing)?;
     let base_url = client.base_url(origin);
-    document.set(client.base_url_key(), &base_url)?;
+    config.set(client.base_url_key(), &base_url)?;
     let mut next = record.clone();
     next.keys
         .insert(client.base_url_key().into(), sha256_hex(&base_url));
     next.base_url = base_url;
     next.written_at_unix = unix_now();
-    Ok(Some((document.render(), next)))
+    Ok(Some((config.render(existing), next)))
 }
 
 /// The keys `apply` writes, as a standalone file for manual setup.
 pub fn snippet(client: Client, connection: &Connection) -> Result<String, String> {
-    Ok(plan_write(client.writable()?, None, connection, None)?.contents)
+    let client = client.writable()?;
+    // Pi's setup spans two files, which one snippet cannot show.
+    if client.files().len() != 1 {
+        return Err("this client's config spans several files".into());
+    }
+    let mut plan = plan_write(client, &[None], connection, None).map_err(|error| error.message)?;
+    Ok(plan.contents.remove(0))
 }
 
-fn file_error(path: &Path, error: String) -> String {
-    format!("{} {error}", path.display())
+fn read_files(paths: &[PathBuf]) -> Result<Vec<Option<String>>, String> {
+    paths
+        .iter()
+        .map(|path| host_files::read_optional(path))
+        .collect()
+}
+
+fn texts(files: &[Option<String>]) -> Vec<Option<&str>> {
+    files.iter().map(Option::as_deref).collect()
+}
+
+/// Writes each file whose contents changed. When one fails, the files
+/// already written get their old contents back.
+fn write_files(
+    paths: &[PathBuf],
+    existing: &[Option<String>],
+    contents: &[String],
+) -> Result<(), String> {
+    let mut written: Vec<(&Path, Option<&str>, &str)> = Vec::new();
+    for ((path, before), after) in paths.iter().zip(existing).zip(contents) {
+        let before = before.as_deref();
+        if before.unwrap_or_default() == after {
+            continue;
+        }
+        let result = host_files::write_text(
+            path,
+            after,
+            WriteOptions {
+                secret: true,
+                expected: Some(before),
+            },
+        );
+        if let Err(error) = result {
+            for (path, before, after) in written.into_iter().rev() {
+                let _ = match before {
+                    Some(before) => host_files::write_text(
+                        path,
+                        before,
+                        WriteOptions {
+                            secret: true,
+                            expected: Some(Some(after)),
+                        },
+                    ),
+                    None if host_files::read_optional(path).ok().flatten().as_deref()
+                        == Some(after) =>
+                    {
+                        host_files::remove_path(path)
+                    }
+                    None => Ok(()),
+                };
+            }
+            return Err(error);
+        }
+        written.push((path, before, after));
+    }
+    Ok(())
 }
 
 pub fn status(home: &Path, inference_url: Option<&str>) -> Result<Vec<ClientStatus>, String> {
@@ -886,14 +1253,17 @@ pub fn status(home: &Path, inference_url: Option<&str>) -> Result<Vec<ClientStat
     let records = read_records(home)?;
     let mut statuses = Vec::new();
     for client in Client::WRITABLE {
-        let path = client.config_path(home);
-        let existing = host_files::read_optional(&path)?;
+        let paths = client.config_paths(home);
+        let existing = read_files(&paths)?;
         let record = records.get(client);
-        let state = inspect(client, existing.as_deref(), record, origin.as_deref());
+        let state = inspect(client, &texts(&existing), record, origin.as_deref());
         statuses.push(ClientStatus {
             client,
             detected: client.detected(home),
-            paths: vec![path.display().to_string()],
+            paths: paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
             state,
             token_id: record
                 .filter(|_| state != ClientState::NotConfigured)
@@ -945,10 +1315,10 @@ pub fn write(
     let client = client.writable()?;
     let _lock = host_files::lock();
     let mut records = read_records(home)?;
-    let path = client.config_path(home);
-    let existing = host_files::read_optional(&path)?;
-    let plan = plan_write(client, existing.as_deref(), connection, records.get(client))
-        .map_err(|error| file_error(&path, error))?;
+    let paths = client.config_paths(home);
+    let existing = read_files(&paths)?;
+    let plan = plan_write(client, &texts(&existing), connection, records.get(client))
+        .map_err(|error| error.at(&paths))?;
     if !plan.conflicts.is_empty() && !replace {
         return Ok(ApplyOutcome::NeedsConfirmation {
             keys: plan.conflicts,
@@ -956,15 +1326,7 @@ pub fn write(
     }
     let previous = records.slot(client).replace(plan.record);
     write_records(home, &mut records)?;
-    let written = host_files::write_text(
-        &path,
-        &plan.contents,
-        WriteOptions {
-            secret: true,
-            expected: Some(existing.as_deref()),
-        },
-    );
-    if let Err(error) = written {
+    if let Err(error) = write_files(&paths, &existing, &plan.contents) {
         *records.slot(client) = previous;
         let _ = write_records(home, &mut records);
         return Err(error);
@@ -979,28 +1341,30 @@ pub fn remove(home: &Path, client: Client) -> Result<(), String> {
     let Some(record) = records.get(client).cloned() else {
         return Ok(());
     };
-    let path = client.config_path(home);
-    let existing = host_files::read_optional(&path)?;
-    match plan_remove(client, existing.as_deref(), &record)
-        .map_err(|error| file_error(&path, error))?
-    {
-        Removal::Unchanged => {}
-        Removal::Write(contents) => host_files::write_text(
-            &path,
-            &contents,
-            WriteOptions {
-                expected: Some(existing.as_deref()),
-                ..Default::default()
-            },
-        )?,
-        Removal::Delete => {
-            if host_files::read_optional(&path)? != existing {
-                return Err(format!(
-                    "unable to remove {}: the file changed; try again",
-                    path.display()
-                ));
+    let paths = client.config_paths(home);
+    let existing = read_files(&paths)?;
+    let removals =
+        plan_remove(client, &texts(&existing), &record).map_err(|error| error.at(&paths))?;
+    for ((path, existing), removal) in paths.iter().zip(&existing).zip(removals) {
+        match removal {
+            Removal::Unchanged => {}
+            Removal::Write(contents) => host_files::write_text(
+                path,
+                &contents,
+                WriteOptions {
+                    expected: Some(existing.as_deref()),
+                    ..Default::default()
+                },
+            )?,
+            Removal::Delete => {
+                if host_files::read_optional(path)? != *existing {
+                    return Err(format!(
+                        "unable to remove {}: the file changed; try again",
+                        path.display()
+                    ));
+                }
+                host_files::remove_path(path)?;
             }
-            host_files::remove_path(&path)?;
         }
     }
     *records.slot(client) = None;
@@ -1017,24 +1381,17 @@ pub fn sync(home: &Path, inference_url: &str) -> Result<(), String> {
         let Some(record) = records.get(client).cloned() else {
             continue;
         };
-        let path = client.config_path(home);
+        let paths = client.config_paths(home);
         let result = (|| {
-            let existing = host_files::read_optional(&path)?;
-            let Some((contents, next)) = plan_sync(client, existing.as_deref(), &record, &origin)
-                .map_err(|error| file_error(&path, error))?
+            let existing = read_files(&paths)?;
+            let Some((contents, next)) = plan_sync(client, &texts(&existing), &record, &origin)
+                .map_err(|error| error.at(&paths))?
             else {
                 return Ok(());
             };
             *records.slot(client) = Some(next);
             write_records(home, &mut records)?;
-            let written = host_files::write_text(
-                &path,
-                &contents,
-                WriteOptions {
-                    secret: true,
-                    expected: Some(existing.as_deref()),
-                },
-            );
+            let written = write_files(&paths, &existing, &contents);
             if written.is_err() {
                 *records.slot(client) = Some(record.clone());
                 let _ = write_records(home, &mut records);
@@ -1101,10 +1458,16 @@ mod tests {
             ("model", "main-route".to_string()),
             ("fableModel", "fable-route".to_string()),
         ];
-        let plan = plan_write(Client::Claude, Some(existing), &connection(&models), None).unwrap();
+        let plan = plan_write(
+            Client::Claude,
+            &[Some(existing)],
+            &connection(&models),
+            None,
+        )
+        .unwrap();
         assert!(plan.conflicts.is_empty());
         assert_eq!(
-            plan.contents,
+            plan.contents[0],
             "{\n    \"theme\": \"dark\",\n    \"env\": {\n        \"EDITOR\": \"vim\",\n        \"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:18317\",\n        \"ANTHROPIC_AUTH_TOKEN\": \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\",\n        \"ANTHROPIC_MODEL\": \"main-route\",\n        \"ANTHROPIC_DEFAULT_FABLE_MODEL\": \"fable-route\"\n    },\n    \"permissions\": {\"allow\": []}\n}\n"
         );
         assert!(!plan.record.created_file);
@@ -1118,25 +1481,27 @@ mod tests {
                 "env.ANTHROPIC_MODEL",
             ]
         );
-        let removed = plan_remove(Client::Claude, Some(&plan.contents), &plan.record).unwrap();
-        assert_eq!(removed, Removal::Write(existing.into()));
+        let removed =
+            plan_remove(Client::Claude, &[Some(&plan.contents[0])], &plan.record).unwrap();
+        assert_eq!(removed, [Removal::Write(existing.into())]);
     }
 
     #[test]
     fn claude_settings_are_created_and_removed_whole() {
         for existing in [None, Some("")] {
-            let plan = plan_write(Client::Claude, existing, &connection(&[]), None).unwrap();
+            let plan = plan_write(Client::Claude, &[existing], &connection(&[]), None).unwrap();
             assert_eq!(
-                json(&plan.contents),
+                json(&plan.contents[0]),
                 serde_json::json!({"env": {"ANTHROPIC_BASE_URL": ORIGIN, "ANTHROPIC_AUTH_TOKEN": TOKEN}})
             );
-            assert!(plan.contents.ends_with("}\n"));
+            assert!(plan.contents[0].ends_with("}\n"));
             assert_eq!(plan.record.created_file, existing.is_none());
-            let removal = plan_remove(Client::Claude, Some(&plan.contents), &plan.record).unwrap();
+            let removal =
+                plan_remove(Client::Claude, &[Some(&plan.contents[0])], &plan.record).unwrap();
             if existing.is_none() {
-                assert_eq!(removal, Removal::Delete);
+                assert_eq!(removal, [Removal::Delete]);
             } else {
-                assert_eq!(removal, Removal::Write("{}\n".into()));
+                assert_eq!(removal, [Removal::Write("{}\n".into())]);
             }
         }
     }
@@ -1144,7 +1509,7 @@ mod tests {
     #[test]
     fn claude_conflicts_are_named_and_removed_only_when_replacing() {
         let existing = r#"{"apiKeyHelper": "secret-helper", "env": {"ANTHROPIC_API_KEY": "sk-secret", "ANTHROPIC_BASE_URL": "https://other.example", "CLAUDE_CODE_USE_BEDROCK": "1", "ANTHROPIC_DEFAULT_OPUS_MODEL": "old-opus", "HTTP_PROXY": "http://proxy"}}"#;
-        let plan = plan_write(Client::Claude, Some(existing), &connection(&[]), None).unwrap();
+        let plan = plan_write(Client::Claude, &[Some(existing)], &connection(&[]), None).unwrap();
         assert_eq!(
             plan.conflicts,
             [
@@ -1155,7 +1520,7 @@ mod tests {
                 "apiKeyHelper",
             ]
         );
-        let written = json(&plan.contents);
+        let written = json(&plan.contents[0]);
         assert_eq!(
             written,
             serde_json::json!({"env": {"ANTHROPIC_BASE_URL": ORIGIN, "HTTP_PROXY": "http://proxy", "ANTHROPIC_AUTH_TOKEN": TOKEN}})
@@ -1173,10 +1538,10 @@ mod tests {
     #[test]
     fn rewriting_replaces_our_own_values_without_asking() {
         let models = vec![("opusModel", "opus-route".to_string())];
-        let first = plan_write(Client::Claude, None, &connection(&models), None).unwrap();
+        let first = plan_write(Client::Claude, &[None], &connection(&models), None).unwrap();
         let second = plan_write(
             Client::Claude,
-            Some(&first.contents),
+            &[Some(&first.contents[0])],
             &Connection {
                 token_id: "token_02",
                 token: OTHER_TOKEN,
@@ -1188,7 +1553,7 @@ mod tests {
         .unwrap();
         assert!(second.conflicts.is_empty());
         assert_eq!(
-            json(&second.contents),
+            json(&second.contents[0]),
             serde_json::json!({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:9000", "ANTHROPIC_AUTH_TOKEN": OTHER_TOKEN}})
         );
         assert!(second.record.created_file);
@@ -1198,18 +1563,17 @@ mod tests {
     #[test]
     fn removal_keeps_keys_changed_or_added_after_writing() {
         let models = vec![("model", "main-route".to_string())];
-        let plan = plan_write(Client::Claude, None, &connection(&models), None).unwrap();
-        let edited = plan
-            .contents
+        let plan = plan_write(Client::Claude, &[None], &connection(&models), None).unwrap();
+        let edited = plan.contents[0]
             .replace("main-route", "user-route")
             .replace("\"env\": {", "\"env\": {\n    \"EDITOR\": \"vim\",");
-        let Removal::Write(left) =
-            plan_remove(Client::Claude, Some(&edited), &plan.record).unwrap()
+        let [Removal::Write(left)] =
+            &plan_remove(Client::Claude, &[Some(&edited)], &plan.record).unwrap()[..]
         else {
             panic!("expected a rewrite");
         };
         assert_eq!(
-            json(&left),
+            json(left),
             serde_json::json!({"env": {"EDITOR": "vim", "ANTHROPIC_MODEL": "user-route"}})
         );
     }
@@ -1224,10 +1588,11 @@ mod tests {
             "{\"a\": 1,}",
         ] {
             let error =
-                plan_write(Client::Claude, Some(existing), &connection(&[]), None).unwrap_err();
-            assert!(!error.contains(TOKEN));
+                plan_write(Client::Claude, &[Some(existing)], &connection(&[]), None).unwrap_err();
+            assert_eq!(error.file, 0);
+            assert!(!error.message.contains(TOKEN));
             assert_eq!(
-                inspect(Client::Claude, Some(existing), None, Some(ORIGIN)),
+                inspect(Client::Claude, &[Some(existing)], None, Some(ORIGIN)),
                 ClientState::Invalid
             );
         }
@@ -1238,19 +1603,19 @@ mod tests {
         let existing = "# user settings\nmodel = \"gpt-5\" # mine\napproval_policy = \"never\"\n\n[profiles.fast]\nmodel = \"o3\"\n\n[model_providers.other]\nname = \"Other\"\n";
         let plan = plan_write(
             Client::Codex,
-            Some(existing),
+            &[Some(existing)],
             &connection(&codex_models()),
             None,
         )
         .unwrap();
         assert_eq!(plan.conflicts, ["model"]);
         assert_eq!(
-            plan.contents,
+            plan.contents[0],
             "# user settings\nmodel = \"gpt-route\" # mine\napproval_policy = \"never\"\nmodel_provider = \"astrlink\"\n\n[profiles.fast]\nmodel = \"o3\"\n\n[model_providers.other]\nname = \"Other\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\n"
         );
         assert_eq!(plan.record.base_url, "http://127.0.0.1:18317/v1");
-        let Removal::Write(removed) =
-            plan_remove(Client::Codex, Some(&plan.contents), &plan.record).unwrap()
+        let [Removal::Write(removed)] =
+            &plan_remove(Client::Codex, &[Some(&plan.contents[0])], &plan.record).unwrap()[..]
         else {
             panic!("expected a rewrite");
         };
@@ -1262,17 +1627,17 @@ mod tests {
 
     #[test]
     fn codex_config_is_created_without_auth_settings() {
-        let plan = plan_write(Client::Codex, None, &connection(&codex_models()), None).unwrap();
+        let plan = plan_write(Client::Codex, &[None], &connection(&codex_models()), None).unwrap();
         assert_eq!(
-            plan.contents,
+            plan.contents[0],
             "model_provider = \"astrlink\"\nmodel = \"gpt-route\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\n"
         );
         for forbidden in ["env_key", "requires_openai_auth", "\"OpenAI\"", "openai"] {
-            assert!(!plan.contents.contains(forbidden));
+            assert!(!plan.contents[0].contains(forbidden));
         }
         assert_eq!(
-            plan_remove(Client::Codex, Some(&plan.contents), &plan.record).unwrap(),
-            Removal::Delete
+            plan_remove(Client::Codex, &[Some(&plan.contents[0])], &plan.record).unwrap(),
+            [Removal::Delete]
         );
     }
 
@@ -1281,7 +1646,7 @@ mod tests {
         let existing = "model_provider = \"other\"\n\n[model_providers.astrlink]\nbase_url = \"https://secret.example/v1\"\nenv_key = \"SECRET_KEY\"\n";
         let plan = plan_write(
             Client::Codex,
-            Some(existing),
+            &[Some(existing)],
             &connection(&codex_models()),
             None,
         )
@@ -1294,17 +1659,17 @@ mod tests {
                 "model_providers.astrlink.env_key",
             ]
         );
-        assert!(!plan.contents.contains("env_key"));
-        assert!(!plan.contents.contains("secret.example"));
+        assert!(!plan.contents[0].contains("env_key"));
+        assert!(!plan.contents[0].contains("secret.example"));
         let plan = plan_write(
             Client::Codex,
-            Some("model_providers = { astrlink = \"broken\" }\n"),
+            &[Some("model_providers = { astrlink = \"broken\" }\n")],
             &connection(&codex_models()),
             None,
         )
         .unwrap();
         assert_eq!(plan.conflicts, ["model_providers.astrlink"]);
-        assert!(plan.contents.contains("experimental_bearer_token"));
+        assert!(plan.contents[0].contains("experimental_bearer_token"));
     }
 
     #[test]
@@ -1312,17 +1677,15 @@ mod tests {
         let existing = "# a\r\napproval_policy = \"never\"\r\n";
         let plan = plan_write(
             Client::Codex,
-            Some(existing),
+            &[Some(existing)],
             &connection(&codex_models()),
             None,
         )
         .unwrap();
-        assert!(plan
-            .contents
-            .starts_with("# a\r\napproval_policy = \"never\"\r\n"));
-        assert!(!plan.contents.replace("\r\n", "").contains('\n'));
-        let Removal::Write(removed) =
-            plan_remove(Client::Codex, Some(&plan.contents), &plan.record).unwrap()
+        assert!(plan.contents[0].starts_with("# a\r\napproval_policy = \"never\"\r\n"));
+        assert!(!plan.contents[0].replace("\r\n", "").contains('\n'));
+        let [Removal::Write(removed)] =
+            &plan_remove(Client::Codex, &[Some(&plan.contents[0])], &plan.record).unwrap()[..]
         else {
             panic!("expected a rewrite");
         };
@@ -1331,12 +1694,12 @@ mod tests {
 
     #[test]
     fn a_model_the_client_changed_does_not_block_sync() {
-        let plan = plan_write(Client::Codex, None, &connection(&codex_models()), None).unwrap();
-        let edited = plan.contents.replace("gpt-route", "picked-in-tui");
+        let plan = plan_write(Client::Codex, &[None], &connection(&codex_models()), None).unwrap();
+        let edited = plan.contents[0].replace("gpt-route", "picked-in-tui");
         assert_eq!(
             inspect(
                 Client::Codex,
-                Some(&edited),
+                &[Some(&edited)],
                 Some(&plan.record),
                 Some(ORIGIN)
             ),
@@ -1344,26 +1707,30 @@ mod tests {
         );
         let (synced, record) = plan_sync(
             Client::Codex,
-            Some(&edited),
+            &[Some(&edited)],
             &plan.record,
             "http://127.0.0.1:9000",
         )
         .unwrap()
         .unwrap();
-        assert_eq!(synced, edited.replace("127.0.0.1:18317", "127.0.0.1:9000"));
+        let [synced] = &synced[..] else {
+            panic!("expected one file");
+        };
+        assert_eq!(*synced, edited.replace("127.0.0.1:18317", "127.0.0.1:9000"));
         assert_eq!(record.base_url, "http://127.0.0.1:9000/v1");
         assert_eq!(record.token_sha256, plan.record.token_sha256);
         assert_eq!(
             inspect(
                 Client::Codex,
-                Some(&synced),
+                &[Some(synced)],
                 Some(&record),
                 Some("http://127.0.0.1:9000")
             ),
             ClientState::Configured
         );
         // The model the user picked is theirs now and survives removal.
-        let Removal::Write(removed) = plan_remove(Client::Codex, Some(&synced), &record).unwrap()
+        let [Removal::Write(removed)] =
+            &plan_remove(Client::Codex, &[Some(synced)], &record).unwrap()[..]
         else {
             panic!("expected a rewrite");
         };
@@ -1372,11 +1739,11 @@ mod tests {
 
     #[test]
     fn a_changed_connection_is_modified_and_never_synced() {
-        let plan = plan_write(Client::Claude, None, &connection(&[]), None).unwrap();
+        let plan = plan_write(Client::Claude, &[None], &connection(&[]), None).unwrap();
         assert_eq!(
             inspect(
                 Client::Claude,
-                Some(&plan.contents),
+                &[Some(&plan.contents[0])],
                 Some(&plan.record),
                 Some(ORIGIN)
             ),
@@ -1385,17 +1752,17 @@ mod tests {
         assert_eq!(
             inspect(
                 Client::Claude,
-                Some(&plan.contents),
+                &[Some(&plan.contents[0])],
                 Some(&plan.record),
                 Some("http://127.0.0.1:9000")
             ),
             ClientState::Outdated
         );
-        let edited = plan.contents.replace(TOKEN, OTHER_TOKEN);
+        let edited = plan.contents[0].replace(TOKEN, OTHER_TOKEN);
         assert_eq!(
             inspect(
                 Client::Claude,
-                Some(&edited),
+                &[Some(&edited)],
                 Some(&plan.record),
                 Some("http://127.0.0.1:9000")
             ),
@@ -1404,7 +1771,7 @@ mod tests {
         assert_eq!(
             plan_sync(
                 Client::Claude,
-                Some(&edited),
+                &[Some(&edited)],
                 &plan.record,
                 "http://127.0.0.1:9000"
             )
@@ -1412,11 +1779,11 @@ mod tests {
             None
         );
         assert_eq!(
-            inspect(Client::Claude, None, Some(&plan.record), Some(ORIGIN)),
+            inspect(Client::Claude, &[None], Some(&plan.record), Some(ORIGIN)),
             ClientState::Modified
         );
         assert_eq!(
-            inspect(Client::Claude, Some("{}"), None, Some(ORIGIN)),
+            inspect(Client::Claude, &[Some("{}")], None, Some(ORIGIN)),
             ClientState::NotConfigured
         );
     }
@@ -1424,24 +1791,26 @@ mod tests {
     #[test]
     fn a_synced_claude_config_changes_only_the_base_url() {
         let models = vec![("model", "main-route".to_string())];
-        let plan = plan_write(Client::Claude, None, &connection(&models), None).unwrap();
+        let plan = plan_write(Client::Claude, &[None], &connection(&models), None).unwrap();
         let (synced, record) = plan_sync(
             Client::Claude,
-            Some(&plan.contents),
+            &[Some(&plan.contents[0])],
             &plan.record,
             "http://127.0.0.1:9000",
         )
         .unwrap()
         .unwrap();
+        let [synced] = &synced[..] else {
+            panic!("expected one file");
+        };
         assert_eq!(
-            synced,
-            plan.contents
-                .replace("http://127.0.0.1:18317", "http://127.0.0.1:9000")
+            *synced,
+            plan.contents[0].replace("http://127.0.0.1:18317", "http://127.0.0.1:9000")
         );
         assert_eq!(record.keys["env.ANTHROPIC_AUTH_TOKEN"], sha256_hex(TOKEN));
         assert!(plan_sync(
             Client::Claude,
-            Some(&synced),
+            &[Some(synced)],
             &record,
             "http://127.0.0.1:9000"
         )
@@ -1450,7 +1819,7 @@ mod tests {
     }
 
     #[test]
-    fn only_claude_and_codex_are_written_directly() {
+    fn only_claude_codex_and_pi_are_written_directly() {
         let home = unique_home("unsupported");
         for client in [Client::Gemini, Client::Opencode, Client::Openclaw] {
             let error = write(&home, client, &connection(&codex_models()), true).unwrap_err();
@@ -1463,7 +1832,211 @@ mod tests {
             .into_iter()
             .map(|status| status.client)
             .collect::<Vec<_>>();
-        assert_eq!(clients, [Client::Claude, Client::Codex]);
+        assert_eq!(clients, [Client::Claude, Client::Codex, Client::Pi]);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    fn pi_models() -> Vec<(&'static str, String)> {
+        vec![("model", "pi-route".to_string())]
+    }
+
+    #[test]
+    fn pi_endpoints_and_startup_model_are_written_to_two_files() {
+        let plan = plan_write(Client::Pi, &[None, None], &connection(&pi_models()), None).unwrap();
+        assert!(plan.conflicts.is_empty());
+        assert_eq!(
+            json(&plan.contents[0]),
+            serde_json::json!({"providers": {"astrlink": {
+                "name": "AstrLink",
+                "baseUrl": "http://127.0.0.1:18317/v1",
+                "api": "openai-responses",
+                "apiKey": TOKEN,
+                "models": [{"id": "pi-route"}],
+            }}})
+        );
+        assert_eq!(
+            json(&plan.contents[1]),
+            serde_json::json!({"defaultProvider": "astrlink", "defaultModel": "pi-route"})
+        );
+        assert!(!plan.contents[1].contains(TOKEN));
+        assert!(plan.record.created_file);
+        assert_eq!(plan.record.base_url, "http://127.0.0.1:18317/v1");
+        let existing = [Some(plan.contents[0].as_str()), Some(&plan.contents[1])];
+        assert_eq!(
+            inspect(Client::Pi, &existing, Some(&plan.record), Some(ORIGIN)),
+            ClientState::Configured
+        );
+        // The created endpoint file goes; Pi's own settings file stays.
+        assert_eq!(
+            plan_remove(Client::Pi, &existing, &plan.record).unwrap(),
+            [Removal::Delete, Removal::Write("{}\n".into())]
+        );
+        assert!(snippet(Client::Pi, &connection(&pi_models())).is_err());
+    }
+
+    #[test]
+    fn pi_files_keep_comments_other_providers_and_preferences() {
+        let models = "{\n  // local servers\n  \"providers\": {\n    \"ollama\": {\"baseUrl\": \"http://localhost:11434/v1\", \"apiKey\": \"sk-other\"},\n  },\n}\n";
+        let settings = "{\n  \"theme\": \"dark\",\n  \"defaultProvider\": \"ollama\",\n  \"defaultModel\": \"qwen\"\n}\n";
+        let plan = plan_write(
+            Client::Pi,
+            &[Some(models), Some(settings)],
+            &connection(&pi_models()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.conflicts, ["defaultProvider", "defaultModel"]);
+        assert!(plan.contents[0].starts_with("{\n  // local servers\n"));
+        assert!(plan.contents[0].contains("\"apiKey\": \"sk-other\""));
+        assert_eq!(
+            json(&plan.contents[1]),
+            serde_json::json!({"theme": "dark", "defaultProvider": "astrlink", "defaultModel": "pi-route"})
+        );
+        assert!(!plan.record.created_file);
+        let existing = [Some(plan.contents[0].as_str()), Some(&plan.contents[1])];
+        let removals = plan_remove(Client::Pi, &existing, &plan.record).unwrap();
+        let [Removal::Write(models_left), Removal::Write(settings_left)] = &removals[..] else {
+            panic!("expected two rewrites");
+        };
+        assert!(models_left.contains("// local servers") && models_left.contains("ollama"));
+        assert!(!models_left.contains("astrlink"));
+        // Replaced settings are not restored.
+        assert_eq!(json(settings_left), serde_json::json!({"theme": "dark"}));
+    }
+
+    #[test]
+    fn pi_model_choices_and_edited_model_lists_belong_to_the_user() {
+        let plan = plan_write(Client::Pi, &[None, None], &connection(&pi_models()), None).unwrap();
+        // Saving another model in Pi's picker is not a connection change.
+        let picked = plan.contents[1].replace("astrlink", "anthropic");
+        let edited = plan.contents[0].replace(
+            "\"id\": \"pi-route\"",
+            "\"id\": \"pi-route\", \"reasoning\": true",
+        );
+        assert_ne!(edited, plan.contents[0]);
+        let existing = [Some(edited.as_str()), Some(&picked)];
+        assert_eq!(
+            inspect(Client::Pi, &existing, Some(&plan.record), Some(ORIGIN)),
+            ClientState::Configured
+        );
+        let (synced, record) =
+            plan_sync(Client::Pi, &existing, &plan.record, "http://127.0.0.1:9000")
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            synced,
+            [
+                edited.replace("127.0.0.1:18317", "127.0.0.1:9000"),
+                picked.clone()
+            ]
+        );
+        assert_eq!(record.base_url, "http://127.0.0.1:9000/v1");
+        let rewrite = plan_write(
+            Client::Pi,
+            &[Some(&synced[0]), Some(&synced[1])],
+            &connection(&pi_models()),
+            Some(&record),
+        )
+        .unwrap();
+        assert_eq!(
+            rewrite.conflicts,
+            ["providers.astrlink.models", "defaultProvider"]
+        );
+        let removals =
+            plan_remove(Client::Pi, &[Some(&synced[0]), Some(&synced[1])], &record).unwrap();
+        let [Removal::Write(models_left), Removal::Write(settings_left)] = &removals[..] else {
+            panic!("expected two rewrites");
+        };
+        assert_eq!(
+            json(models_left),
+            serde_json::json!({"providers": {"astrlink": {"models": [{"id": "pi-route", "reasoning": true}]}}})
+        );
+        assert_eq!(
+            json(settings_left),
+            serde_json::json!({"defaultProvider": "anthropic"})
+        );
+    }
+
+    #[test]
+    fn pi_files_pi_cannot_read_are_left_alone() {
+        for (models, settings, file) in [
+            ("{\"providers\": []}", "{}", 0),
+            ("{providers: {}}", "{}", 0),
+            ("[]", "{}", 0),
+            ("{}", "{\n  // note\n}", 1),
+            ("{}", "{\"a\": 1,}", 1),
+        ] {
+            let existing = [Some(models), Some(settings)];
+            let error =
+                plan_write(Client::Pi, &existing, &connection(&pi_models()), None).unwrap_err();
+            assert_eq!(error.file, file);
+            assert!(!error.message.contains(TOKEN));
+            assert_eq!(
+                inspect(Client::Pi, &existing, None, Some(ORIGIN)),
+                ClientState::Invalid
+            );
+        }
+        let plan = plan_write(
+            Client::Pi,
+            &[Some("{\"providers\": {\"astrlink\": \"broken\"}}"), None],
+            &connection(&pi_models()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.conflicts, ["providers.astrlink"]);
+        assert!(plan.contents[0].contains(TOKEN));
+    }
+
+    #[test]
+    fn pi_apply_writes_both_files_and_removes_only_what_it_wrote() {
+        let home = unique_home("pi");
+        fs::create_dir_all(home.join(".pi/agent")).unwrap();
+        let agent = home.join(".pi").join("agent");
+        let settings = agent.join("settings.json");
+        fs::write(&settings, "{\n  \"theme\": \"dark\"\n}\n").unwrap();
+        assert_eq!(
+            write(&home, Client::Pi, &connection(&pi_models()), false).unwrap(),
+            ApplyOutcome::Applied
+        );
+        let models = agent.join("models.json");
+        assert!(fs::read_to_string(&models).unwrap().contains(TOKEN));
+        assert!(fs::read_to_string(&settings)
+            .unwrap()
+            .contains("\"defaultModel\": \"pi-route\""));
+        let statuses = status(&home, Some("http://127.0.0.1:9000/")).unwrap();
+        assert_eq!(statuses[2].state, ClientState::Outdated);
+        assert_eq!(
+            statuses[2].paths,
+            [models.display().to_string(), settings.display().to_string()]
+        );
+        sync(&home, "http://127.0.0.1:9000/").unwrap();
+        assert!(fs::read_to_string(&models)
+            .unwrap()
+            .contains("http://127.0.0.1:9000/v1"));
+        remove(&home, Client::Pi).unwrap();
+        assert!(!models.exists());
+        assert_eq!(
+            json(&fs::read_to_string(&settings).unwrap()),
+            serde_json::json!({"theme": "dark"})
+        );
+        assert!(!records_path(&home).exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_pi_write_puts_back_the_files_already_written() {
+        let home = unique_home("pi-rollback");
+        fs::create_dir_all(home.join(".pi/agent")).unwrap();
+        // A dangling link reads as missing but cannot be written.
+        std::os::unix::fs::symlink(
+            home.join("missing/settings.json"),
+            home.join(".pi/agent/settings.json"),
+        )
+        .unwrap();
+        assert!(write(&home, Client::Pi, &connection(&pi_models()), false).is_err());
+        assert!(!home.join(".pi/agent/models.json").exists());
+        assert!(!records_path(&home).exists());
         fs::remove_dir_all(home).unwrap();
     }
 
@@ -1568,9 +2141,9 @@ mod tests {
             ),
         ] {
             let plan =
-                plan_write(Client::Codex, Some(existing), &connection(&models), None).unwrap();
-            let Removal::Write(removed) =
-                plan_remove(Client::Codex, Some(&plan.contents), &plan.record).unwrap()
+                plan_write(Client::Codex, &[Some(existing)], &connection(&models), None).unwrap();
+            let [Removal::Write(removed)] =
+                &plan_remove(Client::Codex, &[Some(&plan.contents[0])], &plan.record).unwrap()[..]
             else {
                 panic!("expected a rewrite");
             };
@@ -1657,9 +2230,9 @@ mod tests {
         let codex = snippet(Client::Codex, &connection(&codex_models())).unwrap();
         assert_eq!(
             codex,
-            plan_write(Client::Codex, None, &connection(&codex_models()), None)
+            plan_write(Client::Codex, &[None], &connection(&codex_models()), None)
                 .unwrap()
-                .contents
+                .contents[0]
         );
         let claude = snippet(Client::Claude, &connection(&[])).unwrap();
         assert_eq!(

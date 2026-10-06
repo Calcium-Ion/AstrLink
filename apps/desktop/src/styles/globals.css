@@ -30,6 +30,28 @@
   }
 }
 
+/* Outlines a window while its native frame animates, so the eye follows the
+ * edges that moved. Fade only, for the reason given at panel-reveal; it rests
+ * invisible, so without motion nothing is drawn. */
+@keyframes window-edge-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.window-edge-flash {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .window-edge-flash {
+    animation: window-edge-flash 720ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
 /* A page frame insets its fixed chrome by the scrollbar gutter, and each
  * scrollport inside reclaims that inset as a stable gutter. Revealing overflow
  * then never narrows the content or misaligns it with the chrome. Prefer

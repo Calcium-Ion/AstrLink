@@ -11,6 +11,7 @@ import {
 function statuses(
   claude: Record<string, unknown> = {},
   codex: Record<string, unknown> = {},
+  pi: Record<string, unknown> = {},
 ): unknown[] {
   return [
     {
@@ -29,6 +30,17 @@ function statuses(
       token_id: null,
       ...codex,
     },
+    {
+      client: "pi",
+      detected: true,
+      paths: [
+        "/Users/me/.pi/agent/models.json",
+        "/Users/me/.pi/agent/settings.json",
+      ],
+      state: "not_configured",
+      token_id: null,
+      ...pi,
+    },
   ];
 }
 
@@ -37,6 +49,7 @@ describe("client-config IPC parsing", () => {
     const value = statuses(
       { state: "configured", token_id: "token_01" },
       { state: "outdated", token_id: "token_02" },
+      { state: "modified", token_id: "token_01" },
     );
     expect(parseClientConfigStatuses(value)).toEqual(value);
     // An unreadable file may or may not have a record behind it.

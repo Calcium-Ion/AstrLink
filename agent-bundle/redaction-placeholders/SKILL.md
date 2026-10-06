@@ -68,8 +68,13 @@ user it is a documentation address or needs updating.
 ## Replying to the user
 
 With response restore on, which is the default, the user reads your reply with
-the original values in place. Refer to the value normally and do not warn that
-it is hidden.
+the original values in place. Refer to a value normally and do not warn that it
+is hidden.
+
+That restore also turns a `<SECRET_…>` marker in a reply back into the secret.
+Keep secret markers out of replies unless the user asks for the literal value.
+Name the secret instead, such as "the key you sent", and put `$VAR` in its place
+in a command you show rather than run.
 
 ## When the task needs the real value
 

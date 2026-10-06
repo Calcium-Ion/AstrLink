@@ -106,6 +106,29 @@ func (buffer *captureBuffer) readyToPersist() bool {
 	return buffer != nil && buffer.enabled && buffer.complete && len(buffer.bytes) > 0
 }
 
+// copyReplayable fills the buffer from a fresh copy of an in-memory body and
+// reports whether the copy succeeded. Only the audited prefix is read. The
+// buffer is left untouched on failure so a tee can still capture the bytes
+// net/http sends.
+func (buffer *captureBuffer) copyReplayable(open func() (io.ReadCloser, error)) bool {
+	if buffer == nil || !buffer.enabled || open == nil {
+		return false
+	}
+	body, err := open()
+	if err != nil || body == nil {
+		return false
+	}
+	defer func() { _ = body.Close() }()
+	// One byte past the limit distinguishes a full capture from a clipped one.
+	chunk, err := io.ReadAll(io.LimitReader(body, int64(max(buffer.maxBytes, 0))+1))
+	if err != nil {
+		return false
+	}
+	buffer.observe(chunk)
+	buffer.markComplete()
+	return true
+}
+
 func (buffer *captureBuffer) reset(enabled bool, maxBytes int) {
 	*buffer = captureBuffer{enabled: enabled, maxBytes: maxBytes}
 }
@@ -525,6 +548,10 @@ func (session *recordSession) recordSnapshot(
 	if session.upstreamScanner != nil && !session.upstreamScanner.firstOutputAt.IsZero() {
 		firstTokenMs := int(max(0, session.upstreamScanner.firstOutputAt.Sub(session.startedAt).Milliseconds()))
 		record.FirstTokenMs = &firstTokenMs
+		if !session.upstreamScanner.firstAnswerAt.IsZero() {
+			firstAnswerMs := int(max(int64(firstTokenMs), session.upstreamScanner.firstAnswerAt.Sub(session.startedAt).Milliseconds()))
+			record.FirstAnswerMs = &firstAnswerMs
+		}
 	}
 	if session.sessionID != "" {
 		id := session.sessionID
@@ -799,7 +826,8 @@ func conversionDiagnosticText(value string, maxRunes int) string {
 }
 
 // observeOutboundCapture records the exact upstream request after transport
-// normalization and attaches a body tee. Credentials are redacted first.
+// normalization. An in-memory body is copied and stored at once; a streamed
+// body gets a tee instead. Credentials are redacted first.
 func (session *recordSession) observeOutboundCapture(outbound *http.Request) {
 	if session == nil || outbound == nil {
 		return
@@ -818,6 +846,13 @@ func (session *recordSession) observeOutboundCapture(outbound *http.Request) {
 	session.upstreamRequestCapture.mediaType = mediaType
 	if outbound.Body == nil || outbound.Body == http.NoBody {
 		session.upstreamRequestCapture.markComplete()
+		session.persistAvailableAudit(context.Background())
+		return
+	}
+	// A replayable body is already in memory. Copy it before the round trip so
+	// the redacted request can be read while the upstream is still thinking,
+	// instead of after its first response byte adopts the tee.
+	if session.upstreamRequestCapture.copyReplayable(outbound.GetBody) {
 		session.persistAvailableAudit(context.Background())
 		return
 	}

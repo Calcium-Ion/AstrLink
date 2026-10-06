@@ -1,5 +1,6 @@
 import { i18n } from "./i18n";
 import type {
+  ClientType,
   RequestRecord,
   RequestSession,
   SessionStatus,
@@ -11,6 +12,8 @@ export interface RecordFilters {
   status: SessionStatus | "";
   serviceId: string;
   protocol: string;
+  // Rows without a detected client show as unknown, so they filter as unknown.
+  clientType: ClientType | "";
   localAccessTokenIds: string[];
 }
 
@@ -28,6 +31,8 @@ export function recordMatchesFilters(
     (!filters.status || record.status === filters.status) &&
     (!filters.serviceId || record.service_id === filters.serviceId) &&
     (!filters.protocol || record.input_protocol === filters.protocol) &&
+    (!filters.clientType ||
+      (record.client_type ?? "unknown") === filters.clientType) &&
     (!filters.localAccessTokenIds?.length ||
       (record.local_access_token_id !== null &&
         filters.localAccessTokenIds.includes(record.local_access_token_id)))

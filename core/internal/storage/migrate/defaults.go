@@ -794,5 +794,8 @@ CHECK(sealed IN (0, 1) AND (sealed = 0 OR length(credential_value) >= 30))`,
 		{Version: 47, Name: "request_conversion_diagnostics", Statements: []string{
 			`ALTER TABLE request_records ADD COLUMN conversion_diagnostics_json TEXT`,
 		}},
+		{Version: 48, Name: "request_first_answer_timing", Statements: []string{
+			`ALTER TABLE request_records ADD COLUMN first_answer_ms INTEGER CHECK(first_answer_ms IS NULL OR first_answer_ms >= 0)`,
+		}},
 	}
 }

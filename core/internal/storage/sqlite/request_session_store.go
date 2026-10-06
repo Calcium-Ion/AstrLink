@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -163,80 +164,43 @@ func (store *Store) ListRequestSessions(
 		return storagecontract.RequestSessionPage{}, err
 	}
 
-	query := strings.Builder{}
-	query.WriteString(`
-SELECT
-  sid,
-  MIN(started_at) AS started_at,
-  MAX(started_at) AS last_started_at,
-  COUNT(*) AS turn_count
-FROM (
-  SELECT
-    COALESCE(session_id, id) AS sid,
-    started_at
-  FROM request_records
-  WHERE parent_request_id IS NULL`)
-	args := make([]any, 0, 16)
-	// Classify before LIMIT so discovery traffic cannot consume call-list pages.
-	if options.Kind != "" {
-		if options.Kind == "discovery" {
-			query.WriteString(` AND input_protocol IN (?, ?)`)
-		} else {
-			query.WriteString(` AND input_protocol NOT IN (?, ?)`)
-		}
-		args = append(args, string(contract.ProtocolOpenAIModels), string(contract.ProtocolGoogleModels))
-	}
-	if options.From != nil {
-		query.WriteString(` AND started_at >= ?`)
-		args = append(args, options.From.UTC().Format(time.RFC3339Nano))
-	}
-	if options.To != nil {
-		query.WriteString(` AND started_at < ?`)
-		args = append(args, options.To.UTC().Format(time.RFC3339Nano))
-	}
-	appendAccessTokenFilter(&query, &args, options.LocalAccessTokenIDs)
-	if options.Protocol != nil {
-		query.WriteString(` AND input_protocol = ?`)
-		args = append(args, string(*options.Protocol))
-	}
-	if options.ServiceID != nil {
-		query.WriteString(` AND service_id = ?`)
-		args = append(args, string(*options.ServiceID))
-	}
-	if options.Status != nil {
-		query.WriteString(` AND status = ?`)
-		args = append(args, string(*options.Status))
-	}
-	query.WriteString(`
-) grouped
-GROUP BY sid`)
-	if options.Cursor != "" {
-		query.WriteString(` HAVING last_started_at < ? OR (last_started_at = ? AND sid < ?)`)
-		args = append(args, cursorStarted, cursorStarted, cursorID)
-	}
-	query.WriteString(` ORDER BY last_started_at DESC, sid DESC LIMIT ?`)
-	args = append(args, limit+1)
-
+	// A session's newest matching root places it in the list, so walking the
+	// roots newest first meets the sessions in list order. Grouping every root
+	// instead made each one-second poll read the whole history.
+	query, args := requestSessionScan(options)
 	started := time.Now()
 	defer logSlowRequestList("request sessions list slow", started)
-	rows, err := store.db.QueryContext(ctx, query.String(), args...)
+	rows, err := store.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		logRequestListFailure("request sessions list failed", err)
 		return storagecontract.RequestSessionPage{}, fmt.Errorf("list request sessions: %w", err)
 	}
 	defer rows.Close()
 
+	seen := make(map[string]struct{}, limit+1)
 	matched := make([]sessionAggregate, 0, limit+1)
 	for rows.Next() {
 		var item sessionAggregate
-		if err := rows.Scan(&item.id, &item.startedAt, &item.lastStartedAt, &item.turnCount); err != nil {
+		if err := rows.Scan(&item.id, &item.lastStartedAt); err != nil {
 			logRequestListFailure("request sessions list failed", err)
 			return storagecontract.RequestSessionPage{}, err
 		}
-		matched = append(matched, item)
-		if len(matched) == limit+1 {
+		// Sessions arrive by their newest root. Past the last one the page
+		// needs, only a session tied with it on time can still sort ahead.
+		if len(matched) > limit && item.lastStartedAt < matched[limit].lastStartedAt {
 			break
 		}
+		if _, ok := seen[item.id]; ok {
+			continue
+		}
+		seen[item.id] = struct{}{}
+		// Earlier pages hold sessions at or after the cursor, by their newest
+		// root; an older root of theirs must not bring them back.
+		if options.Cursor != "" && (item.lastStartedAt > cursorStarted ||
+			item.lastStartedAt == cursorStarted && item.id >= cursorID) {
+			continue
+		}
+		matched = append(matched, item)
 	}
 	if err := rows.Err(); err != nil {
 		logRequestListFailure("request sessions list failed", err)
@@ -244,6 +208,16 @@ GROUP BY sid`)
 	}
 	if err := rows.Close(); err != nil {
 		return storagecontract.RequestSessionPage{}, err
+	}
+	// The same order as the cursor: newest first, then by descending id.
+	slices.SortStableFunc(matched, func(left, right sessionAggregate) int {
+		if order := strings.Compare(right.lastStartedAt, left.lastStartedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(right.id, left.id)
+	})
+	if len(matched) > limit+1 {
+		matched = matched[:limit+1]
 	}
 
 	page := storagecontract.RequestSessionPage{Items: make([]contract.RequestSession, 0, limit)}
@@ -275,6 +249,50 @@ GROUP BY sid`)
 		return storagecontract.RequestSessionPage{}, err
 	}
 	return page, nil
+}
+
+// requestSessionScan selects the roots the options match, newest first. Its
+// order comes from an index, so a reader that stops early reads only the
+// newest roots.
+func requestSessionScan(options storagecontract.RequestSessionListOptions) (string, []any) {
+	query := strings.Builder{}
+	query.WriteString(`
+SELECT COALESCE(session_id, id), started_at
+FROM request_records
+WHERE parent_request_id IS NULL`)
+	args := make([]any, 0, 16)
+	// Classify in SQL so discovery traffic cannot consume call-list pages.
+	if options.Kind != "" {
+		if options.Kind == "discovery" {
+			query.WriteString(` AND input_protocol IN (?, ?)`)
+		} else {
+			query.WriteString(` AND input_protocol NOT IN (?, ?)`)
+		}
+		args = append(args, string(contract.ProtocolOpenAIModels), string(contract.ProtocolGoogleModels))
+	}
+	if options.From != nil {
+		query.WriteString(` AND started_at >= ?`)
+		args = append(args, options.From.UTC().Format(time.RFC3339Nano))
+	}
+	if options.To != nil {
+		query.WriteString(` AND started_at < ?`)
+		args = append(args, options.To.UTC().Format(time.RFC3339Nano))
+	}
+	appendAccessTokenFilter(&query, &args, options.LocalAccessTokenIDs)
+	if options.Protocol != nil {
+		query.WriteString(` AND input_protocol = ?`)
+		args = append(args, string(*options.Protocol))
+	}
+	if options.ServiceID != nil {
+		query.WriteString(` AND service_id = ?`)
+		args = append(args, string(*options.ServiceID))
+	}
+	if options.Status != nil {
+		query.WriteString(` AND status = ?`)
+		args = append(args, string(*options.Status))
+	}
+	query.WriteString(` ORDER BY started_at DESC, id DESC`)
+	return query.String(), args
 }
 
 func (store *Store) GetRequestSession(
@@ -332,16 +350,7 @@ func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract
 		performance[string(session.ID)] = &sessionPerformance{}
 		args[i] = string(session.ID)
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
-	rows, err := store.db.QueryContext(ctx, `
-SELECT COALESCE(root.session_id, root.id), call.started_at, call.completed_at,
-       call.status, call.latency_ms, json_extract(call.error_json, '$.code'),
-       root.id, root.turn_index, call.id, call.input_protocol, call.streaming, call.first_token_ms,
-       json_extract(call.usage_json, '$.output_tokens'), json_extract(call.usage_json, '$.billing_incomplete')
-FROM request_records root
-JOIN request_records call ON call.id = root.id OR call.parent_request_id = root.id
-WHERE root.parent_request_id IS NULL AND COALESCE(root.session_id, root.id) IN (`+placeholders+`)
-ORDER BY call.started_at, call.id`, args...)
+	rows, err := store.db.QueryContext(ctx, sessionRuntimeQuery(len(args)), args...)
 	if err != nil {
 		return fmt.Errorf("load session runtimes: %w", err)
 	}
@@ -400,17 +409,21 @@ ORDER BY call.started_at, call.id`, args...)
 			session.ActiveRequestStarts = append(session.ActiveRequestStarts, started)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate session runtimes: %w", err)
+	}
 	for id, stats := range performance {
 		stats.apply(byID[id])
+		// Calls arrive in index order; a long session would spill a sort by
+		// start time to disk on every poll, and only these starts need it.
+		slices.SortFunc(byID[id].ActiveRequestStarts, time.Time.Compare)
 	}
-	return rows.Err()
+	return nil
 }
 
 type sessionAggregate struct {
 	id            string
-	startedAt     string
 	lastStartedAt string
-	turnCount     int
 }
 
 func logRequestListFailure(op string, err error) {
@@ -438,7 +451,35 @@ const requestSessionSummaryColumns = `
     turn_index, NULL, NULL, NULL, NULL,
     (SELECT COUNT(*) FROM request_records children
      WHERE children.parent_request_id = request_records.id), NULL, NULL, model_redirect_json, NULL, client_type,
-    NULL, NULL, NULL`
+    NULL, NULL, NULL, NULL`
+
+// sessionSummaryQuery reads the root turns of sessions, each session's in
+// time order. Without statistics SQLite takes `parent_request_id IS NULL`,
+// true of nearly every row, for the selective term and scans every root, so
+// the session index is named. Its own order needs no sort.
+func sessionSummaryQuery(sessions int) string {
+	return `SELECT` + requestSessionSummaryColumns + `
+FROM request_records INDEXED BY request_records_session_turns_idx
+WHERE parent_request_id IS NULL AND COALESCE(session_id, id) IN (` + sessionPlaceholders(sessions) + `)
+ORDER BY COALESCE(session_id, id), started_at ASC, id ASC`
+}
+
+// sessionRuntimeQuery reads every call of sessions, retries included, in no
+// particular order; see sessionSummaryQuery for the index.
+func sessionRuntimeQuery(sessions int) string {
+	return `
+SELECT COALESCE(root.session_id, root.id), call.started_at, call.completed_at,
+       call.status, call.latency_ms, json_extract(call.error_json, '$.code'),
+       root.id, root.turn_index, call.id, call.input_protocol, call.streaming, call.first_token_ms,
+       json_extract(call.usage_json, '$.output_tokens'), json_extract(call.usage_json, '$.billing_incomplete')
+FROM request_records root INDEXED BY request_records_session_turns_idx
+JOIN request_records call ON call.id = root.id OR call.parent_request_id = root.id
+WHERE root.parent_request_id IS NULL AND COALESCE(root.session_id, root.id) IN (` + sessionPlaceholders(sessions) + `)`
+}
+
+func sessionPlaceholders(count int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
+}
 
 func (store *Store) loadSessionSummaries(ctx context.Context, items []sessionAggregate) (map[string][]contract.RequestRecord, error) {
 	result := make(map[string][]contract.RequestRecord, len(items))
@@ -449,11 +490,7 @@ func (store *Store) loadSessionSummaries(ctx context.Context, items []sessionAgg
 	for i, item := range items {
 		args[i] = item.id
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(items)), ",")
-	rows, err := store.db.QueryContext(ctx, `SELECT`+requestSessionSummaryColumns+`
-FROM request_records
-WHERE parent_request_id IS NULL AND COALESCE(session_id, id) IN (`+placeholders+`)
-ORDER BY started_at ASC, id ASC`, args...)
+	rows, err := store.db.QueryContext(ctx, sessionSummaryQuery(len(items)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list session summaries: %w", err)
 	}

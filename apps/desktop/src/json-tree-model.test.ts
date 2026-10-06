@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { findMatcher } from "./find-model";
 import {
   JSON_CHILD_BATCH,
+  JSON_STRING_CHUNK,
   JSON_TREE_ROOT,
   JsonTreeCancelledError,
   containerPreview,
@@ -11,6 +13,8 @@ import {
   flattenJsonTree,
   parseJsonTree,
   parseJsonTreeIncremental,
+  revealJsonHit,
+  searchJsonTree,
   type JsonContainerNode,
   type JsonNode,
 } from "./json-tree-model";
@@ -176,6 +180,19 @@ describe("flattenJsonTree", () => {
     expect(all.some((row) => row.type === "more")).toBe(false);
     expect(all.filter((row) => row.type === "node")).toHaveLength(252);
   });
+
+  it("closes an empty container on its own row", () => {
+    const root = parseJsonTree('{"output":[],"meta":{},"cut":[').root!;
+    const rows = flattenJsonTree(root, expandAllPaths(root), new Map());
+    expect(rows.map((row) => row.type)).toEqual([
+      "node",
+      "node",
+      "node",
+      "node",
+      "close",
+      "close",
+    ]);
+  });
 });
 
 describe("defaultOpenPaths", () => {
@@ -273,5 +290,95 @@ describe("containerPreview", () => {
     );
     const cut = parseJsonTree('{"a":1,"b":2').root!;
     expect(containerPreview(container(cut))).toBe("{a: 1, …}");
+  });
+});
+
+describe("JSON tree search", () => {
+  const search = (text: string, query: string, limit = 1000) =>
+    searchJsonTree(parseJsonTree(text).root!, findMatcher(query)!, limit);
+
+  it("finds keys and values in document order, folded parts included", () => {
+    const long = `${"x".repeat(200)} Needle`;
+    const { hits, capped } = search(
+      JSON.stringify({
+        needle: 1,
+        tools: [{ name: "needle_lookup" }],
+        input: [{ text: long }],
+        count: 42,
+      }),
+      "needle",
+    );
+
+    expect(capped).toBe(false);
+    expect(hits).toEqual([
+      { path: "$/0", field: "key", offset: 0, folded: false },
+      { path: "$/1/0/0", field: "value", offset: 0, folded: false },
+      { path: "$/2/0/0", field: "value", offset: 201, folded: true },
+    ]);
+    expect(search('{"count":42}', "42").hits).toEqual([
+      { path: "$/0", field: "value", offset: 0, folded: false },
+    ]);
+  });
+
+  it("matches keys as the tree prints them and skips inline files", () => {
+    const image = `data:image/png;base64,${"QUJD".repeat(200)}`;
+    const { hits } = search(
+      JSON.stringify({ 'say "hi"': image, note: "QUJD" }),
+      'say \\"hi',
+    );
+    expect(hits.map((hit) => hit.path)).toEqual(["$/0"]);
+    expect(search(JSON.stringify({ image }), "QUJD").hits).toEqual([]);
+  });
+
+  it("stops at the limit and says there is more", () => {
+    const { hits, capped } = search(
+      JSON.stringify(Array.from({ length: 5 }, () => "hit hit")),
+      "hit",
+      4,
+    );
+    expect(hits).toHaveLength(4);
+    expect(capped).toBe(true);
+    expect(search(JSON.stringify(["hit", "hit"]), "hit", 2).capped).toBe(false);
+  });
+
+  it("opens and pages the way to a hit and leaves a visible one alone", () => {
+    const items = Array.from({ length: JSON_CHILD_BATCH + 30 }, (_, index) =>
+      index === JSON_CHILD_BATCH + 20 ? { text: "deep needle" } : { text: "-" },
+    );
+    const root = parseJsonTree(JSON.stringify({ items })).root!;
+    const [hit] = searchJsonTree(root, findMatcher("needle")!, 10).hits;
+    const open = new Set([JSON_TREE_ROOT]);
+    const limits = new Map<string, number>();
+
+    const revealed = revealJsonHit(hit!, 6, open, limits);
+
+    expect([...revealed.open]).toEqual([
+      "$",
+      "$/0",
+      `$/0/${JSON_CHILD_BATCH + 20}`,
+    ]);
+    expect(revealed.limits.get("$/0")).toBe(2 * JSON_CHILD_BATCH);
+    const rows = flattenJsonTree(root, revealed.open, revealed.limits);
+    expect(rows.some((row) => row.path === hit!.path)).toBe(true);
+
+    const again = revealJsonHit(hit!, 6, revealed.open, revealed.limits);
+    expect(again.open).toBe(revealed.open);
+    expect(again.limits).toBe(revealed.limits);
+  });
+
+  it("unfolds a folded string far enough to show the hit", () => {
+    const text = `${"a".repeat(JSON_STRING_CHUNK + 10)}needle`;
+    const root = parseJsonTree(JSON.stringify({ text })).root!;
+    const [hit] = searchJsonTree(root, findMatcher("needle")!, 10).hits;
+
+    const revealed = revealJsonHit(
+      hit!,
+      6,
+      new Set([JSON_TREE_ROOT]),
+      new Map(),
+    );
+
+    expect(revealed.open.has("$/0")).toBe(true);
+    expect(revealed.limits.get("$/0")).toBe(2 * JSON_STRING_CHUNK);
   });
 });

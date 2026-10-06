@@ -15,7 +15,11 @@ import (
 // usageScanner is a passive observer of client-facing response bytes. It never
 // modifies the stream and never fails the response; overflow disables capture.
 type usageScanner struct {
+	// firstOutputAt is when the first generated content of any kind arrived;
+	// firstAnswerAt is when the first non-reasoning content did. Both are
+	// zero until seen and only ever set once per attempt.
 	firstOutputAt    time.Time
+	firstAnswerAt    time.Time
 	complete         bool
 	protocol         contract.ProtocolID
 	streaming        bool
@@ -201,8 +205,18 @@ func (scanner *usageScanner) parseEventJSON(payload []byte) {
 	if err := json.Unmarshal(payload, &document); err != nil || document == nil {
 		return
 	}
-	if scanner.streaming && scanner.firstOutputAt.IsZero() && hasGeneratedOutput(scanner.protocol, payload) {
-		scanner.firstOutputAt = time.Now()
+	if scanner.streaming && scanner.firstAnswerAt.IsZero() {
+		// One clock reading per event keeps the answer time at or after the
+		// first-token time when the same event sets both.
+		if kind := classifyStreamOutput(scanner.protocol, payload); kind != streamOutputNone {
+			now := time.Now()
+			if scanner.firstOutputAt.IsZero() {
+				scanner.firstOutputAt = now
+			}
+			if kind == streamOutputAnswer {
+				scanner.firstAnswerAt = now
+			}
+		}
 	}
 	if scanner.observer != nil && (scanner.streaming || !scanner.observerFed) {
 		scanner.observer.ObserveEvent(document)

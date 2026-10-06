@@ -18,6 +18,7 @@ import {
   GeminiColor,
   OpenCodeMono,
   OpenClawColor,
+  PiMono,
 } from "@/components/brand-icons";
 import { CCSwitchIcon } from "@/components/CCSwitchIcon";
 import { ArrowUpRight, Key, Server, Settings } from "@/components/icons";
@@ -50,6 +51,7 @@ import {
   type ClientConfigTarget,
 } from "./bridge";
 import {
+  ccSwitchImports,
   isDirectClient,
   type ClientConfigClient,
   type ClientConfigModels,
@@ -74,6 +76,7 @@ export const clientSetupClients = [
   { id: "gemini", label: "Gemini CLI", Icon: GeminiColor },
   { id: "opencode", label: "OpenCode", Icon: OpenCodeMono },
   { id: "openclaw", label: "OpenClaw", Icon: OpenClawColor },
+  { id: "pi", label: "Pi", Icon: PiMono },
 ] as const satisfies readonly {
   id: ClientConfigClient;
   label: string;
@@ -90,6 +93,7 @@ const protocols: Record<ClientConfigClient, string> = {
   gemini: "google.generate_content",
   opencode: "openai.chat",
   openclaw: "openai.chat",
+  pi: "openai.responses",
 };
 
 const claudeTiers = [
@@ -285,6 +289,7 @@ export function ClientSetupDialog({
   const isClaude = client === "claude";
   const modelRequired = !isClaude && !model.trim();
   const configured = status?.token_id != null;
+  const offersCCSwitch = ccSwitch && client !== null && ccSwitchImports(client);
   const checksProxy = client === "codex" && inferenceURL !== "";
 
   useEffect(() => {
@@ -581,7 +586,7 @@ export function ClientSetupDialog({
 
   const working = busy !== null;
   const baseURL = `${inferenceURL}${
-    ["codex", "opencode", "openclaw"].includes(client ?? "") ? "/v1" : ""
+    ["codex", "opencode", "openclaw", "pi"].includes(client ?? "") ? "/v1" : ""
   }`;
   const proxy =
     checksProxy && proxyCheck?.url === inferenceURL
@@ -595,7 +600,7 @@ export function ClientSetupDialog({
     >
       <DialogContent
         showCloseButton={!working}
-        className="w-[calc(100vw_-_2rem)] max-w-none sm:max-w-2xl"
+        className="w-[calc(100vw_-_2rem)] max-w-none sm:max-w-3xl"
       >
         <DialogHeader className="text-left">
           <DialogTitle>{t("clientSetup.title")}</DialogTitle>
@@ -608,7 +613,7 @@ export function ClientSetupDialog({
             </legend>
             <RadioGroup
               aria-label={t("clientSetup.client")}
-              className="grid grid-cols-2 gap-2 min-[540px]:grid-cols-5"
+              className="grid grid-cols-2 gap-2 min-[480px]:grid-cols-3 min-[720px]:grid-cols-6"
               value={client ?? ""}
               onValueChange={(value) => {
                 setChoice(value as ClientConfigClient);
@@ -626,7 +631,8 @@ export function ClientSetupDialog({
                   selected={client === id}
                   disabled={working || !usable(id)}
                   layout="tile"
-                  icon={<Icon size={26} />}
+                  // Pi's filled mark reaches the edges; inset it to match.
+                  icon={<Icon size={id === "pi" ? 21 : 26} />}
                 />
               ))}
             </RadioGroup>
@@ -643,52 +649,48 @@ export function ClientSetupDialog({
           </fieldset>
           {client ? (
             <>
-              <div className="grid gap-3 rounded-md border bg-muted/40 p-3 min-[540px]:grid-cols-2">
-                <div className="flex min-w-0 items-start gap-2.5">
+              <div className="grid gap-x-3 gap-y-2 rounded-md border bg-muted/40 px-3 py-2.5 text-xs min-[540px]:grid-cols-2">
+                <div className="flex min-w-0 items-start gap-2">
                   <Server
                     aria-hidden="true"
-                    className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                    className="size-4 shrink-0 text-muted-foreground"
                   />
-                  <div className="grid min-w-0 gap-1">
-                    <span className="text-xs text-muted-foreground">
-                      {t("overview.apiAddress")}
-                    </span>
-                    <code className="break-all text-xs">{baseURL}</code>
-                  </div>
+                  <span className="shrink-0 text-muted-foreground">
+                    {t("overview.apiAddress")}
+                  </span>
+                  <code className="min-w-0 break-all">{baseURL}</code>
                 </div>
-                <div className="flex min-w-0 items-start gap-2.5">
+                <div className="flex min-w-0 items-start gap-2">
                   <Key
                     aria-hidden="true"
-                    className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                    className="size-4 shrink-0 text-muted-foreground"
                   />
-                  <div className="grid min-w-0 gap-1">
-                    <span className="text-xs text-muted-foreground">
-                      {t("clientSetup.token")}
+                  <span className="shrink-0 text-muted-foreground">
+                    {t("clientSetup.token")}
+                  </span>
+                  <span className="min-w-0 truncate" title={token.name}>
+                    {token.name}{" "}
+                    <span className="font-mono text-muted-foreground">
+                      {token.hint}
                     </span>
-                    <span className="truncate text-xs" title={token.name}>
-                      {token.name}{" "}
-                      <span className="font-mono text-muted-foreground">
-                        {token.hint}
-                      </span>
-                    </span>
-                  </div>
+                  </span>
                 </div>
                 {mode === "direct" && status ? (
-                  <div className="flex min-w-0 items-start gap-2.5 min-[540px]:col-span-2">
+                  <div className="flex min-w-0 items-start gap-2 min-[540px]:col-span-2">
                     <Settings
                       aria-hidden="true"
-                      className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                      className="size-4 shrink-0 text-muted-foreground"
                     />
-                    <div className="grid min-w-0 gap-1">
-                      <span className="text-xs text-muted-foreground">
-                        {t("clientSetup.configFile")}
-                      </span>
+                    <span className="shrink-0 text-muted-foreground">
+                      {t("clientSetup.configFile")}
+                    </span>
+                    <span className="grid min-w-0 gap-1">
                       {status.paths.map((path) => (
-                        <code key={path} className="break-all text-xs">
+                        <code key={path} className="break-all">
                           {path}
                         </code>
                       ))}
-                    </div>
+                    </span>
                   </div>
                 ) : null}
               </div>
@@ -795,7 +797,7 @@ export function ClientSetupDialog({
               {mode === "direct" && isDirectClient(client) ? (
                 <HelpDisclosure title={t("clientSetup.limitsTitle")}>
                   <p>{t(`clientSetup.limits.${client}`)}</p>
-                  {ccSwitch ? (
+                  {offersCCSwitch ? (
                     <p>{t("clientSetup.ccSwitchOverwrites")}</p>
                   ) : null}
                 </HelpDisclosure>
@@ -834,7 +836,7 @@ export function ClientSetupDialog({
             >
               {t("common.close")}
             </Button>
-            {mode === "direct" && ccSwitch ? (
+            {mode === "direct" && offersCCSwitch ? (
               <Button
                 type="button"
                 variant="outline"

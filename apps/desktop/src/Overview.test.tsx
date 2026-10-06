@@ -219,7 +219,7 @@ describe("Overview", () => {
           onOpenService={onOpenService}
           onOpenTokenRecords={() => undefined}
           onRefreshServices={() => undefined}
-          onRefreshUsage={() => undefined}
+          onRefresh={() => undefined}
           onRestart={onRestart}
           onUsagePresetChange={onUsagePresetChange}
           snapshot={

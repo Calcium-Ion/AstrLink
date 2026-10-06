@@ -5,6 +5,8 @@ export interface ResponseOutput {
   kind: "text" | "reasoning" | "tool" | "error" | "other";
   text: string;
   name?: string;
+  /** The provider's call id on a tool output, so a later request can answer it. */
+  id?: string;
 }
 
 export interface ResponsePreview {
@@ -44,18 +46,35 @@ export async function parseResponsePreview(
     text: string,
     append = false,
     name?: string,
+    id?: string,
   ) => {
     const previous = outputs.get(key);
+    const callId = id || previous?.id;
     outputs.set(key, {
       kind,
       text: append ? (previous?.text ?? "") + text : text,
       name: name || previous?.name,
+      ...(callId ? { id: callId } : {}),
     });
   };
   const removePrefix = (prefix: string) => {
     for (const key of outputs.keys())
       if (key.startsWith(prefix)) outputs.delete(key);
   };
+  // Reasoning that only streamed as deltas, by output slot, while a terminal
+  // snapshot replaces the items: a snapshot's reasoning item may carry no
+  // text (summaries are optional), and the streamed text must survive it.
+  let streamedReasoning = new Map<string, ResponseOutput[]>();
+  // A reasoning item's text lives in `summary` (OpenAI), `content` with
+  // reasoning_text blocks (open-weight models and gateways), or flat fields.
+  const reasoningTexts = (item: ObjectValue): string[] =>
+    [
+      ...array(item.summary).map((block) => string(object(block).text)),
+      ...array(item.content).map((block) => string(object(block).text)),
+      string(item.text),
+      string(item.reasoning_content),
+      string(item.reasoning),
+    ].filter((text) => text.trim() !== "");
   // Errors keep the provider's code as the name, so the reason can lead.
   const error = (value: unknown) => {
     const data = object(value);
@@ -75,7 +94,14 @@ export async function parseResponsePreview(
     } else if (type === "thinking") {
       put(key, "reasoning", string(block.thinking));
     } else if (type === "tool_use" || type === "server_tool_use") {
-      put(key, "tool", detail(block.input), false, string(block.name));
+      put(
+        key,
+        "tool",
+        detail(block.input),
+        false,
+        string(block.name),
+        string(block.id),
+      );
     } else if (type && type !== "redacted_thinking") {
       put(key, "other", detail(block), false, type);
     }
@@ -92,13 +118,27 @@ export async function parseResponsePreview(
         contentBlock(block, `${key}:text:${i}`),
       );
     } else if (type === "reasoning") {
-      array(item.summary).forEach((block, i) =>
-        put(`${key}:reasoning:${i}`, "reasoning", string(object(block).text)),
-      );
+      const texts = reasoningTexts(item);
+      if (texts.length > 0) {
+        texts.forEach((text, i) =>
+          put(`${key}:reasoning:${i}`, "reasoning", text),
+        );
+      } else {
+        (streamedReasoning.get(slot) ?? []).forEach((output, i) =>
+          outputs.set(`${key}:reasoning:${i}`, output),
+        );
+      }
     } else if (type === "function_call" || type === "custom_tool_call") {
       const text = detail(item.arguments ?? item.input);
       if (snapshot || text || !outputs.has(`${key}:tool`)) {
-        put(`${key}:tool`, "tool", text, false, string(item.name));
+        put(
+          `${key}:tool`,
+          "tool",
+          text,
+          false,
+          string(item.name),
+          string(item.call_id) || string(item.id),
+        );
       }
     } else if (type.endsWith("_call")) {
       put(`${key}:tool`, "tool", detail(item.action ?? item), false, type);
@@ -121,8 +161,17 @@ export async function parseResponsePreview(
       }
       if (Array.isArray(response.output) && response.output.length > 0) {
         // A terminal response snapshot is authoritative, including its item order.
+        streamedReasoning = new Map();
+        for (const [key, output] of outputs) {
+          const match = /^response:(\d+):reasoning(?::|$)/.exec(key);
+          if (!match || output.kind !== "reasoning" || !output.text) continue;
+          const list = streamedReasoning.get(match[1]!) ?? [];
+          list.push(output);
+          streamedReasoning.set(match[1]!, list);
+        }
         removePrefix("response:");
         response.output.forEach((item, i) => responseItem(item, i, true));
+        streamedReasoning = new Map();
       }
       const item = object(data.item);
       const slot = String(
@@ -133,19 +182,23 @@ export async function parseResponsePreview(
         type === "response.output_item.done"
       ) {
         responseItem(item, Number(slot), type.endsWith(".done"));
-      } else if (
-        /^response\.(output_text|refusal|reasoning_summary_text|reasoning_text)\.(delta|done)$/.test(
-          type,
-        )
-      ) {
-        const reasoning = type.includes("reasoning");
-        const index = data.summary_index ?? data.content_index ?? 0;
+      } else if (/^response\.(output_text|refusal)\.(delta|done)$/.test(type)) {
+        const index = data.content_index ?? 0;
         put(
-          `response:${slot}:${reasoning ? "reasoning" : "text"}:${index}`,
-          reasoning ? "reasoning" : "text",
+          `response:${slot}:text:${index}`,
+          "text",
           string(data.delta ?? data.text ?? data.refusal),
           type.endsWith(".delta"),
         );
+      } else if (/^response\.reasoning\w*\.(added|delta|done)$/.test(type)) {
+        // reasoning_summary_text, reasoning_text and gateway variants; a part
+        // event carries its text inside `part`. An empty done never erases.
+        const index = data.summary_index ?? data.content_index ?? 0;
+        const delta = type.endsWith(".delta");
+        const text = string(data.delta ?? data.text ?? object(data.part).text);
+        if (delta || text) {
+          put(`response:${slot}:reasoning:${index}`, "reasoning", text, delta);
+        }
       } else if (
         /^response\.(function_call_arguments|custom_tool_call_input)\.(delta|done)$/.test(
           type,
@@ -202,6 +255,7 @@ export async function parseResponsePreview(
             delta
               ? (outputs.get(toolKey)?.name ?? "") + string(fn.name)
               : string(fn.name),
+            string(tool.id),
           );
         });
         if (

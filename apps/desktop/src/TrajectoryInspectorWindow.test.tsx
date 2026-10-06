@@ -35,6 +35,8 @@ import type { AuditContent, RequestRecord } from "./request-record-model";
 import { emptyTrajectoryFields } from "./request-record-model";
 import type { TrajectoryRow } from "./request-trajectory-model";
 import { TrajectoryInspectorWindow } from "./TrajectoryInspectorWindow";
+import { TRAJECTORY_INSPECTOR_TOUR_KEY } from "./TrajectoryInspectorTour";
+import { findShortcutLabel } from "./find-model";
 import { WindowChrome, WindowChromeProvider } from "./WindowChrome";
 import {
   detachedInspectorEnabled,
@@ -207,6 +209,8 @@ describe("TrajectoryInspectorWindow", () => {
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
+    // Most tests represent returning users who already took the tour.
+    localStorage.setItem(TRAJECTORY_INSPECTOR_TOUR_KEY, "seen");
     hostState.current = { selection: null, pinned: false };
     hostMocks.listen.mockResolvedValue(hostMocks.unlisten);
     hostMocks.invoke.mockImplementation(
@@ -234,6 +238,8 @@ describe("TrajectoryInspectorWindow", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    localStorage.removeItem(TRAJECTORY_INSPECTOR_TOUR_KEY);
+    vi.useRealTimers();
     delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     delete (window as { __ASTRLINK_DESKTOP_PLATFORM__?: string })
       .__ASTRLINK_DESKTOP_PLATFORM__;
@@ -533,6 +539,257 @@ describe("TrajectoryInspectorWindow", () => {
     expect(body().getAttribute("data-view")).toBe("http");
     expect(body().textContent).toContain("POST /v1/responses HTTP/1.1");
     expect(body().textContent).toContain("Content-Type");
+  });
+
+  it("keeps a search box on the body and steps between the hits", async () => {
+    const content = JSON.stringify({
+      model: "gpt-4.1",
+      input: [{ text: "ping" }, { text: "PING again" }],
+    });
+    bridgeMocks.getRequestAuditContent.mockResolvedValue({
+      ...auditContent,
+      request_body: {
+        content,
+        media_type: "application/json",
+        captured_bytes: content.length,
+        truncated: false,
+      },
+    });
+    hostState.current = {
+      selection: { record, row: laterRow },
+      pinned: false,
+    };
+    const scrolled = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+    await render();
+
+    const body = () =>
+      container.querySelector<HTMLElement>(
+        '[data-testid="inspector-client-body"]',
+      )!;
+    // The box is there before anyone asks for it, with its shortcut.
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-testid="find-input"]',
+    )!;
+    expect(input).not.toBeNull();
+    expect(input.disabled).toBe(false);
+    expect(
+      container.querySelector('[data-testid="find-bar"] kbd'),
+    ).not.toBeNull();
+
+    // ⌘F puts the cursor in it.
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "f", metaKey: true }),
+      );
+    });
+    expect(document.activeElement).toBe(input);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, "ping");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+
+    const count = () =>
+      container.querySelector('[data-testid="find-count"]')?.textContent;
+    const activeHit = () =>
+      body().querySelector('mark[data-find-active="true"]');
+    expect(count()).toBe("1/2");
+    expect(activeHit()?.textContent).toBe("ping");
+    expect(scrolled).toHaveBeenCalled();
+
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+    expect(count()).toBe("2/2");
+    expect(activeHit()?.textContent).toBe("PING");
+
+    // The original text is searched too, from the same bar.
+    const raw = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "原文",
+    )!;
+    await act(async () => raw.click());
+    await flush();
+    expect(body().querySelector('[data-testid="audit-raw"]')).not.toBeNull();
+    expect(count()).toBe("1/2");
+    expect(activeHit()?.textContent).toBe("ping");
+
+    // Escape clears the query; the box stays for the next search.
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(input.value).toBe("");
+    expect(container.querySelector('[data-testid="find-count"]')).toBeNull();
+    expect(body().querySelector('[data-testid="find-mark"]')).toBeNull();
+    scrolled.mockRestore();
+  });
+
+  it("widens the window from its title bar and narrows it back", async () => {
+    hostMocks.invoke.mockImplementation(
+      async (command: string, args?: Record<string, unknown>) => {
+        if (command === "trajectory_inspector_state") return hostState.current;
+        if (command === "set_trajectory_inspector_wide") return args?.wide;
+        return undefined;
+      },
+    );
+    await render();
+    await act(async () => {
+      pushSelection({ row, record });
+    });
+    await flush();
+
+    const widen = () =>
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="trajectory-inspector-widen"]',
+      )!;
+    // Quiet and icon-only, like the pin beside it.
+    expect(widen().getAttribute("aria-label")).toBe("变成宽窗");
+    expect(widen().textContent).toBe("");
+    expect(widen().getAttribute("aria-pressed")).toBe("false");
+    expect(
+      container.querySelector(
+        '[data-testid="trajectory-inspector-edge-flash"]',
+      ),
+    ).toBeNull();
+
+    await act(async () => widen().click());
+    await flush();
+
+    expect(hostMocks.invoke).toHaveBeenCalledWith(
+      "set_trajectory_inspector_wide",
+      { wide: true },
+    );
+    expect(widen().getAttribute("aria-pressed")).toBe("true");
+    expect(widen().getAttribute("aria-label")).toBe("恢复窄窗");
+    // The edges flash while the native frame stretches.
+    expect(
+      container.querySelector(
+        '[data-testid="trajectory-inspector-edge-flash"]',
+      ),
+    ).not.toBeNull();
+
+    await act(async () => widen().click());
+    await flush();
+
+    expect(hostMocks.invoke).toHaveBeenLastCalledWith(
+      "set_trajectory_inspector_wide",
+      { wide: false },
+    );
+    expect(widen().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("tours widen, find and pin the first time it shows a call", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.removeItem(TRAJECTORY_INSPECTOR_TOUR_KEY);
+    const content = '{"input":"ping"}';
+    bridgeMocks.getRequestAuditContent.mockResolvedValue({
+      ...auditContent,
+      request_body: {
+        content,
+        media_type: "application/json",
+        captured_bytes: content.length,
+        truncated: false,
+      },
+    });
+    const tour = () => document.querySelector('[data-slot="spotlight-tour"]');
+    const spotlight = () =>
+      document.querySelector<HTMLElement>("[data-tour-spotlight]")?.dataset
+        .tourSpotlight;
+    const button = (text: string) =>
+      [...document.querySelectorAll("button")].find(
+        (item) => item.textContent === text,
+      )!;
+
+    await render();
+    // An empty window has nothing to tour yet.
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(tour()).toBeNull();
+
+    await act(async () => {
+      pushSelection({ row: laterRow, record });
+    });
+    await flush();
+    await act(async () => vi.advanceTimersByTime(600));
+
+    expect(spotlight()).toBe("inspector-widen");
+    expect(tour()?.querySelector("h3")?.textContent).toBe("一键变宽");
+    expect(tour()?.textContent).toContain("1 / 3");
+    expect(localStorage.getItem(TRAJECTORY_INSPECTOR_TOUR_KEY)).toBe("seen");
+
+    await act(async () => button("下一步").click());
+    expect(spotlight()).toBe("inspector-find");
+    expect(tour()?.textContent).toContain(findShortcutLabel());
+
+    await act(async () => button("下一步").click());
+    expect(spotlight()).toBe("inspector-pin");
+
+    await act(async () => button("知道了").click());
+    await vi.waitFor(() => expect(tour()).toBeNull());
+  });
+
+  it("replays the tour, leaving out a search box the tab does not have", async () => {
+    hostState.current = {
+      selection: { record, row: { ...row, chip: "RESULT", lane: "client" } },
+      pinned: false,
+    };
+    await render();
+    expect(
+      container
+        .querySelector('[data-testid="inspector-section"]')
+        ?.getAttribute("data-chip"),
+    ).toBe("RESULT");
+    expect(
+      document.querySelector('[data-tour-target="inspector-find"]'),
+    ).toBeNull();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="trajectory-inspector-tour"]',
+        )!
+        .click();
+    });
+
+    const tour = document.querySelector('[data-slot="spotlight-tour"]');
+    expect(tour?.textContent).toContain("1 / 2");
+    expect(
+      document.querySelector<HTMLElement>("[data-tour-spotlight]")?.dataset
+        .tourSpotlight,
+    ).toBe("inspector-widen");
+  });
+
+  it("restores a widened window and admits a width the host refused", async () => {
+    hostState.current = {
+      selection: { record, row },
+      pinned: false,
+      wide: true,
+    };
+    hostMocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "trajectory_inspector_state") return hostState.current;
+      throw new Error("a full-screen inspector window cannot change its width");
+    });
+    await render();
+
+    const widen = () =>
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="trajectory-inspector-widen"]',
+      )!;
+    // A dev reload keeps the toggle in step with the window the host widened.
+    expect(widen().getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => widen().click());
+    await flush();
+
+    expect(widen().getAttribute("aria-pressed")).toBe("true");
   });
 
   it("never asks itself to open another inspector window", () => {

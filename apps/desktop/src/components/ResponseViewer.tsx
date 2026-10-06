@@ -21,6 +21,7 @@ export function ResponseViewer({
   previewContent,
   rawView,
   rawHint,
+  structured,
   children,
 }: {
   content?: string;
@@ -34,13 +35,21 @@ export function ResponseViewer({
   /** Optional bounded inspector for large captured responses. */
   rawView?: ReactNode;
   rawHint?: string;
+  /**
+   * The raw body laid out by its format, such as a JSON tree or stream
+   * events, offered between the preview and the original text. It brings
+   * its own notices; copying from it copies the original text.
+   */
+  structured?: { label: string; view: ReactNode };
   children?: ReactNode;
 }) {
   const t = useT();
-  const [view, setView] = useState<"preview" | "raw">("preview");
+  const [view, setView] = useState<"preview" | "structured" | "raw">("preview");
   const copy = useCopyFeedback();
   const hasResponse = content !== undefined || rawContent !== undefined;
-  const visibleContent = view === "raw" ? rawContent : content;
+  const showStructured = view === "structured" && structured !== undefined;
+  const wire = view === "raw" || showStructured;
+  const visibleContent = wire ? rawContent : content;
   const copyKey = `${view}:${visibleContent ?? ""}`;
   return (
     <Panel className="flex min-h-0 flex-1 flex-col" aria-label={label}>
@@ -57,11 +66,7 @@ export function ResponseViewer({
               aria-label={copyButtonLabel(
                 copy,
                 copyKey,
-                t(
-                  view === "raw"
-                    ? "responseViewer.copyRaw"
-                    : "responseViewer.copy",
-                ),
+                t(wire ? "responseViewer.copyRaw" : "responseViewer.copy"),
               )}
               onClick={() => {
                 if (visibleContent) copy.copy(copyKey, visibleContent);
@@ -80,6 +85,9 @@ export function ResponseViewer({
               onValueChange={setView}
               options={[
                 { value: "preview", label: t("responseViewer.preview") },
+                ...(structured
+                  ? [{ value: "structured" as const, label: structured.label }]
+                  : []),
                 { value: "raw", label: t("responseViewer.raw") },
               ]}
             />
@@ -94,31 +102,37 @@ export function ResponseViewer({
         data-slot="response-content"
         data-tab-scroller
       >
-        {view === "raw" ? (
+        {wire ? (
           <>
             <p className="mb-3 break-words text-xs text-muted-foreground">
               {rawHint ?? t("responseViewer.rawHint")}
               {contentType ? ` · ${contentType}` : ""}
             </p>
-            {rawTruncated ? (
-              <FormMessage className="mb-3" tone="warning">
-                {t("responseViewer.truncated")}
-              </FormMessage>
-            ) : null}
-            {rawView ??
-              (rawContent ? (
-                <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-                  {rawContent}
-                </pre>
-              ) : (
-                <FormMessage>
-                  {t(
-                    rawContent === undefined
-                      ? "responseViewer.rawUnavailable"
-                      : "responseViewer.rawEmpty",
-                  )}
-                </FormMessage>
-              ))}
+            {showStructured ? (
+              structured.view
+            ) : (
+              <>
+                {rawTruncated ? (
+                  <FormMessage className="mb-3" tone="warning">
+                    {t("responseViewer.truncated")}
+                  </FormMessage>
+                ) : null}
+                {rawView ??
+                  (rawContent ? (
+                    <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
+                      {rawContent}
+                    </pre>
+                  ) : (
+                    <FormMessage>
+                      {t(
+                        rawContent === undefined
+                          ? "responseViewer.rawUnavailable"
+                          : "responseViewer.rawEmpty",
+                      )}
+                    </FormMessage>
+                  ))}
+              </>
+            )}
           </>
         ) : (
           <>

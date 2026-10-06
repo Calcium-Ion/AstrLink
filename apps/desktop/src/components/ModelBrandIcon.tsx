@@ -1,33 +1,14 @@
-import {
-  AnthropicMono,
-  ByteDanceColor,
-  ClaudeColor,
-  DeepSeekColor,
-  DoubaoColor,
-  GeminiColor,
-  GemmaColor,
-  GrokMono,
-  HunyuanColor,
-  MetaColor,
-  MinimaxColor,
-  MistralColor,
-  MoonshotMono,
-  OpenAIMono,
-  QwenColor,
-  StepfunMono,
-  WenxinColor,
-  XiaomiMiMoMono,
-  ZAIMono,
-} from "@/components/brand-icons";
 import { Brain } from "@/components/icons";
+import { vendorMarks, type Vendor } from "@/components/vendor-marks";
 
 import { cn } from "@/lib/utils";
 
-// Keywords follow @lobehub/icons `modelMappings`, in its order, for the brands
-// kept here. Other models fall back to the Brain mark.
-const brands = [
+// Keywords follow @lobehub/icons `modelMappings`, in its order, for the
+// vendors kept here. The mark itself comes from `vendorMarks` so a model shows
+// the same logo as its provider kind. Other models fall back to the Brain mark.
+const brands: { vendor: Vendor; keywords: string[] }[] = [
   {
-    Icon: OpenAIMono,
+    vendor: "openai",
     keywords: [
       "gpt-3",
       "gpt-4",
@@ -62,17 +43,17 @@ const brands = [
     ],
   },
   {
-    Icon: ZAIMono,
+    vendor: "zhipu",
     keywords: ["^glm-", "/glm-", "/glm\\d", "-glm-", "chatglm"],
   },
-  { Icon: ClaudeColor, keywords: ["claude"] },
-  { Icon: AnthropicMono, keywords: ["anthropic"] },
-  { Icon: MetaColor, keywords: ["llama", "/l3"] },
-  { Icon: GeminiColor, keywords: ["gemini"] },
-  { Icon: GemmaColor, keywords: ["gemma"] },
-  { Icon: MoonshotMono, keywords: ["kimi", "moonshot"] },
+  { vendor: "claude", keywords: ["claude"] },
+  { vendor: "anthropic", keywords: ["anthropic"] },
+  { vendor: "meta", keywords: ["llama", "/l3"] },
+  { vendor: "gemini", keywords: ["gemini"] },
+  { vendor: "gemma", keywords: ["gemma"] },
+  { vendor: "kimi", keywords: ["kimi", "moonshot"] },
   {
-    Icon: QwenColor,
+    vendor: "qwen",
     keywords: [
       "qwen",
       "qwq",
@@ -84,9 +65,9 @@ const brands = [
       "gte-rerank",
     ],
   },
-  { Icon: MinimaxColor, keywords: ["minimax", "abab", "^image-"] },
+  { vendor: "minimax", keywords: ["minimax", "abab", "^image-"] },
   {
-    Icon: MistralColor,
+    vendor: "mistral",
     keywords: [
       "mistral",
       "mixtral",
@@ -100,18 +81,30 @@ const brands = [
       "voxtral",
     ],
   },
-  { Icon: StepfunMono, keywords: ["step"] },
-  { Icon: WenxinColor, keywords: ["ernie", "irag"] },
-  { Icon: DoubaoColor, keywords: ["^ep-", "doubao-"] },
-  { Icon: HunyuanColor, keywords: ["hunyuan", "hy3"] },
-  { Icon: ByteDanceColor, keywords: ["skylark", "seed-", "bytedance"] },
-  { Icon: GrokMono, keywords: ["^grok-", "/grok-"] },
-  { Icon: DeepSeekColor, keywords: ["deepseek"] },
-  { Icon: XiaomiMiMoMono, keywords: ["^mimo-", "/mimo-"] },
-].map(({ Icon, keywords }) => ({
-  Icon,
+  { vendor: "stepfun", keywords: ["step"] },
+  { vendor: "wenxin", keywords: ["ernie", "irag"] },
+  { vendor: "doubao", keywords: ["^ep-", "doubao-"] },
+  { vendor: "hunyuan", keywords: ["hunyuan", "hy3"] },
+  { vendor: "bytedance", keywords: ["skylark", "seed-", "bytedance"] },
+  { vendor: "grok", keywords: ["^grok-", "/grok-"] },
+  { vendor: "deepseek", keywords: ["deepseek"] },
+  { vendor: "xiaomi", keywords: ["^mimo-", "/mimo-"] },
+];
+
+const matchers = brands.map(({ vendor, keywords }) => ({
+  vendor,
   patterns: keywords.map((keyword) => new RegExp(keyword, "i")),
 }));
+
+/** The vendor a model id belongs to, or null when no brand keyword matches. */
+export function modelVendor(model: string | null | undefined): Vendor | null {
+  if (!model?.trim()) return null;
+  return (
+    matchers.find(({ patterns }) =>
+      patterns.some((pattern) => pattern.test(model)),
+    )?.vendor ?? null
+  );
+}
 
 export function ModelBrandIcon({
   className,
@@ -124,9 +117,8 @@ export function ModelBrandIcon({
 }) {
   if (!model?.trim()) return null;
 
-  const BrandIcon = brands.find(({ patterns }) =>
-    patterns.some((pattern) => pattern.test(model)),
-  )?.Icon;
+  const vendor = modelVendor(model);
+  const BrandIcon = vendor ? vendorMarks[vendor] : null;
 
   return (
     <span

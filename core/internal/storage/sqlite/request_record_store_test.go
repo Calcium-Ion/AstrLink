@@ -179,11 +179,14 @@ func TestRequestRecordStoreLiveUpsertAndStartupRecovery(t *testing.T) {
 
 	completed := started.Add(2 * time.Second)
 	latency := 2000
+	firstToken, firstAnswer := 300, 1200
 	status := http.StatusOK
 	terminal := pending
 	terminal.Status = contract.RequestStatusSucceeded
 	terminal.CompletedAt = &completed
 	terminal.LatencyMs = &latency
+	terminal.FirstTokenMs = &firstToken
+	terminal.FirstAnswerMs = &firstAnswer
 	terminal.HTTPStatus = &status
 	if err := store.UpsertRequestRecord(ctx, terminal); err != nil {
 		t.Fatal(err)
@@ -194,6 +197,9 @@ func TestRequestRecordStoreLiveUpsertAndStartupRecovery(t *testing.T) {
 	got, err = store.GetRequestRecord(ctx, pending.ID)
 	if err != nil || got.Status != contract.RequestStatusSucceeded || got.CompletedAt == nil {
 		t.Fatalf("late pending downgraded terminal=%#v err=%v", got, err)
+	}
+	if got.FirstTokenMs == nil || *got.FirstTokenMs != firstToken || got.FirstAnswerMs == nil || *got.FirstAnswerMs != firstAnswer {
+		t.Fatalf("timing lost: first token=%v first answer=%v", got.FirstTokenMs, got.FirstAnswerMs)
 	}
 
 	interrupted := pending

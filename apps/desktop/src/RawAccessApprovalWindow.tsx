@@ -262,10 +262,13 @@ export function RawAccessApprovalWindow() {
       case "password_invalid":
         setError(t("proofDialog.passwordInvalid"));
         return;
-      case "backoff":
-        setNow(Date.now());
-        setRetryAt(Date.now() + outcome.retry_after_seconds * 1000);
+      case "backoff": {
+        // One clock read: a second read a millisecond later shows N+1 seconds.
+        const current = Date.now();
+        setNow(current);
+        setRetryAt(current + outcome.retry_after_seconds * 1000);
         return;
+      }
     }
     void refresh();
   };

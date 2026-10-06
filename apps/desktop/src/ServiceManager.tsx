@@ -17,7 +17,9 @@ import type { UsageRangePreset } from "./usage-range";
 import { ServiceOrderHelp } from "./ServiceOrderHelp";
 import { ServiceRiskBadge } from "./ServiceRiskBadge";
 import { ProtocolModeHelp } from "./ProtocolModeHelp";
+import { ServiceEditorTour } from "./ServiceEditorTour";
 import { OrderedList } from "./components/OrderedList";
+import { ClientTypeIcons } from "./components/ClientTypeIcon";
 import { useRoutingDefaults } from "./use-routing-defaults";
 import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
 import { parseFailurePolicy, type FailurePolicy } from "./failure-policy-model";
@@ -137,6 +139,7 @@ import {
   protocolDescriptors,
   protocolEntryPath,
   protocolClients,
+  protocolClientTypes,
   protocolLabel,
   serviceAuthLabels,
   serviceSiteForBaseURL,
@@ -915,6 +918,7 @@ export function ServiceManager({
   } | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>("connection");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const editorTabs = useRef<HTMLDivElement>(null);
   const [usageByService, setUsageByService] = useWorkspaceSnapshot<
     Record<
       string,
@@ -2859,6 +2863,12 @@ export function ServiceManager({
   const egressTargets = subscriptionKind
     ? subscriptionConversionTargets[subscriptionKind]
     : null;
+  // Re-enabling a protocol the preset's upstream serves natively passes it through.
+  const presetUpstreamProtocols = new Set(
+    selectedPreset?.capabilities
+      .filter((capability) => !capability.convert_to)
+      .map((capability) => capability.protocol),
+  );
   const protocolRows = subscriptionKind
     ? descriptors.filter(
         ({ id }) => nativeProtocols.has(id) || supportsLocalConversion(id),
@@ -2910,13 +2920,15 @@ export function ServiceManager({
             );
             const defaultTarget = egressTargets
               ? targets.find((target) => target.enabled)?.id
-              : bestConversionTarget(
-                  descriptor.id,
-                  draft.capabilities
-                    .filter((row) => !row.convert_to)
-                    .map((row) => row.protocol),
-                  conversionEngine,
-                );
+              : presetUpstreamProtocols.has(descriptor.id)
+                ? undefined
+                : bestConversionTarget(
+                    descriptor.id,
+                    draft.capabilities
+                      .filter((row) => !row.convert_to)
+                      .map((row) => row.protocol),
+                    conversionEngine,
+                  );
             const locked =
               native ||
               (egressTargets !== null && !capability && !defaultTarget);
@@ -2943,8 +2955,15 @@ export function ServiceManager({
                       {protocolEntryPath(descriptor.id)}
                     </code>
                     {protocolClients[descriptor.id] ? (
-                      <span className="truncate text-micro text-muted-foreground">
-                        {t(protocolClients[descriptor.id])}
+                      <span className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
+                        {protocolClientTypes[descriptor.id] ? (
+                          <ClientTypeIcons
+                            clientTypes={protocolClientTypes[descriptor.id]}
+                          />
+                        ) : null}
+                        <span className="truncate">
+                          {t(protocolClients[descriptor.id])}
+                        </span>
                       </span>
                     ) : null}
                     {selected ? (
@@ -3456,63 +3475,77 @@ export function ServiceManager({
               onValueChange={(value) => setEditorTab(value as EditorTab)}
               value={editorTab}
             >
-              <TabsList
-                aria-label={t("services.tabsAria")}
-                scrollable
-                className="h-9 max-w-full shrink-0"
-              >
-                <TabsTrigger
-                  data-testid="service-editor-tab-connection"
-                  onClick={() => setEditorTab("connection")}
-                  type="button"
-                  value="connection"
+              <div className="flex min-w-0 shrink-0 items-center gap-1">
+                <TabsList
+                  ref={editorTabs}
+                  aria-label={t("services.tabsAria")}
+                  scrollable
+                  className="h-9 min-w-0 max-w-full"
                 >
-                  <Cable aria-hidden="true" />
-                  {t("services.tabConnection")}
-                </TabsTrigger>
-                <TabsTrigger
-                  data-testid="service-editor-tab-models"
-                  onClick={() => setEditorTab("models")}
-                  type="button"
-                  value="models"
-                >
-                  <Boxes aria-hidden="true" />
-                  {t("services.tabModels")}
-                  <Badge
-                    className="px-1.5 py-0 text-micro tabular-nums"
-                    variant="secondary"
+                  <TabsTrigger
+                    data-testid="service-editor-tab-connection"
+                    data-tour-target="connection"
+                    onClick={() => setEditorTab("connection")}
+                    type="button"
+                    value="connection"
                   >
-                    {t("services.modelCount", {
-                      count: draft.models.length,
-                    })}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger
-                  data-testid="service-editor-tab-protocols"
-                  onClick={() => setEditorTab("protocols")}
-                  type="button"
-                  value="protocols"
-                >
-                  <SlidersHorizontal aria-hidden="true" />
-                  {t("services.tabProtocols")}
-                  <Badge
-                    className="px-1.5 py-0 text-micro tabular-nums"
-                    variant="secondary"
+                    <Cable aria-hidden="true" />
+                    {t("services.tabConnection")}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    data-testid="service-editor-tab-models"
+                    data-tour-target="models"
+                    onClick={() => setEditorTab("models")}
+                    type="button"
+                    value="models"
                   >
-                    {t("services.enabledItems", {
-                      count: draft.capabilities.length,
-                    })}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger
-                  data-testid="service-editor-tab-failure"
-                  onClick={() => setEditorTab("failure")}
-                  type="button"
-                  value="failure"
-                >
-                  {t("failure.title")}
-                </TabsTrigger>
-              </TabsList>
+                    <Boxes aria-hidden="true" />
+                    {t("services.tabModels")}
+                    <Badge
+                      className="px-1.5 py-0 text-micro tabular-nums"
+                      variant="secondary"
+                    >
+                      {t("services.modelCount", {
+                        count: draft.models.length,
+                      })}
+                    </Badge>
+                  </TabsTrigger>
+                  <TabsTrigger
+                    data-testid="service-editor-tab-protocols"
+                    data-tour-target="protocols"
+                    onClick={() => setEditorTab("protocols")}
+                    type="button"
+                    value="protocols"
+                  >
+                    <SlidersHorizontal aria-hidden="true" />
+                    {t("services.tabProtocols")}
+                    <Badge
+                      className="px-1.5 py-0 text-micro tabular-nums"
+                      variant="secondary"
+                    >
+                      {t("services.enabledItems", {
+                        count: draft.capabilities.length,
+                      })}
+                    </Badge>
+                  </TabsTrigger>
+                  <TabsTrigger
+                    data-testid="service-editor-tab-failure"
+                    data-tour-target="failure"
+                    onClick={() => setEditorTab("failure")}
+                    type="button"
+                    value="failure"
+                  >
+                    {t("failure.title")}
+                  </TabsTrigger>
+                </TabsList>
+                <ServiceEditorTour
+                  modelCount={draft.models.length}
+                  protocols={draft.capabilities.map(
+                    (capability) => capability.protocol,
+                  )}
+                  root={editorTabs}
+                />
+              </div>
               <TabsContent
                 className="gutter-scroller min-h-0 min-w-0 flex-1 overflow-y-auto pr-4 pb-1"
                 data-tab-scroller=""

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { findMatcher } from "./find-model";
 import {
   emptyTrajectoryFields,
   type RequestRecord,
@@ -10,6 +11,7 @@ import {
   eventTone,
   extendPendingTimeline,
   extractPrivacyHits,
+  findInTrajectory,
   foldTimelineColumns,
   inspectorChainRows,
   inspectorPart,
@@ -582,6 +584,73 @@ describe("request trajectory model", () => {
     // A single turn has no header to fold under.
     const single = trajectoryRows([turn("req_t1", 1, 0)], {});
     expect(trajectoryListLayout(single, new Map(), null).rows).toEqual(single);
+
+    // Find opens the turn it landed on, unless that turn was closed by hand.
+    expect(
+      trajectoryListLayout(rows, new Map(), null, header("req_t1").id)
+        .openTurns,
+    ).toEqual(new Set([header("req_t1").id, header("req_t3").id]));
+    expect(
+      trajectoryListLayout(
+        rows,
+        new Map([[header("req_t1").id, false]]),
+        null,
+        header("req_t1").id,
+      ).openTurns,
+    ).toEqual(new Set([header("req_t3").id]));
+  });
+
+  it("lands find on the turns that hold a hit, folded ones included", () => {
+    const turn = (id: string, index: number, preview: string) => ({
+      ...record,
+      id,
+      turn_index: index,
+      input_preview: preview,
+    });
+    const rows = trajectoryRows(
+      [
+        turn("req_t1", 1, "Quote the first line"),
+        turn("req_t2", 2, "Summarize the diff"),
+        // A tool loop: the second call belongs to the same turn.
+        turn("req_t2b", 2, "Summarize the diff"),
+        turn("req_t3", 3, "quote it again"),
+      ],
+      {},
+    );
+    const headerId = (requestId: string) =>
+      rows.find((row) => row.chip === "TURN" && row.requestId === requestId)!
+        .id;
+    const texts = (row: (typeof rows)[number]) => [row.summary, row.result];
+
+    const found = findInTrajectory(rows, findMatcher("QUOTE")!, texts);
+
+    expect(found.stops).toEqual([headerId("req_t1"), headerId("req_t3")]);
+    expect([...found.rows]).toEqual([headerId("req_t1"), headerId("req_t3")]);
+
+    // Several hits in one turn still land on it once.
+    const model = findInTrajectory(
+      rows,
+      findMatcher(record.requested_model!)!,
+      texts,
+    );
+    expect(model.stops).toEqual([
+      headerId("req_t1"),
+      headerId("req_t2"),
+      headerId("req_t3"),
+    ]);
+    expect(
+      [...model.rows].filter((id) => id.startsWith("req_t2")).length,
+    ).toBeGreaterThan(1);
+
+    // Without headers there is no turn, so the matching rows are the stops.
+    const single = trajectoryRows([record], {});
+    const plain = findInTrajectory(
+      single,
+      findMatcher(record.requested_model!)!,
+      texts,
+    );
+    expect(plain.stops).toEqual([...plain.rows]);
+    expect(plain.stops.length).toBeGreaterThan(0);
   });
 
   it("merges the timeline calls a folded turn hides into its header's call", () => {

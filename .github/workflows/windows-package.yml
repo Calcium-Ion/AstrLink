@@ -135,7 +135,9 @@ jobs:
         with:
           shared-key: astrlink-native
           env-vars: ImageOS ImageVersion MACOSX_DEPLOYMENT_TARGET
-          cache-on-failure: true
+          # Restore main's cache only; a release-profile cache on a tag ref is
+          # unreachable from later tags and evicts main's entries.
+          save-if: false
           workspaces: |
             apps/desktop/src-tauri
             apps/privacy-worker

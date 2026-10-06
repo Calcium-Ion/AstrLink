@@ -18,9 +18,11 @@ import (
 //
 // Each variant states what actually happens to a marker written into a tool
 // call, because a model told to report hidden values as unavailable refuses
-// tasks the restore path would have completed. The notes deliberately carry no
-// mapping: sending the originals alongside the placeholders would defeat the
-// redaction entirely.
+// tasks the restore path would have completed. The restored variant also keeps
+// secret markers out of replies: response restore would print the secret into
+// the user's chat, where repeating it serves nothing. The notes deliberately
+// carry no mapping: sending the originals alongside the placeholders would
+// defeat the redaction entirely.
 const placeholderNoticePrefix = "Some values in this conversation were replaced by " +
 	"redaction markers of the form <PRIVATE_KIND_hex> or <SECRET_hex>. Treat each " +
 	"marker as an opaque literal: copy it character for character when you need to " +
@@ -28,9 +30,11 @@ const placeholderNoticePrefix = "Some values in this conversation were replaced 
 
 const placeholderNoticeRestored = placeholderNoticePrefix +
 	"Markers in tool-call arguments are replaced with the original values before the " +
-	"tool runs, and replies are restored the same way, so write the marker exactly " +
-	"where the value belongs and perform any encoding, hashing, or other " +
-	"transformation inside the tool."
+	"tool runs, so write the marker exactly where the value belongs and perform any " +
+	"encoding, hashing, or other transformation inside the tool. Replies are restored " +
+	"the same way, so a <SECRET_hex> marker in a reply prints the secret: keep secret " +
+	"markers out of replies unless the user asks for the literal value, and name the " +
+	"secret instead."
 
 const placeholderNoticeUnrestored = placeholderNoticePrefix +
 	"Markers in tool-call arguments are not replaced with the original values, so " +

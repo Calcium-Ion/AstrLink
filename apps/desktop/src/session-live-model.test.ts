@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { RequestSession } from "./request-record-model";
-import { mergeLiveSessions } from "./session-live-model";
+import {
+  mergeLiveSessions,
+  reuseUnchangedSessions,
+  sessionMatchesFilters,
+} from "./session-live-model";
 
 function session(
   id: string,
@@ -64,6 +68,14 @@ describe("mergeLiveSessions", () => {
       active_request_starts: ["2026-07-25T09:59:01Z"],
     });
     expect(mergeLiveSessions([], [before], [after], true).queued[0]).toBe(
+      after,
+    );
+  });
+
+  it("updates the client mark when only the detected client changes", () => {
+    const before = session("sess_a");
+    const after = session("sess_a", { client_type: "codex" });
+    expect(mergeLiveSessions([before], [], [after], false).items[0]).toBe(
       after,
     );
   });
@@ -168,5 +180,71 @@ describe("mergeLiveSessions", () => {
     expect(parked.items.map((entry) => entry.id)).toEqual(["sess_a"]);
     expect(parked.queued.map((entry) => entry.id)).toEqual(["sess_b"]);
     expect(parked.added).toBe(1);
+  });
+});
+
+describe("reuseUnchangedSessions", () => {
+  it("returns the previous list when the page matches it", () => {
+    const previous = [session("sess_b"), session("sess_a")];
+    const page = previous.map((entry) => ({ ...entry }));
+    expect(reuseUnchangedSessions(previous, page)).toBe(previous);
+  });
+
+  it("follows the page while keeping the sessions that did not move", () => {
+    const kept = session("sess_a");
+    const moved = session("sess_b");
+    const dropped = session("sess_c");
+    const page = [session("sess_d"), { ...moved, call_count: 2 }, { ...kept }];
+    const items = reuseUnchangedSessions([moved, kept, dropped], page);
+    expect(items.map((entry) => entry.id)).toEqual([
+      "sess_d",
+      "sess_b",
+      "sess_a",
+    ]);
+    expect(items[0]).toBe(page[0]);
+    expect(items[1]).toBe(page[1]);
+    expect(items[2]).toBe(kept);
+  });
+
+  it("returns a new list when only the order changed", () => {
+    const first = session("sess_a");
+    const second = session("sess_b");
+    const items = reuseUnchangedSessions(
+      [first, second],
+      [{ ...second }, { ...first }],
+    );
+    expect(items).toEqual([second, first]);
+    expect(items[0]).toBe(second);
+    expect(items[1]).toBe(first);
+  });
+});
+
+describe("sessionMatchesFilters", () => {
+  const filters = {
+    status: "" as const,
+    serviceId: "",
+    protocol: "",
+    clientType: "" as const,
+    localAccessTokenIds: [],
+  };
+
+  it("matches the selected client", () => {
+    const codex = session("sess_a", { client_type: "codex" });
+    expect(
+      sessionMatchesFilters(codex, { ...filters, clientType: "codex" }),
+    ).toBe(true);
+    expect(
+      sessionMatchesFilters(codex, { ...filters, clientType: "claude_code" }),
+    ).toBe(false);
+  });
+
+  it("files sessions without a detected client under unknown", () => {
+    const undetected = session("sess_a");
+    expect(
+      sessionMatchesFilters(undetected, { ...filters, clientType: "unknown" }),
+    ).toBe(true);
+    expect(
+      sessionMatchesFilters(undetected, { ...filters, clientType: "codex" }),
+    ).toBe(false);
   });
 });

@@ -132,7 +132,7 @@ export function Overview({
   onOpenService,
   onOpenTokenRecords,
   onRefreshServices,
-  onRefreshUsage,
+  onRefresh,
   onRestart,
   onUsagePresetChange,
   snapshot,
@@ -156,7 +156,7 @@ export function Overview({
   onOpenService: (serviceId: string) => void;
   onOpenTokenRecords: (tokenId: string) => void;
   onRefreshServices: () => void;
-  onRefreshUsage: () => void;
+  onRefresh: () => void;
   onRestart: () => void;
   onUsagePresetChange: (preset: UsageRangePreset) => void;
   snapshot: AppSnapshot | null;
@@ -563,7 +563,7 @@ export function Overview({
         billingSummary={billingSummary}
         isReady={isReady}
         onOpenTokenRecords={onOpenTokenRecords}
-        onRefreshUsage={onRefreshUsage}
+        onRefresh={onRefresh}
         status={usage.status}
         tokenCatalog={tokenCatalog}
         tokensUnknown={tokensUnknown}
@@ -757,7 +757,7 @@ export function Overview({
                 </IconButton>
                 <Button
                   disabled={!isReady || usage.status === "loading"}
-                  onClick={onRefreshUsage}
+                  onClick={onRefresh}
                   size="icon-sm"
                   type="button"
                   variant="ghost"
@@ -980,7 +980,7 @@ function TokenUsagePanel({
   billingSummary,
   isReady,
   onOpenTokenRecords,
-  onRefreshUsage,
+  onRefresh,
   status,
   tokenCatalog,
   tokensUnknown,
@@ -991,7 +991,7 @@ function TokenUsagePanel({
   billingSummary: BillingSummary | null;
   isReady: boolean;
   onOpenTokenRecords: (tokenId: string) => void;
-  onRefreshUsage: () => void;
+  onRefresh: () => void;
   status: UsageStatus;
   tokenCatalog: AccessTokenCatalog;
   tokensUnknown: boolean;
@@ -1091,7 +1091,7 @@ function TokenUsagePanel({
                   tokenCatalog.status === "error" ? (
                     <Button
                       disabled={!isReady}
-                      onClick={onRefreshUsage}
+                      onClick={onRefresh}
                       size="sm"
                       type="button"
                       variant="outline"

@@ -56,6 +56,7 @@ vi.mock("./response-preview-model", async (importOriginal) => {
 import type { AuditSettings } from "./audit-settings-model";
 import type { RawSealingState } from "./raw-sealing-model";
 import { RequestRecords } from "./RequestRecords";
+import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
 import {
   displayRequestStatus,
   emptyTrajectoryFields,
@@ -300,6 +301,41 @@ function buttonContaining(
   return match;
 }
 
+/** Option text as read aloud; decorative marks may carry their own SVG titles. */
+function optionText(option: Element): string | undefined {
+  const copy = option.cloneNode(true) as Element;
+  copy
+    .querySelectorAll('[aria-hidden="true"]')
+    .forEach((node) => node.remove());
+  return copy.textContent?.trim();
+}
+
+/** Opens a dropdown menu by its trigger label and returns the named item. */
+async function menuItem(
+  triggerLabel: string,
+  itemText: string,
+): Promise<HTMLElement> {
+  const trigger = document.querySelector<HTMLButtonElement>(
+    `button[aria-label="${triggerLabel}"]`,
+  );
+  if (!trigger) throw new Error(`Missing menu trigger: ${triggerLabel}`);
+  await act(async () => {
+    trigger.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerType: "mouse",
+      }),
+    );
+    await Promise.resolve();
+  });
+  const item = [
+    ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+  ].find((candidate) => candidate.textContent?.trim() === itemText);
+  if (!item) throw new Error(`Missing menu item: ${itemText}`);
+  return item;
+}
+
 async function chooseOption(label: string, option: string): Promise<void> {
   const trigger = document.querySelector<HTMLButtonElement>(
     `button[role="combobox"][aria-label="${label}"]`,
@@ -317,7 +353,7 @@ async function chooseOption(label: string, option: string): Promise<void> {
   });
   const item = [
     ...document.querySelectorAll<HTMLElement>('[role="option"]'),
-  ].find((candidate) => candidate.textContent?.trim() === option);
+  ].find((candidate) => optionText(candidate) === option);
   if (!item) throw new Error(`Missing select option: ${option}`);
   await act(async () => {
     item.click();
@@ -468,6 +504,7 @@ describe("RequestRecords", () => {
     container.remove();
   });
 
+  // These tests read the trace; the conversation default has its own test.
   const renderRecords = async (session = "session-1", services = [service]) => {
     await act(async () => {
       reactRoot.render(
@@ -475,6 +512,7 @@ describe("RequestRecords", () => {
           accessTokens={[]}
           accessTokensReady
           coreSessionKey={session}
+          initialDetailTab="trajectory"
           services={services}
           isReady
         />,
@@ -487,11 +525,14 @@ describe("RequestRecords", () => {
   };
 
   it.each([
-    ["claude_code", "Claude Code"],
-    ["pi", "Pi"],
+    ["claude_code", "Claude Code", ""],
+    ["pi", "Pi", ""],
+    ["deepseek_harness", "DeepSeek Harness", ""],
+    // Clients without a published mark get a monogram, not the unknown robot.
+    ["droid", "Droid", "D"],
   ] as const)(
     "shows %s beside each session, independently of the model brand",
-    async (clientType, clientName) => {
+    async (clientType, clientName, monogram) => {
       bridgeMocks.listRequestSessions.mockResolvedValue({
         items: [
           sessionFromRecord(firstRecord, { client_type: clientType }),
@@ -509,6 +550,24 @@ describe("RequestRecords", () => {
       expect(rows[1].querySelector('[role="img"]')?.getAttribute("title")).toBe(
         "客户端：未知客户端",
       );
+      // Brand marks keep their own colour; only the unknown fallback is muted.
+      expect(
+        rows[0]
+          .querySelector('[role="img"]')
+          ?.classList.contains("text-foreground"),
+      ).toBe(true);
+      expect(
+        rows[1]
+          .querySelector('[role="img"]')
+          ?.classList.contains("text-muted-foreground"),
+      ).toBe(true);
+      const mark = rows[0].querySelector('[role="img"]');
+      if (monogram) {
+        expect(mark?.querySelector("svg")).toBeNull();
+        expect(mark?.textContent).toBe(monogram);
+      } else {
+        expect(mark?.querySelector("svg")).not.toBeNull();
+      }
       expect(rows[0].textContent).toContain("gpt-4.1");
     },
   );
@@ -554,6 +613,56 @@ describe("RequestRecords", () => {
     );
     expect(provider?.querySelector('[aria-label="New API"]')).not.toBeNull();
     expect(provider?.getAttribute("title")).toContain(service.id);
+  });
+
+  it("mounts what fits the window first and the rest of a long list frame by frame", async () => {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(400);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    const sessions = Array.from({ length: 36 }, (_, index) => {
+      // Two date groups of 18, newest first, seconds apart within each day
+      // so no time zone splits a group.
+      const startedAt = new Date(
+        Date.parse("2026-07-25T06:00:30Z") -
+          (index % 18) * 1000 -
+          (index < 18 ? 0 : 24 * 60 * 60_000),
+      ).toISOString();
+      return sessionFromRecord({
+        ...firstRecord,
+        id: `req_long_${String(index).padStart(2, "0")}`,
+        session_id: `sess_long_${String(index).padStart(2, "0")}`,
+        started_at: startedAt,
+      });
+    });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: sessions,
+      next_cursor: null,
+    });
+    await renderRecords();
+    const rowIds = () =>
+      [
+        ...container.querySelectorAll<HTMLElement>(
+          '[data-testid="request-session-row"]',
+        ),
+      ].map((row) => row.dataset.sessionId);
+    const groupCounts = () =>
+      [...container.querySelectorAll('[role="feed"] section')].map(
+        (section) => section.querySelector('[data-slot="badge"]')?.textContent,
+      );
+
+    // 400px fits ten of the shortest rows.
+    expect(rowIds()).toEqual(sessions.slice(0, 10).map((entry) => entry.id));
+    expect(groupCounts()).toEqual(["18 条"]);
+
+    while (frames.length > 0) {
+      await act(async () => frames.shift()?.(performance.now()));
+    }
+    expect(rowIds()).toEqual(sessions.map((entry) => entry.id));
+    expect(groupCounts()).toEqual(["18 条", "18 条"]);
   });
 
   it("distinguishes pending selection, an unrouted result, exhausted providers and a removed provider", async () => {
@@ -633,11 +742,11 @@ describe("RequestRecords", () => {
     });
     await act(async () => await Promise.resolve());
     const duration = () =>
-      [...container.querySelectorAll("dt")].find(
+      [...document.querySelectorAll("dt")].find(
         (node) => node.textContent === i18n.t("records.modelDuration"),
       )?.nextElementSibling?.textContent;
     expect(duration()).toBe("3.6 s");
-    const stats = container.querySelector(
+    const stats = document.querySelector(
       '[data-testid="session-performance"]',
     )!;
     expect(stats.textContent).toContain("≈ 19.8 s");
@@ -826,10 +935,10 @@ describe("RequestRecords", () => {
     });
     await act(async () => await Promise.resolve());
 
-    const copyButton = exactButton("复制诊断信息");
-    expect(copyButton.title).toContain("不含请求/响应正文");
+    const copyItem = await menuItem("更多操作", "复制诊断信息");
+    expect(copyItem.title).toContain("不含请求/响应正文");
     await act(async () => {
-      copyButton.click();
+      copyItem.click();
       await Promise.resolve();
     });
     await act(async () => await Promise.resolve());
@@ -948,8 +1057,9 @@ describe("RequestRecords", () => {
       ),
     ).toBeNull();
 
+    const copyItem = await menuItem("更多操作", "复制诊断信息");
     await act(async () => {
-      exactButton("复制诊断信息").click();
+      copyItem.click();
       await Promise.resolve();
     });
     await act(async () => await Promise.resolve());
@@ -2275,6 +2385,57 @@ describe("RequestRecords", () => {
     ).toBeNull();
   });
 
+  it("offers the clients that sent traffic and filters by them locally", async () => {
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, { client_type: "codex" }),
+        sessionFromRecord(secondRecord),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    bridgeMocks.listRequestSessions.mockClear();
+
+    await act(async () => {
+      document
+        .querySelector('button[role="combobox"][aria-label="客户端筛选"]')
+        ?.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            button: 0,
+            pointerType: "mouse",
+          }),
+        );
+      await Promise.resolve();
+    });
+    expect(
+      [...document.querySelectorAll('[role="option"]')].map(optionText),
+    ).toEqual(["全部", "Codex", "未知客户端"]);
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+      await Promise.resolve();
+    });
+
+    await chooseOption("客户端筛选", "Codex");
+    expect(bridgeMocks.listRequestSessions).not.toHaveBeenCalled();
+    expect(
+      container.querySelector(`[data-session-id="${firstRecord.id}"]`),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(`[data-session-id="${secondRecord.id}"]`),
+    ).toBeNull();
+
+    await chooseOption("客户端筛选", "未知客户端");
+    expect(
+      container.querySelector(`[data-session-id="${firstRecord.id}"]`),
+    ).toBeNull();
+    expect(
+      container.querySelector(`[data-session-id="${secondRecord.id}"]`),
+    ).not.toBeNull();
+  });
+
   it("passes the stable cursor when loading earlier records", async () => {
     await renderRecords();
     bridgeMocks.listRequestSessions.mockClear();
@@ -2474,6 +2635,70 @@ describe("RequestRecords", () => {
     });
     await act(async () => await Promise.resolve());
     expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens on the conversation and remembers a switch to the trace", async () => {
+    const openSession = async (record: RequestRecord) => {
+      await act(async () => {
+        (
+          container.querySelector(
+            `[data-session-id="${record.session_id ?? record.id}"]`,
+          ) as HTMLButtonElement
+        ).click();
+        await Promise.resolve();
+      });
+      await flush();
+    };
+    await act(async () => {
+      reactRoot.render(
+        <WorkspaceSnapshotProvider sessionKey="session-1">
+          <RequestRecords
+            accessTokens={[]}
+            accessTokensReady
+            coreSessionKey="session-1"
+            services={[service]}
+            isReady
+          />
+        </WorkspaceSnapshotProvider>,
+      );
+      await Promise.resolve();
+    });
+    await flush();
+    await openSession(firstRecord);
+    const tabs = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        `[aria-label="${i18n.t("records.sections")}"] [role="tab"]`,
+      ),
+    ].map((tab) => tab.textContent?.trim());
+    expect(tabs.slice(0, 2)).toEqual(["对话", "追踪"]);
+    expect(
+      container.querySelector('[data-testid="request-conversation"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="conversation-outline-toggle"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="trajectory-list"]'),
+    ).toBeNull();
+    await act(async () => {
+      exactButton("追踪").click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(
+      container.querySelector('[data-testid="trajectory-list"]'),
+    ).not.toBeNull();
+    await act(async () => {
+      buttonContaining("实时监控").click();
+      await Promise.resolve();
+    });
+    await openSession(secondRecord);
+    expect(
+      container.querySelector('[data-testid="trajectory-list"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="request-conversation"]'),
+    ).toBeNull();
   });
 
   it("shows a friendly message for records without http metadata", async () => {

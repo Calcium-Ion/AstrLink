@@ -26,7 +26,8 @@ const requestRecordSelectColumns = `
      FROM (SELECT kind, direction, value FROM request_record_cursors
            WHERE request_record_cursors.request_id = request_records.id
            ORDER BY kind, direction, value)) AS cursors_json, first_token_ms, model_redirect_json,
-    routing_decision_json, client_type, privacy_decision, privacy_findings_json, conversion_diagnostics_json`
+    routing_decision_json, client_type, privacy_decision, privacy_findings_json, conversion_diagnostics_json,
+    first_answer_ms`
 
 const requestRecordInsertColumns = `
     id, parent_request_id, attempt_index, started_at, completed_at, status, input_protocol,
@@ -35,9 +36,9 @@ const requestRecordInsertColumns = `
     session_id, previous_response_id, output_response_id, input_preview, events_json, created_at,
     turn_index, session_link_json, turn_user_messages, turn_user_fingerprint, recovery_json, first_token_ms,
     model_redirect_json, routing_decision_json, client_type, privacy_decision, privacy_findings_json,
-    conversion_diagnostics_json`
+    conversion_diagnostics_json, first_answer_ms`
 
-const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const requestRecordInsertValues = `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func (row requestRecordRow) insertArgs() []any {
 	return []any{
@@ -48,7 +49,7 @@ func (row requestRecordRow) insertArgs() []any {
 		row.outputResponseID, row.inputPreview, row.eventsJSON, row.createdAt,
 		row.turnIndex, row.sessionLinkJSON, row.turnUserMessages, row.turnUserFingerprint, row.recoveryJSON, row.firstTokenMs,
 		row.modelRedirectJSON, row.routingDecisionJSON, row.clientType, row.privacyDecision, row.privacyFindingsJSON,
-		row.conversionDiagnosticsJSON,
+		row.conversionDiagnosticsJSON, row.firstAnswerMs,
 	}
 }
 
@@ -120,6 +121,7 @@ ON CONFLICT(id) DO UPDATE SET
     http_status = excluded.http_status,
     latency_ms = excluded.latency_ms,
     first_token_ms = excluded.first_token_ms,
+    first_answer_ms = excluded.first_answer_ms,
     usage_json = excluded.usage_json,
     error_json = excluded.error_json,
     audit_json = excluded.audit_json,
@@ -626,6 +628,7 @@ type requestRecordRow struct {
 	httpStatus                any
 	latencyMs                 any
 	firstTokenMs              any
+	firstAnswerMs             any
 	usageJSON                 any
 	errorJSON                 any
 	auditJSON                 string
@@ -721,6 +724,9 @@ func encodeRequestRecordRow(record contract.RequestRecord, createdAt time.Time) 
 	if record.FirstTokenMs != nil {
 		row.firstTokenMs = *record.FirstTokenMs
 	}
+	if record.FirstAnswerMs != nil {
+		row.firstAnswerMs = *record.FirstAnswerMs
+	}
 	if record.Usage != nil {
 		encoded, err := json.Marshal(record.Usage)
 		if err != nil {
@@ -804,7 +810,7 @@ type scannable interface {
 func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	var recoveryJSON, modelRedirectJSON, routingDecisionJSON, clientType sql.NullString
 	var privacyDecision, privacyFindingsJSON, conversionDiagnosticsJSON sql.NullString
-	var firstTokenMs sql.NullInt64
+	var firstTokenMs, firstAnswerMs sql.NullInt64
 	var (
 		id, startedAt, status, inputProtocol, auditJSON, createdAt        string
 		parentRequestID                                                   sql.NullString
@@ -824,7 +830,7 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 		&sessionID, &previousResponseID, &outputResponseID, &inputPreview, &eventsJSON,
 		&createdAt, &turnIndex, &sessionLinkJSON, &turnUserMessages, &turnUserFingerprint, &recoveryJSON, &childCount, &cursorsJSON, &firstTokenMs,
 		&modelRedirectJSON, &routingDecisionJSON, &clientType, &privacyDecision, &privacyFindingsJSON,
-		&conversionDiagnosticsJSON,
+		&conversionDiagnosticsJSON, &firstAnswerMs,
 	); err != nil {
 		return contract.RequestRecord{}, err
 	}
@@ -910,6 +916,10 @@ func scanRequestRecord(row scannable) (contract.RequestRecord, error) {
 	if firstTokenMs.Valid {
 		value := int(firstTokenMs.Int64)
 		record.FirstTokenMs = &value
+	}
+	if firstAnswerMs.Valid {
+		value := int(firstAnswerMs.Int64)
+		record.FirstAnswerMs = &value
 	}
 	if usageJSON.Valid {
 		var usage contract.Usage

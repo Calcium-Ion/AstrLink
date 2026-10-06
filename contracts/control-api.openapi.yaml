@@ -5866,6 +5866,20 @@ components:
           openclaw,
           cline,
           pi,
+          deepseek_harness,
+          codewhale,
+          reasonix,
+          qwen_code,
+          kimi_code,
+          codebuddy,
+          copilot,
+          droid,
+          crush,
+          kilo_code,
+          roo_code,
+          mistral_vibe,
+          zed,
+          cherry_studio,
         ]
       description: Best-effort client label from original inbound headers, before upstream identity rewriting. Display metadata only; never an authenticated identity. Unknown means no recognized signature. Historical records omit this field.
     RequestRecord:
@@ -5978,6 +5992,14 @@ components:
         latency_ms:
           type: [integer, "null"]
           minimum: 0
+        first_token_ms:
+          type: [integer, "null"]
+          minimum: 0
+          description: Milliseconds from sending the upstream request to the first generated stream content of any kind (text, reasoning, or a tool call). Null for non-streaming and historical calls.
+        first_answer_ms:
+          type: [integer, "null"]
+          minimum: 0
+          description: Milliseconds from sending the upstream request to the first generated content that is not reasoning (text, a refusal, a tool call, or media). At least first_token_ms; the difference is how long the model thought before answering. Null without first_token_ms, for calls that only reasoned, and on historical rows.
         usage:
           oneOf:
             - $ref: "#/components/schemas/Usage"

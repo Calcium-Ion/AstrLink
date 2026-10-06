@@ -47,6 +47,7 @@ const secret = `astr_${"A".repeat(43)}`;
 function statuses(
   claude: Partial<ClientConfigStatus> = {},
   codex: Partial<ClientConfigStatus> = {},
+  pi: Partial<ClientConfigStatus> = {},
 ): ClientConfigStatus[] {
   return [
     {
@@ -64,6 +65,17 @@ function statuses(
       state: "not_configured",
       token_id: null,
       ...codex,
+    },
+    {
+      client: "pi",
+      detected: true,
+      paths: [
+        "/Users/me/.pi/agent/models.json",
+        "/Users/me/.pi/agent/settings.json",
+      ],
+      state: "not_configured",
+      token_id: null,
+      ...pi,
     },
   ];
 }
@@ -610,6 +622,51 @@ describe("ClientSetupDialog", () => {
     expect(bridgeMocks.applyClientConfig).not.toHaveBeenCalled();
   });
 
+  it("writes Pi itself, even while CC Switch is installed", async () => {
+    bridgeMocks.isCCSwitchInstalled.mockResolvedValue(true);
+    bridgeMocks.applyClientConfig.mockResolvedValue({ status: "applied" });
+    bridgeMocks.listServices.mockResolvedValue({
+      items: [
+        {
+          enabled: true,
+          models: ["gpt-5"],
+          capabilities: [{ protocol: "openai.responses" }],
+        },
+      ],
+    });
+    await renderDialog();
+
+    expect(cardText("Pi")).not.toContain("CC Switch");
+    await act(async () => card("Pi").click());
+    const text = dialog().textContent;
+    expect(text).toContain("http://127.0.0.1:8317/v1");
+    expect(text).toContain("/Users/me/.pi/agent/models.json");
+    expect(text).toContain("/Users/me/.pi/agent/settings.json");
+    expect(text).not.toContain("改用 CC Switch 导入");
+    expect(button("写入配置").disabled).toBe(true);
+
+    await setInput("#client-setup-model", "gpt-5");
+    await act(async () => button("写入配置").click());
+    expect(bridgeMocks.applyClientConfig).toHaveBeenCalledExactlyOnceWith({
+      tokenId: token.id,
+      client: "pi",
+      models: { model: "gpt-5" },
+      inferenceUrl: "http://127.0.0.1:8317",
+      replace: false,
+    });
+    expect(bridgeMocks.openCCSwitchImport).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalledOnce();
+
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      statuses({}, {}, { detected: false }),
+    );
+    await act(async () => reactRoot.unmount());
+    reactRoot = createRoot(container);
+    await renderDialog();
+    expect(card("Pi").disabled).toBe(true);
+    expect(cardText("Pi")).toContain("未安装");
+  });
+
   it("suggests only compatible enabled models for each client", async () => {
     bridgeMocks.isCCSwitchInstalled.mockResolvedValue(true);
     const protocols = [
@@ -641,6 +698,7 @@ describe("ClientSetupDialog", () => {
       ["Gemini CLI", ["model-2"]],
       ["OpenCode", ["model-3"]],
       ["OpenClaw", ["model-3"]],
+      ["Pi", ["model-1"]],
     ] as const) {
       await act(async () => card(client).click());
       expect(await suggestions()).toEqual(expected);

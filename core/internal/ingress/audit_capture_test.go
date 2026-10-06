@@ -186,6 +186,91 @@ func TestIngressAuditPersistsClientRequestWhilePending(t *testing.T) {
 	}
 }
 
+// The redacted upstream request is stored before the round trip starts, so
+// reading it never waits for the upstream's first response byte.
+func TestIngressAuditPersistsUpstreamRequestBeforeResponse(t *testing.T) {
+	const requestBody = `{"model":"m","input":"hello"}`
+	const responseBody = `{"id":"r","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	records := &memoryRequestRecordStore{}
+	blobs := &memoryAuditBlobs{records: records}
+	settings := &memoryAuditSettings{settings: contract.AuditSettings{
+		RequestBodyEnabled: true, ResponseContentEnabled: true, HTTPMetaEnabled: true,
+		RequestBodyMaxBytes: 1024, ResponseContentMaxBytes: 1024,
+		MetadataRetentionDays: 30, ContentRetentionDays: 7,
+	}}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler := NewWithDependencies(Dependencies{
+		Resolver:       candidateResolver{candidates: []endpoint.Resolved{{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}}},
+		RequestRecords: records,
+		AuditSettings:  settings,
+		AuditBlobs:     blobs,
+		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			// Nothing has been sent yet: the body is read only after release.
+			close(started)
+			<-release
+			if _, err := io.ReadAll(request.Body); err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": {"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(responseBody)),
+			}, nil
+		})),
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(requestBody))
+		req.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	<-started
+	if len(records.records) != 1 || records.records[0].Status != contract.RequestStatusPending {
+		t.Fatalf("pending records=%#v", records.records)
+	}
+	if !records.records[0].Audit.UpstreamRequestBodyCaptured {
+		t.Fatalf("pending audit=%#v", records.records[0].Audit)
+	}
+	var upstreamRequest *storage.AuditBlob
+	for index := range blobs.blobs {
+		if blobs.blobs[index].Direction == storage.AuditDirectionUpstreamRequest {
+			upstreamRequest = &blobs.blobs[index]
+			break
+		}
+	}
+	if upstreamRequest == nil {
+		t.Fatalf("missing upstream request blob among %#v", blobs.blobs)
+	}
+	if upstreamRequest.RequestID != records.records[0].ID {
+		t.Fatalf("blob request=%s pending record=%s", upstreamRequest.RequestID, records.records[0].ID)
+	}
+	plain, err := storage.OpenAuditBlob(blobs.key, upstreamRequest.Nonce, upstreamRequest.Ciphertext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != requestBody {
+		t.Fatalf("pending upstream request plain=%q", plain)
+	}
+	close(release)
+	<-done
+	record := records.records[len(records.records)-1]
+	if record.Status != contract.RequestStatusSucceeded || !record.Audit.UpstreamRequestBodyCaptured ||
+		record.Audit.UpstreamRequestBodyTruncated {
+		t.Fatalf("terminal record=%#v", record)
+	}
+	upstreamRequests := 0
+	for _, blob := range blobs.blobs {
+		if blob.Direction == storage.AuditDirectionUpstreamRequest {
+			upstreamRequests++
+		}
+	}
+	if upstreamRequests != 1 {
+		t.Fatalf("upstream request blobs=%d in %#v", upstreamRequests, blobs.blobs)
+	}
+}
+
 // net/http writes request bodies on its own goroutine and may deliver the
 // response before the final EOF read, even after the handler has finished.
 func TestIngressAuditToleratesRequestBodyReadAfterResponse(t *testing.T) {

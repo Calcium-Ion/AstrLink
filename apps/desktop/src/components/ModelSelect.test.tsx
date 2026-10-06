@@ -97,6 +97,31 @@ describe("ModelSelect", () => {
     expect(suggestions()).toHaveLength(4);
   });
 
+  it("opens upward only when the list would be cut short below", async () => {
+    await act(async () => root.render(<Harness />));
+    const anchor = container.querySelector<HTMLElement>(
+      '[data-slot="combobox"]',
+    )!;
+    anchor.getBoundingClientRect = () =>
+      new DOMRect(0, window.innerHeight - 150, 240, 32);
+    const side = () =>
+      document.querySelector('[role="listbox"]')?.getAttribute("data-side");
+
+    await act(async () => input().click());
+    expect(side()).toBe("top");
+    await act(async () =>
+      input().dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      ),
+    );
+    // A single match fits below, and the side holds while the filter changes.
+    await type("custom");
+    expect(side()).toBe("bottom");
+    await type("");
+    expect(suggestions()).toHaveLength(4);
+    expect(side()).toBe("bottom");
+  });
+
   it("retains custom model input and clears the filter", async () => {
     await act(async () => root.render(<Harness />));
     await type("my-new-route");

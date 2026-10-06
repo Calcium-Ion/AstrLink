@@ -5,6 +5,8 @@
  * does not hold the main thread.
  */
 
+import { findOffsets } from "./find-model";
+
 export type JsonNode =
   | JsonObjectNode
   | JsonArrayNode
@@ -477,6 +479,8 @@ export function flattenJsonTree(
     });
     if (!isOpen || !isJsonContainer(node)) return;
     const total = childCount(node);
+    // An empty container already reads as `[]` or `{}` on its own row.
+    if (total === 0 && node.complete) return;
     const shown = Math.min(total, limits.get(path) ?? JSON_CHILD_BATCH);
     for (let child = 0; child < shown; child += 1) {
       const { key, value } = childAt(node, child);
@@ -594,6 +598,121 @@ function revealStrings(
       });
     }
   }
+}
+
+/** One place a find query appears in the tree. */
+export interface JsonSearchHit {
+  /** Path of the row the hit shows in. */
+  path: string;
+  /** In that row's object key, or in its value. */
+  field: "key" | "value";
+  /** Where the hit starts in the field's text. */
+  offset: number;
+  /** The value is a string that starts folded, so the hit needs it open. */
+  folded: boolean;
+}
+
+export interface JsonSearchResult {
+  hits: JsonSearchHit[];
+  /** More hits exist past the limit. */
+  capped: boolean;
+}
+
+/** A key as the tree prints it, without the quotes: what find matches. */
+export function jsonKeyText(key: string): string {
+  return JSON.stringify(key).slice(1, -1);
+}
+
+/**
+ * Every hit of `matcher` in keys and values, in document order. Folded
+ * containers, pages past the first batch and folded strings are searched
+ * too; `revealJsonHit` opens the way to any one of them. Inline files are
+ * skipped: a match inside base64 is noise, and the tree never shows it.
+ */
+export function searchJsonTree(
+  root: JsonNode,
+  matcher: RegExp,
+  limit: number,
+): JsonSearchResult {
+  const hits: JsonSearchHit[] = [];
+  let capped = false;
+  // Asks for one hit past the limit, so a full page also says there is more.
+  const collect = (
+    path: string,
+    field: JsonSearchHit["field"],
+    text: string,
+    folded: boolean,
+  ) => {
+    for (const offset of findOffsets(text, matcher, limit - hits.length + 1)) {
+      if (hits.length === limit) {
+        capped = true;
+        return;
+      }
+      hits.push({ path, field, offset, folded });
+    }
+  };
+  const stack: { node: JsonNode; path: string; key: string | null }[] = [
+    { node: root, path: JSON_TREE_ROOT, key: null },
+  ];
+  while (stack.length > 0 && !capped) {
+    const { node, path, key } = stack.pop()!;
+    if (key !== null) collect(path, "key", jsonKeyText(key), false);
+    if (isJsonContainer(node)) {
+      for (let child = childCount(node) - 1; child >= 0; child -= 1) {
+        const { key: childKey, value } = childAt(node, child);
+        stack.push({
+          node: value,
+          path: childPath(path, child),
+          key: childKey,
+        });
+      }
+      continue;
+    }
+    if (node.kind === "string") {
+      if (detectBase64(node.text)) continue;
+      collect(path, "value", node.text, isFoldableString(node.text));
+      continue;
+    }
+    collect(path, "value", node.text, false);
+  }
+  return { hits, capped };
+}
+
+/**
+ * The open set and page limits with the way to `hit` cleared: every
+ * container above it open and paged far enough to list it, and the folded
+ * string it sits in opened past its end. The inputs come back unchanged,
+ * by identity, when the hit was already on screen.
+ */
+export function revealJsonHit(
+  hit: JsonSearchHit,
+  length: number,
+  open: ReadonlySet<string>,
+  limits: ReadonlyMap<string, number>,
+): { open: ReadonlySet<string>; limits: ReadonlyMap<string, number> } {
+  let nextOpen: Set<string> | null = null;
+  let nextLimits: Map<string, number> | null = null;
+  const openPath = (path: string) => {
+    if ((nextOpen ?? open).has(path)) return;
+    nextOpen ??= new Set(open);
+    nextOpen.add(path);
+  };
+  const reach = (path: string, needed: number, batch: number) => {
+    if (needed <= ((nextLimits ?? limits).get(path) ?? batch)) return;
+    nextLimits ??= new Map(limits);
+    nextLimits.set(path, Math.ceil(needed / batch) * batch);
+  };
+  const segments = hit.path.split("/");
+  for (let depth = 1; depth < segments.length; depth += 1) {
+    const parent = segments.slice(0, depth).join("/");
+    openPath(parent);
+    reach(parent, Number(segments[depth]) + 1, JSON_CHILD_BATCH);
+  }
+  if (hit.field === "value" && hit.folded) {
+    openPath(hit.path);
+    reach(hit.path, hit.offset + length, JSON_STRING_CHUNK);
+  }
+  return { open: nextOpen ?? open, limits: nextLimits ?? limits };
 }
 
 const DATA_URL_PATTERN = /^data:([^;,]*)(?:;[^;,]*)*;base64,/;

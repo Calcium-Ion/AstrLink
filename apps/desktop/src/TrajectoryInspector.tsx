@@ -47,6 +47,7 @@ import { chipDotClass } from "./trajectory-chip";
 import {
   CapturePane,
   EndpointLine,
+  InspectorFindShortcut,
   ResultInspector,
   UpstreamInspector,
 } from "./TrajectoryResponse";
@@ -62,7 +63,8 @@ type BodyPart = Exclude<InspectorPart, "route" | "redirect">;
  * `onClose` is set only where the host has no window controls of its own. A
  * detached window keeps its pin in the title bar and passes `pinned` in.
  * Clicking a chip here only switches the tab. `onUnlockRaw` puts the unlock
- * in the header while any part of this call is sealed away.
+ * in the header while any part of this call is sealed away. `findShortcut`
+ * gives ⌘F to the body on screen, for a host whose window is the inspector.
  */
 export function TrajectoryInspector({
   row,
@@ -74,6 +76,7 @@ export function TrajectoryInspector({
   auditError,
   copyFeedback,
   pinned = false,
+  findShortcut = false,
   onClose,
   onUnlockRaw,
 }: {
@@ -86,6 +89,7 @@ export function TrajectoryInspector({
   auditError: string | null;
   copyFeedback: CopyFeedback;
   pinned?: boolean;
+  findShortcut?: boolean;
   onClose?: () => void;
   onUnlockRaw?: () => void;
 }) {
@@ -241,18 +245,20 @@ export function TrajectoryInspector({
         )}
       >
         {focusRow ? (
-          <InspectorSection
-            key={`${record.id}:${focusRow.chip}`}
-            auditContent={auditContent}
-            auditLoading={auditLoading}
-            copyFeedback={copyFeedback}
-            omitCapturedBody={focusRow.chip === "RESTORE" && hideRestoreBody}
-            record={record}
-            routes={routes}
-            service={service}
-            services={services}
-            row={focusRow}
-          />
+          <InspectorFindShortcut.Provider value={findShortcut}>
+            <InspectorSection
+              key={`${record.id}:${focusRow.chip}`}
+              auditContent={auditContent}
+              auditLoading={auditLoading}
+              copyFeedback={copyFeedback}
+              omitCapturedBody={focusRow.chip === "RESTORE" && hideRestoreBody}
+              record={record}
+              routes={routes}
+              service={service}
+              services={services}
+              row={focusRow}
+            />
+          </InspectorFindShortcut.Provider>
         ) : null}
       </div>
     </div>

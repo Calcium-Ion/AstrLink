@@ -796,14 +796,19 @@ describe("App workspace navigation", () => {
       items: [],
       next_cursor: null,
     });
-    bridgeMocks.createAccessToken.mockResolvedValue({
-      token: {
-        id: "token_setup",
-        name: "My assistant",
-        hint: "astr_…setup",
-        created_at: "2026-09-25T08:00:00Z",
-      },
-      access_token: "test-secret",
+    const created = {
+      id: "token_setup",
+      name: "My assistant",
+      hint: "astr_…setup",
+      created_at: "2026-09-25T08:00:00Z",
+    };
+    // The saved token is listed by later reads, like the real control API.
+    bridgeMocks.createAccessToken.mockImplementation(async () => {
+      bridgeMocks.listAccessTokens.mockResolvedValue({
+        items: [created],
+        next_cursor: null,
+      });
+      return { token: created, access_token: "test-secret" };
     });
     await renderApp();
     expect(
@@ -1473,6 +1478,88 @@ describe("App workspace navigation", () => {
         today.getDate() + 1,
       ).getDate(),
     );
+  });
+
+  it("revalidates the overview silently on return, on a timer, and when shown again", async () => {
+    vi.useFakeTimers();
+    await renderApp();
+    const base = await bridgeMocks.getUsageSummary.mock.results[0].value;
+    const usageSection = () =>
+      container.querySelector('[aria-labelledby="usage-heading"]');
+    const calls = () => ({
+      usage: bridgeMocks.getUsageSummary.mock.calls.length,
+      services: bridgeMocks.listServices.mock.calls.length,
+      tokens: bridgeMocks.listAccessTokens.mock.calls.length,
+    });
+    const tick = () =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+    let before = calls();
+    expect(before.usage).toBe(1);
+
+    // An in-flight background read keeps the panels exactly as they were.
+    let resolveSummary: (value: unknown) => void = () => {};
+    bridgeMocks.getUsageSummary.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSummary = resolve;
+      }),
+    );
+    await tick();
+    expect(calls()).toEqual({
+      usage: before.usage + 1,
+      services: before.services + 1,
+      tokens: before.tokens + 1,
+    });
+    expect(usageSection()?.getAttribute("aria-busy")).toBe("false");
+    expect(container.querySelector('[data-slot="usage-loading"]')).toBeNull();
+    expect(container.textContent).not.toContain("等待刷新");
+    await act(async () => {
+      resolveSummary({ ...base, totals: { ...base.totals, requests: 987 } });
+    });
+    expect(usageSection()?.textContent).toContain("987");
+
+    // A failed background read keeps the last good numbers without an error.
+    bridgeMocks.getUsageSummary.mockRejectedValueOnce(new Error("offline"));
+    await tick();
+    expect(usageSection()?.textContent).toContain("987");
+    expect(container.textContent).not.toContain("offline");
+
+    // A hidden window skips the timer and catches up once it is shown.
+    before = calls();
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    await tick();
+    expect(calls()).toEqual(before);
+    hidden.mockReturnValue(false);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(calls().usage).toBe(before.usage + 1);
+
+    // Other pages stop the timer; returning to the overview reads again.
+    await act(async () => button("请求").click());
+    before = calls();
+    await tick();
+    expect(calls()).toEqual(before);
+    await act(async () => button("概览").click());
+    expect(calls()).toEqual({
+      usage: before.usage + 1,
+      services: before.services + 1,
+      tokens: before.tokens + 1,
+    });
+  });
+
+  it("refreshes services and tokens with the usage from the overview header", async () => {
+    await renderApp();
+    const usage = bridgeMocks.getUsageSummary.mock.calls.length;
+    const services = bridgeMocks.listServices.mock.calls.length;
+    const tokens = bridgeMocks.listAccessTokens.mock.calls.length;
+
+    await act(async () => button("刷新").click());
+
+    expect(bridgeMocks.getUsageSummary).toHaveBeenCalledTimes(usage + 1);
+    expect(bridgeMocks.listServices).toHaveBeenCalledTimes(services + 1);
+    expect(bridgeMocks.listAccessTokens).toHaveBeenCalledTimes(tokens + 1);
   });
 
   it("navigates to the request records page", async () => {

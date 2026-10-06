@@ -1,3 +1,4 @@
+import { findMatches } from "./find-model";
 import { formatExactNumber } from "./format-compact-number";
 import { i18n } from "./i18n";
 import {
@@ -534,13 +535,15 @@ export interface TrajectoryListLayout {
 /**
  * Folds finished turns so a long conversation reads as one line per turn.
  * A turn is open when the operator said so, and otherwise when it is the
- * latest turn or holds the row the operator picked, so a new turn landing
- * never folds away the call being read. Without headers nothing folds.
+ * latest turn, holds the row the operator picked, or is the turn find landed
+ * on, so a new turn landing never folds away the call being read. Without
+ * headers nothing folds.
  */
 export function trajectoryListLayout(
   rows: TrajectoryRow[],
   overrides: ReadonlyMap<string, boolean>,
   selectedRowId: string | null,
+  foundTurn: string | null = null,
 ): TrajectoryListLayout {
   const turnByRowId = new Map<string, string>();
   let latestTurn: string | null = null;
@@ -561,7 +564,9 @@ export function trajectoryListLayout(
       header = row;
       open =
         overrides.get(row.id) ??
-        (row.id === latestTurn || row.id === selectedTurn);
+        (row.id === latestTurn ||
+          row.id === selectedTurn ||
+          row.id === foundTurn);
       if (open) openTurns.add(row.id);
       visible.push(row);
     } else if (open) {
@@ -571,6 +576,42 @@ export function trajectoryListLayout(
     }
   }
   return { rows: visible, openTurns, turnByRowId, anchorByRequestId };
+}
+
+/** Where a find query lands in the trajectory list. */
+export interface TrajectoryFind {
+  /**
+   * The turn headers holding a hit, in list order. A list without headers
+   * has no turns to land on, so its matching rows stand in for them.
+   */
+  stops: string[];
+  /** The rows whose own text holds the query. */
+  rows: Set<string>;
+}
+
+/**
+ * Searches every row, folded turns included, and lands on the turns that
+ * hold a hit: in a long conversation the question is which turn something
+ * happened in, and the turn's rows then say where. `texts` is what a row
+ * reads as in the list.
+ */
+export function findInTrajectory(
+  rows: TrajectoryRow[],
+  matcher: RegExp,
+  texts: (row: TrajectoryRow) => readonly string[],
+): TrajectoryFind {
+  const stops: string[] = [];
+  const matched = new Set<string>();
+  let turn: string | null = null;
+  for (const row of rows) {
+    if (row.chip === "TURN") turn = row.id;
+    if (!texts(row).some((text) => findMatches(text, matcher))) continue;
+    matched.add(row.id);
+    // A turn's rows are contiguous, so its stop only repeats back to back.
+    const stop = turn ?? row.id;
+    if (stops[stops.length - 1] !== stop) stops.push(stop);
+  }
+  return { stops, rows: matched };
 }
 
 /** Compact list text; full event summaries remain available to the inspector. */

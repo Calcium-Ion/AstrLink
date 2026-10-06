@@ -1,16 +1,33 @@
 import { i18n } from "./i18n";
 
-export type ClientType =
-  | "unknown"
-  | "codex"
-  | "claude_code"
-  | "cursor"
-  | "grok_cli"
-  | "gemini_cli"
-  | "opencode"
-  | "openclaw"
-  | "cline"
-  | "pi";
+export const CLIENT_TYPES = [
+  "unknown",
+  "codex",
+  "claude_code",
+  "cursor",
+  "grok_cli",
+  "gemini_cli",
+  "opencode",
+  "openclaw",
+  "cline",
+  "pi",
+  "deepseek_harness",
+  "codewhale",
+  "reasonix",
+  "qwen_code",
+  "kimi_code",
+  "codebuddy",
+  "copilot",
+  "droid",
+  "crush",
+  "kilo_code",
+  "roo_code",
+  "mistral_vibe",
+  "zed",
+  "cherry_studio",
+] as const;
+
+export type ClientType = (typeof CLIENT_TYPES)[number];
 
 export type RequestStatus =
   | "pending"
@@ -216,6 +233,8 @@ export interface RequestRecord {
   http_status: number | null;
   latency_ms: number | null;
   first_token_ms?: number | null;
+  /** First non-reasoning output; minus first_token_ms is the thinking time. */
+  first_answer_ms?: number | null;
   usage: RequestUsage | null;
   error: RequestErrorSummary | null;
   audit: RequestAuditSummary;
@@ -810,21 +829,10 @@ function optionalConversionDiagnostics(
 function optionalClientType(value: unknown): { client_type?: ClientType } {
   if (value == null) return {};
   // Future Core labels remain displayable by older desktop builds.
-  const known: readonly string[] = [
-    "unknown",
-    "codex",
-    "claude_code",
-    "cursor",
-    "grok_cli",
-    "gemini_cli",
-    "opencode",
-    "openclaw",
-    "cline",
-    "pi",
-  ];
   return {
     client_type:
-      typeof value === "string" && known.includes(value)
+      typeof value === "string" &&
+      (CLIENT_TYPES as readonly string[]).includes(value)
         ? (value as ClientType)
         : "unknown",
   };
@@ -897,6 +905,11 @@ function parseRequestRecordAt(value: unknown, path: string): RequestRecord {
     first_token_ms: optionalPerformanceNumber(
       record.first_token_ms,
       `${path}.first_token_ms`,
+      true,
+    ),
+    first_answer_ms: optionalPerformanceNumber(
+      record.first_answer_ms,
+      `${path}.first_answer_ms`,
       true,
     ),
     usage: parseUsage(record.usage, `${path}.usage`),

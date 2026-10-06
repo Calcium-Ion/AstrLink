@@ -834,6 +834,16 @@ describe("desktop bridge contract", () => {
         state: "not_configured",
         token_id: null,
       },
+      {
+        client: "pi",
+        detected: true,
+        paths: [
+          "/Users/me/.pi/agent/models.json",
+          "/Users/me/.pi/agent/settings.json",
+        ],
+        state: "not_configured",
+        token_id: null,
+      },
     ];
     invokeMock.mockResolvedValueOnce(statuses);
     await expect(

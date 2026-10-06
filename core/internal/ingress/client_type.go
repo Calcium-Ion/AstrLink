@@ -25,6 +25,11 @@ func detectClientType(headers http.Header) contract.ClientType {
 			return client
 		}
 	}
+	// Copilot CLI keeps its SDK's User-Agent on BYOK endpoints; this header is
+	// the only GitHub Copilot trace on those requests.
+	if normalizedClientHeader(headers.Get("X-Interaction-Type")) != "" {
+		return contract.ClientCopilot
+	}
 	return contract.ClientUnknown
 }
 
@@ -51,7 +56,7 @@ func clientProduct(product string) contract.ClientType {
 		return contract.ClientCursor
 	case "grok-cli", "grok-shell", "xai-grok-workspace":
 		return contract.ClientGrokCLI
-	case "gemini-cli", "geminicli", "geminicli-a2a-server":
+	case "gemini-cli", "geminicli":
 		return contract.ClientGeminiCLI
 	case "opencode":
 		return contract.ClientOpenCode
@@ -61,7 +66,37 @@ func clientProduct(product string) contract.ClientType {
 		return contract.ClientCline
 	case "pi", "pi-coding-agent":
 		return contract.ClientPi
+	case "deepseek-harness":
+		return contract.ClientDeepSeekHarness
+	case "codewhale", "deepseek-tui":
+		return contract.ClientCodewhale
+	case "reasonix":
+		return contract.ClientReasonix
+	case "qwencode", "qwen code":
+		return contract.ClientQwenCode
+	case "kimi-code-cli", "kimi-code-vscode", "kimi-code-acp", "kimicli":
+		return contract.ClientKimiCode
+	case "codebuddy":
+		return contract.ClientCodeBuddy
+	case "factory-cli":
+		return contract.ClientDroid
+	case "charm-crush":
+		return contract.ClientCrush
+	case "kilo-code", "kilo", "kilo code":
+		return contract.ClientKiloCode
+	case "roocode", "roo-code", "roo code":
+		return contract.ClientRooCode
+	case "mistral-vibe":
+		return contract.ClientMistralVibe
+	case "zed":
+		return contract.ClientZed
+	case "cherry studio":
+		return contract.ClientCherryStudio
 	default:
+		// A2A and ACP builds suffix the product, e.g. GeminiCLI-acp-zed.
+		if strings.HasPrefix(product, "geminicli-") {
+			return contract.ClientGeminiCLI
+		}
 		return ""
 	}
 }

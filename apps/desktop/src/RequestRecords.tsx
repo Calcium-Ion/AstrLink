@@ -1,11 +1,21 @@
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { SessionChannelBindings } from "./SessionChannelBindings";
 import { RecoveryChain, RecoveryDetails } from "./components/RecoveryDetails";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ChevronDown,
+  ChevronUp,
   Copy,
   SlidersHorizontal as ListFilter,
+  Menu as Ellipsis,
   MessageSquare,
   RefreshCw,
   SlidersHorizontal as Settings2,
@@ -13,7 +23,7 @@ import {
 } from "@/components/icons";
 
 import { ConfirmDialog as AppConfirmDialog } from "@/components/ConfirmDialog";
-import { ClientTypeIcon } from "@/components/ClientTypeIcon";
+import { ClientTypeIcon, clientTypeName } from "@/components/ClientTypeIcon";
 import { DataRow } from "@/components/DataRow";
 import { EmptyState } from "@/components/EmptyState";
 import { ScrollWorkspace } from "@/components/ScrollWorkspace";
@@ -22,7 +32,6 @@ import { ServiceSelect } from "@/components/ServiceSelect";
 import { FormMessage } from "@/components/FormMessage";
 import { MultiFilterSelect } from "@/components/MultiFilterSelect";
 import { HelpPopover } from "@/components/HelpPopover";
-import { Metric as SummaryMetric, MetricGroup } from "@/components/Metric";
 import { IconButton } from "@/components/IconButton";
 import { ModelLabel } from "@/components/ModelLabel";
 import { RequestServiceLabel } from "@/components/RequestServiceLabel";
@@ -77,6 +86,7 @@ import {
   updateAuditSettings,
 } from "./bridge";
 import { copyButtonLabel, useCopyFeedback } from "./copy-feedback";
+import { formatCompactNumber } from "./format-compact-number";
 import { i18n, useT } from "./i18n";
 import { useLiveClock } from "./live-clock";
 import { notify } from "./notify";
@@ -98,7 +108,6 @@ import type { RoutableService } from "./service-model";
 import {
   requestServiceIdentity,
   type RequestService,
-  type RequestServiceIdentity,
   type RequestServiceMap,
 } from "./request-service-model";
 import {
@@ -108,23 +117,28 @@ import {
   type RecordFilters,
 } from "./request-live-model";
 import {
+  CLIENT_TYPES,
+  displayRequestStatus,
   holdsRawPart,
   isModelDiscoveryProtocol,
   statusLabel,
   statusTone,
   type AuditContent,
   type AuditContentPart,
+  type ClientType,
   type RequestRecord,
   type RequestSession,
   type RequestSessionDetail,
   type RequestSessionKind,
   type SessionStatus,
 } from "./request-record-model";
+import { RequestConversation } from "./RequestConversation";
 import { RequestTrajectory } from "./RequestTrajectory";
 import {
   applyQueuedSessions,
   groupSessionsByDate,
   mergeLiveSessions,
+  reuseUnchangedSessions,
   sessionMatchesFilters,
 } from "./session-live-model";
 import { protocolEntryPath } from "./service-presets";
@@ -145,12 +159,32 @@ const EMPTY_FILTERS: RecordFilters = {
   status: "",
   serviceId: "",
   protocol: "",
+  clientType: "",
   localAccessTokenIds: [],
 };
 
 type RecordsView = "monitor" | "detail";
 type RecordsKind = RequestSessionKind | "all";
-type DetailTab = "trajectory" | "content" | "audit" | "binding";
+type DetailTab =
+  | "conversation"
+  | "trajectory"
+  | "content"
+  | "audit"
+  | "binding";
+// Copies started from a menu lose their button when it closes, so their
+// outcome is announced beside the actions instead.
+const MENU_COPY_KEYS: ReadonlySet<string> = new Set([
+  "bundle-meta",
+  "skill-diagnostic",
+  "session-id",
+]);
+const DETAIL_TABS: readonly DetailTab[] = [
+  "conversation",
+  "trajectory",
+  "content",
+  "audit",
+  "binding",
+];
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
   | { kind: "delete"; requestId: string }
@@ -173,6 +207,17 @@ function auditContentBytes(content: AuditContent): number {
 }
 
 /** Everything the list row shows, so the detail only reloads when it moved. */
+/** The session beside `id` in the list: -1 is newer, 1 is older. */
+function neighborSession(
+  items: RequestSession[],
+  id: string | null,
+  direction: -1 | 1,
+): RequestSession | null {
+  const index = id === null ? -1 : items.findIndex((item) => item.id === id);
+  if (index < 0) return null;
+  return items[index + direction] ?? null;
+}
+
 function sessionSummaryKey(session: RequestSession): string {
   return [
     session.id,
@@ -234,6 +279,7 @@ export function RequestRecords({
   accessTokens,
   accessTokensReady,
   coreSessionKey,
+  initialDetailTab = "conversation",
   initialLocalAccessTokenId,
   isReady,
   services,
@@ -241,6 +287,8 @@ export function RequestRecords({
   accessTokens: AccessTokenSummary[];
   accessTokensReady: boolean;
   coreSessionKey: string | null;
+  /** The reading tab a session opens on until the operator picks one. */
+  initialDetailTab?: "conversation" | "trajectory";
   initialLocalAccessTokenId?: string;
   isReady: boolean;
   services: (RoutableService & RequestService)[];
@@ -442,6 +490,20 @@ export function RequestRecords({
       )
       .sort();
   }, [allRecords, services, kind]);
+  // Only clients that actually sent traffic are worth offering; unknown
+  // traffic is the catch-all, so it trails the named clients.
+  const clientOptions = useMemo(() => {
+    const seen = new Set<ClientType>(
+      allRecords.map((session) => session.client_type ?? "unknown"),
+    );
+    if (filters.clientType) seen.add(filters.clientType);
+    return [
+      ...CLIENT_TYPES.filter(
+        (clientType) => clientType !== "unknown" && seen.has(clientType),
+      ),
+      ...(seen.has("unknown") ? (["unknown"] as const) : []),
+    ];
+  }, [allRecords, filters.clientType]);
 
   useEffect(() => {
     const generation = generationRef.current + 1;
@@ -473,7 +535,8 @@ export function RequestRecords({
         sameTokenSelection &&
         current.status === EMPTY_FILTERS.status &&
         current.serviceId === EMPTY_FILTERS.serviceId &&
-        current.protocol === EMPTY_FILTERS.protocol
+        current.protocol === EMPTY_FILTERS.protocol &&
+        current.clientType === EMPTY_FILTERS.clientType
       ) {
         return current;
       }
@@ -546,10 +609,18 @@ export function RequestRecords({
     })
       .then((page) => {
         if (listGenerationRef.current !== generation) return;
-        setLive({
-          items: page.items,
-          queued: [],
-          nextCursor: page.next_cursor,
+        // Coming back to the page usually finds the list it left. Keeping
+        // those objects spares every mounted row a second render.
+        setLive((current) => {
+          const items = reuseUnchangedSessions(current.items, page.items);
+          if (
+            items === current.items &&
+            current.queued.length === 0 &&
+            page.next_cursor === current.nextCursor
+          ) {
+            return current;
+          }
+          return { items, queued: [], nextCursor: page.next_cursor };
         });
         setListStatus("ready");
       })
@@ -839,12 +910,14 @@ export function RequestRecords({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawProtected]);
 
-  const openDetail = (sessionId: string) => {
+  // Stable, so the memoized list rows skip the page's re-renders.
+  const openDetail = useCallback((sessionId: string) => {
     selectedFocusRef.current = sessionId;
     setSelectedId(sessionId);
     setSelectedTurnId(null);
-    setViewAndRef("detail");
-  };
+    viewRef.current = "detail";
+    setView("detail");
+  }, []);
 
   const returnToMonitor = () => {
     setViewAndRef("monitor");
@@ -1352,7 +1425,7 @@ export function RequestRecords({
                   </FormMessage>
                 ) : null}
                 <div className="flex w-full min-w-0 flex-wrap items-center gap-2 border-b bg-background py-2">
-                  <div className="grid min-w-0 flex-1 basis-72 grid-cols-2 gap-2 @[760px]:max-w-2xl @[760px]:grid-cols-4">
+                  <div className="grid min-w-0 flex-1 basis-72 grid-cols-3 gap-2 @[680px]:max-w-4xl @[680px]:grid-cols-5">
                     <FilterSelect
                       ariaLabel={t("records.filter", {
                         label: t("records.status"),
@@ -1376,10 +1449,10 @@ export function RequestRecords({
                     />
                     <ServiceSelect
                       ariaLabel={t("records.filter", {
-                        label: t("records.provider"),
+                        label: t("records.providerFilter"),
                       })}
                       className="w-full"
-                      label={t("records.provider")}
+                      label={t("records.providerFilter")}
                       onChange={(serviceId) =>
                         setFilters((current) => ({ ...current, serviceId }))
                       }
@@ -1404,6 +1477,39 @@ export function RequestRecords({
                         })),
                       ]}
                       value={filters.protocol}
+                    />
+                    <FilterSelect
+                      ariaLabel={t("records.filter", {
+                        label: t("records.client"),
+                      })}
+                      className="w-full"
+                      label={t("records.client")}
+                      onChange={(clientType) =>
+                        setFilters((current) => ({
+                          ...current,
+                          clientType: clientType as ClientType | "",
+                        }))
+                      }
+                      options={[
+                        { label: t("common.all"), value: "" },
+                        ...clientOptions.map((clientType) => ({
+                          label: clientTypeName(clientType),
+                          value: clientType,
+                          displayLabel: (
+                            <span className="inline-flex min-w-0 items-center gap-2">
+                              <ClientTypeIcon
+                                clientType={clientType}
+                                decorative
+                                size={16}
+                              />
+                              <span className="truncate">
+                                {clientTypeName(clientType)}
+                              </span>
+                            </span>
+                          ),
+                        })),
+                      ]}
+                      value={filters.clientType}
                     />
                     <MultiFilterSelect
                       allLabel={t("common.all")}
@@ -1430,17 +1536,16 @@ export function RequestRecords({
                       value={filters.localAccessTokenIds}
                     />
                   </div>
-                  <Button
+                  <IconButton
                     className="ml-auto"
                     variant="outline"
                     disabled={!isReady || listStatus === "loading"}
+                    label={t("common.refresh")}
                     onClick={() => manualPollRef.current?.()}
-                    size="sm"
                     type="button"
                   >
                     <RefreshCw aria-hidden="true" />
-                    {t("common.refresh")}
-                  </Button>
+                  </IconButton>
                 </div>
               </>
             }
@@ -1498,6 +1603,7 @@ export function RequestRecords({
                     filters.status ||
                     filters.serviceId ||
                     filters.protocol ||
+                    filters.clientType ||
                     filters.localAccessTokenIds.length ? (
                       <Button
                         variant="outline"
@@ -1541,8 +1647,19 @@ export function RequestRecords({
             auditLoading={auditLoading}
             auditSettings={settings}
             deleting={deleting}
+            initialTab={initialDetailTab}
+            newerAvailable={
+              neighborSession(visibleItems, selectedId, -1) !== null
+            }
+            olderAvailable={
+              neighborSession(visibleItems, selectedId, 1) !== null
+            }
             onBack={returnToMonitor}
             onClearDecrypted={clearDecrypted}
+            onNavigate={(direction) => {
+              const next = neighborSession(visibleItems, selectedId, direction);
+              if (next) openDetail(next.id);
+            }}
             onDelete={() =>
               setPendingConfirm({ kind: "delete", requestId: selected.id })
             }
@@ -1673,69 +1790,36 @@ function SessionDuration({ session }: { session: RequestSession }) {
   return <>{formatDuration(sessionRuntimeMs(session, nowMs))}</>;
 }
 
-function SessionPerformance({ session }: { session: RequestSession }) {
-  const t = useT();
-  return (
-    <MetricGroup
-      aria-label={t("records.performanceStats")}
-      className="shrink-0 border-b"
-      data-testid="session-performance"
-    >
-      <SummaryMetric
-        size="compact"
-        label={
-          <span className="flex items-center gap-1">
-            {t("records.modelDuration")}
-            <HelpPopover label={t("records.performanceStats")}>
-              <div className="space-y-2">
-                <p>{t("records.modelDurationHint")}</p>
-                <p>{t("records.toolDurationHint")}</p>
-                <p>{t("records.averageTTFTHint")}</p>
-                <p>{t("records.outputSpeedHint")}</p>
-                <p>{t("records.performanceMissingHint")}</p>
-              </div>
-            </HelpPopover>
-          </span>
-        }
-        value={<SessionDuration session={session} />}
-      />
-      <SummaryMetric
-        size="compact"
-        label={t("records.toolDuration")}
-        title={t("records.toolDurationHint")}
-        value={
-          session.tool_duration_ms == null
-            ? "—"
-            : `≈ ${formatDuration(session.tool_duration_ms)}`
-        }
-      />
-      <SummaryMetric
-        size="compact"
-        label={t("records.averageTTFT")}
-        value={
-          session.average_ttft_ms == null
-            ? "—"
-            : formatDuration(session.average_ttft_ms)
-        }
-      />
-      <SummaryMetric
-        size="compact"
-        label={t("records.outputSpeed")}
-        value={
-          session.output_tokens_per_second == null
-            ? "—"
-            : `${session.output_tokens_per_second.toFixed(1)} tok/s`
-        }
-      />
-    </MetricGroup>
-  );
-}
-
 function RecordLatency({ record }: { record: RequestRecord }) {
   const nowMs = useLiveClock(
     record.latency_ms === null && !record.completed_at,
   );
   return <>{formatDuration(liveDurationMs(record, nowMs))}</>;
+}
+
+// The shortest row, a model discovery, is about 40px tall.
+const FIRST_FRAME_ROW_PX = 40;
+const ROWS_PER_FRAME = 10;
+
+/**
+ * How many of `total` rows to mount. WebKit spends ~2.5 ms styling and laying
+ * out one session row, so mounting a full page of 50 held the switch to this
+ * page for ~180 ms. The first frame gets what can fit in the window; the rest
+ * follow a chunk per frame. Rows already mounted stay mounted.
+ */
+function useProgressiveRowCount(total: number): number {
+  const [mounted, setMounted] = useState(() =>
+    Math.ceil(window.innerHeight / FIRST_FRAME_ROW_PX),
+  );
+  const shown = Math.min(total, mounted);
+  useEffect(() => {
+    if (shown >= total) return;
+    const frame = window.requestAnimationFrame(() =>
+      setMounted(shown + ROWS_PER_FRAME),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [shown, total]);
+  return shown;
 }
 
 function SessionStream({
@@ -1752,55 +1836,61 @@ function SessionStream({
   const t = i18n.t.bind(i18n);
   // Only the date buckets need "now", and those turn over once a day.
   const groups = groupSessionsByDate(sessions);
+  let remaining = useProgressiveRowCount(sessions.length);
   return (
     <div className="pb-3" role="feed" aria-label={t("records.sessionFlow")}>
-      {groups.map((group) => (
-        <section className="mt-3 first:mt-0" key={group.key}>
-          <div className="flex items-center gap-2 px-3 pt-4 pb-2 text-xs font-medium text-muted-foreground">
-            <span>{group.label}</span>
-            <Badge className="font-normal tabular-nums" variant="secondary">
-              {t("records.countItems", { count: group.sessions.length })}
-            </Badge>
-          </div>
-          {group.sessions.map((session) =>
-            isModelDiscoveryProtocol(session.input_protocol) ? (
-              <DiscoveryRow
-                key={session.id}
-                onOpen={() => onOpen(session.id)}
-                selected={session.id === selectedId}
-                session={session}
-                service={requestServiceIdentity(session, services)}
-              />
-            ) : (
-              <SessionRow
-                key={session.id}
-                onOpen={() => onOpen(session.id)}
-                selected={session.id === selectedId}
-                service={requestServiceIdentity(session, services)}
-                session={session}
-              />
-            ),
-          )}
-        </section>
-      ))}
+      {groups.map((group) => {
+        const rows = group.sessions.slice(0, remaining);
+        remaining -= rows.length;
+        if (rows.length === 0) return null;
+        return (
+          <section className="mt-3 first:mt-0" key={group.key}>
+            <div className="flex items-center gap-2 px-3 pt-4 pb-2 text-xs font-medium text-muted-foreground">
+              <span>{group.label}</span>
+              <Badge className="font-normal tabular-nums" variant="secondary">
+                {t("records.countItems", { count: group.sessions.length })}
+              </Badge>
+            </div>
+            {rows.map((session) =>
+              isModelDiscoveryProtocol(session.input_protocol) ? (
+                <DiscoveryRow
+                  key={session.id}
+                  onOpen={onOpen}
+                  selected={session.id === selectedId}
+                  services={services}
+                  session={session}
+                />
+              ) : (
+                <SessionRow
+                  key={session.id}
+                  onOpen={onOpen}
+                  selected={session.id === selectedId}
+                  services={services}
+                  session={session}
+                />
+              ),
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-function DiscoveryRow({
+const DiscoveryRow = memo(function DiscoveryRow({
   session,
-  service,
+  services,
   selected,
   onOpen,
 }: {
   session: RequestSession;
-  service: RequestServiceIdentity;
+  services: RequestServiceMap;
   selected: boolean;
-  onOpen: () => void;
+  onOpen: (sessionId: string) => void;
 }) {
   const t = useT();
   const nowMs = useLiveClock(session.active_request_starts.length > 0);
-  const last = new Date(session.last_started_at);
+  const service = requestServiceIdentity(session, services);
   return (
     <DataRow
       asChild
@@ -1811,7 +1901,7 @@ function DiscoveryRow({
         className="h-auto w-full rounded-none bg-transparent text-left font-normal whitespace-normal text-foreground hover:bg-muted/60 focus-visible:bg-accent focus-visible:ring-inset aria-[current=true]:bg-accent"
         data-session-id={session.id}
         data-testid="request-session-row"
-        onClick={onOpen}
+        onClick={() => onOpen(session.id)}
         type="button"
         variant="ghost"
       >
@@ -1848,31 +1938,30 @@ function DiscoveryRow({
           dateTime={session.last_started_at}
           title={formatDateTime(session.last_started_at)}
         >
-          {Number.isNaN(last.getTime())
-            ? session.last_started_at
-            : last.toLocaleTimeString(dateTimeLocale(), { hour12: false })}
+          {formatTime(session.last_started_at)}
         </time>
       </Button>
     </DataRow>
   );
-}
+});
 
-function SessionRow({
+const SessionRow = memo(function SessionRow({
   session,
-  service,
+  services,
   selected,
   onOpen,
 }: {
   session: RequestSession;
-  service: RequestServiceIdentity;
+  services: RequestServiceMap;
   selected: boolean;
-  onOpen: () => void;
+  onOpen: (sessionId: string) => void;
 }) {
-  const t = i18n.t.bind(i18n);
+  // Memoized, so it subscribes to the language itself.
+  const t = useT();
   // The elapsed time is interpolated into a translated sentence, so the row is
   // the smallest thing that can repaint it. Only active requests tick.
   const nowMs = useLiveClock(session.active_request_starts.length > 0);
-  const last = new Date(session.last_started_at);
+  const service = requestServiceIdentity(session, services);
   return (
     <DataRow
       asChild
@@ -1883,7 +1972,7 @@ function SessionRow({
         className="h-auto w-full rounded-none bg-transparent text-left font-normal whitespace-normal text-foreground hover:bg-muted/60 focus-visible:bg-accent focus-visible:ring-inset aria-[current=true]:bg-accent"
         data-session-id={session.id}
         data-testid="request-session-row"
-        onClick={onOpen}
+        onClick={() => onOpen(session.id)}
         type="button"
         variant="ghost"
       >
@@ -1944,9 +2033,7 @@ function SessionRow({
             dateTime={session.last_started_at}
             title={formatDateTime(session.last_started_at)}
           >
-            {Number.isNaN(last.getTime())
-              ? session.last_started_at
-              : last.toLocaleTimeString(dateTimeLocale(), { hour12: false })}
+            {formatTime(session.last_started_at)}
           </time>
         </span>
         <ModelLabel
@@ -1959,7 +2046,7 @@ function SessionRow({
       </Button>
     </DataRow>
   );
-}
+});
 
 function RecordDetail({
   serviceNames,
@@ -1974,8 +2061,12 @@ function RecordDetail({
   auditSettings,
   deleting,
   rawSealing,
+  initialTab,
+  newerAvailable,
+  olderAvailable,
   onBack,
   onDelete,
+  onNavigate,
   onClearDecrypted,
   onLockRaw,
   onSelectTurn,
@@ -1994,8 +2085,12 @@ function RecordDetail({
   auditSettings: AuditSettings | null;
   deleting: boolean;
   rawSealing: RawSealingState | null;
+  initialTab: "conversation" | "trajectory";
+  newerAvailable: boolean;
+  olderAvailable: boolean;
   onBack: () => void;
   onDelete: () => void;
+  onNavigate: (direction: -1 | 1) => void;
   onClearDecrypted: () => void;
   onLockRaw: () => void;
   onSelectTurn: (requestId: string) => void;
@@ -2005,7 +2100,28 @@ function RecordDetail({
   const t = useT();
   const copyFeedback = useCopyFeedback();
   const [bundleSize, setBundleSize] = useState<number | null>(null);
-  const [detailTab, setDetailTab] = useState<DetailTab>("trajectory");
+  // The tab the operator reads conversations in is a habit, not a property
+  // of one session, so it is remembered across sessions and page visits.
+  const [rememberedTab, setRememberedTab] = useWorkspaceSnapshot<DetailTab>(
+    "request-detail-tab",
+    initialTab,
+    "desktop",
+  );
+  const discovery = isModelDiscoveryProtocol(session.input_protocol);
+  const defaultTab: DetailTab =
+    rememberedTab === "conversation" && discovery
+      ? "trajectory"
+      : rememberedTab;
+  const [detailTab, setDetailTabState] = useState<DetailTab>(defaultTab);
+  const setDetailTab = (tab: DetailTab) => {
+    setDetailTabState(tab);
+    if (tab === "conversation" || tab === "trajectory") setRememberedTab(tab);
+  };
+  const [outlineOpen, setOutlineOpen] = useWorkspaceSnapshot(
+    "request-conversation-outline",
+    true,
+    "desktop",
+  );
   const [childrenByRoot, setChildrenByRoot] = useState<
     Record<string, RequestRecord[]>
   >({});
@@ -2019,7 +2135,8 @@ function RecordDetail({
   const upstreamResponsePart = auditContent?.upstream_response_content ?? null;
 
   useEffect(() => {
-    setDetailTab("trajectory");
+    setDetailTabState(defaultTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id]);
 
   // One request per root that retried, so this must not re-run on a new `turns`
@@ -2065,6 +2182,27 @@ function RecordDetail({
       cancelled = true;
     };
   }, [childRoots]);
+
+  // Failures and tokens across the whole conversation, retries included,
+  // for the one-line summary under the title.
+  const everyRecord = useMemo(
+    () => [...turns, ...Object.values(childrenByRoot).flat()],
+    [turns, childrenByRoot],
+  );
+  const failedCalls = everyRecord.filter((item) => {
+    const status = displayRequestStatus(item.status, item.http_status);
+    return status === "failed" || status === "blocked";
+  }).length;
+  const sessionTokens = everyRecord.reduce<{
+    input: number;
+    output: number;
+  } | null>((sum, item) => {
+    if (!item.usage) return sum;
+    return {
+      input: (sum?.input ?? 0) + item.usage.input_tokens,
+      output: (sum?.output ?? 0) + item.usage.output_tokens,
+    };
+  }, null);
 
   const exportEnvironment = useExportEnvironment(auditSettings);
   // The same diagnosis context for copy and export: a record alone cannot
@@ -2133,63 +2271,76 @@ function RecordDetail({
         titleId="request-detail-heading"
         titlePrefix={<ClientTypeIcon clientType={record.client_type} />}
         titleSuffix={
-          <StatusBadge
-            className="shrink-0"
-            data-testid="record-status"
-            tone={statusTone(session.status)}
-          >
-            {statusLabel(session.status)}
-            {session.status === "pending" ? (
-              <span className="ml-1.5 tabular-nums">
-                <SessionDuration session={session} />
-              </span>
+          <>
+            <StatusBadge
+              className="shrink-0"
+              data-testid="record-status"
+              tone={statusTone(session.status)}
+            >
+              {statusLabel(session.status)}
+              {session.status === "pending" ? (
+                <span className="ml-1.5 tabular-nums">
+                  <SessionDuration session={session} />
+                </span>
+              ) : null}
+            </StatusBadge>
+            <span aria-hidden="true" className="text-border">
+              ·
+            </span>
+            <RequestServiceLabel
+              className="max-w-64 text-xs"
+              labelClassName="sr-only"
+              service={requestServiceIdentity(record, services)}
+            />
+            {!discovery && session.requested_model ? (
+              <>
+                <span aria-hidden="true" className="text-border">
+                  ·
+                </span>
+                <ModelLabel
+                  className="max-w-56 text-xs"
+                  model={session.requested_model}
+                  reasoningEffort={session.reasoning_effort}
+                  redirectedTo={session.model_redirect?.to}
+                />
+              </>
             ) : null}
-          </StatusBadge>
+          </>
         }
         actionsClassName="flex-wrap justify-end gap-1.5"
         actions={
           <>
-            {copyFeedback.activeKey === "bundle-meta" ? (
+            {copyFeedback.activeKey !== null &&
+            MENU_COPY_KEYS.has(copyFeedback.activeKey) ? (
               <span className="text-micro text-muted-foreground" role="status">
-                {copyButtonLabel(copyFeedback, "bundle-meta")}
+                {copyButtonLabel(copyFeedback, copyFeedback.activeKey)}
               </span>
             ) : null}
             <IconButton
-              className="text-danger-foreground hover:bg-danger-wash hover:text-danger-foreground"
-              disabled={deleting || record.status === "pending"}
-              label={
-                record.status === "pending"
-                  ? t("records.deletePending")
-                  : deleting
-                    ? t("records.deleting")
-                    : t("common.delete")
-              }
-              onClick={onDelete}
+              data-testid="newer-session"
+              disabled={!newerAvailable}
+              label={t("records.newerSession")}
+              onClick={() => onNavigate(-1)}
               type="button"
             >
-              <Trash2 aria-hidden="true" />
+              <ChevronUp aria-hidden="true" />
             </IconButton>
-            <Button
-              data-testid="copy-skill-diagnostic"
-              onClick={copySkillDiagnostic}
-              size="sm"
-              title={t("records.copySkillDiagnosticHint")}
+            <IconButton
+              data-testid="older-session"
+              disabled={!olderAvailable}
+              label={t("records.olderSession")}
+              onClick={() => onNavigate(1)}
               type="button"
-              variant="outline"
             >
-              <Copy aria-hidden="true" />
-              {copyButtonLabel(
-                copyFeedback,
-                "skill-diagnostic",
-                t("records.copySkillDiagnostic"),
-              )}
-            </Button>
+              <ChevronDown aria-hidden="true" />
+            </IconButton>
             <div className="inline-flex">
               <Button
                 className="rounded-r-none"
                 onClick={() => copyBundle(true)}
                 size="sm"
                 type="button"
+                variant="outline"
               >
                 <Copy aria-hidden="true" />
                 {copyButtonLabel(
@@ -2207,9 +2358,10 @@ function RecordDetail({
                 <DropdownMenuTrigger asChild>
                   <Button
                     aria-label={t("records.copyExportOptions")}
-                    className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
+                    className="-ml-px rounded-l-none px-1.5"
                     size="sm"
                     type="button"
+                    variant="outline"
                   >
                     <ChevronDown aria-hidden="true" />
                   </Button>
@@ -2233,17 +2385,79 @@ function RecordDetail({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label={t("records.moreActions")}
+                  data-testid="record-more-actions"
+                  size="icon-sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <Ellipsis aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  data-testid="copy-skill-diagnostic"
+                  onSelect={copySkillDiagnostic}
+                  title={t("records.copySkillDiagnosticHint")}
+                >
+                  <Copy aria-hidden="true" />
+                  {copyButtonLabel(
+                    copyFeedback,
+                    "skill-diagnostic",
+                    t("records.copySkillDiagnostic"),
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => copyFeedback.copy("session-id", session.id)}
+                >
+                  <Copy aria-hidden="true" />
+                  {copyButtonLabel(
+                    copyFeedback,
+                    "session-id",
+                    t("records.copySessionId"),
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={deleting || record.status === "pending"}
+                  onSelect={onDelete}
+                  variant="destructive"
+                >
+                  <Trash2 aria-hidden="true" />
+                  {record.status === "pending"
+                    ? t("records.deletePending")
+                    : deleting
+                      ? t("records.deleting")
+                      : t("common.delete")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </>
         }
       />
 
       <Tabs
         className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"
-        onValueChange={(value) => setDetailTab(value as DetailTab)}
+        onValueChange={(value) => {
+          if (DETAIL_TABS.includes(value as DetailTab)) {
+            setDetailTab(value as DetailTab);
+          }
+        }}
         value={detailTab}
       >
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-1.5">
           <TabsList aria-label={t("records.sections")} className="h-8">
+            {!discovery && (
+              <TabsTrigger
+                onClick={() => setDetailTab("conversation")}
+                value="conversation"
+              >
+                {t("conversation.tab")}
+              </TabsTrigger>
+            )}
             <TabsTrigger
               onClick={() => setDetailTab("trajectory")}
               value="trajectory"
@@ -2268,41 +2482,127 @@ function RecordDetail({
               {t("records.tabAudit")}
             </TabsTrigger>
           </TabsList>
-          <dl className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-micro text-muted-foreground">
-            <div className="flex min-w-0 max-w-64 items-center gap-1.5">
-              <dt className="sr-only">{t("records.provider")}</dt>
-              <dd className="min-w-0 text-foreground">
-                <RequestServiceLabel
-                  service={requestServiceIdentity(record, services)}
-                />
-              </dd>
-            </div>
-            {isModelDiscoveryProtocol(session.input_protocol) && (
+          <dl
+            data-testid="session-performance"
+            className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-micro text-muted-foreground [&>div+div]:before:mr-2 [&>div+div]:before:text-border [&>div+div]:before:content-['·']"
+          >
+            {detailTab === "conversation" ? (
+              <div className="flex items-center">
+                <dt className="sr-only">{t("conversation.outline")}</dt>
+                <dd>
+                  <Button
+                    aria-pressed={outlineOpen}
+                    className={cn(
+                      "h-6 px-1.5 text-micro text-muted-foreground",
+                      outlineOpen && "bg-accent text-accent-foreground",
+                    )}
+                    data-testid="conversation-outline-toggle"
+                    onClick={() => setOutlineOpen((current) => !current)}
+                    size="xs"
+                    type="button"
+                    variant="ghost"
+                  >
+                    {t("conversation.outline")}
+                  </Button>
+                </dd>
+              </div>
+            ) : null}
+            {discovery ? (
               <div className="flex items-center gap-1.5">
                 <dt>{t("records.duration")}</dt>
                 <dd className="font-medium tabular-nums text-foreground">
                   <SessionDuration session={session} />
                 </dd>
               </div>
-            )}
-            <div className="flex items-center gap-1.5">
-              <dt>{t("records.turns")}</dt>
-              <dd className="font-medium tabular-nums text-foreground">
-                {session.turn_count}
+            ) : null}
+            <div className="flex items-center">
+              <dt className="sr-only">{t("records.turns")}</dt>
+              <dd className="tabular-nums text-foreground">
+                {t("records.turnsCount", { count: session.turn_count })}
               </dd>
             </div>
-            <div className="flex items-center gap-1.5">
-              <dt>{t("records.calls")}</dt>
-              <dd className="font-medium tabular-nums text-foreground">
-                {session.call_count}
+            <div className="flex items-center">
+              <dt className="sr-only">{t("records.calls")}</dt>
+              <dd className="tabular-nums text-foreground">
+                {t("conversation.calls", { count: session.call_count })}
               </dd>
             </div>
+            {failedCalls > 0 ? (
+              <div className="flex items-center">
+                <dt className="sr-only">{t("status.failed")}</dt>
+                <dd
+                  className="tabular-nums text-danger-foreground"
+                  data-testid="session-failed-calls"
+                >
+                  {t("conversation.failures", { count: failedCalls })}
+                </dd>
+              </div>
+            ) : null}
+            {sessionTokens ? (
+              <div className="flex items-center">
+                <dt className="sr-only">{t("records.totalTokens")}</dt>
+                <dd
+                  className="tabular-nums text-foreground"
+                  title={`${t("records.inputTokens")} ${sessionTokens.input.toLocaleString()} · ${t("records.outputTokens")} ${sessionTokens.output.toLocaleString()}`}
+                >
+                  {t("conversation.tokens", {
+                    input: formatCompactNumber(sessionTokens.input),
+                    output: formatCompactNumber(sessionTokens.output),
+                  })}
+                </dd>
+              </div>
+            ) : null}
+            {!discovery ? (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <dt>{t("records.modelDuration")}</dt>
+                  <dd className="tabular-nums text-foreground">
+                    <SessionDuration session={session} />
+                  </dd>
+                </div>
+                <div
+                  className="flex items-center gap-1.5"
+                  title={t("records.toolDurationHint")}
+                >
+                  <dt>{t("records.toolDuration")}</dt>
+                  <dd className="tabular-nums text-foreground">
+                    {session.tool_duration_ms == null
+                      ? "\u2014"
+                      : `\u2248 ${formatDuration(session.tool_duration_ms)}`}
+                  </dd>
+                </div>
+                <div
+                  className="flex items-center gap-1.5"
+                  title={t("records.averageTTFT")}
+                >
+                  <dt>{t("records.ttft")}</dt>
+                  <dd className="tabular-nums text-foreground">
+                    {session.average_ttft_ms == null
+                      ? "\u2014"
+                      : formatDuration(session.average_ttft_ms)}
+                  </dd>
+                </div>
+                <div className="flex items-center gap-1">
+                  <dt className="sr-only">{t("records.outputSpeed")}</dt>
+                  <dd className="tabular-nums text-foreground">
+                    {session.output_tokens_per_second == null
+                      ? "\u2014 tok/s"
+                      : `${session.output_tokens_per_second.toFixed(1)} tok/s`}
+                  </dd>
+                  <HelpPopover label={t("records.performanceStats")}>
+                    <div className="space-y-2">
+                      <p>{t("records.modelDurationHint")}</p>
+                      <p>{t("records.toolDurationHint")}</p>
+                      <p>{t("records.averageTTFTHint")}</p>
+                      <p>{t("records.outputSpeedHint")}</p>
+                      <p>{t("records.performanceMissingHint")}</p>
+                    </div>
+                  </HelpPopover>
+                </div>
+              </>
+            ) : null}
           </dl>
         </div>
-
-        {!isModelDiscoveryProtocol(session.input_protocol) && (
-          <SessionPerformance session={session} />
-        )}
 
         <TabsContent
           className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
@@ -2318,6 +2618,29 @@ function RecordDetail({
             }}
           />
         </TabsContent>
+
+        {!discovery && (
+          <TabsContent
+            className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            value="conversation"
+          >
+            <RequestConversation
+              auditContent={auditContent}
+              auditError={auditError}
+              auditLoading={auditLoading}
+              childrenByRoot={childrenByRoot}
+              copyFeedback={copyFeedback}
+              onSelectRequest={onSelectTurn}
+              onUnlockRaw={onUnlockRaw}
+              outlineOpen={outlineOpen}
+              rawSealing={rawSealing}
+              selectedRequestId={record.id}
+              services={services}
+              session={session}
+              turns={turns}
+            />
+          </TabsContent>
+        )}
 
         <TabsContent
           className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
@@ -2986,10 +3309,37 @@ function dateTimeLocale(): string {
   return i18n.language === "zh-CN" ? "zh-CN" : "en";
 }
 
-function formatDateTime(value: string): string {
+// Same output as toLocaleString / toLocaleTimeString with `hour12: false`,
+// which build a new formatter per call; the list formats two times per row.
+const dateTimeFormats = new Map<string, Intl.DateTimeFormat>();
+
+function formatDate(value: string, withDate: boolean): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(dateTimeLocale(), { hour12: false });
+  const locale = dateTimeLocale();
+  const key = `${locale}:${withDate}`;
+  let format = dateTimeFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, {
+      ...(withDate
+        ? { year: "numeric", month: "numeric", day: "numeric" }
+        : {}),
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+      hour12: false,
+    });
+    dateTimeFormats.set(key, format);
+  }
+  return format.format(date);
+}
+
+function formatDateTime(value: string): string {
+  return formatDate(value, true);
+}
+
+function formatTime(value: string): string {
+  return formatDate(value, false);
 }
 
 function formatBytes(bytes: number): string {
