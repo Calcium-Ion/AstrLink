@@ -417,6 +417,10 @@ paths:
                     phase: alpha
                     primary: false
                     streaming: false
+                  - id: openai.alpha_search
+                    phase: alpha
+                    primary: false
+                    streaming: false
                   - id: anthropic.messages
                     phase: alpha
                     primary: false
@@ -4552,7 +4556,7 @@ components:
           $ref: "#/components/schemas/HTTPServiceConnectionInput"
         capabilities:
           type: array
-          description: Required for HTTP services. Subscription services default to the provider's fixed native capabilities; when supplied, the list must keep those unchanged and may only add native-mode local conversions whose convert_to is a protocol the provider serves (openai.responses for Codex, anthropic.messages for Claude, openai.responses or openai.chat for Grok, anthropic.messages, openai.responses or openai.chat for GitHub Copilot).
+          description: Required for HTTP services. Subscription services default to the provider's fixed native capabilities, including non-streaming openai.alpha_search for Codex; when supplied, the list must keep those unchanged and may only add native-mode local conversions whose convert_to is a protocol the provider serves (openai.responses for Codex, anthropic.messages for Claude, openai.responses or openai.chat for Grok, anthropic.messages, openai.responses or openai.chat for GitHub Copilot).
           items:
             $ref: ./protocol-capabilities.schema.json#/$defs/ServiceCapability
       additionalProperties: false
@@ -5069,7 +5073,7 @@ components:
       properties:
         protocol:
           $ref: ./protocol-capabilities.schema.json#/$defs/ProtocolId
-          description: Must be a protocol with inspectable request-body roots.
+          description: Must be a protocol with inspectable request-body roots. openai.alpha_search uses commands.search_query[0].q for the generated search sample.
         sample_text:
           type: string
           minLength: 1

@@ -81,6 +81,9 @@ var exactProtocolRoutes = map[string]protocolRoute{
 	"/v1/responses/compact": {
 		method: http.MethodPost, protocol: contract.ProtocolOpenAIResponsesCompact, inspectMetadata: true,
 	},
+	"/v1/alpha/search": {
+		method: http.MethodPost, protocol: contract.ProtocolOpenAIAlphaSearch, inspectMetadata: true,
+	},
 	"/v1/messages": {
 		method: http.MethodPost, protocol: contract.ProtocolAnthropicMessages, inspectMetadata: true,
 	},
@@ -142,7 +145,7 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	if err != nil {
 		return Request{}, err
 	}
-	if result.Protocol != contract.ProtocolOpenAIResponsesCompact {
+	if result.Protocol != contract.ProtocolOpenAIResponsesCompact && result.Protocol != contract.ProtocolOpenAIAlphaSearch {
 		result.Streaming = metadata.Stream
 	}
 	if result.Model == "" {
@@ -154,7 +157,7 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	result.ConversationID = metadata.ConversationID
 	result.InputPreview = metadata.InputPreview
 	result.Conversation = metadata.Conversation
-	if result.Protocol == contract.ProtocolOpenAIResponses || result.Protocol == contract.ProtocolOpenAIResponsesCompact {
+	if result.Protocol == contract.ProtocolOpenAIResponses || result.Protocol == contract.ProtocolOpenAIResponsesCompact || result.Protocol == contract.ProtocolOpenAIAlphaSearch {
 		// Read the caller's identity before subscription forwarding scopes it
 		// to an upstream account. A fork can retain its parent's cache key and
 		// history, so the session header is authoritative for record grouping.
@@ -172,6 +175,9 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 }
 
 func validateClassifiedRequest(request Request) (Request, error) {
+	if request.Protocol == contract.ProtocolOpenAIAlphaSearch && strings.TrimSpace(request.Model) == "" {
+		return Request{}, errInvalidMetadata
+	}
 	if utf8.RuneCountInString(request.Model) > maxModelRunes {
 		return Request{}, errInvalidMetadata
 	}
@@ -366,6 +372,9 @@ func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, ma
 			metadata.ConversationID = conversationCursor(summary, metadata.PreviousResponseID)
 			metadata.InputPreview = sanitizePreview(summary.LastUserText)
 		}
+	}
+	if protocol == contract.ProtocolOpenAIAlphaSearch {
+		inspectAlphaSearchMetadata(&metadata, fields)
 	}
 	metadata.raw = raw
 	return metadata, nil

@@ -2383,7 +2383,10 @@ describe("SafetyPolicy", () => {
     ).toContain("产品发布说明");
   });
 
-  it("applies a request format chosen from the compact settings and clears stale results", async () => {
+  it.each([
+    ["Anthropic Messages", "anthropic.messages"],
+    ["Alpha Search", "openai.alpha_search"],
+  ])("switches to %s and clears results", async (label, protocol) => {
     bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
       policyRecord({ enabled: true }),
     );
@@ -2403,7 +2406,7 @@ describe("SafetyPolicy", () => {
     ).not.toBeNull();
 
     await act(async () => button("请求格式").click());
-    await chooseOption('[aria-label="试运行协议"]', "Anthropic Messages");
+    await chooseOption('[aria-label="试运行协议"]', label);
     expect(
       container.querySelector('[data-testid="safety-dry-run-result"]'),
     ).toBeNull();
@@ -2412,7 +2415,7 @@ describe("SafetyPolicy", () => {
     await flush();
     expect(bridgeMocks.dryRunPrivacyPolicy).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        protocol: "anthropic.messages",
+        protocol,
         sample_text: expect.stringContaining("chen.yu@example.com"),
       }),
     );

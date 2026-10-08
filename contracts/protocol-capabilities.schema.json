@@ -16,7 +16,7 @@
     },
     "protocols": {
       "type": "array",
-      "minItems": 8,
+      "minItems": 9,
       "items": {
         "$ref": "#/$defs/ProtocolSummary"
       },
@@ -69,6 +69,7 @@
       "enum": [
         "openai.responses",
         "openai.responses.compact",
+        "openai.alpha_search",
         "anthropic.messages",
         "google.generate_content",
         "openai.chat",
@@ -76,7 +77,7 @@
         "openai.models",
         "google.models"
       ],
-      "description": "Required Alpha text and model-discovery protocol IDs. openai.models covers /v1/models and /v1beta/openai/models; google.models covers native Gemini model discovery."
+      "description": "Required Alpha text, search, and model-discovery protocol IDs. openai.alpha_search covers non-streaming native POST /v1/alpha/search with no conversion edges. openai.models covers /v1/models and /v1beta/openai/models; google.models covers native Gemini model discovery."
     },
     "ProtocolPhase": {
       "type": "string",
@@ -395,6 +396,7 @@
               "protocol": {
                 "enum": [
                   "openai.responses.compact",
+                  "openai.alpha_search",
                   "openai.models",
                   "google.models",
                   "openai.embeddings",
@@ -586,6 +588,13 @@
             },
             {
               "contains": {
+                "$ref": "#/$defs/ProtocolWithIdOpenaiAlphaSearch"
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
                 "$ref": "#/$defs/ProtocolWithIdAnthropicMessages"
               },
               "minContains": 1,
@@ -666,6 +675,9 @@
     "ProtocolWithIdOpenaiResponsesCompact": {
       "$ref": "#/$defs/ProtocolIdConstraintOpenaiResponsesCompact"
     },
+    "ProtocolWithIdOpenaiAlphaSearch": {
+      "$ref": "#/$defs/ProtocolIdConstraintOpenaiAlphaSearch"
+    },
     "ProtocolWithIdAnthropicMessages": {
       "$ref": "#/$defs/ProtocolIdConstraintAnthropicMessages"
     },
@@ -698,6 +710,16 @@
       "properties": {
         "id": { "const": "openai.responses.compact" },
         "phase": { "const": "alpha" }
+      }
+    },
+    "ProtocolIdConstraintOpenaiAlphaSearch": {
+      "type": "object",
+      "required": ["id", "phase", "primary", "streaming"],
+      "properties": {
+        "id": { "const": "openai.alpha_search" },
+        "phase": { "const": "alpha" },
+        "primary": { "const": false },
+        "streaming": { "const": false }
       }
     },
     "ProtocolIdConstraintAnthropicMessages": {

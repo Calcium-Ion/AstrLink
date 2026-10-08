@@ -11,6 +11,8 @@ import {
   parseSubscriptionRiskEvents,
   serviceStatusLabel,
   subscriptionRiskLabel,
+  subscriptionNativeCapabilities,
+  subscriptionConversionTargets,
   serviceBuiltinRedirects,
   supportsResponsesWebSocket,
   withClaudeCodeRedirects,
@@ -19,6 +21,31 @@ import {
 const createdAt = "2026-07-28T12:00:00Z";
 
 describe("service model", () => {
+  it("fixes Alpha Search as native non-streaming only for Codex subscriptions", () => {
+    for (const [kind, capabilities] of Object.entries(
+      subscriptionNativeCapabilities,
+    )) {
+      expect(
+        capabilities.filter(
+          ({ protocol }) => protocol === "openai.alpha_search",
+        ),
+      ).toEqual(
+        kind === "codex_subscription"
+          ? [
+              {
+                protocol: "openai.alpha_search",
+                mode: "native",
+                streaming: false,
+              },
+            ]
+          : [],
+      );
+    }
+    for (const targets of Object.values(subscriptionConversionTargets)) {
+      expect(targets).not.toContain("openai.alpha_search");
+    }
+  });
+
   it("parses HTTP and subscription services from one page", () => {
     const page = parseServicePage({
       items: [

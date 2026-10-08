@@ -178,6 +178,7 @@ const dryRunProtocolOptions: ReadonlyArray<{
   { value: "openai.completions", label: "OpenAI Completions" },
   { value: "openai.responses", label: "OpenAI Responses" },
   { value: "openai.responses.compact", label: "OpenAI Responses Compact" },
+  { value: "openai.alpha_search", label: "Alpha Search" },
   { value: "anthropic.messages", label: "Anthropic Messages" },
   { value: "google.generate_content", label: "Google Generate Content" },
 ];

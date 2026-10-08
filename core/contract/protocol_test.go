@@ -20,6 +20,7 @@ func TestAlphaProtocolDescriptorsAreFrozen(t *testing.T) {
 	want := []ProtocolID{
 		ProtocolOpenAIResponses,
 		ProtocolOpenAIResponsesCompact,
+		ProtocolOpenAIAlphaSearch,
 		ProtocolAnthropicMessages,
 		ProtocolGoogleGenerateContent,
 		ProtocolOpenAIChat,

@@ -117,6 +117,7 @@ export const subscriptionNativeCapabilities: Record<
   codex_subscription: [
     { protocol: "openai.responses", mode: "native", streaming: true },
     { protocol: "openai.responses.compact", mode: "native", streaming: false },
+    { protocol: "openai.alpha_search", mode: "native", streaming: false },
     { protocol: "openai.models", mode: "native", streaming: false },
   ],
   claude_subscription: [

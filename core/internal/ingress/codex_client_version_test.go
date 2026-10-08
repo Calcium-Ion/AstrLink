@@ -81,6 +81,7 @@ func TestCodexForwardingIdentityAcrossHTTPPaths(t *testing.T) {
 			{"/v1/responses", `{"id":"resp_test","object":"response","output":[]}`, false},
 			{"/v1/responses", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"output\":[]}}\n\n", true},
 			{"/v1/responses/compact", `{"id":"resp_test","object":"response.compaction","output":[]}`, false},
+			{"/v1/alpha/search", `{"output":"found","encrypted_output":"opaque","results":[]}`, false},
 			{"/v1/models", `{"models":[{"slug":"gpt-6-astra","visibility":"list"}]}`, false},
 			{"/v1/models?client_version=0.103.0", `{"models":[{"slug":"gpt-6-astra","visibility":"list"}]}`, false},
 		} {

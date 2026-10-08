@@ -507,6 +507,9 @@ func visibleResponseTextRefs(
 		appendOpenAICompletionRefs(&refs, object, frame)
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		appendOpenAIResponseRefs(&refs, object, frame)
+	case contract.ProtocolOpenAIAlphaSearch:
+		// Encrypted output and opaque result DTOs must survive unchanged.
+		appendStringRef(&refs, object, "output", "alpha_search:output", frame)
 	case contract.ProtocolAnthropicMessages:
 		appendAnthropicRefs(&refs, object, frame)
 	case contract.ProtocolGoogleGenerateContent:

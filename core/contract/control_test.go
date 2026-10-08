@@ -8,8 +8,8 @@ import (
 
 func TestDefaultCapabilitiesExposeAlphaSemanticsWithoutConversion(t *testing.T) {
 	capabilities := DefaultCapabilitiesResponse()
-	if len(capabilities.Protocols) != 8 {
-		t.Fatalf("protocol count = %d, want 8", len(capabilities.Protocols))
+	if len(capabilities.Protocols) != 9 {
+		t.Fatalf("protocol count = %d, want 9", len(capabilities.Protocols))
 	}
 	if capabilities.ConversionEngine.Name != "relaykit" || capabilities.ConversionEngine.Version != nil || capabilities.ConversionEngine.Available {
 		t.Fatalf("unexpected conversion engine descriptor: %#v", capabilities.ConversionEngine)

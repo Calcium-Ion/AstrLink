@@ -12,6 +12,7 @@ type ProtocolID string
 const (
 	ProtocolOpenAIResponses        ProtocolID = "openai.responses"
 	ProtocolOpenAIResponsesCompact ProtocolID = "openai.responses.compact"
+	ProtocolOpenAIAlphaSearch      ProtocolID = "openai.alpha_search"
 	ProtocolAnthropicMessages      ProtocolID = "anthropic.messages"
 	ProtocolGoogleGenerateContent  ProtocolID = "google.generate_content"
 	ProtocolOpenAIChat             ProtocolID = "openai.chat"
@@ -47,6 +48,7 @@ type ProtocolDescriptor struct {
 var descriptors = [...]ProtocolDescriptor{
 	{ID: ProtocolOpenAIResponses, Phase: ProtocolPhaseAlpha, Primary: true, Streaming: true},
 	{ID: ProtocolOpenAIResponsesCompact, Phase: ProtocolPhaseAlpha, Streaming: false},
+	{ID: ProtocolOpenAIAlphaSearch, Phase: ProtocolPhaseAlpha, Streaming: false},
 	{ID: ProtocolAnthropicMessages, Phase: ProtocolPhaseAlpha, Streaming: true},
 	{ID: ProtocolGoogleGenerateContent, Phase: ProtocolPhaseAlpha, Streaming: true},
 	{ID: ProtocolOpenAIChat, Phase: ProtocolPhaseAlpha, Streaming: true},

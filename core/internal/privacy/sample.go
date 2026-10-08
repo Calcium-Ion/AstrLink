@@ -41,6 +41,12 @@ func WrapSampleText(protocol contract.ProtocolID, sample string) ([]byte, error)
 		payload = map[string]any{"prompt": sample}
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		payload = map[string]any{"input": sample}
+	case contract.ProtocolOpenAIAlphaSearch:
+		payload = map[string]any{
+			"commands": map[string]any{
+				"search_query": []map[string]string{{"q": sample}},
+			},
+		}
 	case contract.ProtocolGoogleGenerateContent:
 		payload = map[string]any{
 			"contents": []map[string]any{

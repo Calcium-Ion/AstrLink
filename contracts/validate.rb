@@ -92,6 +92,7 @@ raise "OpenAPI capability example differs from frozen fixture" unless openapi_ex
 expected_protocols = %w[
   openai.responses
   openai.responses.compact
+  openai.alpha_search
   anthropic.messages
   google.generate_content
   openai.chat
@@ -101,6 +102,11 @@ expected_protocols = %w[
 ]
 actual_protocols = fixture.fetch("protocols").map { |protocol| protocol.fetch("id") }
 raise "Alpha protocol registry drifted" unless actual_protocols == expected_protocols
+raise "Alpha protocol schema enum drifted" unless schema.dig("$defs", "BuiltInAlphaProtocolId", "enum") == expected_protocols
+alpha_search = fixture.fetch("protocols").find { |protocol| protocol.fetch("id") == "openai.alpha_search" }
+raise "Alpha Search must be non-primary and non-streaming" unless alpha_search == {
+  "id" => "openai.alpha_search", "phase" => "alpha", "primary" => false, "streaming" => false
+}
 
 plans = fixture.fetch("plan_types").to_h { |plan| [plan.fetch("id"), plan] }
 raise "native must be protocol-preserving in Alpha" unless plans.dig("native", "available_in_alpha") && !plans.dig("native", "uses_local_conversion")

@@ -46,6 +46,36 @@ describe("dry-run original text", () => {
     );
   });
 
+  it("reads the Alpha Search dry-run query without treating input or metadata as the sample", () => {
+    const searchBody = JSON.stringify({
+      model: "gpt-5.1",
+      id: "req_1",
+      input: "other input",
+      commands: {
+        search_query: [{ q: text, recency: 1, domains: ["example.com"] }],
+      },
+      settings: { locale: "en" },
+      future_field: { nested: true },
+    });
+    expect(dryRunSampleText(searchBody, "openai.alpha_search")).toBe(text);
+    expect(
+      dryRunFindingSpan(searchBody, {
+        ...finding,
+        path: "/commands/search_query/0/q",
+      }),
+    ).toEqual({ text, value, start, end: start + value.length });
+    expect(
+      dryRunSampleText(
+        JSON.stringify({
+          model: "gpt-5.1",
+          input: text,
+          commands: { search_query: [] },
+        }),
+        "openai.alpha_search",
+      ),
+    ).toBeNull();
+  });
+
   it("reads plain text from every supported protocol without including other request fields", () => {
     expect(dryRunSampleText(body, "openai.chat")).toBe(text);
     expect(dryRunSampleText(body, "anthropic.messages")).toBe(text);

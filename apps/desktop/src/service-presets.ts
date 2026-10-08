@@ -150,6 +150,12 @@ export const alphaProtocolDescriptors: readonly ProtocolDescriptor[] = [
     streaming: false,
   },
   {
+    id: "openai.alpha_search",
+    phase: "alpha",
+    primary: false,
+    streaming: false,
+  },
+  {
     id: "anthropic.messages",
     phase: "alpha",
     primary: false,
@@ -175,6 +181,7 @@ export const alphaProtocolDescriptors: readonly ProtocolDescriptor[] = [
 export const protocolLabels: Readonly<Record<string, string>> = {
   "openai.responses": "OpenAI Responses",
   "openai.responses.compact": "Responses Compact",
+  "openai.alpha_search": "Alpha Search",
   "anthropic.messages": "Anthropic Messages",
   "google.generate_content": "Gemini Generate Content",
   "openai.chat": "OpenAI Chat Completions",
@@ -204,6 +211,7 @@ export const protocolClientTypes: Readonly<
 export const protocolEntryPaths: Readonly<Record<string, string>> = {
   "openai.responses": "/v1/responses",
   "openai.responses.compact": "/v1/responses/compact",
+  "openai.alpha_search": "/v1/alpha/search",
   "anthropic.messages": "/v1/messages",
   "google.generate_content": "/v1beta/models/:model:generateContent",
   "openai.chat": "/v1/chat/completions",
@@ -221,8 +229,6 @@ export function protocolEntryPath(
   }
   return protocolEntryPaths[protocolID] ?? protocolID;
 }
-
-const allProtocolIDs = alphaProtocolDescriptors.map(({ id }) => id);
 
 const profileDefinitions: Readonly<
   Record<
@@ -346,14 +352,23 @@ const profileDefinitions: Readonly<
     id: "newapi",
     label: "New API",
     description:
-      "外部网关首选。适用于 New API 生态面板，自动启用全部兼容协议。",
+      "外部网关首选。适用于 New API 生态面板，默认启用常用兼容协议。",
     defaultName: "New API",
     kind: "newapi",
     baseURL: "",
     baseURLPlaceholder: "https://api.example.com",
     authScheme: "bearer",
     headerName: "",
-    capabilityIDs: allProtocolIDs,
+    capabilityIDs: [
+      "openai.responses",
+      "openai.responses.compact",
+      "anthropic.messages",
+      "google.generate_content",
+      "openai.chat",
+      "openai.completions",
+      "openai.models",
+      "google.models",
+    ],
     advancedOnStart: false,
   },
   openai_compatible: {

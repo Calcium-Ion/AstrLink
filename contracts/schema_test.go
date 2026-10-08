@@ -159,12 +159,47 @@ func TestRootCapabilitySchemaRejectsContractDrift(t *testing.T) {
 	}
 }
 
+func TestRootCapabilitySchemaRequiresStableAlphaSearch(t *testing.T) {
+	schema := compileSchema(t, capabilitySchemaURL)
+	for _, field := range []string{"id", "phase", "primary", "streaming", "duplicate"} {
+		t.Run(field, func(t *testing.T) {
+			instance := loadFixture(t)
+			protocols := instance["protocols"].([]any)
+			var search map[string]any
+			for _, protocol := range protocols {
+				row := protocol.(map[string]any)
+				if row["id"] == "openai.alpha_search" {
+					search = row
+					break
+				}
+			}
+			if search == nil {
+				t.Fatal("fixture is missing Alpha Search")
+			}
+			switch field {
+			case "id":
+				search[field] = "vendor.custom_search"
+			case "phase":
+				search[field] = "post_alpha"
+			case "primary", "streaming":
+				search[field] = true
+			case "duplicate":
+				instance["protocols"] = append(protocols, cloneObject(t, search))
+			}
+			if err := schema.Validate(instance); err == nil {
+				t.Fatal("invalid Alpha Search descriptor passed schema validation")
+			}
+		})
+	}
+}
+
 func TestServiceCapabilityDefinitionEnforcesStreamingRegistry(t *testing.T) {
 	// ServiceCapability is a reusable $def that the root capability response
 	// does not reference. Compile it directly so this invariant is exercised.
 	schema := compileSchema(t, capabilitySchemaURL+"#/$defs/ServiceCapability")
 	nonStreaming := []string{
 		"openai.responses.compact",
+		"openai.alpha_search",
 		"openai.models",
 		"google.models",
 		"openai.embeddings",

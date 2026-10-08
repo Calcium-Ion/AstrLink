@@ -117,6 +117,7 @@ const loopbackURLPattern =
 const requiredAlphaProtocols = [
   { id: "openai.responses", primary: true, streaming: true },
   { id: "openai.responses.compact", primary: false, streaming: false },
+  { id: "openai.alpha_search", primary: false, streaming: false },
   { id: "anthropic.messages", primary: false, streaming: true },
   { id: "google.generate_content", primary: false, streaming: true },
   { id: "openai.chat", primary: false, streaming: true },

@@ -23,7 +23,7 @@ func TestEnginePreservesResponsesEncryptedContent(t *testing.T) {
   {"type":"function_call_output","call_id":"call_3","output":{"type":"reasoning","encrypted_content":"SENSITIVE"}}
  ]
 } `
-	for _, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact} {
+	for _, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact, contract.ProtocolOpenAIAlphaSearch} {
 		for _, mode := range []string{"builtin", "custom", "model"} {
 			t.Run(string(protocol)+"/"+mode, func(t *testing.T) {
 				cipher := "gAAAAA" + strings.Repeat("Ab09_-", 335) + "=="
@@ -88,7 +88,7 @@ func TestEnginePreservesResponsesEncryptedContent(t *testing.T) {
 }
 
 func TestEncryptedResponsesHistoryDoesNotTriggerPrivacyActions(t *testing.T) {
-	for _, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact} {
+	for _, protocol := range []contract.ProtocolID{contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact, contract.ProtocolOpenAIAlphaSearch} {
 		for _, action := range []Action{ActionRedact, ActionBlock, ActionWarn} {
 			t.Run(string(protocol)+"/"+string(action), func(t *testing.T) {
 				policy := Policy{
