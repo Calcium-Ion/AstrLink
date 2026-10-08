@@ -57,7 +57,7 @@ func structuredToolPayloadPaths(protocol contract.ProtocolID, root map[string]an
 		}
 	}
 	switch protocol {
-	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
+	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact, contract.ProtocolOpenAIAlphaSearch:
 		visitArray(root["input"], func(index int, item map[string]any) {
 			path := "/input/" + jsonIndex(index)
 			if role, exists := item["role"]; exists && role != "assistant" {

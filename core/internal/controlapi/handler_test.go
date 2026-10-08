@@ -40,8 +40,8 @@ func TestReadOnlyControlContract(t *testing.T) {
 		response := serve(t, handler, http.MethodGet, CapabilitiesPath)
 		var body contract.CapabilitiesResponse
 		decode(t, response, &body)
-		if len(body.Protocols) != 8 || len(body.PlanTypes) != 3 {
-			t.Fatalf("protocols=%d plans=%d, want 8 and 3", len(body.Protocols), len(body.PlanTypes))
+		if len(body.Protocols) != 9 || len(body.PlanTypes) != 3 {
+			t.Fatalf("protocols=%d plans=%d, want 9 and 3", len(body.Protocols), len(body.PlanTypes))
 		}
 		if body.ConversionEngine.Name != "relaykit" || body.ConversionEngine.Version != nil || body.ConversionEngine.Available {
 			t.Fatalf("unexpected conversion engine: %#v", body.ConversionEngine)

@@ -567,6 +567,7 @@ func TestSubscriptionServicesAcceptOnlyProviderEgressConversions(t *testing.T) {
 	)
 	codex := `{"protocol":"openai.responses","mode":"native","streaming":true},` +
 		`{"protocol":"openai.responses.compact","mode":"native","streaming":false},` +
+		`{"protocol":"openai.alpha_search","mode":"native","streaming":false},` +
 		`{"protocol":"openai.models","mode":"native","streaming":false}`
 	chatToResponses := `{"protocol":"openai.chat","mode":"native","streaming":true,"convert_to":"openai.responses"}`
 	create := func(capabilities string) *httptest.ResponseRecorder {
@@ -597,7 +598,8 @@ func TestSubscriptionServicesAcceptOnlyProviderEgressConversions(t *testing.T) {
 
 	converted := createServiceForTest(t, handler,
 		`{"name":"Codex","kind":"codex_subscription","capabilities":[`+codex+","+chatToResponses+`]}`)
-	if len(converted.Capabilities) != 4 || converted.Capabilities[3].ConvertTo != contract.ProtocolOpenAIResponses {
+	nativeCount := len(contract.DefaultOpenAICodexCapabilities())
+	if len(converted.Capabilities) != nativeCount+1 || converted.Capabilities[nativeCount].ConvertTo != contract.ProtocolOpenAIResponses {
 		t.Fatalf("created capabilities = %#v", converted.Capabilities)
 	}
 	defaulted := createServiceForTest(t, handler, `{"name":"Codex default","kind":"codex_subscription"}`)
@@ -618,8 +620,8 @@ func TestSubscriptionServicesAcceptOnlyProviderEgressConversions(t *testing.T) {
 		t.Fatalf("patch status=%d body=%s", response.Code, response.Body.String())
 	}
 	saved, err := store.GetService(context.Background(), defaulted.ID)
-	if err != nil || len(saved.Service.Capabilities) != 4 ||
-		saved.Service.Capabilities[3].Protocol != contract.ProtocolOpenAIChat {
+	if err != nil || len(saved.Service.Capabilities) != nativeCount+1 ||
+		saved.Service.Capabilities[nativeCount].Protocol != contract.ProtocolOpenAIChat {
 		t.Fatalf("persisted capabilities = %#v, %v", saved.Service.Capabilities, err)
 	}
 }

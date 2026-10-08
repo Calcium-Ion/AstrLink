@@ -1169,7 +1169,7 @@
     "qualityGood": "转换质量好",
     "qualityFair": "转换质量一般",
     "qualityDiscouraged": "不推荐转换",
-    "newapiDescription": "外部网关首选。适用于 New API 生态面板，自动启用全部兼容协议。",
+    "newapiDescription": "外部网关首选。适用于 New API 生态面板，默认启用常用兼容协议。",
     "openaiCompatible": "OpenAI 兼容（Chat / Completions）",
     "openaiCompatibleDescription": "适用于提供标准 OpenAI Chat、Completions 与 Models 接口的 API 提供商。",
     "openaiCompatibleName": "OpenAI 兼容 API 提供商",

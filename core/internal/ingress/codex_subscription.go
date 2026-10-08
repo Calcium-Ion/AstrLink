@@ -52,6 +52,11 @@ func prepareCodexSubscriptionRequest(
 	if options.sessionScope != "" {
 		scopeCodexSessionHeaders(request.Header, options.sessionScope)
 	}
+	// Standalone search has its own schema. Responses normalization would
+	// remove valid search controls and inject an unsupported instructions field.
+	if protocol == contract.ProtocolOpenAIAlphaSearch {
+		return false, scopeCodexAlphaSearchSession(request, options.sessionScope)
+	}
 	legacy := !options.normalize && options.converted && protocol == contract.ProtocolOpenAIResponses
 	repair := options.normalize || legacy
 	if !repair && options.sessionScope == "" {
@@ -91,6 +96,32 @@ func prepareCodexSubscriptionRequest(
 	}
 	replaceRecoveryRequestBody(request, updated)
 	return forcedStream, nil
+}
+
+// SearchRequest.id names the search session. Scope only that string when the
+// existing account-isolation control is on; preserve every other body byte.
+func scopeCodexAlphaSearchSession(request *http.Request, scope contract.ServiceID) error {
+	if scope == "" {
+		return nil
+	}
+	raw, err := io.ReadAll(request.Body)
+	_ = request.Body.Close()
+	if err != nil {
+		return fmt.Errorf("Codex search session could not be prepared")
+	}
+	start, end, spanErr := topLevelStringValueSpan(raw, "id")
+	if spanErr == nil {
+		var id string
+		if json.Unmarshal(raw[start:end], &id) == nil && strings.TrimSpace(id) != "" {
+			encoded, _ := json.Marshal(accountauth.ScopedSessionID(scope, id))
+			updated := append([]byte(nil), raw[:start]...)
+			updated = append(updated, encoded...)
+			raw = append(updated, raw[end:]...)
+		}
+	}
+	// Missing/malformed ids are left for upstream validation, not invented.
+	replaceRecoveryRequestBody(request, raw)
+	return nil
 }
 
 func normalizeCodexSubscriptionBody(body map[string]json.RawMessage, protocol contract.ProtocolID) (changed, forcedStream bool) {

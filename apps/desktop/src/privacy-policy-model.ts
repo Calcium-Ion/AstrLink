@@ -182,6 +182,7 @@ export type PrivacyDryRunProtocol =
   | "openai.completions"
   | "openai.responses"
   | "openai.responses.compact"
+  | "openai.alpha_search"
   | "anthropic.messages"
   | "google.generate_content";
 
@@ -375,6 +376,7 @@ const dryRunProtocols = new Set<PrivacyDryRunProtocol>([
   "openai.completions",
   "openai.responses",
   "openai.responses.compact",
+  "openai.alpha_search",
   "anthropic.messages",
   "google.generate_content",
 ]);

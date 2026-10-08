@@ -873,5 +873,26 @@ WHEN NEW.layout = 'whole' AND OLD.layout <> 'whole' BEGIN
 END`,
 			`UPDATE audit_settings SET request_body_max_bytes = 33554432 WHERE request_body_max_bytes = 1048576`,
 		}},
+		// v12 moved subscription_accounts into services and dropped the old
+		// table. Append only the missing Codex native protocol. New API keeps
+		// its configured capabilities; Alpha Search remains opt-in there.
+		{Version: 50, Name: "native_alpha_search_capabilities", Statements: []string{
+			`UPDATE services
+SET document_json = json_set(
+    document_json,
+    '$.capabilities', json_insert(
+        COALESCE(json_extract(document_json, '$.capabilities'), '[]'),
+        '$[#]', json('{"protocol":"openai.alpha_search","mode":"native","streaming":false}')
+    )
+)
+WHERE json_extract(document_json, '$.kind') = 'codex_subscription'
+  AND NOT EXISTS (
+      SELECT 1 FROM json_each(services.document_json, '$.capabilities')
+      WHERE json_extract(value, '$.protocol') = 'openai.alpha_search'
+        AND json_extract(value, '$.mode') = 'native'
+        AND COALESCE(json_extract(value, '$.streaming'), 0) = 0
+        AND COALESCE(json_extract(value, '$.convert_to'), '') = ''
+  )`,
+		}},
 	}
 }

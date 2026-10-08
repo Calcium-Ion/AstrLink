@@ -343,7 +343,7 @@ func (handler *Handler) executeCandidatesWithTest(
 		clientClass := accountauth.ClientClassUnknown
 		codexForcedStream := false
 		if candidate.Service.Kind == contract.ServiceKindCodexSubscription &&
-			(plan.UpstreamProtocol == contract.ProtocolOpenAIResponses || plan.UpstreamProtocol == contract.ProtocolOpenAIResponsesCompact) {
+			(plan.UpstreamProtocol == contract.ProtocolOpenAIResponses || plan.UpstreamProtocol == contract.ProtocolOpenAIResponsesCompact || plan.UpstreamProtocol == contract.ProtocolOpenAIAlphaSearch) {
 			converted := plan.Type == contract.PlanTypeRelayKit
 			// A converted request never teaches or keeps a client identity.
 			recognized := !converted && (protection.officialPassthrough || protection.codexAutoLearn) &&
@@ -1095,6 +1095,7 @@ func requiresInspectedJSON(protocol contract.ProtocolID) bool {
 	switch protocol {
 	case contract.ProtocolOpenAIResponses,
 		contract.ProtocolOpenAIResponsesCompact,
+		contract.ProtocolOpenAIAlphaSearch,
 		contract.ProtocolAnthropicMessages,
 		contract.ProtocolOpenAIChat,
 		contract.ProtocolOpenAICompletions:

@@ -332,6 +332,11 @@ func DefaultOpenAICodexCapabilities() []Capability {
 			Streaming: false,
 		},
 		{
+			Protocol:  ProtocolOpenAIAlphaSearch,
+			Mode:      CapabilityModeNative,
+			Streaming: false,
+		},
+		{
 			Protocol:  ProtocolOpenAIModels,
 			Mode:      CapabilityModeNative,
 			Streaming: false,

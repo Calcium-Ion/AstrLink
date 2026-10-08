@@ -15,7 +15,7 @@ func extractReasoningEffort(protocol contract.ProtocolID, fields map[string]json
 	switch protocol {
 	case contract.ProtocolOpenAIChat, contract.ProtocolOpenAICompletions:
 		path = []string{"reasoning_effort"}
-	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
+	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact, contract.ProtocolOpenAIAlphaSearch:
 		path = []string{"reasoning", "effort"}
 	case contract.ProtocolAnthropicMessages:
 		path = []string{"output_config", "effort"}

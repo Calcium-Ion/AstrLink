@@ -111,7 +111,7 @@ func addToolResultReferencePaths(protocol contract.ProtocolID, root map[string]a
 	}
 
 	switch protocol {
-	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
+	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact, contract.ProtocolOpenAIAlphaSearch:
 		records(root["input"], func(index int, item map[string]any) {
 			if role, exists := item["role"]; exists && role != "assistant" {
 				return
@@ -174,6 +174,8 @@ func protocolRoots(protocol contract.ProtocolID) ([]string, bool) {
 	switch protocol {
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		return []string{"instructions", "input", "prompt"}, true
+	case contract.ProtocolOpenAIAlphaSearch:
+		return []string{"input", "commands"}, true
 	case contract.ProtocolOpenAIChat:
 		return []string{"messages"}, true
 	case contract.ProtocolOpenAICompletions:

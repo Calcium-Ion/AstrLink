@@ -14,6 +14,12 @@
       "streaming": false
     },
     {
+      "id": "openai.alpha_search",
+      "phase": "alpha",
+      "primary": false,
+      "streaming": false
+    },
+    {
       "id": "anthropic.messages",
       "phase": "alpha",
       "primary": false,

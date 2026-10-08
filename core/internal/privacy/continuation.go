@@ -43,6 +43,16 @@ func continuationPaths(protocol contract.ProtocolID, root map[string]any) map[st
 	}
 
 	switch protocol {
+	case contract.ProtocolOpenAIAlphaSearch:
+		// Codex SearchRequest reuses Responses input items. Its command
+		// ref_id values name opaque search results, not query text.
+		paths = continuationPaths(contract.ProtocolOpenAIResponses, root)
+		commands, _ := root["commands"].(map[string]any)
+		for _, name := range []string{"open", "click", "find", "screenshot"} {
+			arrayRecords(commands[name], func(index int, command map[string]any) {
+				addStrings("/commands/"+name+"/"+jsonIndex(index), command, "ref_id")
+			})
+		}
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		arrayRecords(root["input"], func(index int, item map[string]any) {
 			path := "/input/" + jsonIndex(index)

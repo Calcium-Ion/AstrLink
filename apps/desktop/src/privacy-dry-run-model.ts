@@ -9,6 +9,7 @@ const samplePaths: Record<PrivacyDryRunProtocol, string> = {
   "openai.completions": "/prompt",
   "openai.responses": "/input",
   "openai.responses.compact": "/input",
+  "openai.alpha_search": "/commands/search_query/0/q",
   "google.generate_content": "/contents/0/parts/0/text",
 };
 

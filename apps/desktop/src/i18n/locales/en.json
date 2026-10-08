@@ -1169,7 +1169,7 @@
     "qualityGood": "Good conversion quality",
     "qualityFair": "Fair conversion quality",
     "qualityDiscouraged": "Conversion not recommended",
-    "newapiDescription": "Preferred external gateway. For New API style panels. Enables every compatible protocol.",
+    "newapiDescription": "Preferred external gateway. For New API style panels. Enables common compatible protocols by default.",
     "openaiCompatible": "OpenAI compatible (Chat / Completions)",
     "openaiCompatibleDescription": "For API providers that expose standard OpenAI Chat, Completions, and Models APIs.",
     "openaiCompatibleName": "OpenAI compatible API provider",

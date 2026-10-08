@@ -4817,6 +4817,7 @@ describe("ServiceManager", () => {
         mode: "native",
         streaming: false,
       },
+      { protocol: "openai.alpha_search", mode: "native", streaming: false },
       { protocol: "openai.models", mode: "native", streaming: false },
     ];
     const listed: Service = { ...codexService, capabilities: native };
@@ -4878,6 +4879,12 @@ describe("ServiceManager", () => {
     expect(responsesSwitch.getAttribute("aria-checked")).toBe("true");
     expect(responsesSwitch.hasAttribute("disabled")).toBe(true);
     expect(responses.textContent).toContain("订阅原生支持");
+    const search = row("Alpha Search")!;
+    const searchSwitch = search.querySelector('[role="switch"]')!;
+    expect(searchSwitch.getAttribute("aria-checked")).toBe("true");
+    expect(searchSwitch.hasAttribute("disabled")).toBe(true);
+    expect(search.textContent).toContain("/v1/alpha/search");
+    expect(search.querySelector('[role="combobox"]')).toBeNull();
     expect(row("OpenAI Legacy Completions")).toBeUndefined();
     expect(row("Gemini Models")).toBeUndefined();
     const anthropic = row("Anthropic Messages")!;

@@ -8,6 +8,7 @@ import {
   httpServicePresetLabel,
   localConversionTargets,
   protocolEntryPath,
+  protocolLabels,
   serviceSiteForBaseURL,
   supportsLocalConversion,
 } from "./service-presets";
@@ -33,6 +34,17 @@ describe("HTTP service product presets", () => {
       "openai.models",
       "google.models",
     ]);
+  });
+
+  it("keeps Alpha Search opt-in for all HTTP service presets", () => {
+    expect(protocolLabels["openai.alpha_search"]).toBe("Alpha Search");
+    for (const id of httpServicePresetIDs) {
+      expect(
+        httpServicePreset(id).capabilities.filter(
+          ({ protocol }) => protocol === "openai.alpha_search",
+        ),
+      ).toEqual([]);
+    }
   });
 
   it("does not expose API-key services as Codex, Claude, or Gemini subscriptions", () => {
@@ -288,6 +300,10 @@ describe("HTTP service product presets", () => {
     // render permanently disabled options.
     expect(supportsLocalConversion("openai.responses.compact")).toBe(false);
     expect(supportsLocalConversion("openai.completions")).toBe(false);
+    expect(supportsLocalConversion("openai.alpha_search")).toBe(false);
+    expect(
+      localConversionTargets("openai.chat").map(({ id }) => id),
+    ).not.toContain("openai.alpha_search");
     expect(
       localConversionTargets("anthropic.messages", {
         available: true,
@@ -314,6 +330,7 @@ describe("HTTP service product presets", () => {
   it("maps protocol IDs to the inference-plane entry path", () => {
     expect(protocolEntryPath("anthropic.messages")).toBe("/v1/messages");
     expect(protocolEntryPath("openai.responses")).toBe("/v1/responses");
+    expect(protocolEntryPath("openai.alpha_search")).toBe("/v1/alpha/search");
     expect(protocolEntryPath("openai.chat")).toBe("/v1/chat/completions");
     expect(protocolEntryPath("google.generate_content")).toBe(
       "/v1beta/models/:model:generateContent",

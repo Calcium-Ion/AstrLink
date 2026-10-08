@@ -16,6 +16,7 @@ func TestWrapSampleTextBuildsInspectableBodies(t *testing.T) {
 		contract.ProtocolOpenAICompletions,
 		contract.ProtocolOpenAIResponses,
 		contract.ProtocolOpenAIResponsesCompact,
+		contract.ProtocolOpenAIAlphaSearch,
 		contract.ProtocolGoogleGenerateContent,
 	} {
 		body, err := WrapSampleText(protocol, sample)

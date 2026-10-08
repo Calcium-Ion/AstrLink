@@ -233,6 +233,14 @@ describe("privacy-policy IPC contract", () => {
     ).toThrow("between 0 and 1");
   });
 
+  it("accepts Alpha Search dry-run input", () => {
+    const input = {
+      protocol: "openai.alpha_search" as const,
+      sample_text: "search alice@example.com",
+    };
+    expect(validatePrivacyDryRunInput(input)).toEqual(input);
+  });
+
   it("parses kind rules and refuses to unlock a locked placeholder style", () => {
     const {
       kind_rules: _kindRules,

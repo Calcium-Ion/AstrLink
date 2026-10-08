@@ -26,6 +26,7 @@ func rewriteRequestModel(
 		return rewriteGeminiPathModel(request, upstreamModel)
 	case contract.ProtocolOpenAIResponses,
 		contract.ProtocolOpenAIResponsesCompact,
+		contract.ProtocolOpenAIAlphaSearch,
 		contract.ProtocolOpenAIChat,
 		contract.ProtocolOpenAICompletions,
 		contract.ProtocolAnthropicMessages:
@@ -95,6 +96,10 @@ func rewriteJSONBodyModel(request *http.Request, upstreamModel string, replayabl
 }
 
 func topLevelModelValueSpan(contents []byte) (int, int, error) {
+	return topLevelStringValueSpan(contents, "model")
+}
+
+func topLevelStringValueSpan(contents []byte, field string) (int, int, error) {
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.UseNumber()
 
@@ -117,7 +122,7 @@ func topLevelModelValueSpan(contents []byte) (int, int, error) {
 		if !ok {
 			return 0, 0, fmt.Errorf("request object member key is not a string")
 		}
-		if key != "model" {
+		if key != field {
 			if err := skipJSONValue(decoder); err != nil {
 				return 0, 0, err
 			}
@@ -129,19 +134,19 @@ func topLevelModelValueSpan(contents []byte) (int, int, error) {
 			return 0, 0, err
 		}
 		if _, ok := valueToken.(string); !ok {
-			return 0, 0, fmt.Errorf("top-level model member must be a string")
+			return 0, 0, fmt.Errorf("top-level %s member must be a string", field)
 		}
 		end := decoder.InputOffset()
 		relative := bytes.IndexByte(contents[start:end], '"')
 		if relative < 0 {
-			return 0, 0, fmt.Errorf("top-level model value has no opening quote")
+			return 0, 0, fmt.Errorf("top-level %s value has no opening quote", field)
 		}
 		// Keep scanning: like encoding/json, which classified the request and
 		// matched the redirect, most upstreams read the last duplicate member.
 		valueStart, valueEnd = int(start)+relative, int(end)
 	}
 	if valueStart < 0 {
-		return 0, 0, fmt.Errorf("request has no top-level model member to rewrite")
+		return 0, 0, fmt.Errorf("request has no top-level %s member to rewrite", field)
 	}
 	return valueStart, valueEnd, nil
 }

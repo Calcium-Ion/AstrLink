@@ -558,7 +558,7 @@ describe("desktop bridge contract", () => {
 
       expect(invokeMock).toHaveBeenCalledWith(command);
       expect(parsed).toEqual(wireSnapshot);
-      expect(parsed.capabilities?.protocols).toHaveLength(8);
+      expect(parsed.capabilities?.protocols).toHaveLength(9);
     },
   );
 
@@ -651,12 +651,29 @@ describe("desktop bridge contract", () => {
     await expect(getCoreStatus()).rejects.toThrow("unsupported version");
   });
 
+  it.each([
+    { id: "vendor.custom_search" },
+    { phase: "post_alpha" },
+    { primary: true },
+    { streaming: true },
+  ])("rejects invalid Alpha Search descriptors: %j", async (change) => {
+    const snapshot = validSnapshot();
+    const capabilities = structuredClone(capabilityFixture);
+    const search = capabilities.protocols.find(
+      ({ id }) => id === "openai.alpha_search",
+    )!;
+    Object.assign(search, change);
+    snapshot.capabilities = capabilities;
+    invokeMock.mockResolvedValueOnce(snapshot);
+    await expect(getCoreStatus()).rejects.toThrow(/openai\.alpha_search/);
+  });
+
   it("rejects missing required Alpha protocols but preserves unknown protocols", async () => {
     const invalid = validSnapshot();
     (invalid.capabilities as any).protocols.shift();
     invokeMock.mockResolvedValueOnce(invalid);
     await expect(getCoreStatus()).rejects.toThrow(
-      "expected at least 8 entries",
+      "expected at least 9 entries",
     );
 
     const extended = validSnapshot();

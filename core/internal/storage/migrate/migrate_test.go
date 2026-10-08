@@ -576,7 +576,7 @@ func TestServiceLevelModelMigrationFailsClosedAndRemovesCapabilityModels(t *test
 	).Scan(&codexCapabilityCount, &codexModelCapability); err != nil {
 		t.Fatal(err)
 	}
-	if codexCapabilityCount != 3 || codexModelCapability != 1 {
+	if codexCapabilityCount != 4 || codexModelCapability != 1 {
 		t.Fatalf("Codex capabilities=%d model capability=%d", codexCapabilityCount, codexModelCapability)
 	}
 }
@@ -924,8 +924,8 @@ func TestPassthroughCapabilityModesMergeToNative(t *testing.T) {
 	).Scan(&capabilityCount, &delegatedCount); err != nil {
 		t.Fatal(err)
 	}
-	if capabilityCount != 2 || delegatedCount != 0 {
-		t.Fatalf("capabilities=%d delegated=%d, want 2 native passthrough rows", capabilityCount, delegatedCount)
+	if capabilityCount != 3 || delegatedCount != 0 {
+		t.Fatalf("capabilities=%d delegated=%d, want 3 native passthrough rows", capabilityCount, delegatedCount)
 	}
 	var delegatedTargets int
 	if err := database.QueryRow(
