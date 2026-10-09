@@ -223,10 +223,23 @@ fn start_allowed(state: &LifecycleState, has_child: bool) -> bool {
         )
 }
 
+/// Where the inference plane listens: the saved scope and port together.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InferenceBind {
+    listen: crate::preferences::InferenceListen,
+    port: u16,
+}
+
+impl InferenceBind {
+    fn address(self) -> String {
+        format!("{}:{}", self.listen.host(), self.port)
+    }
+}
+
 fn sidecar_args(
     parent_pid: u32,
     data_directory: &Path,
-    inference_port: u16,
+    inference: InferenceBind,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
     max_request_body_mib: u32,
@@ -235,14 +248,20 @@ fn sidecar_args(
     let data_directory = data_directory
         .to_str()
         .ok_or_else(|| "AstrLink data directory is not valid UTF-8".to_string())?;
-    Ok(vec![
+    let mut arguments = vec![
         "--parent-pid".to_string(),
         parent_pid.to_string(),
         "--data-dir".to_string(),
         data_directory.to_string(),
         "--inference-listen".to_string(),
-        format!("127.0.0.1:{inference_port}"),
-        "--inference-port-fallback".to_string(),
+        inference.address(),
+    ];
+    // Other devices are configured with the saved port, so an exposed
+    // gateway never moves to a random one; Core reports the occupied port.
+    if inference.listen == crate::preferences::InferenceListen::Loopback {
+        arguments.push("--inference-port-fallback".to_string());
+    }
+    arguments.extend([
         "--control-listen".to_string(),
         "127.0.0.1:0".to_string(),
         "--control-token-stdin".to_string(),
@@ -257,7 +276,8 @@ fn sidecar_args(
             "--outbound-proxy={}",
             if use_system_proxy { "system" } else { "direct" }
         ),
-    ])
+    ]);
+    Ok(arguments)
 }
 
 fn recovery_delay(attempt: u8) -> Duration {
@@ -427,6 +447,9 @@ pub struct CoreSnapshot {
     pub capabilities: Option<CapabilitiesResponse>,
     pub last_error: Option<String>,
     pub inference_port_fallback: Option<InferencePortFallback>,
+    /// Which interfaces the running Core was started to answer; `None` while
+    /// stopped. Differs from the saved preference until the next restart.
+    pub inference_listen_active: Option<crate::preferences::InferenceListen>,
     pub recovery_attempt: u8,
     pub recovery_scheduled_in_ms: Option<u64>,
 }
@@ -449,6 +472,8 @@ struct CoreInner {
     app_handle: Option<AppHandle>,
     inference_port: u16,
     started_inference_port: Option<u16>,
+    inference_listen: crate::preferences::InferenceListen,
+    started_inference_listen: Option<crate::preferences::InferenceListen>,
     max_concurrent_inspections: u16,
     response_start_timeout_seconds: u32,
     max_request_body_mib: u32,
@@ -491,6 +516,8 @@ impl Default for CoreInner {
             app_handle: None,
             inference_port: crate::preferences::DEFAULT_INFERENCE_PORT,
             started_inference_port: None,
+            inference_listen: crate::preferences::InferenceListen::Loopback,
+            started_inference_listen: None,
             max_concurrent_inspections: 16,
             response_start_timeout_seconds: 0,
             max_request_body_mib: 0,
@@ -741,6 +768,7 @@ impl CoreInner {
         self.raw_key_replaced = false;
         self.ready = None;
         self.started_inference_port = None;
+        self.started_inference_listen = None;
         self.health = None;
         self.version = None;
         self.capabilities = None;
@@ -881,6 +909,7 @@ impl CoreManager {
             inner.pid = None;
             inner.clear_handshake();
             inner.started_inference_port = Some(inner.inference_port);
+            inner.started_inference_listen = Some(inner.inference_listen);
             inner.last_error = None;
             inner.clear_process_guard();
             clear_published_control_session();
@@ -906,7 +935,10 @@ impl CoreManager {
             let arguments = match sidecar_args(
                 std::process::id(),
                 &data_directory,
-                inner.inference_port,
+                InferenceBind {
+                    listen: inner.inference_listen,
+                    port: inner.inference_port,
+                },
                 inner.max_concurrent_inspections,
                 inner.response_start_timeout_seconds,
                 inner.max_request_body_mib,
@@ -1063,6 +1095,7 @@ impl CoreManager {
     pub fn configure(&self, preferences: &crate::preferences::Preferences) {
         let mut inner = self.lock_inner();
         inner.inference_port = preferences.inference_port;
+        inner.inference_listen = preferences.inference_listen;
         inner.max_concurrent_inspections = preferences.max_concurrent_inspections;
         inner.response_start_timeout_seconds = preferences.response_start_timeout_seconds;
         inner.max_request_body_mib = preferences.max_request_body_mib;
@@ -1312,6 +1345,7 @@ impl CoreManager {
             capabilities: inner.capabilities.clone(),
             last_error: inner.last_error.clone(),
             inference_port_fallback: inner.inference_port_fallback(),
+            inference_listen_active: inner.started_inference_listen,
             recovery_attempt: inner.recovery_attempt,
             recovery_scheduled_in_ms: inner.recovery_scheduled_at.map(|deadline| {
                 deadline
@@ -1683,6 +1717,16 @@ impl CoreManager {
             .await?;
         serde_json::from_slice(&body)
             .map_err(|error| format!("access token list returned invalid JSON: {error}"))
+    }
+
+    /// Addresses other devices reach this machine by, read from Core on each
+    /// call so a changed network shows its current address.
+    pub async fn list_network_addresses(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/network-addresses", None, None)
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("network address list returned invalid JSON: {error}"))
     }
 
     pub async fn get_usage_summary(
@@ -7180,8 +7224,19 @@ mod tests {
 
     #[test]
     fn sidecar_receives_pid_and_data_path_but_not_control_token_in_arguments() {
-        let arguments = sidecar_args(4242, Path::new("/tmp/astrlink-data"), 8317, 16, 0, 0, true)
-            .expect("test path should be valid UTF-8");
+        let arguments = sidecar_args(
+            4242,
+            Path::new("/tmp/astrlink-data"),
+            InferenceBind {
+                listen: crate::preferences::InferenceListen::Loopback,
+                port: 8317,
+            },
+            16,
+            0,
+            0,
+            true,
+        )
+        .expect("test path should be valid UTF-8");
         assert_eq!(
             arguments,
             [
@@ -7208,7 +7263,10 @@ mod tests {
         let direct = sidecar_args(
             4242,
             Path::new("/tmp/astrlink-data"),
-            8317,
+            InferenceBind {
+                listen: crate::preferences::InferenceListen::Loopback,
+                port: 8317,
+            },
             16,
             0,
             64,
@@ -7220,6 +7278,53 @@ mod tests {
             .any(|args| args == ["--max-request-body-mib", "64"]));
         assert!(direct.iter().any(|arg| arg == "--outbound-proxy=direct"));
         assert!(!direct.iter().any(|arg| arg == "--outbound-proxy=system"));
+    }
+
+    #[test]
+    fn exposed_sidecar_binds_every_interface_without_a_port_fallback() {
+        let arguments = sidecar_args(
+            4242,
+            Path::new("/tmp/astrlink-data"),
+            InferenceBind {
+                listen: crate::preferences::InferenceListen::AllInterfaces,
+                port: 8317,
+            },
+            16,
+            0,
+            0,
+            true,
+        )
+        .expect("valid path");
+        assert!(arguments
+            .windows(2)
+            .any(|args| args == ["--inference-listen", "0.0.0.0:8317"]));
+        assert!(!arguments
+            .iter()
+            .any(|arg| arg == "--inference-port-fallback"));
+        // The control plane stays on this machine whatever the inference scope.
+        assert!(arguments
+            .windows(2)
+            .any(|args| args == ["--control-listen", "127.0.0.1:0"]));
+    }
+
+    #[test]
+    fn snapshot_reports_the_listen_scope_the_running_core_started_with() {
+        let manager = CoreManager::new();
+        assert_eq!(manager.snapshot().inference_listen_active, None);
+        manager.configure(&crate::preferences::Preferences {
+            inference_listen: crate::preferences::InferenceListen::AllInterfaces,
+            ..Default::default()
+        });
+        // Saving the preference alone changes nothing until Core restarts.
+        assert_eq!(manager.snapshot().inference_listen_active, None);
+        manager.lock_inner().started_inference_listen =
+            Some(crate::preferences::InferenceListen::Loopback);
+        assert_eq!(
+            manager.snapshot().inference_listen_active,
+            Some(crate::preferences::InferenceListen::Loopback)
+        );
+        manager.lock_inner().clear_handshake();
+        assert_eq!(manager.snapshot().inference_listen_active, None);
     }
 
     #[test]

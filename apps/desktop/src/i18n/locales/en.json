@@ -307,6 +307,25 @@
     "portDirty": "Unsaved entry changes.",
     "portNeedsRestart": "The entry change is not active yet. Restart the gateway to apply the saved settings.",
     "portControlHint": "The control plane always uses a desktop-only 127.0.0.1 ephemeral port.",
+    "listenField": "Listen address",
+    "listenOptions": {
+      "loopback": "This computer only",
+      "all_interfaces": "All interfaces"
+    },
+    "listenHints": {
+      "loopback": "127.0.0.1. Only programs on this computer can connect.",
+      "all_interfaces": "0.0.0.0. Other devices on the same network connect with an access token."
+    },
+    "listenConfirmTitle": "Open the inference entry to the network?",
+    "listenConfirmBody": "After you save and restart the gateway, any device on the same network can connect to port {{port}}. Every request must carry an access token; requests without one are refused. If you have no token yet, create one on the Access tokens page first. The system firewall may ask whether AstrLink may accept incoming connections; choose allow.",
+    "listenConfirm": "Open to the network",
+    "listenKeepLoopback": "Keep this computer only",
+    "listenExposedNotice": "The gateway is open to the network on port {{port}}. Other devices connect with any address below plus an access token.",
+    "listenExposedNoAddresses": "No address other devices could connect to was found. Check the network connection.",
+    "listenExposedAddressesFailed": "Reading this computer's network addresses failed: {{error}}",
+    "listenRevert": "Back to this computer only",
+    "listenReverting": "Switching back…",
+    "listenAddressCopy": "Copy address",
     "concurrencyField": "Inspection concurrency",
     "concurrencySaved": "Saved",
     "concurrencyHint": "How many requests may parse and classify at once (4–128). Raise this if parallel calls queue up.",

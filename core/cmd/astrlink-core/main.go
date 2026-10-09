@@ -57,8 +57,8 @@ func main() {
 	maxConcurrentInspections := ingress.DefaultMaxConcurrentInspections
 	var maxRequestBodyMiB uint64
 	responseStartTimeoutSeconds := ingress.DefaultResponseStartTimeoutSeconds
-	flag.StringVar(&config.InferenceListen, "inference-listen", config.InferenceListen, "loopback inference listen address")
-	flag.BoolVar(&config.InferencePortFallback, "inference-port-fallback", false, "use an ephemeral loopback port when the inference port is occupied")
+	flag.StringVar(&config.InferenceListen, "inference-listen", config.InferenceListen, "inference listen address: 127.0.0.1:<port> answers this machine only, "+coreapp.NetworkInferenceHost+":<port> answers every interface")
+	flag.BoolVar(&config.InferencePortFallback, "inference-port-fallback", false, "use an ephemeral loopback port when the inference port is occupied; ignored with "+coreapp.NetworkInferenceHost)
 	flag.StringVar(&config.ControlListen, "control-listen", config.ControlListen, "loopback control listen address")
 	flag.IntVar(&parentPID, "parent-pid", 0, "optional desktop parent PID to watch on Unix")
 	flag.StringVar(&dataDirectory, "data-dir", "", "optional persistent application data directory")
@@ -148,13 +148,22 @@ func main() {
 		}
 		dependencies.ControlHandler = core.control
 		dependencies.RetentionSweep = core.retentionSweep
-		dependencies.NewInferenceHandler = func(address string) (http.Handler, error) {
+		dependencies.NewInferenceHandler = func(address string, networkExposed bool) (http.Handler, error) {
 			production := core.gateway
+			if networkExposed {
+				// Other machines reach this port by any name, so there is no
+				// Host gate; access tokens stay mandatory and unauthenticated
+				// requests are not recorded. See ingress.NewNetworkProduction.
+				return ingress.NewNetworkProduction(production)
+			}
 			production.AllowedHost = address
 			return ingress.NewProduction(production)
 		}
 	}
 
+	if config.NetworkExposed() {
+		logger.Printf("inference plane answers every interface on %s; requests need an access token", config.InferenceListen)
+	}
 	if err := coreapp.RunWithDependencies(ctx, config, os.Stdout, dependencies); err != nil {
 		logger.Printf("%v", err)
 		os.Exit(1)

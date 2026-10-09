@@ -34,6 +34,27 @@ fn default_response_start_timeout_seconds() -> u32 {
     DEFAULT_RESPONSE_START_TIMEOUT_SECONDS
 }
 
+/// Which network interfaces the inference port answers.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceListen {
+    /// Only programs on this computer reach the gateway.
+    #[default]
+    Loopback,
+    /// Every interface; other devices reach the gateway with an access token.
+    AllInterfaces,
+}
+
+impl InferenceListen {
+    /// The host Core binds for this scope.
+    pub fn host(self) -> &'static str {
+        match self {
+            Self::Loopback => "127.0.0.1",
+            Self::AllInterfaces => "0.0.0.0",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseBehavior {
@@ -204,6 +225,9 @@ pub struct Preferences {
     // Existing preferences without this field used the original default.
     #[serde(default = "legacy_inference_port")]
     pub inference_port: u16,
+    /// Preferences saved before this field existed stay on loopback.
+    #[serde(default)]
+    pub inference_listen: InferenceListen,
     #[serde(default = "default_max_concurrent_inspections")]
     pub max_concurrent_inspections: u16,
     #[serde(default = "default_response_start_timeout_seconds")]
@@ -226,6 +250,7 @@ impl Default for Preferences {
             core_auto_recover: true,
             use_system_proxy: true,
             inference_port: DEFAULT_INFERENCE_PORT,
+            inference_listen: InferenceListen::Loopback,
             max_concurrent_inspections: DEFAULT_MAX_CONCURRENT_INSPECTIONS,
             response_start_timeout_seconds: DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
             max_request_body_mib: 0,
@@ -750,6 +775,25 @@ mod tests {
             .unwrap()
             .contains("invalid settings"));
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn inference_listen_defaults_to_loopback_and_round_trips() {
+        let saved: Preferences = serde_json::from_str(r#"{"inference_port":9123}"#).unwrap();
+        assert_eq!(saved.inference_listen, InferenceListen::Loopback);
+        assert_eq!(InferenceListen::Loopback.host(), "127.0.0.1");
+        assert_eq!(InferenceListen::AllInterfaces.host(), "0.0.0.0");
+        let exposed = Preferences {
+            inference_listen: InferenceListen::AllInterfaces,
+            ..Preferences::default()
+        };
+        let json = serde_json::to_value(&exposed).unwrap();
+        assert_eq!(json["inference_listen"], "all_interfaces");
+        assert_eq!(
+            serde_json::from_value::<Preferences>(json).unwrap(),
+            exposed
+        );
+        assert!(serde_json::from_str::<Preferences>(r#"{"inference_listen":"lan"}"#).is_err());
     }
 
     #[test]

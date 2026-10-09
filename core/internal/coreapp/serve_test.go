@@ -25,11 +25,14 @@ func TestServeConfigAcceptsNetworkAddresses(t *testing.T) {
 			t.Errorf("%q was accepted", address)
 		}
 	}
-	// The desktop path still refuses anything but 127.0.0.1.
-	desktop := DefaultConfig("0.1.0-test", "abc1234")
-	desktop.InferenceListen = "0.0.0.0:18317"
-	if err := desktop.Validate(); err == nil {
-		t.Fatal("desktop config accepted a non-loopback inference address")
+	// The desktop path accepts only 127.0.0.1 or every interface, never a
+	// single named address or an IPv6-only wildcard.
+	for _, address := range []string{"192.168.1.20:18317", "[::]:18317", "astrlink:18317"} {
+		desktop := DefaultConfig("0.1.0-test", "abc1234")
+		desktop.InferenceListen = address
+		if err := desktop.Validate(); err == nil {
+			t.Errorf("desktop config accepted inference address %q", address)
+		}
 	}
 }
 

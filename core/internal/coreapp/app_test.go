@@ -127,7 +127,7 @@ func TestRunValidatesReadyEventBeforeWriting(t *testing.T) {
 }
 
 func TestConfigRejectsNonLoopbackListeners(t *testing.T) {
-	for _, address := range []string{"0.0.0.0:8317", "192.0.2.1:8317", ":8317", "localhost:8317", "[::1]:8317"} {
+	for _, address := range []string{"192.0.2.1:8317", ":8317", "localhost:8317", "[::1]:8317", "[::]:8317"} {
 		t.Run(address, func(t *testing.T) {
 			config := DefaultConfig("", "")
 			config.InferenceListen = address
@@ -490,5 +490,134 @@ func assertLoopbackURL(t *testing.T, value string) {
 	}
 	if parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
 		t.Fatalf("URL is not an IPv4 loopback HTTP URL: %q", value)
+	}
+}
+
+func TestConfigAcceptsEveryInterfaceInferenceListener(t *testing.T) {
+	config := DefaultConfig("", "")
+	config.InferenceListen = "0.0.0.0:8317"
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate error = %v, want every-interface inference listener accepted", err)
+	}
+	if !config.NetworkExposed() {
+		t.Fatal("NetworkExposed = false for 0.0.0.0")
+	}
+	if DefaultConfig("", "").NetworkExposed() {
+		t.Fatal("NetworkExposed = true for the loopback default")
+	}
+	config.ControlListen = "0.0.0.0:0"
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "control listen address") {
+		t.Fatalf("Validate error = %v, want the control plane kept on loopback", err)
+	}
+}
+
+func TestExposedRunBindsEveryInterfaceAndAdvertisesLoopback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Every bind is scripted here; the real probe would touch port 8317.
+	probed := 0
+	previousProbe := exposedPortProbe
+	exposedPortProbe = func(port string) error {
+		probed++
+		if port != "8317" {
+			t.Errorf("probed port %q", port)
+		}
+		return nil
+	}
+	t.Cleanup(func() { exposedPortProbe = previousProbe })
+	config := DefaultConfig("0.1.0-test", "abc1234")
+	config.InferenceListen = "0.0.0.0:8317"
+	config.InferencePortFallback = true
+	config.ControlListen = "127.0.0.1:0"
+	writer := newRecordingWriter()
+
+	var binds []string
+	ipv6Binds := 0
+	listeners := []net.Listener{newBlockingListener("[::]:8317"), newBlockingListener("127.0.0.1:54321")}
+	var factoryAddress string
+	var factoryExposed bool
+	runErrors := make(chan error, 1)
+	go func() {
+		runErrors <- runWithDependencies(ctx, config, writer, func(_, address string) (net.Listener, error) {
+			binds = append(binds, address)
+			if address == ":8317" && len(binds) == 1 {
+				return nil, addressInUse
+			}
+			listener := listeners[0]
+			listeners = listeners[1:]
+			return listener, nil
+		}, func(_, _ string) (net.Listener, error) {
+			ipv6Binds++
+			return newBlockingListener("[::1]:8317"), nil
+		}, Dependencies{NewInferenceHandler: func(address string, networkExposed bool) (http.Handler, error) {
+			factoryAddress, factoryExposed = address, networkExposed
+			return http.NotFoundHandler(), nil
+		}})
+	}()
+
+	err := waitForRunError(t, runErrors)
+	if err == nil || !strings.Contains(err.Error(), "listen on inference plane") || !errors.Is(err, addressInUse) {
+		t.Fatalf("Run error = %v, want the occupied exposed port reported without a fallback bind", err)
+	}
+	if len(binds) != 1 || binds[0] != ":8317" {
+		t.Fatalf("binds = %v, want one dual-stack wildcard bind and no 127.0.0.1:0 fallback", binds)
+	}
+
+	binds = nil
+	listeners = []net.Listener{newBlockingListener("[::]:8317"), newBlockingListener("127.0.0.1:54321")}
+	go func() {
+		runErrors <- runWithDependencies(ctx, config, writer, func(_, address string) (net.Listener, error) {
+			binds = append(binds, address)
+			listener := listeners[0]
+			listeners = listeners[1:]
+			return listener, nil
+		}, func(_, _ string) (net.Listener, error) {
+			ipv6Binds++
+			return newBlockingListener("[::1]:8317"), nil
+		}, Dependencies{NewInferenceHandler: func(address string, networkExposed bool) (http.Handler, error) {
+			factoryAddress, factoryExposed = address, networkExposed
+			return http.NotFoundHandler(), nil
+		}})
+	}()
+	waitForReadyWrite(t, writer)
+	cancel()
+	if err := waitForRunError(t, runErrors); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if len(binds) != 2 || binds[0] != ":8317" || binds[1] != "127.0.0.1:0" {
+		t.Fatalf("binds = %v, want the wildcard inference bind then the loopback control bind", binds)
+	}
+	if ipv6Binds != 0 {
+		t.Fatalf("[::1] binds = %d, want none for a dual-stack listener", ipv6Binds)
+	}
+	if factoryAddress != "127.0.0.1:8317" || !factoryExposed {
+		t.Fatalf("factory got (%q, %v), want the loopback authority and networkExposed", factoryAddress, factoryExposed)
+	}
+	if probed != 2 {
+		t.Fatalf("probe ran %d times, want once per exposed run", probed)
+	}
+	var ready contract.ReadyEvent
+	if err := json.Unmarshal(bytes.TrimSpace(writer.buffer.Bytes()), &ready); err != nil {
+		t.Fatalf("decode ready event: %v (%q)", err, writer.buffer.String())
+	}
+	if ready.InferenceURL != "http://127.0.0.1:8317" || ready.ClientInferenceURL != "http://localhost:8317" {
+		t.Fatalf("ready URLs = %q / %q", ready.InferenceURL, ready.ClientInferenceURL)
+	}
+}
+
+func TestExposedLoopbackAuthorityKeeps127WhenIPv6IsUnavailable(t *testing.T) {
+	authority, clientURL := exposedLoopbackAuthority(fakeAddress("0.0.0.0:8317"))
+	if authority != "127.0.0.1:8317" || clientURL != "http://127.0.0.1:8317" {
+		t.Fatalf("IPv4-only wildcard = %q / %q", authority, clientURL)
+	}
+	authority, clientURL = exposedLoopbackAuthority(fakeAddress("[::]:8317"))
+	if authority != "127.0.0.1:8317" || clientURL != "http://localhost:8317" {
+		t.Fatalf("dual-stack wildcard = %q / %q", authority, clientURL)
+	}
+	if got := inferenceBindAddress("0.0.0.0:8317", true); got != ":8317" {
+		t.Fatalf("exposed bind = %q", got)
+	}
+	if got := inferenceBindAddress("127.0.0.1:8317", false); got != "127.0.0.1:8317" {
+		t.Fatalf("loopback bind = %q", got)
 	}
 }

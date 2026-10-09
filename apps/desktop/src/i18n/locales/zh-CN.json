@@ -307,6 +307,25 @@
     "portDirty": "有未保存的入口修改。",
     "portNeedsRestart": "入口修改尚未生效；重启网关后切换到已保存设置。",
     "portControlHint": "控制面始终使用仅桌面可知的 127.0.0.1 临时端口。",
+    "listenField": "监听地址",
+    "listenOptions": {
+      "loopback": "仅本机",
+      "all_interfaces": "全部网卡"
+    },
+    "listenHints": {
+      "loopback": "127.0.0.1，只有这台电脑上的程序能连接。",
+      "all_interfaces": "0.0.0.0，同一网络里的其他设备凭访问令牌连接。"
+    },
+    "listenConfirmTitle": "对网络开放推理入口？",
+    "listenConfirmBody": "保存并重启网关后，同一网络里的任何设备都能连到端口 {{port}}。每个请求都必须带访问令牌，没有令牌的请求会被拒绝；还没有令牌的话，先在「访问令牌」页创建。系统防火墙可能询问是否允许 AstrLink 接收网络连接，需要选择允许。",
+    "listenConfirm": "对网络开放",
+    "listenKeepLoopback": "保持仅本机",
+    "listenExposedNotice": "网关正在对网络开放，端口 {{port}}。其他设备用下面任一地址加访问令牌即可连接。",
+    "listenExposedNoAddresses": "暂时没有读到可供其他设备连接的地址，请检查网络连接。",
+    "listenExposedAddressesFailed": "读取本机网络地址失败：{{error}}",
+    "listenRevert": "改回仅本机",
+    "listenReverting": "正在改回…",
+    "listenAddressCopy": "复制地址",
     "concurrencyField": "检查并发",
     "concurrencySaved": "已保存",
     "concurrencyHint": "同时解析与分类的请求路数，范围 4–128。并行调用排队时可调高。",

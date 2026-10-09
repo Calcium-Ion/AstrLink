@@ -31,7 +31,9 @@ import type { UsageSummary, UsageWindow } from "./usage-range";
 import {
   browserSnapshot,
   parseAppSnapshot,
+  parseNetworkAddresses,
   type AppSnapshot,
+  type NetworkAddressesResponse,
 } from "./core-model";
 import {
   parseServicePage,
@@ -795,6 +797,12 @@ export async function getLocalDataStatus(): Promise<LocalDataStatus> {
 export async function listAccessTokens(): Promise<AccessTokenPage> {
   requireNativeBridge();
   return parseAccessTokenPage(await invoke<unknown>("list_access_tokens"));
+}
+
+/** Addresses other devices reach this machine by, read from Core on each call. */
+export async function listNetworkAddresses(): Promise<NetworkAddressesResponse> {
+  requireNativeBridge();
+  return parseNetworkAddresses(await invoke<unknown>("list_network_addresses"));
 }
 
 export async function listAccessTokenUsage(

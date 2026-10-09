@@ -22,8 +22,11 @@ import (
 
 const (
 	DefaultInferenceListen = "127.0.0.1:18317"
-	DefaultControlListen   = "127.0.0.1:0"
-	inferenceReadTimeout   = 60 * time.Second
+	// NetworkInferenceHost is the inference host that answers every interface
+	// of this machine. Any other inference host must be the IPv4 loopback.
+	NetworkInferenceHost = "0.0.0.0"
+	DefaultControlListen = "127.0.0.1:0"
+	inferenceReadTimeout = 60 * time.Second
 )
 
 type Config struct {
@@ -36,8 +39,10 @@ type Config struct {
 
 type Dependencies struct {
 	InferenceHandler http.Handler
-	// NewInferenceHandler builds the production Host gate from the bound address.
-	NewInferenceHandler func(address string) (http.Handler, error)
+	// NewInferenceHandler builds the production gate. address is the
+	// 127.0.0.1 authority programs on this machine use; networkExposed
+	// reports that the same port also answers other machines.
+	NewInferenceHandler func(address string, networkExposed bool) (http.Handler, error)
 	ControlHandler      http.Handler
 	// RetentionSweep deletes expired request records and audit blobs.
 	// Nil disables the startup/hourly retention loop (headless mode).
@@ -53,7 +58,7 @@ func DefaultConfig(coreVersion, buildCommit string) Config {
 }
 
 func (config Config) Validate() error {
-	if err := validateLoopbackAddress(config.InferenceListen); err != nil {
+	if err := validateInferenceAddress(config.InferenceListen); err != nil {
 		return fmt.Errorf("inference listen address: %w", err)
 	}
 	if err := validateLoopbackAddress(config.ControlListen); err != nil {
@@ -65,6 +70,26 @@ func (config Config) Validate() error {
 	return nil
 }
 
+// NetworkExposed reports whether the inference plane answers every interface
+// instead of only this machine.
+func (config Config) NetworkExposed() bool {
+	host, _, err := net.SplitHostPort(config.InferenceListen)
+	return err == nil && host == NetworkInferenceHost
+}
+
+// validateInferenceAddress accepts the IPv4 loopback or the every-interface
+// host. The control plane never leaves loopback; see validateLoopbackAddress.
+func validateInferenceAddress(address string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("split host and port: %w", err)
+	}
+	if host != "127.0.0.1" && host != NetworkInferenceHost {
+		return fmt.Errorf("address %q must use 127.0.0.1 or %s", address, NetworkInferenceHost)
+	}
+	return validatePort(address, port)
+}
+
 func validateLoopbackAddress(address string) error {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -73,11 +98,41 @@ func validateLoopbackAddress(address string) error {
 	if host != "127.0.0.1" {
 		return fmt.Errorf("address %q must use 127.0.0.1", address)
 	}
+	return validatePort(address, port)
+}
+
+func validatePort(address, port string) error {
 	parsedPort, err := strconv.ParseUint(port, 10, 16)
 	if err != nil || parsedPort > 65535 {
 		return fmt.Errorf("address %q has an invalid port", address)
 	}
 	return nil
+}
+
+// inferenceBindAddress maps the every-interface host to the wildcard bind,
+// which Go serves dual-stack where IPv6 is available, so `localhost` and the
+// machine's IPv6 addresses answer as well.
+func inferenceBindAddress(address string, exposed bool) string {
+	_, port, err := net.SplitHostPort(address)
+	if !exposed || err != nil {
+		return address
+	}
+	return ":" + port
+}
+
+// exposedLoopbackAuthority returns the 127.0.0.1 authority and the client URL
+// for an every-interface listener. `localhost` is advertised only when the
+// bind is dual-stack, so a resolver answering ::1 first still reaches this Core.
+func exposedLoopbackAuthority(bound net.Addr) (authority, clientURL string) {
+	host, port, err := net.SplitHostPort(bound.String())
+	if err != nil {
+		return bound.String(), "http://" + bound.String()
+	}
+	authority = net.JoinHostPort("127.0.0.1", port)
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() && ip.To4() == nil {
+		return authority, "http://localhost:" + port
+	}
+	return authority, "http://" + authority
 }
 
 // Run binds both planes, emits exactly one ready event to readyWriter, and
@@ -95,13 +150,18 @@ func RunWithDependencies(ctx context.Context, config Config, readyWriter io.Writ
 
 type listenFunc func(network, address string) (net.Listener, error)
 
+// exposedPortProbe checks an every-interface port before it is bound; tests
+// that script every bind replace it.
+var exposedPortProbe = probeExposedPort
+
 // run serves IPv4 only; tests that script every bind use it.
 func run(ctx context.Context, config Config, readyWriter io.Writer, listen listenFunc) error {
 	return runWithDependencies(ctx, config, readyWriter, listen, nil, Dependencies{})
 }
 
 // listenIPv6 binds the inference port on [::1] as well, so clients can use
-// `localhost`, which most resolvers answer with ::1 first. Nil skips it.
+// `localhost`, which most resolvers answer with ::1 first. Nil skips it. An
+// every-interface bind is dual-stack already and does not use it.
 func runWithDependencies(
 	ctx context.Context,
 	config Config,
@@ -117,8 +177,18 @@ func runWithDependencies(
 		return err
 	}
 
-	inferenceListener, err := listen("tcp", config.InferenceListen)
-	if config.InferencePortFallback && errors.Is(err, addressInUse) {
+	exposed := config.NetworkExposed()
+	if exposed {
+		if _, port, splitErr := net.SplitHostPort(config.InferenceListen); splitErr == nil {
+			if err := exposedPortProbe(port); err != nil {
+				return fmt.Errorf("listen on inference plane: %w", err)
+			}
+		}
+	}
+	inferenceListener, err := listen("tcp", inferenceBindAddress(config.InferenceListen, exposed))
+	// Other machines are configured with the saved port, so an exposed
+	// listener never moves to a random one.
+	if config.InferencePortFallback && !exposed && errors.Is(err, addressInUse) {
 		// Bind directly instead of probing and releasing a port: the listener
 		// remains owned until shutdown, so another process cannot claim it.
 		inferenceListener, err = listen("tcp", "127.0.0.1:0")
@@ -130,9 +200,18 @@ func runWithDependencies(
 		return fmt.Errorf("listen on inference plane: %w", err)
 	}
 	defer inferenceListener.Close()
-	inferenceIPv6, clientInferenceURL := listenIPv6Loopback(listenIPv6, inferenceListener.Addr())
-	if inferenceIPv6 != nil {
-		defer inferenceIPv6.Close()
+	// Programs on this machine always get a 127.0.0.1 authority; an exposed
+	// listener answers it as well.
+	inferenceAddress := inferenceListener.Addr().String()
+	var inferenceIPv6 net.Listener
+	var clientInferenceURL string
+	if exposed {
+		inferenceAddress, clientInferenceURL = exposedLoopbackAuthority(inferenceListener.Addr())
+	} else {
+		inferenceIPv6, clientInferenceURL = listenIPv6Loopback(listenIPv6, inferenceListener.Addr())
+		if inferenceIPv6 != nil {
+			defer inferenceIPv6.Close()
+		}
 	}
 
 	controlListener, err := listen("tcp", config.ControlListen)
@@ -143,7 +222,7 @@ func runWithDependencies(
 
 	inferenceHandler := dependencies.InferenceHandler
 	if dependencies.NewInferenceHandler != nil {
-		inferenceHandler, err = dependencies.NewInferenceHandler(inferenceListener.Addr().String())
+		inferenceHandler, err = dependencies.NewInferenceHandler(inferenceAddress, exposed)
 		if err != nil {
 			return fmt.Errorf("configure production inference gate: %w", err)
 		}
@@ -195,7 +274,7 @@ func runWithDependencies(
 		CoreVersion:             config.Version.CoreVersion,
 		ControlAPIVersion:       config.Version.ControlAPIVersion,
 		ProtocolContractVersion: config.Version.ProtocolContractVersion,
-		InferenceURL:            "http://" + inferenceListener.Addr().String(),
+		InferenceURL:            "http://" + inferenceAddress,
 		ClientInferenceURL:      clientInferenceURL,
 		ControlURL:              "http://" + controlListener.Addr().String(),
 	}

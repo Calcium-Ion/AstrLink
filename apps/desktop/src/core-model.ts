@@ -1,3 +1,4 @@
+import { isInferenceListen, type InferenceListen } from "./preferences-model";
 import { isWebEdition } from "./edition";
 import { i18n } from "./i18n";
 
@@ -79,6 +80,16 @@ export interface InferencePortFallback {
   active_port: number;
 }
 
+/** One address other devices reach this machine by, from `/control/v1/network-addresses`. */
+export interface NetworkAddress {
+  interface: string;
+  ip: string;
+}
+
+export interface NetworkAddressesResponse {
+  addresses: NetworkAddress[];
+}
+
 export interface CoreSnapshot {
   phase: CorePhase;
   pid: number | null;
@@ -88,6 +99,8 @@ export interface CoreSnapshot {
   capabilities: CapabilitiesResponse | null;
   last_error: string | null;
   inference_port_fallback: InferencePortFallback | null;
+  /** Interfaces the running Core answers; `null` while stopped. Changes only on restart. */
+  inference_listen_active: InferenceListen | null;
   recovery_attempt: number;
   recovery_scheduled_in_ms: number | null;
 }
@@ -513,6 +526,42 @@ function parseLastError(value: unknown, path: string): string | null {
   return value;
 }
 
+function parseInferenceListen(value: unknown, path: string): InferenceListen {
+  if (!isInferenceListen(value)) {
+    return invalid(path, "unknown inference listen scope");
+  }
+  return value;
+}
+
+const MAX_NETWORK_ADDRESSES = 64;
+
+export function parseNetworkAddresses(
+  value: unknown,
+): NetworkAddressesResponse {
+  const root = objectAt(value, "$");
+  exactKeys(root, ["addresses"], "$");
+  if (
+    !Array.isArray(root.addresses) ||
+    root.addresses.length > MAX_NETWORK_ADDRESSES
+  ) {
+    return invalid(
+      "$.addresses",
+      `expected an array of at most ${MAX_NETWORK_ADDRESSES} addresses`,
+    );
+  }
+  return {
+    addresses: root.addresses.map((item, index) => {
+      const path = `$.addresses[${index}]`;
+      const address = objectAt(item, path);
+      exactKeys(address, ["interface", "ip"], path);
+      return {
+        interface: stringAt(address.interface, `${path}.interface`, 64),
+        ip: stringAt(address.ip, `${path}.ip`, 64),
+      };
+    }),
+  };
+}
+
 function parsePortFallback(
   value: unknown,
   path: string,
@@ -549,6 +598,7 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
       "ready",
       "last_error",
       "inference_port_fallback",
+      "inference_listen_active",
       "health",
       "version",
       "capabilities",
@@ -574,6 +624,11 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
       snapshot.inference_port_fallback,
       "$.inference_port_fallback",
       parsePortFallback,
+    ),
+    inference_listen_active: nullable(
+      snapshot.inference_listen_active,
+      "$.inference_listen_active",
+      parseInferenceListen,
     ),
     health: nullable(snapshot.health, "$.health", parseHealth),
     version: nullable(snapshot.version, "$.version", parseVersion),
@@ -642,6 +697,7 @@ export const browserSnapshot = (): AppSnapshot => ({
   capabilities: null,
   last_error: "The native bridge is unavailable. Open this UI with Tauri.",
   inference_port_fallback: null,
+  inference_listen_active: null,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
 });
@@ -660,6 +716,7 @@ export function failedSnapshot(
     capabilities: null,
     last_error: message,
     inference_port_fallback: null,
+    inference_listen_active: null,
     recovery_attempt: current?.recovery_attempt ?? 0,
     recovery_scheduled_in_ms: null,
   };

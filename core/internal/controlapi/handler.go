@@ -228,6 +228,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	handler.mux.HandleFunc(CapabilitiesPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, handler.capabilities)
 	}))
+	handler.mux.HandleFunc(NetworkAddressesPath, handler.authenticated(handler.getOnly(handler.getNetworkAddresses), RoleOperator))
 	if handler.shutdown != nil {
 		handler.mux.HandleFunc(ShutdownPath, handler.authenticated(func(writer http.ResponseWriter, request *http.Request) {
 			if request.Method != http.MethodPost {

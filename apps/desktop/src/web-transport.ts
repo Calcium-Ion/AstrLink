@@ -179,6 +179,7 @@ const commands: Record<string, Command> = {
       capabilities: capabilities.value,
       last_error: null,
       inference_port_fallback: null,
+      inference_listen_active: null,
       recovery_attempt: 0,
       recovery_scheduled_in_ms: null,
     };
@@ -312,6 +313,7 @@ const commands: Record<string, Command> = {
   update_audit_settings: route("/audit-settings", "PATCH", patch),
   local_data_status: route("/local-data"),
   list_access_tokens: route("/access-tokens"),
+  list_network_addresses: route("/network-addresses"),
   list_access_token_usage: route(
     (a) => `/access-token-usage${query({ today_from: a.todayFrom })}`,
   ),

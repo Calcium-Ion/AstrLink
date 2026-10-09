@@ -32,7 +32,7 @@ func TestOccupiedInferencePortFallsBackAndKeepsProductionHostGate(t *testing.T) 
 	runErrors := make(chan error, 1)
 	go func() {
 		runErrors <- RunWithDependencies(ctx, config, writer, Dependencies{
-			NewInferenceHandler: func(address string) (http.Handler, error) {
+			NewInferenceHandler: func(address string, _ bool) (http.Handler, error) {
 				return ingress.NewProduction(ingress.Dependencies{
 					AllowedHost: address,
 					Resolver:    endpoint.UnavailableResolver{},
@@ -161,7 +161,7 @@ func TestInferenceHandlerSetupFailureClosesEveryListenerWithoutReady(t *testing.
 		return listener, nil
 	}, func(_, _ string) (net.Listener, error) {
 		return inferenceIPv6, nil
-	}, Dependencies{NewInferenceHandler: func(address string) (http.Handler, error) {
+	}, Dependencies{NewInferenceHandler: func(address string, _ bool) (http.Handler, error) {
 		if address != config.InferenceListen {
 			t.Fatalf("factory address = %s", address)
 		}
@@ -176,5 +176,56 @@ func TestInferenceHandlerSetupFailureClosesEveryListenerWithoutReady(t *testing.
 		default:
 			t.Fatal("listener leaked after handler setup failure")
 		}
+	}
+}
+
+func TestExposedInferencePortHeldOnLoopbackFailsInsteadOfCoexisting(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	_, port, err := net.SplitHostPort(occupied.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := DefaultConfig("0.1.0-test", "abc1234")
+	config.InferenceListen = "0.0.0.0:" + port
+	config.InferencePortFallback = true
+	config.ControlListen = "127.0.0.1:0"
+	writer := newRecordingWriter()
+
+	err = RunWithDependencies(context.Background(), config, writer, Dependencies{
+		NewInferenceHandler: func(string, bool) (http.Handler, error) {
+			return http.NotFoundHandler(), nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "listen on inference plane") || !errors.Is(err, addressInUse) {
+		t.Fatalf("Run error = %v, want the port reported as occupied", err)
+	}
+	if writer.buffer.Len() != 0 {
+		t.Fatalf("ready event written for a port another process holds: %s", writer.buffer.String())
+	}
+
+	// The probe must not leave the port unusable for the real listener.
+	occupied.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErrors := make(chan error, 1)
+	go func() {
+		runErrors <- RunWithDependencies(ctx, config, writer, Dependencies{
+			NewInferenceHandler: func(string, bool) (http.Handler, error) {
+				return http.NotFoundHandler(), nil
+			},
+		})
+	}()
+	select {
+	case <-writer.ready:
+	case err := <-runErrors:
+		t.Fatalf("Run error = %v, want the freed port bound", err)
+	}
+	cancel()
+	if err := <-runErrors; err != nil {
+		t.Fatalf("Run error = %v", err)
 	}
 }

@@ -199,3 +199,14 @@ func validateReadyURL(name, value string) error {
 	}
 	return nil
 }
+
+// NetworkAddress is one address other machines reach this host by while the
+// inference plane answers every interface.
+type NetworkAddress struct {
+	Interface string `json:"interface"`
+	IP        string `json:"ip"`
+}
+
+type NetworkAddressesResponse struct {
+	Addresses []NetworkAddress `json:"addresses"`
+}

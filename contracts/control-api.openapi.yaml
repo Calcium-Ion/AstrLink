@@ -2970,6 +2970,34 @@ paths:
           $ref: "#/components/responses/Conflict"
         "500":
           $ref: "#/components/responses/InternalServerError"
+  /control/v1/network-addresses:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: operator
+      tags: [Bootstrap]
+      operationId: listNetworkAddresses
+      summary: List the addresses other machines reach this host by.
+      description: |
+        Read on each call from the host's network interfaces, so a changed
+        Wi-Fi network or a VPN that came up later shows its current address.
+        Loopback, link-local, multicast and unspecified addresses are left
+        out. IPv4 addresses come first. Clients on other machines combine one
+        of these with the inference port while the inference plane answers
+        every interface.
+      responses:
+        "200":
+          description: Reachable unicast addresses, at most 64.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkAddresses"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /control/v1/local-data:
     x-astrlink-implementation-status: implemented
     get:
@@ -6907,6 +6935,27 @@ components:
         audit_key_missing:
           type: boolean
           description: Bodies captured earlier cannot be opened on this device.
+      additionalProperties: false
+    NetworkAddress:
+      type: object
+      required: [interface, ip]
+      properties:
+        interface:
+          type: string
+          description: Interface name as the operating system reports it.
+        ip:
+          type: string
+          description: IPv4 or IPv6 unicast address without a port.
+      additionalProperties: false
+    NetworkAddresses:
+      type: object
+      required: [addresses]
+      properties:
+        addresses:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/NetworkAddress"
       additionalProperties: false
     RawSealingSummary:
       type: object

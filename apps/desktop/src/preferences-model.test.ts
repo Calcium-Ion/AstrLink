@@ -14,6 +14,7 @@ const valid = {
     core_auto_recover: true,
     use_system_proxy: true,
     inference_port: 8317,
+    inference_listen: "loopback" as const,
     max_concurrent_inspections: 16,
     response_start_timeout_seconds: 0,
     max_request_body_mib: 0,
