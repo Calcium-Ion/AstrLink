@@ -423,7 +423,7 @@ func controlAPITestPort(t *testing.T) int {
 }
 
 func TestPayAsYouGoServicesPersistAsHTTP(t *testing.T) {
-	for _, kind := range []contract.ServiceKind{"deepseek", "qwen", "moonshot", "glm", "minimax", "doubao", "xai"} {
+	for _, kind := range []contract.ServiceKind{"deepseek", "qwen", "moonshot", "glm", "minimax", "doubao", "xai", "magpie"} {
 		t.Run(string(kind), func(t *testing.T) {
 			store, handler := newServiceHandler(t, "service_api")
 			service := createServiceForTest(t, handler, fmt.Sprintf(`{"name":"API","kind":%q,"models":["model-test"],"http":{"base_url":"https://api.example/v1","auth":{"scheme":"bearer"},"credential":{"secret":"api-secret"}},"capabilities":[{"protocol":"openai.chat","mode":"native","streaming":true}]}`, kind))

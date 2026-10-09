@@ -32,6 +32,7 @@ const (
 	ServiceKindGLMCoding               ServiceKind = "glm_coding"
 	ServiceKindMiniMaxCoding           ServiceKind = "minimax_coding"
 	ServiceKindNewAPI                  ServiceKind = "newapi"
+	ServiceKindMagpie                  ServiceKind = "magpie"
 	ServiceKindOpenAI                  ServiceKind = "openai"
 	ServiceKindAnthropic               ServiceKind = "anthropic"
 	ServiceKindGemini                  ServiceKind = "gemini"
@@ -48,7 +49,7 @@ const (
 
 func (kind ServiceKind) Valid() bool {
 	switch kind {
-	case ServiceKindCodexSubscription, ServiceKindNewAPI, ServiceKindOpenAI,
+	case ServiceKindCodexSubscription, ServiceKindNewAPI, ServiceKindMagpie, ServiceKindOpenAI,
 		ServiceKindAnthropic, ServiceKindGemini, ServiceKindOpenAICompatible,
 		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindGrokSubscription, ServiceKindAntigravitySubscription,
 		ServiceKindCopilotSubscription, ServiceKindOpenCodeGo,

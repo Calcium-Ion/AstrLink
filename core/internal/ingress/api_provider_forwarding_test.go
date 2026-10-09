@@ -54,6 +54,11 @@ func TestAPIProviderForwarding(t *testing.T) {
 		{contract.ServiceKindGLM, "/proxy/api/v1/", "/proxy/api/v1/responses", contract.ProtocolOpenAIResponses, false},
 		{contract.ServiceKindDoubao, "/proxy/api/compatible/v1/", "/proxy/api/v3/responses", contract.ProtocolOpenAIResponses, false},
 		{contract.ServiceKindNewAPI, "/proxy/v1", "/proxy/v1/messages", contract.ProtocolAnthropicMessages, false},
+		// Magpie serves every protocol under one root; an OpenAI SDK-style /v1 base keeps a single /v1.
+		{contract.ServiceKindMagpie, "", "/v1/chat/completions", contract.ProtocolOpenAIChat, false},
+		{contract.ServiceKindMagpie, "", "/v1/messages", contract.ProtocolAnthropicMessages, false},
+		{contract.ServiceKindMagpie, "", "/v1/responses", contract.ProtocolOpenAIResponses, false},
+		{contract.ServiceKindMagpie, "/v1", "/v1/messages", contract.ProtocolAnthropicMessages, false},
 		{contract.ServiceKindCustom, "/proxy", "/proxy/v1/messages", contract.ProtocolAnthropicMessages, false},
 	} {
 		for _, streaming := range []bool{false, true} {

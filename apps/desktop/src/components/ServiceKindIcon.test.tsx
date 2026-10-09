@@ -23,6 +23,7 @@ describe("ServiceKindIcon", () => {
 
   it.each([
     ["newapi", "New API"],
+    ["magpie", "Magpie"],
     ["codex_subscription", "Codex 订阅"],
     ["grok_subscription", "Grok 订阅"],
     ["antigravity_subscription", "Antigravity 订阅"],

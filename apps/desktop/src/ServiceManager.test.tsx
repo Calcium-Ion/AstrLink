@@ -3019,6 +3019,13 @@ describe("ServiceManager", () => {
     expect(dialog?.textContent).toContain("选择 API 提供商类型");
     expect(dialog?.querySelector('[aria-current="true"]')).toBeNull();
     expect(changed).not.toHaveBeenCalled();
+    expect(
+      [
+        ...document.querySelectorAll(
+          '[role="dialog"] [data-slot="dialog-picker-label"]',
+        ),
+      ].map((label) => label.textContent),
+    ).toEqual(expect.arrayContaining(["New API", "Magpie"]));
     const card = [
       ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
     ].find(

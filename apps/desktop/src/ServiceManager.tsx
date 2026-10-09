@@ -289,6 +289,7 @@ function serviceTypeOptionLabel(kind: ServiceKind): string {
 function serviceKindPickerHint(kind: ServiceKind): string {
   if (isSubscriptionKind(kind)) return subscriptionOauthLabel(kind);
   if (kind === "newapi") return i18n.t("services.kindPickerNewapiHint");
+  if (kind === "magpie") return i18n.t("services.kindPickerMagpieHint");
   if (kind === "openai_compatible") return "Chat · Completions · Models";
   if (kind === "custom") return i18n.t("services.kindPickerCustomHint");
   return httpServicePreset(kind)
@@ -312,6 +313,9 @@ const subscriptionPlanKinds: ServiceKind[] = [
   ...codingPlanPresetIDs,
 ];
 
+/** Gateways that front other providers' accounts behind one address. */
+const gatewayKinds: ServiceKind[] = ["newapi", "magpie"];
+
 /**
  * Subscriptions whose logo is shared with a pay-as-you-go kind (GLM Coding
  * Plan and GLM API, for example) need a tag to tell them apart.
@@ -328,7 +332,7 @@ function serviceKindPickerGroups(): DialogPickerGroup<ServiceKind>[] {
     },
     {
       label: i18n.t("services.groupGateway"),
-      options: [serviceKindPickerOption("newapi")],
+      options: gatewayKinds.map(serviceKindPickerOption),
     },
     {
       label: i18n.t("services.groupPayAsYouGo"),
@@ -339,7 +343,7 @@ function serviceKindPickerGroups(): DialogPickerGroup<ServiceKind>[] {
       options: httpServicePresetIDs
         .filter(
           (kind) =>
-            kind !== "newapi" &&
+            !gatewayKinds.includes(kind) &&
             !codingPlanPresetIDs.includes(kind) &&
             !payAsYouGoPresetIDs.includes(kind),
         )

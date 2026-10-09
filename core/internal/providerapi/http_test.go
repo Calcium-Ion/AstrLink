@@ -19,6 +19,7 @@ func TestProviderSurfacePreservesOriginPrefixAndInput(t *testing.T) {
 		{contract.ServiceKindMiniMax, "https://api.minimax.io/v1", "https://api.minimax.io/anthropic/v1/messages?trace=a%2Fb"},
 		{contract.ServiceKindQwen, "https://workspace.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", "https://workspace.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages?trace=a%2Fb"},
 		{contract.ServiceKindNewAPI, "https://proxy.example/custom/v1", "https://proxy.example/custom/v1/messages?trace=a%2Fb"},
+		{contract.ServiceKindMagpie, "http://127.0.0.1:3425", "http://127.0.0.1:3425/v1/messages?trace=a%2Fb"},
 		{contract.ServiceKindGLMCoding, "https://proxy.example/api/anthropic", "https://proxy.example/api/anthropic/v1/messages?trace=a%2Fb"},
 	} {
 		t.Run(string(tt.kind), func(t *testing.T) {

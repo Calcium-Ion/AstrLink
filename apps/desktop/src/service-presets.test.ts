@@ -35,6 +35,31 @@ describe("HTTP service product presets", () => {
     ]);
   });
 
+  it("points magpie at the local gateway with its documented native surface", () => {
+    const preset = httpServicePreset("magpie");
+
+    expect(preset).toMatchObject({
+      kind: "magpie",
+      baseURL: "http://127.0.0.1:3425",
+      authScheme: "bearer",
+      advancedOnStart: false,
+      sites: [{ id: "local", baseURL: "http://127.0.0.1:3425" }],
+    });
+    expect(preset.capabilities).toEqual([
+      { protocol: "openai.responses", mode: "native", streaming: true },
+      { protocol: "anthropic.messages", mode: "native", streaming: true },
+      { protocol: "google.generate_content", mode: "native", streaming: true },
+      { protocol: "openai.chat", mode: "native", streaming: true },
+      { protocol: "openai.models", mode: "native", streaming: false },
+      { protocol: "google.models", mode: "native", streaming: false },
+    ]);
+    // The OpenAI SDK base keeps its /v1; another host or port is a custom address.
+    expect(serviceSiteForBaseURL(preset, "http://127.0.0.1:3425/v1")).toBe(
+      "local",
+    );
+    expect(serviceSiteForBaseURL(preset, "http://192.168.1.8:3425")).toBeNull();
+  });
+
   it("does not expose API-key services as Codex, Claude, or Gemini subscriptions", () => {
     expect(httpServicePresetIDs).toEqual([
       "opencode_go",
@@ -43,6 +68,7 @@ describe("HTTP service product presets", () => {
       "glm_coding",
       "minimax_coding",
       "newapi",
+      "magpie",
       "openai_compatible",
       "openai",
       "anthropic",
@@ -417,6 +443,14 @@ describe("default protocol conversions", () => {
           "openai.models:native:false",
           "google.generate_content:native:true → openai.responses",
         ],
+        "magpie": [
+          "openai.responses:native:true",
+          "anthropic.messages:native:true",
+          "google.generate_content:native:true",
+          "openai.chat:native:true",
+          "openai.models:native:false",
+          "google.models:native:false",
+        ],
         "minimax": [
           "openai.responses:native:true",
           "anthropic.messages:native:true",
@@ -518,7 +552,11 @@ describe("default protocol conversions", () => {
           streaming: true,
         });
       }
-      if (["opencode_go", "opencode_zen", "custom", "newapi"].includes(id))
+      if (
+        ["opencode_go", "opencode_zen", "custom", "newapi", "magpie"].includes(
+          id,
+        )
+      )
         expect(current).toEqual(original);
     },
   );

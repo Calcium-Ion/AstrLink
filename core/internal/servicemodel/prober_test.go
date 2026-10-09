@@ -331,6 +331,31 @@ func TestPayAsYouGoModelDiscovery(t *testing.T) {
 	}
 }
 
+func TestMagpieDiscoversBothCatalogsWithOneBearerKey(t *testing.T) {
+	for _, tt := range []struct {
+		protocol contract.ProtocolID
+		path     string
+		body     string
+	}{
+		{contract.ProtocolOpenAIModels, "/v1/models", `{"data":[{"id":"deepseek/deepseek-v4-pro"},{"id":"group/opus-anywhere"}]}`},
+		{contract.ProtocolGoogleModels, "/v1beta/models", `{"models":[{"name":"models/group/opus-anywhere"},{"name":"models/deepseek/deepseek-v4-pro"}]}`},
+	} {
+		t.Run(string(tt.protocol), func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path != tt.path || r.Header.Get("Authorization") != "Bearer magpie" || r.Header.Get("X-Goog-Api-Key") != "" {
+					t.Fatalf("wrong discovery request: %s %v", r.URL, r.Header)
+				}
+				return probeResponse(tt.body), nil
+			})}
+			models, err := New(nil, nil, client).ProbeHTTP(context.Background(), "service_api", contract.ServiceKindMagpie, contract.HTTPConnection{BaseURL: "http://127.0.0.1:3425", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeBearer}}, []byte("magpie"), tt.protocol)
+			// Magpie names models provider/model and routing groups group/<id>.
+			if err != nil || strings.Join(models, ",") != "deepseek/deepseek-v4-pro,group/opus-anywhere" {
+				t.Fatalf("models=%v err=%v", models, err)
+			}
+		})
+	}
+}
+
 func TestPayAsYouGoDiscoveryFromAnthropicSDKRoot(t *testing.T) {
 	for _, kind := range []contract.ServiceKind{contract.ServiceKindDeepSeek, contract.ServiceKindMoonshot, contract.ServiceKindMiniMax} {
 		t.Run(string(kind), func(t *testing.T) {

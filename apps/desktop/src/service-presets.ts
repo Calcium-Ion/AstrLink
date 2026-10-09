@@ -37,8 +37,11 @@ export interface ProtocolDescriptor {
   streaming: boolean;
 }
 
-/** Where a preset account lives; "official" marks a single-site vendor. */
-export type ServiceSiteID = "cn" | "global" | "official";
+/**
+ * Where a preset account lives; "official" marks a single-site vendor and
+ * "local" a gateway running on this computer.
+ */
+export type ServiceSiteID = "cn" | "global" | "official" | "local";
 
 export interface ServiceSite {
   id: ServiceSiteID;
@@ -354,6 +357,30 @@ const profileDefinitions: Readonly<
     authScheme: "bearer",
     headerName: "",
     capabilityIDs: allProtocolIDs,
+    advancedOnStart: false,
+  },
+  magpie: {
+    id: "magpie",
+    label: "Magpie",
+    description:
+      "接入本机运行的 Magpie 网关，由它统一管理各家账号并在额度用尽时自动换下一个。",
+    defaultName: "Magpie",
+    kind: "magpie",
+    baseURL: "http://127.0.0.1:3425",
+    baseURLPlaceholder: "http://127.0.0.1:3425",
+    sites: [{ id: "local", baseURL: "http://127.0.0.1:3425" }],
+    authScheme: "bearer",
+    headerName: "",
+    // Magpie documents Chat, Responses, Messages, Gemini and both catalogs;
+    // Responses Compact and legacy Completions are not on its surface.
+    capabilityIDs: [
+      "openai.responses",
+      "anthropic.messages",
+      "google.generate_content",
+      "openai.chat",
+      "openai.models",
+      "google.models",
+    ],
     advancedOnStart: false,
   },
   openai_compatible: {
@@ -691,6 +718,11 @@ function localizeHttpPreset(preset: HTTPServicePreset): HTTPServicePreset {
         ...preset,
         description: i18n.t("presets.newapiDescription"),
       };
+    case "magpie":
+      return {
+        ...preset,
+        description: i18n.t("presets.magpieDescription"),
+      };
     case "openai_compatible":
       return {
         ...preset,
@@ -752,6 +784,7 @@ export function httpServiceKindLabel(kind: HTTPServiceKind): string {
   return (
     {
       newapi: "New API",
+      magpie: "Magpie",
       openai: "OpenAI",
       anthropic: "Anthropic",
       gemini: "Gemini",
