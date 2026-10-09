@@ -954,6 +954,9 @@ func (handler *Handler) clearServiceRisk(writer http.ResponseWriter, request *ht
 		}
 		return
 	}
+	if handler.rateLimits != nil {
+		handler.rateLimits.ReleaseRateLimits(id)
+	}
 	record, err := handler.serviceStore.GetService(request.Context(), id)
 	if err != nil {
 		handler.writeStoreError(writer, err)

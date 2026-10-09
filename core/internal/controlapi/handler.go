@@ -64,6 +64,9 @@ type Dependencies struct {
 	// ClientIdentities reports learned client identity versions. Optional.
 	ClientIdentities ClientIdentityReporter
 	Subscriptions    *subscription.Manager
+	// RateLimits releases gateway cooldowns when subscription risk is cleared.
+	// Supply the same resolver used by ingress. Optional.
+	RateLimits RateLimitReleaser
 	// CodingPlans reads first-party plan quotas for API-key coding plan
 	// services (Kimi, GLM, MiniMax, OpenCode Go). Optional.
 	CodingPlans      CodingPlanUsage
@@ -79,6 +82,11 @@ type Dependencies struct {
 	// ConsoleSessions is set by the server edition, whose web console signs
 	// in with the raw password. See ConsoleSessions.
 	ConsoleSessions ConsoleSessions
+}
+
+// RateLimitReleaser restores a service after an operator clears its risk.
+type RateLimitReleaser interface {
+	ReleaseRateLimits(contract.ServiceID)
 }
 
 // CodingPlanUsage is satisfied by *codingplan.Fetcher.
@@ -131,6 +139,7 @@ type Handler struct {
 	localData         storage.LocalDataStore
 	clientIdentities  ClientIdentityReporter
 	subscriptions     *subscription.Manager
+	rateLimits        RateLimitReleaser
 	codingPlans       CodingPlanUsage
 	serviceModels     ServiceModelProber
 	serviceTester     ServiceTester
@@ -199,6 +208,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		rawGrants:       newRawGrantManager(),
 		localData:       dependencies.LocalData,
 		subscriptions:   dependencies.Subscriptions,
+		rateLimits:      dependencies.RateLimits,
 		codingPlans:     dependencies.CodingPlans,
 		serviceModels:   dependencies.ServiceModels,
 		serviceTester:   dependencies.ServiceTester,

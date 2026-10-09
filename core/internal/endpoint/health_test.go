@@ -58,6 +58,44 @@ func TestStoreResolverWithholdsOnlyRateLimitedRoutes(t *testing.T) {
 	}
 }
 
+func TestReleaseRateLimitsDropsOnlyThatService(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	resolver := &StoreResolver{clock: func() time.Time { return now }}
+	base := Resolved{
+		Service:          contract.Service{ID: "service_a"},
+		UpstreamProtocol: contract.ProtocolOpenAIResponses,
+		UpstreamModel:    "gpt-5",
+		Mode:             contract.CapabilityModeNative,
+	}
+	otherModel, otherProtocol, otherPlan, otherService := base, base, base, base
+	otherModel.UpstreamModel = "gpt-5-mini"
+	otherProtocol.UpstreamProtocol = contract.ProtocolOpenAIChat
+	otherPlan.PlanType = contract.PlanTypeDelegated
+	otherService.Service.ID = "service_ab"
+	targets := []Resolved{base, otherModel, otherProtocol, otherPlan}
+	for _, candidate := range targets {
+		resolver.RecordRateLimit(candidate, 7*24*time.Hour)
+	}
+	resolver.RecordRateLimit(otherService, time.Hour)
+	otherUntil := resolver.RateLimitedUntil(otherService)
+
+	resolver.ReleaseRateLimits("service_a")
+	resolver.ReleaseRateLimits("service_a") // Repeated clearing is harmless.
+	resolver.ReleaseRateLimits("service_missing")
+	for _, candidate := range targets {
+		if until := resolver.RateLimitedUntil(candidate); !until.IsZero() {
+			t.Fatalf("cleared route still limited: %+v until %v", candidate, until)
+		}
+	}
+	if until := resolver.RateLimitedUntil(otherService); !until.Equal(otherUntil) {
+		t.Fatalf("service with shared ID prefix changed: %v, want %v", until, otherUntil)
+	}
+	resolver.RecordRateLimit(base, time.Minute)
+	if until := resolver.RateLimitedUntil(base); !until.Equal(now.Add(time.Minute)) {
+		t.Fatalf("new upstream 429 did not restore cooldown: %v", until)
+	}
+}
+
 func healthCandidate() Resolved {
 	return Resolved{
 		Endpoint: contract.Endpoint{ID: "endpoint_health"},

@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,20 @@ func (limits *rateLimits) limit(candidate Resolved, duration time.Duration, now 
 	}
 }
 
+func (limits *rateLimits) release(serviceID contract.ServiceID) {
+	if limits == nil {
+		return
+	}
+	limits.mu.Lock()
+	defer limits.mu.Unlock()
+	prefix := string(serviceID) + "\x00"
+	for key := range limits.deadlines {
+		if strings.HasPrefix(key, prefix) {
+			delete(limits.deadlines, key)
+		}
+	}
+}
+
 func rateLimitKey(candidate Resolved) string {
 	model := candidate.UpstreamModel
 	if model == "" {
@@ -63,6 +78,14 @@ func rateLimitKey(candidate Resolved) string {
 		}
 	}
 	return string(candidate.CanonicalService().ID) + "\x00" + string(candidate.UpstreamProtocol) + "\x00" + model + "\x00" + string(plan)
+}
+
+// ReleaseRateLimits drops all route cooldowns for a service after an operator
+// restores its scheduling. A later upstream 429 can establish a new cooldown.
+func (resolver *StoreResolver) ReleaseRateLimits(serviceID contract.ServiceID) {
+	if resolver != nil {
+		resolver.limits.release(serviceID)
+	}
 }
 
 func (resolver *StoreResolver) RecordRateLimit(candidate Resolved, duration time.Duration) {
