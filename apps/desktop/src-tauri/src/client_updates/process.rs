@@ -67,11 +67,41 @@ fn capture(mut stream: impl Read) -> Vec<u8> {
     output
 }
 
+/// Whether `path` holds a PE image. CreateProcess treats any other .exe as a
+/// 16-bit DOS program, which 64-bit Windows refuses with a modal
+/// "Unsupported 16-Bit Application" dialog on top of the error. Claude Code's
+/// npm package keeps a text stub at bin/claude.exe when its postinstall did
+/// not run or its platform package was not downloaded.
+#[cfg(any(windows, test))]
+pub(super) fn windows_image(path: &std::path::Path) -> std::io::Result<bool> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let mut header = Vec::with_capacity(64);
+    (&mut file).take(64).read_to_end(&mut header)?;
+    if header.len() < 64 || !header.starts_with(b"MZ") {
+        return Ok(false);
+    }
+    let offset = u32::from_le_bytes([header[60], header[61], header[62], header[63]]);
+    file.seek(SeekFrom::Start(offset.into()))?;
+    let mut signature = Vec::with_capacity(4);
+    file.take(4).read_to_end(&mut signature)?;
+    Ok(signature == b"PE\0\0")
+}
+
 pub(super) fn run(
     environment: &Environment,
     spec: &CommandSpec,
     deadline: Duration,
 ) -> Result<String, ClientError> {
+    // A file that cannot be read is left to CreateProcess, which reports it
+    // without a dialog.
+    #[cfg(windows)]
+    if matches!(windows_image(&spec.program), Ok(false)) {
+        return Err(ClientError::new(
+            "damaged",
+            format!("{} is not a Windows program", spec.program.display()),
+        ));
+    }
     let mut command = Command::new(&spec.program);
     command
         .args(&spec.args)

@@ -36,6 +36,7 @@ const ERROR_KEYS = new Set([
   "timeout",
   "changed",
   "unchanged",
+  "damaged",
 ]);
 
 export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {

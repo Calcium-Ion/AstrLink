@@ -167,9 +167,20 @@ describe("local client updates", () => {
       phase: "manual",
       can_update: false,
     };
+    snapshot.clients[2] = {
+      ...snapshot.clients[2],
+      phase: "error",
+      error_code: "damaged",
+      error_detail: "C:\\npm\\cursor-agent.exe is not a Windows program",
+      can_update: false,
+    };
     mocks.get.mockResolvedValue(snapshot);
     await render();
     expect(container.textContent).toContain("请检查网络和代理设置后重试");
+    expect(
+      container.querySelector('[data-client="cursor"] [role="alert"]')
+        ?.textContent,
+    ).toBe("安装不完整或文件已损坏，无法启动。请重新安装后重试。");
     await act(async () => button("手动更新").click());
     expect(mocks.open).toHaveBeenCalledWith(
       "https://code.claude.com/docs/en/setup",

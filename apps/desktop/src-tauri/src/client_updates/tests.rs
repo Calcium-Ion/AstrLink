@@ -445,6 +445,62 @@ fn follows_npm_shims_on_windows_without_verbatim_paths() {
 }
 
 #[test]
+fn recognizes_windows_programs_by_their_pe_header() {
+    let fixture = Fixture::new();
+    // Claude Code's npm stub, left when its postinstall did not run.
+    let stub = fixture.write(
+        "npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+        "echo \"Error: claude native binary not installed.\" >&2\nexit 1\n",
+    );
+    assert!(!process::windows_image(&stub).unwrap());
+    let mut image = vec![0; 0x84];
+    image[..2].copy_from_slice(b"MZ");
+    image[60..64].copy_from_slice(&0x80u32.to_le_bytes());
+    image[0x80..].copy_from_slice(b"PE\0\0");
+    let path = fixture.0.join("program.exe");
+    fs::write(&path, &image).unwrap();
+    assert!(process::windows_image(&path).unwrap());
+    let mut dos = image.clone();
+    dos[0x80..].copy_from_slice(b"NE\0\0");
+    // Empty, DOS header only, cut-off signature, and a 16-bit NE image.
+    for bytes in [&[][..], &image[..64], &image[..0x82], &dos[..]] {
+        fs::write(&path, bytes).unwrap();
+        assert!(!process::windows_image(&path).unwrap());
+    }
+    assert!(process::windows_image(&fixture.0.join("missing.exe")).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn never_starts_a_file_that_is_not_a_windows_program() {
+    let fixture = Fixture::new();
+    let environment = Environment {
+        home: fixture.0.clone(),
+        path: std::env::var_os("PATH").unwrap_or_default(),
+        use_system_proxy: false,
+        proxy_env: None,
+    };
+    let stub = fixture.write("claude.exe", "exit 1\n");
+    // CreateProcess itself would fail with "command" after showing the dialog.
+    let error = process::run(
+        &environment,
+        &CommandSpec::new(&stub, &["--version"]),
+        PROBE_TIMEOUT,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "damaged");
+    assert!(process::windows_image(&std::env::current_exe().unwrap()).unwrap());
+    let shell = std::env::var_os("ComSpec").unwrap();
+    let output = process::run(
+        &environment,
+        &CommandSpec::new(shell, &["/d", "/c", "echo ok"]),
+        PROBE_TIMEOUT,
+    )
+    .unwrap();
+    assert_eq!(output.trim(), "ok");
+}
+
+#[test]
 fn parses_latest_sources_and_rejects_invalid_versions() {
     assert_eq!(
         parse_latest(

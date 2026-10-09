@@ -3029,6 +3029,7 @@
       "timeout": "The operation timed out. Check your connection and retry.",
       "changed": "The installation changed. Refresh before updating.",
       "unchanged": "No update was installed. Select View details to see why, then retry.",
+      "damaged": "This installation is incomplete or damaged and cannot start. Reinstall it, then retry.",
       "proxy": "Could not read or use the system proxy. Check your proxy settings."
     }
   },
