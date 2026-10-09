@@ -364,6 +364,12 @@ func (store *Store) CreateAccessToken(ctx context.Context, candidate storagecont
 		return record, fmt.Errorf("begin access token create: %w", err)
 	}
 	defer rollbackOnError(transaction, &err)
+	// Write first, before insertAccessTokenTx reads the count, so another
+	// connection's write makes this wait on busy_timeout instead of failing
+	// a deferred read transaction upgrade with SQLITE_BUSY.
+	if _, err = transaction.ExecContext(ctx, `UPDATE local_access_tokens SET id = id WHERE 0`); err != nil {
+		return storagecontract.AccessTokenMetadata{}, fmt.Errorf("lock access tokens: %w", err)
+	}
 	record, err = store.insertAccessTokenTx(ctx, transaction, candidate, store.now().UTC())
 	if err != nil {
 		return storagecontract.AccessTokenMetadata{}, err

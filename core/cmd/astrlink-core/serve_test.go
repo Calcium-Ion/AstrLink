@@ -477,6 +477,9 @@ func TestServeResetSwitchClearsThePasswordOncePerValue(t *testing.T) {
 	var secret struct {
 		AccessToken string `json:"access_token"`
 	}
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create access token = %d", created.StatusCode)
+	}
 	decodeBody(t, created, &secret)
 	stop(running)
 

@@ -1,6 +1,6 @@
 module github.com/QuantumNous/astrlink/core
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/QuantumNous/astrlink/convo v0.0.0
@@ -10,10 +10,10 @@ require (
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/zalando/go-keyring v0.2.6
-	golang.org/x/crypto v0.53.0
-	golang.org/x/image v0.41.0
-	golang.org/x/net v0.56.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/crypto v0.57.0
+	golang.org/x/image v0.45.0
+	golang.org/x/net v0.60.0
+	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.38.2
 )
 
@@ -34,7 +34,7 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
