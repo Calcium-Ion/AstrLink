@@ -8,6 +8,9 @@ func (kind ServiceKind) ModelNativeProtocol(model string) ProtocolID {
 	if kind == ServiceKindCopilotSubscription {
 		return copilotModelProtocol(strings.ToLower(model))
 	}
+	if kind == ServiceKindDroidSubscription {
+		return droidModelProtocol(strings.ToLower(model))
+	}
 	if kind != ServiceKindOpenCodeGo && kind != ServiceKindOpenCodeZen {
 		return ""
 	}
@@ -20,6 +23,20 @@ func (kind ServiceKind) ModelNativeProtocol(model string) ProtocolID {
 		return ProtocolAnthropicMessages
 	}
 	return ProtocolOpenAIChat
+}
+
+// droidModelProtocol follows the wire the Droid CLI's model registry sends
+// each model on: Claude and MiniMax M2 on Messages (/api/llm/a), GPT and
+// Grok on Responses, every other open model on Chat Completions (/api/llm/o).
+func droidModelProtocol(model string) ProtocolID {
+	switch {
+	case strings.HasPrefix(model, "claude-"), strings.HasPrefix(model, "minimax-m2"):
+		return ProtocolAnthropicMessages
+	case strings.HasPrefix(model, "gpt-"), strings.HasPrefix(model, "grok-"):
+		return ProtocolOpenAIResponses
+	default:
+		return ProtocolOpenAIChat
+	}
 }
 
 // copilotModelProtocol mirrors OpenCode's choice among the endpoints a Copilot

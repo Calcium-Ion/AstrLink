@@ -43,12 +43,16 @@ const (
 	// authorized through the OpenCode GitHub OAuth app (device code), the
 	// third-party client GitHub supports for Copilot plans.
 	SubscriptionProviderGitHubCopilot SubscriptionProvider = "github_copilot"
+	// SubscriptionProviderFactoryDroid is a Factory plan (Pro, Plus, Max)
+	// authorized through the Droid CLI's public WorkOS client (device code).
+	// Requests present the Droid CLI, the only client Factory serves.
+	SubscriptionProviderFactoryDroid SubscriptionProvider = "factory_droid"
 )
 
 func (provider SubscriptionProvider) Valid() bool {
 	switch provider {
 	case SubscriptionProviderOpenAICodex, SubscriptionProviderClaudeCode, SubscriptionProviderXAIGrok,
-		SubscriptionProviderAntigravity, SubscriptionProviderGitHubCopilot:
+		SubscriptionProviderAntigravity, SubscriptionProviderGitHubCopilot, SubscriptionProviderFactoryDroid:
 		return true
 	default:
 		return false
@@ -65,6 +69,8 @@ func (provider SubscriptionProvider) ServiceKind() ServiceKind {
 		return ServiceKindAntigravitySubscription
 	case SubscriptionProviderGitHubCopilot:
 		return ServiceKindCopilotSubscription
+	case SubscriptionProviderFactoryDroid:
+		return ServiceKindDroidSubscription
 	default:
 		return ServiceKindCodexSubscription
 	}
@@ -87,6 +93,8 @@ func (provider SubscriptionProvider) Capabilities() []Capability {
 		}
 	case SubscriptionProviderGitHubCopilot:
 		return DefaultGitHubCopilotCapabilities()
+	case SubscriptionProviderFactoryDroid:
+		return DefaultFactoryDroidCapabilities()
 	default:
 		return DefaultOpenAICodexCapabilities()
 	}
@@ -103,7 +111,7 @@ func (provider SubscriptionProvider) ConversionTargets() []ProtocolID {
 		return []ProtocolID{ProtocolOpenAIResponses, ProtocolOpenAIChat}
 	case SubscriptionProviderAntigravity:
 		return []ProtocolID{ProtocolGoogleGenerateContent}
-	case SubscriptionProviderGitHubCopilot:
+	case SubscriptionProviderGitHubCopilot, SubscriptionProviderFactoryDroid:
 		return []ProtocolID{ProtocolAnthropicMessages, ProtocolOpenAIResponses, ProtocolOpenAIChat}
 	default:
 		return []ProtocolID{ProtocolOpenAIResponses}
@@ -166,6 +174,20 @@ func DefaultXAIGrokCapabilities() []Capability {
 // Copilot API: each model is served on Messages, Responses or Chat
 // Completions (see ServiceKind.ModelNativeProtocol), plus the model list.
 func DefaultGitHubCopilotCapabilities() []Capability {
+	return []Capability{
+		{Protocol: ProtocolAnthropicMessages, Mode: CapabilityModeNative, Streaming: true},
+		{Protocol: ProtocolOpenAIResponses, Mode: CapabilityModeNative, Streaming: true},
+		{Protocol: ProtocolOpenAIChat, Mode: CapabilityModeNative, Streaming: true},
+		{Protocol: ProtocolOpenAIModels, Mode: CapabilityModeNative},
+	}
+}
+
+// DefaultFactoryDroidCapabilities is the fixed native capability set of
+// Factory's LLM gateway: Claude on Messages, GPT and Grok on Responses, the
+// open models on Chat Completions (see ServiceKind.ModelNativeProtocol), plus
+// the model list, which AstrLink serves from the configured models because
+// Factory publishes no model endpoint.
+func DefaultFactoryDroidCapabilities() []Capability {
 	return []Capability{
 		{Protocol: ProtocolAnthropicMessages, Mode: CapabilityModeNative, Streaming: true},
 		{Protocol: ProtocolOpenAIResponses, Mode: CapabilityModeNative, Streaming: true},
@@ -386,7 +408,7 @@ func (flow AuthorizationFlow) SupportedBy(provider SubscriptionProvider) bool {
 	switch provider {
 	case SubscriptionProviderClaudeCode:
 		return flow == AuthorizationFlowCode
-	case SubscriptionProviderXAIGrok, SubscriptionProviderGitHubCopilot:
+	case SubscriptionProviderXAIGrok, SubscriptionProviderGitHubCopilot, SubscriptionProviderFactoryDroid:
 		return flow == AuthorizationFlowDeviceCode
 	case SubscriptionProviderAntigravity:
 		return flow == AuthorizationFlowBrowser

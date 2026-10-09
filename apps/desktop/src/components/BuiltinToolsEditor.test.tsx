@@ -254,6 +254,9 @@ it("offers MiniMax and its image models for the provider Images API", async () =
   await act(async () =>
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
   );
+  // Radix hands focus back to the provider trigger a tick after closing; a
+  // model list opened before that is dismissed as focus moving outside it.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
   await act(async () =>
     container
       .querySelector<HTMLInputElement>('[aria-label="图片生成绘图模型"]')!
