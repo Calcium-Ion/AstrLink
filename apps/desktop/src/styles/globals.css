@@ -415,6 +415,28 @@
   --window-chrome-height: 0px;
 }
 
+/* Where the sidebar brand and the page header start. macOS draws its traffic
+   lights at the top-left, so both columns start below the title bar. */
+:root {
+  --sidebar-top: calc(var(--window-chrome-height) + 16px);
+  --workspace-top: calc(var(--window-chrome-height) + 28px);
+}
+
+@media (max-height: 680px) {
+  :root {
+    --workspace-top: calc(var(--window-chrome-height) + 18px);
+  }
+}
+
+/* Windows, and Linux with the GTK buttons on the right, draw every control at
+   the end of the title bar. The page header starts right under the bar, and
+   the 32px brand sits level with the header's title (8px header padding plus
+   half of its 20px line). */
+:root[data-window-controls="end"]:not([data-window-fullscreen="true"]) {
+  --sidebar-top: calc(var(--window-chrome-height) + 2px);
+  --workspace-top: var(--window-chrome-height);
+}
+
 /* The tray popover is a transparent window; the panel draws its own surface. */
 :root[data-surface="tray-popover"] {
   --window-chrome-height: 0px;

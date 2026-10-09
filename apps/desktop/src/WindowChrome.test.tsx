@@ -84,6 +84,7 @@ describe("WindowChrome", () => {
       document.documentElement.dataset,
       "windowFullscreen",
     );
+    Reflect.deleteProperty(document.documentElement.dataset, "windowControls");
   });
 
   it("does not render desktop chrome in a browser", async () => {
@@ -92,6 +93,7 @@ describe("WindowChrome", () => {
     });
 
     expect(container.childElementCount).toBe(0);
+    expect(document.documentElement.dataset.windowControls).toBeUndefined();
   });
 
   it("keeps macOS native controls and renders no duplicate branding", async () => {
@@ -110,6 +112,8 @@ describe("WindowChrome", () => {
     expect(container.querySelector("button")).toBeNull();
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toBe("");
+    // The traffic lights take the start of the bar.
+    expect(document.documentElement.dataset.windowControls).toBe("start");
     expect(
       container.querySelector(
         '[data-slot="window-drag-region"][data-tauri-drag-region]',
@@ -124,6 +128,17 @@ describe("WindowChrome", () => {
 
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toBe("");
+    expect(document.documentElement.dataset.windowControls).toBe("end");
+    // Caption glyphs: a bar, a box, and a cross.
+    expect(
+      control(container, "最小化窗口").querySelector("path")?.getAttribute("d"),
+    ).toBe("M3 8.5h10");
+    expect(
+      control(container, "最大化窗口").querySelectorAll("rect, path"),
+    ).toHaveLength(1);
+    expect(
+      control(container, "关闭窗口").querySelector("path")?.getAttribute("d"),
+    ).toBe("m3.5 3.5 9 9m0-9-9 9");
 
     await act(async () => {
       control(container, "最小化窗口").click();
@@ -171,6 +186,21 @@ describe("WindowChrome", () => {
       ),
     ).toHaveLength(2);
     expect(container.textContent).toBe("");
+    expect(document.documentElement.dataset.windowControls).toBe("start");
+  });
+
+  it("frees the start of the bar when GTK puts every button at the end", async () => {
+    await act(async () => {
+      root.render(<WindowChrome platform="linux" />);
+    });
+    await act(async () => undefined);
+
+    expect(
+      container.querySelector(
+        '[data-slot="window-controls"][data-placement="start"]',
+      ),
+    ).toBeNull();
+    expect(document.documentElement.dataset.windowControls).toBe("end");
   });
 
   it("draws a surface's accessory in the title bar, before the controls", async () => {
@@ -222,7 +252,10 @@ describe("WindowChrome", () => {
     });
     await act(async () => undefined);
 
-    expect(control(container, "还原窗口")).not.toBeNull();
+    // Two stacked boxes while maximized.
+    expect(
+      control(container, "还原窗口").querySelectorAll("rect, path"),
+    ).toHaveLength(2);
     expect(
       container.querySelector('[data-slot="window-resize-handle"]'),
     ).toBeNull();
@@ -230,6 +263,7 @@ describe("WindowChrome", () => {
     await act(async () => root.unmount());
     expect(windowMocks.unlistenFocus).toHaveBeenCalledOnce();
     expect(windowMocks.unlistenResize).toHaveBeenCalledOnce();
+    expect(document.documentElement.dataset.windowControls).toBeUndefined();
     root = createRoot(container);
   });
 });

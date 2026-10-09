@@ -6,6 +6,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
 } from "react";
@@ -21,7 +22,6 @@ import {
 } from "./window-chrome";
 import { i18n } from "./i18n";
 import { cn } from "@/lib/utils";
-import { Maximize, Minimize, SquareStack, X } from "@/components/icons";
 
 type ResizeDirection =
   | "East"
@@ -101,6 +101,10 @@ const resizeHandleClasses: Record<ResizeDirection, string> = {
   NorthWest: "top-0 left-0 size-2 cursor-nwse-resize",
 };
 
+/**
+ * The caption glyphs Windows and GNOME draw: a bar, a box, two stacked boxes
+ * while maximized, and a cross, each inside a 10px square.
+ */
 function ControlIcon({
   control,
   maximized,
@@ -108,15 +112,29 @@ function ControlIcon({
   control: WindowControl;
   maximized: boolean;
 }): ReactNode {
-  const Icon =
-    control === "minimize"
-      ? Minimize
-      : control === "close"
-        ? X
-        : maximized
-          ? SquareStack
-          : Maximize;
-  return <Icon className="size-4" strokeWidth={1.6} />;
+  return (
+    <svg
+      aria-hidden="true"
+      className="size-4"
+      fill="none"
+      focusable="false"
+      stroke="currentColor"
+      viewBox="0 0 16 16"
+    >
+      {control === "minimize" ? (
+        <path d="M3 8.5h10" />
+      ) : control === "close" ? (
+        <path d="m3.5 3.5 9 9m0-9-9 9" />
+      ) : maximized ? (
+        <>
+          <rect height="7" rx="1" width="7" x="3.5" y="5.5" />
+          <path d="M5.5 5.5v-1a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1" />
+        </>
+      ) : (
+        <rect height="9" rx="1" width="9" x="3.5" y="3.5" />
+      )}
+    </svg>
+  );
 }
 
 function controlLabel(control: WindowControl, maximized: boolean): string {
@@ -139,6 +157,19 @@ export function WindowChrome({
   const [linuxLayout, setLinuxLayout] = useState<WindowControlLayout>(() =>
     parseLinuxDecorationLayout(null),
   );
+  const layout =
+    platform === "linux"
+      ? linuxLayout
+      : platform === "windows"
+        ? {
+            start: [],
+            end: ["minimize", "maximize", "close"] satisfies WindowControl[],
+          }
+        : { start: [], end: [] };
+  // macOS draws its traffic lights at the start. When every control sits at
+  // the end, the page lays out its brand under the bar's empty start.
+  const controlSide =
+    platform === "macos" || layout.start.length > 0 ? "start" : "end";
 
   const syncWindowState = useCallback(async () => {
     if (!appWindow) return;
@@ -220,6 +251,16 @@ export function WindowChrome({
     };
   }, [platform, windowState.fullscreen]);
 
+  // Before paint, so the page never shows a frame laid out for the other side.
+  useLayoutEffect(() => {
+    if (platform === "browser") return;
+    const root = document.documentElement;
+    root.dataset.windowControls = controlSide;
+    return () => {
+      delete root.dataset.windowControls;
+    };
+  }, [platform, controlSide]);
+
   const runWindowAction = useCallback((action: () => Promise<unknown>) => {
     void action().catch((error: unknown) => {
       console.error("AstrLink window action failed", error);
@@ -254,16 +295,6 @@ export function WindowChrome({
   );
 
   if (platform === "browser") return null;
-
-  const layout =
-    platform === "linux"
-      ? linuxLayout
-      : platform === "windows"
-        ? {
-            start: [],
-            end: ["minimize", "maximize", "close"] satisfies WindowControl[],
-          }
-        : { start: [], end: [] };
 
   const renderControls = (
     controls: WindowControl[],

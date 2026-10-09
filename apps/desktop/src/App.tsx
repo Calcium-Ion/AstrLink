@@ -786,7 +786,7 @@ export default function App() {
   return (
     <AppShell
       sidebar={
-        <aside className="flex h-full min-h-0 flex-col border-r bg-sidebar px-3 pt-[calc(var(--window-chrome-height)+16px)] pb-3 max-[960px]:px-2 max-[960px]:pb-2.5">
+        <aside className="flex h-full min-h-0 flex-col border-r bg-sidebar px-3 pt-[var(--sidebar-top)] pb-3 max-[960px]:px-2 max-[960px]:pb-2.5">
           <div className="flex items-center gap-3 px-2 pb-5 max-[960px]:justify-center max-[960px]:px-0">
             <img
               className="block size-8 shrink-0"
@@ -903,7 +903,7 @@ export default function App() {
         >
           <main
             className={cn(
-              "@container/workspace-surface h-full min-h-0 w-full min-w-0 px-8 pt-[calc(var(--window-chrome-height)+28px)] pb-8 max-[960px]:px-5 max-h-[680px]:pt-[calc(var(--window-chrome-height)+18px)] max-h-[680px]:pb-5",
+              "@container/workspace-surface h-full min-h-0 w-full min-w-0 px-8 pt-[var(--workspace-top)] pb-8 max-[960px]:px-5 [@media(max-height:680px)]:pb-5",
               "flex flex-col",
               [
                 "about",
