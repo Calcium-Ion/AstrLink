@@ -24,21 +24,28 @@ func listenControlSocket(path string) (net.Listener, error) {
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("restrict control socket mode: %w", err)
 	}
-	return &uidCheckedListener{Listener: listener}, nil
+	return &uidCheckedListener{Listener: listener, check: requireSameUID}, nil
 }
 
 type uidCheckedListener struct {
 	net.Listener
+	check func(net.Conn) error
 }
 
+// Accept drops a connection from another user and keeps listening.
+// http.Server.Serve stops on a non-temporary Accept error, so returning the
+// rejection would let any root process (sudo astrlink, docker exec -u root)
+// shut Core down by connecting.
 func (listener *uidCheckedListener) Accept() (net.Conn, error) {
-	conn, err := listener.Listener.Accept()
-	if err != nil {
-		return nil, err
+	for {
+		conn, err := listener.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if err := listener.check(conn); err != nil {
+			_ = conn.Close()
+			continue
+		}
+		return conn, nil
 	}
-	if err := requireSameUID(conn); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return conn, nil
 }
