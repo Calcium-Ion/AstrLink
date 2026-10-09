@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -475,6 +476,55 @@ func TestAccessTokenLimitIsEnforcedAtomically(t *testing.T) {
 	}
 	if count != storagecontract.AccessTokenLimit {
 		t.Fatalf("access token count = %d", count)
+	}
+}
+
+func TestAccessTokenCreateWaitsForAnotherWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "astrlink.db")
+	store := openTestStore(t, path)
+	defer store.Close()
+	manager, err := accesstoken.NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another connection keeps committing, as background work does while a
+	// user creates a token. A create that read before one of those commits
+	// must still insert.
+	other, err := sql.Open(driverName, sqliteFileDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if _, err := other.Exec(`CREATE TABLE write_probe (value INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	writerDone := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				writerDone <- nil
+				return
+			default:
+			}
+			if _, err := other.Exec(`INSERT INTO write_probe (value) VALUES (1)`); err != nil {
+				writerDone <- err
+				return
+			}
+		}
+	}()
+	ctx := context.Background()
+	for index := 0; index < 50; index++ {
+		if _, err := manager.Create(ctx, fmt.Sprintf("busy-%02d", index)); err != nil {
+			close(stop)
+			<-writerDone
+			t.Fatalf("Create %d while another connection writes: %v", index, err)
+		}
+	}
+	close(stop)
+	if err := <-writerDone; err != nil {
+		t.Fatalf("writer: %v", err)
 	}
 }
 
