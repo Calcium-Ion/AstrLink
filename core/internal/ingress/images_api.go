@@ -90,6 +90,12 @@ func (handler *Handler) serveImages(writer http.ResponseWriter, request *http.Re
 			handler.forwardCodexImages(writer, request, classified, settings, candidate, binding, model)
 			return
 		}
+		// Codex names OpenAI's image model, which MiniMax does not serve.
+		// MiniMax draws with image-01 unless a redirect or the provider's
+		// own mapping chose another model.
+		if model == classified.Model && minimaxImageKind(service.Kind) {
+			model = minimaxDefaultImageModel
+		}
 		// The provider's Images API is called as a configured provider
 		// Images backend would be, so its answer reaches Codex the same way.
 		config = contract.BuiltinTool{Enabled: true, Backend: "service_images", ServiceID: service.ID, Model: model}

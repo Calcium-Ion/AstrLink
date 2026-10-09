@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -129,5 +130,62 @@ func TestMiniMaxImageFailures(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "echoed prompt") {
 			t.Errorf("%s: err = %v", test.body, err)
 		}
+	}
+}
+
+func TestCodexImageFallbackDrawsWithMiniMaxImageModel(t *testing.T) {
+	jpegImage := encodedTestImage(t, "jpeg")
+	for _, test := range []struct {
+		name      string
+		redirects []contract.ModelRedirect
+		want      string
+	}{
+		{name: "default", want: "image-01"},
+		{name: "redirect", redirects: []contract.ModelRedirect{{From: "gpt-image-2", To: "image-01-live", Enabled: true}}, want: "image-01-live"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var models []any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body builtintools.Object
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				switch r.URL.Path {
+				case "/v1/responses":
+					writeResponsesSSE(w, builtintools.String(body["model"]), builtinMessage("ok"))
+				case "/v1/image_generation":
+					mu.Lock()
+					models = append(models, body["model"])
+					mu.Unlock()
+					_, _ = io.WriteString(w, `{"data":{"image_base64":["`+jpegImage+`"]},"base_resp":{"status_code":0}}`)
+				default:
+					t.Errorf("unexpected upstream path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			minimax := wsCandidate(server.URL)
+			minimax.Service.ID = "service_minimax"
+			minimax.Service.Kind = contract.ServiceKindMiniMaxCoding
+			minimax.Service.ResponsesWebSocketEnabled = nil
+			minimax.Service.Models = []string{"gpt-5.6-sol"}
+			minimax.Service.HTTP.Auth = contract.ServiceAuth{Scheme: contract.AuthSchemeBearer}
+			minimax.Service.HTTP.CredentialRef = "local://service/service_minimax"
+			store := newRedirectSettingsStore(test.redirects...)
+			store.settings.BuiltinTools = &contract.BuiltinTools{}
+			handler := NewWithDependencies(Dependencies{
+				Resolver:       codexToolResolver{candidateResolver{candidates: []endpoint.Resolved{minimax}}},
+				Authorizer:     endpoint.NewServiceAuthorizer(codingPlanCredentials{}, codingPlanCredentials{}),
+				RequestRecords: store,
+			})
+			codexTurn(t, handler, true)
+			image := codexClientRequest("/v1/images/generations", `{"prompt":"a red fox","model":"gpt-image-2"}`, true)
+			image.Header.Set(codexImageTurnHeader, codexTestTurn)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, image)
+			mu.Lock()
+			defer mu.Unlock()
+			if response.Code != http.StatusOK || fmt.Sprint(models) != "["+test.want+"]" {
+				t.Fatalf("image = %d %s, MiniMax models = %v", response.Code, response.Body.String(), models)
+			}
+		})
 	}
 }

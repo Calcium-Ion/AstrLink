@@ -23,6 +23,10 @@ func minimaxImageKind(kind contract.ServiceKind) bool {
 	return kind == contract.ServiceKindMiniMax || kind == contract.ServiceKindMiniMaxCoding
 }
 
+// minimaxDefaultImageModel draws Codex's own image requests on a MiniMax
+// provider that served the turn, unless a redirect names another model.
+const minimaxDefaultImageModel = "image-01"
+
 // minimaxAspectRatios are the aspect_ratio values MiniMax accepts. Only
 // image-01 takes 21:9.
 var minimaxAspectRatios = []struct {
