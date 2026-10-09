@@ -431,6 +431,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				handler.learnClientIdentity(request.Context(), contract.SubscriptionProviderXAIGrok, attemptRequest.Header)
 			}
 		}
+		records.noteCodexOfficial(clientClass == accountauth.ClientClassOfficial)
 		var headers http.Header
 		authorizationEndpoint, authorizeErr := candidate.AuthorizationEndpoint()
 		// The recognized class rides the proxy context so the authorizer, which

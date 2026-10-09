@@ -797,8 +797,14 @@ export function ClientSetupDialog({
               {mode === "direct" && isDirectClient(client) ? (
                 <HelpDisclosure title={t("clientSetup.limitsTitle")}>
                   <p>{t(`clientSetup.limits.${client}`)}</p>
+                  {client === "codex" ? (
+                    <p>{t("clientSetup.codexTools")}</p>
+                  ) : null}
                   {offersCCSwitch ? (
                     <p>{t("clientSetup.ccSwitchOverwrites")}</p>
+                  ) : null}
+                  {offersCCSwitch && client === "codex" ? (
+                    <p>{t("clientSetup.codexToolsCCSwitch")}</p>
                   ) : null}
                 </HelpDisclosure>
               ) : null}

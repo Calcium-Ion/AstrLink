@@ -201,7 +201,10 @@ type recordSession struct {
 	upstreamHTTPStatus    int
 	hasUpstreamHTTPStatus bool
 	endpointID            *contract.ServiceID
-	plan                  *contract.ExecutionPlan
+	// codexOfficial is set when the current attempt forwarded a Codex
+	// subscription request with the Codex client's own identity.
+	codexOfficial bool
+	plan          *contract.ExecutionPlan
 	// conversionDiagnostics is what the current attempt's local protocol
 	// conversion dropped or rewrote, request side first.
 	conversionDiagnostics []contract.ConversionDiagnostic
@@ -717,6 +720,14 @@ func (session *recordSession) noteSelected(candidate endpoint.Resolved, plan con
 	session.endpointID = &endpointID
 	planCopy := plan
 	session.plan = &planCopy
+}
+
+// noteCodexOfficial records whether the current attempt forwarded a Codex
+// subscription request with the Codex client's own identity.
+func (session *recordSession) noteCodexOfficial(official bool) {
+	if session != nil {
+		session.codexOfficial = official
+	}
 }
 
 // noteAttemptedService attributes a failure that never reached a RoundTrip to

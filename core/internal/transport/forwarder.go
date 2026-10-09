@@ -237,7 +237,15 @@ func removeInboundCredentials(header http.Header) {
 	} {
 		header.Del(name)
 	}
+	// Codex shows its image and search tools only for a provider that sends
+	// this OpenAI header. Its value is a local switch, not a credential that
+	// an upstream should ever see.
+	removeHeaderFold(header, OpenAIActorAuthorizationHeader)
 }
+
+// OpenAIActorAuthorizationHeader is the header Codex checks before showing its
+// own image generation and web search tools.
+const OpenAIActorAuthorizationHeader = "X-Openai-Actor-Authorization"
 
 // Gateway diagnostics belong to the local connection. Apply this after target
 // overlays as well, so a provider adapter cannot reintroduce gateway branding.

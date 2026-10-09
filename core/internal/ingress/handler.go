@@ -113,6 +113,8 @@ func (function PolicyWarningReporterFunc) ReportPolicyWarning(
 
 type Handler struct {
 	builtinStates            builtintools.Store
+	searchRefs               searchRefStore
+	codexTurns               codexTurnStore
 	proxyCredentials         secretstore.SecretStore
 	affinities               responseAffinities
 	resolver                 endpoint.Resolver
@@ -313,6 +315,10 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		if request.Context().Err() != nil {
 			session.noteCancelled()
 		}
+		if mode := builtinInternalFrom(request.Context()); mode == nil || !mode.Native {
+			// A tool executor's own model call does not serve the turn.
+			handler.noteCodexTurn(classified, session)
+		}
 		if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
 			return
 		}
@@ -336,6 +342,16 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 	if routingSettingsLoaded && err == nil {
 		session.routingSettings = &routingSettings
+	}
+	// Codex's own image and search requests skip routing: the built-in tools
+	// answer them, or the provider that served the turn.
+	switch classified.Protocol {
+	case contract.ProtocolOpenAIImages:
+		handler.serveImages(outWriter, request, classified, routingSettings)
+		return
+	case contract.ProtocolOpenAISearch:
+		handler.serveSearch(outWriter, request, classified, routingSettings)
+		return
 	}
 	if mode := builtinInternalFrom(request.Context()); (mode == nil || (!mode.Native && mode.Model == "")) && !classified.Protocol.IsModelDiscovery() && classified.Model != "" {
 		classified = handler.applyModelRedirect(request.Context(), session, classified, routingSettings)

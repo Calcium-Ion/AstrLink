@@ -31,6 +31,9 @@ func TestClassifyAlphaProtocolRoutes(t *testing.T) {
 		{name: "gemini auto", method: http.MethodPost, path: "/v1beta/models/astrlink/auto:generateContent", body: `{"contents":[{"parts":[{"text":"hello"}]}]}`, protocol: contract.ProtocolGoogleGenerateContent, model: contract.AstrLinkAutoModelID},
 		{name: "gemini stream", method: http.MethodPost, path: "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse", body: `{}`, protocol: contract.ProtocolGoogleGenerateContent, model: "gemini-2.5-flash", streaming: true},
 		{name: "google models", method: http.MethodGet, path: "/v1beta/models?pageSize=20", protocol: contract.ProtocolGoogleModels},
+		{name: "codex image", method: http.MethodPost, path: "/v1/images/generations", body: `{"model":"gpt-image-2","prompt":"fox"}`, protocol: contract.ProtocolOpenAIImages, model: "gpt-image-2"},
+		{name: "codex image edit", method: http.MethodPost, path: "/v1/images/edits", body: `{"model":"gpt-image-2","prompt":"fox"}`, protocol: contract.ProtocolOpenAIImages, model: "gpt-image-2"},
+		{name: "codex search", method: http.MethodPost, path: "/v1/alpha/search", body: `{"id":"session","model":"gpt-5","commands":{}}`, protocol: contract.ProtocolOpenAISearch, model: "gpt-5"},
 	}
 
 	for _, test := range tests {

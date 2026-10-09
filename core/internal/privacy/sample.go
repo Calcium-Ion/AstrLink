@@ -37,8 +37,14 @@ func WrapSampleText(protocol contract.ProtocolID, sample string) ([]byte, error)
 				{"role": "user", "content": sample},
 			},
 		}
-	case contract.ProtocolOpenAICompletions:
+	case contract.ProtocolOpenAICompletions, contract.ProtocolOpenAIImages:
 		payload = map[string]any{"prompt": sample}
+	case contract.ProtocolOpenAISearch:
+		payload = map[string]any{
+			"commands": map[string]any{
+				"search_query": []map[string]string{{"q": sample}},
+			},
+		}
 	case contract.ProtocolOpenAIResponses, contract.ProtocolOpenAIResponsesCompact:
 		payload = map[string]any{"input": sample}
 	case contract.ProtocolGoogleGenerateContent:

@@ -182,6 +182,13 @@ func protocolRoots(protocol contract.ProtocolID) ([]string, bool) {
 		return []string{"system", "messages"}, true
 	case contract.ProtocolGoogleGenerateContent:
 		return []string{"systemInstruction", "contents"}, true
+	case contract.ProtocolOpenAIImages:
+		// Reference images travel as data URLs, which are never inspected.
+		return []string{"prompt"}, true
+	case contract.ProtocolOpenAISearch:
+		// The recent conversation Codex attaches reaches a Codex
+		// subscription with the queries. The built-in search drops it first.
+		return []string{"commands", "input"}, true
 	default:
 		return nil, false
 	}

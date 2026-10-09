@@ -2799,6 +2799,8 @@
     "ccSwitchOpened": "Requested CC Switch to open. Confirm the import there.",
     "ccSwitchFailed": "Unable to open CC Switch. Check that it is installed with the ccswitch:// protocol registered and that the gateway and token are still available, then retry.",
     "ccSwitchOverwrites": "Switching providers in CC Switch overwrites the config written here.",
+    "codexTools": "After writing, Codex shows its own image generation and web search tools. When Codex calls them, the gateway first uses the settings under Routing → Models & tools → Built-in tools. A tool turned off there goes to the API provider serving the conversation. A Codex subscription handles both tools. OpenAI API, OpenAI compatible and New API providers handle image generation. Otherwise Codex is told how to turn the tool on.",
+    "codexToolsCCSwitch": "A config imported with CC Switch lacks this setting, so Codex does not show these two tools.",
     "limitsTitle": "Limitations",
     "limits": {
       "claude": "Only the user-level ~/.claude/settings.json is written. A project’s .claude/settings.json or .claude/settings.local.json wins when it sets the same environment variables. With CLAUDE_CONFIG_DIR set, Claude Code reads another folder; configure it manually instead.",
@@ -2869,7 +2871,7 @@
     "serviceImages": "Provider’s Images API",
     "imagesApi": "Custom Images API",
     "upstreamHint": "Uses the selected provider’s Responses API. The executor model calls the same type of built-in tool, and the result returns to the original request’s main model.",
-    "externalSearchHint": "Uses a Tavily-compatible API for searches, page reads and text lookups. Connects through the API base URL and separately saved key below.",
+    "externalSearchHint": "Uses a Tavily-compatible API for searches, page reads and text lookups. Connects through the API base URL and separately saved key below. When Codex asks for cached results only, Tavily still fetches live pages.",
     "externalImagesHint": "Uses an OpenAI Images-compatible API to generate or edit images. Connects through the API base URL and separately saved key below.",
     "serviceImagesHint": "Uses the selected provider’s own image API to generate or edit images, reusing that provider’s configured key and proxy. Given a reference image, MiniMax keeps the person in it and generates a new image.",
     "provider": "API provider",
@@ -2895,7 +2897,7 @@
     "keySaved": "Key status updated.",
     "failed": "Tool operation failed.",
     "keyStatusFailed": "Could not read key status.",
-    "description": "Matches the type field of entries in the tools array of OpenAI Responses requests. When enabled, the gateway exposes the matching tools to the main model as functions, executes their calls through the model or API configured here, and returns the results so the main model can continue. The main model must support function calling.",
+    "description": "Matches the type field of entries in the tools array of OpenAI Responses requests. When enabled, the gateway exposes the matching tools to the main model as functions, executes their calls through the model or API configured here, and returns the results so the main model can continue. The main model must support function calling. Codex's own image generation and web search tools run with these settings too. When they are turned off here, an API provider with these tools of its own, such as a Codex subscription, handles them directly.",
     "noProviders": "No enabled provider supports native Responses. Configure one under API providers first.",
     "noImageProviders": "No enabled OpenAI, OpenAI-compatible, New API, or MiniMax provider. Configure one under API providers first."
   },

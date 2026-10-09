@@ -83,19 +83,7 @@ func (handler *Handler) tryBuiltinTools(writer http.ResponseWriter, request *htt
 	}, Binding: func() (string, string) { return string(mainMode.Target), mainMode.Model }, Store: &handler.builtinStates, Executor: handler.builtinExecutor(request, classified), Model: func(ctx context.Context, body builtintools.Object) (builtintools.Object, error) {
 		return handler.builtinModel(ctx, request, body, mainMode)
 	}, Observe: func(kind string, config contract.BuiltinTool, started time.Time, result builtintools.Result, err error) {
-		status := contract.RequestStatusSucceeded
-		if err != nil {
-			status = contract.RequestStatusFailed
-		}
-		summary := fmt.Sprintf("%s · %s %s · %d ms", kind, config.Backend, config.ServiceID, time.Since(started).Milliseconds())
-		if result.Usage != nil {
-			summary += " · usage " + builtintools.Text(result.Usage)
-		}
-		if err != nil {
-			summary += " · " + err.Error()
-		}
-		ended := time.Now().UTC()
-		session.events = append(session.events, contract.RequestEvent{Kind: contract.RequestEventUpstream, StartedAt: started.UTC(), EndedAt: &ended, Status: status, Summary: sanitizeSummary(summary), AttemptIndex: session.attemptIndex})
+		session.noteBuiltinTool(kind, config, started, result, err)
 		if err != nil {
 			session.noteFailed(errorSummaryFromInference("builtin_tool_failed", err.Error(), false))
 		}
@@ -114,6 +102,26 @@ func (handler *Handler) tryBuiltinTools(writer http.ResponseWriter, request *htt
 		session.noteSucceeded()
 	}
 	return true
+}
+
+// noteBuiltinTool records one built-in tool execution as an upstream event.
+func (session *recordSession) noteBuiltinTool(kind string, config contract.BuiltinTool, started time.Time, result builtintools.Result, err error) {
+	if session == nil {
+		return
+	}
+	status := contract.RequestStatusSucceeded
+	if err != nil {
+		status = contract.RequestStatusFailed
+	}
+	summary := fmt.Sprintf("%s · %s %s · %d ms", kind, config.Backend, config.ServiceID, time.Since(started).Milliseconds())
+	if result.Usage != nil {
+		summary += " · usage " + builtintools.Text(result.Usage)
+	}
+	if err != nil {
+		summary += " · " + err.Error()
+	}
+	ended := time.Now().UTC()
+	session.events = append(session.events, contract.RequestEvent{Kind: contract.RequestEventUpstream, StartedAt: started.UTC(), EndedAt: &ended, Status: status, Summary: sanitizeSummary(summary), AttemptIndex: session.attemptIndex})
 }
 
 func (handler *Handler) builtinExecutor(request *http.Request, classified Request) builtintools.Executor {

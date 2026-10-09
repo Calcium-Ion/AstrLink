@@ -65,4 +65,18 @@ func TestStoreResolverSkipsRiskPausedSubscriptions(t *testing.T) {
 	if len(got) != 2 || !got["service_expired"] || !got["service_healthy"] {
 		t.Fatalf("scheduled services = %v, want service_expired and service_healthy", got)
 	}
+	// A lookup by ID, as for Codex's own tool requests, skips paused accounts
+	// too and returns the subscription's API root.
+	resolved, err := resolver.ResolveService(context.Background(), "service_healthy")
+	if err != nil || resolved.EffectiveBaseURL() != "https://chatgpt.com/backend-api/codex" {
+		t.Fatalf("ResolveService = %#v, %v", resolved, err)
+	}
+	if _, err := resolved.AuthorizationEndpoint(); err != nil {
+		t.Fatalf("AuthorizationEndpoint: %v", err)
+	}
+	for _, id := range []contract.ServiceID{"service_suspended", "service_cooling"} {
+		if _, err := resolver.ResolveService(context.Background(), id); err == nil {
+			t.Fatalf("ResolveService(%s) found a paused account", id)
+		}
+	}
 }

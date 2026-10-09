@@ -54,6 +54,10 @@ type Request struct {
 	// redirect rule. Model keeps the client's original id so records still
 	// report what the client asked for.
 	RedirectedModel string
+	// codexTurn names the Codex turn a Responses request belongs to. Codex's
+	// own image and search requests for that turn go to the provider that
+	// served it.
+	codexTurn codexTurnRef
 }
 
 // routingModel is the model id used to select services and sent upstream.
@@ -92,6 +96,17 @@ var exactProtocolRoutes = map[string]protocolRoute{
 	},
 	"/v1/models": {
 		method: http.MethodGet, protocol: contract.ProtocolOpenAIModels,
+	},
+	// Codex calls these itself for its image and web search tools. The
+	// built-in tools answer them, or the provider that served the turn.
+	"/v1/images/generations": {
+		method: http.MethodPost, protocol: contract.ProtocolOpenAIImages, inspectMetadata: true,
+	},
+	"/v1/images/edits": {
+		method: http.MethodPost, protocol: contract.ProtocolOpenAIImages, inspectMetadata: true,
+	},
+	"/v1/alpha/search": {
+		method: http.MethodPost, protocol: contract.ProtocolOpenAISearch, inspectMetadata: true,
 	},
 	"/v1beta/models": {
 		method: http.MethodGet, protocol: contract.ProtocolGoogleModels,
@@ -154,6 +169,9 @@ func classify(request *http.Request, maxBodyBytes int64) (Request, error) {
 	result.ConversationID = metadata.ConversationID
 	result.InputPreview = metadata.InputPreview
 	result.Conversation = metadata.Conversation
+	if result.Protocol == contract.ProtocolOpenAIResponses {
+		result.codexTurn = metadata.codexTurn.or(codexTurnFromHeader(request.Header))
+	}
 	if result.Protocol == contract.ProtocolOpenAIResponses || result.Protocol == contract.ProtocolOpenAIResponsesCompact {
 		// Read the caller's identity before subscription forwarding scopes it
 		// to an upstream account. A fork can retain its parent's cache key and
@@ -221,6 +239,7 @@ type requestMetadata struct {
 	ConversationID     string
 	InputPreview       string
 	Conversation       convo.RequestSummary
+	codexTurn          codexTurnRef
 	raw                []byte
 }
 
@@ -357,6 +376,9 @@ func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, ma
 		}
 	}
 	metadata.PreviousResponseID = extractProtocolCursor(fields, "previous_response_id")
+	if protocol == contract.ProtocolOpenAIResponses {
+		metadata.codexTurn = codexTurnFromClientMetadata(fields["client_metadata"])
+	}
 	if convoProto, ok := convoProtocol(protocol); ok {
 		// The summary walks the history once; conversation cursors and the
 		// preview both come from it so the two never disagree.
@@ -366,6 +388,9 @@ func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, ma
 			metadata.ConversationID = conversationCursor(summary, metadata.PreviousResponseID)
 			metadata.InputPreview = sanitizePreview(summary.LastUserText)
 		}
+	}
+	if text := builtinToolPreview(protocol, fields); text != "" {
+		metadata.InputPreview = sanitizePreview(text)
 	}
 	metadata.raw = raw
 	return metadata, nil

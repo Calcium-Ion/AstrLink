@@ -95,6 +95,9 @@ func TestForwardPreservesNativeRequestAndFiltersHopByHopHeaders(t *testing.T) {
 			if strings.HasPrefix(strings.ToLower(name), "x-astrlink-") {
 				t.Errorf("gateway header reached upstream: %s", name)
 			}
+			if strings.EqualFold(name, OpenAIActorAuthorizationHeader) {
+				t.Errorf("Codex tool switch reached upstream: %s", name)
+			}
 		}
 		for _, name := range []string{"Connection", "Keep-Alive", "X-Request-Hop"} {
 			if value := request.Header.Get(name); value != "" {
@@ -132,6 +135,7 @@ func TestForwardPreservesNativeRequestAndFiltersHopByHopHeaders(t *testing.T) {
 	request.Header.Set("X-Goog-Api-Key", "client-google-key")
 	request.Header.Set(localPolicyWarningHeader, "spoofed=999")
 	request.Header["x-aStRlInK-debug"] = []string{"local-only"}
+	request.Header["x-openai-actor-authorization"] = []string{"codex-imagegen"}
 	// The control-plane raw-audit grant must never leave the machine.
 	request.Header.Set("X-AstrLink-Raw-Grant", "local-grant-token")
 	request.Header.Set("Connection", "X-Request-Hop")

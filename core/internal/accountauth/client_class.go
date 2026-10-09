@@ -107,6 +107,17 @@ func RecognizedCodexOfficialClient(header http.Header) bool {
 	return strings.TrimSpace(header.Get("Session-Id")) != ""
 }
 
+// RecognizedCodexToolClient reports a Codex CLI identity on the image and
+// search requests Codex sends for its own tools. Those carry the client's
+// User-Agent and originator but no session-id header.
+func RecognizedCodexToolClient(header http.Header) bool {
+	if header == nil {
+		return false
+	}
+	_, name, _, ok := recognizedCodexClient(header)
+	return ok && strings.TrimSpace(header.Get("originator")) == name
+}
+
 // splitAnthropicBetas flattens the comma-separated Anthropic-Beta header values
 // into individual, trimmed feature betas, preserving their order.
 func splitAnthropicBetas(values []string) []string {

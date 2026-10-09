@@ -167,9 +167,11 @@ type CandidateResolver interface {
 	ResolveCandidates(context.Context, ResolveRequest) ([]Resolved, error)
 }
 
-// ServiceResolver looks up one schedulable HTTP service by ID for
-// gateway-owned requests outside protocol routing, such as built-in tool
-// Images API calls. It never selects a different provider.
+// ServiceResolver looks up one schedulable service by ID for gateway-owned
+// requests outside protocol routing, such as built-in tool Images API calls
+// and Codex's own tool requests for a turn a subscription served. A disabled,
+// disconnected or risk-paused service is not found. It never selects a
+// different provider.
 type ServiceResolver interface {
 	ResolveService(context.Context, contract.ServiceID) (Resolved, error)
 }

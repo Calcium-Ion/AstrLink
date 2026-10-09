@@ -28,6 +28,11 @@ const (
 	ProtocolOpenAIAudio      ProtocolID = "openai.audio"
 	ProtocolRerank           ProtocolID = "rerank"
 	ProtocolOpenAIVideos     ProtocolID = "openai.videos"
+
+	// ProtocolOpenAISearch records Codex's standalone web search requests. The
+	// gateway answers them with its own search tool, so no provider declares
+	// it and it has no descriptor.
+	ProtocolOpenAISearch ProtocolID = "openai.search"
 )
 
 type ProtocolPhase string

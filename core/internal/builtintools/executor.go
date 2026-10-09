@@ -186,14 +186,14 @@ func publicURL(raw string) bool {
 }
 
 func (executor Executor) search(ctx context.Context, config contract.BuiltinTool, call Invocation) (Result, error) {
-	if err := checkOptions(call.Options, "type search_context_size filters external_web_access user_location"); err != nil {
+	// Codex declares search_content_types for image-capable models and
+	// indexed_web_access in its indexed mode. Tavily searches the live web
+	// for every request, including Codex's default cached-only mode.
+	if err := checkOptions(call.Options, "type search_context_size filters external_web_access indexed_web_access search_content_types user_location"); err != nil {
 		return Result{}, err
 	}
 	if call.Options["user_location"] != nil {
 		return Result{}, fmt.Errorf("Tavily backend does not support precise user_location")
-	}
-	if call.Options["external_web_access"] == false {
-		return Result{}, fmt.Errorf("Tavily backend does not support offline search")
 	}
 	action := String(call.Arguments["action"])
 	if action == "" {

@@ -2799,6 +2799,8 @@
     "ccSwitchOpened": "已请求打开 CC Switch，请在其中确认导入。",
     "ccSwitchFailed": "无法打开 CC Switch。请确认已安装并注册 ccswitch:// 协议，且网关和令牌仍可用，然后重试。",
     "ccSwitchOverwrites": "在 CC Switch 中切换供应商会覆盖这里写入的配置。",
+    "codexTools": "写入后，Codex 会显示自带的生图和联网搜索工具。Codex 调用它们时，网关先按「路由 → 模型与工具 → 内置工具」的设置执行。那里关着的工具会交给当前对话所用的 API 提供商。Codex 订阅可以处理这两个工具。OpenAI API、OpenAI 兼容和 New API 可以处理生图。其他情况下，Codex 会收到开启方法。",
+    "codexToolsCCSwitch": "用 CC Switch 导入的配置里没有这项设置，Codex 中不会出现这两个工具。",
     "limitsTitle": "使用限制",
     "limits": {
       "claude": "只写入用户级的 ~/.claude/settings.json。项目里的 .claude/settings.json 或 .claude/settings.local.json 设置了相同的环境变量时，以项目为准。设置了 CLAUDE_CONFIG_DIR 时 Claude Code 读取其他目录，请改用手动配置。",
@@ -2869,7 +2871,7 @@
     "serviceImages": "提供商的 Images API",
     "imagesApi": "自定义 Images API",
     "upstreamHint": "使用所选提供商的 Responses API，由下方执行模型调用同类型的内置工具，再把结果交回原请求的主模型。",
-    "externalSearchHint": "使用 Tavily 兼容 API 完成搜索、网页读取和文字查找。连接使用下方填写的 API 基础地址和单独保存的密钥。",
+    "externalSearchHint": "使用 Tavily 兼容 API 完成搜索、网页读取和文字查找。连接使用下方填写的 API 基础地址和单独保存的密钥。Codex 要求只用缓存结果时，Tavily 仍会实时抓取网页。",
     "externalImagesHint": "使用 OpenAI Images 兼容 API 生成或编辑图片。连接使用下方填写的 API 基础地址和单独保存的密钥。",
     "serviceImagesHint": "使用所选提供商自带的生图接口生成或编辑图片，复用该提供商已配置的密钥和代理。MiniMax 收到参考图时，会保留图中人物的特征，重新生成一张图。",
     "provider": "API 提供商",
@@ -2895,7 +2897,7 @@
     "keySaved": "密钥状态已更新。",
     "failed": "工具操作失败。",
     "keyStatusFailed": "无法读取密钥状态。",
-    "description": "匹配 OpenAI Responses 请求中 tools 数组的 type 字段。开启后，网关把对应工具声明转换为函数供主模型调用，再交给这里选定的模型或 API 执行，结果交回主模型继续回答。主模型须支持函数调用。",
+    "description": "匹配 OpenAI Responses 请求中 tools 数组的 type 字段。开启后，网关把对应工具声明转换为函数供主模型调用，再交给这里选定的模型或 API 执行，结果交回主模型继续回答。主模型须支持函数调用。Codex 自带的生图和联网搜索工具也按这里的设置执行。这里关闭时，Codex 订阅等自带这两个工具的 API 提供商会直接处理。",
     "noProviders": "暂无支持原生 Responses 的已启用提供商。请先在 API 提供商中配置。",
     "noImageProviders": "暂无已启用的 OpenAI、OpenAI 兼容、New API 或 MiniMax 提供商。请先在 API 提供商中配置。"
   },

@@ -36,6 +36,14 @@ const PI_PROVIDER_PREFIX: &str = "providers.astrlink.";
 const PI_MODELS_KEY: &str = "providers.astrlink.models";
 /// The model Pi starts with, which its `/model` picker can save over.
 const PI_STARTUP_KEYS: [&str; 2] = ["defaultProvider", "defaultModel"];
+/// Codex shows its own image generation and web search tools only for a
+/// provider whose `http_headers` set this header. The gateway answers both
+/// tools and strips the header before forwarding; any non-empty value works.
+/// AstrLink owns this one header, and other headers in the table stay the
+/// user's.
+const CODEX_HEADERS_KEY: &str = "model_providers.astrlink.http_headers";
+const CODEX_TOOLS_HEADER: &str = "x-openai-actor-authorization";
+const CODEX_TOOLS_HEADER_VALUE: &str = "codex-imagegen";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -127,6 +135,15 @@ impl Client {
                 "providers.astrlink.apiKey",
             ],
             _ => &["env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN"],
+        }
+    }
+
+    /// Keys newer versions write that configs from released builds lack. A
+    /// sync adds each one once to a config nobody changed.
+    fn added_keys(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Codex => &[(CODEX_HEADERS_KEY, CODEX_TOOLS_HEADER_VALUE)],
+            _ => &[],
         }
     }
 }
@@ -532,6 +549,40 @@ fn set_toml_string(table: &mut dyn TableLike, key: &str, value: &str) {
     }
 }
 
+/// AstrLink's entry in Codex's `http_headers`, matched case-insensitively as
+/// Codex matches it.
+fn codex_tools_header(headers: &dyn TableLike) -> Option<(String, &Item)> {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(CODEX_TOOLS_HEADER))
+        .map(|(name, item)| (name.to_string(), item))
+}
+
+/// Adds AstrLink's header to the provider's `http_headers` next to any
+/// other header there. A value that is not a table is replaced.
+fn set_codex_tools_header(provider: &mut dyn TableLike, value: &str) {
+    if provider
+        .get("http_headers")
+        .and_then(Item::as_table_like)
+        .is_none()
+    {
+        provider.insert(
+            "http_headers",
+            Item::Value(Value::InlineTable(InlineTable::new())),
+        );
+    }
+    let Some(headers) = provider
+        .get_mut("http_headers")
+        .and_then(Item::as_table_like_mut)
+    else {
+        return;
+    };
+    let name = codex_tools_header(&*headers)
+        .map(|(name, _)| name)
+        .unwrap_or_else(|| CODEX_TOOLS_HEADER.to_string());
+    set_toml_string(headers, &name, value);
+}
+
 /// Removes a root key but keeps the comment above it, handing it to the
 /// neighbouring key: a file's header note often sits above `model`.
 fn remove_toml_root_key(document: &mut DocumentMut, key: &str) {
@@ -615,13 +666,19 @@ impl Document {
                 let Some(key) = path.strip_prefix(CODEX_PROVIDER_PREFIX) else {
                     return document.get(path).map(toml_string);
                 };
-                document
+                let item = document
                     .get("model_providers")?
                     .as_table_like()?
                     .get(CODEX_PROVIDER)?
                     .as_table_like()?
-                    .get(key)
-                    .map(toml_string)
+                    .get(key)?;
+                if path != CODEX_HEADERS_KEY {
+                    return Some(toml_string(item));
+                }
+                match item.as_table_like() {
+                    Some(headers) => codex_tools_header(headers).map(|(_, item)| toml_string(item)),
+                    None => Some(None),
+                }
             }
         }
     }
@@ -694,8 +751,12 @@ impl Document {
                     .and_then(|providers| providers.get(CODEX_PROVIDER));
                 match provider.map(|item| item.as_table_like()) {
                     Some(Some(table)) => {
-                        for (key, item) in table.iter() {
-                            keys.push((format!("{CODEX_PROVIDER_PREFIX}{key}"), toml_string(item)));
+                        for (key, _) in table.iter() {
+                            let path = format!("{CODEX_PROVIDER_PREFIX}{key}");
+                            // Headers without AstrLink's own are the user's.
+                            if let Some(value) = self.get(&path) {
+                                keys.push((path, value));
+                            }
                         }
                     }
                     Some(None) => keys.push(("model_providers.astrlink".into(), None)),
@@ -763,7 +824,11 @@ impl Document {
                     .get_mut(CODEX_PROVIDER)
                     .and_then(Item::as_table_like_mut)
                     .ok_or("unable to create model_providers.astrlink")?;
-                set_toml_string(provider, key, value);
+                if path == CODEX_HEADERS_KEY {
+                    set_codex_tools_header(provider, value);
+                } else {
+                    set_toml_string(provider, key, value);
+                }
             }
         }
         Ok(())
@@ -792,7 +857,20 @@ impl Document {
                         .and_then(|providers| providers.get_mut(CODEX_PROVIDER))
                         .and_then(Item::as_table_like_mut)
                     {
-                        provider.remove(key);
+                        let headers = provider
+                            .get_mut("http_headers")
+                            .and_then(Item::as_table_like_mut)
+                            .filter(|_| path == CODEX_HEADERS_KEY);
+                        match headers {
+                            Some(headers) => {
+                                if let Some((name, _)) = codex_tools_header(&*headers) {
+                                    headers.remove(&name);
+                                }
+                            }
+                            None => {
+                                provider.remove(key);
+                            }
+                        }
                     }
                 } else {
                     remove_toml_root_key(document, path);
@@ -831,6 +909,14 @@ impl Document {
                     .get_mut("model_providers")
                     .and_then(Item::as_table_like_mut)
                 {
+                    if let Some(provider) = providers
+                        .get_mut(CODEX_PROVIDER)
+                        .and_then(Item::as_table_like_mut)
+                    {
+                        if empty(provider.get("http_headers")) {
+                            provider.remove("http_headers");
+                        }
+                    }
                     if empty(providers.get(CODEX_PROVIDER)) {
                         providers.remove(CODEX_PROVIDER);
                     }
@@ -993,6 +1079,7 @@ fn desired_keys(client: Client, connection: &Connection) -> Vec<(String, String)
             ] {
                 keys.push((format!("{CODEX_PROVIDER_PREFIX}{key}"), value.into()));
             }
+            keys.push((CODEX_HEADERS_KEY.into(), CODEX_TOOLS_HEADER_VALUE.into()));
         }
         Client::Pi => {
             // The display name is local UI in Pi's model picker.
@@ -1156,24 +1243,43 @@ pub fn inspect(
     }
 }
 
-/// Points an untouched config at the gateway's new port. The token stays
-/// as written, so the sync never needs to reveal it.
+/// Points an untouched config at the gateway's new port, and adds the keys
+/// a released build did not write yet. The token stays as written, so the
+/// sync never needs to reveal it.
 pub fn plan_sync(
     client: Client,
     existing: &[Option<&str>],
     record: &ClientRecord,
     origin: &str,
 ) -> Result<Option<(Vec<String>, ClientRecord)>, FileError> {
-    if inspect(client, existing, Some(record), Some(origin)) != ClientState::Outdated {
+    let state = inspect(client, existing, Some(record), Some(origin));
+    if !matches!(state, ClientState::Outdated | ClientState::Configured) {
         return Ok(None);
     }
     let mut config = Config::parse(client, existing)?;
-    let base_url = client.base_url(origin);
-    config.set(client.base_url_key(), &base_url)?;
     let mut next = record.clone();
-    next.keys
-        .insert(client.base_url_key().into(), sha256_hex(&base_url));
-    next.base_url = base_url;
+    let mut changed = false;
+    if state == ClientState::Outdated {
+        let base_url = client.base_url(origin);
+        config.set(client.base_url_key(), &base_url)?;
+        next.keys
+            .insert(client.base_url_key().into(), sha256_hex(&base_url));
+        next.base_url = base_url;
+        changed = true;
+    }
+    for (path, value) in client.added_keys() {
+        // A key AstrLink wrote before and the user removed stays removed, and
+        // a value the user set stays theirs.
+        if record.keys.contains_key(*path) || config.get(path).is_some() {
+            continue;
+        }
+        config.set(path, value)?;
+        next.keys.insert((*path).into(), sha256_hex(value));
+        changed = true;
+    }
+    if !changed {
+        return Ok(None);
+    }
     next.written_at_unix = unix_now();
     Ok(Some((config.render(existing), next)))
 }
@@ -1611,7 +1717,7 @@ mod tests {
         assert_eq!(plan.conflicts, ["model"]);
         assert_eq!(
             plan.contents[0],
-            "# user settings\nmodel = \"gpt-route\" # mine\napproval_policy = \"never\"\nmodel_provider = \"astrlink\"\n\n[profiles.fast]\nmodel = \"o3\"\n\n[model_providers.other]\nname = \"Other\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\n"
+            "# user settings\nmodel = \"gpt-route\" # mine\napproval_policy = \"never\"\nmodel_provider = \"astrlink\"\n\n[profiles.fast]\nmodel = \"o3\"\n\n[model_providers.other]\nname = \"Other\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\nhttp_headers = { x-openai-actor-authorization = \"codex-imagegen\" }\n"
         );
         assert_eq!(plan.record.base_url, "http://127.0.0.1:18317/v1");
         let [Removal::Write(removed)] =
@@ -1630,15 +1736,122 @@ mod tests {
         let plan = plan_write(Client::Codex, &[None], &connection(&codex_models()), None).unwrap();
         assert_eq!(
             plan.contents[0],
-            "model_provider = \"astrlink\"\nmodel = \"gpt-route\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\n"
+            "model_provider = \"astrlink\"\nmodel = \"gpt-route\"\n\n[model_providers.astrlink]\nname = \"AstrLink\"\nbase_url = \"http://127.0.0.1:18317/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"astr_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0\"\nhttp_headers = { x-openai-actor-authorization = \"codex-imagegen\" }\n"
         );
-        for forbidden in ["env_key", "requires_openai_auth", "\"OpenAI\"", "openai"] {
+        // The reserved provider ID or the name "OpenAI" would make Codex
+        // treat this as its built-in provider.
+        for forbidden in [
+            "env_key",
+            "requires_openai_auth",
+            "\"OpenAI\"",
+            "\"openai\"",
+            "model_providers.openai",
+        ] {
             assert!(!plan.contents[0].contains(forbidden));
         }
         assert_eq!(
             plan_remove(Client::Codex, &[Some(&plan.contents[0])], &plan.record).unwrap(),
             [Removal::Delete]
         );
+    }
+
+    #[test]
+    fn codex_tools_header_sits_beside_the_users_own_headers() {
+        let existing = "[model_providers.astrlink.http_headers]\nx-team = \"blue\"\n";
+        let plan = plan_write(
+            Client::Codex,
+            &[Some(existing)],
+            &connection(&codex_models()),
+            None,
+        )
+        .unwrap();
+        assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+        assert!(plan.contents[0].contains("x-team = \"blue\""));
+        assert!(plan.contents[0].contains("x-openai-actor-authorization = \"codex-imagegen\""));
+        let [Removal::Write(removed)] =
+            &plan_remove(Client::Codex, &[Some(&plan.contents[0])], &plan.record).unwrap()[..]
+        else {
+            panic!("expected a rewrite");
+        };
+        assert!(removed.contains("x-team = \"blue\""), "{removed}");
+        for gone in [
+            "x-openai-actor-authorization",
+            "experimental_bearer_token",
+            "model_provider =",
+        ] {
+            assert!(!removed.contains(gone), "{removed}");
+        }
+
+        // A value the user gave the header is theirs until they confirm.
+        let existing = "[model_providers.astrlink]\nhttp_headers = { X-OpenAI-Actor-Authorization = \"mine\", x-team = \"blue\" }\n";
+        let plan = plan_write(
+            Client::Codex,
+            &[Some(existing)],
+            &connection(&codex_models()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.conflicts, [CODEX_HEADERS_KEY]);
+        assert!(plan.contents[0].contains(
+            "http_headers = { X-OpenAI-Actor-Authorization = \"codex-imagegen\", x-team = \"blue\" }"
+        ));
+    }
+
+    #[test]
+    fn sync_adds_the_codex_tools_header_to_released_configs_once() {
+        let plan = plan_write(Client::Codex, &[None], &connection(&codex_models()), None).unwrap();
+        // Released builds wrote no header and kept no fingerprint for it.
+        let released = plan.contents[0].replace(
+            "http_headers = { x-openai-actor-authorization = \"codex-imagegen\" }\n",
+            "",
+        );
+        let mut record = plan.record.clone();
+        record.keys.remove(CODEX_HEADERS_KEY);
+        assert_eq!(
+            inspect(
+                Client::Codex,
+                &[Some(&released)],
+                Some(&record),
+                Some(ORIGIN)
+            ),
+            ClientState::Configured
+        );
+        let (contents, next) = plan_sync(Client::Codex, &[Some(&released)], &record, ORIGIN)
+            .unwrap()
+            .expect("the header is added");
+        assert_eq!(contents[0], plan.contents[0]);
+        assert_eq!(next.keys, plan.record.keys);
+        assert!(
+            plan_sync(Client::Codex, &[Some(&contents[0])], &next, ORIGIN)
+                .unwrap()
+                .is_none()
+        );
+
+        // A header the user removed after AstrLink wrote it stays removed.
+        assert!(
+            plan_sync(Client::Codex, &[Some(&released)], &plan.record, ORIGIN)
+                .unwrap()
+                .is_none()
+        );
+        // A changed connection is left alone.
+        let modified = released.replace("wire_api = \"responses\"", "wire_api = \"chat\"");
+        assert!(
+            plan_sync(Client::Codex, &[Some(&modified)], &record, ORIGIN)
+                .unwrap()
+                .is_none()
+        );
+        // A new port and the header arrive in one write.
+        let (contents, next) = plan_sync(
+            Client::Codex,
+            &[Some(&released)],
+            &record,
+            "http://127.0.0.1:9000",
+        )
+        .unwrap()
+        .expect("synced");
+        assert!(contents[0].contains("base_url = \"http://127.0.0.1:9000/v1\""));
+        assert!(contents[0].contains("x-openai-actor-authorization = \"codex-imagegen\""));
+        assert_eq!(next.base_url, "http://127.0.0.1:9000/v1");
     }
 
     #[test]
