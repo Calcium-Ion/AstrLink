@@ -110,6 +110,9 @@ WHERE (r.id = ?1 OR r.parent_request_id = ?1)`+chunkablePart, id)
 		return err
 	}
 	for _, rowID := range rowIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, err := store.chunkPart(ctx, auditKey, rowID); err != nil {
 			return err
 		}
@@ -169,8 +172,13 @@ func scanRowIDs(rows *sql.Rows) ([]int64, error) {
 
 // chunkPart moves one whole shareable request body of an ended request into
 // chunks and reports the bytes it read. A part that changed meanwhile, or
-// that does not open under this audit key, is left as it is.
+// that does not open under this audit key, is left as it is. A stop takes
+// effect between parts, never inside one: database/sql rolls back a
+// cancelled transaction from its own goroutine, which can still hold the
+// connection after Close returned, and Windows then refuses to delete the
+// database file.
 func (store *Store) chunkPart(ctx context.Context, auditKey []byte, rowID int64) (int, error) {
+	ctx = context.WithoutCancel(ctx)
 	var (
 		requestID, direction, scope string
 		payloadID                   sql.NullInt64

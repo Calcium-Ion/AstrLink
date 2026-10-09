@@ -324,11 +324,14 @@ end
 implemented_operations = openapi.dig("x-astrlink-implementation", "implemented_operations")
 
 public_operations = %w[/control/v1/health /control/v1/version /control/v1/capabilities]
+# Host addresses tell a client where to reach the gateway from another
+# machine; only the operator who exposes the gateway needs them.
 operator_reads = %w[
   /control/v1/access-tokens/{token_id}/secret
   /control/v1/services/{service_id}/authorization
   /control/v1/builtin-tools/{kind}/credential
   /control/v1/audit/raw-access
+  /control/v1/network-addresses
 ]
 # An agent may ask for raw access and give up its own grant; only the
 # operator can approve it.
