@@ -26,6 +26,7 @@ const (
 	ServiceKindGrokSubscription        ServiceKind = "grok_subscription"
 	ServiceKindAntigravitySubscription ServiceKind = "antigravity_subscription"
 	ServiceKindCopilotSubscription     ServiceKind = "copilot_subscription"
+	ServiceKindDroidSubscription       ServiceKind = "droid_subscription"
 	ServiceKindOpenCodeGo              ServiceKind = "opencode_go"
 	ServiceKindOpenCodeZen             ServiceKind = "opencode_zen"
 	ServiceKindKimiCoding              ServiceKind = "kimi_coding"
@@ -52,7 +53,7 @@ func (kind ServiceKind) Valid() bool {
 	case ServiceKindCodexSubscription, ServiceKindNewAPI, ServiceKindMagpie, ServiceKindOpenAI,
 		ServiceKindAnthropic, ServiceKindGemini, ServiceKindOpenAICompatible,
 		ServiceKindCustom, ServiceKindClaudeSubscription, ServiceKindGrokSubscription, ServiceKindAntigravitySubscription,
-		ServiceKindCopilotSubscription, ServiceKindOpenCodeGo,
+		ServiceKindCopilotSubscription, ServiceKindDroidSubscription, ServiceKindOpenCodeGo,
 		ServiceKindOpenCodeZen, ServiceKindKimiCoding, ServiceKindGLMCoding, ServiceKindMiniMaxCoding,
 		ServiceKindDeepSeek, ServiceKindQwen, ServiceKindMoonshot, ServiceKindGLM, ServiceKindMiniMax, ServiceKindDoubao, ServiceKindXAI:
 		return true
@@ -63,7 +64,8 @@ func (kind ServiceKind) Valid() bool {
 
 func (kind ServiceKind) IsSubscription() bool {
 	return kind == ServiceKindCodexSubscription || kind == ServiceKindClaudeSubscription || kind == ServiceKindGrokSubscription ||
-		kind == ServiceKindAntigravitySubscription || kind == ServiceKindCopilotSubscription
+		kind == ServiceKindAntigravitySubscription || kind == ServiceKindCopilotSubscription ||
+		kind == ServiceKindDroidSubscription
 }
 
 func (kind ServiceKind) SubscriptionProvider() SubscriptionProvider {
@@ -76,6 +78,8 @@ func (kind ServiceKind) SubscriptionProvider() SubscriptionProvider {
 		return SubscriptionProviderXAIGrok
 	case ServiceKindCopilotSubscription:
 		return SubscriptionProviderGitHubCopilot
+	case ServiceKindDroidSubscription:
+		return SubscriptionProviderFactoryDroid
 	case ServiceKindCodexSubscription:
 		return SubscriptionProviderOpenAICodex
 	default:
@@ -271,9 +275,9 @@ func (service Service) UpstreamModelFor(model string) (string, bool) {
 }
 
 // ResponsesWebSocket reports the effective per-channel transport setting.
-// The Copilot API serves Responses over HTTP only.
+// The Copilot API and Factory's gateway serve Responses over HTTP only.
 func (service Service) ResponsesWebSocket() bool {
-	if service.Kind == ServiceKindCopilotSubscription {
+	if service.Kind == ServiceKindCopilotSubscription || service.Kind == ServiceKindDroidSubscription {
 		return false
 	}
 	if service.ResponsesWebSocketEnabled != nil {
