@@ -189,6 +189,11 @@ func (handler *Handler) postRawPassword(writer http.ResponseWriter, request *htt
 		}})
 		return
 	}
+	if handler.consoleSessions != nil && action != RawPasswordChange {
+		writeError(writer, http.StatusForbidden, "raw_password_action_unavailable",
+			"the server edition sets the raw password in first-run setup and resets it from its deploy configuration; only change is available here")
+		return
+	}
 	var password []byte
 	if raw, present := members["password"]; present && !isJSONNull(raw) {
 		decoded, err := decodeJSONStringBytes(raw)
@@ -219,6 +224,9 @@ func (handler *Handler) postRawPassword(writer http.ResponseWriter, request *htt
 	}
 	// Whatever an agent was granted under the old password ends with it.
 	handler.rawGrants.revokeAll()
+	if handler.consoleSessions != nil {
+		handler.consoleSessions.EndOtherSessions(request)
+	}
 	handler.observers.noteRawEvent(rawPasswordEvents[action], RawAccessGrant{ClientName: classifyObserver(request)})
 	view, err := handler.rawSealingStatus(request, outcome.Status)
 	if err != nil {

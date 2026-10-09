@@ -362,15 +362,40 @@ var capturedFlagPaths = map[storagecontract.AuditDirection][2]string{
 // key, and their records no longer claim a capture. Privacy findings and the
 // rest of each record stay.
 func (store *Store) ReplaceRawSealingKey(ctx context.Context, key storagecontract.NewRawSealingKey) (storagecontract.RawResetResult, error) {
-	var result storagecontract.RawResetResult
 	if err := validateNewRawSealingKey(key); err != nil {
-		return result, err
+		return storagecontract.RawResetResult{}, err
 	}
 	mac, err := store.publicKeyMAC(key.PublicKey)
 	if err != nil {
-		return result, err
+		return storagecontract.RawResetResult{}, err
 	}
-	err = store.withSecureDelete(ctx, true, func(conn *sql.Conn) (err error) {
+	result, err := store.discardRawSealing(ctx, func(transaction *sql.Tx) error {
+		return store.insertRawSealingKey(ctx, transaction, key, mac, store.now().UTC().Format(time.RFC3339Nano))
+	})
+	if err != nil {
+		return storagecontract.RawResetResult{}, err
+	}
+	store.rawKey.set(key.KeyID, key.PublicKey, hasPasswordEnvelope(key.Envelopes))
+	return result, nil
+}
+
+// ClearRawSealingKey is ReplaceRawSealingKey without a new key: the raw
+// password is gone and new raw captures are not kept until one is set.
+func (store *Store) ClearRawSealingKey(ctx context.Context) (storagecontract.RawResetResult, error) {
+	result, err := store.discardRawSealing(ctx, nil)
+	if err != nil {
+		return storagecontract.RawResetResult{}, err
+	}
+	store.rawKey.set(0, nil, false)
+	return result, nil
+}
+
+// discardRawSealing deletes every raw_v1 part and the raw sealing key in one
+// transaction, clears the captured flags of affected records, and runs
+// install, when given, before committing.
+func (store *Store) discardRawSealing(ctx context.Context, install func(*sql.Tx) error) (storagecontract.RawResetResult, error) {
+	var result storagecontract.RawResetResult
+	err := store.withSecureDelete(ctx, true, func(conn *sql.Conn) (err error) {
 		transaction, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin raw sealing reset: %w", err)
@@ -403,15 +428,16 @@ WHERE payload_id IN (SELECT id FROM audit_payloads WHERE sealing = 'raw_v1')`); 
 		if _, err = transaction.ExecContext(ctx, `DELETE FROM raw_sealing_keys`); err != nil {
 			return fmt.Errorf("delete raw sealing key: %w", err)
 		}
-		if err = store.insertRawSealingKey(ctx, transaction, key, mac, store.now().UTC().Format(time.RFC3339Nano)); err != nil {
-			return err
+		if install != nil {
+			if err = install(transaction); err != nil {
+				return err
+			}
 		}
 		return transaction.Commit()
 	})
 	if err != nil {
 		return storagecontract.RawResetResult{}, err
 	}
-	store.rawKey.set(key.KeyID, key.PublicKey, hasPasswordEnvelope(key.Envelopes))
 	return result, nil
 }
 

@@ -13,35 +13,30 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
-	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/buildinfo"
-	"github.com/QuantumNous/astrlink/core/internal/codingplan"
 	"github.com/QuantumNous/astrlink/core/internal/controlapi"
 	"github.com/QuantumNous/astrlink/core/internal/coreapp"
-	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/ingress"
 	"github.com/QuantumNous/astrlink/core/internal/localkey"
 	"github.com/QuantumNous/astrlink/core/internal/networkproxy"
 	"github.com/QuantumNous/astrlink/core/internal/parentwatch"
-	"github.com/QuantumNous/astrlink/core/internal/pricing"
-	"github.com/QuantumNous/astrlink/core/internal/privacy"
-	"github.com/QuantumNous/astrlink/core/internal/privacymodel"
-	"github.com/QuantumNous/astrlink/core/internal/privacyworker"
-	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
-	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
-	"github.com/QuantumNous/astrlink/core/internal/servicetest"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
 
 func main() {
 	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "serve":
+			os.Exit(runServeCommand(os.Args[2:], os.Stderr))
+		case "healthcheck":
+			os.Exit(runHealthcheck(os.Args[2:], os.LookupEnv, os.Stderr))
+		}
 		commandCtx, stopCommand := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		code, handled := runOfflineCommand(commandCtx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 		stopCommand()
@@ -93,16 +88,10 @@ func main() {
 		logger.Printf("max-request-body-mib must be at most 4294967295 (0 means unlimited)")
 		os.Exit(2)
 	}
-	proxy, err := networkproxy.New(outboundProxy)
-	if err != nil {
+	if err := installOutboundProxy(outboundProxy); err != nil {
 		logger.Printf("%v", err)
 		os.Exit(2)
 	}
-	// Configure once, before any clients or transport clones are created.
-	// OAuth, subscriptions, discovery, downloads and inference share this policy.
-	outboundTransport := http.DefaultTransport.(*http.Transport).Clone()
-	outboundTransport.Proxy = proxy
-	http.DefaultTransport = networkproxy.WrapTransport(outboundTransport)
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -118,7 +107,6 @@ func main() {
 			MaxRequestBodyMiB: uint32(maxRequestBodyMiB),
 		}),
 	}
-	var closeStore func() error
 	if (localKeyStdin || localKeyFile != "") && !controlTokenStdin {
 		logger.Printf("--kek-stdin and --kek-file require persistent mode")
 		os.Exit(2)
@@ -133,226 +121,38 @@ func main() {
 			logger.Printf("read local control tokens: %v", err)
 			os.Exit(2)
 		}
-		controlToken := tokens.control
 		if localKeyFile == "" {
 			localKeyFile = os.Getenv(localkey.EnvKeyFile)
 		}
-		localKey, _, err := localkey.Resolve(localkey.Options{
-			StdinKey: tokens.localKey,
-			KeyFile:  localKeyFile,
-			DataDir:  dataDirectory,
-			Logf:     logger.Printf,
+		core, err := openPersistentCore(ctx, persistentOptions{
+			version:                  config.Version,
+			dataDirectory:            dataDirectory,
+			controlToken:             tokens.control,
+			observerToken:            tokens.observer,
+			stdinLocalKey:            tokens.localKey,
+			localKeyFile:             localKeyFile,
+			privacyWorkerPath:        privacyWorkerPath,
+			maxConcurrentInspections: maxConcurrentInspections,
+			maxRequestBodyMiB:        uint32(maxRequestBodyMiB),
+			responseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
+			shutdown:                 stopSignals,
+			logf:                     logger.Printf,
 		})
-		clear(tokens.localKey)
 		if err != nil {
-			logger.Printf("load local key: %v", err)
+			logger.Printf("%v", err)
 			os.Exit(1)
 		}
-		store, err := sqlite.Open(ctx, filepath.Join(dataDirectory, "astrlink.db"),
-			sqlite.WithLocalKey(localKey), sqlite.WithLogger(logger.Printf))
-		clear(localKey)
-		if err != nil {
-			logger.Printf("open persistent store: %v", err)
-			os.Exit(1)
-		}
+		defer core.close()
 		if runtime.GOOS != "windows" {
 			config.ControlSocketPath = filepath.Join(dataDirectory, "control.sock")
 		}
-		closeStore = store.Close
-		if recovered, recoverErr := store.RecoverPendingRequestRecords(ctx); recoverErr != nil {
-			logger.Printf("recover interrupted request records: %v", recoverErr)
-		} else if recovered > 0 {
-			logger.Printf("recovered %d interrupted request record(s)", recovered)
-		}
-		rawVault := controlapi.NewRawVault(store, controlapi.RawVaultOptions{Logf: logger.Printf})
-		warnWithoutRawPassword(ctx, rawVault, dataDirectory, logger.Printf)
-		accessTokenManager, err := accesstoken.NewManager(store)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure persistent access tokens: %v", err)
-			os.Exit(1)
-		}
-		privacyModel, err := privacymodel.NewRegistry(ctx, privacymodel.RegistryConfig{
-			RootDirectory: filepath.Join(dataDirectory, "privacy-model"),
-			Store:         store,
-			Logf:          logger.Printf,
-		})
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure local privacy model: %v", err)
-			os.Exit(1)
-		}
-		if privacyWorkerPath == "" {
-			privacyWorkerPath, err = privacyworker.SiblingExecutablePath()
-			if err != nil {
-				_ = store.Close()
-				logger.Printf("locate local privacy worker: %v", err)
-				os.Exit(1)
-			}
-		}
-		privacyWorker, err := privacyworker.New(privacyworker.Config{
-			ExecutablePath: privacyWorkerPath,
-			Model:          privacyModel,
-		})
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure local privacy worker: %v", err)
-			os.Exit(1)
-		}
-		defer privacyWorker.Close()
-		policyRecord, err := store.GetPolicy(ctx, contract.DefaultPrivacyPolicyID)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("load local privacy policy: %v", err)
-			os.Exit(1)
-		}
-		privacyWorker.ApplyPolicy(policyRecord.Policy)
-		policyProvider, err := privacy.NewStorePolicyProvider(store)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure local privacy policy: %v", err)
-			os.Exit(1)
-		}
-		privacyFilter, err := privacy.New(policyProvider, privacyWorker)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure local privacy filter: %v", err)
-			os.Exit(1)
-		}
-		conversionEngine := relaykitbridge.NewEngine()
-		// One registry serves inference, gateway-initiated requests and
-		// learning, so a learned identity applies everywhere at once.
-		identities := accountauth.NewIdentityRegistry(store, store)
-		if err := identities.Hydrate(ctx); err != nil {
-			logger.Printf("load learned client identities: %v", err)
-		}
-		subscriptionManager, err := newSubscriptionManager(ctx, store, identities, logger.Printf)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure subscription manager: %v", err)
-			os.Exit(1)
-		}
-		subscriptionManager.SetRiskEventStore(store)
-		pricingManager := pricing.NewManager(store, nil)
-		subscriptionManager.SetUsageObservers(
-			func(ctx context.Context, account contract.SubscriptionAccount, usage contract.SubscriptionUsage) error {
-				current, err := store.GetService(ctx, account.ID)
-				if err != nil {
-					return err
-				}
-				if current.Service.Subscription == nil || current.Service.Subscription.ProviderAccountID != account.ProviderAccountID {
-					return nil
-				}
-				return store.ObserveSubscriptionUsage(ctx, current.Service, usage)
-			},
-			func(ctx context.Context, account contract.SubscriptionAccount) error {
-				current, err := store.GetService(ctx, account.ID)
-				if err != nil {
-					return err
-				}
-				if current.Service.Subscription == nil || current.Service.Subscription.ProviderAccountID != account.ProviderAccountID {
-					return nil
-				}
-				return store.ObserveSubscriptionReset(ctx, current.Service)
-			},
-		)
-		resolver, err := endpoint.NewStoreResolver(store)
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure persistent endpoint resolver: %v", err)
-			os.Exit(1)
-		}
-		resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
-		resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
-		gatewayDependencies := ingress.Dependencies{
-			ProxyCredentials: store,
-			Resolver:         resolver,
-			Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).
-				WithRoutingSettings(store).WithIdentities(identities),
-			AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
-				func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
-					return accessTokenManager.Authenticate(ctx, raw)
-				},
-			),
-			PrivacyFilter: privacyFilter,
-			PolicyWarningReporter: ingress.PolicyWarningReporterFunc(
-				func(protocol contract.ProtocolID, endpointID contract.ServiceID, summary string) {
-					logger.Printf(
-						"privacy policy warning: protocol=%s service_id=%s findings=%s",
-						protocol,
-						endpointID,
-						summary,
-					)
-				},
-			),
-			RequestRecords:           store,
-			AuditSettings:            store,
-			AuditBlobs:               store,
-			RecordLogger:             logger.Printf,
-			ConversionEngine:         conversionEngine,
-			MaxConcurrentInspections: maxConcurrentInspections,
-			MaxRequestBodyMiB:        uint32(maxRequestBodyMiB),
-			ResponseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,
-			SubscriptionRisk:         subscriptionRiskReporter{manager: subscriptionManager},
-			Identities:               identities,
-		}
-		handler, err := controlapi.NewWithDependencies(config.Version, controlapi.Dependencies{
-			ServiceStore: store,
-			PricingStore: store, PricingManager: pricingManager,
-			AccessTokenManager: accessTokenManager,
-			PolicyStore:        store,
-			PrivacyModels:      privacyModel,
-			PrivacyFilter:      privacyFilter,
-			PolicyChanged:      privacyWorker.ApplyPolicy,
-			RequestRecords:     store,
-			AuditSettings:      store,
-			AuditKeys:          store,
-			AuditBlobs:         store,
-			RawVault:           rawVault,
-			LocalData:          store,
-			ClientIdentities:   identities,
-			Subscriptions:      subscriptionManager,
-			CodingPlans:        codingplan.New(store, nil),
-			ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
-			ServiceTester:      servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor),
-			BuiltinToolTester:  ingress.NewWithDependencies(gatewayDependencies),
-			ControlToken:       controlToken,
-			ObserverToken:      tokens.observer,
-			ConversionEngine:   conversionEngine,
-			Shutdown:           stopSignals,
-		})
-		if err != nil {
-			_ = store.Close()
-			logger.Printf("configure persistent control API: %v", err)
-			os.Exit(1)
-		}
-		dependencies.ControlHandler = handler
-		dependencies.RetentionSweep = func(ctx context.Context) error {
-			_, err := store.SweepExpiredAuditData(ctx)
-			return err
-		}
+		dependencies.ControlHandler = core.control
+		dependencies.RetentionSweep = core.retentionSweep
 		dependencies.NewInferenceHandler = func(address string) (http.Handler, error) {
-			production := gatewayDependencies
+			production := core.gateway
 			production.AllowedHost = address
 			return ingress.NewProduction(production)
 		}
-		monitorCtx, stopMonitors := context.WithCancel(ctx)
-		var monitors sync.WaitGroup
-		monitors.Add(3)
-		go func() { defer monitors.Done(); pricingManager.Run(monitorCtx, logger.Printf) }()
-		go func() { defer monitors.Done(); subscriptionManager.RunUsageMonitor(monitorCtx) }()
-		go func() { defer monitors.Done(); rawVault.Run(monitorCtx) }()
-		closeStore = func() error {
-			// Zero every key an agent grant or the unlock session holds.
-			handler.RevokeRawGrants()
-			rawVault.Lock()
-			stopMonitors()
-			monitors.Wait()
-			return store.Close()
-		}
-	}
-	if closeStore != nil {
-		defer closeStore()
 	}
 
 	if err := coreapp.RunWithDependencies(ctx, config, os.Stdout, dependencies); err != nil {
@@ -530,12 +330,14 @@ func newSubscriptionManager(
 	ctx context.Context,
 	store *sqlite.Store,
 	identities *accountauth.IdentityRegistry,
+	noLoopbackCallback bool,
 	logf func(string, ...any),
 ) (*subscription.Manager, error) {
 	oauth := accountauth.OAuthConfig{
-		ResolveProxy: networkproxy.Resolver(store, store),
-		ClientID:     accountauth.DefaultCodexOAuthClientID,
-		Identities:   identities,
+		ResolveProxy:       networkproxy.Resolver(store, store),
+		ClientID:           accountauth.DefaultCodexOAuthClientID,
+		Identities:         identities,
+		NoLoopbackCallback: noLoopbackCallback,
 	}
 	if clientID := strings.TrimSpace(os.Getenv("ASTRLINK_CODEX_OAUTH_CLIENT_ID")); clientID != "" {
 		oauth.ClientID = clientID

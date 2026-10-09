@@ -68,6 +68,9 @@ type RawSealingStore interface {
 	// ReplaceRawSealingKey discards every raw_v1 part and the old key and
 	// stores a new one, clearing the captured flags of affected records.
 	ReplaceRawSealingKey(context.Context, NewRawSealingKey) (RawResetResult, error)
+	// ClearRawSealingKey discards like ReplaceRawSealingKey but stores no
+	// new key, so no raw password is set until one is set again.
+	ClearRawSealingKey(context.Context) (RawResetResult, error)
 	// ResealRawParts moves every raw part still sealed under the audit key
 	// onto the raw sealing key, committing at most limit parts at a time.
 	// Without a raw password it only drops the content of pending parts whose

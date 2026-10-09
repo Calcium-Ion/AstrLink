@@ -45,6 +45,8 @@ const (
 	ErrCodeDeviceCodeRequest     = "oauth_device_code_request_failed"
 	ErrCodeDeviceCodePoll        = "oauth_device_code_poll_failed"
 	ErrCodeStoreUnavailable      = "account_credential_store_unavailable"
+
+	ErrCodeLoopbackCallbackUnavailable = "oauth_loopback_callback_unavailable"
 )
 
 var (
@@ -55,6 +57,9 @@ var (
 	ErrCallbackPortsUnavailable = errors.New("codex oauth callback ports are unavailable")
 	ErrDeviceCodeUnavailable    = errors.New("codex device code login is unavailable")
 	ErrDeviceCodeRequestFailed  = errors.New("codex device code request failed")
+	// ErrLoopbackCallbackUnavailable refuses a sign-in that can only finish
+	// through a callback on this machine's loopback; see NoLoopbackCallback.
+	ErrLoopbackCallbackUnavailable = errors.New("sign-in needs a browser on the machine running AstrLink")
 )
 
 // OAuthConfig configures the Codex subscription authorization adapter.
@@ -92,6 +97,12 @@ type OAuthConfig struct {
 	// requests and of the provider's gateway-initiated requests; nil uses the
 	// baseline.
 	Identities *IdentityRegistry
+	// NoLoopbackCallback is set when the browser that finishes sign-in may
+	// run on another machine, as in the server edition: a callback to this
+	// machine's localhost would never arrive. Codex browser sign-in then uses
+	// a device code; a provider with only a loopback callback is refused
+	// with ErrLoopbackCallbackUnavailable.
+	NoLoopbackCallback bool
 }
 
 func (config OAuthConfig) Normalize() OAuthConfig {

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -158,13 +159,7 @@ func runWithDependencies(
 	defer cancelRequests()
 	baseContext := func(net.Listener) context.Context { return requestContext }
 
-	if dependencies.RetentionSweep != nil {
-		if err := dependencies.RetentionSweep(requestContext); err != nil && !errors.Is(err, context.Canceled) {
-			// Best-effort at startup; continue serving even if the first sweep fails.
-			_ = err
-		}
-		go runRetentionSweepLoop(requestContext, dependencies.RetentionSweep)
-	}
+	startRetentionSweep(requestContext, dependencies.RetentionSweep)
 
 	inferenceServer := &http.Server{
 		Handler:           inferenceHandler,
@@ -178,43 +173,22 @@ func runWithDependencies(
 		BaseContext:       baseContext,
 	}
 
-	servers := []*http.Server{inferenceServer, controlServer}
-	var controlSocket net.Listener
+	planes := []plane{
+		{name: "inference", server: inferenceServer, listener: inferenceListener},
+		{name: "control", server: controlServer, listener: controlListener},
+	}
 	if config.ControlSocketPath != "" {
-		controlSocket, err = listenControlSocket(config.ControlSocketPath)
+		socketPlane, closeSocket, err := controlSocketPlane(config.ControlSocketPath, controlHandler, baseContext)
 		if err != nil {
-			return fmt.Errorf("listen on local control socket: %w", err)
+			return err
 		}
-		defer func() {
-			_ = controlSocket.Close()
-			_ = os.Remove(config.ControlSocketPath)
-		}()
-		servers = append(servers, &http.Server{
-			Handler:           controlapi.LocalSocketHandler(controlHandler),
-			ReadHeaderTimeout: 5 * time.Second,
-			BaseContext:       baseContext,
-		})
-	}
-
-	serverErrors := make(chan error, 4)
-	var serveGroup sync.WaitGroup
-	serve := func(name string, server *http.Server, listener net.Listener) {
-		defer serveGroup.Done()
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			serverErrors <- fmt.Errorf("serve %s plane: %w", name, serveErr)
-		}
-	}
-	serveGroup.Add(2)
-	go serve("inference", inferenceServer, inferenceListener)
-	go serve("control", controlServer, controlListener)
-	if controlSocket != nil {
-		serveGroup.Add(1)
-		go serve("control socket", servers[2], controlSocket)
+		defer closeSocket()
+		planes = append(planes, socketPlane)
 	}
 	if inferenceIPv6 != nil {
-		serveGroup.Add(1)
-		go serve("inference IPv6", inferenceServer, inferenceIPv6)
+		planes = append(planes, plane{name: "inference IPv6", server: inferenceServer, listener: inferenceIPv6})
 	}
+	running := startPlanes(planes)
 
 	ready := contract.ReadyEvent{
 		Event:                   "ready",
@@ -227,30 +201,99 @@ func runWithDependencies(
 	}
 	if err := ready.Validate(); err != nil {
 		cancelRequests()
-		return shutdownAndCollect(
-			servers,
-			&serveGroup,
-			serverErrors,
-			fmt.Errorf("validate ready event: %w", err),
-		)
+		return running.stop(fmt.Errorf("validate ready event: %w", err))
 	}
 	if err := json.NewEncoder(readyWriter).Encode(ready); err != nil {
 		cancelRequests()
-		return shutdownAndCollect(
-			servers,
-			&serveGroup,
-			serverErrors,
-			fmt.Errorf("write ready event: %w", err),
-		)
+		return running.stop(fmt.Errorf("write ready event: %w", err))
 	}
+	return running.wait(ctx, cancelRequests)
+}
 
+// plane is one listener and the server answering it. Two planes may share
+// a server, as the IPv4 and IPv6 inference listeners do.
+type plane struct {
+	name     string
+	server   *http.Server
+	listener net.Listener
+}
+
+// runningPlanes tracks the serving goroutines of one run.
+type runningPlanes struct {
+	servers []*http.Server
+	group   sync.WaitGroup
+	errors  chan error
+}
+
+func startPlanes(planes []plane) *runningPlanes {
+	running := &runningPlanes{errors: make(chan error, len(planes))}
+	for _, current := range planes {
+		if !slices.Contains(running.servers, current.server) {
+			running.servers = append(running.servers, current.server)
+		}
+	}
+	running.group.Add(len(planes))
+	for _, current := range planes {
+		go func() {
+			defer running.group.Done()
+			if serveErr := current.server.Serve(current.listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				running.errors <- fmt.Errorf("serve %s plane: %w", current.name, serveErr)
+			}
+		}()
+	}
+	return running
+}
+
+// wait blocks until ctx ends or a plane fails, then shuts every plane down.
+func (running *runningPlanes) wait(ctx context.Context, cancelRequests context.CancelFunc) error {
 	var triggerErr error
 	select {
 	case <-ctx.Done():
-	case triggerErr = <-serverErrors:
+	case triggerErr = <-running.errors:
 	}
 	cancelRequests()
-	return shutdownAndCollect(servers, &serveGroup, serverErrors, triggerErr)
+	return running.stop(triggerErr)
+}
+
+func (running *runningPlanes) stop(primaryErr error) error {
+	return shutdownAndCollect(running.servers, &running.group, running.errors, primaryErr)
+}
+
+// controlSocketPlane serves the same-uid control socket. closeSocket removes
+// the socket file; call it only after the plane stopped.
+func controlSocketPlane(
+	path string,
+	controlHandler http.Handler,
+	baseContext func(net.Listener) context.Context,
+) (socketPlane plane, closeSocket func(), err error) {
+	listener, err := listenControlSocket(path)
+	if err != nil {
+		return plane{}, nil, fmt.Errorf("listen on local control socket: %w", err)
+	}
+	return plane{
+			name: "control socket",
+			server: &http.Server{
+				Handler:           controlapi.LocalSocketHandler(controlHandler),
+				ReadHeaderTimeout: 5 * time.Second,
+				BaseContext:       baseContext,
+			},
+			listener: listener,
+		}, func() {
+			_ = listener.Close()
+			_ = os.Remove(path)
+		}, nil
+}
+
+// startRetentionSweep runs sweep once now and then hourly. Nil disables it.
+func startRetentionSweep(ctx context.Context, sweep func(context.Context) error) {
+	if sweep == nil {
+		return
+	}
+	if err := sweep(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		// Best-effort at startup; continue serving even if the first sweep fails.
+		_ = err
+	}
+	go runRetentionSweepLoop(ctx, sweep)
 }
 
 // listenIPv6Loopback binds the inference port on ::1 and returns the URL

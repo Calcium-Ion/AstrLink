@@ -20,7 +20,8 @@ const (
 	// without a raw read (D13).
 	rawUnlockIdle = 15 * time.Minute
 	// rawBackoffFreeFailures wrong proofs in a row are answered at once;
-	// the next ones wait 2^(n-3) s, at most rawBackoffCap (§5.11.9.6).
+	// the next ones wait 2^(n-3) s, at most rawBackoffCap (§5.11.9.6)
+	// unless RawVaultOptions.BackoffCap raises it.
 	rawBackoffFreeFailures = 2
 	rawBackoffCap          = 30 * time.Second
 	// rawResealBatch parts are committed per reseal transaction.
@@ -85,6 +86,13 @@ type RawVaultOptions struct {
 	// ReadOnly is for a store opened read-only: a proof never repairs the
 	// public key MAC.
 	ReadOnly bool
+	// Now is for tests; nil uses time.Now.
+	Now func() time.Time
+	// BackoffCap bounds the wait after wrong proofs; zero keeps
+	// rawBackoffCap. The server edition, whose raw password also signs in
+	// to a console other machines reach, raises it. The backoff is kept in
+	// memory only, so a restart clears it.
+	BackoffCap time.Duration
 }
 
 // Vault guards the raw sealing private key inside Core (§5.11.9.4). The
@@ -114,6 +122,7 @@ type Vault struct {
 
 	failures     int
 	blockedUntil time.Time
+	backoffCap   time.Duration
 
 	// privateCleared, when set by tests, sees each proof-opened private key
 	// right after the vault zeroes it.
@@ -136,14 +145,22 @@ func NewRawVault(store storage.RawSealingStore, options RawVaultOptions) *Vault 
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
 	vault := &Vault{
 		store:    store,
 		readOnly: options.ReadOnly,
 		kdf:      kdf,
 		logf:     logf,
-		now:      time.Now,
+		now:      now,
 		slot:     make(chan struct{}, 1),
 		reseal:   make(chan struct{}, 1),
+	}
+	vault.backoffCap = options.BackoffCap
+	if vault.backoffCap <= 0 {
+		vault.backoffCap = rawBackoffCap
 	}
 	// The first pass picks up parts left under the audit key by an earlier
 	// run that stopped mid-reseal.
@@ -464,9 +481,11 @@ func (vault *Vault) noteWrongProof() {
 	if vault.failures <= rawBackoffFreeFailures {
 		return
 	}
-	delay := rawBackoffCap
-	if shift := vault.failures - rawBackoffFreeFailures - 1; shift < 5 {
-		delay = min(time.Second<<shift, rawBackoffCap)
+	// Doubling stops at the cap; the shift bound only keeps it from
+	// overflowing.
+	delay := vault.backoffCap
+	if shift := vault.failures - rawBackoffFreeFailures - 1; shift < 30 {
+		delay = min(time.Second<<shift, vault.backoffCap)
 	}
 	vault.blockedUntil = vault.now().Add(delay)
 }
@@ -749,4 +768,29 @@ func (vault *Vault) replace(ctx context.Context, password []byte) (*storage.RawR
 		result.DeletedParts, result.AffectedRecords)
 	vault.requestReseal()
 	return &result, nil
+}
+
+// ClearPassword discards the key pair, every part sealed to it and with
+// them the raw password, so none is set until set runs again. It needs no
+// proof: the server edition runs it at startup for the reset switch in its
+// deploy configuration, which only whoever controls the deployment can set.
+func (vault *Vault) ClearPassword(ctx context.Context) (storage.RawResetResult, error) {
+	if err := vault.acquire(ctx); err != nil {
+		return storage.RawResetResult{}, err
+	}
+	defer vault.release()
+	result, err := vault.store.ClearRawSealingKey(ctx)
+	if err != nil {
+		return storage.RawResetResult{}, err
+	}
+	vault.mu.Lock()
+	vault.clearSessionLocked()
+	vault.mu.Unlock()
+	if err := vault.reload(ctx); err != nil {
+		return storage.RawResetResult{}, err
+	}
+	vault.logf("raw sealing: cleared the raw password; discarded %d raw part(s) of %d request(s)",
+		result.DeletedParts, result.AffectedRecords)
+	vault.requestReseal()
+	return result, nil
 }

@@ -128,6 +128,7 @@ type Handler struct {
 	auditBlobs               AuditBlobPersister
 	recordLogger             func(string, ...any)
 	allowedHosts             []string
+	networkExposed           bool
 	responseStartTimeout     time.Duration
 	metadataSlots            chan struct{}
 	maxRequestBodyBytes      int64
@@ -204,11 +205,8 @@ func New() *Handler {
 // NewProduction requires the complete minimum loopback gate before a resolver
 // backed by stored upstream credentials can be installed.
 func NewProduction(dependencies Dependencies) (*Handler, error) {
-	if dependencies.Resolver == nil || dependencies.Authorizer == nil {
-		return nil, fmt.Errorf("production resolver and authorizer are required")
-	}
-	if dependencies.AccessTokenAuthenticator == nil {
-		return nil, fmt.Errorf("production access token authenticator is required")
+	if err := validateProductionDependencies(dependencies); err != nil {
+		return nil, err
 	}
 	host, port, err := net.SplitHostPort(dependencies.AllowedHost)
 	portNumber, portErr := strconv.ParseUint(port, 10, 16)
@@ -216,6 +214,33 @@ func NewProduction(dependencies Dependencies) (*Handler, error) {
 		return nil, fmt.Errorf("production allowed host must be a fixed 127.0.0.1 authority")
 	}
 	return NewWithDependencies(dependencies), nil
+}
+
+// NewNetworkProduction is the server edition's inference gate. Its listener
+// is reached from other machines by IP, hostname or container name, so any
+// Host is accepted; the access token stays mandatory and browser origins
+// stay refused. Requests rejected before their token is accepted are not
+// recorded, so whoever can reach the port cannot fill the request records.
+func NewNetworkProduction(dependencies Dependencies) (*Handler, error) {
+	if err := validateProductionDependencies(dependencies); err != nil {
+		return nil, err
+	}
+	if dependencies.AllowedHost != "" {
+		return nil, fmt.Errorf("network production accepts any Host; allowed host must be empty")
+	}
+	handler := NewWithDependencies(dependencies)
+	handler.networkExposed = true
+	return handler, nil
+}
+
+func validateProductionDependencies(dependencies Dependencies) error {
+	if dependencies.Resolver == nil || dependencies.Authorizer == nil {
+		return fmt.Errorf("production resolver and authorizer are required")
+	}
+	if dependencies.AccessTokenAuthenticator == nil {
+		return fmt.Errorf("production access token authenticator is required")
+	}
+	return nil
 }
 
 // NewWithDependencies is the composition seam used by deterministic tests and
@@ -770,11 +795,11 @@ func (handler *Handler) hostAllowed(host string) bool {
 
 func (handler *Handler) allowLocalCaller(writer http.ResponseWriter, request *http.Request) bool {
 	if hasBrowserOrigin(request.Header) {
-		handler.writeRecordedInferenceError(writer, request, http.StatusForbidden, "origin_forbidden", "browser origins cannot call the inference plane", false, nil)
+		handler.writeBoundaryError(writer, request, http.StatusForbidden, "origin_forbidden", "browser origins cannot call the inference plane")
 		return false
 	}
 	if !handler.hostAllowed(request.Host) {
-		handler.writeRecordedInferenceError(writer, request, http.StatusMisdirectedRequest, "host_forbidden", "request Host does not match the inference listener", false, nil)
+		handler.writeBoundaryError(writer, request, http.StatusMisdirectedRequest, "host_forbidden", "request Host does not match the inference listener")
 		return false
 	}
 	return true
@@ -800,19 +825,19 @@ func (handler *Handler) allowInferenceBoundary(writer http.ResponseWriter, reque
 	}
 	if handler.accessTokenAuthenticator != nil {
 		if request.URL.Query().Has("key") || request.URL.Query().Has("api_key") || request.URL.Query().Has("access_token") {
-			handler.writeRecordedInferenceError(writer, request, http.StatusUnauthorized, "token_query_forbidden", "local access tokens are not accepted in query parameters", false, nil)
+			handler.writeBoundaryError(writer, request, http.StatusUnauthorized, "token_query_forbidden", "local access tokens are not accepted in query parameters")
 			return false
 		}
 		token, ok := localClientCredential(request.Header)
 		if !ok {
 			writer.Header().Set("WWW-Authenticate", `Bearer realm="astrlink-inference"`)
-			handler.writeRecordedInferenceError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required", false, nil)
+			handler.writeBoundaryError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required")
 			return false
 		}
 		tokenID, err := handler.accessTokenAuthenticator.AuthenticateAccessToken(request.Context(), token)
 		if err != nil || tokenID == "" {
 			writer.Header().Set("WWW-Authenticate", `Bearer realm="astrlink-inference"`)
-			handler.writeRecordedInferenceError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required", false, nil)
+			handler.writeBoundaryError(writer, request, http.StatusUnauthorized, "invalid_access_token", "a valid local access token is required")
 			return false
 		}
 		*request = *request.WithContext(context.WithValue(request.Context(), accessTokenIDContextKey{}, tokenID))
@@ -863,6 +888,18 @@ func (handler *Handler) startRecordSession(request *http.Request, classified Req
 	session.captureHTTPRequestMeta(request)
 	session.attachRequestCapture(request)
 	return session
+}
+
+// writeBoundaryError rejects a request before its access token is accepted.
+// The loopback listener records it like any inference error; a
+// network-exposed listener does not, since anyone who reaches the port could
+// otherwise fill the request records.
+func (handler *Handler) writeBoundaryError(writer http.ResponseWriter, request *http.Request, status int, code, message string) {
+	if handler.networkExposed {
+		writeInferenceError(writer, status, code, message, false, nil)
+		return
+	}
+	handler.writeRecordedInferenceError(writer, request, status, code, message, false, nil)
 }
 
 // writeRecordedInferenceError writes a local inference-plane error and, when

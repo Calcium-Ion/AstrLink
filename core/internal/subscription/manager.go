@@ -144,6 +144,7 @@ func providerOverride(overrides []accountauth.OAuthConfig, provider contract.Sub
 	if config.Identities == nil {
 		config.Identities = base.Identities
 	}
+	config.NoLoopbackCallback = config.NoLoopbackCallback || base.NoLoopbackCallback
 	config.Provider = provider
 	return config.Normalize()
 }

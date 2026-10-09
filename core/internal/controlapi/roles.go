@@ -32,10 +32,13 @@ func (role Role) String() string {
 	}
 }
 
-// roleFromRequest resolves the caller's role. The operator token is checked
-// first so a desktop request is never downgraded; the observer token and the
-// local socket both resolve to observer.
+// roleFromRequest resolves the caller's role. A console session and the
+// operator token are checked first so an operator is never downgraded; the
+// observer token and the local socket both resolve to observer.
 func (handler *Handler) roleFromRequest(request *http.Request) Role {
+	if consoleSessionAuthenticated(request) {
+		return RoleOperator
+	}
 	const prefix = "Bearer "
 	if authorization := request.Header.Get("Authorization"); strings.HasPrefix(authorization, prefix) {
 		provided := []byte(strings.TrimPrefix(authorization, prefix))

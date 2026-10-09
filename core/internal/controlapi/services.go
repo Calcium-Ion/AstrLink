@@ -503,6 +503,13 @@ func (handler *Handler) serviceAuthorization(writer http.ResponseWriter, request
 					accountauth.ErrCodeCallbackPortsBusy,
 					"OAuth callback ports 1455 and 1457 are unavailable, and Device Code login could not start",
 				)
+			case errors.Is(err, accountauth.ErrLoopbackCallbackUnavailable):
+				writeError(
+					writer,
+					http.StatusUnprocessableEntity,
+					accountauth.ErrCodeLoopbackCallbackUnavailable,
+					"this sign-in finishes in a browser on the machine running AstrLink, which the server edition does not support yet",
+				)
 			case errors.Is(err, accountauth.ErrDeviceCodeUnavailable):
 				writeError(
 					writer,

@@ -123,6 +123,12 @@ func (manager *SessionManager) Begin(
 	case contract.AuthorizationFlowCode:
 		return manager.beginCodeAuthorization(ctx, serviceID)
 	case contract.AuthorizationFlowBrowser:
+		if manager.config.NoLoopbackCallback {
+			if manager.config.Provider == contract.SubscriptionProviderOpenAICodex {
+				return manager.beginDeviceCodeAuthorization(ctx, serviceID)
+			}
+			return contract.AuthorizationSession{}, ErrLoopbackCallbackUnavailable
+		}
 		session, err := manager.beginBrowserAuthorization(ctx, serviceID)
 		if !errors.Is(err, ErrCallbackPortsUnavailable) || manager.config.Provider != contract.SubscriptionProviderOpenAICodex {
 			return session, err
