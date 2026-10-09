@@ -216,3 +216,52 @@ it("separates the provider Images API from a chat model executing the tool", asy
   });
   expect(field("图片生成绘图模型")).toBeNull();
 });
+
+it("offers MiniMax and its image models for the provider Images API", async () => {
+  const services: RoutableService[] = [
+    {
+      id: "minimax_plan",
+      name: "MiniMax 订阅",
+      kind: "minimax_coding",
+      enabled: true,
+      models: ["MiniMax-M3"],
+      capabilities: [],
+    },
+  ];
+  function Editor() {
+    const [value, setValue] = useState<BuiltinTools>(() => ({
+      ...defaultBuiltinTools(),
+      image_generation: {
+        enabled: true,
+        backend: "service_images",
+        service_id: "minimax_plan",
+        model: "",
+      },
+    }));
+    return (
+      <BuiltinToolsEditor
+        value={value}
+        services={services}
+        disabled={false}
+        onChange={setValue}
+      />
+    );
+  }
+  await act(async () => root.render(<Editor />));
+  expect((await choose("图片生成提供商", "")).join("\n")).toContain(
+    "MiniMax 订阅",
+  );
+  await act(async () =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
+  );
+  await act(async () =>
+    container
+      .querySelector<HTMLInputElement>('[aria-label="图片生成绘图模型"]')!
+      .click(),
+  );
+  expect(
+    [...document.querySelectorAll('[role="option"]')].map((option) =>
+      option.getAttribute("aria-label"),
+    ),
+  ).toEqual(["image-01", "image-01-live", "MiniMax-M3"]);
+});

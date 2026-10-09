@@ -109,10 +109,12 @@ func (config BuiltinTool) Validate(kind string) error {
 
 func BuiltinToolKind(kind string) bool { return kind == "web_search" || kind == "image_generation" }
 
-// BuiltinImagesServiceKind reports provider kinds whose API root serves the
-// OpenAI Images endpoints with the provider's ordinary credential.
+// BuiltinImagesServiceKind reports provider kinds that generate images with
+// the provider's ordinary credential: through the OpenAI Images endpoints, or
+// through MiniMax's image_generation, which plan keys may also call.
 func BuiltinImagesServiceKind(kind ServiceKind) bool {
-	return kind == ServiceKindNewAPI || kind == ServiceKindOpenAI || kind == ServiceKindOpenAICompatible
+	return kind == ServiceKindNewAPI || kind == ServiceKindOpenAI || kind == ServiceKindOpenAICompatible ||
+		kind == ServiceKindMiniMax || kind == ServiceKindMiniMaxCoding
 }
 
 func (settings BuiltinTools) For(kind string) BuiltinTool {

@@ -10,12 +10,25 @@ export interface BuiltinTool {
 }
 export type BuiltinTools = Record<BuiltinToolKind, BuiltinTool>;
 
-/** Provider kinds whose API root serves the OpenAI Images endpoints. */
+/**
+ * Provider kinds that generate images with their own key: through the OpenAI
+ * Images endpoints, or through MiniMax's image API.
+ */
 export const builtinImagesServiceKinds: readonly ServiceKind[] = [
   "newapi",
   "openai",
   "openai_compatible",
+  "minimax",
+  "minimax_coding",
 ];
+
+/** Image models suggested for providers whose model list may omit them. */
+export const builtinImageModels: Partial<
+  Record<ServiceKind, readonly string[]>
+> = {
+  minimax: ["image-01", "image-01-live"],
+  minimax_coding: ["image-01", "image-01-live"],
+};
 
 export function defaultBuiltinTools(): BuiltinTools {
   return {

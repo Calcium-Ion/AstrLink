@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { builtinToolAction } from "../bridge";
 import {
+  builtinImageModels,
   builtinImagesServiceKinds,
   defaultBuiltinTools,
   parseBuiltinTools,
@@ -69,6 +70,10 @@ function ToolEditor({
     );
   const providers = providersFor(backend);
   const selected = providers.find((service) => service.id === value.service_id);
+  const modelOptions = [
+    ...((direct && selected && builtinImageModels[selected.kind]) || []),
+    ...(selected?.models ?? []),
+  ];
   useEffect(() => {
     if (disabled) return;
     let active = true;
@@ -283,7 +288,7 @@ function ToolEditor({
                       : "builtinTools.modelFor",
                     { tool: title },
                   )}
-                  options={selected?.models ?? []}
+                  options={modelOptions}
                   value={value.model ?? ""}
                   onValueChange={(model) => change({ model })}
                 />

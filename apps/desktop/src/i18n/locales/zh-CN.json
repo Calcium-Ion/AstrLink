@@ -2871,7 +2871,7 @@
     "upstreamHint": "使用所选提供商的 Responses API，由下方执行模型调用同类型的内置工具，再把结果交回原请求的主模型。",
     "externalSearchHint": "使用 Tavily 兼容 API 完成搜索、网页读取和文字查找。连接使用下方填写的 API 基础地址和单独保存的密钥。",
     "externalImagesHint": "使用 OpenAI Images 兼容 API 生成或编辑图片。连接使用下方填写的 API 基础地址和单独保存的密钥。",
-    "serviceImagesHint": "使用所选提供商的 Images API 生成或编辑图片，复用该提供商已配置的密钥和代理。",
+    "serviceImagesHint": "使用所选提供商自带的生图接口生成或编辑图片，复用该提供商已配置的密钥和代理。MiniMax 收到参考图时，会保留图中人物的特征，重新生成一张图。",
     "provider": "API 提供商",
     "providerFor": "{{tool}}提供商",
     "model": "执行模型",
@@ -2897,7 +2897,7 @@
     "keyStatusFailed": "无法读取密钥状态。",
     "description": "匹配 OpenAI Responses 请求中 tools 数组的 type 字段。开启后，网关把对应工具声明转换为函数供主模型调用，再交给这里选定的模型或 API 执行，结果交回主模型继续回答。主模型须支持函数调用。",
     "noProviders": "暂无支持原生 Responses 的已启用提供商。请先在 API 提供商中配置。",
-    "noImageProviders": "暂无已启用的 OpenAI、OpenAI 兼容或 New API 提供商。请先在 API 提供商中配置。"
+    "noImageProviders": "暂无已启用的 OpenAI、OpenAI 兼容、New API 或 MiniMax 提供商。请先在 API 提供商中配置。"
   },
   "about": {
     "title": "关于",
