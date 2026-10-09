@@ -1113,9 +1113,10 @@ paths:
       summary: Restore scheduling for a subscription paused by an upstream risk signal.
       description: |
         Removes the current `subscription.risk` of a Claude Code or Codex
-        subscription service and records a `cleared` risk event. Credentials
-        are kept. If the provider still restricts the account, the next
-        request pauses it again.
+        subscription service and records a `cleared` risk event. On success,
+        also removes this service's in-memory HTTP 429 route cooldowns, even
+        if its account risk was already cleared. Credentials are kept. If
+        the provider still restricts the account, the next request pauses it again.
       responses:
         "200":
           description: Updated service without a current risk.
