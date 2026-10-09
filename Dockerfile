@@ -21,7 +21,7 @@ COPY apps/desktop/ ./
 RUN bun run build:web && cd /src && bun apps/desktop/scripts/stage-web.mjs
 
 # Core and the CLI, cross-compiled without cgo.
-FROM --platform=$BUILDPLATFORM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS go
+FROM --platform=$BUILDPLATFORM golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS go
 ARG TARGETOS TARGETARCH
 # Set by CI to stamp the source revision; the image has no .git to read it from.
 ARG ASTRLINK_COMMIT=unknown
