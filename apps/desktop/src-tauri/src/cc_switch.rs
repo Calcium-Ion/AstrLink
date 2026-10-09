@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use reqwest::Url;
 
 use crate::{
@@ -136,6 +138,7 @@ pub fn installed() -> bool {
 
 pub async fn open_import(
     manager: &CoreManager,
+    home: PathBuf,
     token_id: &str,
     client: Client,
     models: &Models,
@@ -150,9 +153,32 @@ pub async fn open_import(
         models,
         &token,
     )?;
+    // Note the move before CC Switch can act on it, so the config CC Switch
+    // writes is not reported as a change. The import goes ahead without it.
+    let marked = set_cc_switch(home.clone(), client, true)
+        .await
+        .unwrap_or_else(|error| {
+            eprintln!("unable to note the move to CC Switch: {error}");
+            false
+        });
     // The URL contains a credential: keep it out of frontend state and errors.
-    tauri_plugin_opener::open_url(url.as_str(), None::<&str>)
-        .map_err(|_| "unable to open CC Switch; check that it is installed".to_string())
+    if tauri_plugin_opener::open_url(url.as_str(), None::<&str>).is_err() {
+        if marked {
+            if let Err(error) = set_cc_switch(home, client, false).await {
+                eprintln!("unable to undo the move to CC Switch: {error}");
+            }
+        }
+        return Err("unable to open CC Switch; check that it is installed".into());
+    }
+    Ok(())
+}
+
+async fn set_cc_switch(home: PathBuf, client: Client, handed_over: bool) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        client_config::set_cc_switch(&home, client, handed_over)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]

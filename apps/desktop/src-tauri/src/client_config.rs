@@ -306,6 +306,8 @@ pub enum ClientState {
     Outdated,
     /// A connection key changed since AstrLink wrote it.
     Modified,
+    /// Moved to CC Switch, and the connection is not the one AstrLink wrote.
+    CcSwitch,
     /// The config file cannot be parsed.
     Invalid,
 }
@@ -352,9 +354,46 @@ struct Records {
     codex: Option<ClientRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pi: Option<ClientRecord>,
+    /// Clients the user moved to CC Switch since AstrLink last wrote them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cc_switch: Vec<Client>,
 }
 
 impl Records {
+    fn is_empty(&self) -> bool {
+        self.claude.is_none()
+            && self.codex.is_none()
+            && self.pi.is_none()
+            && self.cc_switch.is_empty()
+    }
+
+    fn handed_over(&self, client: Client) -> bool {
+        self.cc_switch.contains(&client)
+    }
+
+    fn set_handed_over(&mut self, client: Client, handed_over: bool) {
+        self.cc_switch.retain(|item| *item != client);
+        if handed_over {
+            self.cc_switch.push(client);
+        }
+    }
+
+    /// Once the user moved a client to CC Switch, a connection AstrLink did
+    /// not write is CC Switch's, not a change to its own config.
+    fn state(
+        &self,
+        client: Client,
+        existing: &[Option<&str>],
+        origin: Option<&str>,
+    ) -> ClientState {
+        match inspect(client, existing, self.get(client), origin) {
+            ClientState::NotConfigured | ClientState::Modified if self.handed_over(client) => {
+                ClientState::CcSwitch
+            }
+            state => state,
+        }
+    }
+
     fn slot(&mut self, client: Client) -> &mut Option<ClientRecord> {
         match client {
             Client::Codex => &mut self.codex,
@@ -392,7 +431,7 @@ fn read_records(home: &Path) -> Result<Records, String> {
 
 fn write_records(home: &Path, records: &mut Records) -> Result<(), String> {
     let path = records_path(home);
-    if records.claude.is_none() && records.codex.is_none() && records.pi.is_none() {
+    if records.is_empty() {
         return host_files::remove_path(&path);
     }
     records.version = RECORDS_VERSION;
@@ -1362,7 +1401,7 @@ pub fn status(home: &Path, inference_url: Option<&str>) -> Result<Vec<ClientStat
         let paths = client.config_paths(home);
         let existing = read_files(&paths)?;
         let record = records.get(client);
-        let state = inspect(client, &texts(&existing), record, origin.as_deref());
+        let state = records.state(client, &texts(&existing), origin.as_deref());
         statuses.push(ClientStatus {
             client,
             detected: client.detected(home),
@@ -1371,8 +1410,9 @@ pub fn status(home: &Path, inference_url: Option<&str>) -> Result<Vec<ClientStat
                 .map(|path| path.display().to_string())
                 .collect(),
             state,
+            // Only a config AstrLink wrote names its token.
             token_id: record
-                .filter(|_| state != ClientState::NotConfigured)
+                .filter(|_| !matches!(state, ClientState::NotConfigured | ClientState::CcSwitch))
                 .map(|record| record.token_id.clone()),
         });
     }
@@ -1431,9 +1471,13 @@ pub fn write(
         });
     }
     let previous = records.slot(client).replace(plan.record);
+    // Writing takes the client back from CC Switch.
+    let handed_over = records.handed_over(client);
+    records.set_handed_over(client, false);
     write_records(home, &mut records)?;
     if let Err(error) = write_files(&paths, &existing, &plan.contents) {
         *records.slot(client) = previous;
+        records.set_handed_over(client, handed_over);
         let _ = write_records(home, &mut records);
         return Err(error);
     }
@@ -1445,12 +1489,21 @@ pub fn remove(home: &Path, client: Client) -> Result<(), String> {
     let _lock = host_files::lock();
     let mut records = read_records(home)?;
     let Some(record) = records.get(client).cloned() else {
+        if records.handed_over(client) {
+            records.set_handed_over(client, false);
+            write_records(home, &mut records)?;
+        }
         return Ok(());
     };
     let paths = client.config_paths(home);
     let existing = read_files(&paths)?;
-    let removals =
-        plan_remove(client, &texts(&existing), &record).map_err(|error| error.at(&paths))?;
+    // CC Switch rewrites some keys with the values AstrLink wrote, so the
+    // files of a client it holds are left to it.
+    let removals = if records.state(client, &texts(&existing), None) == ClientState::CcSwitch {
+        Vec::new()
+    } else {
+        plan_remove(client, &texts(&existing), &record).map_err(|error| error.at(&paths))?
+    };
     for ((path, existing), removal) in paths.iter().zip(&existing).zip(removals) {
         match removal {
             Removal::Unchanged => {}
@@ -1474,7 +1527,24 @@ pub fn remove(home: &Path, client: Client) -> Result<(), String> {
         }
     }
     *records.slot(client) = None;
+    records.set_handed_over(client, false);
     write_records(home, &mut records)
+}
+
+/// Records whether the user moved a client AstrLink writes to CC Switch, and
+/// returns whether the record changed. Other clients have no record.
+pub fn set_cc_switch(home: &Path, client: Client, handed_over: bool) -> Result<bool, String> {
+    if !Client::WRITABLE.contains(&client) {
+        return Ok(false);
+    }
+    let _lock = host_files::lock();
+    let mut records = read_records(home)?;
+    if records.handed_over(client) == handed_over {
+        return Ok(false);
+    }
+    records.set_handed_over(client, handed_over);
+    write_records(home, &mut records)?;
+    Ok(true)
 }
 
 /// Moves every untouched config to the gateway's current address.
@@ -2340,6 +2410,120 @@ mod tests {
         let error = remove(&home, Client::Codex).unwrap_err();
         assert!(error.contains("config.toml") && error.contains("TOML"));
         assert!(!error.contains("astr_x"));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_client_moved_to_cc_switch_is_left_to_it_once_cc_switch_switches() {
+        let home = unique_home("cc-switch");
+        let config = home.join(".codex/config.toml");
+        write(&home, Client::Codex, &connection(&codex_models()), false).unwrap();
+        let written = fs::read_to_string(&config).unwrap();
+        // CC Switch's switch takes over the route and model keys and adds its
+        // own provider table; AstrLink's table stays behind.
+        let switched = written
+            .replace("model_provider = \"astrlink\"", "model_provider = \"custom\"")
+            .replace(
+                "model = \"gpt-route\"\n",
+                "model = \"gpt-route\"\nmodel_reasoning_effort = \"high\"\n",
+            )
+            + &format!(
+                "\n[model_providers.custom]\nname = \"AstrLink · VS Code\"\nbase_url = \"{ORIGIN}/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"{TOKEN}\"\n"
+            );
+        let codex = |home: &Path| {
+            status(home, Some("http://127.0.0.1:18317/"))
+                .unwrap()
+                .remove(1)
+        };
+        fs::write(&config, &switched).unwrap();
+        assert_eq!(codex(&home).state, ClientState::Modified);
+
+        // The move counts once CC Switch replaces AstrLink's connection.
+        fs::write(&config, &written).unwrap();
+        assert!(set_cc_switch(&home, Client::Codex, true).unwrap());
+        assert!(!set_cc_switch(&home, Client::Codex, true).unwrap());
+        assert_eq!(codex(&home).state, ClientState::Configured);
+        fs::write(&config, &switched).unwrap();
+        let moved = codex(&home);
+        assert_eq!(moved.state, ClientState::CcSwitch);
+        assert_eq!(moved.token_id, None);
+        sync(&home, "http://127.0.0.1:9000/").unwrap();
+        assert_eq!(fs::read_to_string(&config).unwrap(), switched);
+
+        // Writing takes it back, asking only about the route CC Switch chose.
+        assert_eq!(
+            write(&home, Client::Codex, &connection(&codex_models()), false).unwrap(),
+            ApplyOutcome::NeedsConfirmation {
+                keys: vec!["model_provider".into()]
+            }
+        );
+        write(&home, Client::Codex, &connection(&codex_models()), true).unwrap();
+        let rewritten = fs::read_to_string(&config).unwrap();
+        assert!(rewritten.contains("model_provider = \"astrlink\""));
+        assert!(rewritten.contains("model_reasoning_effort = \"high\""));
+        assert!(rewritten.contains("[model_providers.custom]"));
+        assert_eq!(codex(&home).state, ClientState::Configured);
+        assert!(!fs::read_to_string(records_path(&home))
+            .unwrap()
+            .contains("cc_switch"));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn removing_a_client_cc_switch_holds_leaves_its_files_alone() {
+        let home = unique_home("cc-switch-remove");
+        let settings = home.join(".claude/settings.json");
+        let models = vec![("model", "main-route".to_string())];
+        write(&home, Client::Claude, &connection(&models), false).unwrap();
+        set_cc_switch(&home, Client::Claude, true).unwrap();
+        // A CC Switch provider with another token keeps the address and model
+        // AstrLink wrote, which removal would otherwise take for its own.
+        let switched = fs::read_to_string(&settings)
+            .unwrap()
+            .replace(TOKEN, OTHER_TOKEN);
+        fs::write(&settings, &switched).unwrap();
+        assert_eq!(status(&home, None).unwrap()[0].state, ClientState::CcSwitch);
+        remove(&home, Client::Claude).unwrap();
+        assert_eq!(fs::read_to_string(&settings).unwrap(), switched);
+        assert!(!records_path(&home).exists());
+        assert_eq!(
+            status(&home, None).unwrap()[0].state,
+            ClientState::NotConfigured
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn moves_are_noted_only_for_clients_astrlink_writes() {
+        let home = unique_home("cc-switch-only");
+        assert!(!set_cc_switch(&home, Client::Gemini, true).unwrap());
+        assert!(!records_path(&home).exists());
+        assert!(set_cc_switch(&home, Client::Codex, true).unwrap());
+        let statuses = status(&home, None).unwrap();
+        assert_eq!(statuses[0].state, ClientState::NotConfigured);
+        assert_eq!(statuses[1].state, ClientState::CcSwitch);
+        assert_eq!(statuses[1].token_id, None);
+        remove(&home, Client::Codex).unwrap();
+        assert!(!records_path(&home).exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn records_from_released_builds_still_load() {
+        let home = unique_home("released-records");
+        let plan = plan_write(Client::Codex, &[None], &connection(&codex_models()), None).unwrap();
+        fs::write(home.join(".codex/config.toml"), &plan.contents[0]).unwrap();
+        // Released builds wrote one object per client and nothing else.
+        fs::create_dir_all(astrlink_home(&home)).unwrap();
+        fs::write(
+            records_path(&home),
+            serde_json::json!({"version": 1, "codex": plan.record}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            status(&home, Some("http://127.0.0.1:18317/")).unwrap()[1].state,
+            ClientState::Configured
+        );
         fs::remove_dir_all(home).unwrap();
     }
 

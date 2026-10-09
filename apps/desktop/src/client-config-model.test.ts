@@ -52,6 +52,10 @@ describe("client-config IPC parsing", () => {
       { state: "modified", token_id: "token_01" },
     );
     expect(parseClientConfigStatuses(value)).toEqual(value);
+    // A client moved to CC Switch holds no config AstrLink wrote.
+    expect(
+      parseClientConfigStatuses(statuses({ state: "cc_switch" }))[0],
+    ).toMatchObject({ state: "cc_switch", token_id: null });
     // An unreadable file may or may not have a record behind it.
     for (const tokenID of [null, "token_01"]) {
       expect(
@@ -74,6 +78,10 @@ describe("client-config IPC parsing", () => {
     ["a malformed token ID", statuses({ state: "configured", token_id: "X" })],
     ["a configured client without a token", statuses({ state: "modified" })],
     ["an unconfigured client with a token", statuses({ token_id: "token_01" })],
+    [
+      "a client moved to CC Switch with a token",
+      statuses({ state: "cc_switch", token_id: "token_01" }),
+    ],
   ])("rejects %s", (_, value) => {
     expect(() => parseClientConfigStatuses(value)).toThrow(
       "Invalid client-config IPC response",

@@ -38,6 +38,8 @@ export type ClientConfigState =
   | "outdated"
   /** A connection setting changed since AstrLink wrote it. */
   | "modified"
+  /** Moved to CC Switch, which now holds the connection. */
+  | "cc_switch"
   /** The config file cannot be read as its format. */
   | "invalid";
 
@@ -76,6 +78,7 @@ const states: readonly ClientConfigState[] = [
   "configured",
   "outdated",
   "modified",
+  "cc_switch",
   "invalid",
 ];
 const resourceIDPattern = /^[a-z][a-z0-9_-]{2,95}$/;
@@ -152,11 +155,10 @@ function parseStatus(value: unknown, path: string): ClientConfigStatus {
       invalid(`${path}.token_id`, "invalid token ID");
     }
   }
-  // An unreadable file may or may not have been written by AstrLink.
-  if (
-    state !== "invalid" &&
-    (state === "not_configured") !== (tokenID === null)
-  ) {
+  // Only a config AstrLink wrote names its token. An unreadable file may or
+  // may not have been written by AstrLink.
+  const written = state !== "not_configured" && state !== "cc_switch";
+  if (state !== "invalid" && written !== (tokenID !== null)) {
     invalid(`${path}.token_id`, "does not match the state");
   }
   return {

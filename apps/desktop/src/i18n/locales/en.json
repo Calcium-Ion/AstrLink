@@ -2773,11 +2773,13 @@
       "configured": "Configured",
       "outdated": "Port update pending",
       "modified": "Changed elsewhere",
+      "cc_switch": "Via CC Switch",
       "invalid": "Unreadable config"
     },
     "usesToken": "{{client}} currently uses “{{name}}”; updating switches it to “{{current}}”.",
     "usesOtherToken": "{{client}} currently uses another token; updating switches it to “{{current}}”.",
     "modifiedHint": "This config changed after AstrLink wrote it, so port changes no longer update it. Write it again to restore it.",
+    "ccSwitchManagedHint": "CC Switch now manages {{client}}. If the gateway port changes, update the address in CC Switch. To let AstrLink manage it again, choose Write config.",
     "invalidHint": "The config file has a format error, so AstrLink leaves it alone. Fix it, then write again.",
     "configFile": "Config file",
     "write": "Write config",

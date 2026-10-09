@@ -485,6 +485,29 @@ describe("ClientSetupDialog", () => {
     expect(cardText("Claude Code")).toContain("端口待更新");
   });
 
+  it("shows a client moved to CC Switch without asking to restore it", async () => {
+    bridgeMocks.isCCSwitchInstalled.mockResolvedValue(true);
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      statuses({}, { state: "cc_switch" }),
+    );
+    await renderDialog();
+
+    expect(cardText("Codex")).toContain("通过 CC Switch");
+    expect(
+      card("Codex").closest("label")?.querySelector("[data-tone]"),
+    ).toBeNull();
+    await act(async () => card("Codex").click());
+    const text = dialog().textContent;
+    expect(text).toContain(
+      "Codex 现在由 CC Switch 管理。网关端口变化后，需要在 CC Switch 中更新地址。",
+    );
+    expect(text).not.toContain("重新写入即可恢复");
+    // CC Switch owns the file, so only writing again takes it back.
+    expect(text).not.toContain("移除配置");
+    expect(button("写入配置")).toBeTruthy();
+    expect(button("改用 CC Switch 导入")).toBeTruthy();
+  });
+
   it("confirms replacing settings it did not write before writing them", async () => {
     bridgeMocks.applyClientConfig
       .mockResolvedValueOnce({

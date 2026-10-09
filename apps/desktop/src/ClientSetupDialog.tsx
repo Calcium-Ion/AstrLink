@@ -104,7 +104,7 @@ const claudeTiers = [
 ] as const;
 
 const stateTones: Record<
-  Exclude<ClientConfigState, "not_configured">,
+  Exclude<ClientConfigState, "not_configured" | "cc_switch">,
   StatusTone
 > = {
   configured: "positive",
@@ -576,11 +576,14 @@ export function ClientSetupDialog({
             : "clientSetup.unsupported",
         );
       case "direct":
-        return card && card.state !== "not_configured" ? (
+        if (!card || card.state === "not_configured") return null;
+        // Reads like the clients only CC Switch configures.
+        if (card.state === "cc_switch") return t("clientSetup.state.cc_switch");
+        return (
           <StatusBadge tone={stateTones[card.state]}>
             {t(`clientSetup.state.${card.state}`)}
           </StatusBadge>
-        ) : null;
+        );
     }
   };
 
@@ -705,6 +708,10 @@ export function ClientSetupDialog({
               ) : status?.state === "modified" ? (
                 <FormMessage tone="warning">
                   {t("clientSetup.modifiedHint")}
+                </FormMessage>
+              ) : status?.state === "cc_switch" ? (
+                <FormMessage tone="notice">
+                  {t("clientSetup.ccSwitchManagedHint", { client: label })}
                 </FormMessage>
               ) : status?.token_id != null && status.token_id !== token.id ? (
                 <FormMessage tone="notice">

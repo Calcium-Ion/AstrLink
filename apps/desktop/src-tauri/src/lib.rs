@@ -1754,7 +1754,8 @@ async fn open_cc_switch_import(
     inference_url: String,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<(), String> {
-    cc_switch::open_import(&manager, &token_id, client, &models, &inference_url).await
+    let home = control_session::user_home()?;
+    cc_switch::open_import(&manager, home, &token_id, client, &models, &inference_url).await
 }
 
 /// Read-only: reports whether the system proxy keeps Codex from reaching

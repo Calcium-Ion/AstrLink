@@ -2773,11 +2773,13 @@
       "configured": "已配置",
       "outdated": "端口待更新",
       "modified": "配置已被改动",
+      "cc_switch": "通过 CC Switch",
       "invalid": "无法读取配置"
     },
     "usesToken": "{{client}} 当前使用“{{name}}”，更新后改用“{{current}}”。",
     "usesOtherToken": "{{client}} 当前使用其他令牌，更新后改用“{{current}}”。",
     "modifiedHint": "这份配置在 AstrLink 写入后被改动过，端口变化时不会再自动更新。重新写入即可恢复。",
+    "ccSwitchManagedHint": "{{client}} 现在由 CC Switch 管理。网关端口变化后，需要在 CC Switch 中更新地址。要改回由 AstrLink 管理，点击「写入配置」。",
     "invalidHint": "配置文件格式有误，AstrLink 不会改动它。修正后再写入。",
     "configFile": "配置文件",
     "write": "写入配置",
