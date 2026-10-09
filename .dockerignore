@@ -1,0 +1,56 @@
+# The image builds from an allowlist: everything else in the checkout stays out
+# of the build context, including local data, keys, installers and models.
+*
+
+!Dockerfile
+!LICENSE
+!LICENSING.md
+!LICENSES/
+!assets/branding/
+!contracts/examples/
+!docker/
+!convo/
+!core/
+!apps/privacy-worker/
+!apps/desktop/
+
+# Built and staged by the image itself.
+core/bin/
+core/coverage.out
+core/internal/console/webui/*
+!core/internal/console/webui/placeholder.html
+apps/desktop/dist/
+apps/desktop/dist-web/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/target-dmg/
+
+# Dependencies, build output and tooling caches.
+**/node_modules/
+**/target/
+**/.venv/
+**/.git/
+**/.DS_Store
+
+# Test models and anything that looks like a secret or local data.
+apps/privacy-worker/testdata/
+apps/privacy-worker/scripts/
+**/*.onnx
+**/*.onnx_data*
+**/*.onnx.data
+**/*.safetensors
+**/*.gguf
+**/*.ggml
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.dmg
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3

@@ -1,0 +1,11 @@
+services:
+  astrlink:
+    image: calciumion/astrlink:latest
+    ports:
+      - "8317:8317"
+    volumes:
+      - astrlink-data:/data
+    restart: unless-stopped
+
+volumes:
+  astrlink-data:
