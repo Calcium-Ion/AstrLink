@@ -88,3 +88,8 @@ flax_model*.msgpack
 /docs/notes/
 /docs/release-readiness.md
 /docs/color-scheme-plan*.md
+
+# Generated browser console
+apps/desktop/dist-web/
+core/internal/console/webui/*
+!core/internal/console/webui/placeholder.html

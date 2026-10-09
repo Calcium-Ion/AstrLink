@@ -1,3 +1,5 @@
+import { isWebEdition } from "./edition";
+import { webText } from "./web-copy";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -4381,6 +4383,11 @@ export function SafetyPolicy({
                       htmlFor="privacy-local-model-path"
                     >
                       <span>{t("safety.localPathField")}</span>
+                      {isWebEdition && (
+                        <p className="text-xs text-muted-foreground">
+                          {webText("serverPath")}
+                        </p>
+                      )}
                       <Input
                         aria-describedby="local-model-mount-note"
                         aria-label={t("safety.localPath")}

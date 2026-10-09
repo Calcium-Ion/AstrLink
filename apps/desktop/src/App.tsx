@@ -1,3 +1,6 @@
+import { isWebEdition } from "./edition";
+import { ConsoleLogout } from "./ConsoleEntry";
+import { WebSettings } from "./WebSettings";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -326,7 +329,8 @@ export default function App() {
   };
 
   const isReady = snapshot?.phase === "ready";
-  const isNativeApp = snapshot !== null && snapshot.phase !== "unavailable";
+  const isNativeApp =
+    !isWebEdition && snapshot !== null && snapshot.phase !== "unavailable";
   const coreSessionKey =
     isReady && snapshot?.ready
       ? `${snapshot.pid ?? "none"}|${snapshot.ready.control_url}|${snapshot.ready.inference_url}`
@@ -743,7 +747,7 @@ export default function App() {
       error: null,
       stale: false,
     }));
-    if (onboarding.active) setPage({ kind: "overview" });
+    if (!isWebEdition && onboarding.active) setPage({ kind: "overview" });
   };
 
   const handleTokenDeleted = (tokenId: string) => {
@@ -850,29 +854,34 @@ export default function App() {
             <span className="mt-4 px-2 pb-1.5 text-xs font-medium tracking-[0.08em] text-muted-foreground uppercase max-[960px]:mx-2 max-[960px]:mt-3 max-[960px]:mb-2 max-[960px]:h-px max-[960px]:bg-border max-[960px]:p-0 max-[960px]:text-transparent">
               {t("nav.system")}
             </span>
-            <NavButton
-              active={page.kind === "agentTools"}
-              icon="bot"
-              label={t("nav.agentTools")}
-              onClick={() => navigate({ kind: "agentTools" })}
-            />
+            {!isWebEdition && (
+              <NavButton
+                active={page.kind === "agentTools"}
+                icon="bot"
+                label={t("nav.agentTools")}
+                onClick={() => navigate({ kind: "agentTools" })}
+              />
+            )}
             <NavButton
               active={page.kind === "settings"}
               icon="settings"
               label={t("nav.settings")}
               onClick={() => navigate({ kind: "settings" })}
             />
-            <NavButton
-              active={page.kind === "about"}
-              icon="about"
-              label={t("nav.about")}
-              badge={
-                updateNoticeKind
-                  ? t(`about.phase.${updateNoticeKind}`)
-                  : undefined
-              }
-              onClick={() => navigate({ kind: "about" })}
-            />
+            {!isWebEdition && (
+              <NavButton
+                active={page.kind === "about"}
+                icon="about"
+                label={t("nav.about")}
+                badge={
+                  updateNoticeKind
+                    ? t(`about.phase.${updateNoticeKind}`)
+                    : undefined
+                }
+                onClick={() => navigate({ kind: "about" })}
+              />
+            )}
+            {isWebEdition && <ConsoleLogout />}
           </nav>
 
           <div
@@ -924,7 +933,7 @@ export default function App() {
             data-page={page.kind}
             data-slot="workspace"
           >
-            {onboarding.active && page.kind !== "overview" ? (
+            {!isWebEdition && onboarding.active && page.kind !== "overview" ? (
               <div
                 className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground"
                 data-slot="onboarding-return"
@@ -949,7 +958,7 @@ export default function App() {
                 </Button>
               </div>
             ) : null}
-            {page.kind === "overview" && onboarding.active ? (
+            {!isWebEdition && page.kind === "overview" && onboarding.active ? (
               <GettingStarted
                 conversionEngine={snapshot?.capabilities?.conversion_engine}
                 onboarding={onboarding}
@@ -984,8 +993,8 @@ export default function App() {
                 onCopy={(value, label) => void copyValue(value, label)}
                 onManageServices={() => navigate({ kind: "list" })}
                 onManageTokens={() => navigate({ kind: "tokens" })}
-                onOpenOnboarding={onboarding.open}
-                showOnboardingHint={onboarding.showResumeHint}
+                onOpenOnboarding={isWebEdition ? undefined : onboarding.open}
+                showOnboardingHint={!isWebEdition && onboarding.showResumeHint}
                 onDismissOnboardingHint={onboarding.dismissResumeHint}
                 onOpenService={(serviceId) =>
                   navigate({ kind: "edit", serviceId })
@@ -1022,11 +1031,14 @@ export default function App() {
                 coreSessionKey={coreSessionKey}
                 initialView={page.view}
                 isReady={isReady}
-                onInstallPlaceholderSkill={() =>
-                  navigate({
-                    kind: "agentTools",
-                    preselectSkill: "redaction-placeholders",
-                  })
+                onInstallPlaceholderSkill={
+                  isWebEdition
+                    ? undefined
+                    : () =>
+                        navigate({
+                          kind: "agentTools",
+                          preselectSkill: "redaction-placeholders",
+                        })
                 }
               />
             ) : page.kind === "records" ? (
@@ -1053,6 +1065,8 @@ export default function App() {
                 loadError={updates.error}
                 hasUnsavedChanges={() => editorDirtyRef.current}
               />
+            ) : page.kind === "settings" && isWebEdition ? (
+              <WebSettings coreSessionKey={coreSessionKey} isReady={isReady} />
             ) : page.kind === "settings" ? (
               <SettingsCenter
                 localDataNotice={

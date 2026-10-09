@@ -21,7 +21,8 @@
     "desktop:dev": "bun run branding:sync && bun run sidecar:build && tauri dev",
     "desktop:start": "bun run branding:sync && bun run sidecar:build && rsbuild build && tauri dev --no-watch --no-dev-server --config src-tauri/tauri.start.conf.json",
     "desktop:build": "bun run branding:sync && bun run sidecar:build && tauri build",
-    "macos:notarize": "bun scripts/notarize-macos.mjs"
+    "macos:notarize": "bun scripts/notarize-macos.mjs",
+    "build:web": "PUBLIC_ASTRLINK_EDITION=web bun run build"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "5.3.0",

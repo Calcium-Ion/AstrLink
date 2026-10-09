@@ -1,3 +1,4 @@
+import { isWebEdition } from "../../edition";
 import { useAnimation, type AnimationDefinition } from "motion/react";
 import {
   forwardRef,
@@ -49,6 +50,9 @@ export function createAnimatedIcon(
       useEffect(() => {
         const svg = svgRef.current;
         if (!svg || !animateOnHover) return;
+        // Chromium needs an explicit starting value for animated SVG attributes.
+        // Keep the native edition's animation initialization unchanged.
+        if (isWebEdition) controls.set(normal);
         const trigger = svg.closest(interactiveSelector) ?? svg;
         const reducedMotion = window.matchMedia(
           "(prefers-reduced-motion: reduce)",

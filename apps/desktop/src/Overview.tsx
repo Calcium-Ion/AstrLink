@@ -1,3 +1,4 @@
+import { isWebEdition } from "./edition";
 import { BillingOverview, useBillingSummary } from "./BillingOverview";
 import {
   memo,
@@ -256,7 +257,11 @@ export function Overview({
           : t("overview.relaykitOff")}
       </ExternalLink>,
     ],
-  ];
+  ].filter(
+    ([term]) =>
+      !isWebEdition ||
+      (term !== t("overview.desktopVersion") && term !== t("overview.process")),
+  ) as Array<[string, ReactNode]>;
 
   const moduleLabels: Record<OverviewModuleId, string> = {
     usage: t("overview.usageSummary"),

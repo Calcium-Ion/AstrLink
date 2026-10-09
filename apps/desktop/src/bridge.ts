@@ -1,3 +1,5 @@
+import { isWebEdition } from "./edition";
+import { webInvoke, RAW_CHANGED } from "./web-transport";
 import {
   parseServiceTestResult,
   type ServiceTestInput,
@@ -181,6 +183,11 @@ async function invoke<T>(
   ...call: Parameters<typeof invokeCommand>
 ): Promise<T> {
   try {
+    if (isWebEdition)
+      return await webInvoke<T>(
+        call[0],
+        call[1] as Record<string, unknown> | undefined,
+      );
     return await invokeCommand<T>(...call);
   } catch (error) {
     if (typeof error === "string") {
@@ -212,7 +219,7 @@ async function invokeDesktopRead(
 }
 
 export async function getCoreStatus(): Promise<AppSnapshot> {
-  if (!hasNativeBridge()) {
+  if (!isWebEdition && !hasNativeBridge()) {
     return browserSnapshot();
   }
 
@@ -278,7 +285,7 @@ export async function trayPopoverHide(): Promise<void> {
 }
 
 function requireNativeBridge(): void {
-  if (!hasNativeBridge()) {
+  if (!isWebEdition && !hasNativeBridge()) {
     throw new Error(i18n.t("bridge.desktopOnly"));
   }
 }
@@ -738,6 +745,10 @@ export async function lockRaw(): Promise<RawSealingStatus> {
 export async function listenRawSealingChanged(
   onChange: () => void,
 ): Promise<() => void> {
+  if (isWebEdition) {
+    window.addEventListener(RAW_CHANGED, onChange);
+    return () => window.removeEventListener(RAW_CHANGED, onChange);
+  }
   if (!hasNativeBridge()) return () => {};
   return listen("raw-sealing-changed", () => onChange());
 }

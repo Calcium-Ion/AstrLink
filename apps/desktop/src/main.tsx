@@ -1,3 +1,5 @@
+import { isWebEdition } from "./edition";
+import { ConsoleEntry } from "./ConsoleEntry";
 import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
@@ -82,9 +84,18 @@ async function loadPreferences(): Promise<void> {
   await applyLocale(settings.values.locale);
 }
 
-void loadPreferences().catch(() => {
-  // Browser preview has no preferences IPC.
-});
+if (isWebEdition) {
+  try {
+    const locale = localStorage.getItem("astrlink:console-locale");
+    if (locale === "en" || locale === "zh-CN") void applyLocale(locale);
+  } catch {
+    // The console also works when the browser disables persistent storage.
+  }
+}
+if (!isWebEdition)
+  void loadPreferences().catch(() => {
+    // Browser preview has no preferences IPC.
+  });
 
 function LocaleGate({ children }: { children: ReactNode }) {
   useT();
@@ -92,7 +103,11 @@ function LocaleGate({ children }: { children: ReactNode }) {
 }
 
 // Every window loads this bundle; the label decides which app it becomes.
-const surface = trayPopover ? (
+const surface = isWebEdition ? (
+  <ConsoleEntry>
+    <App />
+  </ConsoleEntry>
+) : trayPopover ? (
   <TrayPopoverWindow />
 ) : isTrajectoryInspectorWindow() ? (
   <TrajectoryInspectorWindow />
@@ -108,7 +123,9 @@ createRoot(root).render(
       <LocaleGate>
         <TooltipProvider>
           <WindowChromeProvider>
-            {trayPopover ? null : <WindowChrome platform={desktopPlatform} />}
+            {trayPopover || isWebEdition ? null : (
+              <WindowChrome platform={desktopPlatform} />
+            )}
             <AppErrorBoundary>{surface}</AppErrorBoundary>
           </WindowChromeProvider>
           {trayPopover ? null : <Toaster position="bottom-right" />}

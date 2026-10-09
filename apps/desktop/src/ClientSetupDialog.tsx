@@ -1,3 +1,5 @@
+import { isWebEdition } from "./edition";
+import { WebClientSetup } from "./WebClientSetup";
 import {
   useCallback,
   useEffect,
@@ -162,7 +164,17 @@ function failure(message: string, cause: unknown): Failure {
   };
 }
 
-export function ClientSetupDialog({
+export function ClientSetupDialog(
+  props: Parameters<typeof DesktopClientSetupDialog>[0],
+) {
+  return isWebEdition ? (
+    <WebClientSetup onClose={props.onClose} />
+  ) : (
+    <DesktopClientSetupDialog {...props} />
+  );
+}
+
+function DesktopClientSetupDialog({
   token,
   tokens = [],
   inferenceURL,

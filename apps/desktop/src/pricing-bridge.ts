@@ -1,3 +1,5 @@
+import { isWebEdition } from "./edition";
+import { webInvoke } from "./web-transport";
 import { invoke } from "@tauri-apps/api/core";
 import { parseBillingSummary, parseServiceBilling } from "./pricing-model";
 async function call(
@@ -5,6 +7,8 @@ async function call(
   serviceId?: string,
   input?: unknown,
 ): Promise<unknown> {
+  if (isWebEdition)
+    return webInvoke("pricing", { operation, serviceId, input });
   if (!("__TAURI_INTERNALS__" in window))
     throw new Error("Native gateway unavailable");
   return invoke("pricing", { operation, serviceId, input });

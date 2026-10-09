@@ -78,3 +78,9 @@ dev: desktop-install desktop-toolchain
 # neither frontend nor Rust changes reload until the next start.
 start: desktop-install desktop-toolchain
 	cd apps/desktop && $(BUN) run desktop:start
+
+.PHONY: web
+web:
+	cd apps/desktop && $(BUN) run build:web
+	$(BUN) apps/desktop/scripts/stage-web.mjs
+	cd core && go build -tags webui -o bin/astrlink-core ./cmd/astrlink-core

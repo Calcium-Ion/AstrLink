@@ -1,3 +1,4 @@
+import { isWebEdition } from "./edition";
 import { i18n } from "./i18n";
 
 export const SUPPORTED_CONTROL_API_VERSION = "v1";
@@ -238,7 +239,11 @@ function parseReady(value: unknown, path: string): ReadyAnnouncement {
     128,
   );
   const controlURL = stringAt(ready.control_url, `${path}.control_url`, 128);
-  if (!loopbackURLPattern.test(inferenceURL)) {
+  if (
+    !(isWebEdition
+      ? inferenceURL === window.location.origin
+      : loopbackURLPattern.test(inferenceURL))
+  ) {
     invalid(`${path}.inference_url`, "expected a canonical IPv4 loopback URL");
   }
   if (
@@ -251,7 +256,11 @@ function parseReady(value: unknown, path: string): ReadyAnnouncement {
       "expected inference_url or localhost on the same port",
     );
   }
-  if (!loopbackURLPattern.test(controlURL)) {
+  if (
+    !(isWebEdition
+      ? controlURL === window.location.origin
+      : loopbackURLPattern.test(controlURL))
+  ) {
     invalid(`${path}.control_url`, "expected a canonical IPv4 loopback URL");
   }
   return {
@@ -609,7 +618,7 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
   }
   if (
     parsed.phase === "ready" &&
-    (!parsed.pid ||
+    ((!isWebEdition && !parsed.pid) ||
       !parsed.ready ||
       !parsed.health ||
       !parsed.version ||

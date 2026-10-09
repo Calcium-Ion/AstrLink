@@ -1,3 +1,4 @@
+import { isWebEdition } from "./edition";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { CapabilityToggle } from "@/components/CapabilityToggle";
@@ -121,7 +122,7 @@ export function RawPasswordPanel({
     state === "password"
       ? [
           action("change", t("rawSealing.change")),
-          action("reset", t("rawSealing.reset")),
+          ...(isWebEdition ? [] : [action("reset", t("rawSealing.reset"))]),
         ]
       : null;
 
@@ -146,7 +147,7 @@ export function RawPasswordPanel({
           <FormMessage tone="error">
             {t("rawSealing.loadFailed", { message: error })}
           </FormMessage>
-        ) : missing ? (
+        ) : missing && !isWebEdition ? (
           <FormMessage
             className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5"
             data-slot="raw-password-missing"
@@ -289,7 +290,7 @@ export function RawPasswordGate({
 }) {
   const setupNeeded = useRawSetupNeeded(status);
   const replaced = !suspended && status?.key_replaced === true;
-  const required = !suspended && setupNeeded;
+  const required = !isWebEdition && !suspended && setupNeeded;
   return (
     <RawSealingDialogs
       dialog={
