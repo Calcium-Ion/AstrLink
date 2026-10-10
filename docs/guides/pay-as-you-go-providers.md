@@ -20,6 +20,7 @@
 | OpenCode Zen / Go              | Zen 为按量付费，Go 为月费订阅，分别选择对应类型          |
 | Codex / Claude / Grok 账号订阅 | 选择对应订阅类型，按界面提示完成授权                     |
 | GitHub Copilot 订阅            | 确认风险提示后，用 GitHub Device Code 完成授权           |
+| Droid 订阅                     | 确认风险提示后，用 Factory Device Code 完成授权          |
 
 Grok 订阅（SuperGrok / Grok Build）通过 xAI Device Code 登录，请求经由 Grok
 CLI 代理。它与 xAI 开放平台 API Key 相互独立。
@@ -31,6 +32,14 @@ GitHub Copilot 订阅：
 - Copilot 的模型名用点号（`claude-sonnet-4.6`）。提供商的“模型重定向”里有内置规则，把 Claude
   Code 发的 `claude-sonnet-4-6` 换成
   `claude-sonnet-4.6`，每条都可以关闭或改目标。
+
+Droid 订阅（Factory Pro / Plus / Max）：
+
+- AstrLink 以 Droid
+  CLI 的身份登录和转发请求，Factory 登录页上请求授权的应用叫 Droid。
+- Factory 只接受系统提示以 Droid 自我介绍开头的请求。AstrLink 会在每个请求的系统提示前加上这一行，你的提示词保持不变、排在它后面。
+- Factory 没有模型列表接口。“拉取模型”给出 Factory 文档列出的模型，新模型可以手动添加。
+- Factory 仍可能判定经网关的使用违规，请连接你本人的账号。
 
 ## 添加提供商
 

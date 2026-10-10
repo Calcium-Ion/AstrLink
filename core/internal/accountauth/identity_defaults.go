@@ -38,6 +38,11 @@ const (
 	// pins (packages/opencode/src/plugin/github-copilot/copilot.ts).
 	DefaultCopilotClientVersion = "1.18.34"
 	copilotAPIVersion           = "2026-06-01"
+
+	// DefaultDroidClientVersion is the Droid CLI release AstrLink presents to
+	// Factory's API (npm @factory/cli), with the client headers it sends.
+	DefaultDroidClientVersion = "0.237.0"
+	droidClientSurface        = "cli"
 )
 
 // ClientIdentity is one subscription client's upstream identity: its
@@ -88,6 +93,19 @@ func DefaultCopilotIdentity() ClientIdentity {
 		UserAgent: "opencode/" + DefaultCopilotClientVersion,
 		Version:   DefaultCopilotClientVersion,
 		Headers:   map[string]string{"X-Github-Api-Version": copilotAPIVersion},
+	}
+}
+
+// DefaultDroidIdentity is the Droid CLI's identity on Factory's API: its
+// User-Agent and the client surface and version headers.
+func DefaultDroidIdentity() ClientIdentity {
+	return ClientIdentity{
+		UserAgent: "factory-cli/" + DefaultDroidClientVersion,
+		Version:   DefaultDroidClientVersion,
+		Headers: map[string]string{
+			"X-Factory-Client": droidClientSurface,
+			"X-Client-Version": DefaultDroidClientVersion,
+		},
 	}
 }
 

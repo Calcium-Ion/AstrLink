@@ -3,6 +3,7 @@ import { useRef, type ReactNode } from "react";
 import { i18n } from "@/i18n";
 import { useExitSnapshot } from "@/lib/exit-snapshot";
 
+import { BadgeAlert } from "@/components/icons";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,6 +14,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+/** `warning` puts a warning icon on the title, for a risk the user accepts. */
+type ConfirmDialogTone = "default" | "warning";
 
 interface ConfirmDialogProps {
   cancelLabel?: string;
@@ -25,6 +29,7 @@ interface ConfirmDialogProps {
   onConfirm: () => void;
   open: boolean;
   title: string;
+  tone?: ConfirmDialogTone;
 }
 
 export function ConfirmDialog(props: ConfirmDialogProps) {
@@ -39,6 +44,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
     destructive = false,
     disabled = false,
     title,
+    tone = "default",
   } = useExitSnapshot(props, open);
   const actionPendingRef = useRef(false);
   return (
@@ -55,7 +61,16 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogTitle
+            className={
+              tone === "warning" ? "flex items-center gap-2" : undefined
+            }
+          >
+            {tone === "warning" ? (
+              <BadgeAlert aria-hidden="true" className="size-5 text-warning" />
+            ) : null}
+            {title}
+          </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-2">{description}</div>
           </AlertDialogDescription>

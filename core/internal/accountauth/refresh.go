@@ -163,7 +163,7 @@ func (source *TokenSource) refresh(ctx context.Context, accountID contract.Subsc
 	source.inflight[accountID] = call
 	source.mu.Unlock()
 
-	refreshed, err := source.client.Refresh(ctx, current.RefreshToken)
+	refreshed, err := source.client.RefreshAccount(ctx, current)
 	if err != nil {
 		if errors.Is(err, ErrInvalidGrant) {
 			source.markInvalidated(accountID)
@@ -188,6 +188,9 @@ func (source *TokenSource) refresh(ctx context.Context, accountID contract.Subsc
 		refreshed.AccountID = current.AccountID
 	}
 	refreshed.ProjectID, refreshed.PlanType = current.ProjectID, current.PlanType
+	if refreshed.Region == "" {
+		refreshed.Region = current.Region
+	}
 	if err := source.store.Put(ctx, accountID, refreshed); err != nil {
 		return source.finishRefresh(accountID, call, AccountTokens{}, err)
 	}

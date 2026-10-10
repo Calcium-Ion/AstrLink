@@ -840,3 +840,31 @@ func TestModelDiscoveryEmptyAggregateKeepsProtocolEnvelopes(t *testing.T) {
 		})
 	}
 }
+
+func TestModelDiscoveryServesDroidModelsWithoutUpstreamIO(t *testing.T) {
+	service := contract.Service{
+		ID: "service_droid", Name: "Droid", Kind: contract.ServiceKindDroidSubscription, Enabled: true,
+		Models:       []string{"gpt-5.4", "claude-opus-4-6"},
+		Capabilities: contract.SubscriptionProviderFactoryDroid.Capabilities(),
+		Subscription: &contract.SubscriptionConnection{Provider: contract.SubscriptionProviderFactoryDroid, Status: contract.SubscriptionStatusConnected, CredentialRef: "local://subscription/service_droid"},
+	}
+	if err := service.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithDependencies(Dependencies{
+		Resolver: candidateResolver{candidates: []endpoint.Resolved{{Service: service, BaseURL: "https://api.factory.ai", UpstreamProtocol: contract.ProtocolOpenAIModels}}},
+		Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			t.Errorf("Factory has no model endpoint, yet %s was requested", request.URL)
+			return nil, io.ErrUnexpectedEOF
+		})),
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	want := `{"object":"list","data":[{"id":"claude-opus-4-6","object":"model","created":0,"owned_by":"system"},{"id":"gpt-5.4","object":"model","created":0,"owned_by":"system"}],"first_id":"claude-opus-4-6","has_more":false,"last_id":"gpt-5.4"}`
+	if response.Body.String() != want {
+		t.Fatalf("body = %s\nwant %s", response.Body.String(), want)
+	}
+}

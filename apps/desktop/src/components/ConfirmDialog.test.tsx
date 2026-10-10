@@ -103,6 +103,36 @@ describe("ConfirmDialog", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  it("marks a warning with an icon on the title", async () => {
+    const warningIcon = () =>
+      document.querySelector(
+        '[data-slot="alert-dialog-title"] [data-animated-icon="badge-alert"]',
+      );
+    await act(async () =>
+      root.render(<Harness onCancel={vi.fn()} onConfirm={vi.fn()} />),
+    );
+    expect(warningIcon()).toBeNull();
+
+    await act(async () =>
+      root.render(
+        <ConfirmDialog
+          confirmLabel="我已了解风险，继续"
+          description="风险说明"
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+          open
+          title="先了解风险"
+          tone="warning"
+        />,
+      ),
+    );
+
+    expect(warningIcon()).not.toBeNull();
+    expect(
+      document.querySelector('[data-slot="alert-dialog-title"]')?.textContent,
+    ).toBe("先了解风险");
+  });
+
   it("reports an explicit cancellation once", async () => {
     const onCancel = vi.fn();
     const onConfirm = vi.fn();

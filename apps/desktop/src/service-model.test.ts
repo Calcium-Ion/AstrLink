@@ -140,6 +140,29 @@ describe("service model", () => {
     });
     expect(copilot.subscription?.provider).toBe("github_copilot");
     expect(supportsResponsesWebSocket(copilot)).toBe(false);
+    const droid = parseService({
+      id: "service_droid_personal",
+      name: "Droid",
+      kind: "droid_subscription",
+      enabled: true,
+      models: ["claude-opus-4-6", "gpt-5.4", "glm-5.3"],
+      capabilities: [
+        { protocol: "anthropic.messages", mode: "native", streaming: true },
+        { protocol: "openai.responses", mode: "native", streaming: true },
+        { protocol: "openai.chat", mode: "native", streaming: true },
+        { protocol: "openai.models", mode: "native", streaming: false },
+      ],
+      subscription: {
+        provider: "factory_droid",
+        status: "connected",
+        account_hint: "fact***-7",
+        credential_ref: "local://subscription/service_droid_personal",
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    expect(droid.subscription?.provider).toBe("factory_droid");
+    expect(supportsResponsesWebSocket(droid)).toBe(false);
   });
 
   it("parses a provider's own redirect rules", () => {

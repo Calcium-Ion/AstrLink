@@ -90,12 +90,13 @@ const POPOVER_BLUR_GUARD: Duration = Duration::from_millis(150);
 /// resulting blur; past this it hides regardless.
 const POPOVER_HANDOFF_TIMEOUT: Duration = Duration::from_millis(400);
 
-const SUBSCRIPTION_KINDS: [&str; 9] = [
+const SUBSCRIPTION_KINDS: [&str; 10] = [
     "codex_subscription",
     "claude_subscription",
     "grok_subscription",
     "antigravity_subscription",
     "copilot_subscription",
+    "droid_subscription",
     "kimi_coding",
     "glm_coding",
     "minimax_coding",

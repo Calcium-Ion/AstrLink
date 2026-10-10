@@ -3,7 +3,8 @@ export type SubscriptionProvider =
   | "claude_code"
   | "xai_grok"
   | "antigravity"
-  | "github_copilot";
+  | "github_copilot"
+  | "factory_droid";
 
 export type SubscriptionStatus =
   | "disconnected"
@@ -68,6 +69,7 @@ const providers = new Set<SubscriptionProvider>([
   "xai_grok",
   "antigravity",
   "github_copilot",
+  "factory_droid",
 ]);
 
 /** Login transports each provider accepts; mirrors contract.AuthorizationFlow.SupportedBy. */
@@ -80,6 +82,7 @@ export const providerAuthorizationFlows: Record<
   xai_grok: ["device_code"],
   antigravity: ["browser"],
   github_copilot: ["device_code"],
+  factory_droid: ["device_code"],
 };
 
 export function flowSupportedByProvider(

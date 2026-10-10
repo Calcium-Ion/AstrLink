@@ -220,6 +220,19 @@ func (handler *Handler) fetchModelDiscovery(
 		}}
 	}
 
+	if candidate.Service.Kind == contract.ServiceKindDroidSubscription {
+		// Factory publishes no model endpoint: the list is the configured one.
+		entries, synthesizeErr := synthesizeDiscoveryEntries(classified.Protocol, candidate.Service.Models)
+		if synthesizeErr != nil {
+			return discoveryResult{outcome: discoveryOutcomeFailed, failure: executionFailure{
+				kind:       executionFailureUpstream,
+				err:        synthesizeErr,
+				endpointID: candidate.Service.ID,
+			}}
+		}
+		return discoveryResult{outcome: discoveryOutcomeFetched, entries: entries}
+	}
+
 	fetchContext, cancelFetch := context.WithTimeout(request.Context(), defaultDiscoveryTimeout)
 	defer cancelFetch()
 	// Discovery fans out concurrently; only the aggregator may mutate the

@@ -20,13 +20,16 @@ var (
 // AccountTokens is the recoverable OAuth material persisted only in
 // AccountCredentialStore. It must never enter control responses or React state.
 type AccountTokens struct {
-	AccessToken      string    `json:"access_token"`
-	RefreshToken     string    `json:"refresh_token"`
-	TokenType        string    `json:"token_type,omitempty"`
-	Scope            string    `json:"scope,omitempty"`
-	AccountID        string    `json:"account_id,omitempty"`
-	ProjectID        string    `json:"project_id,omitempty"`
-	PlanType         string    `json:"plan_type,omitempty"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type,omitempty"`
+	Scope        string `json:"scope,omitempty"`
+	AccountID    string `json:"account_id,omitempty"`
+	ProjectID    string `json:"project_id,omitempty"`
+	PlanType     string `json:"plan_type,omitempty"`
+	// Region is the provider region serving the account when it is not the
+	// default one (a Factory organization in the EU region).
+	Region           string    `json:"region,omitempty"`
 	ExpiresAt        time.Time `json:"expires_at"`
 	RawIDTokenClaims string    `json:"-"`
 }

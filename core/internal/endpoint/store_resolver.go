@@ -443,6 +443,9 @@ func baseURLForService(service contract.Service, subscriptionBaseURL string) str
 	if service.Kind == contract.ServiceKindCopilotSubscription {
 		return accountauth.DefaultCopilotAPIBaseURL
 	}
+	if service.Kind == contract.ServiceKindDroidSubscription {
+		return accountauth.DefaultDroidAPIBaseURL
+	}
 	if service.Kind.IsSubscription() {
 		return subscriptionBaseURL
 	}

@@ -101,6 +101,10 @@ func (authorizer *ServiceAuthorizer) Headers(ctx context.Context, endpoint contr
 			// Every Copilot call presents OpenCode, whatever the caller;
 			// providerapi.CopilotRequest drops the caller's other headers.
 			accountauth.ApplyCopilotAPIHeaders(headers, tokens)
+		case contract.ServiceKindDroidSubscription:
+			// Every Factory call presents the Droid CLI, whatever the caller;
+			// providerapi.DroidRequest drops the caller's other headers.
+			accountauth.ApplyDroidAPIHeaders(headers, tokens)
 		case contract.ServiceKindClaudeSubscription:
 			if official {
 				accountauth.ApplyClaudeOfficialForwardHeaders(headers, tokens, clientHeaders)

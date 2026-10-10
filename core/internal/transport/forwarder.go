@@ -157,6 +157,11 @@ func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*ht
 			return nil, &TargetError{err: err}
 		}
 	}
+	if target.Service.Kind == contract.ServiceKindDroidSubscription {
+		if err := providerapi.DroidRequest(outbound, target.RequestHeaders.Get(providerapi.DroidEndpointHeader)); err != nil {
+			return nil, &TargetError{err: err}
+		}
+	}
 	removeHopByHopHeaders(outbound.Header)
 	removeGatewayHeaders(outbound.Header)
 	removeForwardingHeaders(outbound.Header)

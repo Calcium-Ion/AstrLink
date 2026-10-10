@@ -28,6 +28,7 @@ describe("ServiceKindIcon", () => {
     ["grok_subscription", "Grok 订阅"],
     ["antigravity_subscription", "Antigravity 订阅"],
     ["copilot_subscription", "GitHub Copilot 订阅"],
+    ["droid_subscription", "Droid 订阅"],
     ["custom", "自定义 API"],
   ] as const)("renders a labeled icon for %s", async (kind, label) => {
     await act(async () => {
@@ -47,6 +48,7 @@ describe("ServiceKindIcon", () => {
     ["claude_subscription", false],
     ["antigravity_subscription", false],
     ["copilot_subscription", false],
+    ["droid_subscription", false],
   ] as const)("reports whether %s shares its logo", (kind, shared) => {
     expect(kindMarkIsShared(kind)).toBe(shared);
   });

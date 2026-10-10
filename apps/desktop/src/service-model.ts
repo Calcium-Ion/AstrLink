@@ -95,7 +95,8 @@ export type SubscriptionServiceKind =
   | "claude_subscription"
   | "grok_subscription"
   | "antigravity_subscription"
-  | "copilot_subscription";
+  | "copilot_subscription"
+  | "droid_subscription";
 export type ServiceKind = SubscriptionServiceKind | HTTPServiceKind;
 
 /** Provider owning each subscription kind; mirrors contract.ServiceKind.SubscriptionProvider. */
@@ -108,6 +109,7 @@ export const subscriptionKindProviders: Record<
   grok_subscription: "xai_grok",
   antigravity_subscription: "antigravity",
   copilot_subscription: "github_copilot",
+  droid_subscription: "factory_droid",
 };
 
 /** Fixed native capabilities; mirrors contract.SubscriptionProvider.Capabilities. */
@@ -140,6 +142,12 @@ export const subscriptionNativeCapabilities: Record<
     { protocol: "openai.chat", mode: "native", streaming: true },
     { protocol: "openai.models", mode: "native", streaming: false },
   ],
+  droid_subscription: [
+    { protocol: "anthropic.messages", mode: "native", streaming: true },
+    { protocol: "openai.responses", mode: "native", streaming: true },
+    { protocol: "openai.chat", mode: "native", streaming: true },
+    { protocol: "openai.models", mode: "native", streaming: false },
+  ],
 };
 
 /**
@@ -159,6 +167,7 @@ export const subscriptionConversionTargets: Record<
     "openai.responses",
     "openai.chat",
   ],
+  droid_subscription: ["anthropic.messages", "openai.responses", "openai.chat"],
 };
 
 export const subscriptionKinds = Object.keys(
@@ -806,7 +815,8 @@ function parseSubscriptionConnection(
     subscription.provider !== "claude_code" &&
     subscription.provider !== "xai_grok" &&
     subscription.provider !== "antigravity" &&
-    subscription.provider !== "github_copilot"
+    subscription.provider !== "github_copilot" &&
+    subscription.provider !== "factory_droid"
   ) {
     invalid(`${path}.provider`, "unknown subscription provider");
   }
@@ -1126,8 +1136,12 @@ export function subscriptionRiskLabel(
 export function supportsResponsesWebSocket(
   service: Pick<Service, "kind" | "capabilities">,
 ): boolean {
-  // The Copilot API serves Responses over HTTP only.
-  if (service.kind === "copilot_subscription") return false;
+  // The Copilot API and Factory's gateway serve Responses over HTTP only.
+  if (
+    service.kind === "copilot_subscription" ||
+    service.kind === "droid_subscription"
+  )
+    return false;
   return (
     service.kind === "codex_subscription" ||
     service.capabilities.some(

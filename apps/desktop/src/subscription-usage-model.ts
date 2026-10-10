@@ -446,6 +446,15 @@ export function parseSubscriptionUsageReset(
 
 const planTypeLabels: Record<SubscriptionProvider, Record<string, string>> = {
   antigravity: {},
+  factory_droid: {
+    free: "Free",
+    starter: "Starter",
+    pro: "Pro",
+    plus: "Plus",
+    max: "Max",
+    team: "Team",
+    enterprise: "Enterprise",
+  },
   github_copilot: {
     free: "Free",
     individual: "Individual",

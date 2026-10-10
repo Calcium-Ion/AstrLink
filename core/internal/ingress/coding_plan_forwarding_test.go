@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
+	"github.com/QuantumNous/astrlink/core/internal/providerapi"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 )
 
@@ -43,6 +44,9 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 		{contract.ServiceKindCopilotSubscription, "claude-sonnet-4.6", "", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeBearer, "", ""},
 		{contract.ServiceKindCopilotSubscription, "gpt-5.4", "", "/v1/responses", contract.ProtocolOpenAIResponses, contract.AuthSchemeBearer, "/responses", ""},
 		{contract.ServiceKindCopilotSubscription, "gpt-4.1", "", "/v1/chat/completions", contract.ProtocolOpenAIChat, contract.AuthSchemeBearer, "/chat/completions", ""},
+		{contract.ServiceKindDroidSubscription, "claude-opus-4-6", "", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeBearer, "/api/llm/a/v1/messages", ""},
+		{contract.ServiceKindDroidSubscription, "gpt-5.4", "", "/v1/responses", contract.ProtocolOpenAIResponses, contract.AuthSchemeBearer, "/api/llm/o/v1/responses", ""},
+		{contract.ServiceKindDroidSubscription, "glm-5.3", "", "/v1/chat/completions", contract.ProtocolOpenAIChat, contract.AuthSchemeBearer, "/api/llm/o/v1/chat/completions", ""},
 		{contract.ServiceKindKimiCoding, "kimi-for-coding", "/coding", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeAnthropicAPIKey, "", ""},
 		{contract.ServiceKindGLMCoding, "glm-5.3", "/api/anthropic", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeBearer, "", ""},
 		{contract.ServiceKindMiniMaxCoding, "MiniMax-M3", "/anthropic", "/v1/messages", contract.ProtocolAnthropicMessages, contract.AuthSchemeBearer, "", ""},
@@ -84,6 +88,10 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 						}
 						if sent == contract.AuthSchemeAnthropicAPIKey {
 							authorization, apiKey = "", "plan-key"
+						}
+						if test.kind == contract.ServiceKindDroidSubscription && test.protocol == contract.ProtocolAnthropicMessages {
+							// Droid's Anthropic client sends its placeholder key beside the token.
+							apiKey = "placeholder"
 						}
 						if request.Header.Get("Authorization") != authorization || request.Header.Get("X-Api-Key") != apiKey {
 							t.Error("upstream authentication did not replace local credentials")
@@ -127,6 +135,19 @@ func TestCodingPlanForwardingPathsHeadersAndStreams(t *testing.T) {
 								request.Header.Get("X-Opencode-Session") != "" ||
 								(request.Header.Get("Anthropic-Beta") != "") != (test.protocol == contract.ProtocolAnthropicMessages) {
 								t.Errorf("wrong Copilot identity: %v", request.Header)
+							}
+						}
+						if test.kind == contract.ServiceKindDroidSubscription {
+							// Factory sees the Droid CLI alone, and every prompt opens as Droid's.
+							if request.UserAgent() != "factory-cli/"+accountauth.DefaultDroidClientVersion ||
+								request.Header.Get("X-Factory-Client") != "cli" || request.Header.Get("X-Api-Provider") == "" ||
+								request.Header.Get("X-Session-Id") == "" || request.Header.Get("X-Assistant-Message-Id") == "" ||
+								request.Header.Get("X-Opencode-Session") != "" || request.Header.Get("X-AstrLink-Factory-Endpoint") != "" ||
+								(request.Header.Get("Anthropic-Beta") != "") != (test.protocol == contract.ProtocolAnthropicMessages) {
+								t.Errorf("wrong Droid identity: %v", request.Header)
+							}
+							if !strings.Contains(string(body), providerapi.DroidSystemPromptLine) {
+								t.Error("missing Droid system prompt line")
 							}
 						}
 						if test.kind == contract.ServiceKindOpenCodeGo || test.kind == contract.ServiceKindOpenCodeZen {

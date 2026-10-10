@@ -94,6 +94,32 @@ describe("subscription IPC contract", () => {
     ).toThrow(/unsupported by provider/);
   });
 
+  it("accepts Droid Device Code sessions and rejects other Droid flows", () => {
+    const droid = {
+      id: "authorization_droid",
+      provider: "factory_droid",
+      status: "pending",
+      flow: "device_code",
+      service_id: "service_droid_01",
+      device_code: {
+        verification_url: "https://auth.factory.ai/device?user_code=DROI-D001",
+        user_code: "DROI-D001",
+      },
+      expires_at: "2026-10-10T08:15:00Z",
+      created_at: timestamps.created_at,
+      updated_at: timestamps.updated_at,
+    };
+    expect(parseAuthorizationSession(droid).provider).toBe("factory_droid");
+    expect(() =>
+      parseAuthorizationSession({
+        ...droid,
+        flow: "browser",
+        device_code: undefined,
+        authorization_url: "https://auth.factory.ai/oauth/authorize",
+      }),
+    ).toThrow(/unsupported by provider/);
+  });
+
   it("accepts Copilot Device Code sessions and rejects other Copilot flows", () => {
     const copilot = {
       id: "authorization_copilot",

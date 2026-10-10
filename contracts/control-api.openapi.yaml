@@ -546,9 +546,9 @@ paths:
       summary: Create one independently addressable API service.
       description: |
         `codex_subscription`, `claude_subscription`, `grok_subscription`,
-        `antigravity_subscription` and `copilot_subscription` create a
-        disconnected service that is authorized through its service-scoped OAuth
-        operation. HTTP kinds such as `newapi`
+        `antigravity_subscription`, `copilot_subscription` and
+        `droid_subscription` create a disconnected service that is authorized
+        through its service-scoped OAuth operation. HTTP kinds such as `newapi`
         carry an `http` connection and optional write-only credential.
       requestBody:
         required: true
@@ -1034,8 +1034,9 @@ paths:
       description: |
         Fetches the official ChatGPT `/wham/usage` snapshot for a connected
         `codex_subscription` service, Claude's `/api/oauth/usage` windows, the
-        Grok CLI proxy `/v1/billing?format=credits` snapshot, or GitHub
-        Copilot's `/copilot_internal/user` quota snapshots. API-key coding
+        Grok CLI proxy `/v1/billing?format=credits` snapshot, GitHub
+        Copilot's `/copilot_internal/user` quota snapshots, or Factory's
+        `/api/billing/limits` windows for a `droid_subscription`. API-key coding
         plans (Kimi, GLM, MiniMax, OpenCode Go) report their plan windows with
         the service key, and a `newapi` service reports its key's prepaid
         `quota` from New API `/api/usage/token/`, valued at the site's
@@ -4311,6 +4312,7 @@ components:
         - grok_subscription
         - antigravity_subscription
         - copilot_subscription
+        - droid_subscription
         - opencode_go
         - opencode_zen
         - kimi_coding
@@ -4369,7 +4371,14 @@ components:
         provider:
           type: string
           enum:
-            [openai_codex, claude_code, xai_grok, antigravity, github_copilot]
+            [
+              openai_codex,
+              claude_code,
+              xai_grok,
+              antigravity,
+              github_copilot,
+              factory_droid,
+            ]
         status:
           type: string
           enum: [disconnected, authorizing, connected, needs_reauth, error]
@@ -4521,6 +4530,7 @@ components:
                   grok_subscription,
                   antigravity_subscription,
                   copilot_subscription,
+                  droid_subscription,
                 ]
           required: [subscription]
           not:
@@ -4582,7 +4592,7 @@ components:
           $ref: "#/components/schemas/HTTPServiceConnectionInput"
         capabilities:
           type: array
-          description: Required for HTTP services. Subscription services default to the provider's fixed native capabilities; when supplied, the list must keep those unchanged and may only add native-mode local conversions whose convert_to is a protocol the provider serves (openai.responses for Codex, anthropic.messages for Claude, openai.responses or openai.chat for Grok, anthropic.messages, openai.responses or openai.chat for GitHub Copilot).
+          description: Required for HTTP services. Subscription services default to the provider's fixed native capabilities; when supplied, the list must keep those unchanged and may only add native-mode local conversions whose convert_to is a protocol the provider serves (openai.responses for Codex, anthropic.messages for Claude, openai.responses or openai.chat for Grok, anthropic.messages, openai.responses or openai.chat for GitHub Copilot and Factory Droid).
           items:
             $ref: ./protocol-capabilities.schema.json#/$defs/ServiceCapability
       additionalProperties: false
@@ -4596,6 +4606,7 @@ components:
                   grok_subscription,
                   antigravity_subscription,
                   copilot_subscription,
+                  droid_subscription,
                 ]
           not:
             required: [http]
@@ -7373,7 +7384,7 @@ components:
     AuthorizationFlow:
       type: string
       enum: [browser, device_code, authorization_code]
-      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai). Antigravity supports browser authorization with Google OAuth and a loopback callback. GitHub Copilot (github_copilot) supports device_code only (RFC 8628 against github.com with the OpenCode OAuth app).
+      description: Codex supports browser and device_code. Claude Code supports authorization_code with PKCE and a manual code#state callback. Grok (xai_grok) supports device_code only (RFC 8628 against auth.x.ai). Antigravity supports browser authorization with Google OAuth and a loopback callback. GitHub Copilot (github_copilot) supports device_code only (RFC 8628 against github.com with the OpenCode OAuth app). Factory Droid (factory_droid) supports device_code only (RFC 8628 against WorkOS with the Droid CLI's public client).
     AuthorizationStartRequest:
       type: object
       required: [flow]
@@ -7412,7 +7423,14 @@ components:
         provider:
           type: string
           enum:
-            [openai_codex, claude_code, xai_grok, antigravity, github_copilot]
+            [
+              openai_codex,
+              claude_code,
+              xai_grok,
+              antigravity,
+              github_copilot,
+              factory_droid,
+            ]
         status:
           type: string
           enum: [pending, completed, cancelled, expired, failed]

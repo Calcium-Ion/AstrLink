@@ -1288,7 +1288,7 @@ describe("ServiceManager", () => {
   function copilotRiskDialog(): Element | null {
     return (
       [...document.querySelectorAll('[role="alertdialog"]')].find((dialog) =>
-        dialog.textContent?.includes("连接 GitHub Copilot 前先了解风险"),
+        dialog.textContent?.includes("连接 GitHub Copilot 有封号风险"),
       ) ?? null
     );
   }
@@ -1426,6 +1426,167 @@ describe("ServiceManager", () => {
     expect(dialog?.textContent).toContain("GitHub 设备授权页");
     expect(dialog?.textContent).toContain("OpenCode");
     expect(dialog?.textContent).not.toContain("OpenAI");
+  });
+
+  it("confirms the Droid account risk before creating and signing in", async () => {
+    const droidService: Service = {
+      ...copilotService,
+      id: "service_droid",
+      name: "Droid",
+      kind: "droid_subscription",
+      subscription: { provider: "factory_droid", status: "disconnected" },
+    };
+    const droidSession = {
+      ...copilotSession,
+      id: "authorization_droid",
+      provider: "factory_droid",
+      device_code: {
+        verification_url: "https://auth.factory.ai/device?user_code=DROI-D001",
+        user_code: "DROI-D001",
+      },
+      service_id: "service_droid",
+    };
+    bridgeMocks.createService.mockResolvedValue({
+      service: droidService,
+      etag,
+    });
+    bridgeMocks.beginServiceAuthorization.mockResolvedValue({
+      kind: "session",
+      session: droidSession,
+    });
+    bridgeMocks.getServiceAuthorization.mockResolvedValue(droidSession);
+    await act(async () =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[]}
+          view={{ kind: "create", serviceKind: "codex_subscription" }}
+        />,
+      ),
+    );
+    await chooseServiceKind("Droid 订阅");
+    expect(
+      container.querySelector<HTMLInputElement>("#service-name")?.value,
+    ).toBe("Droid");
+    expect(
+      container.querySelector('[role="radio"][aria-label="Device Code"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("以 Droid CLI 的身份");
+    const submit = () =>
+      act(async () =>
+        container
+          .querySelector("form")!
+          .dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true }),
+          ),
+      );
+    await submit();
+    const riskDialog = () =>
+      [...document.querySelectorAll('[role="alertdialog"]')].find((dialog) =>
+        dialog.textContent?.includes("连接 Droid 有封号风险"),
+      ) ?? null;
+    expect(riskDialog()?.textContent).toContain("Droid 的自我介绍");
+    expect(riskDialog()?.textContent).not.toContain("GitHub");
+    expect(bridgeMocks.createService).not.toHaveBeenCalled();
+    const confirm = [...(riskDialog()?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent === "我已了解风险，继续",
+    );
+    await act(async () => confirm!.click());
+    expect(bridgeMocks.createService).toHaveBeenCalledWith({
+      name: "Droid",
+      kind: "droid_subscription",
+      enabled: true,
+      responses_websocket_enabled: false,
+      models: [],
+    });
+    expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
+      "service_droid",
+      "device_code",
+    );
+  });
+
+  it("signs a Droid subscription in with a Factory device dialog after the risk confirmation", async () => {
+    const droidService: Service = {
+      ...copilotService,
+      id: "service_droid",
+      name: "Droid",
+      kind: "droid_subscription",
+      subscription: { provider: "factory_droid", status: "disconnected" },
+    };
+    const droidSession = {
+      ...copilotSession,
+      id: "authorization_droid",
+      provider: "factory_droid",
+      device_code: {
+        verification_url: "https://auth.factory.ai/device?user_code=DROI-D001",
+        user_code: "DROI-D001",
+      },
+      service_id: "service_droid",
+    };
+    bridgeMocks.beginServiceAuthorization.mockResolvedValue({
+      kind: "session",
+      session: droidSession,
+    });
+    bridgeMocks.getServiceAuthorization.mockResolvedValue(droidSession);
+    await act(async () =>
+      root.render(
+        <ServiceManager
+          catalogError={null}
+          catalogStatus="ready"
+          isReady
+          onDirtyChange={() => {}}
+          onRefresh={() => {}}
+          onServiceRemoved={() => {}}
+          onServiceSaved={() => {}}
+          onViewChange={() => {}}
+          protocols={[]}
+          services={[droidService]}
+          view={{ kind: "list" }}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("Factory Droid OAuth");
+    await openServiceOverflow("Droid");
+    await chooseMenuItem("登录");
+    const choice = document.querySelector('[role="dialog"]');
+    expect(
+      choice?.querySelector('[role="radio"][aria-label="Device Code"]'),
+    ).not.toBeNull();
+    expect(
+      choice?.querySelector('[role="radio"][aria-label="浏览器 OAuth"]'),
+    ).toBeNull();
+    expect(choice?.textContent).toContain("Factory 登录页");
+    const start = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "开始登录",
+    );
+    await act(async () => start!.click());
+    const riskDialog = [
+      ...document.querySelectorAll('[role="alertdialog"]'),
+    ].find((dialog) => dialog.textContent?.includes("连接 Droid 有封号风险"));
+    expect(riskDialog).not.toBeUndefined();
+    expect(bridgeMocks.beginServiceAuthorization).not.toHaveBeenCalled();
+    const confirm = [...(riskDialog?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent === "我已了解风险，继续",
+    );
+    await act(async () => confirm!.click());
+    expect(bridgeMocks.beginServiceAuthorization).toHaveBeenCalledWith(
+      "service_droid",
+      "device_code",
+    );
+    const dialog = [...document.querySelectorAll('[role="dialog"]')].find(
+      (candidate) => candidate.textContent?.includes("DROI-D001"),
+    );
+    expect(dialog?.textContent).toContain("Factory 登录页面");
+    expect(dialog?.textContent).not.toContain("OpenAI");
+    expect(dialog?.textContent).not.toContain("GitHub");
   });
 
   it("lists Copilot's built-in redirects with its own rules and saves a turned-off row", async () => {

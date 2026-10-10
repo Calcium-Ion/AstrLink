@@ -4566,6 +4566,7 @@ const SUBSCRIPTION_PROVIDERS: &[&str] = &[
     "xai_grok",
     "antigravity",
     "github_copilot",
+    "factory_droid",
 ];
 const AUTHORIZATION_SESSION_STATUSES: &[&str] =
     &["pending", "completed", "cancelled", "expired", "failed"];
@@ -4763,7 +4764,9 @@ fn parse_authorization_session_value(
     if provider == "antigravity" && flow != "browser" {
         return Err("authorization flow is unsupported by provider".to_string());
     }
-    if (provider == "xai_grok" || provider == "github_copilot") && flow != "device_code" {
+    if (provider == "xai_grok" || provider == "github_copilot" || provider == "factory_droid")
+        && flow != "device_code"
+    {
         return Err("authorization flow is unsupported by provider".to_string());
     }
     let service_id = object
@@ -5763,6 +5766,15 @@ mod tests {
         let mut copilot_browser = browser.clone();
         copilot_browser["provider"] = serde_json::json!("github_copilot");
         assert!(parse_authorization_session_value(&copilot_browser).is_err());
+
+        let mut droid = device.clone();
+        droid["provider"] = serde_json::json!("factory_droid");
+        droid["device_code"]["verification_url"] =
+            serde_json::json!("https://auth.factory.ai/device?user_code=DROI-D001");
+        assert!(parse_authorization_session_value(&droid).is_ok());
+        let mut droid_browser = browser.clone();
+        droid_browser["provider"] = serde_json::json!("factory_droid");
+        assert!(parse_authorization_session_value(&droid_browser).is_err());
 
         device["authorization_url"] = serde_json::json!("https://auth.openai.com/oauth/authorize");
         assert!(parse_authorization_session_value(&device).is_err());

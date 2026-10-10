@@ -98,6 +98,9 @@ func (manager *SessionManager) Begin(
 	if manager.config.Provider == contract.SubscriptionProviderGitHubCopilot && flow != contract.AuthorizationFlowDeviceCode {
 		return contract.AuthorizationSession{}, fmt.Errorf("GitHub Copilot requires device_code flow")
 	}
+	if manager.config.Provider == contract.SubscriptionProviderFactoryDroid && flow != contract.AuthorizationFlowDeviceCode {
+		return contract.AuthorizationSession{}, fmt.Errorf("Factory Droid requires device_code flow")
+	}
 	if manager.config.Provider == contract.SubscriptionProviderAntigravity && flow != contract.AuthorizationFlowBrowser {
 		return contract.AuthorizationSession{}, fmt.Errorf("Antigravity requires browser flow")
 	}
@@ -117,6 +120,10 @@ func (manager *SessionManager) Begin(
 	if manager.config.Provider == contract.SubscriptionProviderGitHubCopilot {
 		return manager.beginPolledDeviceAuthorization(ctx, serviceID,
 			manager.requestCopilotDeviceAuthorization, manager.pollCopilotDeviceAuthorizationOnce, "GitHub")
+	}
+	if manager.config.Provider == contract.SubscriptionProviderFactoryDroid {
+		return manager.beginPolledDeviceAuthorization(ctx, serviceID,
+			manager.requestDroidDeviceAuthorization, manager.pollDroidDeviceAuthorizationOnce, "Factory")
 	}
 
 	switch flow {

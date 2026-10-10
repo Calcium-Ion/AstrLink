@@ -125,6 +125,9 @@ func (config OAuthConfig) normalized() OAuthConfig {
 	if config.Provider == contract.SubscriptionProviderGitHubCopilot {
 		config = normalizeCopilotConfig(config)
 	}
+	if config.Provider == contract.SubscriptionProviderFactoryDroid {
+		config = normalizeDroidConfig(config)
+	}
 	if strings.TrimSpace(config.ClientID) == "" {
 		config.ClientID = DefaultCodexOAuthClientID
 	}
@@ -246,9 +249,21 @@ func (client *TokenClient) ExchangeCode(ctx context.Context, code, verifier, red
 	return tokens, err
 }
 
+// RefreshAccount renews current's tokens. Providers whose refresh needs more
+// than the refresh token (Factory's organization) read it from current.
+func (client *TokenClient) RefreshAccount(ctx context.Context, current AccountTokens) (AccountTokens, error) {
+	if client.config.Provider == contract.SubscriptionProviderFactoryDroid {
+		return client.refreshDroid(ctx, current)
+	}
+	return client.Refresh(ctx, current.RefreshToken)
+}
+
 func (client *TokenClient) Refresh(ctx context.Context, refreshToken string) (AccountTokens, error) {
 	if client.config.Provider == contract.SubscriptionProviderGitHubCopilot {
 		return client.refreshCopilot(ctx, refreshToken)
+	}
+	if client.config.Provider == contract.SubscriptionProviderFactoryDroid {
+		return client.refreshDroid(ctx, AccountTokens{RefreshToken: refreshToken})
 	}
 	values := url.Values{}
 	values.Set("grant_type", "refresh_token")

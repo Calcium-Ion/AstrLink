@@ -142,6 +142,12 @@ func devicePollFailure(err error, issuerName string) *contract.SubscriptionError
 			Message: "This GitHub account has no active Copilot plan",
 		}
 	}
+	if errors.Is(err, ErrDroidNoOrganization) {
+		return &contract.SubscriptionError{
+			Code:    ErrCodeDroidNoOrganization,
+			Message: "This Factory account belongs to no organization",
+		}
+	}
 	return &contract.SubscriptionError{
 		Code:    ErrCodeDeviceCodePoll,
 		Message: "Device Code login failed while waiting for " + issuerName,

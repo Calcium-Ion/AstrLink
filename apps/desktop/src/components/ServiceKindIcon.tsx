@@ -5,10 +5,11 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 import newapiLogo from "../assets/newapi-logo.svg";
+import { DroidIcon } from "./DroidIcon";
 import { MagpieIcon } from "./MagpieIcon";
 import { serviceKindLabel, type ServiceKind } from "../service-model";
 
-type Mark = Vendor | "newapi" | "magpie" | "custom";
+type Mark = Vendor | "newapi" | "magpie" | "droid" | "custom";
 
 // Vendor-backed kinds share their logo with the vendor's models through
 // `vendorMarks`; only the gateways and custom endpoints have marks of their own.
@@ -20,6 +21,7 @@ const kindMarks: Record<ServiceKind, Mark> = {
   grok_subscription: "grok",
   antigravity_subscription: "antigravity",
   copilot_subscription: "copilot",
+  droid_subscription: "droid",
   opencode_go: "opencode",
   opencode_zen: "opencode",
   moonshot: "kimi",
@@ -53,6 +55,8 @@ function renderMark(mark: Mark, size: number): ReactNode {
       );
     case "magpie":
       return <MagpieIcon size={size} />;
+    case "droid":
+      return <DroidIcon size={size} />;
     case "custom":
       return (
         <Cable

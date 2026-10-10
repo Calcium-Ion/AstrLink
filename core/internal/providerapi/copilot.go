@@ -173,6 +173,20 @@ const copilotBase62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 // two accounts never shares an id. cache_control markers move between
 // requests and are left out.
 func copilotInteractionID(salt string, turns gjson.Result) string {
+	sum := conversationDigest(salt, turns)
+	id := make([]byte, 0, 30)
+	id = append(id, "ses_"...)
+	id = append(id, hex.EncodeToString(sum[:6])...)
+	for _, b := range sum[6:20] {
+		id = append(id, copilotBase62[int(b)%len(copilotBase62)])
+	}
+	return string(id)
+}
+
+// conversationDigest hashes a conversation's first non-system message, with
+// cache_control markers removed since they move between requests, salted by
+// the account credential.
+func conversationDigest(salt string, turns gjson.Result) []byte {
 	first := ""
 	turns.ForEach(func(_, message gjson.Result) bool {
 		if role := message.Get("role").String(); role == "system" || role == "developer" {
@@ -188,14 +202,7 @@ func copilotInteractionID(salt string, turns gjson.Result) string {
 	hash.Write([]byte(salt))
 	hash.Write([]byte{0})
 	hash.Write([]byte(first))
-	sum := hash.Sum(nil)
-	id := make([]byte, 0, 30)
-	id = append(id, "ses_"...)
-	id = append(id, hex.EncodeToString(sum[:6])...)
-	for _, b := range sum[6:20] {
-		id = append(id, copilotBase62[int(b)%len(copilotBase62)])
-	}
-	return string(id)
+	return hash.Sum(nil)
 }
 
 func deleteCacheControl(message []byte) ([]byte, error) {
