@@ -4,10 +4,12 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +21,11 @@ export const targets = [
   "windows-x86_64",
   "linux-x86_64",
 ];
+// Release publishes these together. The slower Intel macOS build runs in
+// release-macos-x86_64.yml, which attaches it to the published release.
+export const releaseTargets = targets.filter(
+  (target) => target !== "darwin-x86_64",
+);
 const readJSON = (file) => JSON.parse(readFileSync(file, "utf8"));
 const writeJSON = (file, value) =>
   writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
@@ -218,6 +225,72 @@ function filesIn(directory) {
   );
 }
 
+/** Verify one staged platform and return its update manifest entry. */
+function verifiedPlatform(files, target, tag, version, publicKey) {
+  const fragments = files.filter(
+    (file) => path.basename(file) === `${target}.json`,
+  );
+  requireValue(
+    fragments.length === 1,
+    `Missing or duplicate platform: ${target}`,
+  );
+  const fragment = readJSON(fragments[0]);
+  requireValue(
+    fragment.version === version &&
+      fragment.tag === tag &&
+      fragment.target === target,
+    `Version or target mismatch: ${target}`,
+  );
+  requireValue(
+    typeof fragment.file === "string" &&
+      path.basename(fragment.file) === fragment.file,
+    "Invalid artifact filename",
+  );
+  const file = path.join(path.dirname(fragments[0]), fragment.file),
+    bytes = readFileSync(file);
+  requireValue(
+    sha256(bytes) === fragment.sha256,
+    `Artifact checksum mismatch: ${target}`,
+  );
+  requireValue(
+    readFileSync(`${file}.sig`, "utf8").trim() === fragment.signature,
+    `Signature sidecar mismatch: ${target}`,
+  );
+  verifyUpdateSignature(bytes, fragment.signature, publicKey);
+  return {
+    signature: fragment.signature,
+    url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(fragment.file)}`,
+  };
+}
+
+function releaseAssets(files) {
+  const assets = new Map();
+  for (const file of files.filter((file) =>
+    /\.(dmg|deb|exe|AppImage|tar\.gz|sig)$/.test(file),
+  )) {
+    const name = path.basename(file);
+    requireValue(!assets.has(name), `Duplicate release filename: ${name}`);
+    assets.set(name, file);
+  }
+  return assets;
+}
+
+/** Write assets, latest.json and a SHA256SUMS that adds both to `sums`. */
+function writeRelease(output, assets, manifest, sums = new Map()) {
+  mkdirSync(output, { recursive: true });
+  for (const [name, file] of assets) cpSync(file, path.join(output, name));
+  writeJSON(path.join(output, "latest.json"), manifest);
+  for (const name of [...assets.keys(), "latest.json"])
+    sums.set(name, sha256(readFileSync(path.join(output, name))));
+  writeFileSync(
+    path.join(output, "SHA256SUMS"),
+    [...sums.keys()]
+      .sort()
+      .map((name) => `${sums.get(name)}  ${name}\n`)
+      .join(""),
+  );
+}
+
 export function collectRelease(
   input,
   output,
@@ -228,65 +301,68 @@ export function collectRelease(
 ) {
   const { version } = releaseVersion(tag),
     files = filesIn(input);
-  const platforms = {},
-    assets = new Map();
-  for (const target of targets) {
-    const fragments = files.filter(
-      (file) => path.basename(file) === `${target}.json`,
+  const platforms = {};
+  for (const target of releaseTargets)
+    platforms[target] = verifiedPlatform(
+      files,
+      target,
+      tag,
+      version,
+      publicKey,
     );
-    requireValue(
-      fragments.length === 1,
-      `Missing or duplicate platform: ${target}`,
-    );
-    const fragment = readJSON(fragments[0]);
-    requireValue(
-      fragment.version === version &&
-        fragment.tag === tag &&
-        fragment.target === target,
-      `Version or target mismatch: ${target}`,
-    );
-    requireValue(
-      typeof fragment.file === "string" &&
-        path.basename(fragment.file) === fragment.file,
-      "Invalid artifact filename",
-    );
-    const file = path.join(path.dirname(fragments[0]), fragment.file),
-      bytes = readFileSync(file);
-    requireValue(
-      sha256(bytes) === fragment.sha256,
-      `Artifact checksum mismatch: ${target}`,
-    );
-    requireValue(
-      readFileSync(`${file}.sig`, "utf8").trim() === fragment.signature,
-      `Signature sidecar mismatch: ${target}`,
-    );
-    verifyUpdateSignature(bytes, fragment.signature, publicKey);
-    platforms[target] = {
-      signature: fragment.signature,
-      url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(fragment.file)}`,
-    };
-  }
   // All validation precedes creating the publish directory or touching GitHub.
-  for (const file of files.filter((file) =>
-    /\.(dmg|deb|exe|AppImage|tar\.gz|sig)$/.test(file),
-  )) {
-    const name = path.basename(file);
-    requireValue(!assets.has(name), `Duplicate release filename: ${name}`);
-    assets.set(name, file);
-  }
-  mkdirSync(output, { recursive: true });
-  for (const [name, file] of assets) cpSync(file, path.join(output, name));
+  const assets = releaseAssets(files);
   const manifest = { version, notes, pub_date: now.toISOString(), platforms };
-  writeJSON(path.join(output, "latest.json"), manifest);
-  writeFileSync(
-    path.join(output, "SHA256SUMS"),
-    [...assets.keys(), "latest.json"]
-      .sort()
-      .map(
-        (name) => `${sha256(readFileSync(path.join(output, name)))}  ${name}\n`,
-      )
-      .join(""),
+  writeRelease(output, assets, manifest);
+  return manifest;
+}
+
+/**
+ * Add a platform built outside Release to the manifest and checksums that
+ * Release published. Retrying with the same package is safe; replacing a
+ * package that the release already lists is refused.
+ */
+export function extendRelease(
+  input,
+  published,
+  output,
+  tag,
+  target,
+  publicKey,
+) {
+  requireValue(targets.includes(target), "Unsupported update target");
+  const { version } = releaseVersion(tag),
+    files = filesIn(input);
+  const manifest = readJSON(path.join(published, "latest.json"));
+  requireValue(
+    manifest.version === version,
+    "Published manifest version does not match release tag",
   );
+  const platform = verifiedPlatform(files, target, tag, version, publicKey),
+    listed = manifest.platforms[target];
+  requireValue(
+    !listed ||
+      (listed.signature === platform.signature && listed.url === platform.url),
+    `Release already lists a different ${target} package`,
+  );
+  const sums = new Map();
+  for (const line of readFileSync(path.join(published, "SHA256SUMS"), "utf8")
+    .split("\n")
+    .filter(Boolean)) {
+    const [, sum, name] = requireValue(
+      /^([0-9a-f]{64}) {2}(.+)$/.exec(line),
+      "Invalid published SHA256SUMS",
+    );
+    sums.set(name, sum);
+  }
+  const assets = releaseAssets(files);
+  for (const [name, file] of assets)
+    requireValue(
+      !sums.has(name) || sums.get(name) === sha256(readFileSync(file)),
+      `Release already has a different ${name}`,
+    );
+  manifest.platforms[target] = platform;
+  writeRelease(output, assets, manifest, sums);
   return manifest;
 }
 
@@ -295,6 +371,21 @@ function gh(args) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+function uploadAssets(tag, assets) {
+  gh(["release", "upload", tag, "--repo", repository, "--clobber", ...assets]);
+  const remote = JSON.parse(
+    gh(["release", "view", tag, "--repo", repository, "--json", "assets"]),
+  );
+  for (const asset of assets)
+    requireValue(
+      remote.assets.some(
+        (a) =>
+          a.name === path.basename(asset) &&
+          a.size === readFileSync(asset).length,
+      ),
+      `Release upload incomplete: ${path.basename(asset)}`,
+    );
 }
 export function publishRelease(input, output, tag, env = process.env) {
   requireValue(
@@ -344,22 +435,12 @@ export function publishRelease(input, output, tag, env = process.env) {
       notesFile,
     ]);
   // A temporary draft keeps incomplete uploads invisible. No human approval is required.
-  const assets = readdirSync(output)
-    .filter((name) => name !== "release-notes.txt")
-    .map((name) => path.join(output, name));
-  gh(["release", "upload", tag, "--repo", repository, "--clobber", ...assets]);
-  const remote = JSON.parse(
-    gh(["release", "view", tag, "--repo", repository, "--json", "assets"]),
+  uploadAssets(
+    tag,
+    readdirSync(output)
+      .filter((name) => name !== "release-notes.txt")
+      .map((name) => path.join(output, name)),
   );
-  for (const asset of assets)
-    requireValue(
-      remote.assets.some(
-        (a) =>
-          a.name === path.basename(asset) &&
-          a.size === readFileSync(asset).length,
-      ),
-      `Release upload incomplete: ${path.basename(asset)}`,
-    );
   gh([
     "release",
     "edit",
@@ -372,6 +453,54 @@ export function publishRelease(input, output, tag, env = process.env) {
     "--notes-file",
     notesFile,
   ]);
+}
+
+export function attachRelease(input, output, tag, target, env = process.env) {
+  requireValue(
+    env.GITHUB_REPOSITORY === repository,
+    "Release publishing is restricted to the project repository",
+  );
+  // Only Release itself writes to a draft; it may still be uploading.
+  requireValue(
+    !JSON.parse(
+      gh(["release", "view", tag, "--repo", repository, "--json", "isDraft"]),
+    ).isDraft,
+    "Release is not published yet",
+  );
+  const published = mkdtempSync(path.join(os.tmpdir(), "astrlink-release-"));
+  gh([
+    "release",
+    "download",
+    tag,
+    "--repo",
+    repository,
+    "--dir",
+    published,
+    "--pattern",
+    "latest.json",
+    "--pattern",
+    "SHA256SUMS",
+  ]);
+  extendRelease(
+    input,
+    published,
+    output,
+    tag,
+    target,
+    requireValue(env.TAURI_UPDATER_PUBLIC_KEY, "Missing update public key"),
+  );
+  // Upload the packages before latest.json points update clients at them.
+  const manifests = ["latest.json", "SHA256SUMS"];
+  uploadAssets(
+    tag,
+    readdirSync(output)
+      .filter((name) => !manifests.includes(name))
+      .map((name) => path.join(output, name)),
+  );
+  uploadAssets(
+    tag,
+    manifests.map((name) => path.join(output, name)),
+  );
 }
 
 if (
@@ -392,9 +521,11 @@ if (
     else if (command === "preflight") signingEnvironment();
     else if (command === "stage") stageUpdate(desktop, args[0], args[1]);
     else if (command === "publish") publishRelease(args[0], args[1], args[2]);
+    else if (command === "attach")
+      attachRelease(args[0], args[1], args[2], args[3]);
     else
       throw new Error(
-        "Expected version, stamp, preflight, stage or publish command",
+        "Expected version, stamp, preflight, stage, publish or attach command",
       );
   } catch (error) {
     console.error(error.message);

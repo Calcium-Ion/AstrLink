@@ -6,13 +6,23 @@ on:
       release_tag:
         type: string
         required: true
+      arch:
+        description: arm64 or x86_64
+        type: string
+        required: true
   workflow_dispatch:
+    inputs:
+      arch:
+        type: choice
+        options: [arm64, x86_64]
+        default: arm64
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-package-${{ github.event_name }}-${{ github.ref }}
+  # Release and Release macOS x86_64 each call this for the same tag.
+  group: macos-package-${{ github.event_name }}-${{ github.ref }}-${{ inputs.arch }}
   cancel-in-progress: true
 
 env:
@@ -25,16 +35,8 @@ env:
 
 jobs:
   package:
-    name: Build and verify macOS ${{ matrix.arch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            arch: arm64
-          - os: macos-15-intel
-            arch: x86_64
-    runs-on: ${{ matrix.os }}
+    name: Build and verify macOS ${{ inputs.arch }}
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-15-intel' || 'macos-15' }}
     timeout-minutes: 90
     env:
       APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -133,7 +135,7 @@ jobs:
           cache-directories: apps/privacy-worker/target/onnxruntime
       - name: Check runner architecture
         env:
-          EXPECTED_ARCH: ${{ matrix.arch }}
+          EXPECTED_ARCH: ${{ inputs.arch }}
         run: test "$(uname -m)" = "$EXPECTED_ARCH"
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -180,7 +182,7 @@ jobs:
         run: bun run macos:notarize
       - name: Mount DMG and verify packaged application
         env:
-          PACKAGE_ARCH: ${{ matrix.arch }}
+          PACKAGE_ARCH: ${{ inputs.arch }}
         run: |
           shopt -s nullglob
           images=(src-tauri/target/release/bundle/dmg/*.dmg)
@@ -197,7 +199,7 @@ jobs:
             --logs "$RUNNER_TEMP/astrlink-smoke"
       - name: Prepare downloads and checksums
         env:
-          PACKAGE_ARCH: ${{ matrix.arch }}
+          PACKAGE_ARCH: ${{ inputs.arch }}
         run: |
           mkdir -p package
           cp src-tauri/target/release/bundle/dmg/*.dmg package/
@@ -209,7 +211,7 @@ jobs:
         if: inputs.release_tag != ''
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-          PACKAGE_ARCH: ${{ matrix.arch }}
+          PACKAGE_ARCH: ${{ inputs.arch }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
@@ -219,7 +221,7 @@ jobs:
       - name: Upload checked macOS package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: AstrLink-macOS-${{ matrix.arch }}
+          name: AstrLink-macOS-${{ inputs.arch }}
           path: apps/desktop/package/*
           if-no-files-found: error
           retention-days: 14
@@ -227,7 +229,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: macOS-${{ matrix.arch }}-smoke-diagnostics
+          name: macOS-${{ inputs.arch }}-smoke-diagnostics
           path: ${{ runner.temp }}/astrlink-smoke/*
           if-no-files-found: ignore
           retention-days: 7
@@ -235,7 +237,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: macOS-${{ matrix.arch }}-notarization
+          name: macOS-${{ inputs.arch }}-notarization
           path: apps/desktop/src-tauri/target/release/bundle/notarization/*
           if-no-files-found: ignore
           retention-days: 7

@@ -1,5 +1,8 @@
-name: Release
+name: Release macOS x86_64
 
+# The Intel runner is the slowest release build. It runs beside Release
+# instead of holding back the other platforms, and adds its package to the
+# release once Release has published it.
 on:
   push:
     tags: ["**"]
@@ -8,10 +11,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-macos-x86_64-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Same gate as Release: a valid tag, signing settings and a passing CI run.
   validate:
     if: github.repository == 'Calcium-Ion/AstrLink'
     runs-on: ubuntu-24.04
@@ -37,8 +41,6 @@ jobs:
         run: |
           bun apps/desktop/scripts/release-updates.mjs version "$RELEASE_TAG"
           bun apps/desktop/scripts/release-updates.mjs preflight
-      # Tests run once, in CI, when the commit is pushed to a branch. A release
-      # only repeats the build, signing, and installer smoke checks.
       - name: Require a passing CI run for the tagged commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,35 +48,22 @@ jobs:
           SHA: ${{ github.sha }}
         run: scripts/require-ci-success.sh
 
-  # Intel macOS builds in release-macos-x86_64.yml, which adds its package to
-  # this release after publish.
   macos:
     needs: validate
     uses: ./.github/workflows/macos-package.yml
     with:
       release_tag: ${{ github.ref_name }}
-      arch: arm64
-    secrets: inherit
-
-  windows:
-    needs: validate
-    uses: ./.github/workflows/windows-package.yml
-    with:
-      release_tag: ${{ github.ref_name }}
-    secrets: inherit
-
-  linux:
-    needs: validate
-    uses: ./.github/workflows/linux-package.yml
-    with:
-      release_tag: ${{ github.ref_name }}
+      arch: x86_64
     secrets: inherit
 
   publish:
-    needs: [macos, windows, linux]
+    needs: macos
     runs-on: ubuntu-24.04
+    # Release normally publishes before this build ends; otherwise wait for it.
+    timeout-minutes: 90
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -86,11 +75,18 @@ jobs:
           no-cache: true
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: AstrLink-*
+          name: AstrLink-macOS-x86_64
           path: artifacts
-      - name: Verify all platforms and publish release
+      - name: Wait for Release to publish the other platforms
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: scripts/wait-for-release.sh
+      - name: Verify the package and add it to the release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
-        run: bun apps/desktop/scripts/release-updates.mjs publish artifacts release "$RELEASE_TAG"
+        run: bun apps/desktop/scripts/release-updates.mjs attach artifacts release "$RELEASE_TAG" darwin-x86_64
