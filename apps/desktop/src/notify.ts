@@ -10,15 +10,14 @@ const ACTION_DURATION_MS = 8_000;
 
 export const notify = {
   success(message: string, action?: NotifyAction) {
-    toast.success(
-      message,
-      action
-        ? {
-            action: { label: action.label, onClick: action.onClick },
-            duration: ACTION_DURATION_MS,
-          }
-        : undefined,
-    );
+    if (!action) {
+      toast.success(message);
+      return;
+    }
+    toast.success(message, {
+      action: { label: action.label, onClick: action.onClick },
+      duration: ACTION_DURATION_MS,
+    });
   },
   error(message: string) {
     toast.error(message);
