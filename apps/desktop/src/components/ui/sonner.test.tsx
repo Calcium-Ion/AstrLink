@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { notify } from "@/notify";
+
 import { Toaster } from "./sonner";
 
 describe("Toaster", () => {
@@ -69,5 +71,21 @@ describe("Toaster", () => {
     await vi.waitFor(() =>
       expect(item.hasAttribute("data-pointer-over")).toBe(false),
     );
+  });
+
+  it("renders a success action as a button that runs it", async () => {
+    const onClick = vi.fn();
+    await act(async () => {
+      notify.success("已保存，重启网关后生效。", {
+        label: "立即重启",
+        onClick,
+      });
+    });
+    const item = await toastWithText("已保存，重启网关后生效。");
+    // globals.css keeps toasts with a [data-button] reachable by the pointer.
+    const action = item.querySelector<HTMLButtonElement>("button[data-button]");
+    expect(action?.textContent).toBe("立即重启");
+    await act(async () => action?.click());
+    expect(onClick).toHaveBeenCalledOnce();
   });
 });

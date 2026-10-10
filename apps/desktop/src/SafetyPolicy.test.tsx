@@ -445,7 +445,7 @@ describe("SafetyPolicy", () => {
     expect(notice()).toBeNull();
     expect(enabled?.disabled).toBe(false);
     expect(notifyMocks.success).toHaveBeenCalledWith(
-      "安全策略已保存，本地模型已关闭。",
+      "安全策略已保存，新请求立即生效。本地模型已关闭。",
     );
   });
 
@@ -474,7 +474,9 @@ describe("SafetyPolicy", () => {
       pending.resolve(policyRecord({ enabled: false }));
       await Promise.resolve();
     });
-    expect(notifyMocks.success).toHaveBeenCalledWith("安全策略已保存。");
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "安全策略已保存，新请求立即生效。",
+    );
   });
 
   it("keeps rendering when switching a catalog quantization variant", async () => {
@@ -1613,7 +1615,9 @@ describe("SafetyPolicy", () => {
       detector: "local_model",
       local_model_id: ready.id,
     });
-    expect(notifyMocks.success).toHaveBeenCalledWith("安全策略已保存。");
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "安全策略已保存，新请求立即生效。",
+    );
   });
 
   it("shows an in-app confirmation and feedback when deleting a model", async () => {

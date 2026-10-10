@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { ActionGroup } from "@/components/ActionGroup";
 import { ChoiceCard } from "@/components/ChoiceCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CopyableValue } from "@/components/CopyableValue";
@@ -29,6 +30,7 @@ import { Menu, SlidersHorizontal } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
 import {
+  getCoreStatus,
   getPreferences,
   getTrayState,
   listNetworkAddresses,
@@ -424,6 +426,24 @@ export function SettingsCenter({
     return () => onDirtyChange(false);
   }, [entryDirty, onDirtyChange]);
 
+  const gatewayRunning =
+    snapshot != null &&
+    !["stopped", "exited", "error", "unavailable"].includes(snapshot.phase);
+
+  /** Says when a saved launch setting applies, and offers the restart it needs. */
+  const notifyLaunchSaved = (): void => {
+    if (!gatewayRunning) {
+      notify.success(i18n.t("settings.notifySavedNextStart"));
+      return;
+    }
+    notify.success(i18n.t("settings.notifySavedRestart"), {
+      label: i18n.t("settings.restartNow"),
+      onClick: () => void runCoreAction("restart"),
+    });
+    // Show the pending restart now instead of at the next status poll.
+    getCoreStatus().then(onCoreSnapshot, () => undefined);
+  };
+
   const applyInstant = async (patch: Partial<InstantPatch>): Promise<void> => {
     if (!settings || busy !== null) return;
     const previous = settings;
@@ -448,9 +468,7 @@ export function SettingsCenter({
       if (patch.quota_display_mode !== undefined)
         applyQuotaDisplayMode(next.values.quota_display_mode);
       if (patch.theme !== undefined) applyTheme(next.values.theme);
-      if (patch.use_system_proxy !== undefined) {
-        notify.success(i18n.t("settings.notifyProxySaved"));
-      }
+      if (patch.use_system_proxy !== undefined) notifyLaunchSaved();
       if (patch.locale && patch.locale !== previous.values.locale) {
         await applyLocale(patch.locale);
       }
@@ -534,14 +552,7 @@ export function SettingsCenter({
       setConcurrencyDraft(next.values.max_concurrent_inspections);
       setTimeoutDraft(next.values.response_start_timeout_seconds);
       setBodyLimitDraft(next.values.max_request_body_mib);
-      const gatewayRunning =
-        snapshot != null &&
-        !["stopped", "exited", "error", "unavailable"].includes(snapshot.phase);
-      notify.success(
-        gatewayRunning
-          ? i18n.t("settings.notifyPortSavedRestart")
-          : i18n.t("settings.notifyPortSaved"),
-      );
+      notifyLaunchSaved();
     } catch (error) {
       setActionError(messageOf(error));
     } finally {
@@ -592,9 +603,7 @@ export function SettingsCenter({
   const phase = snapshot?.phase ?? "unavailable";
   const tone = phaseTone(phase);
   const canStart = ["stopped", "exited", "error"].includes(phase);
-  const canStop = !["stopped", "exited", "error", "unavailable"].includes(
-    phase,
-  );
+  const canStop = gatewayRunning;
   const recoveryHint =
     snapshot?.recovery_scheduled_in_ms !== null &&
     snapshot?.recovery_scheduled_in_ms !== undefined
@@ -607,13 +616,7 @@ export function SettingsCenter({
             attempt: snapshot.recovery_attempt,
           })
         : null;
-  const portNeedsRestart =
-    (active !== null &&
-      active !== settings.values.inference_port &&
-      snapshot?.inference_port_fallback?.requested_port !==
-        settings.values.inference_port) ||
-    (snapshot?.inference_listen_active != null &&
-      snapshot.inference_listen_active !== settings.values.inference_listen);
+  const restartPending = snapshot?.restart_pending === true;
   const listenValue = listenDraft ?? settings.values.inference_listen;
   const exposedPort = active ?? settings.values.inference_port;
 
@@ -1110,25 +1113,38 @@ export function SettingsCenter({
                     <p className="min-w-0 flex-1 text-xs text-warning-foreground">
                       {t("settings.portDirty")}
                     </p>
-                  ) : portNeedsRestart ? (
+                  ) : restartPending ? (
                     <p className="min-w-0 flex-1 text-xs text-warning-foreground">
-                      {t("settings.portNeedsRestart")}
+                      {t("settings.restartPending")}
                     </p>
                   ) : (
                     <p className="min-w-0 flex-1 text-xs text-muted-foreground">
                       {t("settings.portControlHint")}
                     </p>
                   )}
-                  <Button
-                    className="shrink-0 max-[560px]:w-full"
-                    disabled={!entryDirty || !bodyLimitValid || busy !== null}
-                    onClick={() => void saveEntry()}
-                    type="button"
-                  >
-                    {busy === "port"
-                      ? t("settings.savingPort")
-                      : t("settings.savePort")}
-                  </Button>
+                  <ActionGroup className="shrink-0 max-[560px]:ml-0 max-[560px]:[&>*]:flex-1">
+                    {restartPending && !entryDirty ? (
+                      <Button
+                        disabled={busy !== null}
+                        onClick={() => void runCoreAction("restart")}
+                        type="button"
+                        variant="outline"
+                      >
+                        {busy === "restart"
+                          ? t("settings.restarting")
+                          : t("settings.restartNow")}
+                      </Button>
+                    ) : null}
+                    <Button
+                      disabled={!entryDirty || !bodyLimitValid || busy !== null}
+                      onClick={() => void saveEntry()}
+                      type="button"
+                    >
+                      {busy === "port"
+                        ? t("settings.savingPort")
+                        : t("settings.savePort")}
+                    </Button>
+                  </ActionGroup>
                 </div>
               </Panel>
               <ConfirmDialog

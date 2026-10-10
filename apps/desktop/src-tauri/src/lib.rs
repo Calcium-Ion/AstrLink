@@ -2809,6 +2809,7 @@ mod tests {
                 last_error: None,
                 inference_port_fallback: None,
                 inference_listen_active: None,
+                restart_pending: false,
                 recovery_attempt: 0,
                 recovery_scheduled_in_ms: None,
             },

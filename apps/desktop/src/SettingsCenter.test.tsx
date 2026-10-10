@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const bridge = vi.hoisted(() => ({
+  getCoreStatus: vi.fn(),
   getPreferences: vi.fn(),
   getTrayState: vi.fn(),
   trayAction: vi.fn(),
@@ -42,6 +43,7 @@ const snapshot = {
   },
   inference_port_fallback: null,
   inference_listen_active: "loopback",
+  restart_pending: false,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
   last_error: null,
@@ -91,6 +93,10 @@ describe("SettingsCenter", () => {
       .mockReset()
       .mockRejectedValue(new Error("tray unavailable in tests"));
     bridge.updatePreferences.mockReset().mockResolvedValue(settings);
+    bridge.getCoreStatus
+      .mockReset()
+      .mockResolvedValue({ ...snapshot, restart_pending: true });
+    bridge.restartCore.mockReset().mockResolvedValue(snapshot);
     bridge.listNetworkAddresses.mockReset().mockResolvedValue({
       addresses: [
         { interface: "en0", ip: "192.168.1.20" },
@@ -206,19 +212,20 @@ describe("SettingsCenter", () => {
 
   it("shows active and saved ports truthfully and saves a validated draft", async () => {
     const onDirtyChange = vi.fn();
+    const onCoreSnapshot = vi.fn();
     await act(async () => {
       root.render(
         <SettingsCenter
-          onCoreSnapshot={vi.fn()}
+          onCoreSnapshot={onCoreSnapshot}
           onDirtyChange={onDirtyChange}
-          snapshot={snapshot}
+          snapshot={{ ...snapshot, restart_pending: true }}
         />,
       );
       await Promise.resolve();
     });
     expect(container.textContent).toMatch(/正在使用[\s\S]*8317/);
     expect(container.textContent).toMatch(/已保存[\s\S]*9000/);
-    expect(container.textContent).toContain("入口修改尚未生效");
+    expect(container.textContent).toContain("已保存的设置要重启网关后生效");
 
     const input = container.querySelector<HTMLInputElement>(
       'input[type="number"]',
@@ -248,9 +255,92 @@ describe("SettingsCenter", () => {
       }),
     );
     expect(notifyMocks.success).toHaveBeenCalledWith(
-      "入口设置已保存。重启网关后生效。",
+      "已保存，重启网关后生效。",
+      expect.objectContaining({ label: "立即重启" }),
+    );
+    // The pending restart shows without waiting for the next status poll.
+    expect(bridge.getCoreStatus).toHaveBeenCalledTimes(1);
+    expect(onCoreSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ restart_pending: true }),
     );
     expect(onDirtyChange).toHaveBeenCalledWith(true);
+  });
+
+  it("offers the restart a saved launch setting is waiting for", async () => {
+    const onCoreSnapshot = vi.fn();
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={onCoreSnapshot}
+          onDirtyChange={vi.fn()}
+          snapshot={{ ...snapshot, restart_pending: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const restartButtons = () =>
+      [...container.querySelectorAll("button")].filter(
+        (button) => button.textContent === "立即重启",
+      );
+    expect(restartButtons()).toHaveLength(1);
+    await act(async () => {
+      restartButtons()[0]!.click();
+      await Promise.resolve();
+    });
+    expect(bridge.restartCore).toHaveBeenCalledTimes(1);
+    expect(onCoreSnapshot).toHaveBeenCalledWith(snapshot);
+
+    // Nothing waits on a restart: the footer goes back to its usual hint.
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={onCoreSnapshot}
+          onDirtyChange={vi.fn()}
+          snapshot={snapshot}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain("已保存的设置要重启网关后生效");
+    expect(restartButtons()).toHaveLength(0);
+  });
+
+  it("says a launch setting saved while the gateway is stopped applies at the next start", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={vi.fn()}
+          snapshot={{ ...snapshot, phase: "stopped" }}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="检查并发"]',
+    );
+    if (!input) throw new Error("missing concurrency input");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(input, "32");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const save = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "保存",
+    );
+    if (!save) throw new Error("missing save button");
+    await act(async () => {
+      save.click();
+      await Promise.resolve();
+    });
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "已保存，下次启动网关时生效。",
+    );
+    expect(bridge.getCoreStatus).not.toHaveBeenCalled();
   });
 
   it("opens to every interface only after the consequences are confirmed", async () => {
@@ -321,7 +411,8 @@ describe("SettingsCenter", () => {
       }),
     );
     expect(notifyMocks.success).toHaveBeenCalledWith(
-      "入口设置已保存。重启网关后生效。",
+      "已保存，重启网关后生效。",
+      expect.objectContaining({ label: "立即重启" }),
     );
   });
 
@@ -335,10 +426,11 @@ describe("SettingsCenter", () => {
     };
     bridge.getPreferences.mockResolvedValue(exposedSettings);
     bridge.updatePreferences.mockResolvedValue(settings);
+    const onCoreSnapshot = vi.fn();
     await act(async () => {
       root.render(
         <SettingsCenter
-          onCoreSnapshot={vi.fn()}
+          onCoreSnapshot={onCoreSnapshot}
           onDirtyChange={vi.fn()}
           snapshot={{ ...snapshot, inference_listen_active: "all_interfaces" }}
         />,
@@ -364,8 +456,10 @@ describe("SettingsCenter", () => {
     expect(bridge.updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({ inference_listen: "loopback" }),
     );
-    // Saved loopback, Core still exposed: the restart hint takes over.
-    expect(container.textContent).toContain("入口修改尚未生效");
+    // Saved loopback, Core still exposed: the host reports the pending restart.
+    expect(onCoreSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ restart_pending: true }),
+    );
   });
 
   it("explains a fallback without claiming the saved port is a pending edit", async () => {
@@ -388,7 +482,7 @@ describe("SettingsCenter", () => {
     // Clients are told the address AstrLink writes for them.
     expect(container.textContent).toContain("http://localhost:8317");
     expect(container.textContent).toContain("请同步修改客户端 API 地址");
-    expect(container.textContent).not.toContain("入口修改尚未生效");
+    expect(container.textContent).not.toContain("已保存的设置要重启网关后生效");
     expect(bridge.updatePreferences).not.toHaveBeenCalled();
   });
 
@@ -606,6 +700,7 @@ describe("SettingsCenter", () => {
     expect(bridge.restartCore).not.toHaveBeenCalled();
     expect(notifyMocks.success).toHaveBeenCalledWith(
       "已保存，重启网关后生效。",
+      expect.objectContaining({ label: "立即重启" }),
     );
 
     bridge.updatePreferences.mockRejectedValueOnce(new Error("write failed"));

@@ -172,6 +172,7 @@ const readySnapshot: AppSnapshot = {
   last_error: null,
   inference_port_fallback: null,
   inference_listen_active: null,
+  restart_pending: false,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
 };

@@ -779,7 +779,7 @@ export function Overview({
                 <StatusBadge tone={statusTone}>
                   {isReady ? t("overview.gatewayHealthy") : statusLabel}
                 </StatusBadge>
-                {isNativeApp && !isReady ? (
+                {isNativeApp && (!isReady || snapshot?.restart_pending) ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -789,7 +789,9 @@ export function Overview({
                   >
                     {isRestarting
                       ? t("overview.restarting")
-                      : t("overview.restartGateway")}
+                      : isReady
+                        ? t("overview.restartToApply")
+                        : t("overview.restartGateway")}
                   </Button>
                 ) : null}
               </>

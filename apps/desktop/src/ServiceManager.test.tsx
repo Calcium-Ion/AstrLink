@@ -4528,7 +4528,9 @@ describe("ServiceManager", () => {
     );
     expect(saved).toHaveBeenCalledWith(disabledService);
     expect(changed).not.toHaveBeenCalled();
-    expect(notifyMocks.success).toHaveBeenCalledWith("API 提供商已停用。");
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "API 提供商已停用，新请求立即生效。",
+    );
   });
 
   it("reenables a stopped service from the list", async () => {
@@ -4575,7 +4577,9 @@ describe("ServiceManager", () => {
       etag,
       { enabled: true },
     );
-    expect(notifyMocks.success).toHaveBeenCalledWith("API 提供商已启用。");
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "API 提供商已启用，新请求立即生效。",
+    );
   });
 
   it("uses an in-app confirmation before deleting a service", async () => {

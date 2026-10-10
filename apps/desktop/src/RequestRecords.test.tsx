@@ -3147,7 +3147,9 @@ describe("RequestRecords", () => {
       audit_risk_acknowledged: true,
     });
     expect(window.confirm).not.toHaveBeenCalled();
-    expect(notifyMocks.success).toHaveBeenCalledWith("已开启请求和响应捕获。");
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "已开启请求和响应捕获，对新请求生效。",
+    );
     expect(
       document
         .querySelector('[role="switch"][aria-label="请求和响应捕获"]')
@@ -3222,7 +3224,9 @@ describe("RequestRecords", () => {
       response_content_enabled: true,
       audit_risk_acknowledged: true,
     });
-    expect(notifyMocks.success).toHaveBeenCalledWith("已开启请求和响应捕获。");
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "已开启请求和响应捕获，对新请求生效。",
+    );
     expect(notifyMocks.success).not.toHaveBeenCalledWith("已设置口令");
     expect(proofDialog()).toBeNull();
     expect(captureSwitch().getAttribute("aria-checked")).toBe("true");
@@ -3808,7 +3812,9 @@ describe("RequestRecords", () => {
       response_content_enabled: false,
     });
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(notifyMocks.success).toHaveBeenCalledWith("已关闭请求和响应捕获。");
+    expect(notifyMocks.success).toHaveBeenCalledWith(
+      "已关闭请求和响应捕获，对新请求生效。",
+    );
   });
 
   it("purges records through two in-app dialogs", async () => {

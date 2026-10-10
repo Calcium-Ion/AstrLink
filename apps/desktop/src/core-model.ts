@@ -101,6 +101,8 @@ export interface CoreSnapshot {
   inference_port_fallback: InferencePortFallback | null;
   /** Interfaces the running Core answers; `null` while stopped. Changes only on restart. */
   inference_listen_active: InferenceListen | null;
+  /** Saved launch settings (port, listen address, proxy, limits) wait for a gateway restart. */
+  restart_pending: boolean;
   recovery_attempt: number;
   recovery_scheduled_in_ms: number | null;
 }
@@ -599,6 +601,7 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
       "last_error",
       "inference_port_fallback",
       "inference_listen_active",
+      "restart_pending",
       "health",
       "version",
       "capabilities",
@@ -630,6 +633,7 @@ export function parseAppSnapshot(value: unknown): AppSnapshot {
       "$.inference_listen_active",
       parseInferenceListen,
     ),
+    restart_pending: booleanAt(snapshot.restart_pending, "$.restart_pending"),
     health: nullable(snapshot.health, "$.health", parseHealth),
     version: nullable(snapshot.version, "$.version", parseVersion),
     capabilities: nullable(
@@ -698,6 +702,7 @@ export const browserSnapshot = (): AppSnapshot => ({
   last_error: "The native bridge is unavailable. Open this UI with Tauri.",
   inference_port_fallback: null,
   inference_listen_active: null,
+  restart_pending: false,
   recovery_attempt: 0,
   recovery_scheduled_in_ms: null,
 });
@@ -717,6 +722,7 @@ export function failedSnapshot(
     last_error: message,
     inference_port_fallback: null,
     inference_listen_active: null,
+    restart_pending: false,
     recovery_attempt: current?.recovery_attempt ?? 0,
     recovery_scheduled_in_ms: null,
   };
