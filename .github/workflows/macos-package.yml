@@ -147,16 +147,6 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: bun scripts/release-updates.mjs preflight
-      - name: Check frontend and Core in parallel
-        run: |
-          (bun run branding:sync && bun run typecheck && bun run test) &
-          frontend_pid=$!
-          (cd ../../core && go test ./...) &
-          core_pid=$!
-          check_status=0
-          wait "$frontend_pid" || check_status=1
-          wait "$core_pid" || check_status=1
-          exit "$check_status"
       - name: Reject production model artifacts
         run: bun ../../scripts/check-no-production-models.mjs
       - name: Stage Core and worker sidecars

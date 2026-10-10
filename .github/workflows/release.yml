@@ -15,6 +15,11 @@ jobs:
   validate:
     if: github.repository == 'Calcium-Ion/AstrLink'
     runs-on: ubuntu-24.04
+    # Waiting for the tagged commit's CI run can take about twenty minutes.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -32,6 +37,14 @@ jobs:
         run: |
           bun apps/desktop/scripts/release-updates.mjs version "$RELEASE_TAG"
           bun apps/desktop/scripts/release-updates.mjs preflight
+      # Tests run once, in CI, when the commit is pushed to a branch. A release
+      # only repeats the build, signing, and installer smoke checks.
+      - name: Require a passing CI run for the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: scripts/require-ci-success.sh
 
   macos:
     needs: validate

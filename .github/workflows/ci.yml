@@ -1,8 +1,8 @@
 name: CI
 
 on:
-  # Tag pushes run the Release workflow, which tests and packages every
-  # platform itself; repeating that here doubles the macOS runner load.
+  # Tag pushes do not run CI. The Release workflow instead requires a passing
+  # CI run for the tagged commit before it packages anything.
   push:
     branches: ["**"]
   pull_request:
