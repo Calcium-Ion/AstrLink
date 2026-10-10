@@ -408,6 +408,11 @@ func (handler *Handler) TestBuiltinTool(ctx context.Context, kind string, config
 	classified := Request{Protocol: contract.ProtocolOpenAIResponses, Model: config.Model, InputPreview: "Builtin tool test · " + kind}
 	session := handler.startRecordSession(request, classified)
 	session.addEvent(contract.RequestEventAccepted, contract.RequestStatusPending, "builtin tool test · "+kind)
+	if config.Backend == "service_images" {
+		// The provider's Images API is called directly, never through
+		// routing, so the record names the tested provider here.
+		session.noteAttemptedService(config.ServiceID)
+	}
 	session.persistPending(ctx, handler.requestRecords, handler.recordLogger)
 	defer func() {
 		session.finish(context.Background(), handler.requestRecords, handler.auditBlobs, handler.recordLogger)

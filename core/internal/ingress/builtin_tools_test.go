@@ -79,6 +79,9 @@ func TestBuiltinToolTestOwnsOneFinishedRecord(t *testing.T) {
 				if records[0].CompletedAt == nil || records[0].Status == contract.RequestStatusPending {
 					t.Fatal("test record left pending", records[0])
 				}
+				if records[0].ServiceID == nil || *records[0].ServiceID != candidate.Service.ID {
+					t.Fatalf("test record provider = %v, want %s", records[0].ServiceID, candidate.Service.ID)
+				}
 				want := contract.RequestStatusSucceeded
 				if outcome == "missing-tool" || outcome == "rate-limited" {
 					want = contract.RequestStatusFailed
@@ -293,6 +296,11 @@ func TestBuiltinServiceImagesCallsOnlyTheSelectedProvider(t *testing.T) {
 			result, err := handler.TestBuiltinTool(context.Background(), "image_generation", contract.BuiltinTool{
 				Enabled: true, Backend: "service_images", ServiceID: test.service, Model: "gpt-image-1",
 			})
+			records := store.snapshot()
+			// The record names the tested provider whether or not it answered.
+			if len(records) != 1 || records[0].ServiceID == nil || *records[0].ServiceID != test.service {
+				t.Fatalf("records = %+v, want one naming %s", records, test.service)
+			}
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) || calls.Load() != 0 {
 					t.Fatalf("err=%v upstream calls=%d", err, calls.Load())
@@ -302,7 +310,6 @@ func TestBuiltinServiceImagesCallsOnlyTheSelectedProvider(t *testing.T) {
 			if err != nil || result["result_count"] != 1 || calls.Load() != 1 {
 				t.Fatalf("result=%v err=%v upstream calls=%d", result, err, calls.Load())
 			}
-			records := store.snapshot()
 			if len(records) != 1 || records[0].Status != contract.RequestStatusSucceeded {
 				t.Fatalf("records = %+v", records)
 			}
