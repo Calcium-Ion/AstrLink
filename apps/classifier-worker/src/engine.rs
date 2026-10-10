@@ -17,6 +17,7 @@ use crate::{
         TAIL_TOKENS,
     },
     normalize::{NormalizeError, normalize_current_user_text},
+    priority,
 };
 
 const INTRA_OP_THREADS: usize = 2;
@@ -107,13 +108,7 @@ impl ClassifierEngine {
         let tokenizer =
             load_tokenizer(&manifest.resolve(model_directory, &manifest.tokenizer_path))?;
         initialize_onnx_runtime()?;
-        let session = Session::builder()?
-            .with_log_level(LogLevel::Error)?
-            .with_intra_threads(INTRA_OP_THREADS)?
-            .with_inter_threads(INTER_OP_THREADS)?
-            .with_parallel_execution(false)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .commit_from_file(manifest.resolve(model_directory, &manifest.model_path))?;
+        let session = commit_session(&manifest.resolve(model_directory, &manifest.model_path))?;
         validate_session(&session, &manifest)?;
         let labels = manifest.labels()?;
         Ok(Self {
@@ -136,13 +131,7 @@ impl ClassifierEngine {
         }
         let tokenizer = load_tokenizer(&bundle.join("tokenizer.json"))?;
         initialize_onnx_runtime()?;
-        let session = Session::builder()?
-            .with_log_level(LogLevel::Error)?
-            .with_intra_threads(INTRA_OP_THREADS)?
-            .with_inter_threads(INTER_OP_THREADS)?
-            .with_parallel_execution(false)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .commit_from_file(bundle.join("model.onnx"))?;
+        let session = commit_session(&bundle.join("model.onnx"))?;
         Ok(Self {
             tokenizer,
             session,
@@ -265,6 +254,19 @@ pub fn pad_to_multiple(ids: &[i64], pad_id: i64, multiple: usize) -> (Vec<i64>, 
     padded.resize(padded_len, pad_id);
     mask.resize(padded_len, 0);
     (padded, mask)
+}
+
+fn commit_session(model_path: &Path) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
+    // Without spinning, idle pool threads sleep between operators instead of
+    // busy-waiting on cores the rest of the machine could use.
+    let builder = Session::builder()?
+        .with_log_level(LogLevel::Error)?
+        .with_intra_threads(INTRA_OP_THREADS)?
+        .with_intra_op_spinning(false)?
+        .with_inter_threads(INTER_OP_THREADS)?
+        .with_parallel_execution(false)?
+        .with_optimization_level(GraphOptimizationLevel::Level3)?;
+    Ok(priority::lower_pool_threads(builder)?.commit_from_file(model_path)?)
 }
 
 fn load_tokenizer(path: &Path) -> Result<Tokenizer, Box<dyn std::error::Error + Send + Sync>> {

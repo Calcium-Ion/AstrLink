@@ -7,10 +7,12 @@ use std::{
 
 use astrlink_classifier_worker::{
     engine::ClassifierEngine,
+    priority,
     protocol::{ClassifyResponse, PROTOCOL_VERSION, read_request, write_ready, write_response},
 };
 
 fn main() -> ExitCode {
+    priority::lower_process();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(()) => {

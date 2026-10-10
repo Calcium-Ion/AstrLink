@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -96,6 +97,7 @@ type Client struct {
 	batchBytes     int
 	pieceBytes     int
 	pieceOverlap   int
+	intraThreads   int
 
 	mu                    sync.Mutex
 	active                bool
@@ -152,6 +154,7 @@ func New(config Config) (*Client, error) {
 		batchBytes:     defaultBatchBytes,
 		pieceBytes:     defaultPieceBytes,
 		pieceOverlap:   defaultPieceOverlap,
+		intraThreads:   hostIntraThreads(),
 		change:         make(chan struct{}),
 	}, nil
 }
@@ -640,6 +643,8 @@ func (client *Client) ensureProcess(
 		client.executablePath,
 		"--model-dir",
 		installation.Directory,
+		"--intra-threads",
+		strconv.Itoa(client.intraThreads),
 	)
 	command.Stderr = io.Discard
 	stdin, err := command.StdinPipe()

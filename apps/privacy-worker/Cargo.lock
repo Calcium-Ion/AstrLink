@@ -29,11 +29,13 @@ dependencies = [
 name = "astrlink-privacy-worker"
 version = "0.1.0-dev.1"
 dependencies = [
+ "libc",
  "ort",
  "regex",
  "serde",
  "serde_json",
  "tokenizers",
+ "windows-sys",
 ]
 
 [[package]]

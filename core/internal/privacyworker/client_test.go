@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -198,6 +200,33 @@ func TestClientFailsClosedWhenPolicySwitchesWhileInstallationLookupIsBlocked(t *
 	client.mu.Unlock()
 	if commandCalled || process != nil {
 		t.Fatalf("stale lookup started a worker: command=%t process=%#v", commandCalled, process)
+	}
+}
+
+func TestClientPassesHostThreadCountToWorker(t *testing.T) {
+	client := newTestClient(t, "success", 5*time.Second)
+	installation, ready := client.model.ReadyInstallation(testInstallationID)
+	if !ready {
+		t.Fatal("test installation is not ready")
+	}
+	originalCommand := client.command
+	var workerArguments []string
+	client.command = func(name string, arguments ...string) *exec.Cmd {
+		workerArguments = slices.Clone(arguments)
+		return originalCommand(name, arguments...)
+	}
+	if _, err := client.Detect(
+		context.Background(),
+		testDetectInput(testInstallationID),
+	); err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	want := []string{
+		"--model-dir", installation.Directory,
+		"--intra-threads", strconv.Itoa(hostIntraThreads()),
+	}
+	if !slices.Equal(workerArguments, want) {
+		t.Fatalf("worker arguments = %q, want %q", workerArguments, want)
 	}
 }
 

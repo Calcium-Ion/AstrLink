@@ -13,12 +13,12 @@ use tokenizers::{Encoding, Tokenizer};
 use crate::{
     decoder::{Decoder, offset_contract},
     manifest::{Adapter, ModelManifest},
+    priority,
     protocol::{DetectedSpan, TextInput},
     sensitive::SensitiveGuard,
     span_contract,
 };
 
-const INTRA_OP_THREADS: usize = 2;
 const INTER_OP_THREADS: usize = 1;
 // CI sets this explicitly so even the production-shaped worker binary refuses
 // catalog identities and assets larger than the bounded synthetic fixture.
@@ -44,7 +44,10 @@ pub struct PrivacyEngine {
 }
 
 impl PrivacyEngine {
-    pub fn load(model_directory: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn load(
+        model_directory: &Path,
+        intra_threads: usize,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let manifest = ModelManifest::load(model_directory)?;
         if synthetic_models_only()? {
             manifest.validate_synthetic_fixture(model_directory)?;
@@ -138,12 +141,16 @@ impl PrivacyEngine {
             .ok_or_else(|| io::Error::other("invalid_model_window"))?;
 
         initialize_onnx_runtime()?;
-        let session = Session::builder()?
+        // Without spinning, idle pool threads sleep between operators instead
+        // of holding their cores while the main thread tokenizes and decodes.
+        let builder = Session::builder()?
             .with_log_level(LogLevel::Error)?
-            .with_intra_threads(INTRA_OP_THREADS)?
+            .with_intra_threads(intra_threads)?
+            .with_intra_op_spinning(false)?
             .with_inter_threads(INTER_OP_THREADS)?
             .with_parallel_execution(false)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
+            .with_optimization_level(GraphOptimizationLevel::Level3)?;
+        let session = priority::lower_pool_threads(builder)?
             .commit_from_file(manifest.resolve(model_directory, &manifest.model_path))?;
         validate_session(&session, &manifest)?;
 
@@ -639,6 +646,7 @@ mod tests {
     const TEST_WINDOW_TOKENS: usize = 4096;
     const TEST_OVERLAP_TOKENS: usize = 128;
     const TEST_MAX_REQUEST_TOKENS: usize = 128 * 1024;
+    const TEST_INTRA_THREADS: usize = 2;
 
     const MICRO_ONNX_MODEL: &[u8] = &[
         8, 9, 18, 21, 97, 115, 116, 114, 108, 105, 110, 107, 45, 116, 101, 115, 116, 45, 102, 105,
@@ -1003,7 +1011,7 @@ mod tests {
     fn micro_onnx_fixture_runs_end_to_end_with_utf8_offsets() {
         let directory = micro_model_directory();
         let result = (|| {
-            let mut engine = PrivacyEngine::load(&directory)?;
+            let mut engine = PrivacyEngine::load(&directory, TEST_INTRA_THREADS)?;
             engine.detect(&[TextInput {
                 id: 17,
                 text: "你好 secret".into(),
@@ -1048,7 +1056,7 @@ mod tests {
         .expect("write OpenAI manifest");
 
         let result = (|| {
-            let mut engine = PrivacyEngine::load(&directory)?;
+            let mut engine = PrivacyEngine::load(&directory, TEST_INTRA_THREADS)?;
             engine.detect(&[TextInput {
                 id: 19,
                 text: "你好 secret 你好 secret".into(),
@@ -1088,7 +1096,7 @@ mod tests {
         .expect("write generic manifest");
 
         let result = (|| {
-            let mut engine = PrivacyEngine::load(&directory)?;
+            let mut engine = PrivacyEngine::load(&directory, TEST_INTRA_THREADS)?;
             engine.detect(&[TextInput {
                 id: 23,
                 text: "你好 secret 你好 secret".into(),
@@ -1117,7 +1125,7 @@ mod tests {
                 }
             });
             let result = (|| {
-                PrivacyEngine::load(&directory)?.detect(&[TextInput {
+                PrivacyEngine::load(&directory, TEST_INTRA_THREADS)?.detect(&[TextInput {
                     id: 29,
                     text: text.into(),
                 }])
@@ -1291,7 +1299,7 @@ mod tests {
 
     /// Loads a fixture that must fail and removes it.
     fn load_error(directory: &Path) -> String {
-        let error = PrivacyEngine::load(directory)
+        let error = PrivacyEngine::load(directory, TEST_INTRA_THREADS)
             .err()
             .map(|error| error.to_string());
         let _ = fs::remove_dir_all(directory);

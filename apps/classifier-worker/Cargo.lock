@@ -29,12 +29,14 @@ dependencies = [
 name = "astrlink-classifier-worker"
 version = "0.1.0-dev.1"
 dependencies = [
+ "libc",
  "ort",
  "serde",
  "serde_json",
  "sha2",
  "tokenizers",
  "unicode-normalization",
+ "windows-sys",
 ]
 
 [[package]]
