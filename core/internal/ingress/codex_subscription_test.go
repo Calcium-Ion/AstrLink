@@ -42,7 +42,7 @@ func TestPrepareCodexSubscriptionRequestNormalizesStructureOnly(t *testing.T) {
 		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
 		"max_output_tokens":10,"max_completion_tokens":10,"temperature":0.2,"top_p":0.9,
 		"frequency_penalty":0,"presence_penalty":0,"truncation":"auto","prompt_cache_retention":"24h",
-		"safety_identifier":"s","user":"u","metadata":{"a":"b"},"stream_options":{"include_usage":true}}`
+		"prompt_cache_options":{"mode":"explicit"},"safety_identifier":"s","user":"u","metadata":{"a":"b"},"stream_options":{"include_usage":true}}`
 	fields, _, forced := prepareCodexBody(t, contract.ProtocolOpenAIResponses, input)
 	if !forced {
 		t.Fatal("stream:false was not forced upstream")

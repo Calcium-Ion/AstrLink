@@ -20,7 +20,7 @@ import (
 var codexSubscriptionUnsupportedFields = []string{
 	"max_output_tokens", "max_completion_tokens", "temperature", "top_p",
 	"frequency_penalty", "presence_penalty", "truncation", "prompt_cache_retention",
-	"safety_identifier", "user", "metadata", "stream_options",
+	"prompt_cache_options", "safety_identifier", "user", "metadata", "stream_options",
 }
 
 const codexEncryptedReasoningInclude = "reasoning.encrypted_content"
