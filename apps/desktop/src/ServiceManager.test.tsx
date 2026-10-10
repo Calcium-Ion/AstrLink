@@ -3382,7 +3382,31 @@ describe("ServiceManager", () => {
     );
     expect(applySelectedButton().textContent).toBe("应用所选模型（1）");
 
+    // The checklist is the filtered result, so search opens no suggestion list.
+    const search = document.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索上游模型"]',
+    );
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    if (!search || !setter) throw new Error("Missing upstream model search");
+    await act(async () => {
+      setter.call(search, "4.1");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(previewModelIds()).toEqual(["gpt-4.1"]);
+    expect(search.getAttribute("role")).toBeNull();
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
     await togglePreviewModel("gpt-4.1");
+    const clear = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="清除搜索"]',
+    );
+    if (!clear) throw new Error("Missing clear search");
+    await act(async () => clear.click());
+    expect(search.value).toBe("");
+    expect(previewModelIds()).toEqual(["gpt-4.1", "gpt-5"]);
+
     const apply = applySelectedButton();
     expect(apply.textContent).toBe("应用所选模型（2）");
     await act(async () => apply.click());

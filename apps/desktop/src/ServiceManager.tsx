@@ -82,6 +82,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ModelSelect } from "@/components/ModelSelect";
+import { SearchInput } from "@/components/SearchInput";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -871,13 +872,13 @@ function ModelPreviewDialog({
         ) : null}
         {preview.models.length > 0 ? (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <ModelSelect
-              options={source}
-              className="min-w-0 flex-[1_1_160px]"
-              aria-label={t("services.searchUpstream")}
+            <SearchInput
+              className="flex-[1_1_160px]"
+              clearLabel={t("common.clearSearch")}
+              label={t("services.searchUpstream")}
+              onValueChange={onQueryChange}
               placeholder={t("services.searchModels")}
               value={query}
-              onValueChange={onQueryChange}
             />
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <Button
