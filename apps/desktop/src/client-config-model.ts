@@ -45,10 +45,21 @@ export type ClientConfigState =
 
 export interface ClientConfigStatus {
   client: DirectClient;
+  /** The WSL distribution the client runs in; `null` for this computer. */
+  wsl: string | null;
   detected: boolean;
   paths: string[];
   state: ClientConfigState;
   token_id: string | null;
+}
+
+export interface ClientConfigOverview {
+  /** This computer's clients, then each running WSL distribution's. */
+  clients: ClientConfigStatus[];
+  /** WSL distributions whose clients went unchecked, usually stopped ones. */
+  wsl_unchecked: string[];
+  /** Whether WSL clients reach the gateway at localhost (mirrored networking). */
+  wsl_localhost: boolean;
 }
 
 export type ClientConfigApplyOutcome =
@@ -130,7 +141,11 @@ function arrayAt(value: unknown, path: string): unknown[] {
 
 function parseStatus(value: unknown, path: string): ClientConfigStatus {
   const status = objectAt(value, path);
-  exactKeys(status, ["client", "detected", "paths", "state", "token_id"], path);
+  exactKeys(
+    status,
+    ["client", "wsl", "detected", "paths", "state", "token_id"],
+    path,
+  );
   if (
     typeof status.client !== "string" ||
     !(directClients as readonly string[]).includes(status.client)
@@ -163,6 +178,7 @@ function parseStatus(value: unknown, path: string): ClientConfigStatus {
   }
   return {
     client: status.client as DirectClient,
+    wsl: status.wsl === null ? null : lineAt(status.wsl, `${path}.wsl`, 255),
     detected: status.detected as boolean,
     paths,
     state,
@@ -170,20 +186,47 @@ function parseStatus(value: unknown, path: string): ClientConfigStatus {
   };
 }
 
-/** Parses `client_config_status`: one entry per direct client, in order. */
-export function parseClientConfigStatuses(
+/**
+ * Parses `client_config_status`: one entry per direct client, in order, for
+ * this computer and then for each WSL distribution.
+ */
+export function parseClientConfigOverview(
   value: unknown,
-): ClientConfigStatus[] {
-  const statuses = arrayAt(value, "$").map((item, index) =>
-    parseStatus(item, `$[${index}]`),
+): ClientConfigOverview {
+  const root = objectAt(value, "$");
+  exactKeys(root, ["clients", "wsl_unchecked", "wsl_localhost"], "$");
+  const clients = arrayAt(root.clients, "$.clients").map((item, index) =>
+    parseStatus(item, `$.clients[${index}]`),
   );
+  const homes: (string | null)[] = [];
+  clients.forEach((status, index) => {
+    const position = index % directClients.length;
+    if (position === 0) homes.push(status.wsl);
+    if (
+      status.client !== directClients[position] ||
+      status.wsl !== homes[homes.length - 1]
+    ) {
+      invalid(`$.clients[${index}]`, "expected claude, codex, and pi per home");
+    }
+  });
   if (
-    statuses.length !== directClients.length ||
-    statuses.some((status, index) => status.client !== directClients[index])
+    clients.length % directClients.length !== 0 ||
+    homes[0] !== null ||
+    homes.slice(1).some((home) => home === null) ||
+    new Set(homes).size !== homes.length
   ) {
-    invalid("$", "expected claude, codex, and pi");
+    invalid("$.clients", "expected this computer first, then each WSL home");
   }
-  return statuses;
+  if (typeof root.wsl_localhost !== "boolean") {
+    invalid("$.wsl_localhost", "expected a boolean");
+  }
+  return {
+    clients,
+    wsl_unchecked: arrayAt(root.wsl_unchecked, "$.wsl_unchecked").map(
+      (item, index) => lineAt(item, `$.wsl_unchecked[${index}]`, 255),
+    ),
+    wsl_localhost: root.wsl_localhost,
+  };
 }
 
 /** Parses `apply_client_config`. Conflicts are key names, never values. */

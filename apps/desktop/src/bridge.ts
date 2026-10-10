@@ -154,12 +154,12 @@ import {
   parseClientConfigApplyOutcome,
   parseClientConfigCopied,
   parseClientConfigSnippet,
-  parseClientConfigStatuses,
+  parseClientConfigOverview,
   parseClientProxyCheck,
   type ClientConfigApplyOutcome,
   type ClientConfigClient,
   type ClientConfigModels,
-  type ClientConfigStatus,
+  type ClientConfigOverview,
   type ClientProxyCheck,
   type DirectClient,
 } from "./client-config-model";
@@ -169,7 +169,7 @@ import {
   type AgentInstallReceipt,
   type AgentInstallStatus,
   type AgentSkillId,
-  type AgentToolId,
+  type AgentToolTarget,
 } from "./agent-install-model";
 
 function hasNativeBridge(): boolean {
@@ -862,14 +862,15 @@ export interface ClientConfigTarget {
 }
 
 /**
- * What AstrLink wrote to Claude Code, Codex, and Pi. Outside the desktop there
- * are no local clients to configure.
+ * What AstrLink wrote to Claude Code, Codex, and Pi, on this computer and in
+ * running WSL distributions. Outside the desktop there are no local clients.
  */
 export async function getClientConfigStatus(
   inferenceUrl: string | null,
-): Promise<ClientConfigStatus[]> {
-  if (!hasNativeBridge()) return [];
-  return parseClientConfigStatuses(
+): Promise<ClientConfigOverview> {
+  if (!hasNativeBridge())
+    return { clients: [], wsl_unchecked: [], wsl_localhost: false };
+  return parseClientConfigOverview(
     await invoke<unknown>("client_config_status", { inferenceUrl }),
   );
 }
@@ -887,9 +888,12 @@ export async function checkClientProxy(
   );
 }
 
-/** Writes the connection, or names the keys that need `replace` first. */
+/**
+ * Writes the connection, or names the keys that need `replace` first. `wsl`
+ * names the WSL distribution to write in; `null` is this computer.
+ */
 export async function applyClientConfig(
-  input: ClientConfigTarget & { replace: boolean },
+  input: ClientConfigTarget & { replace: boolean; wsl: string | null },
 ): Promise<ClientConfigApplyOutcome> {
   requireNativeBridge();
   return parseClientConfigApplyOutcome(
@@ -897,9 +901,12 @@ export async function applyClientConfig(
   );
 }
 
-export async function removeClientConfig(client: DirectClient): Promise<void> {
+export async function removeClientConfig(
+  client: DirectClient,
+  wsl: string | null,
+): Promise<void> {
   requireNativeBridge();
-  await invoke("remove_client_config", { client });
+  await invoke("remove_client_config", { client, wsl });
 }
 
 /** The config for a fresh setup, with the token shown as its hint. */
@@ -1133,11 +1140,11 @@ export async function getAgentDebugStatus(): Promise<AgentInstallStatus> {
 
 export async function installAgentDebug(
   skillIds: AgentSkillId[],
-  toolIds: AgentToolId[],
+  tools: AgentToolTarget[],
 ): Promise<AgentInstallReceipt> {
   requireNativeBridge();
   return parseAgentInstallReceipt(
-    await invoke<unknown>("install_agent_debug", { skillIds, toolIds }),
+    await invoke<unknown>("install_agent_debug", { skillIds, tools }),
   );
 }
 

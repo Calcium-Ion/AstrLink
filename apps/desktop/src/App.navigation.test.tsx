@@ -34,7 +34,11 @@ const bridgeMocks = vi.hoisted(() => ({
   updateServiceOrder: vi.fn(),
   installAgentDebug: vi.fn(),
   isCCSwitchInstalled: vi.fn().mockResolvedValue(false),
-  getClientConfigStatus: vi.fn().mockResolvedValue([]),
+  getClientConfigStatus: vi.fn().mockResolvedValue({
+    clients: [],
+    wsl_unchecked: [],
+    wsl_localhost: false,
+  }),
   previewClientConfigSnippet: vi.fn().mockResolvedValue("{}"),
   copyClientConfigSnippet: vi.fn(),
   uninstallAgentDebug: vi.fn(),
@@ -484,6 +488,7 @@ describe("App workspace navigation", () => {
       tools: [
         {
           id: "cursor",
+          wsl: null,
           detected: true,
           skills: agentSkills(false),
           cli_access: "prompt",
@@ -493,6 +498,7 @@ describe("App workspace navigation", () => {
         },
         {
           id: "claude",
+          wsl: null,
           detected: false,
           skills: agentSkills(false),
           cli_access: "allow_rules",
@@ -502,6 +508,7 @@ describe("App workspace navigation", () => {
         },
         {
           id: "codex",
+          wsl: null,
           detected: true,
           skills: agentSkills(true),
           cli_access: "exec_policy",
@@ -511,6 +518,7 @@ describe("App workspace navigation", () => {
         },
       ],
       shared_paths: [],
+      wsl_unchecked: [],
     });
     container = document.createElement("div");
     document.body.append(container);

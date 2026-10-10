@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 use toml_edit::{DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
 use crate::{
+    agent_home::{Home, OwnedHome},
     control_session::astrlink_home,
     host_files::{self, WriteOptions},
     sidecar::{CoreManager, CorePhase},
@@ -79,11 +80,11 @@ impl Client {
         }
     }
 
-    fn detected(self, home: &Path) -> bool {
+    fn detected(self, home: Home) -> bool {
         match self {
-            Self::Claude => home.join(".claude").is_dir() || home.join(".claude.json").is_file(),
-            Self::Codex => home.join(".codex").is_dir(),
-            Self::Pi => home.join(".pi").is_dir(),
+            Self::Claude => home.claude_detected(),
+            Self::Codex => home.codex_dir().is_dir(),
+            Self::Pi => home.pi_detected(),
             Self::Gemini | Self::Opencode | Self::Openclaw => false,
         }
     }
@@ -97,7 +98,7 @@ impl Client {
         }
     }
 
-    fn config_paths(self, home: &Path) -> Vec<PathBuf> {
+    fn config_paths(self, home: Home) -> Vec<PathBuf> {
         self.files().iter().map(|file| file.path(home)).collect()
     }
 
@@ -160,11 +161,11 @@ enum ConfigFile {
 }
 
 impl ConfigFile {
-    fn path(self, home: &Path) -> PathBuf {
-        let pi = home.join(".pi").join("agent");
+    fn path(self, home: Home) -> PathBuf {
+        let pi = home.pi_agent_dir();
         match self {
-            Self::Claude => home.join(".claude").join("settings.json"),
-            Self::Codex => home.join(".codex").join("config.toml"),
+            Self::Claude => home.claude_dir().join("settings.json"),
+            Self::Codex => home.codex_dir().join("config.toml"),
             Self::PiModels => pi.join("models.json"),
             Self::PiSettings => pi.join("settings.json"),
         }
@@ -315,10 +316,22 @@ pub enum ClientState {
 #[derive(Debug, Serialize)]
 pub struct ClientStatus {
     pub client: Client,
+    /// The WSL distribution the client runs in; `None` for the desktop user's.
+    pub wsl: Option<String>,
     pub detected: bool,
     pub paths: Vec<String>,
     pub state: ClientState,
     pub token_id: Option<String>,
+}
+
+/// Client configs across the desktop user's home and WSL homes.
+#[derive(Debug, Serialize)]
+pub struct ClientOverview {
+    pub clients: Vec<ClientStatus>,
+    /// WSL distributions whose clients were not checked.
+    pub wsl_unchecked: Vec<String>,
+    /// Whether WSL clients reach the gateway at `localhost`.
+    pub wsl_localhost: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -1392,10 +1405,10 @@ fn write_files(
     Ok(())
 }
 
-pub fn status(home: &Path, inference_url: Option<&str>) -> Result<Vec<ClientStatus>, String> {
+pub fn status(home: Home, inference_url: Option<&str>) -> Result<Vec<ClientStatus>, String> {
     let origin = inference_url.map(local_origin).transpose()?;
     let _lock = host_files::lock();
-    let records = read_records(home)?;
+    let records = read_records(&home)?;
     let mut statuses = Vec::new();
     for client in Client::WRITABLE {
         let paths = client.config_paths(home);
@@ -1404,6 +1417,7 @@ pub fn status(home: &Path, inference_url: Option<&str>) -> Result<Vec<ClientStat
         let state = records.state(client, &texts(&existing), origin.as_deref());
         statuses.push(ClientStatus {
             client,
+            wsl: home.distribution().map(str::to_string),
             detected: client.detected(home),
             paths: paths
                 .iter()
@@ -1421,7 +1435,7 @@ pub fn status(home: &Path, inference_url: Option<&str>) -> Result<Vec<ClientStat
 
 pub async fn apply(
     manager: &CoreManager,
-    home: PathBuf,
+    target: OwnedHome,
     token_id: String,
     client: Client,
     models: &Models,
@@ -1431,13 +1445,13 @@ pub async fn apply(
     let client = client.writable()?;
     let origin = local_origin(&inference_url)?;
     let models = models.fields(client)?;
-    if !client.detected(&home) {
+    if !client.detected(target.home()) {
         return Err("this client is not installed for the current user".into());
     }
     let token = reveal_access_token(manager, &token_id, &inference_url).await?;
     tauri::async_runtime::spawn_blocking(move || {
         write(
-            &home,
+            target.home(),
             client,
             &Connection {
                 token_id: &token_id,
@@ -1453,14 +1467,14 @@ pub async fn apply(
 }
 
 pub fn write(
-    home: &Path,
+    home: Home,
     client: Client,
     connection: &Connection,
     replace: bool,
 ) -> Result<ApplyOutcome, String> {
     let client = client.writable()?;
     let _lock = host_files::lock();
-    let mut records = read_records(home)?;
+    let mut records = read_records(&home)?;
     let paths = client.config_paths(home);
     let existing = read_files(&paths)?;
     let plan = plan_write(client, &texts(&existing), connection, records.get(client))
@@ -1474,24 +1488,24 @@ pub fn write(
     // Writing takes the client back from CC Switch.
     let handed_over = records.handed_over(client);
     records.set_handed_over(client, false);
-    write_records(home, &mut records)?;
+    write_records(&home, &mut records)?;
     if let Err(error) = write_files(&paths, &existing, &plan.contents) {
         *records.slot(client) = previous;
         records.set_handed_over(client, handed_over);
-        let _ = write_records(home, &mut records);
+        let _ = write_records(&home, &mut records);
         return Err(error);
     }
     Ok(ApplyOutcome::Applied)
 }
 
-pub fn remove(home: &Path, client: Client) -> Result<(), String> {
+pub fn remove(home: Home, client: Client) -> Result<(), String> {
     let client = client.writable()?;
     let _lock = host_files::lock();
-    let mut records = read_records(home)?;
+    let mut records = read_records(&home)?;
     let Some(record) = records.get(client).cloned() else {
         if records.handed_over(client) {
             records.set_handed_over(client, false);
-            write_records(home, &mut records)?;
+            write_records(&home, &mut records)?;
         }
         return Ok(());
     };
@@ -1528,30 +1542,30 @@ pub fn remove(home: &Path, client: Client) -> Result<(), String> {
     }
     *records.slot(client) = None;
     records.set_handed_over(client, false);
-    write_records(home, &mut records)
+    write_records(&home, &mut records)
 }
 
 /// Records whether the user moved a client AstrLink writes to CC Switch, and
 /// returns whether the record changed. Other clients have no record.
-pub fn set_cc_switch(home: &Path, client: Client, handed_over: bool) -> Result<bool, String> {
+pub fn set_cc_switch(home: Home, client: Client, handed_over: bool) -> Result<bool, String> {
     if !Client::WRITABLE.contains(&client) {
         return Ok(false);
     }
     let _lock = host_files::lock();
-    let mut records = read_records(home)?;
+    let mut records = read_records(&home)?;
     if records.handed_over(client) == handed_over {
         return Ok(false);
     }
     records.set_handed_over(client, handed_over);
-    write_records(home, &mut records)?;
+    write_records(&home, &mut records)?;
     Ok(true)
 }
 
 /// Moves every untouched config to the gateway's current address.
-pub fn sync(home: &Path, inference_url: &str) -> Result<(), String> {
+pub fn sync(home: Home, inference_url: &str) -> Result<(), String> {
     let origin = local_origin(inference_url)?;
     let _lock = host_files::lock();
-    let mut records = read_records(home)?;
+    let mut records = read_records(&home)?;
     let mut errors = Vec::new();
     for client in Client::WRITABLE {
         let Some(record) = records.get(client).cloned() else {
@@ -1566,11 +1580,11 @@ pub fn sync(home: &Path, inference_url: &str) -> Result<(), String> {
                 return Ok(());
             };
             *records.slot(client) = Some(next);
-            write_records(home, &mut records)?;
+            write_records(&home, &mut records)?;
             let written = write_files(&paths, &existing, &contents);
             if written.is_err() {
                 *records.slot(client) = Some(record.clone());
-                let _ = write_records(home, &mut records);
+                let _ = write_records(&home, &mut records);
             }
             written
         })();
@@ -2105,18 +2119,90 @@ mod tests {
     fn only_claude_codex_and_pi_are_written_directly() {
         let home = unique_home("unsupported");
         for client in [Client::Gemini, Client::Opencode, Client::Openclaw] {
-            let error = write(&home, client, &connection(&codex_models()), true).unwrap_err();
+            let error = write(
+                Home::local(&home),
+                client,
+                &connection(&codex_models()),
+                true,
+            )
+            .unwrap_err();
             assert!(!error.contains(TOKEN));
-            assert!(remove(&home, client).is_err());
+            assert!(remove(Home::local(&home), client).is_err());
             assert!(snippet(client, &connection(&codex_models())).is_err());
         }
-        let clients = status(&home, Some("http://127.0.0.1:18317/"))
+        let clients = status(Home::local(&home), Some("http://127.0.0.1:18317/"))
             .unwrap()
             .into_iter()
             .map(|status| status.client)
             .collect::<Vec<_>>();
         assert_eq!(clients, [Client::Claude, Client::Codex, Client::Pi]);
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn moved_dirs_and_wsl_homes_hold_their_own_configs() {
+        use crate::{agent_home::ToolDirs, wsl::WslHome};
+
+        let host = unique_home("moved-host");
+        let claude = host.join("work").join("claude");
+        let pi = host.join("work").join("pi-agent");
+        fs::create_dir_all(&claude).unwrap();
+        fs::create_dir_all(&pi).unwrap();
+        let dirs = ToolDirs {
+            claude: Some(claude.clone()),
+            pi: Some(pi.clone()),
+            ..Default::default()
+        };
+        let local = crate::agent_home::homes(&host, &dirs, &[]).next().unwrap();
+        assert!(Client::Pi.detected(local));
+        write(local, Client::Claude, &connection(&[]), false).unwrap();
+        write(local, Client::Pi, &connection(&pi_models()), false).unwrap();
+        assert!(claude.join("settings.json").is_file());
+        assert!(pi.join("models.json").is_file() && pi.join("settings.json").is_file());
+        assert!(!host.join(".claude").join("settings.json").exists());
+        assert!(!host.join(".pi").exists());
+
+        let share = unique_home("moved-share");
+        let wsl = WslHome {
+            distribution: "Ubuntu".to_string(),
+            share: share.clone(),
+            mount_root: "/mnt".to_string(),
+            dirs: ToolDirs::default(),
+        };
+        let statuses = status(Home::in_wsl(&host, &wsl), Some("http://127.0.0.1:8317/")).unwrap();
+        assert!(statuses
+            .iter()
+            .all(|status| status.wsl.as_deref() == Some("Ubuntu")
+                && status.state == ClientState::NotConfigured));
+        let claude_status = statuses
+            .iter()
+            .find(|status| status.client == Client::Claude)
+            .unwrap();
+        assert!(claude_status.detected);
+        assert_eq!(
+            claude_status.paths,
+            [share
+                .join(".claude")
+                .join("settings.json")
+                .display()
+                .to_string()]
+        );
+        // Each home keeps its own records.
+        write(
+            Home::in_wsl(&host, &wsl),
+            Client::Claude,
+            &connection(&[]),
+            false,
+        )
+        .unwrap();
+        assert!(records_path(&share).is_file());
+        assert!(share.join(".claude").join("settings.json").is_file());
+        remove(Home::in_wsl(&host, &wsl), Client::Claude).unwrap();
+        assert!(!share.join(".claude").join("settings.json").exists());
+        assert!(read_records(&host).unwrap().claude.is_some());
+        assert!(claude.join("settings.json").is_file());
+        fs::remove_dir_all(host).unwrap();
+        fs::remove_dir_all(share).unwrap();
     }
 
     fn pi_models() -> Vec<(&'static str, String)> {
@@ -2278,7 +2364,13 @@ mod tests {
         let settings = agent.join("settings.json");
         fs::write(&settings, "{\n  \"theme\": \"dark\"\n}\n").unwrap();
         assert_eq!(
-            write(&home, Client::Pi, &connection(&pi_models()), false).unwrap(),
+            write(
+                Home::local(&home),
+                Client::Pi,
+                &connection(&pi_models()),
+                false
+            )
+            .unwrap(),
             ApplyOutcome::Applied
         );
         let models = agent.join("models.json");
@@ -2286,17 +2378,17 @@ mod tests {
         assert!(fs::read_to_string(&settings)
             .unwrap()
             .contains("\"defaultModel\": \"pi-route\""));
-        let statuses = status(&home, Some("http://127.0.0.1:9000/")).unwrap();
+        let statuses = status(Home::local(&home), Some("http://127.0.0.1:9000/")).unwrap();
         assert_eq!(statuses[2].state, ClientState::Outdated);
         assert_eq!(
             statuses[2].paths,
             [models.display().to_string(), settings.display().to_string()]
         );
-        sync(&home, "http://127.0.0.1:9000/").unwrap();
+        sync(Home::local(&home), "http://127.0.0.1:9000/").unwrap();
         assert!(fs::read_to_string(&models)
             .unwrap()
             .contains("http://127.0.0.1:9000/v1"));
-        remove(&home, Client::Pi).unwrap();
+        remove(Home::local(&home), Client::Pi).unwrap();
         assert!(!models.exists());
         assert_eq!(
             json(&fs::read_to_string(&settings).unwrap()),
@@ -2317,7 +2409,13 @@ mod tests {
             home.join(".pi/agent/settings.json"),
         )
         .unwrap();
-        assert!(write(&home, Client::Pi, &connection(&pi_models()), false).is_err());
+        assert!(write(
+            Home::local(&home),
+            Client::Pi,
+            &connection(&pi_models()),
+            false
+        )
+        .is_err());
         assert!(!home.join(".pi/agent/models.json").exists());
         assert!(!records_path(&home).exists());
         fs::remove_dir_all(home).unwrap();
@@ -2329,7 +2427,7 @@ mod tests {
         let settings = home.join(".claude/settings.json");
         let foreign = "{\n  \"env\": {\n    \"ANTHROPIC_API_KEY\": \"sk-secret\"\n  }\n}\n";
         fs::write(&settings, foreign).unwrap();
-        let outcome = write(&home, Client::Claude, &connection(&[]), false).unwrap();
+        let outcome = write(Home::local(&home), Client::Claude, &connection(&[]), false).unwrap();
         assert_eq!(
             outcome,
             ApplyOutcome::NeedsConfirmation {
@@ -2339,7 +2437,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&settings).unwrap(), foreign);
         assert!(!records_path(&home).exists());
 
-        let outcome = write(&home, Client::Claude, &connection(&[]), true).unwrap();
+        let outcome = write(Home::local(&home), Client::Claude, &connection(&[]), true).unwrap();
         assert_eq!(outcome, ApplyOutcome::Applied);
         let written = fs::read_to_string(&settings).unwrap();
         assert!(!written.contains("sk-secret"));
@@ -2354,12 +2452,12 @@ mod tests {
                 assert_eq!(mode, 0o600);
             }
         }
-        let statuses = status(&home, Some("http://127.0.0.1:18317/")).unwrap();
+        let statuses = status(Home::local(&home), Some("http://127.0.0.1:18317/")).unwrap();
         assert_eq!(statuses[0].state, ClientState::Configured);
         assert_eq!(statuses[0].token_id.as_deref(), Some("token_01"));
         assert_eq!(statuses[1].state, ClientState::NotConfigured);
 
-        remove(&home, Client::Claude).unwrap();
+        remove(Home::local(&home), Client::Claude).unwrap();
         assert_eq!(fs::read_to_string(&settings).unwrap(), "{}\n");
         assert!(!records_path(&home).exists());
         fs::remove_dir_all(home).unwrap();
@@ -2371,11 +2469,17 @@ mod tests {
         let auth = home.join(".codex/auth.json");
         let login = "{\"auth_mode\": \"chatgpt\", \"tokens\": {}}\n";
         fs::write(&auth, login).unwrap();
-        write(&home, Client::Codex, &connection(&codex_models()), false).unwrap();
-        sync(&home, "http://127.0.0.1:9000/").unwrap();
+        write(
+            Home::local(&home),
+            Client::Codex,
+            &connection(&codex_models()),
+            false,
+        )
+        .unwrap();
+        sync(Home::local(&home), "http://127.0.0.1:9000/").unwrap();
         let config = fs::read_to_string(home.join(".codex/config.toml")).unwrap();
         assert!(config.contains("base_url = \"http://127.0.0.1:9000/v1\""));
-        remove(&home, Client::Codex).unwrap();
+        remove(Home::local(&home), Client::Codex).unwrap();
         assert!(!home.join(".codex/config.toml").exists());
         assert_eq!(fs::read_to_string(&auth).unwrap(), login);
         let entries = fs::read_dir(home.join(".codex"))
@@ -2389,8 +2493,14 @@ mod tests {
     #[test]
     fn sync_leaves_modified_and_unreadable_configs_alone() {
         let home = unique_home("sync");
-        write(&home, Client::Claude, &connection(&[]), false).unwrap();
-        write(&home, Client::Codex, &connection(&codex_models()), false).unwrap();
+        write(Home::local(&home), Client::Claude, &connection(&[]), false).unwrap();
+        write(
+            Home::local(&home),
+            Client::Codex,
+            &connection(&codex_models()),
+            false,
+        )
+        .unwrap();
         let settings = home.join(".claude/settings.json");
         let edited = fs::read_to_string(&settings)
             .unwrap()
@@ -2398,16 +2508,16 @@ mod tests {
         fs::write(&settings, &edited).unwrap();
         let broken = "token = \"astr_x\n";
         fs::write(home.join(".codex/config.toml"), broken).unwrap();
-        sync(&home, "http://127.0.0.1:9000/").unwrap();
+        sync(Home::local(&home), "http://127.0.0.1:9000/").unwrap();
         assert_eq!(fs::read_to_string(&settings).unwrap(), edited);
         assert_eq!(
             fs::read_to_string(home.join(".codex/config.toml")).unwrap(),
             broken
         );
-        let statuses = status(&home, Some("http://127.0.0.1:9000/")).unwrap();
+        let statuses = status(Home::local(&home), Some("http://127.0.0.1:9000/")).unwrap();
         assert_eq!(statuses[0].state, ClientState::Modified);
         assert_eq!(statuses[1].state, ClientState::Invalid);
-        let error = remove(&home, Client::Codex).unwrap_err();
+        let error = remove(Home::local(&home), Client::Codex).unwrap_err();
         assert!(error.contains("config.toml") && error.contains("TOML"));
         assert!(!error.contains("astr_x"));
         fs::remove_dir_all(home).unwrap();
@@ -2417,7 +2527,13 @@ mod tests {
     fn a_client_moved_to_cc_switch_is_left_to_it_once_cc_switch_switches() {
         let home = unique_home("cc-switch");
         let config = home.join(".codex/config.toml");
-        write(&home, Client::Codex, &connection(&codex_models()), false).unwrap();
+        write(
+            Home::local(&home),
+            Client::Codex,
+            &connection(&codex_models()),
+            false,
+        )
+        .unwrap();
         let written = fs::read_to_string(&config).unwrap();
         // CC Switch's switch takes over the route and model keys and adds its
         // own provider table; AstrLink's table stays behind.
@@ -2431,7 +2547,7 @@ mod tests {
                 "\n[model_providers.custom]\nname = \"AstrLink · VS Code\"\nbase_url = \"{ORIGIN}/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"{TOKEN}\"\n"
             );
         let codex = |home: &Path| {
-            status(home, Some("http://127.0.0.1:18317/"))
+            status(Home::local(home), Some("http://127.0.0.1:18317/"))
                 .unwrap()
                 .remove(1)
         };
@@ -2440,24 +2556,36 @@ mod tests {
 
         // The move counts once CC Switch replaces AstrLink's connection.
         fs::write(&config, &written).unwrap();
-        assert!(set_cc_switch(&home, Client::Codex, true).unwrap());
-        assert!(!set_cc_switch(&home, Client::Codex, true).unwrap());
+        assert!(set_cc_switch(Home::local(&home), Client::Codex, true).unwrap());
+        assert!(!set_cc_switch(Home::local(&home), Client::Codex, true).unwrap());
         assert_eq!(codex(&home).state, ClientState::Configured);
         fs::write(&config, &switched).unwrap();
         let moved = codex(&home);
         assert_eq!(moved.state, ClientState::CcSwitch);
         assert_eq!(moved.token_id, None);
-        sync(&home, "http://127.0.0.1:9000/").unwrap();
+        sync(Home::local(&home), "http://127.0.0.1:9000/").unwrap();
         assert_eq!(fs::read_to_string(&config).unwrap(), switched);
 
         // Writing takes it back, asking only about the route CC Switch chose.
         assert_eq!(
-            write(&home, Client::Codex, &connection(&codex_models()), false).unwrap(),
+            write(
+                Home::local(&home),
+                Client::Codex,
+                &connection(&codex_models()),
+                false
+            )
+            .unwrap(),
             ApplyOutcome::NeedsConfirmation {
                 keys: vec!["model_provider".into()]
             }
         );
-        write(&home, Client::Codex, &connection(&codex_models()), true).unwrap();
+        write(
+            Home::local(&home),
+            Client::Codex,
+            &connection(&codex_models()),
+            true,
+        )
+        .unwrap();
         let rewritten = fs::read_to_string(&config).unwrap();
         assert!(rewritten.contains("model_provider = \"astrlink\""));
         assert!(rewritten.contains("model_reasoning_effort = \"high\""));
@@ -2474,20 +2602,29 @@ mod tests {
         let home = unique_home("cc-switch-remove");
         let settings = home.join(".claude/settings.json");
         let models = vec![("model", "main-route".to_string())];
-        write(&home, Client::Claude, &connection(&models), false).unwrap();
-        set_cc_switch(&home, Client::Claude, true).unwrap();
+        write(
+            Home::local(&home),
+            Client::Claude,
+            &connection(&models),
+            false,
+        )
+        .unwrap();
+        set_cc_switch(Home::local(&home), Client::Claude, true).unwrap();
         // A CC Switch provider with another token keeps the address and model
         // AstrLink wrote, which removal would otherwise take for its own.
         let switched = fs::read_to_string(&settings)
             .unwrap()
             .replace(TOKEN, OTHER_TOKEN);
         fs::write(&settings, &switched).unwrap();
-        assert_eq!(status(&home, None).unwrap()[0].state, ClientState::CcSwitch);
-        remove(&home, Client::Claude).unwrap();
+        assert_eq!(
+            status(Home::local(&home), None).unwrap()[0].state,
+            ClientState::CcSwitch
+        );
+        remove(Home::local(&home), Client::Claude).unwrap();
         assert_eq!(fs::read_to_string(&settings).unwrap(), switched);
         assert!(!records_path(&home).exists());
         assert_eq!(
-            status(&home, None).unwrap()[0].state,
+            status(Home::local(&home), None).unwrap()[0].state,
             ClientState::NotConfigured
         );
         fs::remove_dir_all(home).unwrap();
@@ -2496,14 +2633,14 @@ mod tests {
     #[test]
     fn moves_are_noted_only_for_clients_astrlink_writes() {
         let home = unique_home("cc-switch-only");
-        assert!(!set_cc_switch(&home, Client::Gemini, true).unwrap());
+        assert!(!set_cc_switch(Home::local(&home), Client::Gemini, true).unwrap());
         assert!(!records_path(&home).exists());
-        assert!(set_cc_switch(&home, Client::Codex, true).unwrap());
-        let statuses = status(&home, None).unwrap();
+        assert!(set_cc_switch(Home::local(&home), Client::Codex, true).unwrap());
+        let statuses = status(Home::local(&home), None).unwrap();
         assert_eq!(statuses[0].state, ClientState::NotConfigured);
         assert_eq!(statuses[1].state, ClientState::CcSwitch);
         assert_eq!(statuses[1].token_id, None);
-        remove(&home, Client::Codex).unwrap();
+        remove(Home::local(&home), Client::Codex).unwrap();
         assert!(!records_path(&home).exists());
         fs::remove_dir_all(home).unwrap();
     }
@@ -2521,7 +2658,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            status(&home, Some("http://127.0.0.1:18317/")).unwrap()[1].state,
+            status(Home::local(&home), Some("http://127.0.0.1:18317/")).unwrap()[1].state,
             ClientState::Configured
         );
         fs::remove_dir_all(home).unwrap();
@@ -2555,7 +2692,7 @@ mod tests {
         let target = home.join("dotfiles-settings.json");
         fs::write(&target, "{}\n").unwrap();
         std::os::unix::fs::symlink(&target, home.join(".claude/settings.json")).unwrap();
-        write(&home, Client::Claude, &connection(&[]), false).unwrap();
+        write(Home::local(&home), Client::Claude, &connection(&[]), false).unwrap();
         assert!(fs::symlink_metadata(home.join(".claude/settings.json"))
             .unwrap()
             .file_type()

@@ -36,6 +36,7 @@ import {
   type AgentSkillId,
   type AgentToolId,
   type AgentToolStatus,
+  type AgentToolTarget,
 } from "./agent-install-model";
 import { i18n, useT } from "./i18n";
 import { notify } from "./notify";
@@ -44,8 +45,25 @@ import { PageHeader } from "./PageHeader";
 const toolIds = ["cursor", "claude", "codex", "grok", "pi"] as const;
 
 // Codex and Pi both read ~/.agents/skills, so installing for one installs for
-// the other.
+// the other in the same home.
 const sharedSkillTools: readonly AgentToolId[] = ["codex", "pi"];
+
+/** Identifies a tool by where it runs: this computer or a WSL distribution. */
+type ToolKey = string;
+
+function toolKey(tool: AgentToolTarget): ToolKey {
+  return `${tool.wsl ?? ""}/${tool.id}`;
+}
+
+/** This computer's tools always show; a WSL distribution lists what it has. */
+function toolRows(status: AgentInstallStatus | null): AgentToolTarget[] {
+  return [
+    ...toolIds.map((id) => ({ id, wsl: null })),
+    ...(status?.tools
+      .filter((tool) => tool.wsl !== null)
+      .map(({ id, wsl }) => ({ id, wsl })) ?? []),
+  ];
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : i18n.t("agentDebug.failed");
@@ -163,7 +181,7 @@ export function AgentDebugSettings({
   // The cached snapshot may predate a tool install; preselection waits for a
   // fresh status.
   const [fresh, setFresh] = useState(false);
-  const [selectedTools, setSelectedTools] = useState<AgentToolId[]>([]);
+  const [selectedTools, setSelectedTools] = useState<ToolKey[]>([]);
 
   const refreshGeneration = useRef(0);
   const refresh = async (
@@ -211,7 +229,7 @@ export function AgentDebugSettings({
       if (operation === "install") {
         await installAgentDebug(
           SKILL_IDS.filter((id) => selectedSkills.includes(id)),
-          selectedTools,
+          rows.filter((row) => selectedTools.includes(toolKey(row))),
         );
       } else await uninstallAgentDebug();
       if (await refresh()) {
@@ -230,6 +248,9 @@ export function AgentDebugSettings({
     }
   };
 
+  const rows = toolRows(status);
+  const toolAt = (row: AgentToolTarget) =>
+    status?.tools.find((tool) => toolKey(tool) === toolKey(row));
   const detected = status?.tools.filter((tool) => tool.detected) ?? [];
   const installed = detected.filter(isInstalled);
   const anyInstalled = Boolean(
@@ -242,19 +263,27 @@ export function AgentDebugSettings({
     anyInstalled ? "agentDebug.manage" : "agentDebug.install",
   );
   const locked = busy !== null || checking;
-  const detectedShared = sharedSkillTools.filter((id) =>
-    detected.some((tool) => tool.id === id),
+  const sharedGroup = (key: ToolKey): ToolKey[] => {
+    const tool = detected.find((item) => toolKey(item) === key);
+    if (!tool || !sharedSkillTools.includes(tool.id)) return [key];
+    return detected
+      .filter(
+        (item) => item.wsl === tool.wsl && sharedSkillTools.includes(item.id),
+      )
+      .map(toolKey);
+  };
+  const withShared = (keys: ToolKey[]): ToolKey[] => [
+    ...new Set(keys.flatMap((key) => [key, ...sharedGroup(key)])),
+  ];
+  const sharesSkills = detected.some(
+    (tool) => sharedGroup(toolKey(tool)).length > 1,
   );
-  const withShared = (ids: AgentToolId[]): AgentToolId[] =>
-    ids.some((id) => detectedShared.includes(id))
-      ? [...ids, ...detectedShared.filter((id) => !ids.includes(id))]
-      : ids;
-  const toggleTool = (id: AgentToolId, checked: boolean): void => {
-    const group = withShared([id]);
+  const toggleTool = (key: ToolKey, checked: boolean): void => {
+    const group = sharedGroup(key);
     setSelectedTools((current) =>
       checked
-        ? withShared([...current, id])
-        : current.filter((item) => !group.includes(item)),
+        ? withShared([...current, key])
+        : current.filter((item) => item !== key && !group.includes(item)),
     );
   };
   const previewPaths =
@@ -263,7 +292,7 @@ export function AgentDebugSettings({
           ...new Set([
             ...status.shared_paths,
             ...status.tools
-              .filter((tool) => selectedTools.includes(tool.id))
+              .filter((tool) => selectedTools.includes(toolKey(tool)))
               .flatMap((tool) => tool.skills)
               .filter((skill) => selectedSkills.includes(skill.id))
               .flatMap((skill) => skill.preview_paths),
@@ -281,9 +310,7 @@ export function AgentDebugSettings({
     setSelectedSkills(skill ? [skill] : [...SKILL_IDS]);
     setSelectedTools(
       withShared(
-        (skill && configured.length === 0 ? detected : configured).map(
-          (tool) => tool.id,
-        ),
+        (skill && configured.length === 0 ? detected : configured).map(toolKey),
       ),
     );
     setConfirm("install");
@@ -383,10 +410,11 @@ export function AgentDebugSettings({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {toolIds.map((id) => {
-                    const tool = status?.tools.find((item) => item.id === id);
+                  {rows.map((row) => {
+                    const { id } = row;
+                    const tool = toolAt(row);
                     return (
-                      <TableRow key={id}>
+                      <TableRow key={toolKey(row)}>
                         <TableCell className="py-3 pl-4">
                           <span className="flex items-center gap-2.5">
                             <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background">
@@ -396,6 +424,11 @@ export function AgentDebugSettings({
                               <span className="font-medium">
                                 {t(`agentDebug.tools.${id}`)}
                               </span>
+                              {row.wsl !== null ? (
+                                <span className="ml-1.5 text-xs text-muted-foreground">
+                                  {t("agentDebug.wslPlace", { name: row.wsl })}
+                                </span>
+                              ) : null}
                               <StatusDot
                                 label={t(
                                   !status
@@ -429,6 +462,15 @@ export function AgentDebugSettings({
                 </TableBody>
               </Table>
 
+              {status?.wsl_unchecked.length ? (
+                <p className="mx-4 mb-3 text-xs text-muted-foreground">
+                  {t("agentDebug.wslUnchecked", {
+                    names: status.wsl_unchecked.join(
+                      t("agentDebug.partsSeparator"),
+                    ),
+                  })}
+                </p>
+              ) : null}
               {status && detected.length === 0 ? (
                 <FormMessage className="mx-4 mb-3">
                   {t("agentDebug.noTools")}
@@ -603,25 +645,33 @@ export function AgentDebugSettings({
                   {t("agentDebug.selectTools")}
                 </legend>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                  {toolIds.map((id) => {
-                    const tool = status?.tools.find((item) => item.id === id);
+                  {rows.map((row) => {
+                    const { id } = row;
+                    const key = toolKey(row);
+                    const tool = toolAt(row);
+                    const inputId = `agent-install-${row.wsl === null ? "" : `wsl-${row.wsl}-`}${id}`;
                     return (
                       <Label
                         className="min-w-0 items-start gap-2"
-                        htmlFor={`agent-install-${id}`}
-                        key={id}
+                        htmlFor={inputId}
+                        key={key}
                       >
                         <Checkbox
-                          checked={selectedTools.includes(id)}
+                          checked={selectedTools.includes(key)}
                           disabled={locked || !tool?.detected}
-                          id={`agent-install-${id}`}
+                          id={inputId}
                           onCheckedChange={(checked) =>
-                            toggleTool(id, checked === true)
+                            toggleTool(key, checked === true)
                           }
                         />
                         <span className="grid min-w-0 gap-0.5">
                           <span className="text-foreground">
                             {t(`agentDebug.tools.${id}`)}
+                            {row.wsl !== null ? (
+                              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                                {t("agentDebug.wslPlace", { name: row.wsl })}
+                              </span>
+                            ) : null}
                           </span>
                           <span className="text-xs font-normal text-muted-foreground">
                             {t(
@@ -639,7 +689,7 @@ export function AgentDebugSettings({
                     );
                   })}
                 </div>
-                {detectedShared.length > 1 ? (
+                {sharesSkills ? (
                   <p className="text-xs text-muted-foreground">
                     {t("agentDebug.sharedSkills")}
                   </p>

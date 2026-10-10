@@ -1,3 +1,4 @@
+mod agent_home;
 mod agent_install;
 mod cc_switch;
 mod client_config;
@@ -25,6 +26,7 @@ mod sidecar;
 mod startup_window;
 mod tray;
 mod updates;
+mod wsl;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -231,14 +233,48 @@ fn get_preferences(
     settings_snapshot(&app, store.inner())
 }
 
-fn agent_install_context(app: &tauri::AppHandle) -> Result<agent_install::InstallContext, String> {
-    Ok(agent_install::InstallContext {
-        home: control_session::user_home()?,
+/// The homes agent installs work on: the desktop user's, and the WSL
+/// distributions `reach` selects. Tool directories follow CC Switch's
+/// settings. Also returns the distributions left unchecked.
+fn agent_install_context(
+    home: std::path::PathBuf,
+    data_directory: Option<std::path::PathBuf>,
+    raw_key_pins: Option<std::path::PathBuf>,
+    reach: wsl::Reach,
+) -> Result<(agent_install::InstallContext, Vec<String>), String> {
+    let homes = agent_home::Homes::find(home, reach)?;
+    let context = agent_install::InstallContext {
+        home: homes.host,
         // Install reports a missing sidecar itself; status and uninstall do not need it.
         cli_source: agent_install::resolve_sidecar_binary("astrlink-cli").unwrap_or_default(),
-        data_directory: app.path().app_data_dir().ok(),
-        raw_key_pins: raw_key_pin_file(app),
-    })
+        data_directory,
+        raw_key_pins,
+        dirs: homes.dirs,
+        wsl: homes.wsl,
+    };
+    Ok((context, homes.unchecked))
+}
+
+fn app_agent_install_context(
+    app: &tauri::AppHandle,
+    reach: wsl::Reach,
+) -> Result<(agent_install::InstallContext, Vec<String>), String> {
+    agent_install_context(
+        control_session::user_home()?,
+        app.path().app_data_dir().ok(),
+        raw_key_pin_file(app),
+        reach,
+    )
+}
+
+/// Work on agent and client homes runs wsl.exe and edits files over the WSL
+/// share, so it stays off the main thread.
+async fn home_task<T: Send + 'static>(
+    task: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("home task failed: {error}"))?
 }
 
 /// Keeps client configs AstrLink wrote pointed at the gateway's current
@@ -255,7 +291,17 @@ fn start_client_config_sync(manager: &CoreManager, preferences: Arc<PreferencesS
             };
             synced = Some(inference_url.clone());
             let result = tauri::async_runtime::spawn_blocking(move || {
-                client_config::sync(&control_session::user_home()?, &inference_url)
+                let homes =
+                    agent_home::Homes::find(control_session::user_home()?, wsl::Reach::Running)?;
+                let errors = homes
+                    .iter()
+                    .filter_map(|home| client_config::sync(home, &inference_url).err())
+                    .collect::<Vec<_>>();
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors.join("; "))
+                }
             })
             .await
             .map_err(|error| error.to_string())
@@ -272,6 +318,71 @@ fn start_client_config_sync(manager: &CoreManager, preferences: Arc<PreferencesS
     });
 }
 
+/// Keeps installed agent skills, guards, and the CLI current. Recorded WSL
+/// distributions sync off the main thread, and only while running; starting
+/// AstrLink never starts a distribution.
+fn sync_agent_installs(
+    home: std::path::PathBuf,
+    data_directory: std::path::PathBuf,
+    raw_key_pins: Option<std::path::PathBuf>,
+) {
+    let distributions = agent_install::recorded_wsl(&home);
+    let sync_homes = |context: &agent_install::InstallContext, wsl_only: bool| {
+        for target in context
+            .homes()
+            .filter(|target| !wsl_only || target.distribution().is_some())
+        {
+            let place = target
+                .distribution()
+                .map(|distribution| format!(" in WSL {distribution}"))
+                .unwrap_or_default();
+            if let Err(error) = agent_install::sync_installed_skills(target) {
+                eprintln!("failed to sync AstrLink agent skills{place}: {error}");
+            }
+            if let Err(error) = agent_install::sync_installed_host_guards(
+                target,
+                context.data_directory.as_deref(),
+                context.raw_key_pins.as_deref(),
+            ) {
+                eprintln!("failed to sync AstrLink agent host guards{place}: {error}");
+            }
+        }
+    };
+    // The desktop user's home first; WSL distributions follow below.
+    match agent_install_context(
+        home,
+        Some(data_directory),
+        raw_key_pins,
+        wsl::Reach::Named(&[]),
+    ) {
+        Ok((context, _)) => {
+            sync_homes(&context, false);
+            // Runs without a sidecar too, so the MCP migration still happens.
+            if let Err(error) = agent_install::sync_installed_cli(&context) {
+                eprintln!("failed to sync AstrLink agent CLI: {error}");
+            }
+            if distributions.is_empty() {
+                return;
+            }
+            std::thread::spawn(move || {
+                match agent_install_context(
+                    context.home,
+                    context.data_directory,
+                    context.raw_key_pins,
+                    wsl::Reach::RunningAmong(&distributions),
+                ) {
+                    // The desktop user's home synced above.
+                    Ok((context, _)) => sync_homes(&context, true),
+                    Err(error) => {
+                        eprintln!("failed to reach WSL for AstrLink agent installs: {error}")
+                    }
+                }
+            });
+        }
+        Err(error) => eprintln!("failed to sync AstrLink agent installs: {error}"),
+    }
+}
+
 /// The raw key pin file agent guards deny, where the pins live in one.
 fn raw_key_pin_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     app.try_state::<Arc<raw_key_pin::RawKeyPins>>()?
@@ -280,22 +391,45 @@ fn raw_key_pin_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 }
 
 #[tauri::command]
-fn agent_debug_status(app: tauri::AppHandle) -> Result<agent_install::AgentInstallStatus, String> {
-    Ok(agent_install::status(&agent_install_context(&app)?))
+async fn agent_debug_status(
+    app: tauri::AppHandle,
+) -> Result<agent_install::AgentInstallStatus, String> {
+    home_task(move || {
+        let (context, unchecked) = app_agent_install_context(&app, wsl::Reach::Running)?;
+        let mut status = agent_install::status(&context);
+        status.wsl_unchecked = unchecked;
+        Ok(status)
+    })
+    .await
 }
 
 #[tauri::command]
-fn install_agent_debug(
+async fn install_agent_debug(
     app: tauri::AppHandle,
     skill_ids: Vec<agent_install::AgentSkillId>,
-    tool_ids: Vec<agent_install::AgentToolId>,
+    tools: Vec<agent_install::AgentToolTarget>,
 ) -> Result<agent_install::InstallReceipt, String> {
-    agent_install::install(&agent_install_context(&app)?, &skill_ids, &tool_ids)
+    home_task(move || {
+        let distributions = tools
+            .iter()
+            .filter_map(|tool| tool.wsl.clone())
+            .collect::<Vec<_>>();
+        let (context, _) = app_agent_install_context(&app, wsl::Reach::Named(&distributions))?;
+        agent_install::install(&context, &skill_ids, &tools)
+    })
+    .await
 }
 
+/// Also reaches recorded WSL distributions that are stopped, starting them,
+/// so no skill is left pointing at the removed CLI.
 #[tauri::command]
-fn uninstall_agent_debug(app: tauri::AppHandle) -> Result<(), String> {
-    agent_install::uninstall(&agent_install_context(&app)?)
+async fn uninstall_agent_debug(app: tauri::AppHandle) -> Result<(), String> {
+    home_task(move || {
+        let distributions = agent_install::recorded_wsl(&control_session::user_home()?);
+        let (context, _) = app_agent_install_context(&app, wsl::Reach::RunningAnd(&distributions))?;
+        agent_install::uninstall(&context)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1775,16 +1909,51 @@ async fn check_client_proxy(inference_url: String) -> Result<proxy_check::ProxyC
     proxy_check::check(&inference_url).await
 }
 
+/// The client configs in the desktop user's home and in running WSL
+/// distributions. A WSL home that cannot be read is reported unchecked.
 #[tauri::command]
 async fn client_config_status(
     inference_url: Option<String>,
-) -> Result<Vec<client_config::ClientStatus>, String> {
+) -> Result<client_config::ClientOverview, String> {
     let home = control_session::user_home()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        client_config::status(&home, inference_url.as_deref())
+    home_task(move || {
+        let homes = agent_home::Homes::find(home, wsl::Reach::Running)?;
+        let mut clients = Vec::new();
+        let mut wsl_unchecked = homes.unchecked.clone();
+        for home in homes.iter() {
+            match (
+                client_config::status(home, inference_url.as_deref()),
+                home.distribution(),
+            ) {
+                (Ok(statuses), _) => clients.extend(statuses),
+                (Err(error), None) => return Err(error),
+                (Err(error), Some(distribution)) => {
+                    eprintln!("unable to read client configs in WSL {distribution}: {error}");
+                    wsl_unchecked.push(distribution.to_string());
+                }
+            }
+        }
+        Ok(client_config::ClientOverview {
+            clients,
+            wsl_unchecked,
+            wsl_localhost: wsl::localhost_shared(&homes.host),
+        })
     })
     .await
-    .map_err(|error| error.to_string())?
+}
+
+/// The home a client config command works on. Naming a WSL distribution
+/// starts it if it is stopped.
+fn client_home(wsl: Option<String>) -> Result<agent_home::OwnedHome, String> {
+    let names = wsl.iter().cloned().collect::<Vec<_>>();
+    agent_home::Homes::find(control_session::user_home()?, wsl::Reach::Named(&names))?
+        .take(wsl.as_deref())
+        .ok_or_else(|| {
+            format!(
+                "WSL distribution {} is no longer available",
+                wsl.unwrap_or_default()
+            )
+        })
 }
 
 #[tauri::command]
@@ -1794,12 +1963,13 @@ async fn apply_client_config(
     models: client_config::Models,
     inference_url: String,
     replace: bool,
+    wsl: Option<String>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<client_config::ApplyOutcome, String> {
-    let home = control_session::user_home()?;
+    let target = home_task(move || client_home(wsl)).await?;
     client_config::apply(
         &manager,
-        home,
+        target,
         token_id,
         client,
         &models,
@@ -1810,11 +1980,11 @@ async fn apply_client_config(
 }
 
 #[tauri::command]
-async fn remove_client_config(client: client_config::Client) -> Result<(), String> {
-    let home = control_session::user_home()?;
-    tauri::async_runtime::spawn_blocking(move || client_config::remove(&home, client))
-        .await
-        .map_err(|error| error.to_string())?
+async fn remove_client_config(
+    client: client_config::Client,
+    wsl: Option<String>,
+) -> Result<(), String> {
+    home_task(move || client_config::remove(client_home(wsl)?.home(), client)).await
 }
 
 /// The config `apply_client_config` would write to a fresh file, with the
@@ -2254,28 +2424,7 @@ pub fn run() {
             dev_reload::start(app.handle());
 
             if let Ok(home) = control_session::user_home() {
-                if let Err(error) = agent_install::sync_installed_skills(&home) {
-                    eprintln!("failed to sync AstrLink agent skills: {error}");
-                }
-                if let Err(error) = agent_install::sync_installed_host_guards(
-                    &home,
-                    Some(&data_directory),
-                    raw_key_pin_file.as_deref(),
-                ) {
-                    eprintln!("failed to sync AstrLink agent host guards: {error}");
-                }
-                // Runs without a sidecar too, so the MCP migration still happens.
-                if let Err(error) =
-                    agent_install::sync_installed_cli(&agent_install::InstallContext {
-                        home,
-                        cli_source: agent_install::resolve_sidecar_binary("astrlink-cli")
-                            .unwrap_or_default(),
-                        data_directory: Some(data_directory.clone()),
-                        raw_key_pins: raw_key_pin_file.clone(),
-                    })
-                {
-                    eprintln!("failed to sync AstrLink agent CLI: {error}");
-                }
+                sync_agent_installs(home, data_directory.clone(), raw_key_pin_file.clone());
             }
 
             if values.core_auto_start {

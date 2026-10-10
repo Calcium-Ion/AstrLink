@@ -34,6 +34,8 @@ export interface AgentSkillStatus {
 
 export interface AgentToolStatus {
   id: AgentToolId;
+  /** The WSL distribution the tool runs in; `null` for this computer. */
+  wsl: string | null;
   detected: boolean;
   skills: AgentSkillStatus[];
   cli_access: AgentCliAccessKind;
@@ -44,8 +46,17 @@ export interface AgentToolStatus {
 
 export interface AgentInstallStatus {
   cli_binary: boolean;
+  /** This computer's five tools, then the tools found in WSL distributions. */
   tools: AgentToolStatus[];
   shared_paths: string[];
+  /** WSL distributions whose tools went unchecked because they were stopped. */
+  wsl_unchecked: string[];
+}
+
+/** A tool selected for install, on this computer or in a WSL distribution. */
+export interface AgentToolTarget {
+  id: AgentToolId;
+  wsl: string | null;
 }
 
 export interface AgentInstallReceiptSkill {
@@ -60,6 +71,8 @@ export interface AgentInstallReceipt {
   /** `null` when no selected skill drives the CLI. */
   cli_binary: string | null;
   files: string[];
+  /** WSL distributions holding an install. */
+  wsl: string[];
 }
 
 export const SKILL_IDS: readonly AgentSkillId[] = [
@@ -144,6 +157,7 @@ function parseTool(value: unknown, path: string): AgentToolStatus {
     root,
     [
       "id",
+      "wsl",
       "detected",
       "skills",
       "cli_access",
@@ -166,6 +180,7 @@ function parseTool(value: unknown, path: string): AgentToolStatus {
   }
   return {
     id: root.id as AgentToolId,
+    wsl: root.wsl === null ? null : boundedString(root.wsl, `${path}.wsl`, 255),
     detected: booleanAt(root.detected, `${path}.detected`),
     skills: root.skills.map((skill, index) =>
       parseSkill(skill, `${path}.skills[${index}]`),
@@ -180,6 +195,13 @@ function parseTool(value: unknown, path: string): AgentToolStatus {
   };
 }
 
+function parseNames(value: unknown, path: string): string[] {
+  if (!Array.isArray(value)) invalid(path, "expected an array");
+  return value.map((item, index) =>
+    boundedString(item, `${path}[${index}]`, 255),
+  );
+}
+
 function parsePaths(value: unknown, path: string): string[] {
   if (!Array.isArray(value)) invalid(path, "expected an array");
   return value.map((item, index) =>
@@ -189,7 +211,11 @@ function parsePaths(value: unknown, path: string): string[] {
 
 export function parseAgentInstallStatus(value: unknown): AgentInstallStatus {
   const root = objectAt(value, "$");
-  exactKeys(root, ["cli_binary", "tools", "shared_paths"], "$");
+  exactKeys(
+    root,
+    ["cli_binary", "tools", "shared_paths", "wsl_unchecked"],
+    "$",
+  );
   if (!Array.isArray(root.tools)) invalid("$.tools", "expected an array");
   return {
     cli_binary: booleanAt(root.cli_binary, "$.cli_binary"),
@@ -197,6 +223,7 @@ export function parseAgentInstallStatus(value: unknown): AgentInstallStatus {
       parseTool(tool, `$.tools[${index}]`),
     ),
     shared_paths: parsePaths(root.shared_paths, "$.shared_paths"),
+    wsl_unchecked: parseNames(root.wsl_unchecked, "$.wsl_unchecked"),
   };
 }
 
@@ -204,7 +231,7 @@ export function parseAgentInstallReceipt(value: unknown): AgentInstallReceipt {
   const root = objectAt(value, "$");
   exactKeys(
     root,
-    ["version", "skills", "installed_at_unix", "cli_binary", "files"],
+    ["version", "skills", "installed_at_unix", "cli_binary", "files", "wsl"],
     "$",
   );
   if (!Array.isArray(root.skills)) invalid("$.skills", "expected an array");
@@ -237,6 +264,7 @@ export function parseAgentInstallReceipt(value: unknown): AgentInstallReceipt {
     files: root.files.map((path, index) =>
       boundedString(path, `$.files[${index}]`, 8192),
     ),
+    wsl: parseNames(root.wsl, "$.wsl"),
   };
 }
 

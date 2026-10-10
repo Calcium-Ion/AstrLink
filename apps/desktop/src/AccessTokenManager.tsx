@@ -202,8 +202,9 @@ export function AccessTokenManager({
     const generation = ++clientGeneration.current;
     // The client marks only annotate the list; a failed read hides them.
     getClientConfigStatus(inferenceURL || null).then(
-      (statuses) => {
-        if (clientGeneration.current === generation) setClientConfigs(statuses);
+      (overview) => {
+        if (clientGeneration.current === generation)
+          setClientConfigs(overview.clients);
       },
       () => {
         if (clientGeneration.current === generation) setClientConfigs([]);
@@ -221,13 +222,15 @@ export function AccessTokenManager({
     };
   }, [refreshClientConfigs]);
 
-  const clientsUsing = (tokenId: string | undefined): DirectClient[] =>
-    clientConfigs
-      .filter(
-        (status) =>
-          status.token_id === tokenId && status.state !== "not_configured",
-      )
-      .map((status) => status.client);
+  // A client may hold the token on this computer and in WSL distributions.
+  const configsUsing = (tokenId: string | undefined) =>
+    clientConfigs.filter(
+      (status) =>
+        status.token_id === tokenId && status.state !== "not_configured",
+    );
+  const clientsUsing = (tokenId: string | undefined): DirectClient[] => [
+    ...new Set(configsUsing(tokenId).map((status) => status.client)),
+  ];
 
   const refreshTokenUsage = useCallback(async () => {
     const generation = usageGeneration.current + 1;
@@ -388,7 +391,7 @@ export function AccessTokenManager({
   const remove = async () => {
     if (pendingDelete === null || deletingID !== null) return;
     const token = pendingDelete;
-    const configured = removeConfigs ? clientsUsing(token.id) : [];
+    const configured = removeConfigs ? configsUsing(token.id) : [];
     const generation = sessionGeneration.current;
     revealGeneration.current += 1;
     setCopyingID(null);
@@ -401,17 +404,19 @@ export function AccessTokenManager({
       onTokenDeleted(token.id);
       setPendingDelete(null);
       notify.success(i18n.t("tokens.deleted", { name: token.name }));
-      const failed: DirectClient[] = [];
-      for (const client of configured) {
+      const failed = new Set<DirectClient>();
+      for (const config of configured) {
         try {
-          await removeClientConfig(client);
+          await removeClientConfig(config.client, config.wsl);
         } catch {
-          failed.push(client);
+          failed.add(config.client);
         }
       }
-      if (failed.length > 0) {
+      if (failed.size > 0) {
         notify.error(
-          i18n.t("tokens.removeConfigsFailed", { clients: clientList(failed) }),
+          i18n.t("tokens.removeConfigsFailed", {
+            clients: clientList([...failed]),
+          }),
         );
       }
       if (configured.length > 0) refreshClientConfigs();

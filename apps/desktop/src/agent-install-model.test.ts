@@ -10,6 +10,7 @@ const status = {
   tools: [
     {
       id: "codex",
+      wsl: null,
       detected: true,
       skills: [
         {
@@ -35,6 +36,7 @@ const status = {
     },
   ],
   shared_paths: ["/tmp/.astrlink/agent-installs.json"],
+  wsl_unchecked: [],
 };
 
 const receipt = {
@@ -46,6 +48,7 @@ const receipt = {
   installed_at_unix: 1,
   cli_binary: "/tmp/.astrlink/bin/astrlink",
   files: ["/tmp/a"],
+  wsl: [],
 };
 
 describe("agent-install-model", () => {

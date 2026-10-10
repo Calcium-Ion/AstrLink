@@ -53,6 +53,7 @@ const status = {
   tools: [
     {
       id: "cursor" as const,
+      wsl: null,
       detected: true,
       skills: skills("/tmp/.cursor/skills", {}),
       cli_access: "prompt" as const,
@@ -62,6 +63,7 @@ const status = {
     },
     {
       id: "claude" as const,
+      wsl: null,
       detected: false,
       skills: skills("/tmp/.claude/skills", {}, ["/tmp/.claude/settings.json"]),
       cli_access: "allow_rules" as const,
@@ -71,6 +73,7 @@ const status = {
     },
     {
       id: "codex" as const,
+      wsl: null,
       detected: true,
       skills: skills("/tmp/.agents/skills", { debug: true }, [
         "/tmp/.codex/rules/astrlink.rules",
@@ -83,6 +86,7 @@ const status = {
     },
     {
       id: "grok" as const,
+      wsl: null,
       detected: true,
       skills: skills("/tmp/.grok/skills", {}),
       cli_access: "prompt" as const,
@@ -92,6 +96,7 @@ const status = {
     },
     {
       id: "pi" as const,
+      wsl: null,
       detected: false,
       skills: skills("/tmp/.agents/skills", { debug: true }),
       cli_access: "unrestricted" as const,
@@ -101,9 +106,15 @@ const status = {
     },
   ],
   shared_paths: ["/tmp/.astrlink/agent-installs.json"],
+  wsl_unchecked: [],
 };
 
 type ToolFixture = (typeof status.tools)[number];
+
+/** Install targets on this computer, in table order. */
+function local(...ids: string[]) {
+  return ids.map((id) => ({ id, wsl: null }));
+}
 
 function withSkills(tool: ToolFixture, flags: SkillFlags): ToolFixture {
   return {
@@ -132,6 +143,7 @@ describe("AgentDebugSettings", () => {
       installed_at_unix: 1,
       cli_binary: "/tmp/.astrlink/bin/astrlink",
       files: status.shared_paths,
+      wsl: [],
     });
     bridge.uninstallAgentDebug.mockReset().mockResolvedValue(undefined);
     notifyMocks.success.mockReset();
@@ -197,7 +209,7 @@ describe("AgentDebugSettings", () => {
     });
     expect(bridge.installAgentDebug).toHaveBeenCalledWith(
       ["astrlink-debug", "redaction-placeholders"],
-      ["codex"],
+      local("codex"),
     );
     expect(notifyMocks.success).toHaveBeenCalled();
   });
@@ -305,7 +317,7 @@ describe("AgentDebugSettings", () => {
     await act(async () => button("安装所选工具（1）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug"],
-      ["grok"],
+      local("grok"),
     );
   });
 
@@ -332,7 +344,7 @@ describe("AgentDebugSettings", () => {
     await act(async () => button("安装所选工具（2）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug", "redaction-placeholders"],
-      ["cursor", "grok"],
+      local("cursor", "grok"),
     );
   });
 
@@ -389,7 +401,7 @@ describe("AgentDebugSettings", () => {
     await act(async () => button("安装所选工具（1）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["redaction-placeholders"],
-      ["codex"],
+      local("codex"),
     );
   });
 
@@ -419,7 +431,65 @@ describe("AgentDebugSettings", () => {
     await act(async () => button("安装所选工具（2）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug", "redaction-placeholders"],
-      ["pi", "codex"],
+      local("codex", "pi"),
+    );
+  });
+
+  it("lists WSL tools beside this computer's and installs them by distribution", async () => {
+    const wslRoot = String.raw`\\wsl$\Ubuntu\home\me`;
+    const inUbuntu = (tool: ToolFixture, root: string): ToolFixture => ({
+      ...tool,
+      wsl: "Ubuntu" as unknown as null,
+      detected: true,
+      skills: skills(`${wslRoot}\\${root}`, {}),
+      cli_access_installed: false,
+      guard_installed: false,
+    });
+    bridge.getAgentDebugStatus.mockResolvedValue({
+      ...status,
+      tools: [
+        ...status.tools,
+        inUbuntu(status.tools[1]!, ".claude\\skills"),
+        inUbuntu(status.tools[2]!, ".agents\\skills"),
+        inUbuntu(status.tools[4]!, ".agents\\skills"),
+      ],
+      wsl_unchecked: ["Debian"],
+    });
+    await act(async () => root.render(<AgentDebugSettings />));
+    const rows = [...container.querySelectorAll("tbody tr")].map(
+      (row) => row.querySelector("td")?.textContent ?? "",
+    );
+    expect(rows).toHaveLength(8);
+    ["Claude Code", "Codex", "Pi"].forEach((name, index) => {
+      expect(rows[5 + index]).toContain(name);
+      expect(rows[5 + index]?.endsWith("WSL · Ubuntu")).toBe(true);
+    });
+    expect(rows.slice(0, 5).some((row) => row.includes("WSL"))).toBe(false);
+    expect(container.textContent).toContain("0 / 6");
+    expect(container.textContent).toContain(
+      "Debian 未运行，没有检测其中的工具。启动后点「重新检测」。",
+    );
+
+    await act(async () => button("安装 / 更新").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    // The Codex install on this computer says nothing about Ubuntu's.
+    expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
+    expect(checkbox("wsl-Ubuntu-codex").getAttribute("aria-checked")).toBe(
+      "false",
+    );
+    // Codex and Pi share a skill directory only within one home.
+    await act(async () => checkbox("wsl-Ubuntu-codex").click());
+    expect(checkbox("wsl-Ubuntu-pi").getAttribute("aria-checked")).toBe("true");
+    expect(checkbox("pi").getAttribute("aria-checked")).toBe("false");
+    expect(dialog.textContent).toContain(`${wslRoot}\\.agents\\skills`);
+    await act(async () => button("安装所选工具（3）", dialog).click());
+    expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
+      ["astrlink-debug", "redaction-placeholders"],
+      [
+        { id: "codex", wsl: null },
+        { id: "codex", wsl: "Ubuntu" },
+        { id: "pi", wsl: "Ubuntu" },
+      ],
     );
   });
 
@@ -441,7 +511,7 @@ describe("AgentDebugSettings", () => {
     await act(async () => button("安装所选工具（1）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["redaction-placeholders"],
-      ["codex"],
+      local("codex"),
     );
     // Only the first status opens the dialog.
     await act(async () => button("重新检测").click());
@@ -465,7 +535,7 @@ describe("AgentDebugSettings", () => {
     await act(async () => button("安装所选工具（3）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["redaction-placeholders"],
-      ["cursor", "codex", "grok"],
+      local("cursor", "codex", "grok"),
     );
   });
 

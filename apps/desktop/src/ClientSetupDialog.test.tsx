@@ -25,6 +25,7 @@ import { ClientSetupDialog } from "./ClientSetupDialog";
 import type { AccessTokenSummary } from "./access-token-model";
 import type {
   ClientConfigState,
+  ClientConfigOverview,
   ClientConfigStatus,
 } from "./client-config-model";
 
@@ -48,10 +49,11 @@ function statuses(
   claude: Partial<ClientConfigStatus> = {},
   codex: Partial<ClientConfigStatus> = {},
   pi: Partial<ClientConfigStatus> = {},
-): ClientConfigStatus[] {
-  return [
+): ClientConfigOverview {
+  return overview([
     {
       client: "claude",
+      wsl: null,
       detected: true,
       paths: ["/Users/me/.claude/settings.json"],
       state: "not_configured",
@@ -60,6 +62,7 @@ function statuses(
     },
     {
       client: "codex",
+      wsl: null,
       detected: true,
       paths: ["/Users/me/.codex/config.toml"],
       state: "not_configured",
@@ -68,6 +71,7 @@ function statuses(
     },
     {
       client: "pi",
+      wsl: null,
       detected: true,
       paths: [
         "/Users/me/.pi/agent/models.json",
@@ -77,7 +81,14 @@ function statuses(
       token_id: null,
       ...pi,
     },
-  ];
+  ]);
+}
+
+function overview(
+  clients: ClientConfigStatus[],
+  extra: Partial<ClientConfigOverview> = {},
+): ClientConfigOverview {
+  return { clients, wsl_unchecked: [], wsl_localhost: false, ...extra };
 }
 
 function configured(
@@ -527,6 +538,7 @@ describe("ClientSetupDialog", () => {
       client: "claude",
       models: { sonnetModel: "sonnet-route", fableModel: "fable-route" },
       inferenceUrl: "http://127.0.0.1:8317",
+      wsl: null,
     };
     expect(bridgeMocks.applyClientConfig).toHaveBeenLastCalledWith({
       ...target,
@@ -603,6 +615,7 @@ describe("ClientSetupDialog", () => {
     await act(async () => button("移除配置", confirmation()).click());
     expect(bridgeMocks.removeClientConfig).toHaveBeenCalledExactlyOnceWith(
       "claude",
+      null,
     );
     expect(onChanged).toHaveBeenCalledOnce();
     expect(button("写入配置")).toBeTruthy();
@@ -645,6 +658,96 @@ describe("ClientSetupDialog", () => {
     expect(bridgeMocks.applyClientConfig).not.toHaveBeenCalled();
   });
 
+  it("writes a client in WSL and explains the WSL network setting", async () => {
+    const inUbuntu = (
+      status: ClientConfigStatus,
+      extra: Partial<ClientConfigStatus> = {},
+    ): ClientConfigStatus => ({
+      ...status,
+      wsl: "Ubuntu",
+      paths: status.paths.map((path) => `\\\\wsl$\\Ubuntu${path}`),
+      detected: false,
+      ...extra,
+    });
+    const local = statuses({ detected: false }).clients;
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview(
+        [
+          ...local,
+          inUbuntu(local[0]!, { detected: true }),
+          inUbuntu(local[1]!),
+          inUbuntu(local[2]!),
+        ],
+        { wsl_unchecked: ["Debian"] },
+      ),
+    );
+    bridgeMocks.applyClientConfig.mockResolvedValue({ status: "applied" });
+    await renderDialog();
+
+    // Only Ubuntu has Claude Code, so it is the one place offered.
+    const places = [
+      ...dialog().querySelectorAll('[data-slot="segmented-control-item"]'),
+    ].map((item) => item.textContent);
+    expect(places).toEqual(["WSL · Ubuntu"]);
+    expect(dialog().textContent).toContain(
+      "\\\\wsl$\\Ubuntu/Users/me/.claude/settings.json",
+    );
+    expect(dialog().textContent).toContain(
+      "WSL 里的客户端默认连不上这台电脑的 http://127.0.0.1:8317",
+    );
+    expect(dialog().textContent).toContain("Debian 未运行");
+    await act(async () => button("写入配置").click());
+    expect(bridgeMocks.applyClientConfig).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        client: "claude",
+        wsl: "Ubuntu",
+        replace: false,
+      }),
+    );
+  });
+
+  it("switches between this computer and WSL", async () => {
+    const local = statuses(configured("configured")).clients;
+    bridgeMocks.getClientConfigStatus.mockResolvedValue(
+      overview(
+        [
+          ...local,
+          ...local.map((status) => ({
+            ...status,
+            wsl: "Ubuntu",
+            paths: ["/wsl" + status.paths[0]],
+            state: "not_configured" as const,
+            token_id: null,
+          })),
+        ],
+        { wsl_localhost: true },
+      ),
+    );
+    await renderDialog();
+    const place = (label: string) => {
+      const match = [
+        ...dialog().querySelectorAll<HTMLButtonElement>(
+          '[data-slot="segmented-control-item"]',
+        ),
+      ].find((item) => item.textContent === label);
+      if (!match) throw new Error(`Missing place: ${label}`);
+      return match;
+    };
+    expect(place("本机").getAttribute("data-state")).toBe("on");
+    expect(dialog().textContent).toContain("/Users/me/.claude/settings.json");
+    expect(button("更新配置")).toBeTruthy();
+    await act(async () => place("WSL · Ubuntu").click());
+    expect(dialog().textContent).toContain(
+      "/wsl/Users/me/.claude/settings.json",
+    );
+    expect(button("写入配置")).toBeTruthy();
+    expect(dialog().textContent).not.toContain("移除配置");
+    // Mirrored networking shares localhost, so no network hint.
+    expect(dialog().textContent).not.toContain("networkingMode");
+    await act(async () => card("Codex").click());
+    expect(place("本机").getAttribute("data-state")).toBe("on");
+  });
+
   it("writes Pi itself, even while CC Switch is installed", async () => {
     bridgeMocks.isCCSwitchInstalled.mockResolvedValue(true);
     bridgeMocks.applyClientConfig.mockResolvedValue({ status: "applied" });
@@ -676,6 +779,7 @@ describe("ClientSetupDialog", () => {
       models: { model: "gpt-5" },
       inferenceUrl: "http://127.0.0.1:8317",
       replace: false,
+      wsl: null,
     });
     expect(bridgeMocks.openCCSwitchImport).not.toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalledOnce();

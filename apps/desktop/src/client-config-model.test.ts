@@ -4,7 +4,7 @@ import {
   parseClientConfigApplyOutcome,
   parseClientConfigCopied,
   parseClientConfigSnippet,
-  parseClientConfigStatuses,
+  parseClientConfigOverview,
   parseClientProxyCheck,
 } from "./client-config-model";
 
@@ -12,10 +12,11 @@ function statuses(
   claude: Record<string, unknown> = {},
   codex: Record<string, unknown> = {},
   pi: Record<string, unknown> = {},
-): unknown[] {
+): Record<string, unknown>[] {
   return [
     {
       client: "claude",
+      wsl: null,
       detected: true,
       paths: ["/Users/me/.claude/settings.json"],
       state: "not_configured",
@@ -24,6 +25,7 @@ function statuses(
     },
     {
       client: "codex",
+      wsl: null,
       detected: false,
       paths: ["/Users/me/.codex/config.toml"],
       state: "not_configured",
@@ -32,6 +34,7 @@ function statuses(
     },
     {
       client: "pi",
+      wsl: null,
       detected: true,
       paths: [
         "/Users/me/.pi/agent/models.json",
@@ -44,24 +47,60 @@ function statuses(
   ];
 }
 
+function parseStatuses(clients: unknown[]) {
+  return parseClientConfigOverview({
+    clients,
+    wsl_unchecked: [],
+    wsl_localhost: false,
+  }).clients;
+}
+
+function inWSL(name: string) {
+  return statuses().map((status) => ({ ...status, wsl: name }));
+}
+
 describe("client-config IPC parsing", () => {
+  it("accepts this computer's clients, then each WSL home's", () => {
+    const value = {
+      clients: [...statuses(), ...inWSL("Ubuntu"), ...inWSL("Debian")],
+      wsl_unchecked: ["Arch"],
+      wsl_localhost: true,
+    };
+    expect(parseClientConfigOverview(value)).toEqual(value);
+    for (const clients of [
+      inWSL("Ubuntu"),
+      [...statuses(), ...inWSL("Ubuntu"), ...inWSL("Ubuntu")],
+      [...statuses(), ...inWSL("Ubuntu").slice(0, 2)],
+      [...statuses(), ...statuses()],
+    ]) {
+      expect(() => parseStatuses(clients)).toThrow(
+        "Invalid client-config IPC response",
+      );
+    }
+    expect(() =>
+      parseClientConfigOverview({ ...value, wsl_localhost: "yes" }),
+    ).toThrow("wsl_localhost");
+    expect(() =>
+      parseClientConfigOverview({ ...value, wsl_unchecked: [""] }),
+    ).toThrow("wsl_unchecked");
+  });
+
   it("accepts one status per direct client in order", () => {
     const value = statuses(
       { state: "configured", token_id: "token_01" },
       { state: "outdated", token_id: "token_02" },
       { state: "modified", token_id: "token_01" },
     );
-    expect(parseClientConfigStatuses(value)).toEqual(value);
+    expect(parseStatuses(value)).toEqual(value);
     // A client moved to CC Switch holds no config AstrLink wrote.
-    expect(
-      parseClientConfigStatuses(statuses({ state: "cc_switch" }))[0],
-    ).toMatchObject({ state: "cc_switch", token_id: null });
+    expect(parseStatuses(statuses({ state: "cc_switch" }))[0]).toMatchObject({
+      state: "cc_switch",
+      token_id: null,
+    });
     // An unreadable file may or may not have a record behind it.
     for (const tokenID of [null, "token_01"]) {
       expect(
-        parseClientConfigStatuses(
-          statuses({ state: "invalid", token_id: tokenID }),
-        )[0],
+        parseStatuses(statuses({ state: "invalid", token_id: tokenID }))[0],
       ).toMatchObject({ state: "invalid", token_id: tokenID });
     }
   });
@@ -72,6 +111,7 @@ describe("client-config IPC parsing", () => {
     ["a client it cannot write", statuses({ client: "gemini" })],
     ["an unknown state", statuses({ state: "stale" })],
     ["an unexpected field", statuses({ token: "astr_x" })],
+    ["a multi-line WSL name", statuses({ wsl: "a\nb" })],
     ["a non-boolean detection", statuses({ detected: "yes" })],
     ["no config path", statuses({ paths: [] })],
     ["a multi-line path", statuses({ paths: ["/tmp/a\n/tmp/b"] })],
@@ -83,7 +123,7 @@ describe("client-config IPC parsing", () => {
       statuses({ state: "cc_switch", token_id: "token_01" }),
     ],
   ])("rejects %s", (_, value) => {
-    expect(() => parseClientConfigStatuses(value)).toThrow(
+    expect(() => parseStatuses(value)).toThrow(
       "Invalid client-config IPC response",
     );
   });
