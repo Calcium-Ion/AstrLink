@@ -187,6 +187,11 @@ describe("privacy-policy IPC contract", () => {
       inspected_body: '{"messages":[{"content":"y","role":"user"}]}',
     };
     expect(parsePrivacyDryRunResult(dryRun)).toEqual(dryRun);
+    const crowded = {
+      ...dryRun,
+      findings: Array.from({ length: 5_000 }, () => dryRun.findings[0]),
+    };
+    expect(parsePrivacyDryRunResult(crowded).findings).toHaveLength(5_000);
     expect(
       validatePrivacyDryRunInput({
         protocol: "openai.chat",

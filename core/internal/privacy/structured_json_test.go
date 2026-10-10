@@ -3,7 +3,6 @@ package privacy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -298,8 +297,8 @@ func TestStructuredToolOutputAllowlistMatchesTheAlignedValue(t *testing.T) {
 	}
 }
 
-func TestStructuredToolOutputSpanCannotFanOutPastTheDetectorLimit(t *testing.T) {
-	numbers := make([]string, maxDetectorFindings+1)
+func TestStructuredToolOutputSpanAlignsToEveryLiteral(t *testing.T) {
+	numbers := make([]string, 5_000)
 	for index := range numbers {
 		numbers[index] = "1"
 	}
@@ -311,10 +310,10 @@ func TestStructuredToolOutputSpanCannotFanOutPastTheDetectorLimit(t *testing.T) 
 	engine := newTestEngine(t, DetectorFunc(func(_ context.Context, input DetectInput) ([]Finding, error) {
 		return []Finding{{Segment: 0, Start: 0, End: len(input.Segments[0].Value), Kind: KindPhone, Confidence: 1}}, nil
 	}))
-	_, err = engine.Inspect(context.Background(), Policy{
+	result, err := engine.Inspect(context.Background(), Policy{
 		Enabled: true, Mode: ModeModel, LocalModelID: testLocalModelID, Action: ActionRedact,
 	}, contract.ProtocolOpenAIResponses, []byte(body))
-	if !errors.Is(err, ErrDetectorLimit) {
-		t.Fatalf("error = %v", err)
+	if err != nil || result.Decision != DecisionRedact || len(result.Findings) != len(numbers) {
+		t.Fatalf("Inspect findings = %d, decision = %q, err = %v", len(result.Findings), result.Decision, err)
 	}
 }

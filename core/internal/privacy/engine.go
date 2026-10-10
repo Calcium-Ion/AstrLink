@@ -99,15 +99,10 @@ func (engine *Engine) Inspect(ctx context.Context, policy Policy, protocol contr
 		return Result{}, normalizeDetectorError(ctx, err)
 	}
 	findings, err = normalizeFindings(findings, segments)
-	if err == nil {
-		findings, err = alignStructuredFindings(extracted, findings)
-	}
 	if err != nil {
-		if errors.Is(err, ErrDetectorLimit) {
-			return Result{}, ErrDetectorLimit
-		}
 		return Result{}, ErrDetectorUnavailable
 	}
+	findings = alignStructuredFindings(extracted, findings)
 	accepted, suppressed := engine.partitionFindings(policy, findings, segments)
 	if len(accepted) == 0 {
 		return Result{
@@ -270,17 +265,27 @@ func normalizeDetectorError(ctx context.Context, err error) error {
 }
 
 func normalizeFindings(findings []Finding, segments []Segment) ([]Finding, error) {
-	if len(findings) > maxDetectorFindings {
-		return nil, ErrDetectorLimit
-	}
+	// Each value is validated once; a span then only has to fall on rune
+	// boundaries. Validating the prefix of every span instead costs the length
+	// of the text for each one.
+	validated := make(map[int]bool)
 	for _, finding := range findings {
 		if finding.Segment < 0 || finding.Segment >= len(segments) ||
 			finding.Start < 0 || finding.End <= finding.Start ||
 			finding.End > len(segments[finding.Segment].Value) ||
 			!validKind(finding.Kind) ||
-			!validMinConfidence(finding.Confidence) ||
-			!utf8.ValidString(segments[finding.Segment].Value[:finding.Start]) ||
-			!utf8.ValidString(segments[finding.Segment].Value[:finding.End]) {
+			!validMinConfidence(finding.Confidence) {
+			return nil, ErrDetectorUnavailable
+		}
+		value := segments[finding.Segment].Value
+		if !validated[finding.Segment] {
+			if !utf8.ValidString(value) {
+				return nil, ErrDetectorUnavailable
+			}
+			validated[finding.Segment] = true
+		}
+		if !utf8.RuneStart(value[finding.Start]) ||
+			(finding.End < len(value) && !utf8.RuneStart(value[finding.End])) {
 			return nil, ErrDetectorUnavailable
 		}
 	}

@@ -16,6 +16,7 @@ import type {
   PrivacyDetector,
   PrivacyDryRunFinding,
   PrivacyDryRunProtocol,
+  PrivacyDryRunRedaction,
   PrivacyDryRunResult as Result,
 } from "./privacy-policy-model";
 
@@ -54,6 +55,14 @@ export function PrivacyDryRunResult({
         ignored: true,
       })),
     ].map((row) => ({ ...row, span: resolve(row.finding) }));
+  }, [result]);
+  const replacements = useMemo(() => {
+    const byValue = new Map<string, PrivacyDryRunRedaction>();
+    for (const item of result.redactions ?? []) {
+      const key = `${item.kind}\u0000${item.value}`;
+      if (!byValue.has(key)) byValue.set(key, item);
+    }
+    return byValue;
   }, [result]);
   const preview = dryRunSampleText(
     result.redacted_body ?? result.inspected_body,
@@ -122,10 +131,7 @@ export function PrivacyDryRunResult({
             {rows.map(({ finding, ignored, span }, index) => {
               const replacement =
                 !ignored && result.decision === "redact" && span
-                  ? result.redactions?.find(
-                      (item) =>
-                        item.kind === finding.kind && item.value === span.value,
-                    )
+                  ? replacements.get(`${finding.kind}\u0000${span.value}`)
                   : undefined;
               return (
                 <Panel

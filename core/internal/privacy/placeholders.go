@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,10 +56,13 @@ var errNamespaceExhausted = errors.New("privacy: reserved placeholder namespace 
 //     rather than reusing a stand-in, because two originals sharing one
 //     placeholder cannot both be restored.
 type placeholderAllocator struct {
-	key       []byte
-	resolve   func(Kind) KindRule
-	body      []byte
-	bodyText  string
+	key      []byte
+	resolve  func(Kind) KindRule
+	body     []byte
+	bodyText string
+	// bodyHex holds, sorted, every run of hexWindowLength lowercase hex digits
+	// in the body.
+	bodyHex   []uint64
 	used      map[string]struct{}
 	exhausted map[Kind]bool
 }
@@ -126,7 +130,7 @@ func (allocator *placeholderAllocator) allocateToken(kind Kind, value string) (s
 	for trial := range placeholderDerivationTrials {
 		suffix := allocator.derive(kind, value, trial, placeholderTokenHexLength)
 		candidate := withPlaceholderSuffix(replacementFor(kind), suffix)
-		if allocator.reserve(candidate) {
+		if allocator.reserve(candidate, suffix) {
 			return candidate, nil
 		}
 	}
@@ -144,7 +148,7 @@ func (allocator *placeholderAllocator) allocateNatural(kind Kind, value string) 
 		if !ok {
 			return "", errNamespaceExhausted
 		}
-		if allocator.reserve(candidate) {
+		if allocator.reserve(candidate, suffix) {
 			return candidate, nil
 		}
 	}
@@ -154,20 +158,86 @@ func (allocator *placeholderAllocator) allocateNatural(kind Kind, value string) 
 // reserve accepts a candidate only if no earlier value in this request took it
 // and no spelling the response restorer recognises already appears in the
 // request body.
-func (allocator *placeholderAllocator) reserve(candidate string) bool {
+func (allocator *placeholderAllocator) reserve(candidate, suffix string) bool {
 	if _, exists := allocator.used[candidate]; exists {
 		return false
 	}
-	if len(allocator.body) > 0 {
-		if allocator.bodyText == "" {
-			allocator.bodyText = string(allocator.body)
-		}
-		if restorableSpellingIn(candidate, allocator.bodyText) {
-			return false
-		}
+	if len(allocator.body) > 0 && allocator.bodyMayHold(candidate, suffix) &&
+		restorableSpellingIn(candidate, allocator.bodyText) {
+		return false
 	}
 	allocator.used[candidate] = struct{}{}
 	return true
+}
+
+// bodyMayHold rules a candidate out without searching the body. Every spelling
+// of a candidate that embeds its derived suffix contains that suffix, so one
+// pass over the body serves every value in the request; searching the whole
+// body for each value instead grows with the number of values times its size.
+func (allocator *placeholderAllocator) bodyMayHold(candidate, suffix string) bool {
+	if allocator.bodyText == "" {
+		allocator.bodyText = string(allocator.body)
+		allocator.bodyHex = hexWindows(allocator.bodyText)
+	}
+	window, ok := hexWindowValue(suffix)
+	if !ok || !strings.Contains(candidate, suffix) {
+		return true
+	}
+	_, found := slices.BinarySearch(allocator.bodyHex, window)
+	return found
+}
+
+// hexWindowLength is the shorter derived suffix, so every suffix starts with
+// one window.
+const hexWindowLength = placeholderNaturalHexLength
+
+// hexWindows lists, sorted and without repeats, every run of hexWindowLength
+// lowercase hex digits in text.
+func hexWindows(text string) []uint64 {
+	var windows []uint64
+	var value uint64
+	run := 0
+	for index := 0; index < len(text); index++ {
+		digit, ok := lowerHexDigit(text[index])
+		if !ok {
+			run = 0
+			continue
+		}
+		value = (value<<4 | uint64(digit)) & (1<<(4*hexWindowLength) - 1)
+		run++
+		if run >= hexWindowLength {
+			windows = append(windows, value)
+		}
+	}
+	slices.Sort(windows)
+	return slices.Compact(windows)
+}
+
+// hexWindowValue reads the first window of a derived suffix.
+func hexWindowValue(suffix string) (uint64, bool) {
+	if len(suffix) < hexWindowLength {
+		return 0, false
+	}
+	var value uint64
+	for index := range hexWindowLength {
+		digit, ok := lowerHexDigit(suffix[index])
+		if !ok {
+			return 0, false
+		}
+		value = value<<4 | uint64(digit)
+	}
+	return value, true
+}
+
+func lowerHexDigit(character byte) (byte, bool) {
+	switch {
+	case character >= '0' && character <= '9':
+		return character - '0', true
+	case character >= 'a' && character <= 'f':
+		return character - 'a' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func (allocator *placeholderAllocator) derive(

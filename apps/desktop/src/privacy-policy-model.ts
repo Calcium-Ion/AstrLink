@@ -1075,17 +1075,14 @@ export function parsePrivacyDryRunResult(value: unknown): PrivacyDryRunResult {
   ) {
     invalid("$.decision", "unknown action");
   }
-  if (!Array.isArray(result.findings) || result.findings.length > 4_096) {
-    invalid("$.findings", "expected at most 4096 findings");
+  if (!Array.isArray(result.findings)) {
+    invalid("$.findings", "expected an array");
   }
   const findings = result.findings.map((finding, index) =>
     parsePrivacyDryRunFinding(finding, `$.findings[${index}]`),
   );
-  if (
-    !Array.isArray(result.suppressed_findings) ||
-    result.suppressed_findings.length > 4_096
-  ) {
-    invalid("$.suppressed_findings", "expected at most 4096 findings");
+  if (!Array.isArray(result.suppressed_findings)) {
+    invalid("$.suppressed_findings", "expected an array");
   }
   const suppressedFindings = result.suppressed_findings.map((finding, index) =>
     parsePrivacyDryRunFinding(finding, `$.suppressed_findings[${index}]`),
@@ -1108,8 +1105,8 @@ export function parsePrivacyDryRunResult(value: unknown): PrivacyDryRunResult {
     ),
   };
   if (Object.hasOwn(result, "redactions")) {
-    if (!Array.isArray(result.redactions) || result.redactions.length > 4_096) {
-      invalid("$.redactions", "expected at most 4096 redactions");
+    if (!Array.isArray(result.redactions)) {
+      invalid("$.redactions", "expected an array");
     }
     parsed.redactions = result.redactions.map((item, index) => {
       const path = `$.redactions[${index}]`;

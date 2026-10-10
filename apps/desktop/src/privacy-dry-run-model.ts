@@ -67,42 +67,50 @@ export function createDryRunFindingResolver(body: string) {
   } catch {
     document = null;
   }
-  const fields = new Map<string, { text: string; bytes: Uint8Array } | null>();
+  const fields = new Map<string, { text: string; units: Int32Array } | null>();
   return (finding: PrivacyDryRunFinding): DryRunTextSpan | null => {
     if (!fields.has(finding.path)) {
       const text = textAtPath(document, finding.path);
       fields.set(
         finding.path,
-        text === null ? null : { text, bytes: new TextEncoder().encode(text) },
+        text === null ? null : { text, units: utf16Units(text) },
       );
     }
     const field = fields.get(finding.path);
     if (!field) return null;
-    const { text, bytes } = field;
+    const { text, units } = field;
     const { start, end } = finding;
     if (
       !Number.isInteger(start) ||
       !Number.isInteger(end) ||
       start < 0 ||
       end <= start ||
-      end > bytes.length
+      end >= units.length
     )
       return null;
-    try {
-      const decoder = new TextDecoder("utf-8", {
-        fatal: true,
-        ignoreBOM: true,
-      });
-      const prefix = decoder.decode(bytes.subarray(0, start));
-      const value = decoder.decode(bytes.subarray(start, end));
-      return {
-        text,
-        value,
-        start: prefix.length,
-        end: prefix.length + value.length,
-      };
-    } catch {
-      return null;
-    }
+    const from = units[start];
+    const to = units[end];
+    if (from < 0 || to < 0) return null;
+    return { text, value: text.slice(from, to), start: from, end: to };
   };
+}
+
+/**
+ * Maps each UTF-8 byte offset of text to its UTF-16 index, or -1 inside a
+ * character. Decoding the text before every finding instead takes time
+ * proportional to the matches times the length of the text.
+ */
+function utf16Units(text: string): Int32Array {
+  const units = new Int32Array(new TextEncoder().encode(text).length + 1);
+  units.fill(-1);
+  let byte = 0;
+  let unit = 0;
+  for (const character of text) {
+    units[byte] = unit;
+    const point = character.codePointAt(0) ?? 0;
+    byte += point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
+    unit += character.length;
+  }
+  units[byte] = unit;
+  return units;
 }

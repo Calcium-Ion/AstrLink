@@ -73,10 +73,9 @@ func scanStructuredJSONLiterals(value string) structuredJSONLiterals {
 }
 
 // alignStructuredFindings runs before suppression, so an allowlist entry, the
-// reported finding, and the redact decision all see the aligned span. Each
-// piece still counts toward the detector limit: a span is not allowed to fan
-// out across an arbitrary number of literals.
-func alignStructuredFindings(extracted []extractedSegment, findings []Finding) ([]Finding, error) {
+// reported finding, and the redact decision all see the aligned span. A span
+// yields at most one piece per literal it covers.
+func alignStructuredFindings(extracted []extractedSegment, findings []Finding) []Finding {
 	scans := make(map[int]structuredJSONLiterals)
 	aligned := make([]Finding, 0, len(findings))
 	changed := false
@@ -93,14 +92,11 @@ func alignStructuredFindings(extracted []extractedSegment, findings []Finding) (
 		}
 		aligned = scanned.align(aligned, finding)
 		changed = true
-		if len(aligned) > maxDetectorFindings {
-			return nil, ErrDetectorLimit
-		}
 	}
 	if !changed {
-		return findings, nil
+		return findings
 	}
-	return uniqueFindings(aligned), nil
+	return uniqueFindings(aligned)
 }
 
 // align clips a finding to the literals it overlaps. A string piece never

@@ -1,7 +1,10 @@
 package privacy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -164,12 +167,43 @@ func TestRegexDetectorHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestRegexDetectorEnforcesFindingLimit(t *testing.T) {
-	_, err := NewRegexDetector().Detect(context.Background(), DetectInput{
-		Segments: []Segment{{Value: strings.Repeat("a@b.co ", maxDetectorFindings+1)}},
+func TestRegexDetectorReportsEveryMatch(t *testing.T) {
+	const count = 20_000
+	findings, err := NewRegexDetector().Detect(context.Background(), DetectInput{
+		Segments: []Segment{{Value: strings.Repeat("a@b.co ", count)}},
 	})
-	if err != ErrDetectorLimit {
-		t.Fatalf("Detect error = %v", err)
+	if err != nil || len(findings) != count {
+		t.Fatalf("Detect found %d, err = %v", len(findings), err)
+	}
+}
+
+func TestRegexRedactsEveryDistinctValueInALargeRequest(t *testing.T) {
+	const count = 10_000
+	var text strings.Builder
+	for index := range count {
+		fmt.Fprintf(&text, "user%d@example.com, ", index)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "m",
+		"input": []any{map[string]any{"role": "user", "content": text.String()}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := New(PolicyProviderFunc(func(context.Context, Scope) (Policy, error) {
+		return Policy{}, nil
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.Inspect(context.Background(), Policy{
+		Enabled: true, Mode: ModeRegex, Action: ActionRedact,
+	}, contract.ProtocolOpenAIResponses, body)
+	if err != nil || result.Decision != DecisionRedact || len(result.Redactions) != count {
+		t.Fatalf("Inspect redactions = %d, decision = %q, err = %v", len(result.Redactions), result.Decision, err)
+	}
+	if bytes.Contains(result.Body, []byte("@example.com")) {
+		t.Fatal("an address reached the rewritten body")
 	}
 }
 

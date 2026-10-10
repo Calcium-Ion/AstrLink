@@ -13,8 +13,6 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
-const maxDetectorFindings = 4_096
-
 type regexSpec struct {
 	kind     Kind
 	pattern  *regexp.Regexp
@@ -156,15 +154,7 @@ func (detector *RegexDetector) Detect(ctx context.Context, input DetectInput) ([
 			return nil, err
 		}
 		for _, spec := range detector.specs {
-			remaining := maxDetectorFindings - len(candidates)
-			if remaining <= 0 {
-				return nil, ErrDetectorLimit
-			}
-			locations := spec.pattern.FindAllStringIndex(segment.Value, remaining+1)
-			if len(locations) > remaining {
-				return nil, ErrDetectorLimit
-			}
-			for _, location := range locations {
+			for _, location := range spec.pattern.FindAllStringIndex(segment.Value, -1) {
 				if spec.boundary != nil &&
 					!spec.boundary(segment.Value, location[0], location[1]) {
 					continue
@@ -214,18 +204,19 @@ func selectDeterministicFindings(candidates []Finding) []Finding {
 	})
 
 	selected := make([]Finding, 0, len(deduplicated))
-	for _, candidate := range deduplicated {
-		overlap := false
-		for _, existing := range selected {
-			if candidate.Segment == existing.Segment &&
-				candidate.Start < existing.End && existing.Start < candidate.End {
-				overlap = true
-				break
+	for begin := 0; begin < len(deduplicated); {
+		end := begin + 1
+		for end < len(deduplicated) && deduplicated[end].Segment == deduplicated[begin].Segment {
+			end++
+		}
+		segmentCandidates := deduplicated[begin:end]
+		selector := newSpanSelector(segmentCandidates)
+		for _, candidate := range segmentCandidates {
+			if selector.accept(candidate) {
+				selected = append(selected, candidate)
 			}
 		}
-		if !overlap {
-			selected = append(selected, candidate)
-		}
+		begin = end
 	}
 	sort.Slice(selected, func(left, right int) bool {
 		a, b := selected[left], selected[right]

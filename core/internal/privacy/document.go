@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -15,7 +16,6 @@ import (
 )
 
 const maxJSONDepth = 128
-const maxExtractedSegments = 32_768
 
 type jsonDocument struct {
 	body          []byte
@@ -24,7 +24,6 @@ type jsonDocument struct {
 
 type extractedSegment struct {
 	Segment
-	writePath              string
 	validateStructuredJSON bool
 }
 
@@ -75,17 +74,13 @@ func extractDocument(
 	}
 	toolPayloads := structuredToolPayloadPaths(protocol, root)
 	extracted := make([]extractedSegment, 0)
-	overflow := false
 	for _, key := range roots {
 		value, exists := root[key]
 		if !exists || skipJSONChild(root, key, value, jsonContentContext) {
 			continue
 		}
-		walkJSONStrings(value, "/"+escapeJSONPointer(key), sjsonObjectKey(key),
-			1, jsonContentContext, false, protected, toolPayloads, &extracted, &overflow)
-	}
-	if overflow {
-		return jsonDocument{}, nil, ErrUnsafeInput
+		walkJSONStrings(value, "/"+escapeJSONPointer(key),
+			1, jsonContentContext, false, protected, toolPayloads, &extracted)
 	}
 	return document, extracted, nil
 }
@@ -197,16 +192,14 @@ func protocolRoots(protocol contract.ProtocolID) ([]string, bool) {
 func walkJSONStrings(
 	value any,
 	path string,
-	writePath string,
 	depth int,
 	context jsonTraversalContext,
 	structuredToolLeaf bool,
 	protected map[string]struct{},
 	toolPayloads map[string]struct{},
 	extracted *[]extractedSegment,
-	overflow *bool,
 ) {
-	if *overflow || depth > maxJSONDepth {
+	if depth > maxJSONDepth {
 		return
 	}
 	if _, opaque := protected[path]; opaque {
@@ -214,17 +207,12 @@ func walkJSONStrings(
 	}
 	switch typed := value.(type) {
 	case string:
-		if len(*extracted) >= maxExtractedSegments {
-			*overflow = true
-			return
-		}
 		segment := Segment{Path: path, Value: typed}
 		if structuredToolLeaf {
 			segment.ContextPrefix = toolFieldContextPrefix(path)
 		}
 		*extracted = append(*extracted, extractedSegment{
-			Segment:   segment,
-			writePath: writePath,
+			Segment: segment,
 			// Only re-validate after rewrite when the original string was
 			// already JSON. Tool transcripts often start with '{' (a truncated
 			// package.json, a shell dump plus stderr) without being JSON;
@@ -238,8 +226,8 @@ func walkJSONStrings(
 			structuredToolLeaf = true
 		}
 		for index, child := range typed {
-			walkJSONStrings(child, path+"/"+jsonIndex(index), writePath+"."+jsonIndex(index),
-				depth+1, context, structuredToolLeaf, protected, toolPayloads, extracted, overflow)
+			walkJSONStrings(child, path+"/"+jsonIndex(index),
+				depth+1, context, structuredToolLeaf, protected, toolPayloads, extracted)
 		}
 	case map[string]any:
 		if _, payload := toolPayloads[path]; payload {
@@ -261,28 +249,113 @@ func walkJSONStrings(
 			}
 			childContext := nextJSONTraversalContext(typed, key, context)
 			childToolLeaf := structuredToolLeaf && !isToolTextBlockField(typed, key)
-			walkJSONStrings(child, path+"/"+escapeJSONPointer(key), writePath+"."+sjsonObjectKey(key),
-				depth+1, childContext, childToolLeaf, protected, toolPayloads, extracted, overflow)
+			walkJSONStrings(child, path+"/"+escapeJSONPointer(key),
+				depth+1, childContext, childToolLeaf, protected, toolPayloads, extracted)
 		}
 	}
-}
-
-// SJSON paths are not JSON pointers. Force object keys (including numeric and
-// empty keys) and escape every path operator so tool payload keys stay literal.
-func sjsonObjectKey(key string) string {
-	return ":" + gjson.Escape(key)
 }
 
 // Only encode the value being changed. The parsed map is used for inspection,
 // never to serialize the request, preserving other fields and their key order.
 func (document *jsonDocument) setValue(path string, value any) error {
+	encoded, err := encodeJSONValue(value)
+	if err != nil {
+		return err
+	}
+	return document.setRaw(path, encoded)
+}
+
+func encodeJSONValue(value any) ([]byte, error) {
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(value); err != nil {
-		return err
+		return nil, err
 	}
-	return document.setRaw(path, bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}))
+	return bytes.TrimSuffix(encoded.Bytes(), []byte{'\n'}), nil
+}
+
+// stringReplacement is the new raw JSON for a string the request still holds
+// as original.
+type stringReplacement struct {
+	original string
+	raw      []byte
+}
+
+// replaceStrings rewrites the strings at the given JSON pointers in one pass
+// over the body. Setting them one path at a time rescans and copies the whole
+// body for each, which made a long conversation with many redacted messages
+// take seconds on every turn. A string that is missing or no longer holds the
+// inspected text fails the rewrite.
+func (document *jsonDocument) replaceStrings(replacements map[string]stringReplacement) error {
+	if len(replacements) == 0 {
+		return nil
+	}
+	// Only containers on the way to a replaced string are walked.
+	wanted := make(map[string]struct{}, 2*len(replacements))
+	for pointer := range replacements {
+		for index := 1; index < len(pointer); index++ {
+			if pointer[index] == '/' {
+				wanted[pointer[:index]] = struct{}{}
+			}
+		}
+		wanted[pointer] = struct{}{}
+	}
+	trimmed := bytes.TrimLeft(document.body, " \t\r\n")
+	offset := len(document.body) - len(trimmed)
+	type edit struct {
+		start, end int
+		raw        []byte
+	}
+	edits := make([]edit, 0, len(replacements))
+	failed := false
+	var walk func(pointer string, container gjson.Result)
+	walk = func(pointer string, container gjson.Result) {
+		container.ForEach(func(key, child gjson.Result) bool {
+			childPointer := pointer + "/"
+			if key.Type == gjson.String {
+				childPointer += escapeJSONPointer(key.Str)
+			} else {
+				childPointer += jsonIndex(int(key.Num))
+			}
+			if _, ok := wanted[childPointer]; !ok {
+				return true
+			}
+			if replacement, ok := replacements[childPointer]; ok {
+				if child.Type != gjson.String || child.Str != replacement.original {
+					failed = true
+					return false
+				}
+				start := offset + child.Index
+				edits = append(edits, edit{start: start, end: start + len(child.Raw), raw: replacement.raw})
+				return true
+			}
+			if child.IsObject() || child.IsArray() {
+				walk(childPointer, child)
+			}
+			return !failed
+		})
+	}
+	walk("", gjson.ParseBytes(trimmed))
+	if failed || len(edits) != len(replacements) {
+		return ErrUnsafeRewrite
+	}
+	sort.Slice(edits, func(left, right int) bool {
+		return edits[left].start < edits[right].start
+	})
+	updated := make([]byte, 0, len(document.body))
+	written := 0
+	for _, edit := range edits {
+		if edit.start < written || edit.end > len(document.body) ||
+			document.body[edit.start] != '"' {
+			return ErrUnsafeRewrite
+		}
+		updated = append(updated, document.body[written:edit.start]...)
+		updated = append(updated, edit.raw...)
+		written = edit.end
+	}
+	document.body = append(updated, document.body[written:]...)
+	return nil
 }
 
 func (document *jsonDocument) setRaw(path string, value []byte) error {
@@ -616,21 +689,27 @@ func rewriteDocument(
 	for _, item := range placed {
 		grouped[item.Segment] = append(grouped[item.Segment], item)
 	}
+	replacements := make(map[string]stringReplacement, len(grouped))
 	for segmentIndex, segmentFindings := range grouped {
 		if segmentIndex < 0 || segmentIndex >= len(extracted) {
 			return rewriteOutcome{}, ErrUnsafeRewrite
 		}
-		redacted, err := redactStringWithPlaceholders(extracted[segmentIndex].Value, segmentFindings)
+		segment := extracted[segmentIndex]
+		redacted, err := redactStringWithPlaceholders(segment.Value, segmentFindings)
 		if err != nil {
 			return rewriteOutcome{}, err
 		}
-		if extracted[segmentIndex].validateStructuredJSON &&
-			!validStructuredJSON(redacted) {
+		if segment.validateStructuredJSON && !validStructuredJSON(redacted) {
 			return rewriteOutcome{}, ErrUnsafeRewrite
 		}
-		if err := document.setValue(extracted[segmentIndex].writePath, redacted); err != nil {
+		raw, err := encodeJSONValue(redacted)
+		if _, duplicate := replacements[segment.Path]; err != nil || duplicate {
 			return rewriteOutcome{}, ErrUnsafeRewrite
 		}
+		replacements[segment.Path] = stringReplacement{original: segment.Value, raw: raw}
+	}
+	if err := document.replaceStrings(replacements); err != nil {
+		return rewriteOutcome{}, ErrUnsafeRewrite
 	}
 	// The note is only worth its tokens when an opaque marker actually reached
 	// the wire, so it is decided after allocation rather than from policy alone.
@@ -772,42 +851,79 @@ func selectNonOverlappingFindings(value string, findings []Finding) ([]Finding, 
 		return a.Kind < b.Kind
 	})
 
+	selector := newSpanSelector(candidates)
 	selected := make([]Finding, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.Start < 0 || candidate.End > len(value) || candidate.End <= candidate.Start {
 			return nil, ErrUnsafeRewrite
 		}
-		overlap := false
-		for _, existing := range selected {
-			if candidate.Start < existing.End && existing.Start < candidate.End {
-				overlap = true
-				break
-			}
-		}
-		if !overlap {
+		if selector.accept(candidate) {
 			selected = append(selected, candidate)
 		}
 	}
 	return selected, nil
 }
 
+// spanSelector accepts spans of one value in the order offered and refuses
+// any span that overlaps one it already accepted. A span overlaps an accepted
+// one exactly when some accepted span starting before its end also ends after
+// its start, so it keeps the largest accepted end per start in a Fenwick tree
+// and answers in logarithmic time even for a value with many findings.
+type spanSelector struct {
+	starts []int
+	maxEnd []int
+}
+
+func newSpanSelector(findings []Finding) *spanSelector {
+	starts := make([]int, len(findings))
+	for index, finding := range findings {
+		starts[index] = finding.Start
+	}
+	slices.Sort(starts)
+	starts = slices.Compact(starts)
+	return &spanSelector{starts: starts, maxEnd: make([]int, len(starts))}
+}
+
+// accept takes a span from the findings the selector was built from.
+func (selector *spanSelector) accept(finding Finding) bool {
+	before, _ := slices.BinarySearch(selector.starts, finding.End)
+	for index := before; index > 0; index -= index & -index {
+		if selector.maxEnd[index-1] > finding.Start {
+			return false
+		}
+	}
+	rank, _ := slices.BinarySearch(selector.starts, finding.Start)
+	for index := rank + 1; index <= len(selector.maxEnd); index += index & -index {
+		selector.maxEnd[index-1] = max(selector.maxEnd[index-1], finding.End)
+	}
+	return true
+}
+
+// redactStringWithPlaceholders writes value once with the non-overlapping
+// findings replaced, rather than copying it again for every finding.
 func redactStringWithPlaceholders(value string, findings []placedFinding) (string, error) {
 	ordered := append([]placedFinding(nil), findings...)
 	sort.Slice(ordered, func(left, right int) bool {
-		return ordered[left].Start > ordered[right].Start
+		return ordered[left].Start < ordered[right].Start
 	})
+	var redacted strings.Builder
+	redacted.Grow(len(value))
+	written := 0
 	for _, finding := range ordered {
 		if finding.Placeholder == "" ||
-			finding.Start < 0 || finding.End > len(value) || finding.End <= finding.Start {
+			finding.Start < written || finding.End > len(value) || finding.End <= finding.Start {
 			return "", ErrUnsafeRewrite
 		}
-		replacement := finding.Placeholder
+		redacted.WriteString(value[written:finding.Start])
 		if finding.quoted {
-			replacement = `"` + replacement + `"`
+			redacted.WriteString(`"` + finding.Placeholder + `"`)
+		} else {
+			redacted.WriteString(finding.Placeholder)
 		}
-		value = value[:finding.Start] + replacement + value[finding.End:]
+		written = finding.End
 	}
-	return value, nil
+	redacted.WriteString(value[written:])
+	return redacted.String(), nil
 }
 
 func replacementFor(kind Kind) string {
