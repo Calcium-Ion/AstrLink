@@ -130,7 +130,6 @@ export function ServiceProxyFields({
                   onChange(proxyDraftWithURL(value, e.target.value))
                 }
                 autoComplete="off"
-                spellCheck={false}
               />
             </Field>
             <Field label={t("serviceProxy.username")}>

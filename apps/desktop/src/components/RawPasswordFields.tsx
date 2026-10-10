@@ -76,7 +76,6 @@ export function RawPasswordFields({
           name="new-password"
           onChange={(event) => onPasswordChange(event.target.value)}
           ref={inputRef}
-          spellCheck={false}
           type="password"
           value={password}
         />
@@ -93,7 +92,6 @@ export function RawPasswordFields({
           id={CONFIRM_PASSWORD_ID}
           name="confirm-password"
           onChange={(event) => onConfirmationChange(event.target.value)}
-          spellCheck={false}
           type="password"
           value={confirmation}
         />

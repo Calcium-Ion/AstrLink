@@ -4400,7 +4400,6 @@ export function SafetyPolicy({
                           resetProbedModel();
                         }}
                         placeholder={t("safety.localPathPlaceholder")}
-                        spellCheck={false}
                         value={localPath}
                       />
                     </Label>

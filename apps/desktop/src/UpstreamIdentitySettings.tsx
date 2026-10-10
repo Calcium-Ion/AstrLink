@@ -107,7 +107,6 @@ function IdentityVersionField({
         maxLength={maxIdentityVersionLength}
         placeholder={t("routing.learning.versionPlaceholder")}
         autoComplete="off"
-        spellCheck={false}
         aria-invalid={invalid || undefined}
         onChange={(event) => {
           setText(event.target.value);

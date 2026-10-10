@@ -2880,7 +2880,6 @@ export function ServiceManager({
                       aria-label={t("services.authorizationCode")}
                       type="password"
                       autoComplete="off"
-                      spellCheck={false}
                       placeholder="code#state"
                       value={authorizationCode}
                       maxLength={8192}

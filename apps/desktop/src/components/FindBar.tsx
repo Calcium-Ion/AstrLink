@@ -105,7 +105,6 @@ export function FindBar({
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           ref={inputRef}
-          spellCheck={false}
           value={query}
         />
         {blank && shortcut && !disabled ? (

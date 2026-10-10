@@ -6,6 +6,17 @@ import { useT } from "@/i18n";
 import { useImeTextControl } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
+/**
+ * macOS WebKit capitalizes and autocorrects typed words by default, turning
+ * `gpt-` into `Gpt-`. Model IDs, URLs, and keys must stay as typed; a field
+ * that wants these features can still set the attributes itself.
+ */
+const verbatimTextInput = {
+  autoCapitalize: "off",
+  autoCorrect: "off",
+  spellCheck: false,
+} as const;
+
 function Input({ type, ...props }: React.ComponentProps<"input">) {
   return type === "password" ? (
     <PasswordInput {...props} />
@@ -76,6 +87,7 @@ function InputControl({
     <input
       type={type}
       data-slot="input"
+      {...verbatimTextInput}
       className={cn(
         "h-8 w-full min-w-0 rounded-md border border-input bg-card px-2.5 py-1 text-sm transition-[color,box-shadow] outline-none selection:bg-primary-fill selection:text-primary-fill-foreground file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-xs file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-45",
         "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25",
@@ -104,4 +116,4 @@ function InputDatalist({
   );
 }
 
-export { Input, InputDatalist };
+export { Input, InputDatalist, verbatimTextInput };

@@ -72,7 +72,6 @@ export function ProofPasswordField({
           name="current-password"
           onChange={(event) => onChange(event.target.value)}
           ref={inputRef}
-          spellCheck={false}
           type="password"
           value={value}
         />
