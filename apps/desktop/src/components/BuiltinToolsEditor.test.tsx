@@ -267,5 +267,5 @@ it("offers MiniMax and its image models for the provider Images API", async () =
     [...document.querySelectorAll('[role="option"]')].map((option) =>
       option.getAttribute("aria-label"),
     ),
-  ).toEqual(["image-01", "image-01-live", "MiniMax-M3"]);
+  ).toEqual(["image-01", "image-01-live"]);
 });

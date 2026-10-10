@@ -4,7 +4,9 @@ import {
   builtinImageModels,
   builtinImagesServiceKinds,
   defaultBuiltinTools,
+  isImageGenerationModel,
   parseBuiltinTools,
+  runsImageGenerationTool,
   type BuiltinTool,
   type BuiltinToolKind,
   type BuiltinTools,
@@ -70,10 +72,15 @@ function ToolEditor({
     );
   const providers = providersFor(backend);
   const selected = providers.find((service) => service.id === value.service_id);
-  const modelOptions = [
-    ...((direct && selected && builtinImageModels[selected.kind]) || []),
-    ...(selected?.models ?? []),
-  ];
+  const models = selected?.models ?? [];
+  const modelOptions = direct
+    ? [
+        ...((selected && builtinImageModels[selected.kind]) || []),
+        ...models.filter(isImageGenerationModel),
+      ]
+    : kind === "image_generation"
+      ? models.filter(runsImageGenerationTool)
+      : models;
   useEffect(() => {
     if (disabled) return;
     let active = true;

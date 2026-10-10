@@ -30,6 +30,29 @@ export const builtinImageModels: Partial<
   minimax_coding: ["image-01", "image-01-live"],
 };
 
+const imageModelPattern =
+  /image|dall-e|flux|seedream|stable-diffusion|sdxl|sd3|cogview|wanx|t2i|recraft|ideogram|kolors|jimeng|hidream/i;
+
+/**
+ * Reports whether a model ID names an image generation model. Provider model
+ * lists carry only IDs, so the Images API picker goes by known model names.
+ */
+export function isImageGenerationModel(model: string): boolean {
+  return imageModelPattern.test(model) && !/video/i.test(model);
+}
+
+/**
+ * Reports whether a chat model can run the Responses image_generation tool,
+ * which only OpenAI's GPT and o-series models offer.
+ */
+export function runsImageGenerationTool(model: string): boolean {
+  return (
+    /(^|\/)(gpt-\d|o\d)/i.test(model) &&
+    !/realtime|audio|transcribe|tts|search/i.test(model) &&
+    !isImageGenerationModel(model)
+  );
+}
+
 export function defaultBuiltinTools(): BuiltinTools {
   return {
     web_search: { enabled: false, backend: "upstream" },
