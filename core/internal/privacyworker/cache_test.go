@@ -8,16 +8,21 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 )
 
-const testFrameLog = "frames.log"
+const (
+	testFrameLog    = "frames.log"
+	testGateRelease = "release"
+)
 
 func segmentsInput(values ...string) privacy.DetectInput {
 	segments := make([]privacy.Segment, len(values))
@@ -118,6 +123,133 @@ func TestClientBatchesPendingTextByBytes(t *testing.T) {
 	if len(reports) != 1 || reports[0].CachedSegments != 2 || reports[0].CachedBytes != 16 ||
 		reports[0].Batches != 0 {
 		t.Fatalf("cached reports = %+v", reports)
+	}
+}
+
+func TestClientSplitsLongTextIntoOverlappingPieces(t *testing.T) {
+	client := newTestClient(t, "digit_runs", 5*time.Second)
+	client.pieceBytes, client.pieceOverlap = 16, 6
+	long := "密码 12345678901234567890 和 42 é 7 é 31415 " + strings.Repeat("密", 6) + " 99"
+	input := segmentsInput("id 7", long)
+	want := []privacy.Finding{{Segment: 0, Start: 3, End: 4, Kind: privacy.KindAccount, Confidence: 0.99}}
+	for _, run := range digitRuns(long) {
+		want = append(want, privacy.Finding{
+			Segment: 1, Start: run[0], End: run[1], Kind: privacy.KindAccount, Confidence: 0.99,
+		})
+	}
+	// The 20-digit run is longer than any piece: it comes back whole, once.
+	findings, err := client.Detect(context.Background(), input)
+	if err != nil || !reflect.DeepEqual(sortedFindings(findings), want) {
+		t.Fatalf("findings=%+v err=%v, want %+v", findings, err, want)
+	}
+	frames := testFrames(t, client)
+	pieces := 0
+	for _, frame := range frames {
+		for _, text := range frame {
+			if len(text) > client.pieceBytes || !utf8.ValidString(text) {
+				t.Fatalf("frame text %q exceeds the piece size or splits a rune", text)
+			}
+			pieces++
+		}
+	}
+	if pieces < 5 {
+		t.Fatalf("frames = %q, want the long value split", frames)
+	}
+
+	// Each piece is cached, so a retry of the same request reaches no model.
+	findings, err = client.Detect(context.Background(), input)
+	if err != nil || !reflect.DeepEqual(sortedFindings(findings), want) {
+		t.Fatalf("cached findings=%+v err=%v", findings, err)
+	}
+	if again := testFrames(t, client); len(again) != len(frames) {
+		t.Fatalf("frames after retry = %q", again)
+	}
+}
+
+func TestPieceBoundsCoverTextOnRuneBoundaries(t *testing.T) {
+	for _, value := range []string{
+		strings.Repeat("a", 100),
+		strings.Repeat("密", 40),
+		strings.Repeat("ab🔑", 30),
+	} {
+		bounds := pieceBounds(value, 16, 6)
+		if bounds[0][0] != 0 || bounds[len(bounds)-1][1] != len(value) {
+			t.Fatalf("bounds %v do not cover %d bytes", bounds, len(value))
+		}
+		for index, bound := range bounds {
+			if bound[1]-bound[0] > 16 || bound[1] <= bound[0] ||
+				!utf8.ValidString(value[bound[0]:bound[1]]) {
+				t.Fatalf("piece %v of %q", bound, value)
+			}
+			if index > 0 && (bound[0] <= bounds[index-1][0] || bound[0] >= bounds[index-1][1]) {
+				t.Fatalf("piece %v does not overlap and advance past %v", bound, bounds[index-1])
+			}
+		}
+	}
+	if bounds := pieceBounds("short", 16, 6); !reflect.DeepEqual(bounds, [][2]int{{0, 5}}) {
+		t.Fatalf("short value bounds = %v", bounds)
+	}
+}
+
+func sortedFindings(findings []privacy.Finding) []privacy.Finding {
+	sorted := append([]privacy.Finding(nil), findings...)
+	sort.Slice(sorted, func(left, right int) bool {
+		if sorted[left].Segment != sorted[right].Segment {
+			return sorted[left].Segment < sorted[right].Segment
+		}
+		return sorted[left].Start < sorted[right].Start
+	})
+	return sorted
+}
+
+func TestClientLetsAShortRequestInBetweenFramesOfALongOne(t *testing.T) {
+	client := newTestClient(t, "gated", 30*time.Second)
+	client.batchBytes = 8
+	long := make(chan error, 1)
+	go func() {
+		_, err := client.Detect(context.Background(), segmentsInput("GATE", "a@x.test", "b@x.test"))
+		long <- err
+	}()
+	for len(testFrames(t, client)) == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	short := make(chan error, 1)
+	go func() {
+		_, err := client.Detect(context.Background(), segmentsInput("c@x.test"))
+		short <- err
+	}()
+	waitForWorkerTurn(t)
+
+	installation, _ := client.model.ReadyInstallation(testInstallationID)
+	if err := os.WriteFile(filepath.Join(installation.Directory, testGateRelease), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, done := range []chan error{short, long} {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The short request took the worker as soon as the first long frame ended.
+	want := [][]string{{"GATE"}, {"c@x.test"}, {"a@x.test"}, {"b@x.test"}}
+	if frames := testFrames(t, client); !reflect.DeepEqual(frames, want) {
+		t.Fatalf("frames = %q, want %q", frames, want)
+	}
+}
+
+// waitForWorkerTurn returns once a Detect is blocked waiting for the worker.
+func waitForWorkerTurn(t *testing.T) {
+	t.Helper()
+	buffer := make([]byte, 1<<20)
+	for {
+		dump := string(buffer[:runtime.Stack(buffer, true)])
+		for _, goroutine := range strings.Split(dump, "\n\n") {
+			lines := strings.SplitN(goroutine, "\n", 3)
+			if len(lines) > 1 && strings.Contains(lines[0], "[select") &&
+				strings.Contains(lines[1], "privacyworker.(*Client).inspectBatch(") {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

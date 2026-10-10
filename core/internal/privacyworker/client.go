@@ -20,6 +20,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,7 +45,17 @@ const (
 	maxModelLabels               = 256
 	maxModelRequestTokens        = 128 * 1024
 
+	// A frame carries at most this much text, which bounds how long another
+	// request waits for the worker.
 	defaultBatchBytes = 8 << 10
+	// Longer text travels in pieces of one batch. A single frame would wait
+	// out everyone else, and past the worker's token cap (128K for the catalog
+	// models) it fails every retry: one pasted log, or a whole conversation
+	// that a client folds into a single message.
+	defaultPieceBytes = defaultBatchBytes
+	// Neighboring pieces share this much text, so a value cut at one piece's
+	// edge is whole in the next.
+	defaultPieceOverlap = 512
 	// A whole inspection may take this long per batch of pending text, which
 	// is generous for the slowest supported model.
 	inspectionBudgetBase     = 30 * time.Second
@@ -83,6 +94,8 @@ type Client struct {
 	nextRequestID  atomic.Uint64
 	cache          *detectionCache
 	batchBytes     int
+	pieceBytes     int
+	pieceOverlap   int
 
 	mu                    sync.Mutex
 	active                bool
@@ -137,6 +150,8 @@ func New(config Config) (*Client, error) {
 		slot:           make(chan struct{}, 1),
 		cache:          newDetectionCache(),
 		batchBytes:     defaultBatchBytes,
+		pieceBytes:     defaultPieceBytes,
+		pieceOverlap:   defaultPieceOverlap,
 		change:         make(chan struct{}),
 	}, nil
 }
@@ -189,49 +204,67 @@ func (client *Client) Detect(ctx context.Context, input privacy.DetectInput) ([]
 	if len(input.Segments) == 0 {
 		return nil, nil
 	}
-	started := client.now()
 	expectedModelID := input.ExpectedLocalModelID
 	if expectedModelID.Validate() != nil || !client.expectedModelActive(expectedModelID) {
 		return nil, privacy.ErrDetectorUnavailable
 	}
 	inspection := client.planInspection(input.Segments)
 	// Cached spans are the model's own earlier judgement, so a request served
-	// entirely from cache passes without the slot, even while the worker is
-	// latched as failed.
-	client.lookupCached(inspection, expectedModelID)
-	if len(inspection.pending) == 0 {
-		privacy.ReportInspectionProgress(ctx, inspection.progress)
-		return inspection.findings, nil
-	}
-	select {
-	case client.slot <- struct{}{}:
-		defer func() { <-client.slot }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
-	// The previous slot holder may have inspected the same segments.
-	client.lookupCached(inspection, expectedModelID)
+	// entirely from cache never waits for the worker, even while it is latched
+	// as failed.
+	inspection.pending = client.lookupCached(inspection, expectedModelID, inspection.pending)
 	budget := client.inspectionBudget(inspection.pendingBytes())
 	batches := inspection.batches(client.batchBytes)
 	inspection.progress.Batches = len(batches)
 	privacy.ReportInspectionProgress(ctx, inspection.progress)
+	var working time.Duration
 	for index, batch := range batches {
-		if index > 0 && client.now().Sub(started) > budget {
+		if index > 0 && working > budget {
 			return nil, privacy.ErrDetectorTimeout
 		}
-		segments := make([]privacy.Segment, len(batch))
-		for position, segment := range batch {
-			segments[position] = inspection.segments[segment]
-		}
-		findings, key, err := client.detectBatch(ctx, expectedModelID, segments)
+		elapsed, err := client.inspectBatch(ctx, expectedModelID, inspection, batch)
+		working += elapsed
 		if err != nil {
 			return nil, err
 		}
-		inspection.complete(client.cache, key, batch, findings)
 		privacy.ReportInspectionProgress(ctx, inspection.progress)
 	}
-	return inspection.findings, nil
+	return inspection.result(), nil
+}
+
+// inspectBatch holds the worker for one frame only. Concurrent requests take
+// turns, so a short request waits for one frame of a long inspection rather
+// than for all of it.
+func (client *Client) inspectBatch(
+	ctx context.Context,
+	expectedModelID contract.PrivacyModelID,
+	inspection *inspection,
+	batch []int,
+) (time.Duration, error) {
+	select {
+	case client.slot <- struct{}{}:
+		defer func() { <-client.slot }()
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	// Another request may have inspected the same pieces meanwhile.
+	batch = client.lookupCached(inspection, expectedModelID, batch)
+	if len(batch) == 0 {
+		inspection.progress.CompletedBatches++
+		return 0, nil
+	}
+	segments := make([]privacy.Segment, len(batch))
+	for position, piece := range batch {
+		segments[position] = inspection.pieces[piece].text
+	}
+	started := client.now()
+	findings, key, err := client.detectBatch(ctx, expectedModelID, segments)
+	elapsed := client.now().Sub(started)
+	if err != nil {
+		return elapsed, err
+	}
+	inspection.complete(client.cache, key, batch, findings)
+	return elapsed, nil
 }
 
 // detectBatch sends one frame. Each batch has its own timeout and startup
@@ -290,62 +323,118 @@ func (client *Client) detectBatch(
 	return nil, modelKey{}, privacy.ErrDetectorUnavailable
 }
 
-// inspectionBudget bounds a whole Detect for clients that never give up. It
-// is checked only between batches, so it never kills the worker, a request
+// inspectionBudget bounds the worker time one Detect may use, for clients that
+// never give up; waiting while other requests hold the worker does not count.
+// It is checked only between batches, so it never kills the worker, a request
 // always finishes at least one batch, and the retry reuses what finished.
 func (client *Client) inspectionBudget(pendingBytes int) time.Duration {
 	batches := (pendingBytes + client.batchBytes - 1) / client.batchBytes
 	return max(client.timeout, inspectionBudgetBase+time.Duration(batches)*inspectionBudgetPerBatch)
 }
 
-// lookupCached serves pending segments from the cache of the installation
-// that would inspect them now, with the readiness checks ensureProcess
-// applies. An installation that is not ready is left to ensureProcess.
-func (client *Client) lookupCached(inspection *inspection, modelID contract.PrivacyModelID) {
+// lookupCached serves pieces from the cache of the installation that would
+// inspect them now, with the readiness checks ensureProcess applies, and
+// returns the pieces left to inspect. An installation that is not ready is
+// left to ensureProcess.
+func (client *Client) lookupCached(
+	inspection *inspection,
+	modelID contract.PrivacyModelID,
+	pieces []int,
+) []int {
 	installation, ready := client.model.ReadyInstallation(modelID)
 	if !ready || installation.Directory == "" || installation.Identity == "" ||
 		!validSHA256(installation.ManifestSHA256) {
-		return
+		return pieces
 	}
-	inspection.lookup(client.cache, installationKey(modelID, installation))
+	return inspection.lookup(client.cache, installationKey(modelID, installation), pieces)
 }
 
 // inspection tracks one Detect: findings so far, indexed by request segment,
-// and the segments the model has yet to see.
+// and the pieces the model has yet to see.
 type inspection struct {
-	segments []privacy.Segment
+	pieces   []piece
 	digests  []segmentDigest
 	sizes    []int
 	pending  []int
+	split    map[int]bool
 	findings []privacy.Finding
 	progress privacy.InspectionProgress
 }
 
+// piece is the part of a request segment one frame carries, and the unit the
+// cache keeps. Only a segment longer than the piece size has several.
+type piece struct {
+	segment int
+	offset  int
+	text    privacy.Segment
+}
+
 func (client *Client) planInspection(segments []privacy.Segment) *inspection {
-	plan := &inspection{
-		segments: segments,
-		digests:  make([]segmentDigest, len(segments)),
-		sizes:    make([]int, len(segments)),
-	}
+	plan := &inspection{}
 	for index, segment := range segments {
 		// The model cannot find anything in an empty value; a finding inside
 		// the context prefix alone is discarded.
 		if segment.Value == "" {
 			continue
 		}
-		plan.digests[index] = client.cache.digest(segment)
-		plan.sizes[index] = len(segment.ContextPrefix) + len(segment.Value)
-		plan.pending = append(plan.pending, index)
-		plan.progress.Segments++
-		plan.progress.Bytes += plan.sizes[index]
+		bounds := pieceBounds(segment.Value, client.pieceBytes, client.pieceOverlap)
+		if len(bounds) > 1 {
+			if plan.split == nil {
+				plan.split = make(map[int]bool)
+			}
+			plan.split[index] = true
+		}
+		for _, bound := range bounds {
+			text := segment
+			text.Value = segment.Value[bound[0]:bound[1]]
+			size := len(text.ContextPrefix) + len(text.Value)
+			plan.pending = append(plan.pending, len(plan.pieces))
+			plan.pieces = append(plan.pieces, piece{segment: index, offset: bound[0], text: text})
+			plan.digests = append(plan.digests, client.cache.digest(text))
+			plan.sizes = append(plan.sizes, size)
+			plan.progress.Segments++
+			plan.progress.Bytes += size
+		}
 	}
 	return plan
 }
 
-func (plan *inspection) lookup(cache *detectionCache, key modelKey) {
-	remaining := plan.pending[:0]
-	for _, index := range plan.pending {
-		findings, hit := cache.lookup(key, plan.digests[index], plan.segments[index].Value)
+// pieceBounds cuts value on rune boundaries into pieces of at most limit
+// bytes, each starting overlap bytes before the previous one ends.
+func pieceBounds(value string, limit, overlap int) [][2]int {
+	if len(value) <= limit {
+		return [][2]int{{0, len(value)}}
+	}
+	var bounds [][2]int
+	for start := 0; ; {
+		end := runeStart(value, min(start+limit, len(value)))
+		bounds = append(bounds, [2]int{start, end})
+		if end == len(value) {
+			return bounds
+		}
+		next := runeStart(value, max(end-overlap, start+1))
+		if next <= start {
+			next = end
+		}
+		start = next
+	}
+}
+
+// runeStart moves index back to the first byte of the rune it falls in.
+// Invalid text may have none; the worker rejects it anyway.
+func runeStart(value string, index int) int {
+	for step := 1; step < utf8.UTFMax && index < len(value) && !utf8.RuneStart(value[index]); step++ {
+		index--
+	}
+	return index
+}
+
+// lookup records the cached pieces among pieces and returns the rest, reusing
+// the slice.
+func (plan *inspection) lookup(cache *detectionCache, key modelKey, pieces []int) []int {
+	remaining := pieces[:0]
+	for _, index := range pieces {
+		findings, hit := cache.lookup(key, plan.digests[index], plan.pieces[index].text.Value)
 		if !hit {
 			remaining = append(remaining, index)
 			continue
@@ -354,7 +443,7 @@ func (plan *inspection) lookup(cache *detectionCache, key modelKey) {
 		plan.progress.CachedSegments++
 		plan.progress.CachedBytes += plan.sizes[index]
 	}
-	plan.pending = remaining
+	return remaining
 }
 
 func (plan *inspection) pendingBytes() int {
@@ -365,8 +454,8 @@ func (plan *inspection) pendingBytes() int {
 	return total
 }
 
-// batches splits the pending segments by model bytes, in request order. A
-// segment larger than the limit travels alone.
+// batches splits the pending pieces by model bytes, in request order. A
+// piece larger than the limit travels alone.
 func (plan *inspection) batches(limit int) [][]int {
 	var batches [][]int
 	var current []int
@@ -385,7 +474,7 @@ func (plan *inspection) batches(limit int) [][]int {
 	return batches
 }
 
-// complete caches a finished batch per segment, including segments without
+// complete caches a finished batch per piece, including pieces without
 // findings: most text holds none, and those are the most valuable hits.
 func (plan *inspection) complete(cache *detectionCache, key modelKey, batch []int, findings []privacy.Finding) {
 	bySegment := make([][]privacy.Finding, len(batch))
@@ -400,11 +489,55 @@ func (plan *inspection) complete(cache *detectionCache, key modelKey, batch []in
 	plan.progress.CompletedBatches++
 }
 
+// add records findings spanning a piece's text against its request segment.
 func (plan *inspection) add(index int, findings []privacy.Finding) {
+	piece := plan.pieces[index]
 	for _, finding := range findings {
-		finding.Segment = index
+		finding.Segment = piece.segment
+		finding.Start += piece.offset
+		finding.End += piece.offset
 		plan.findings = append(plan.findings, finding)
 	}
+}
+
+// result joins the pieces of each split segment. Neighbors overlap, so both
+// may report one value, or each a part of a value longer than the overlap.
+// Overlapping spans of one kind become their union: redacting only one part
+// would send the rest upstream.
+func (plan *inspection) result() []privacy.Finding {
+	if len(plan.split) == 0 {
+		return plan.findings
+	}
+	findings := make([]privacy.Finding, 0, len(plan.findings))
+	var joined []privacy.Finding
+	for _, finding := range plan.findings {
+		if plan.split[finding.Segment] {
+			joined = append(joined, finding)
+		} else {
+			findings = append(findings, finding)
+		}
+	}
+	sort.Slice(joined, func(left, right int) bool {
+		a, b := joined[left], joined[right]
+		if a.Segment != b.Segment {
+			return a.Segment < b.Segment
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		return a.Start < b.Start
+	})
+	merged := joined[:0]
+	for _, finding := range joined {
+		if last := len(merged) - 1; last >= 0 && merged[last].Segment == finding.Segment &&
+			merged[last].Kind == finding.Kind && finding.Start < merged[last].End {
+			merged[last].End = max(merged[last].End, finding.End)
+			merged[last].Confidence = max(merged[last].Confidence, finding.Confidence)
+			continue
+		}
+		merged = append(merged, finding)
+	}
+	return append(findings, merged...)
 }
 
 func (client *Client) expectedModelActive(expected contract.PrivacyModelID) bool {

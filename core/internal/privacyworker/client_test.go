@@ -1176,7 +1176,7 @@ func TestPrivacyWorkerHelper(t *testing.T) {
 				os.Exit(9)
 			}
 		}
-		if mode == "per_text" || mode == "hang_on_marker" {
+		if mode == "per_text" || mode == "hang_on_marker" || mode == "gated" {
 			if logTestFrame(modelDirectory, request) != nil {
 				os.Exit(3)
 			}
@@ -1187,9 +1187,36 @@ func TestPrivacyWorkerHelper(t *testing.T) {
 					_, _ = readFrame(os.Stdin)
 					os.Exit(0)
 				}
+				// A gated frame stays in flight until the test creates the
+				// release file.
+				for mode == "gated" && strings.Contains(text.Text, "GATE") {
+					if _, err := os.Stat(filepath.Join(modelDirectory, testGateRelease)); err == nil {
+						break
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
 				if strings.Contains(text.Text, "@") {
 					spans = append(spans, workerSpan{
 						TextID: text.ID, Label: "email", Start: 0, End: len(text.Text), Score: &score,
+					})
+				}
+			}
+			payload, err := json.Marshal(workerResponse{Version: protocolVersion, ID: request.ID, Spans: &spans})
+			if err != nil || writeFrame(os.Stdout, payload) != nil {
+				os.Exit(4)
+			}
+			continue
+		}
+		if mode == "digit_runs" {
+			if logTestFrame(modelDirectory, request) != nil {
+				os.Exit(3)
+			}
+			score := 0.99
+			spans := []workerSpan{}
+			for _, text := range request.Texts {
+				for _, run := range digitRuns(text.Text) {
+					spans = append(spans, workerSpan{
+						TextID: text.ID, Label: "account", Start: run[0], End: run[1], Score: &score,
 					})
 				}
 			}
@@ -1296,6 +1323,24 @@ func logTestFrame(modelDirectory string, request workerRequest) error {
 		err = closeErr
 	}
 	return err
+}
+
+// digitRuns lists each maximal run of ASCII digits. A run cut by a piece edge
+// is still a run, so the helper reports a partial value as a real model may.
+func digitRuns(text string) [][2]int {
+	var runs [][2]int
+	for start := 0; start < len(text); start++ {
+		if text[start] < '0' || text[start] > '9' {
+			continue
+		}
+		end := start
+		for end < len(text) && text[end] >= '0' && text[end] <= '9' {
+			end++
+		}
+		runs = append(runs, [2]int{start, end})
+		start = end
+	}
+	return runs
 }
 
 func helperModelDirectory(arguments []string) string {

@@ -14,8 +14,8 @@ import (
 const (
 	defaultCacheEntries  = 16_384
 	defaultCacheFindings = 131_072
-	// A segment reporting more findings than the engine accepts per request
-	// fails there anyway; keeping it would only crowd out useful entries.
+	// A piece this dense would push most other entries out of the cache, so it
+	// is inspected again instead of kept.
 	maxCachedSegmentFindings = 4096
 )
 
