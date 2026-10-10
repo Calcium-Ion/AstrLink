@@ -12,6 +12,7 @@ vi.mock("motion/react", async (importOriginal) => ({
 
 import { SERVICE_ORDER_GUIDE_KEY, ServiceOrderHelp } from "./ServiceOrderHelp";
 import { i18n } from "./i18n";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -130,6 +131,6 @@ it("closes with Escape and returns focus to the help trigger", async () => {
     ),
   );
   expect(dialog()).toBeNull();
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await settleClosedLayer();
   expect(document.activeElement).toBe(help());
 });

@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DialogPicker, PickerDialog } from "./DialogPicker";
+import { settleClosedLayer } from "../lib/test-layer-settle";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -142,9 +143,7 @@ describe("DialogPicker", () => {
       );
     });
     // Radix restores focus on a timer after the dialog unmounts.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settleClosedLayer();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(onValueChange).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(opener);

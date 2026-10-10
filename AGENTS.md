@@ -114,6 +114,18 @@ not file.
   a build or tests passed is insufficient. If a required condition is unmet,
   explain it and do not open the PR.
 
+## Tests
+
+- Code that serves until cancelled (`Run`, `Serve`, listeners) runs in a
+  goroutine under a context the test cancels; select on the expected outcome and
+  on the rejected one, so a wrong assumption fails at once instead of at the
+  `go test` timeout. Wait on done channels, not sleeps; never widen a timeout to
+  hide a flake.
+- After closing a Radix Select, Popover, or Dialog, call `settleClosedLayer()`
+  from `apps/desktop/src/lib/test-layer-settle.ts` before the next interaction
+  or focus assertion. Radix returns focus one timer tick later, which dismisses
+  a layer opened in between. Do not inline `setTimeout(resolve, 0)`.
+
 ## Desktop UI
 
 ### Reuse shared components

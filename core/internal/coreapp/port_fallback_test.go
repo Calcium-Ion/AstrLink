@@ -194,30 +194,36 @@ func TestExposedInferencePortHeldOnLoopbackFailsInsteadOfCoexisting(t *testing.T
 	config.InferencePortFallback = true
 	config.ControlListen = "127.0.0.1:0"
 	writer := newRecordingWriter()
-
-	err = RunWithDependencies(context.Background(), config, writer, Dependencies{
+	dependencies := Dependencies{
 		NewInferenceHandler: func(string, bool) (http.Handler, error) {
 			return http.NotFoundHandler(), nil
 		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "listen on inference plane") || !errors.Is(err, addressInUse) {
-		t.Fatalf("Run error = %v, want the port reported as occupied", err)
 	}
-	if writer.buffer.Len() != 0 {
-		t.Fatalf("ready event written for a port another process holds: %s", writer.buffer.String())
-	}
-
-	// The probe must not leave the port unusable for the real listener.
-	occupied.Close()
+	// Run serves until cancelled, so a bind that wrongly succeeds must show
+	// up as the ready event rather than as a test that never returns.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runErrors := make(chan error, 1)
 	go func() {
-		runErrors <- RunWithDependencies(ctx, config, writer, Dependencies{
-			NewInferenceHandler: func(string, bool) (http.Handler, error) {
-				return http.NotFoundHandler(), nil
-			},
-		})
+		runErrors <- RunWithDependencies(ctx, config, writer, dependencies)
+	}()
+	select {
+	case <-writer.ready:
+		cancel()
+		<-runErrors
+		t.Fatalf("ready event written for a port another process holds: %s", writer.buffer.String())
+	case err = <-runErrors:
+	}
+	if err == nil || !strings.Contains(err.Error(), "listen on inference plane") || !errors.Is(err, addressInUse) {
+		t.Fatalf("Run error = %v, want the port reported as occupied", err)
+	}
+
+	// The probe must not leave the port unusable for the real listener.
+	occupied.Close()
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		runErrors <- RunWithDependencies(ctx, config, writer, dependencies)
 	}()
 	select {
 	case <-writer.ready:

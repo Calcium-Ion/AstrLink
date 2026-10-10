@@ -6,6 +6,7 @@ import { defaultBuiltinTools, type BuiltinTools } from "@/builtin-tools-model";
 import { applyLocale } from "@/i18n";
 import type { RoutableService } from "@/service-model";
 import { BuiltinToolsEditor } from "./BuiltinToolsEditor";
+import { settleClosedLayer } from "../lib/test-layer-settle";
 
 const action = vi.hoisted(() => vi.fn());
 vi.mock("@/bridge", () => ({ builtinToolAction: action }));
@@ -256,7 +257,7 @@ it("offers MiniMax and its image models for the provider Images API", async () =
   );
   // Radix hands focus back to the provider trigger a tick after closing; a
   // model list opened before that is dismissed as focus moving outside it.
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  await settleClosedLayer();
   await act(async () =>
     container
       .querySelector<HTMLInputElement>('[aria-label="图片生成绘图模型"]')!

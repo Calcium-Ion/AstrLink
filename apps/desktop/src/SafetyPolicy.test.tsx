@@ -43,6 +43,7 @@ import type {
   PrivacyPolicyRecord,
 } from "./privacy-policy-model";
 import type { RawSealingState } from "./raw-sealing-model";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 
 function rawSealing(overrides: Partial<RawSealingState> = {}): RawSealingState {
   return {
@@ -1499,7 +1500,7 @@ describe("SafetyPolicy", () => {
     await act(async () => button("取消").click());
     expect(bridgeMocks.updatePrivacyPolicy).not.toHaveBeenCalled();
     expect(trigger.closest("label")?.textContent).toContain(ready.name);
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    await settleClosedLayer();
     expect(document.activeElement?.id).toBe(trigger.id);
 
     await act(async () => trigger.click());

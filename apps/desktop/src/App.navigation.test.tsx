@@ -119,6 +119,7 @@ import { defaultTrayPreferences } from "./preferences-model";
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
 import { ONBOARDING_STORAGE_KEY } from "./use-onboarding";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 
 const readySnapshot: AppSnapshot = {
   app_version: "0.1.0",
@@ -225,9 +226,7 @@ async function chooseKindCard(option: string): Promise<void> {
   });
   // The closed dialog returns focus in a timeout. Let it land now: on a slow
   // runner it could land after a popover opens and close it as focus outside.
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settleClosedLayer();
 }
 
 /** A raw password unless `overrides` says otherwise. */
@@ -1790,6 +1789,9 @@ describe("App workspace navigation", () => {
     expect(workspaceHeading().textContent).toBe("路由");
   });
   it("protects default-policy drafts when leaving routing", async () => {
+    // The routing panel autosaves 500 ms after an edit. The draft must stay
+    // unsaved however slowly a runner moves through the steps below.
+    vi.useFakeTimers();
     await renderApp();
     await act(async () => button("路由").click());
     await act(async () => button("恢复与重试").click());

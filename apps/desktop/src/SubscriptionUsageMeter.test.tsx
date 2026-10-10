@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SubscriptionUsageMeter } from "./SubscriptionUsageMeter";
 import type { SubscriptionUsage } from "./subscription-usage-model";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 
 describe("subscription usage summary", () => {
   let container: HTMLDivElement;
@@ -73,9 +74,7 @@ describe("subscription usage summary", () => {
       );
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settleClosedLayer();
     expect(document.activeElement).toBe(trigger);
   });
 
