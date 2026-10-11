@@ -3,11 +3,93 @@ export interface PriceBinding {
   model: string;
 }
 export interface PricingConfig {
+  overrides?: Record<string, ModelRates>;
   provider: string;
   bindings: Record<string, PriceBinding>;
   monthly_budget_usd: string;
   billing_day: number;
   time_zone: string;
+}
+export interface ModelRates {
+  input: string;
+  output: string;
+  cache_read: string;
+  cache_write: string;
+}
+export interface CatalogPrice {
+  provider: string;
+  model: string;
+  name: string;
+  expression: string;
+}
+export function resolveCatalogPrice(
+  config: PricingConfig,
+  model: string,
+  prices: CatalogPrice[],
+) {
+  const binding = config.bindings[model] ?? {
+    provider: config.provider,
+    model,
+  };
+  const matches = prices.filter(
+    (price) =>
+      price.model === binding.model &&
+      (!binding.provider || price.provider === binding.provider),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+// Display only recognized token-rate formulas; other catalog rules remain
+// visible as their exact expression, never guessed as a flat token price.
+export function catalogRateRows(
+  expression: string,
+): { label: string; rates: ModelRates }[] {
+  const linear = (source: string): ModelRates | undefined => {
+    const rates: ModelRates = {
+      input: "0",
+      output: "0",
+      cache_read: "0",
+      cache_write: "0",
+    };
+    const keys = {
+      p: "input",
+      c: "output",
+      cr: "cache_read",
+      cc: "cache_write",
+    } as const;
+    const seen = new Set<string>();
+    for (const term of source.split("+")) {
+      const match = term.trim().match(/^(p|c|cr|cc)\s*\*\s*(\d+(?:\.\d+)?)$/);
+      if (!match || seen.has(match[1])) return undefined;
+      seen.add(match[1]);
+      rates[keys[match[1] as keyof typeof keys]] = match[2];
+    }
+    // Core keeps cache tokens in p unless the formula prices them separately.
+    if (!/\bcr\b/.test(expression)) rates.cache_read = rates.input;
+    if (!/\bcc\b/.test(expression)) rates.cache_write = rates.input;
+    return rates;
+  };
+  const tiered = expression.match(
+    /^len\s*<=\s*(\d+)\s*\?\s*tier\("[^"]+",\s*([^()]+)\)\s*:\s*tier\("[^"]+",\s*([^()]+)\)$/,
+  );
+  if (tiered) {
+    const low = linear(tiered[2]),
+      high = linear(tiered[3]);
+    if (low && high)
+      return [
+        {
+          label: `输入 ≤ ${Number(tiered[1]).toLocaleString()} Token`,
+          rates: low,
+        },
+        {
+          label: `输入 > ${Number(tiered[1]).toLocaleString()} Token`,
+          rates: high,
+        },
+      ];
+    return [];
+  }
+  const simple = expression.match(/^tier\("[^"]+",\s*([^()]+)\)$/);
+  const rates = linear(simple?.[1] ?? expression);
+  return rates ? [{ label: "标准价格", rates }] : [];
 }
 export interface BillingAmounts {
   amount_usd: string;
@@ -183,7 +265,24 @@ export function parsePricingConfig(value: unknown): PricingConfig {
     throw new Error("Unsupported official provider");
   const day = count(o.billing_day);
   if (day < 1 || day > 31) throw new Error("Invalid billing day");
+  const overrides = Object.fromEntries(
+    Object.entries(o.overrides == null ? {} : object(o.overrides)).map(
+      ([model, value]) => {
+        const rate = object(value);
+        return [
+          model,
+          {
+            input: decimal(rate.input),
+            output: decimal(rate.output),
+            cache_read: decimal(rate.cache_read),
+            cache_write: decimal(rate.cache_write),
+          },
+        ];
+      },
+    ),
+  );
   return {
+    ...(o.overrides == null ? {} : { overrides }),
     provider,
     bindings,
     monthly_budget_usd: decimal(o.monthly_budget_usd, true),
