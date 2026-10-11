@@ -17,6 +17,8 @@ const bridge = vi.hoisted(() => ({
   stopCore: vi.fn(),
   updatePreferences: vi.fn(),
   listNetworkAddresses: vi.fn(),
+  getSyncConfig: vi.fn(),
+  getSyncStatus: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
 
@@ -103,6 +105,13 @@ describe("SettingsCenter", () => {
         { interface: "en0", ip: "fd7a:115c:a1e0::1" },
       ],
     });
+    bridge.getSyncConfig.mockReset().mockRejectedValue(
+      // The sync tab is a separate surface; these tests exercise the other tabs.
+      new Error("sync_unavailable"),
+    );
+    bridge.getSyncStatus
+      .mockReset()
+      .mockRejectedValue(new Error("sync_unavailable"));
     notifyMocks.success.mockReset();
     notifyMocks.error.mockReset();
     notifyMocks.warning.mockReset();

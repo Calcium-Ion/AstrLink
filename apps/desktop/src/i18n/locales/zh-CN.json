@@ -355,7 +355,147 @@
     "tabsLabel": "设置分组",
     "tabs": {
       "general": "常规",
-      "tray": "托盘面板"
+      "tray": "托盘面板",
+      "sync": "同步与备份"
+    },
+    "sync": {
+      "title": "同步与备份",
+      "unavailable": "当前版本不提供配置同步。",
+      "loadFailed": "无法读取同步设置。",
+      "on": "开启同步",
+      "onHint": "按下方计划同步，并在保存后同步。",
+      "remoteTitle": "远程存储",
+      "remoteKind": "存储类型",
+      "remoteKinds": {
+        "webdav": "WebDAV",
+        "s3": "兼容 S3"
+      },
+      "remoteKindHints": {
+        "webdav": "Nextcloud、群晖或任意 WebDAV 服务器",
+        "s3": "AWS S3、MinIO、Cloudflare R2、阿里云 OSS"
+      },
+      "endpoint": "服务地址",
+      "endpointWebdavPlaceholder": "https://cloud.example.com/remote.php/dav/files/me",
+      "endpointS3Placeholder": "https://s3.example.com",
+      "endpointDomainHint": "只填域名，不含存储桶。",
+      "folder": "目录",
+      "bucket": "存储桶",
+      "region": "区域",
+      "addressing": "寻址方式",
+      "addressings": {
+        "path": "路径样式",
+        "suffix": "域名样式"
+      },
+      "addressingHints": {
+        "path": "https://s3.example.com/<存储桶>/",
+        "suffix": "https://<存储桶>.s3.<域名>/"
+      },
+      "username": "用户名",
+      "password": "密码",
+      "accessKey": "Access Key",
+      "secretKey": "Secret Key",
+      "secretSaved": "已保存。留空表示不修改。",
+      "deviceTitle": "本机",
+      "deviceName": "设备名称",
+      "deviceNameHint": "本机显示的名称。留空使用主机名。",
+      "scheduleTitle": "同步时机",
+      "trigger": "触发方式",
+      "triggers": {
+        "interval": "按间隔",
+        "cron": "Cron 表达式",
+        "manual": "仅手动"
+      },
+      "triggerHints": {
+        "interval": "每隔若干分钟。",
+        "cron": "五段或六段。",
+        "manual": "请用「立即同步」。"
+      },
+      "intervalField": "间隔（分钟）",
+      "intervalHint": "至少 {{count}} 分钟。",
+      "cronField": "Cron 表达式",
+      "cronHint": "五段（分 时 日 月 周）或六段（含秒）。",
+      "debounceField": "保存后等待（秒）",
+      "debounceHint": "0 表示默认 30 秒，可选 {{min}}–{{max}}。",
+      "scopeTitle": "同步内容",
+      "scopeHint": "每组要么整体同步，要么整体不同步。在这里关闭不会删除其他设备上的数据。",
+      "scope": {
+        "services": "提供商",
+        "servicesHint": "名称、地址、模型、重定向与失败策略",
+        "credentials": "凭据",
+        "credentialsHint": "API Key 与代理密码，加密后进入配置包",
+        "policies": "隐私策略",
+        "policiesHint": "脱敏与请求原文策略",
+        "pricing": "计费",
+        "pricingHint": "价格绑定、预算与账单日"
+      },
+      "scopeNeedsServices": "随提供商一起同步",
+      "passphraseTitle": "同步口令",
+      "passphraseHint": "各设备保持一致。口令不会上传。",
+      "passphraseSet": "已设置口令",
+      "passphraseMissing": "尚未设置口令",
+      "passphraseField": "口令",
+      "passphrasePlaceholder": "至少 {{count}} 个字符",
+      "passphraseTooShort": "请至少输入 {{count}} 个字符。",
+      "passphraseSave": "保存口令",
+      "passphraseSaving": "校验中…",
+      "passphraseMismatch": "该口令无法打开远程上已有的配置包。",
+      "passphraseSaved": "口令已保存。",
+      "passphraseForget": "忘记口令",
+      "passphraseForgetTitle": "忘记同步口令？",
+      "passphraseForgetBody": "在重新输入口令前同步会暂停。远程上的配置包不受影响，本机存储的凭据会被删除。",
+      "passphraseForgetConfirm": "忘记口令",
+      "statusTitle": "同步状态",
+      "state": {
+        "off": "同步已关闭",
+        "incomplete": "需要配置远程与口令",
+        "ready": "就绪",
+        "running": "同步中…"
+      },
+      "device": "本机",
+      "pendingChanges_one": "{{count}} 项改动等待打包",
+      "pendingChanges_other": "{{count}} 项改动等待打包",
+      "pendingChangesNone": "没有等待打包的改动",
+      "lastSynced": "上次同步",
+      "nextRun": "下次同步",
+      "never": "从未",
+      "lastError": "上次错误",
+      "syncNow": "立即同步",
+      "syncing": "同步中…",
+      "syncDone": "同步完成。",
+      "syncBusy": "其他设备正持有远程锁，请稍后再试。",
+      "syncFailed": "同步失败：{{error}}",
+      "save": "保存",
+      "saving": "保存中…",
+      "saved": "同步设置已保存。",
+      "dirty": "同步设置尚未保存。",
+      "issues": {
+        "interval": "间隔至少需要 {{count}} 分钟。",
+        "cron": "请填写 cron 表达式。",
+        "debounce": "保存后等待需为 0（默认）或 {{min}}–{{max}} 秒。",
+        "webdav_endpoint": "WebDAV 需要填写服务地址。",
+        "s3_endpoint": "兼容 S3 的存储需要填写服务地址与存储桶。",
+        "remote_kind": "开启同步前请先选择存储类型。",
+        "device_name": "设备名称过长。"
+      },
+      "discard": "放弃修改",
+      "saveFailed": "无法保存同步设置：{{error}}",
+      "conflictsTitle": "已合并的并发修改",
+      "conflictsHint": "最新的在最后。",
+      "conflictsEmpty": "目前没有合并过并发修改。",
+      "resolution": {
+        "local_kept": "本机保留",
+        "remote_kept": "远程保留",
+        "deleted": "已删除",
+        "tie_kept_local": "时间相同，本机保留"
+      },
+      "kind": {
+        "service": "提供商",
+        "service_credential": "提供商密钥",
+        "service_proxy_credential": "代理密钥",
+        "builtin_tool_credential": "工具密钥",
+        "policy": "隐私策略",
+        "pricing_config": "计费"
+      }
     }
   },
   "agentDebug": {

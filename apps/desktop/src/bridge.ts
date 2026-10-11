@@ -171,6 +171,14 @@ import {
   type AgentSkillId,
   type AgentToolTarget,
 } from "./agent-install-model";
+import {
+  parseSyncConfig,
+  parseSyncPassphraseResult,
+  parseSyncStatus,
+  syncConfigPayload,
+  type SyncConfig,
+  type SyncStatus,
+} from "./sync-model";
 
 function hasNativeBridge(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -1198,4 +1206,55 @@ export async function builtinToolAction(
     action,
     input,
   });
+}
+
+/** The configuration-sync surface, over the host's `sync_config` command. */
+export async function getSyncStatus(): Promise<SyncStatus> {
+  requireNativeBridge();
+  return parseSyncStatus(
+    await invoke<unknown>("sync_config", { operation: "status" }),
+  );
+}
+
+export async function getSyncConfig(): Promise<SyncConfig> {
+  requireNativeBridge();
+  return parseSyncConfig(
+    await invoke<unknown>("sync_config", { operation: "config" }),
+  );
+}
+
+export async function configureSync(input: SyncConfig): Promise<SyncConfig> {
+  requireNativeBridge();
+  return parseSyncConfig(
+    await invoke<unknown>("sync_config", {
+      operation: "configure",
+      input: syncConfigPayload(input),
+    }),
+  );
+}
+
+export async function setSyncPassphrase(passphrase: string): Promise<boolean> {
+  requireNativeBridge();
+  const result = parseSyncPassphraseResult(
+    await invoke<unknown>("sync_config", {
+      operation: "passphrase",
+      input: { passphrase },
+    }),
+  );
+  return result.passphrase_set;
+}
+
+/** Forgets the passphrase locally; the remote package is left alone. */
+export async function forgetSyncPassphrase(): Promise<void> {
+  requireNativeBridge();
+  await invoke("sync_config", { operation: "forget" });
+}
+
+export async function runSync(): Promise<SyncStatus> {
+  requireNativeBridge();
+  // A run does several remote round trips and may retry the merge, so the host
+  // gives it minutes rather than the usual control-request timeout.
+  return parseSyncStatus(
+    await invoke<unknown>("sync_config", { operation: "run" }),
+  );
 }

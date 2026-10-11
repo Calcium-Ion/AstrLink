@@ -2141,6 +2141,21 @@ impl CoreManager {
         serde_json::from_slice(&body).map_err(|_| "pricing returned invalid JSON".into())
     }
 
+    /// Configuration sync. `configure` stores the settings, `passphrase` sets
+    /// the package passphrase, `forget` clears it, `run` syncs now, and
+    /// `status`/`config` read the stored state.
+    pub async fn sync(
+        &self,
+        operation: &str,
+        input: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let (method, path, body) = sync_request(operation, input)?;
+        let (_, body) = self
+            .authenticated_control(method, &path, body, None)
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "sync returned invalid JSON".into())
+    }
+
     /// `fresh` asks Core to drop its 30s quota snapshot and query the
     /// provider now. Only operator-initiated refreshes set it.
     pub async fn get_service_usage_with(
@@ -3032,6 +3047,42 @@ fn is_builtin_tool_test(method: &Method, path: &str) -> bool {
         )
 }
 
+/// Translates a sync operation into the control request it makes. Kept apart
+/// from the request itself so the mapping is testable without a running Core.
+fn sync_request(
+    operation: &str,
+    input: Option<serde_json::Value>,
+) -> Result<(Method, String, Option<serde_json::Value>), String> {
+    let base = "/control/v1/sync";
+    Ok(match operation {
+        "status" | "config" => (Method::GET, format!("{base}/{operation}"), None),
+        "configure" => (
+            Method::PUT,
+            format!("{base}/config"),
+            Some(input.ok_or("sync configuration is required")?),
+        ),
+        "passphrase" => {
+            let value = input.ok_or("sync passphrase is required")?;
+            // The passphrase travels as the control API's own body, so a
+            // caller passing a bare string and one passing the object both
+            // reach Core the same way.
+            let body = match value {
+                serde_json::Value::String(passphrase) => {
+                    serde_json::json!({ "passphrase": passphrase })
+                }
+                value @ serde_json::Value::Object(_) => value,
+                _ => return Err("sync passphrase is required".into()),
+            };
+            (Method::PUT, format!("{base}/passphrase"), Some(body))
+        }
+        // DELETE forgets the passphrase and leaves the remote settings alone,
+        // so entering the passphrase again resumes sync.
+        "forget" => (Method::DELETE, format!("{base}/passphrase"), None),
+        "run" => (Method::POST, format!("{base}/run"), None),
+        _ => return Err("unsupported sync operation".into()),
+    })
+}
+
 fn control_request_timeout(method: &Method, path: &str) -> Duration {
     let path = control_path(path);
     if crate::raw_access::is_proof_request(method, path) {
@@ -3053,6 +3104,10 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     }
     if method == Method::POST && path.starts_with("/control/v1/pricing/") {
         return Duration::from_secs(150);
+    }
+    // A sync run does several remote round trips and may retry the merge.
+    if method == Method::POST && path == "/control/v1/sync/run" {
+        return Duration::from_secs(320);
     }
     if method == Method::POST
         && (path == SERVICE_MODEL_PROBES_PATH
@@ -5951,6 +6006,78 @@ mod tests {
                 &Method::PUT,
                 "/control/v1/builtin-tools/web_search/credential"
             ),
+            REQUEST_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn sync_operations_map_to_their_control_requests() {
+        assert_eq!(
+            sync_request("status", None).unwrap(),
+            (Method::GET, "/control/v1/sync/status".into(), None)
+        );
+        assert_eq!(
+            sync_request("config", None).unwrap(),
+            (Method::GET, "/control/v1/sync/config".into(), None)
+        );
+        assert_eq!(
+            sync_request("run", None).unwrap(),
+            (Method::POST, "/control/v1/sync/run".into(), None)
+        );
+        assert_eq!(
+            sync_request("forget", None).unwrap(),
+            (Method::DELETE, "/control/v1/sync/passphrase".into(), None)
+        );
+        assert_eq!(
+            sync_request("configure", Some(serde_json::json!({ "enabled": true }))).unwrap(),
+            (
+                Method::PUT,
+                "/control/v1/sync/config".into(),
+                Some(serde_json::json!({ "enabled": true }))
+            )
+        );
+        assert_eq!(
+            sync_request("passphrase", Some(serde_json::json!("twelve-chars"))).unwrap(),
+            (
+                Method::PUT,
+                "/control/v1/sync/passphrase".into(),
+                Some(serde_json::json!({ "passphrase": "twelve-chars" }))
+            )
+        );
+        assert_eq!(
+            sync_request(
+                "passphrase",
+                Some(serde_json::json!({ "passphrase": "twelve-chars" }))
+            )
+            .unwrap(),
+            (
+                Method::PUT,
+                "/control/v1/sync/passphrase".into(),
+                Some(serde_json::json!({ "passphrase": "twelve-chars" }))
+            )
+        );
+        for (operation, input) in [
+            ("configure", None),
+            ("passphrase", None),
+            ("passphrase", Some(serde_json::json!(7))),
+            ("nonsense", None),
+        ] {
+            assert!(sync_request(operation, input).is_err(), "{operation}");
+        }
+    }
+
+    #[test]
+    fn a_sync_run_gets_room_for_its_remote_round_trips() {
+        assert_eq!(
+            control_request_timeout(&Method::POST, "/control/v1/sync/run"),
+            Duration::from_secs(320)
+        );
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/sync/status"),
+            REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            control_request_timeout(&Method::PUT, "/control/v1/sync/config"),
             REQUEST_TIMEOUT
         );
     }

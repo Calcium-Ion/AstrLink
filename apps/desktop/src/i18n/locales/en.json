@@ -355,7 +355,147 @@
     "tabsLabel": "Settings groups",
     "tabs": {
       "general": "General",
-      "tray": "Tray panel"
+      "tray": "Tray panel",
+      "sync": "Sync and backup"
+    },
+    "sync": {
+      "title": "Sync and backup",
+      "unavailable": "Configuration sync is unavailable in this build.",
+      "loadFailed": "Unable to read the sync settings.",
+      "on": "Turn on sync",
+      "onHint": "Runs on the schedule below and after a save.",
+      "remoteTitle": "Remote storage",
+      "remoteKind": "Storage type",
+      "remoteKinds": {
+        "webdav": "WebDAV",
+        "s3": "S3-compatible"
+      },
+      "remoteKindHints": {
+        "webdav": "Nextcloud, Synology or any WebDAV server",
+        "s3": "AWS S3, MinIO, Cloudflare R2, Aliyun OSS"
+      },
+      "endpoint": "Endpoint",
+      "endpointWebdavPlaceholder": "https://cloud.example.com/remote.php/dav/files/me",
+      "endpointS3Placeholder": "https://s3.example.com",
+      "endpointDomainHint": "The domain only, without the bucket.",
+      "folder": "Folder",
+      "bucket": "Bucket",
+      "region": "Region",
+      "addressing": "Bucket addressing",
+      "addressings": {
+        "path": "In the path",
+        "suffix": "In the domain"
+      },
+      "addressingHints": {
+        "path": "https://s3.example.com/<bucket>/",
+        "suffix": "https://<bucket>.s3.<domain>/"
+      },
+      "username": "Username",
+      "password": "Password",
+      "accessKey": "Access key",
+      "secretKey": "Secret key",
+      "secretSaved": "Stored. Leave blank to keep it.",
+      "deviceTitle": "This device",
+      "deviceName": "Device name",
+      "deviceNameHint": "Shown for this device. Blank uses the host name.",
+      "scheduleTitle": "When to sync",
+      "trigger": "Trigger",
+      "triggers": {
+        "interval": "On a timer",
+        "cron": "Cron expression",
+        "manual": "Only when I ask"
+      },
+      "triggerHints": {
+        "interval": "Every so many minutes.",
+        "cron": "Five or six fields.",
+        "manual": "Use Sync now."
+      },
+      "intervalField": "Interval (minutes)",
+      "intervalHint": "At least {{count}}.",
+      "cronField": "Cron expression",
+      "cronHint": "Five fields (minute hour day month weekday) or six with seconds.",
+      "debounceField": "Wait after a save (seconds)",
+      "debounceHint": "0 uses the default of 30 seconds, {{min}}–{{max}}.",
+      "scopeTitle": "What to sync",
+      "scopeHint": "A group travels whole or not at all. Turning one off here does not delete it elsewhere.",
+      "scope": {
+        "services": "Providers",
+        "servicesHint": "Names, endpoints, models, redirects and failure policy",
+        "credentials": "Credentials",
+        "credentialsHint": "API keys and proxy passwords, sealed in the package",
+        "policies": "Privacy policy",
+        "policiesHint": "Redaction and request-body policy",
+        "pricing": "Pricing",
+        "pricingHint": "Price bindings, budget and billing day"
+      },
+      "scopeNeedsServices": "Included with providers",
+      "passphraseTitle": "Sync passphrase",
+      "passphraseHint": "The same on every device. Never uploaded.",
+      "passphraseSet": "Passphrase set",
+      "passphraseMissing": "No passphrase yet",
+      "passphraseField": "Passphrase",
+      "passphrasePlaceholder": "At least {{count}} characters",
+      "passphraseTooShort": "Use at least {{count}} characters.",
+      "passphraseSave": "Save passphrase",
+      "passphraseSaving": "Checking…",
+      "passphraseMismatch": "That passphrase does not open the package on the remote.",
+      "passphraseSaved": "Passphrase saved.",
+      "passphraseForget": "Forget passphrase",
+      "passphraseForgetTitle": "Forget the sync passphrase?",
+      "passphraseForgetBody": "Sync stops until you enter it again. The package on the remote is left alone, and the stored credential is removed from this device.",
+      "passphraseForgetConfirm": "Forget it",
+      "statusTitle": "Sync status",
+      "state": {
+        "off": "Sync is off",
+        "incomplete": "Needs a remote and a passphrase",
+        "ready": "Ready",
+        "running": "Syncing…"
+      },
+      "device": "This device",
+      "pendingChanges_one": "{{count}} change waiting",
+      "pendingChanges_other": "{{count}} changes waiting",
+      "pendingChangesNone": "Nothing waiting",
+      "lastSynced": "Last synced",
+      "nextRun": "Next run",
+      "never": "Never",
+      "lastError": "Last error",
+      "syncNow": "Sync now",
+      "syncing": "Syncing…",
+      "syncDone": "Sync finished.",
+      "syncBusy": "Another device holds the remote lock. Try again shortly.",
+      "syncFailed": "Sync failed: {{error}}",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Sync settings saved.",
+      "dirty": "Unsaved sync settings.",
+      "issues": {
+        "interval": "The interval must be at least {{count}} minutes.",
+        "cron": "Enter a cron expression.",
+        "debounce": "Waiting after a save must be 0 (default) or {{min}}–{{max}} seconds.",
+        "webdav_endpoint": "A WebDAV remote needs an endpoint.",
+        "s3_endpoint": "An S3 remote needs an endpoint and a bucket.",
+        "remote_kind": "Choose a storage type before turning sync on.",
+        "device_name": "The device name is too long."
+      },
+      "discard": "Discard",
+      "saveFailed": "Could not save the sync settings: {{error}}",
+      "conflictsTitle": "Merged concurrent edits",
+      "conflictsHint": "Newest last.",
+      "conflictsEmpty": "No concurrent edits have been merged yet.",
+      "resolution": {
+        "local_kept": "This device kept",
+        "remote_kept": "Remote kept",
+        "deleted": "Deleted",
+        "tie_kept_local": "Same time: this device kept"
+      },
+      "kind": {
+        "service": "Provider",
+        "service_credential": "Provider key",
+        "service_proxy_credential": "Proxy key",
+        "builtin_tool_credential": "Tool key",
+        "policy": "Privacy policy",
+        "pricing_config": "Pricing"
+      }
     }
   },
   "agentDebug": {

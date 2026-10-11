@@ -215,6 +215,21 @@ describe("web command transport", () => {
       "/privacy-models/model_one/resume",
       "POST",
     ],
+    ["sync_config", { operation: "status" }, "/sync/status", "GET"],
+    [
+      "sync_config",
+      { operation: "configure", input: {} },
+      "/sync/config",
+      "PUT",
+    ],
+    [
+      "sync_config",
+      { operation: "passphrase", input: { passphrase: "x" } },
+      "/sync/passphrase",
+      "PUT",
+    ],
+    ["sync_config", { operation: "forget" }, "/sync/passphrase", "DELETE"],
+    ["sync_config", { operation: "run" }, "/sync/run", "POST"],
   ])("routes %s", async (command, args, path, method) => {
     respond({});
     await webInvoke(command as string, args as Record<string, unknown>);
@@ -229,6 +244,7 @@ describe("web command transport", () => {
       ["set_raw_password", { action: "reset" }],
       ["get_service", { serviceId: "../health" }],
       ["open_external_url", { url: "javascript:alert(1)" }],
+      ["sync_config", { operation: "unknown" }],
       ["toString", {}],
     ] as const) {
       await expect(webInvoke(command, args)).rejects.toThrow();

@@ -873,5 +873,144 @@ WHEN NEW.layout = 'whole' AND OLD.layout <> 'whole' BEGIN
 END`,
 			`UPDATE audit_settings SET request_body_max_bytes = 33554432 WHERE request_body_max_bytes = 1048576`,
 		}},
+		// Configuration sync keeps a change log so a save can schedule a sync,
+		// and one row of settings and status. Both are gateway-owned: the log is
+		// never uploaded, and sync_state.config_json is stripped before a
+		// package leaves the device, so a remote cannot see where it is stored.
+		//
+		// Only the low-frequency configuration tables get triggers. Requests,
+		// audit blobs, the billing ledger, channel bindings, and learned
+		// identities are written per request or per observation and are not
+		// synced, so they must not schedule a sync.
+		//
+		// routing_settings and audit_settings deliberately have no trigger:
+		// neither document leaves the device. The parts of routing_settings
+		// that name a service travel inside the service records themselves,
+		// and audit exposure stays each device's own decision. For the same
+		// reason a service's subscription row gets no credential trigger: a
+		// subscription login is performed on each device rather than copied,
+		// so its OAuth token never enters a package.
+		{Version: 50, Name: "config_sync", Statements: []string{
+			`CREATE TABLE config_change_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_kind TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    changed_at TEXT NOT NULL
+)`,
+			`CREATE INDEX config_change_log_changed_idx ON config_change_log(changed_at)`,
+			`CREATE TRIGGER config_change_services AFTER INSERT ON services BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_services_update AFTER UPDATE ON services BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_services_delete AFTER DELETE ON services BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service', OLD.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_service_credentials AFTER INSERT ON service_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service_credential', NEW.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_service_credentials_update AFTER UPDATE ON service_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service_credential', NEW.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_service_credentials_delete AFTER DELETE ON service_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service_credential', OLD.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_service_proxy_credentials AFTER INSERT ON service_proxy_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service_proxy_credential', NEW.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_service_proxy_credentials_update AFTER UPDATE ON service_proxy_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service_proxy_credential', NEW.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_service_proxy_credentials_delete AFTER DELETE ON service_proxy_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('service_proxy_credential', OLD.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_builtin_tool_credentials AFTER INSERT ON builtin_tool_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('builtin_tool_credential', NEW.kind, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_builtin_tool_credentials_update AFTER UPDATE ON builtin_tool_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('builtin_tool_credential', NEW.kind, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_builtin_tool_credentials_delete AFTER DELETE ON builtin_tool_credentials BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('builtin_tool_credential', OLD.kind, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_policies AFTER INSERT ON policies BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('policy', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_policies_update AFTER UPDATE ON policies BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('policy', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_policies_delete AFTER DELETE ON policies BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('policy', OLD.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_privacy_model_installations AFTER INSERT ON privacy_model_installations BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('privacy_model', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_privacy_model_installations_update AFTER UPDATE ON privacy_model_installations BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('privacy_model', NEW.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_privacy_model_installations_delete AFTER DELETE ON privacy_model_installations BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('privacy_model', OLD.id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_pricing_configs AFTER INSERT ON pricing_configs BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('pricing_config', NEW.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_pricing_configs_update AFTER UPDATE ON pricing_configs BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('pricing_config', NEW.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			`CREATE TRIGGER config_change_pricing_configs_delete AFTER DELETE ON pricing_configs BEGIN
+    INSERT INTO config_change_log (entity_kind, entity_id, changed_at) VALUES ('pricing_config', OLD.service_id, strftime('%Y-%m-%dT%H:%M:%f000000Z', 'now'));
+END`,
+			// One row of settings and status. config_json holds the user's sync
+			// options and the remote location, including its credentials; the
+			// engine strips those fields before sealing a package, so the remote
+			// never learns where it lives. The destination itself is pinned by
+			// the confirmed remote_identity: a package response that claims a
+			// different store is refused, so remote_etag alone is not trusted.
+			`CREATE TABLE sync_state (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    device_id TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    passphrase_state TEXT NOT NULL DEFAULT 'unset' CHECK(passphrase_state IN ('unset', 'set')),
+    key_salt BLOB,
+    key_params_json TEXT,
+    remote_identity TEXT,
+    remote_etag TEXT,
+    remote_revision INTEGER NOT NULL DEFAULT 0,
+    last_synced_at TEXT,
+    last_error TEXT,
+    retained_through TEXT,
+    CHECK ((passphrase_state = 'unset' AND key_salt IS NULL AND key_params_json IS NULL)
+        OR (passphrase_state = 'set' AND key_salt IS NOT NULL AND key_params_json IS NOT NULL))
+)`,
+			// The cached sync key, sealed under dek_secrets with the row key as
+			// additional data. It fits the secret-column shape, so the plaintext
+			// sweep and the unreadable-secret count cover it too.
+			`CREATE TABLE sync_key_material (
+    key TEXT PRIMARY KEY,
+    credential_value BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    sealed INTEGER NOT NULL DEFAULT 1 CHECK(sealed IN (0, 1))
+)`,
+			// A deleted entity stays here so a device that still has it deletes
+			// rather than resurrects it. Tombstones are kept for ninety days.
+			`CREATE TABLE sync_tombstone (
+    entity_kind TEXT NOT NULL,
+    sync_id TEXT NOT NULL,
+    deleted_at TEXT NOT NULL,
+    PRIMARY KEY (entity_kind, sync_id)
+)`,
+			// The last package this device synced, sealed under dek_secrets. It
+			// is the merge base: without it a two-device edit cannot tell which
+			// side changed, and every difference looks like a conflict.
+			`CREATE TABLE sync_baseline (
+    key TEXT PRIMARY KEY,
+    payload_blob BLOB NOT NULL,
+    revision INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    sealed INTEGER NOT NULL DEFAULT 1 CHECK(sealed IN (0, 1))
+)`,
+		}},
 	}
 }
