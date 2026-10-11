@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/servicemodel"
 	"github.com/QuantumNous/astrlink/core/internal/servicetest"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
+	syncengine "github.com/QuantumNous/astrlink/core/internal/sync"
 )
 
 // installOutboundProxy configures the outbound proxy once per process,
@@ -189,6 +190,10 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 	}
 	subscriptionManager.SetRiskEventStore(store)
 	pricingManager := pricing.NewManager(store, pricingClient)
+	syncEngine, err := syncengine.New(syncengine.Dependencies{Store: store, Logf: logf})
+	if err != nil {
+		return fail("configure configuration sync: %w", err)
+	}
 	subscriptionManager.SetUsageObservers(
 		func(ctx context.Context, account contract.SubscriptionAccount, usage contract.SubscriptionUsage) error {
 			current, err := store.GetService(ctx, account.ID)
@@ -275,16 +280,18 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		ConversionEngine:   conversionEngine,
 		Shutdown:           options.shutdown,
 		ConsoleSessions:    options.consoleSessions,
+		Sync:               syncEngine,
 	})
 	if err != nil {
 		return fail("configure persistent control API: %w", err)
 	}
 	monitorCtx, stopMonitors := context.WithCancel(ctx)
 	var monitors sync.WaitGroup
-	monitors.Add(3)
+	monitors.Add(4)
 	go func() { defer monitors.Done(); pricingManager.Run(monitorCtx, logf) }()
 	go func() { defer monitors.Done(); subscriptionManager.RunUsageMonitor(monitorCtx) }()
 	go func() { defer monitors.Done(); rawVault.Run(monitorCtx) }()
+	go func() { defer monitors.Done(); syncEngine.Run(monitorCtx, logf) }()
 	return &persistentCore{
 		control:  handler,
 		rawVault: rawVault,

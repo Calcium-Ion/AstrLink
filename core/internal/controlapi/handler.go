@@ -82,6 +82,9 @@ type Dependencies struct {
 	// ConsoleSessions is set by the server edition, whose web console signs
 	// in with the raw password. See ConsoleSessions.
 	ConsoleSessions ConsoleSessions
+	// Sync is the configuration engine. Optional; without it the sync surface
+	// reports 503.
+	Sync SyncManager
 }
 
 // RateLimitReleaser restores a service after an operator clears its risk.
@@ -153,6 +156,7 @@ type Handler struct {
 	shutdown          context.CancelFunc
 	observers         *observerTracker
 	consoleSessions   ConsoleSessions
+	syncManager       SyncManager
 }
 
 func New(version contract.VersionResponse) *Handler {
@@ -219,6 +223,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		newServiceID:    dependencies.NewServiceID,
 		shutdown:        dependencies.Shutdown,
 		consoleSessions: dependencies.ConsoleSessions,
+		syncManager:     dependencies.Sync,
 		mux:             http.NewServeMux(),
 		observers:       newObserverTracker(),
 	}
@@ -229,6 +234,11 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 	handler.mux.HandleFunc(PricingPath+"/", handler.authenticated(handler.pricingResource, RoleObserver))
 	handler.mux.HandleFunc(BuiltinToolsPath, handler.authenticated(handler.builtinToolResource, RoleOperator))
 	handler.mux.HandleFunc(RoutingSettingsPath, handler.authenticated(handler.routingSettingsResource, RoleObserver))
+	// Sync configuration names the remote and its credentials, and the
+	// passphrase unlocks the package, so the surface is operator-only. The
+	// route is always registered: without an engine it answers 503, which is
+	// how the desktop tells "no sync in this build" from "wrong path".
+	handler.mux.HandleFunc(SyncPath+"/", handler.authenticated(handler.syncResource, RoleOperator))
 	handler.mux.HandleFunc(HealthPath, handler.getOnly(func(writer http.ResponseWriter, _ *http.Request) {
 		writeJSON(writer, http.StatusOK, contract.HealthResponse{Status: "ok"})
 	}))

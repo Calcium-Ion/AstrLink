@@ -406,6 +406,25 @@ const commands: Record<string, Command> = {
       input,
     )(a);
   },
+  sync_config: (a) => {
+    const base = "/sync";
+    switch (a.operation) {
+      case "status":
+        return route(`${base}/status`)(a);
+      case "config":
+        return route(`${base}/config`)(a);
+      case "configure":
+        return route(`${base}/config`, "PUT", input)(a);
+      case "passphrase":
+        return route(`${base}/passphrase`, "PUT", input)(a);
+      case "forget":
+        return route(`${base}/passphrase`, "DELETE")(a);
+      case "run":
+        return route(`${base}/run`, "POST")(a);
+      default:
+        throw new Error("Unsupported sync operation");
+    }
+  },
 };
 export async function webInvoke<T>(
   command: string,

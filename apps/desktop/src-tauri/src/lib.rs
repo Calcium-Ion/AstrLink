@@ -1289,6 +1289,15 @@ async fn pricing(
 }
 
 #[tauri::command]
+async fn sync_config(
+    operation: String,
+    input: Option<serde_json::Value>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.sync(&operation, input).await
+}
+
+#[tauri::command]
 async fn get_service_usage(
     service_id: String,
     fresh: Option<bool>,
@@ -2271,6 +2280,7 @@ pub fn run() {
             get_service_usage,
             get_service_reset_credits,
             pricing,
+            sync_config,
             reset_service_usage,
             test_service,
             probe_service_models,

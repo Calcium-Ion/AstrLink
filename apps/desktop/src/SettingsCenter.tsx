@@ -26,8 +26,9 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Menu, SlidersHorizontal } from "@/components/icons";
+import { Menu, RefreshCw, SlidersHorizontal } from "@/components/icons";
 import { cn } from "@/lib/utils";
+import { SyncSettings } from "./SyncSettings";
 
 import {
   getCoreStatus,
@@ -77,7 +78,7 @@ const TRAY_PREVIEW_REFRESH_MS = 30_000;
 /** Time for a requested usage collection to land before the preview re-reads. */
 const TRAY_PREVIEW_SETTLE_MS = 2_500;
 
-type SettingsTab = "general" | "tray";
+type SettingsTab = "general" | "tray" | "sync";
 
 type InstantPatch = Omit<
   Preferences,
@@ -265,6 +266,7 @@ export function SettingsCenter({
     "prefs" | "port" | "listen" | "start" | "stop" | "restart" | null
   >(null);
   const [tab, setTab] = useState<SettingsTab>("general");
+  const [syncDirty, setSyncDirty] = useState(false);
   const [trayState, setTrayState] = useState<TrayState | null>(null);
   const [trayStateError, setTrayStateError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -421,10 +423,11 @@ export function SettingsCenter({
     timeoutDirty ||
     bodyLimitDirty;
   entryDirtyRef.current = entryDirty;
+  const editorDirty = entryDirty || syncDirty;
   useEffect(() => {
-    onDirtyChange(entryDirty);
+    onDirtyChange(editorDirty);
     return () => onDirtyChange(false);
-  }, [entryDirty, onDirtyChange]);
+  }, [editorDirty, onDirtyChange]);
 
   const gatewayRunning =
     snapshot != null &&
@@ -656,7 +659,11 @@ export function SettingsCenter({
           onValueChange={(value) => setTab(value as SettingsTab)}
           value={tab}
         >
-          <TabsList aria-label={t("settings.tabsLabel")} className="shrink-0">
+          <TabsList
+            aria-label={t("settings.tabsLabel")}
+            className="shrink-0"
+            scrollable
+          >
             <TabsTrigger value="general">
               <SlidersHorizontal aria-hidden="true" />
               {t("settings.tabs.general")}
@@ -664,6 +671,10 @@ export function SettingsCenter({
             <TabsTrigger value="tray">
               <Menu aria-hidden="true" />
               {t("settings.tabs.tray")}
+            </TabsTrigger>
+            <TabsTrigger value="sync">
+              <RefreshCw aria-hidden="true" />
+              {t("settings.tabs.sync")}
             </TabsTrigger>
           </TabsList>
 
@@ -1280,6 +1291,14 @@ export function SettingsCenter({
                 </div>
               </Panel>
             </div>
+          </TabsContent>
+
+          <TabsContent
+            className="gutter-scroller min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+            data-tab-scroller
+            value="sync"
+          >
+            <SyncSettings onDirtyChange={setSyncDirty} />
           </TabsContent>
         </Tabs>
       </div>
