@@ -88,8 +88,10 @@ describe("About updates", () => {
       phase: "downloading" as const,
       downloaded_bytes: 5,
       total_bytes: 10,
+      download_source: "download_site" as const,
     };
     await render(downloading);
+    expect(container.textContent).toContain("官方下载站");
     expect(
       container
         .querySelector('[role="progressbar"]')
@@ -102,15 +104,16 @@ describe("About updates", () => {
     );
     mocks.saveUpdatePreferences.mockResolvedValue({
       ...ready,
-      preferences: { ...ready.preferences, auto_check: false },
+      preferences: { ...ready.preferences, official_mirror: true },
     });
     await act(async () =>
       (container.querySelector('[role="switch"]') as HTMLButtonElement).click(),
     );
     expect(mocks.saveUpdatePreferences).toHaveBeenCalledWith({
-      auto_check: false,
+      auto_check: true,
       auto_download: true,
       channel: "stable",
+      official_mirror: true,
     });
     expect(receive).toHaveBeenCalled();
   });

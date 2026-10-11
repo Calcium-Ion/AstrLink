@@ -578,6 +578,7 @@ mod tests {
         let store = load(&directory);
         let mut stale_general = store.snapshot().values;
         let updates = crate::updates::UpdatePreferences {
+            official_mirror: false,
             auto_check: false,
             auto_download: false,
             channel: crate::updates::UpdateChannel::Preview,

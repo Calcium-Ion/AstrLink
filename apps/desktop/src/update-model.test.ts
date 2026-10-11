@@ -36,6 +36,15 @@ describe("update IPC", () => {
         auto_check: true,
         auto_download: true,
         channel: "nightly",
+        official_mirror: false,
+      }),
+    ).toThrow();
+    expect(() =>
+      parseUpdatePreferences({
+        auto_check: true,
+        auto_download: true,
+        channel: "stable",
+        official_mirror: "yes",
       }),
     ).toThrow();
     expect(() =>

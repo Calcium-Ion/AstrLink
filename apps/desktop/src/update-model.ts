@@ -3,11 +3,13 @@ export interface UpdatePreferences {
   auto_check: boolean;
   auto_download: boolean;
   channel: UpdateChannel;
+  official_mirror: boolean;
 }
 export const defaultUpdatePreferences = (): UpdatePreferences => ({
   auto_check: true,
   auto_download: true,
   channel: "stable",
+  official_mirror: false,
 });
 export const UPDATE_PHASES = [
   "idle",
@@ -42,6 +44,7 @@ export interface UpdateSnapshot {
   release: UpdateRelease | null;
   downloaded_bytes: number;
   total_bytes: number | null;
+  download_source: "download_site" | "github" | null;
   last_checked_at: string | null;
   error_code: string | null;
   error_detail: string | null;
@@ -56,10 +59,12 @@ function object(value: unknown): Record<string, unknown> {
 export function parseUpdatePreferences(value: unknown): UpdatePreferences {
   const v = object(value);
   if (
-    Object.keys(v).sort().join() !== "auto_check,auto_download,channel" ||
+    Object.keys(v).sort().join() !==
+      "auto_check,auto_download,channel,official_mirror" ||
     typeof v.auto_check !== "boolean" ||
     typeof v.auto_download !== "boolean" ||
-    !["stable", "preview"].includes(String(v.channel))
+    !["stable", "preview"].includes(String(v.channel)) ||
+    typeof v.official_mirror !== "boolean"
   )
     throw new Error("Invalid update preferences IPC");
   return v as unknown as UpdatePreferences;
@@ -72,6 +77,11 @@ export function parseUpdateSnapshot(value: unknown): UpdateSnapshot {
     if (typeof v[key] !== "string") throw new Error(`Invalid update ${key}`);
   for (const key of ["install_supported", "configured", "development"])
     if (typeof v[key] !== "boolean") throw new Error(`Invalid update ${key}`);
+  if (
+    v.download_source !== null &&
+    !["download_site", "github"].includes(String(v.download_source))
+  )
+    throw new Error("Invalid update download_source");
   for (const key of ["revision", "downloaded_bytes", "total_bytes"]) {
     if (key === "total_bytes" && v[key] === null) continue;
     if (!Number.isSafeInteger(v[key]) || (v[key] as number) < 0)
@@ -125,6 +135,7 @@ export const browserUpdateSnapshot = (): UpdateSnapshot => ({
   release: null,
   downloaded_bytes: 0,
   total_bytes: null,
+  download_source: null,
   last_checked_at: null,
   error_code: null,
   error_detail: null,

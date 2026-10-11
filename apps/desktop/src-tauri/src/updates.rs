@@ -20,10 +20,12 @@ const REPOSITORY: &str = "https://github.com/Calcium-Ion/AstrLink";
 const RELEASE_API: &str = "https://api.github.com/repos/Calcium-Ion/AstrLink/releases";
 const LATEST_MANIFEST: &str =
     "https://github.com/Calcium-Ion/AstrLink/releases/latest/download/latest.json";
+const DOWNLOAD_SITE: &str = "https://download.astrlink.com";
 const EVENT: &str = "app-update-status";
 const PUBLIC_KEY: &str = env!("TAURI_UPDATER_PUBLIC_KEY");
 const INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
 const MAX_PACKAGE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const DOWNLOAD_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -39,6 +41,8 @@ pub struct UpdatePreferences {
     pub auto_check: bool,
     pub auto_download: bool,
     pub channel: UpdateChannel,
+    /// Download the installer from the project download site instead of GitHub.
+    pub official_mirror: bool,
 }
 impl Default for UpdatePreferences {
     fn default() -> Self {
@@ -46,6 +50,7 @@ impl Default for UpdatePreferences {
             auto_check: true,
             auto_download: true,
             channel: UpdateChannel::Stable,
+            official_mirror: false,
         }
     }
 }
@@ -73,6 +78,7 @@ pub struct UpdateSnapshot {
     release: Option<ReleaseInfo>,
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
+    download_source: Option<String>,
     last_checked_at: Option<String>,
     error_code: Option<String>,
     error_detail: Option<String>,
@@ -84,6 +90,8 @@ struct Inner {
     snapshot: UpdateSnapshot,
     generation: u64,
     pending: Option<Update>,
+    /// Release tag (v0.2.2), not the updater's version (0.2.2).
+    pending_tag: Option<String>,
     /// Wall-clock time, so a sleeping Mac ends the wait when the UI says it does.
     retry_after: Option<chrono::DateTime<chrono::Utc>>,
     /// The last `(notice, version)` announced, so periodic checks do not repeat it.
@@ -190,11 +198,113 @@ fn github_asset(url: &str, tag: &str) -> bool {
         && parsed.username().is_empty()
         && parsed.password().is_none()
         && parsed.port().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
         && parsed
             .path()
             .replace("%2B", "+")
             .replace("%2b", "+")
             .starts_with(&format!("/Calcium-Ion/AstrLink/releases/download/{tag}/"))
+}
+
+fn download_site_asset(url: &str, tag: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    parsed.scheme() == "https"
+        && parsed.host_str() == Some("download.astrlink.com")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.port().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && parsed
+            .path()
+            .replace("%2B", "+")
+            .replace("%2b", "+")
+            .starts_with(&format!("/releases/download/{tag}/"))
+}
+
+fn official_asset(url: &str, tag: &str) -> bool {
+    github_asset(url, tag) || download_site_asset(url, tag)
+}
+
+fn candidate_source(url: &reqwest::Url) -> &'static str {
+    if url.host_str() == Some("download.astrlink.com") {
+        "download_site"
+    } else {
+        "github"
+    }
+}
+
+/// `Update::download` verifies the signature, so signature failures surface as
+/// typed errors; map them to `verification` rather than a network `download`.
+fn updater_error_code(error: &tauri_plugin_updater::Error) -> &'static str {
+    use tauri_plugin_updater::Error;
+    match error {
+        Error::Minisign(_)
+        | Error::Base64(_)
+        | Error::SignatureUtf8(_)
+        | Error::SignedVersionMismatch { .. }
+        | Error::MissingSignedVersion => "verification",
+        _ => "download",
+    }
+}
+
+/// Rebuild the asset URL from constants and a validated tag/file pair so the
+/// original URL's query, fragment, credentials, port or extra path cannot leak.
+fn download_candidate(url: &str, tag: &str, mirror: bool) -> Option<reqwest::Url> {
+    if !official_asset(url, tag) {
+        return None;
+    }
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let prefix = if github_asset(url, tag) {
+        "/Calcium-Ion/AstrLink/releases/download/"
+    } else {
+        "/releases/download/"
+    };
+    let path = parsed.path().replace("%2B", "+").replace("%2b", "+");
+    let file = path
+        .strip_prefix(prefix)?
+        .strip_prefix(tag)?
+        .strip_prefix('/')?;
+    if file.is_empty()
+        || file.contains('/')
+        || file.contains('\\')
+        || file.contains("%2F")
+        || file.contains("%2f")
+        || file == "."
+        || file == ".."
+        || file.contains("..")
+    {
+        return None;
+    }
+    let encoded_tag = urlencoding(tag);
+    let encoded_file = urlencoding(file);
+    if mirror {
+        reqwest::Url::parse(&format!(
+            "{DOWNLOAD_SITE}/releases/download/{encoded_tag}/{encoded_file}"
+        ))
+        .ok()
+    } else {
+        reqwest::Url::parse(&format!(
+            "{REPOSITORY}/releases/download/{encoded_tag}/{encoded_file}"
+        ))
+        .ok()
+    }
+}
+
+fn urlencoding(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 pub fn verify_package(bytes: &[u8], signature: &str, key: &str) -> Result<(), String> {
@@ -407,6 +517,7 @@ impl UpdateManager {
                     release: None,
                     downloaded_bytes: 0,
                     total_bytes: None,
+                    download_source: None,
                     last_checked_at: None,
                     error_code: None,
                     error_detail: None,
@@ -414,6 +525,7 @@ impl UpdateManager {
                 },
                 generation: 0,
                 pending: None,
+                pending_tag: None,
                 retry_after: None,
                 notified: None,
             }),
@@ -463,6 +575,7 @@ impl UpdateManager {
                 return;
             }
             i.snapshot.phase = "error".into();
+            i.snapshot.download_source = None;
             i.snapshot.error_code = Some(code.into());
             i.snapshot.error_detail = Some(detail);
         });
@@ -511,6 +624,7 @@ impl UpdateManager {
         if changed_channel {
             inner.generation += 1;
             inner.pending = None;
+            inner.pending_tag = None;
             // Each channel reads its own GitHub source, so a rate limit does not carry over.
             inner.retry_after = None;
             inner.snapshot.retry_at = None;
@@ -521,6 +635,7 @@ impl UpdateManager {
             inner.snapshot.error_detail = None;
             inner.snapshot.downloaded_bytes = 0;
             inner.snapshot.total_bytes = None;
+            inner.snapshot.download_source = None;
             self.cancelled.notify_waiters();
         }
         if changed_channel {
@@ -566,6 +681,7 @@ impl UpdateManager {
         }
         self.publish(app, |i| {
             i.pending = None;
+            i.pending_tag = None;
             i.retry_after = None;
             i.snapshot.phase = "checking".into();
             i.snapshot.error_code = None;
@@ -630,6 +746,7 @@ impl UpdateManager {
             self.publish(app, |i| {
                 if i.generation == generation {
                     i.pending = None;
+                    i.pending_tag = None;
                     i.snapshot.release = None;
                     i.snapshot.phase = "no_releases".into();
                     i.snapshot.latest_version = None;
@@ -650,6 +767,7 @@ impl UpdateManager {
             self.publish(app, |i| {
                 if i.generation == generation {
                     i.pending = None;
+                    i.pending_tag = None;
                     i.snapshot.release = None;
                     i.snapshot.phase = "up_to_date".into();
                 }
@@ -734,6 +852,7 @@ impl UpdateManager {
             i.snapshot.downloaded_bytes = cached.as_ref().map_or(0, |b| b.len() as u64);
             i.snapshot.total_bytes = cached.as_ref().map(|b| b.len() as u64);
             i.pending = Some(update);
+            i.pending_tag = Some(release.tag_name.clone());
         });
         Ok(())
     }
@@ -750,22 +869,40 @@ impl UpdateManager {
         let cancel = self.cancelled.notified();
         tokio::pin!(cancel);
         cancel.as_mut().enable();
-        let Some(mut update) = self.lock().pending.clone() else {
+        let (update, pending_tag) = {
+            let inner = self.lock();
+            (inner.pending.clone(), inner.pending_tag.clone())
+        };
+        let (Some(mut update), Some(pending_tag)) = (update, pending_tag) else {
             return;
         };
-        update.no_proxy = !app
-            .state::<Arc<PreferencesStore>>()
-            .snapshot()
-            .values
-            .use_system_proxy;
+        let prefs = app.state::<Arc<PreferencesStore>>().snapshot().values;
+        update.no_proxy = !prefs.use_system_proxy;
         if self.snapshot().phase == "ready" {
             return;
         }
+        let Some(candidate) = download_candidate(
+            update.download_url.as_str(),
+            &pending_tag,
+            prefs.updates.official_mirror,
+        ) else {
+            self.fail(
+                app,
+                generation,
+                "download",
+                "Update manifest does not name a supported release asset".into(),
+            );
+            return;
+        };
+        let source = candidate_source(&candidate).to_string();
+        update.download_url = candidate;
+        update.timeout = Some(DOWNLOAD_ATTEMPT_TIMEOUT);
         self.publish(app, |i| {
             if i.generation == generation {
                 i.snapshot.phase = "downloading".into();
                 i.snapshot.downloaded_bytes = 0;
                 i.snapshot.total_bytes = None;
+                i.snapshot.download_source = Some(source);
                 i.snapshot.error_code = None;
                 i.snapshot.error_detail = None;
             }
@@ -773,7 +910,7 @@ impl UpdateManager {
         let mut bytes_downloaded = 0u64;
         let mut last_event = Instant::now();
         let task = update.download(
-            |bytes, total| {
+            move |bytes, total| {
                 bytes_downloaded += bytes as u64;
                 if last_event.elapsed() < Duration::from_millis(150) {
                     return;
@@ -788,38 +925,60 @@ impl UpdateManager {
             },
             || {},
         );
-        let result = tokio::select! { result = task => result.map_err(|e| e.to_string()), _ = &mut cancel => return };
-        match result {
-            Ok(bytes) => {
-                let result = (|| -> Result<(), String> {
-                    if bytes.len() as u64 > MAX_PACKAGE_BYTES {
-                        return Err("Update package is too large".into());
+        let result = tokio::select! {
+            result = task => result,
+            _ = &mut cancel => {
+                self.publish(app, |i| {
+                    if i.generation == generation {
+                        i.snapshot.phase = "available".into();
+                        i.snapshot.downloaded_bytes = 0;
+                        i.snapshot.total_bytes = None;
+                        i.snapshot.download_source = None;
+                        i.snapshot.error_code = None;
+                        i.snapshot.error_detail = None;
                     }
-                    verify_package(&bytes, &update.signature, PUBLIC_KEY)?;
-                    // Serialize cache commit with channel changes, so cancelled downloads never reappear.
-                    let inner = self.lock();
-                    if inner.generation != generation {
-                        return Ok(());
-                    }
-                    fs::create_dir_all(&self.cache).map_err(|e| e.to_string())?;
-                    self.clear_cache();
-                    let path = self.cache_file(&update);
-                    fs::write(path.with_extension("part"), &bytes).map_err(|e| e.to_string())?;
-                    fs::rename(path.with_extension("part"), path).map_err(|e| e.to_string())?;
-                    Ok(())
-                })();
-                match result {
-                    Ok(()) => self.publish(app, |i| {
-                        if i.generation == generation {
-                            i.snapshot.phase = "ready".into();
-                            i.snapshot.downloaded_bytes = bytes.len() as u64;
-                            i.snapshot.total_bytes = Some(bytes.len() as u64);
-                        }
-                    }),
-                    Err(error) => self.fail(app, generation, "verification", error),
-                }
+                });
+                return;
             }
-            Err(error) => self.fail(app, generation, "download", error),
+        };
+        let bytes = match result {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.fail(
+                    app,
+                    generation,
+                    updater_error_code(&error),
+                    error.to_string(),
+                );
+                return;
+            }
+        };
+        let result = (|| -> Result<(), String> {
+            if bytes.len() as u64 > MAX_PACKAGE_BYTES {
+                return Err("Update package is too large".into());
+            }
+            verify_package(&bytes, &update.signature, PUBLIC_KEY)?;
+            // Serialize cache commit with channel changes, so cancelled downloads never reappear.
+            let inner = self.lock();
+            if inner.generation != generation {
+                return Ok(());
+            }
+            fs::create_dir_all(&self.cache).map_err(|e| e.to_string())?;
+            self.clear_cache();
+            let path = self.cache_file(&update);
+            fs::write(path.with_extension("part"), &bytes).map_err(|e| e.to_string())?;
+            fs::rename(path.with_extension("part"), path).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.publish(app, |i| {
+                if i.generation == generation {
+                    i.snapshot.phase = "ready".into();
+                    i.snapshot.downloaded_bytes = bytes.len() as u64;
+                    i.snapshot.total_bytes = Some(bytes.len() as u64);
+                }
+            }),
+            Err(error) => self.fail(app, generation, "verification", error),
         }
     }
     pub async fn install(&self, app: &AppHandle) -> Result<UpdateSnapshot, String> {
@@ -1206,15 +1365,106 @@ mod tests {
             "https://github.com/Calcium-Ion/AstrLink/releases/download/v1.0.0/latest.json",
             "v1.0.0"
         ));
+        assert!(download_site_asset(
+            "https://download.astrlink.com/releases/download/v1.0.0/AstrLink.exe",
+            "v1.0.0"
+        ));
         for url in [
             "http://github.com/Calcium-Ion/AstrLink/releases/download/v1.0.0/a",
             "https://example.org/a",
             "https://github.com/Calcium-Ion/AstrLink/releases/download/v0.1.0/a",
             "https://github.com.evil/Calcium-Ion/AstrLink/releases/download/v1.0.0/a",
+            "http://download.astrlink.com/releases/download/v1.0.0/a",
+            "https://download.astrlink.com.evil/releases/download/v1.0.0/a",
+            "https://download.astrlink.com/releases/download/v0.1.0/a",
+            "https://download.astrlink.com/releases/download/v1.0.0/a?x=1",
         ] {
-            assert!(!github_asset(url, "v1.0.0"));
+            assert!(!official_asset(url, "v1.0.0"));
         }
     }
+
+    #[test]
+    fn download_candidate_follows_the_official_mirror_preference() {
+        let github =
+            "https://github.com/Calcium-Ion/AstrLink/releases/download/v1.0.0/AstrLink.exe";
+        let site = "https://download.astrlink.com/releases/download/v1.0.0/AstrLink.exe";
+        for source in [github, site] {
+            assert_eq!(
+                download_candidate(source, "v1.0.0", false)
+                    .unwrap()
+                    .as_str(),
+                github
+            );
+            assert_eq!(
+                download_candidate(source, "v1.0.0", true).unwrap().as_str(),
+                site
+            );
+        }
+    }
+
+    #[test]
+    fn download_candidate_percent_encodes_plus_tags() {
+        let github =
+            "https://github.com/Calcium-Ion/AstrLink/releases/download/v1.0.0+build.1/AstrLink.exe";
+        assert_eq!(
+            download_candidate(github, "v1.0.0+build.1", false).unwrap().as_str(),
+            "https://github.com/Calcium-Ion/AstrLink/releases/download/v1.0.0%2Bbuild.1/AstrLink.exe"
+        );
+        assert_eq!(
+            download_candidate(github, "v1.0.0+build.1", true)
+                .unwrap()
+                .as_str(),
+            "https://download.astrlink.com/releases/download/v1.0.0%2Bbuild.1/AstrLink.exe"
+        );
+    }
+
+    #[test]
+    fn download_candidate_rejects_untrusted_or_malformed_assets() {
+        for source in [
+            "https://example.org/releases/download/v1.0.0/AstrLink.exe",
+            "https://github.com/Calcium-Ion/AstrLink/releases/download/v0.1.0/AstrLink.exe",
+            "https://github.com/Calcium-Ion/AstrLink/releases/download/v1.0.0/dir/AstrLink.exe",
+            "https://download.astrlink.com/releases/download/v1.0.0/a?x=1",
+            "https://download.astrlink.com/releases/download/v1.0.0/a#x",
+            "https://download.astrlink.com/releases/download/v1.0.0/dir%2FAstrLink.exe",
+        ] {
+            assert!(
+                download_candidate(source, "v1.0.0", false).is_none(),
+                "{source}"
+            );
+        }
+    }
+    #[test]
+    fn updater_errors_classify_signature_failures_as_verification() {
+        use tauri_plugin_updater::Error;
+        assert_eq!(
+            updater_error_code(&Error::Minisign(minisign_verify::Error::InvalidSignature)),
+            "verification"
+        );
+        assert_eq!(
+            updater_error_code(&Error::SignatureUtf8("bad".into())),
+            "verification"
+        );
+        assert_eq!(
+            updater_error_code(&Error::SignedVersionMismatch {
+                signed: "1.0.0".into(),
+                announced: "1.1.0".into(),
+            }),
+            "verification"
+        );
+        assert_eq!(
+            updater_error_code(&Error::MissingSignedVersion),
+            "verification"
+        );
+        assert_eq!(
+            updater_error_code(&Error::Network(
+                "Download request failed with status: 404 Not Found".into()
+            )),
+            "download"
+        );
+        assert_eq!(updater_error_code(&Error::ReleaseNotFound), "download");
+    }
+
     #[test]
     fn invalid_signatures_and_keys_fail_closed() {
         assert!(verify_package(b"tampered", "invalid", "invalid").is_err());

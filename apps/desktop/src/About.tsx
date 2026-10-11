@@ -305,6 +305,15 @@ export function About({
                       ? ` / ${(snapshot.total_bytes / 1024 / 1024).toFixed(1)} MB`
                       : ""}
                   </p>
+                  {snapshot.download_source ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t("about.downloadSource.current", {
+                        source: t(
+                          `about.downloadSource.${snapshot.download_source}`,
+                        ),
+                      })}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               {snapshot.release ? (
@@ -438,6 +447,27 @@ export function About({
                           </SelectItem>
                         </SelectContent>
                       </Select>
+                    </DataRow>
+                    <DataRow>
+                      <div className="min-w-0 flex-1">
+                        <Label
+                          htmlFor={`${id}-official-mirror`}
+                          className="text-sm font-normal"
+                        >
+                          {t("about.officialMirror")}
+                        </Label>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          {t("about.preferenceHint.official_mirror")}
+                        </p>
+                      </div>
+                      <Switch
+                        id={`${id}-official-mirror`}
+                        checked={snapshot.preferences.official_mirror}
+                        disabled={preferencesDisabled}
+                        onCheckedChange={(official_mirror) =>
+                          save({ official_mirror })
+                        }
+                      />
                     </DataRow>
                     {(["auto_check", "auto_download"] as const).map((key) => (
                       <DataRow key={key}>

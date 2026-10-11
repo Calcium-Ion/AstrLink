@@ -3041,6 +3041,7 @@
     "check": "Check for updates",
     "auto_check": "Check automatically",
     "auto_download": "Download automatically",
+    "officialMirror": "Use the official mirror",
     "development": "Development versions cannot update automatically. Download and run the installer manually.",
     "manualInstall": "This version needs a manual update. Download and run the latest installer.",
     "unconfigured": "This version cannot install updates automatically. Download the latest installer manually.",
@@ -3105,7 +3106,13 @@
     },
     "preferenceHint": {
       "auto_check": "Check for new versions regularly while the app is open.",
-      "auto_download": "Download new versions automatically. You decide when to install."
+      "auto_download": "Download new versions automatically. You decide when to install.",
+      "official_mirror": "Download the installer from AstrLink's official download site. Version checks and signature verification still come from GitHub."
+    },
+    "downloadSource": {
+      "current": "Downloading from {{source}}.",
+      "download_site": "the official download site",
+      "github": "GitHub"
     },
     "currentVersion": "Current version",
     "latestVersion": "Latest version",
