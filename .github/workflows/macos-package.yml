@@ -219,7 +219,7 @@ jobs:
           if [[ "$update_arch" == arm64 ]]; then update_arch=aarch64; fi
           bun scripts/release-updates.mjs stage "darwin-$update_arch" "$RELEASE_TAG"
       - name: Upload checked macOS package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: AstrLink-macOS-${{ inputs.arch }}
           path: apps/desktop/package/*
@@ -227,7 +227,7 @@ jobs:
           retention-days: 14
       - name: Upload startup diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macOS-${{ inputs.arch }}-smoke-diagnostics
           path: ${{ runner.temp }}/astrlink-smoke/*
@@ -235,7 +235,7 @@ jobs:
           retention-days: 7
       - name: Upload notarization diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macOS-${{ inputs.arch }}-notarization
           path: apps/desktop/src-tauri/target/release/bundle/notarization/*
