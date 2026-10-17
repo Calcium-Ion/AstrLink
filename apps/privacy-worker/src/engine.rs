@@ -1,9 +1,17 @@
-use std::{collections::BTreeSet, env, ffi::OsStr, fs, io, path::Path};
+use std::{
+    collections::BTreeSet,
+    env,
+    ffi::OsStr,
+    fs, io,
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::path::PathBuf;
 
 use ort::{
+    environment::Environment,
     logging::LogLevel,
     session::{Session, SessionInputValue, builder::GraphOptimizationLevel},
     value::Tensor,
@@ -454,6 +462,13 @@ fn initialize_onnx_runtime() -> Result<(), Box<dyn std::error::Error + Send + Sy
     #[cfg(target_os = "windows")]
     {
         let _ = ort::init().with_name("astrlink-privacy-worker").commit();
+    }
+    // ort keeps only a weak reference. Retain the environment between sessions
+    // so a new default logger cannot race the previous environment's teardown.
+    static ENVIRONMENT: OnceLock<Arc<Environment>> = OnceLock::new();
+    if ENVIRONMENT.get().is_none() {
+        let environment = ort::environment::get_environment()?;
+        let _ = ENVIRONMENT.set(environment);
     }
     Ok(())
 }
@@ -917,6 +932,56 @@ mod tests {
                 .expect_err("ambiguous value must fail closed")
                 .to_string(),
             "invalid_synthetic_model_guard"
+        );
+    }
+
+    #[test]
+    fn onnx_environment_outlives_concurrent_sessions() {
+        const CHILD_ENV: &str = "ASTRLINK_TEST_ORT_LIFETIME_CHILD";
+        if env::var_os(CHILD_ENV).is_none() {
+            // Other tests can keep ORT alive, hiding the last-session race.
+            let output = std::process::Command::new(env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "engine::tests::onnx_environment_outlives_concurrent_sessions",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .output()
+                .expect("run isolated ORT lifetime test");
+            assert!(
+                output.status.success(),
+                "isolated ORT lifetime test failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        initialize_onnx_runtime().expect("initialize runtime");
+        let environment = ort::environment::get_environment().expect("get environment");
+        let weak = std::sync::Arc::downgrade(&environment);
+        drop(environment);
+        assert!(
+            weak.upgrade().is_some(),
+            "environment dropped before sessions"
+        );
+
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    start.wait();
+                    for _ in 0..256 {
+                        initialize_onnx_runtime().expect("reuse runtime");
+                        drop(Session::builder().expect("create concurrent session builder"));
+                    }
+                });
+            }
+        });
+        assert!(
+            weak.upgrade().is_some(),
+            "environment dropped after sessions"
         );
     }
 
