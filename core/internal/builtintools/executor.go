@@ -192,6 +192,58 @@ func publicURL(raw string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil
 }
 
+// deepSeekSearchBase reports whether the external search backend is DeepSeek's tools API.
+func deepSeekSearchBase(base string) bool {
+	u, err := url.Parse(strings.TrimRight(base, "/"))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "api.deepseek.com" || strings.HasSuffix(host, ".api.deepseek.com")
+}
+
+// deepSeekDomainQuery folds domain filters into query using site: syntax,
+// which is the only form DeepSeek honours.
+func deepSeekDomainQuery(query string, filters Object) string {
+	add := func(raw any) {
+		if domain := strings.TrimSpace(String(raw)); domain != "" {
+			query += " " + domain
+		}
+	}
+	if allowed := Array(filters["allowed_domains"]); len(allowed) > 0 {
+		sites := make([]string, 0, len(allowed))
+		for _, raw := range allowed {
+			if domain := strings.TrimSpace(String(raw)); domain != "" {
+				sites = append(sites, "site:"+domain)
+			}
+		}
+		if len(sites) > 0 {
+			add(strings.Join(sites, " OR "))
+		}
+	}
+	for _, raw := range Array(filters["blocked_domains"]) {
+		if domain := strings.TrimSpace(String(raw)); domain != "" {
+			add("-site:" + domain)
+		}
+	}
+	return query
+}
+
+// deepSeekSearchURL completes an API or version root with /v1/tools.
+func deepSeekSearchURL(base string) string {
+	u, err := url.Parse(strings.TrimRight(base, "/"))
+	if err != nil {
+		return base
+	}
+	switch strings.TrimRight(u.Path, "/") {
+	case "", "/v1":
+		u.Path = "/v1/tools"
+	default:
+		return base
+	}
+	return u.String()
+}
+
 func (executor Executor) search(ctx context.Context, config contract.BuiltinTool, call Invocation) (Result, error) {
 	// Codex declares search_content_types for image-capable models and
 	// indexed_web_access in its indexed mode. Tavily searches the live web
@@ -201,6 +253,10 @@ func (executor Executor) search(ctx context.Context, config contract.BuiltinTool
 	}
 	if call.Options["user_location"] != nil {
 		return Result{}, fmt.Errorf("Tavily backend does not support precise user_location")
+	}
+	deepSeek := deepSeekSearchBase(config.BaseURL)
+	if deepSeek {
+		config.BaseURL = deepSeekSearchURL(config.BaseURL)
 	}
 	action := String(call.Arguments["action"])
 	if action == "" {
@@ -223,11 +279,20 @@ func (executor Executor) search(ctx context.Context, config contract.BuiltinTool
 		if err := checkOptions(filters, "allowed_domains blocked_domains"); err != nil {
 			return Result{}, err
 		}
-		if value := filters["allowed_domains"]; value != nil {
-			payload["include_domains"] = value
-		}
-		if value := filters["blocked_domains"]; value != nil {
-			payload["exclude_domains"] = value
+		if deepSeek {
+			// DeepSeek takes domain filters in the query, not as fields.
+			query = deepSeekDomainQuery(query, filters)
+			payload = Object{"query": query, "count": 5, "need_content": true}
+			if call.Options["search_context_size"] == "high" {
+				payload["count"] = 10
+			}
+		} else {
+			if value := filters["allowed_domains"]; value != nil {
+				payload["include_domains"] = value
+			}
+			if value := filters["blocked_domains"]; value != nil {
+				payload["exclude_domains"] = value
+			}
 		}
 	case "open", "find":
 		raw := String(call.Arguments["url"])
@@ -236,12 +301,24 @@ func (executor Executor) search(ctx context.Context, config contract.BuiltinTool
 		}
 		path = "/extract"
 		payload = Object{"urls": []string{raw}, "format": "text"}
+		if deepSeek {
+			path = "/fetch"
+			payload = Object{"url": raw}
+		}
 	default:
 		return Result{}, fmt.Errorf("unsupported search action")
 	}
 	response, err := executor.jsonRequest(ctx, "web_search", config, path, payload)
 	if err != nil {
 		return Result{}, err
+	}
+	if deepSeek && action != "search" {
+		// DeepSeek returns one page; present it as a result list.
+		content := String(response["content"])
+		if content == "" {
+			return Result{}, fmt.Errorf("page extraction returned no usable content")
+		}
+		response = Object{"results": []any{Object{"url": call.Arguments["url"], "title": String(response["title"]), "content": content}}}
 	}
 	if _, ok := response["results"].([]any); !ok {
 		return Result{}, fmt.Errorf("search backend returned invalid results")

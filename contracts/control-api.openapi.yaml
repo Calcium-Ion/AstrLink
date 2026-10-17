@@ -4442,7 +4442,7 @@ components:
         service_id: { type: string }
         model: { type: string, maxLength: 256 }
         base_url: { type: string, maxLength: 2048, format: uri }
-      description: Upstream execution requires an enabled native Responses provider and an executor model that supports the hosted tool; the executor chooses the image model. service_images (image generation only) calls the OpenAI Images API of an enabled newapi, openai or openai_compatible provider with its own credential; model is the image model. service_search (web search only) calls the /alpha/search API of an enabled codex_subscription or newapi provider with its own credential; model names the search model. External search uses Tavily; external images use OpenAI Images with a configured model. Credentials are stored separately. Enabled configurations require the selected backend's fields.
+      description: Upstream execution requires an enabled native Responses provider and an executor model that supports the hosted tool; the executor chooses the image model. service_images (image generation only) calls the OpenAI Images API of an enabled newapi, openai or openai_compatible provider with its own credential; model is the image model. service_search (web search only) calls the /alpha/search API of an enabled codex_subscription or newapi provider with its own credential; model names the search model. External search uses Tavily, and a DeepSeek base URL switches to its search and fetch endpoints automatically; external images use OpenAI Images with a configured model. Credentials are stored separately. Enabled configurations require the selected backend's fields.
     BuiltinTools:
       type: object
       additionalProperties: false

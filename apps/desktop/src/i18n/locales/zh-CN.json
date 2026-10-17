@@ -3448,7 +3448,7 @@
     "serviceSearch": "提供商的搜索 API",
     "imagesApi": "自定义 Images API",
     "upstreamHint": "使用所选提供商的 Responses API，由下方执行模型调用同类型的内置工具，再把结果交回原请求的主模型。",
-    "externalSearchHint": "使用 Tavily 兼容 API 完成搜索、网页读取和文字查找。连接使用下方填写的 API 基础地址和单独保存的密钥。Codex 要求只用缓存结果时，Tavily 仍会实时抓取网页。",
+    "externalSearchHint": "使用 Tavily 兼容 API 完成搜索、网页读取和文字查找。连接使用下方填写的 API 基础地址和单独保存的密钥。Codex 要求只用缓存结果时，Tavily 仍会实时抓取网页。填写 DeepSeek 地址时自动适配。",
     "externalImagesHint": "使用 OpenAI Images 兼容 API 生成或编辑图片。连接使用下方填写的 API 基础地址和单独保存的密钥。",
     "serviceImagesHint": "使用所选提供商自带的生图接口生成或编辑图片，复用该提供商已配置的密钥和代理。MiniMax 收到参考图时，会保留图中人物的特征，重新生成一张图。",
     "serviceSearchHint": "使用所选提供商自带的联网搜索接口 /v1/alpha/search，复用该提供商已配置的密钥和代理。Codex 官方客户端搜索时调用的就是这个接口。Codex 发来的搜索改用下方模型后转发。其他客户端调用 web_search 时，网关替它发出同样的搜索请求。",

@@ -3448,7 +3448,7 @@
     "serviceSearch": "APIプロバイダーの検索API",
     "imagesApi": "カスタムImages API",
     "upstreamHint": "選択したAPIプロバイダーのResponses APIを使います。実行モデルが同じ種類の組み込みツールを呼び出し、結果は元のリクエストのメインモデルに戻ります。",
-    "externalSearchHint": "検索、ページの読み取り、テキストの検索にTavily互換APIを使います。下のAPIベースURLと、別に保存したキーで接続します。Codexがキャッシュ結果のみを求めても、Tavilyはライブのページを取得します。",
+    "externalSearchHint": "検索、ページの読み取り、テキストの検索にTavily互換APIを使います。下のAPIベースURLと、別に保存したキーで接続します。Codexがキャッシュ結果のみを求めても、Tavilyはライブのページを取得します。DeepSeekのURLは自動で対応します。",
     "externalImagesHint": "画像の生成または編集に、OpenAI Images互換APIを使います。下のAPIベースURLと、別に保存したキーで接続します。",
     "serviceImagesHint": "選択したAPIプロバイダー自身の画像APIで画像を生成または編集し、そのAPIプロバイダーに設定済みのキーとプロキシを再利用します。参照画像がある場合、MiniMaxはその人物を保ったまま新しい画像を生成します。",
     "serviceSearchHint": "選択したAPIプロバイダー自身のウェブ検索API /v1/alpha/search を使い、そのAPIプロバイダーに設定済みのキーとプロキシを再利用します。公式のCodexクライアントは、検索時にこのAPIを呼び出します。Codexからの検索は、下のモデルで送信されます。別のクライアントが web_search を呼び出すと、ゲートウェイが同じ検索リクエストを代わりに送ります。",

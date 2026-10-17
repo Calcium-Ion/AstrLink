@@ -3448,7 +3448,7 @@
     "serviceSearch": "Provider’s search API",
     "imagesApi": "Custom Images API",
     "upstreamHint": "Uses the selected provider’s Responses API. The executor model calls the same type of built-in tool, and the result returns to the original request’s main model.",
-    "externalSearchHint": "Uses a Tavily-compatible API for searches, page reads and text lookups. Connects through the API base URL and separately saved key below. When Codex asks for cached results only, Tavily still fetches live pages.",
+    "externalSearchHint": "Uses a Tavily-compatible API for searches, page reads and text lookups. Connects through the API base URL and separately saved key below. When Codex asks for cached results only, Tavily still fetches live pages. A DeepSeek base URL is adapted automatically.",
     "externalImagesHint": "Uses an OpenAI Images-compatible API to generate or edit images. Connects through the API base URL and separately saved key below.",
     "serviceImagesHint": "Uses the selected provider’s own image API to generate or edit images, reusing that provider’s configured key and proxy. Given a reference image, MiniMax keeps the person in it and generates a new image.",
     "serviceSearchHint": "Uses the selected provider’s own web search API, /v1/alpha/search, reusing that provider’s configured key and proxy. The official Codex client calls this API when it searches. Searches from Codex go out with the model below. When another client calls web_search, the gateway sends the same search request for it.",
