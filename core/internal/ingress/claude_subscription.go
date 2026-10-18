@@ -173,14 +173,34 @@ func ensureClaudeCodeBanner(body map[string]json.RawMessage) (bool, error) {
 	// Keep that original block first and separate: prepending a banner would
 	// turn protocol attribution into ordinary system-prompt text upstream.
 	bannerIndex := 0
+	changed := false
 	if len(blocks) > 0 {
-		var first struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(blocks[0], &first) == nil && first.Type == "text" &&
-			strings.HasPrefix(first.Text, systemprompt.ClaudeCodeAttributionPrefix) {
-			bannerIndex = 1
+		var first map[string]json.RawMessage
+		if json.Unmarshal(blocks[0], &first) == nil {
+			kind, _ := claudeString(first["type"])
+			text, _ := claudeString(first["text"])
+			if kind == "text" && strings.HasPrefix(text, systemprompt.ClaudeCodeAttributionPrefix) {
+				bannerIndex = 1
+				if end := strings.IndexAny(text, "\r\n"); end >= 0 {
+					rest := strings.TrimLeft(text[end:], "\r\n")
+					if strings.TrimSpace(rest) != "" {
+						// Upstream discards the whole attribution block. Keep the
+						// prompt and its cache marker/extension fields in a separate
+						// block, including when conversion flattened the system text.
+						if err := encodeClaudeField(first, "text", rest); err != nil {
+							return false, err
+						}
+						prompt, err := json.Marshal(first)
+						if err != nil {
+							return false, err
+						}
+						attribution, _ := json.Marshal(map[string]string{"type": "text", "text": text[:end]})
+						blocks[0] = attribution
+						blocks = slices.Insert(blocks, 1, json.RawMessage(prompt))
+						changed = true
+					}
+				}
+			}
 		}
 	}
 	// A prompt that opens with the banner, such as one extended by the global
@@ -194,25 +214,35 @@ func ensureClaudeCodeBanner(body map[string]json.RawMessage) (bool, error) {
 			if rest, ok := strings.CutPrefix(text, claudeCodeBanner); kind == "text" && ok && strings.TrimLeft(rest, " \t\r\n") != rest {
 				if rest = strings.TrimLeft(rest, " \t\r\n"); rest == "" {
 					blocks = slices.Delete(blocks, bannerIndex, bannerIndex+1)
+					changed = true
 				} else if encodeClaudeField(first, "text", rest) == nil {
 					if block, err := json.Marshal(first); err == nil {
 						blocks[bannerIndex] = block
+						changed = true
 					}
 				}
 			}
 		}
 	}
+	bannerExists := false
 	for _, block := range blocks {
 		var text struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		}
 		if json.Unmarshal(block, &text) == nil && text.Type == "text" && text.Text == claudeCodeBanner {
-			return false, nil
+			bannerExists = true
+			break
 		}
 	}
-	banner, _ := json.Marshal(map[string]string{"type": "text", "text": claudeCodeBanner})
-	encoded, err := json.Marshal(slices.Insert(blocks, bannerIndex, banner))
+	if bannerExists && !changed {
+		return false, nil
+	}
+	if !bannerExists {
+		banner, _ := json.Marshal(map[string]string{"type": "text", "text": claudeCodeBanner})
+		blocks = slices.Insert(blocks, bannerIndex, banner)
+	}
+	encoded, err := json.Marshal(blocks)
 	if err != nil {
 		return false, err
 	}

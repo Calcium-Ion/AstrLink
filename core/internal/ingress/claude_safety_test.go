@@ -38,6 +38,60 @@ func TestClaudeSafetyAttributionSurvivesCompatibility(t *testing.T) {
 	}
 }
 
+func TestClaudeSafetySeparatesMixedAttribution(t *testing.T) {
+	const instruction = "Never modify production files.\n\tKeep this newline."
+	mixed := claudeSafetyAttribution + "\n\n" + instruction
+	native := func(system string) string {
+		return strings.Replace(officialClaudeBody, `"messages":`, `"system":`+system+`,"messages":`, 1)
+	}
+	mixedBlock := `{"type":"text","text":` + safetyJSONString(mixed) + `,"cache_control":{"type":"ephemeral","ttl":"1h"},"future_field":{"enabled":true}}`
+	for _, test := range []struct {
+		name, path, body string
+		cache            bool
+	}{
+		{"system string", "/v1/messages", native(safetyJSONString(mixed)), false},
+		{"mixed first block", "/v1/messages", native(`[` + mixedBlock + `,{"type":"text","text":"Tail instructions"}]`), true},
+		{"existing banner", "/v1/messages", native(`[` + mixedBlock + `,{"type":"text","text":` + safetyJSONString(claudeCodeBanner) + `}]`), true},
+		{"CRLF and joined banner", "/v1/messages", native(safetyJSONString(claudeSafetyAttribution + "\r\n\r\n" + claudeCodeBanner + "\n\n" + instruction)), false},
+		{"chat conversion", "/v1/chat/completions", `{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"system","content":` + safetyJSONString(mixed) + `},{"role":"user","content":"hello"}]}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := newCapturedUpstream(t, http.StatusOK, "application/json", identityClaudeResponse)
+			harness := newIdentityHarness(t, passthroughSettings(false, true), nil, claudeConversionCandidate(upstream.url))
+			harness.serve(t, test.path, test.body, officialClaudeHeaders(learnedClaudeUA))
+			_, sent := upstream.request(t)
+			blocks := gjson.GetBytes(sent, "system").Array()
+			if len(blocks) < 3 || blocks[0].Get("text").String() != claudeSafetyAttribution {
+				t.Fatalf("attribution is not isolated: %s", gjson.GetBytes(sent, "system").Raw)
+			}
+			if test.cache && blocks[0].Get("cache_control").Exists() {
+				t.Error("cache marker moved to the discarded attribution block")
+			}
+			// The provider removes the first attribution block. Its remaining
+			// input must still include the caller's instructions and metadata.
+			found, banners := false, 0
+			for _, block := range blocks[1:] {
+				text := block.Get("text").String()
+				banners += strings.Count(text, claudeCodeBanner)
+				if text != instruction {
+					continue
+				}
+				found = true
+				if test.cache && (block.Get("cache_control.ttl").String() != "1h" || !block.Get("future_field.enabled").Bool()) {
+					t.Error("splitting attribution lost prompt block metadata")
+				}
+			}
+			if !found || banners != 1 {
+				t.Fatalf("effective prompt changed: instruction present=%t, banners=%d, system=%s", found, banners, gjson.GetBytes(sent, "system").Raw)
+			}
+			_, second := prepareClaudeBody(t, string(sent))
+			if !bytes.Equal(second, sent) {
+				t.Fatal("normalizing an already split request changed it again")
+			}
+		})
+	}
+}
+
 // Exercise the final HTTP boundary, including privacy restoration and SSE tail
 // events: a model response is not complete until its safety verdict arrives.
 func TestClaudeSafetyFieldsSurviveNativeForwarding(t *testing.T) {
