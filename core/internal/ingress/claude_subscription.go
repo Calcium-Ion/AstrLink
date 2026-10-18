@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -168,20 +169,34 @@ func ensureClaudeCodeBanner(body map[string]json.RawMessage) (bool, error) {
 			return false, fmt.Errorf("invalid Claude subscription system prompt")
 		}
 	}
+	// Claude Code side queries can carry attribution without the main banner.
+	// Keep that original block first and separate: prepending a banner would
+	// turn protocol attribution into ordinary system-prompt text upstream.
+	bannerIndex := 0
+	if len(blocks) > 0 {
+		var first struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(blocks[0], &first) == nil && first.Type == "text" &&
+			strings.HasPrefix(first.Text, systemprompt.ClaudeCodeAttributionPrefix) {
+			bannerIndex = 1
+		}
+	}
 	// A prompt that opens with the banner, such as one extended by the global
 	// system prompt, keeps it as the banner block below instead of carrying a
 	// second copy.
-	if len(blocks) > 0 {
+	if len(blocks) > bannerIndex {
 		var first map[string]json.RawMessage
-		if json.Unmarshal(blocks[0], &first) == nil && first != nil {
+		if json.Unmarshal(blocks[bannerIndex], &first) == nil && first != nil {
 			kind, _ := claudeString(first["type"])
 			text, _ := claudeString(first["text"])
 			if rest, ok := strings.CutPrefix(text, claudeCodeBanner); kind == "text" && ok && strings.TrimLeft(rest, " \t\r\n") != rest {
 				if rest = strings.TrimLeft(rest, " \t\r\n"); rest == "" {
-					blocks = blocks[1:]
+					blocks = slices.Delete(blocks, bannerIndex, bannerIndex+1)
 				} else if encodeClaudeField(first, "text", rest) == nil {
 					if block, err := json.Marshal(first); err == nil {
-						blocks[0] = block
+						blocks[bannerIndex] = block
 					}
 				}
 			}
@@ -197,7 +212,7 @@ func ensureClaudeCodeBanner(body map[string]json.RawMessage) (bool, error) {
 		}
 	}
 	banner, _ := json.Marshal(map[string]string{"type": "text", "text": claudeCodeBanner})
-	encoded, err := json.Marshal(append([]json.RawMessage{banner}, blocks...))
+	encoded, err := json.Marshal(slices.Insert(blocks, bannerIndex, banner))
 	if err != nil {
 		return false, err
 	}

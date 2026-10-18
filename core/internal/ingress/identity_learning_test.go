@@ -275,6 +275,35 @@ func passthroughSettings(passthrough, autoLearn bool) contract.RoutingSettings {
 	return settings
 }
 
+func TestOfficialClaudePassthroughPreservesLargeRequests(t *testing.T) {
+	const metadata = `"metadata":{"user_id":"{\"device_id\":\"device-1\",\"account_uuid\":\"\",\"session_id\":\"session-1\"}"}`
+	const prefix = `{"model":"claude-sonnet-4-5","max_tokens":64,`
+	history := `"messages":[{"role":"user","content":"` + strings.Repeat("x", (1<<20)+128) + `"}]`
+	for _, test := range []struct{ name, body string }{
+		{"metadata before history", prefix + metadata + "," + history + "}"},
+		{"metadata after history", prefix + history + "," + metadata + "}"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := newCapturedUpstream(t, http.StatusOK, "application/json", identityClaudeResponse)
+			harness := newIdentityHarness(t, passthroughSettings(true, true), nil, claudeConversionCandidate(upstream.url))
+			header := officialClaudeHeaders(learnedClaudeUA)
+			harness.serve(t, "/v1/messages", test.body, header)
+			forwarded, body := upstream.request(t)
+			if string(body) != test.body {
+				t.Errorf("official request body was rewritten: received %d bytes, forwarded %d bytes", len(test.body), len(body))
+			}
+			for _, name := range []string{"User-Agent", "X-Claude-Code-Session-Id", "X-Stainless-Retry-Count", "X-Stainless-Helper-Method"} {
+				if got, want := forwarded.Get(name), header.Get(name); got != want {
+					t.Errorf("forwarded %s = %q, want %q", name, got, want)
+				}
+			}
+			if forwarded.Get("X-AstrLink-Debug") != "" {
+				t.Error("gateway-owned header reached upstream")
+			}
+		})
+	}
+}
+
 func TestOfficialClaudeClientTeachesIdentityForConvertedRequests(t *testing.T) {
 	upstream := newCapturedUpstream(t, http.StatusOK, "application/json", identityClaudeResponse)
 	harness := newIdentityHarness(t, passthroughSettings(true, true), nil, claudeConversionCandidate(upstream.url))

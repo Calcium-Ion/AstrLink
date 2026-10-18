@@ -44,9 +44,6 @@ func ClientClassFrom(ctx context.Context) ClientClass {
 	return class
 }
 
-// maxUserIDScan bounds the metadata.user_id recognition read of a request body.
-const maxUserIDScan = 1 << 20
-
 // RecognizedClaudeOfficialHeaders reports the header half of an official Claude
 // Code identity: a versioned claude-cli User-Agent, the CLI app marker or the
 // session header, and the claude-code feature beta. ClaudeMetadataUserIDRecognized
@@ -67,8 +64,11 @@ func RecognizedClaudeOfficialHeaders(header http.Header) bool {
 
 // ClaudeMetadataUserIDRecognized reports whether the request body's
 // metadata.user_id is a Claude Code identifier, in the JSON or legacy form.
+// Ingress already applies its configured body limit before this check. Do not
+// impose a smaller identity limit: long histories and images must not turn the
+// same official client into a third-party client midway through a session.
 func ClaudeMetadataUserIDRecognized(body []byte) bool {
-	if len(body) == 0 || len(body) > maxUserIDScan {
+	if len(body) == 0 {
 		return false
 	}
 	var payload struct {

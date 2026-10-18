@@ -25,8 +25,9 @@ import (
 // ClaudeCodeBanner opens Claude Code's system prompt.
 const ClaudeCodeBanner = "You are Claude Code, Anthropic's official CLI for Claude."
 
-// claudeBillingLine opens the block Claude Code sends before its banner.
-const claudeBillingLine = "x-anthropic-billing-header:"
+// ClaudeCodeAttributionPrefix opens the block Claude Code sends before its
+// banner. Upstream interprets this block only in the first system position.
+const ClaudeCodeAttributionPrefix = "x-anthropic-billing-header:"
 
 // separator joins added text to the prompt it extends.
 const separator = "\n\n"
@@ -358,7 +359,7 @@ func identityLead(text string) int {
 }
 
 func identityLine(text string) int {
-	if strings.HasPrefix(text, claudeBillingLine) {
+	if strings.HasPrefix(text, ClaudeCodeAttributionPrefix) {
 		if end := strings.IndexAny(text, "\r\n"); end >= 0 {
 			return end
 		}

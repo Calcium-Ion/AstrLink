@@ -281,11 +281,14 @@ func TestClaudeSubscriptionDropsBlankStringSystem(t *testing.T) {
 
 func TestClaudeSubscriptionKeepsOneBannerWhenThePromptOpensWithIt(t *testing.T) {
 	banner := `{"text":"` + claudeCodeBanner + `","type":"text"}`
+	attribution := `{"text":"` + claudeSafetyAttribution + `","type":"text"}`
 	for _, test := range []struct{ system, want string }{
 		{`"` + claudeCodeBanner + `\n\nAnswer briefly.\n\nKeep my instructions"`, `[` + banner + `,{"text":"Answer briefly.\n\nKeep my instructions","type":"text"}]`},
 		{`[{"type":"text","text":"` + claudeCodeBanner + `\n\nAnswer briefly.","cache_control":{"type":"ephemeral"}},{"type":"text","text":"Keep"}]`,
 			`[` + banner + `,{"cache_control":{"type":"ephemeral"},"text":"Answer briefly.","type":"text"},{"text":"Keep","type":"text"}]`},
 		{`[{"type":"text","text":"` + claudeCodeBanner + `\n"},{"type":"text","text":"Keep"}]`, `[` + banner + `,{"text":"Keep","type":"text"}]`},
+		{`[` + attribution + `,{"type":"text","text":"` + claudeCodeBanner + `\n\nKeep"}]`, `[` + attribution + `,` + banner + `,{"text":"Keep","type":"text"}]`},
+		{`[` + attribution + `,{"type":"text","text":"` + claudeCodeBanner + `\n"}]`, `[` + attribution + `,` + banner + `]`},
 		// Text that merely starts like the banner is the client's own prompt.
 		{`"` + claudeCodeBanner + `Keep"`, `[` + banner + `,{"text":"` + claudeCodeBanner + `Keep","type":"text"}]`},
 	} {

@@ -73,6 +73,15 @@ func (writer *restoringResponseWriter) WriteHeader(status int) {
 	if writer.wroteHeader || writer.failed {
 		return
 	}
+	// Error envelopes are provider protocol data, not generated content. Keep
+	// their status, encoding and body intact so clients can honor throttling and
+	// safety-check failures instead of receiving a local restoration error.
+	if status >= http.StatusBadRequest {
+		writer.passthrough = true
+		writer.wroteHeader = true
+		writer.ResponseWriter.WriteHeader(status)
+		return
+	}
 	encoding := strings.ToLower(strings.TrimSpace(writer.Header().Get("Content-Encoding")))
 	if encoding != "" && encoding != "identity" {
 		writer.writeRestoreFailure(
