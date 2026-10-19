@@ -24,6 +24,7 @@ const (
 	builtinToolCredentialsTable  = "builtin_tool_credentials"
 	serviceProxyCredentialsTable = "service_proxy_credentials"
 	subscriptionCredentialsTable = "subscription_credentials"
+	classifierCredentialsTable   = "classifier_credentials"
 	syncKeyMaterialTable         = "sync_key_material"
 	syncBaselineTable            = "sync_baseline"
 
@@ -45,6 +46,7 @@ var secretColumns = []secretColumn{
 	{table: builtinToolCredentialsTable, key: "kind", value: "credential_value", flagged: true},
 	{table: serviceProxyCredentialsTable, key: "service_id", value: "credential_value", flagged: true},
 	{table: subscriptionCredentialsTable, key: "service_id", value: "credential_value"},
+	{table: classifierCredentialsTable, key: "id", value: "credential_value", flagged: true},
 	{table: syncKeyMaterialTable, key: "key", value: "credential_value", flagged: true},
 	{table: syncBaselineTable, key: "key", value: "payload_blob", flagged: true},
 }

@@ -338,6 +338,262 @@ describe("routing decision metadata", () => {
   });
 });
 
+describe("model routing decision metadata", () => {
+  const decision = {
+    schema_version: 1,
+    virtual_model_id: "astrlink/superclaude",
+    group_id: "superclaude",
+    config_snapshot_version: "6f1c0b",
+    selection_source: "rule",
+    rule_id: "coding",
+    rule_priority: 100,
+    used_default: false,
+    fields: [
+      { field: "streaming", source: "local", known: true, match_count: 0 },
+      {
+        field: "task_type",
+        source: "classifier",
+        known: false,
+        match_count: 0,
+        error_code: "classifier_timeout",
+      },
+    ],
+    member_id: "strong",
+    member_service_id: "anthropic",
+    member_model: "claude-sonnet",
+    execution: { status: "succeeded", attempt_count: 1 },
+    privacy_attempts: [
+      {
+        attempt_index: 0,
+        service_id: "anthropic",
+        decision: "allow",
+        finding_count: 0,
+        duration_ms: 3,
+      },
+    ],
+    duration_ms: 12,
+  };
+
+  it("keeps the group decision the record carries", () => {
+    expect(
+      parseRequestRecord({ ...fullRecord, model_routing: decision })
+        .model_routing,
+    ).toStrictEqual(decision);
+  });
+
+  it("keeps a classifier's candidate sequence on the field it came from", () => {
+    const withCandidates = {
+      ...decision,
+      fields: [
+        decision.fields[0],
+        {
+          ...decision.fields[1],
+          classifier_confidence: 0.64,
+          candidates: [
+            { value: "modify", score: 0.81, rank: 0, chosen: false },
+            { value: "explain", score: 0.64, rank: 1, chosen: true },
+          ],
+        },
+      ],
+    };
+    const parsed = parseRequestRecord({
+      ...fullRecord,
+      model_routing: withCandidates,
+    });
+    expect(parsed.model_routing?.fields[1].candidates).toStrictEqual([
+      { value: "modify", score: 0.81, rank: 0, chosen: false },
+      { value: "explain", score: 0.64, rank: 1, chosen: true },
+    ]);
+    // The field that took no scored fallback keeps no candidate key at all.
+    expect(parsed.model_routing?.fields[0]).not.toHaveProperty("candidates");
+  });
+
+  it("reads a record written before candidates existed as having none", () => {
+    // Nil and empty array are deliberately not told apart: both mean "no
+    // candidate detail", and neither turns into a placeholder list.
+    const parsed = parseRequestRecord({
+      ...fullRecord,
+      model_routing: decision,
+    });
+    for (const field of parsed.model_routing?.fields ?? [])
+      expect(field.candidates).toBeUndefined();
+
+    const empty = {
+      ...decision,
+      fields: [{ ...decision.fields[0], candidates: [] }],
+    };
+    const parsedEmpty = parseRequestRecord({
+      ...fullRecord,
+      model_routing: empty,
+    });
+    expect(parsedEmpty.model_routing?.fields[0].candidates).toBeUndefined();
+  });
+
+  it("rejects candidate entries it cannot explain", () => {
+    const entry = { value: "explain", score: 0.64, rank: 0, chosen: true };
+    for (const [candidates, message] of [
+      [[{ value: "explain", score: 0.64, rank: 0 }], "应为布尔值"],
+      [[{ value: "explain", score: 0.64, chosen: true }], "应为整数"],
+      [[{ value: "explain", rank: 0, chosen: true }], "应为数字"],
+      [[{ score: 0.64, rank: 0, chosen: true }], "应为字符串"],
+      [[{ ...entry, score: "0.64" }], "应为数字"],
+      [[null], "应为对象"],
+      [["explain"], "应为对象"],
+      [{}, "应为数组"],
+    ] as const) {
+      expect(() =>
+        parseRequestRecord({
+          ...fullRecord,
+          model_routing: {
+            ...decision,
+            fields: [{ ...decision.fields[0], candidates }],
+          },
+        }),
+      ).toThrow(message);
+    }
+  });
+
+  it("accepts every selection source, which is not the provider enum", () => {
+    for (const source of [
+      "rule",
+      "default_member",
+      "group_binding",
+      "response_affinity",
+      "websocket_connection",
+    ] as const) {
+      const parsed = parseRequestRecord({
+        ...fullRecord,
+        model_routing: {
+          ...decision,
+          selection_source: source,
+          // Only a rule-sourced decision may name the rule it hit.
+          ...(source === "rule"
+            ? {}
+            : { rule_id: undefined, rule_priority: undefined }),
+        },
+      }).model_routing;
+      expect(parsed?.selection_source).toBe(source);
+    }
+    // The provider side names session reuse `session_binding`; a group decision
+    // must not borrow it.
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        model_routing: { ...decision, selection_source: "session_binding" },
+      }),
+    ).toThrow("selection_source）：取值无效");
+  });
+
+  it("leaves the key out for historical records without one", () => {
+    for (const model_routing of [null, undefined]) {
+      expect(
+        parseRequestRecord({ ...fullRecord, model_routing }),
+      ).not.toHaveProperty("model_routing");
+    }
+    expect(parseRequestRecord(fullRecord)).not.toHaveProperty("model_routing");
+  });
+
+  it("requires schema version 1 and a rule id when a rule matched", () => {
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        model_routing: { ...decision, schema_version: 2 },
+      }),
+    ).toThrow("schema_version）：取值无效");
+    expect(() =>
+      parseRequestRecord({
+        ...fullRecord,
+        model_routing: {
+          ...decision,
+          rule_id: undefined,
+          rule_priority: undefined,
+        },
+      }),
+    ).toThrow("rule_id）：缺少字段");
+  });
+
+  it("rejects wire values it cannot explain", () => {
+    for (const [patch, message] of [
+      [{ selection_source: "cheapest" }, "selection_source）：取值无效"],
+      [
+        { execution: { status: "running", attempt_count: 1 } },
+        "execution.status）：未知状态",
+      ],
+      [{ fields: {} }, "fields）：应为数组"],
+      [
+        {
+          privacy_attempts: [
+            {
+              attempt_index: 0,
+              service_id: "anthropic",
+              decision: "maybe",
+              finding_count: 0,
+              duration_ms: 1,
+            },
+          ],
+        },
+        "decision）：未知决定",
+      ],
+      [
+        {
+          fields: [{ field: "task_type", source: "classifier", known: "yes" }],
+        },
+        "应为布尔值",
+      ],
+      // The wire types the durations as plain ints, so only the type is checked:
+      // rejecting a value Core is allowed to send would hide the whole record.
+      [{ duration_ms: "12" }, "应为整数"],
+      [{ used_default: "false" }, "应为布尔值"],
+      [{ member_service_id: 7 }, "应为字符串"],
+    ] as const) {
+      expect(() =>
+        parseRequestRecord({
+          ...fullRecord,
+          model_routing: { ...decision, ...patch },
+        }),
+      ).toThrow(message);
+    }
+  });
+
+  it("keeps the seven event kinds unchanged", () => {
+    // A group decision must not smuggle in a new event kind.
+    expect(
+      new Set(
+        parseRequestRecord({
+          ...fullRecord,
+          events: [
+            {
+              kind: "routed",
+              started_at: "2026-07-25T10:00:00Z",
+              ended_at: null,
+              status: "succeeded",
+              summary: "model_group=superclaude member=strong rule=coding",
+              attempt_index: 0,
+            },
+          ],
+        }).events.map((event) => event.kind),
+      ),
+    ).toEqual(new Set(["routed"]));
+    for (const kind of ["model_routing", "group_routing", "selection"]) {
+      expect(() =>
+        parseRequestRecord({
+          ...fullRecord,
+          events: [
+            {
+              kind,
+              started_at: "2026-07-25T10:00:00Z",
+              ended_at: null,
+              status: "succeeded",
+              summary: "",
+              attempt_index: 0,
+            },
+          ],
+        }),
+      ).toThrow("kind）：未知类型");
+    }
+  });
+});
+
 describe("conversion diagnostics", () => {
   const diagnostics = [
     {

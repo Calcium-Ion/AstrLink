@@ -1,5 +1,6 @@
 import { i18n } from "./i18n";
 import type {
+  ModelRoutingDecision,
   RequestRecord,
   RequestRoutingDecision,
   RequestStatus,
@@ -57,6 +58,32 @@ export function routeEventStep(event: RouteEvent): RoutingStep | null {
     };
   }
   return { serviceId: summary, outcome: "selected", code: "" };
+}
+
+/**
+ * The route events that name API providers. A routing group records the model
+ * it chose as a route event too ("model · rule"); read as a provider step it
+ * would put a model name among the providers. That event comes first and
+ * names the member model, which no provider event does.
+ */
+export function withoutModelRoutingEvent<T extends RouteEvent>(
+  routes: readonly T[],
+  decision: ModelRoutingDecision | undefined,
+): T[] {
+  if (!decision) return [...routes];
+  const model = decision.member_model;
+  let removed = false;
+  return routes.filter((route) => {
+    if (removed || route.status === "failed") return true;
+    if (
+      route.summary === model ||
+      route.summary.startsWith(`${model}${SEPARATOR}`)
+    ) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
 }
 
 /**

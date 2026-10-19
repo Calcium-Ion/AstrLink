@@ -24,9 +24,27 @@ export interface ChannelBindingEvent extends ChannelBindingScope {
   request_id: string;
 }
 
+/**
+ * A routing group's session binding: the model the group keeps choosing for
+ * this session. The same stickiness switch and idle timeout govern it, and
+ * releasing the session clears it with the API provider bindings.
+ */
+export interface ModelRoutingSessionBinding {
+  local_access_token_id: string;
+  protocol: string;
+  /** The group as clients name it, `astrlink/<id>`. */
+  virtual_model_id: string;
+  service_id: string;
+  model: string;
+  /** The request whose rules chose this model; absent on older bindings. */
+  request_id?: string;
+  expires_at: string;
+}
+
 export interface ChannelBindingAudit {
   enabled: boolean;
   bindings: ChannelBinding[];
+  model_routing_bindings: ModelRoutingSessionBinding[];
   events: ChannelBindingEvent[];
   has_more: boolean;
 }
@@ -65,9 +83,27 @@ export function parseChannelBindingAudit(value: unknown): ChannelBindingAudit {
     !Array.isArray(data.events)
   )
     throw Error("Invalid API provider binding audit");
+  // An older Core sends no routing bindings; that reads as none.
+  const routingBindings = data.model_routing_bindings ?? [];
+  if (!Array.isArray(routingBindings))
+    throw Error("Invalid API provider binding audit");
   return {
     enabled: data.enabled,
     has_more: data.has_more,
+    model_routing_bindings: routingBindings.map((raw) => {
+      const item = object(raw);
+      const binding: ModelRoutingSessionBinding = {
+        local_access_token_id: text(item.local_access_token_id),
+        protocol: text(item.protocol),
+        virtual_model_id: text(item.virtual_model_id),
+        service_id: text(item.service_id),
+        model: text(item.model),
+        expires_at: date(item.expires_at),
+      };
+      if (item.request_id !== undefined)
+        binding.request_id = text(item.request_id);
+      return binding;
+    }),
     bindings: data.bindings.map((raw) => {
       const item = object(raw);
       return {

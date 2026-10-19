@@ -139,7 +139,7 @@ ON CONFLICT(session_id, principal, protocol, model) DO UPDATE SET service_id=exc
 }
 
 func (store *Store) GetChannelBindingAudit(ctx context.Context, id contract.SessionID, before int64) (contract.ChannelBindingAudit, error) {
-	result := contract.ChannelBindingAudit{Bindings: []contract.ChannelBinding{}, Events: []contract.ChannelBindingEvent{}}
+	result := contract.ChannelBindingAudit{Bindings: []contract.ChannelBinding{}, ModelRoutingBindings: []contract.ModelRoutingSessionBinding{}, Events: []contract.ChannelBindingEvent{}}
 	settings, err := store.GetRoutingSettings(ctx)
 	if err != nil {
 		return result, err
@@ -160,6 +160,9 @@ func (store *Store) GetChannelBindingAudit(ctx context.Context, id contract.Sess
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
+		return result, err
+	}
+	if result.ModelRoutingBindings, err = store.sessionModelRoutingBindings(ctx, id, settings.ModelRoutingGroups); err != nil {
 		return result, err
 	}
 	rows, err = store.db.QueryContext(ctx, `SELECT id, document_json FROM channel_binding_events WHERE session_id = ? AND (? = 0 OR id < ?) ORDER BY id DESC LIMIT 101`, id, before, before)
@@ -203,6 +206,9 @@ func (store *Store) ReleaseChannelBindings(ctx context.Context, id contract.Sess
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM channel_bindings WHERE session_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM model_routing_bindings WHERE session_id = ?`, id); err != nil {
 		return err
 	}
 	if err = insertBindingEvent(ctx, tx, contract.ChannelBindingEvent{ChannelBindingScope: contract.ChannelBindingScope{SessionID: id}, At: now, Action: "released", Reason: "user_requested"}); err != nil {

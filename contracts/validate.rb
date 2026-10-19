@@ -553,4 +553,290 @@ raise "local privacy model probe must accept only one path" unless local_probe.f
                                                                local_probe.fetch("properties").keys == %w[path] &&
                                                                local_probe.fetch("additionalProperties") == false
 
-puts "validated #{reference_count} local $ref values, frozen fixtures, Alpha relay invariants, retired routing operations, and audit patch semantics"
+# --- model routing / classifier: Go is authoritative, the spec must follow -----
+#
+# The routing and classifier schemas are closed documents (`additionalProperties:
+# false` for the settings and condition shapes), so an OpenAPI face that omits an
+# accepted property is not a cosmetic gap: it rejects a write the Go validator
+# accepts, and a symmetric guard elsewhere means nothing covers it. Each
+# assertion below derives its expectation from the Go source itself, so the next
+# drift fails here instead of shipping.
+
+MODEL_ROUTING_PATH = ROOT.join("../core/contract/model_routing.go")
+CLASSIFIER_SETTINGS_PATH = ROOT.join("../core/contract/classifier_settings.go")
+model_routing_source = MODEL_ROUTING_PATH.read
+classifier_settings_source = CLASSIFIER_SETTINGS_PATH.read
+
+# JSON names a Go struct declares, in declaration order, split by `omitempty`.
+def go_struct_fields(source, struct_name)
+  body = source[/type #{struct_name} struct \{(.*?)\n\}/m, 1]
+  raise "no Go struct #{struct_name}" if body.nil?
+
+  required = []
+  optional = []
+  body.scan(/json:"([^",]+)(,omitempty)?"/) { |name, omitempty| (omitempty ? optional : required) << name }
+  [required, optional]
+end
+
+def go_string_constants(source, block)
+  constants = {}
+  block.each_line do |line|
+    match = line.match(/^\s*(\w+)\s*=\s*"([^"]*)"/)
+    constants[match[1]] = match[2] if match
+  end
+  constants
+end
+
+def json_names_at(node, *path)
+  Array(node.dig(*path)).map { |entry| entry.fetch("json") }
+end
+
+drifts = []
+
+# 1. Every fact the Go field table knows is a writable member of the condition
+#    enum, and every condition property is a Go field or logical node.
+go_model_routing_source = model_routing_source[/var modelRoutingFields = map\[string\]struct \{\n\s*kind string\n\}\{(.*?)\n\}/m, 1]
+raise "no Go modelRoutingFields table" if go_model_routing_source.nil?
+
+go_facts = go_model_routing_source.scan(/"([a-z0-9_]+)":\s*\{kind:/).flatten.sort
+
+# A condition carries exactly one shape at a time, so every member is omitempty
+# and the whole wire shape — not just a "required" half — is the comparison set.
+go_condition = go_struct_fields(model_routing_source, "ModelRoutingCondition").flatten.sort
+
+condition = openapi.dig("components", "schemas", "ModelRoutingCondition")
+# An absent schema reports as its own drift rather than crashing the guard: a
+# crash is not a message about what drifted.
+if condition.nil?
+  drifts << "ModelRoutingCondition: not defined"
+else
+  condition_properties = condition.fetch("properties", {})
+  condition_keys = condition_properties.keys.sort
+  if go_condition != condition_keys
+    drifts << "ModelRoutingCondition.properties drift = #{((go_condition - condition_keys) | (condition_keys - go_condition)).inspect}"
+  end
+
+  # The field admits two disjoint name sets: the built-in facts Go registers,
+  # and the name of a dimension the classifier settings declare — a name that
+  # lives in a separate resource, so it cannot be enumerated here. The built-in
+  # half stays a closed enum compared to Go term by term, so the guard that
+  # catches a renamed or retired fact is unchanged; the second branch must
+  # negate exactly that set, or a name would fall through both branches.
+  field = condition_properties["field"]
+  if field.nil?
+    drifts << "ModelRoutingCondition.field: not defined"
+  else
+    branches = Array(field["oneOf"])
+    unless branches.length == 2
+      drifts << "ModelRoutingCondition.field.oneOf = #{branches.length} branches, want 2"
+    end
+
+    builtin_names = Array((branches[0] || {})["enum"]).sort
+    unless go_facts == builtin_names
+      drifts << "ModelRoutingCondition.field enum drift = #{((go_facts - builtin_names) | (builtin_names - go_facts)).inspect}"
+    end
+
+    negated = Array(branches.dig(1, "not", "enum")).sort
+    unless builtin_names == negated
+      drifts << "ModelRoutingCondition.field not.enum drift = #{((builtin_names - negated) | (negated - builtin_names)).inspect}"
+    end
+  end
+
+  # `within` is the time leaf. The schema is closed, so omitting the property
+  # rejects a time rule the Go validator accepts.
+  drifts << "ModelRoutingCondition.within prop = false" unless condition_properties.key?("within")
+
+  # 2. `within`'s shape is a fact of its own: exactly two HH:mm values, a
+  #    half-open [start, end) window. Asserting that the property merely exists
+  #    let `type: array` become `string` and let `items.pattern` widen to `^.*$`
+  #    with the guard still green, so the shape is compared term by term.
+  within = condition_properties["within"]
+  if within.nil?
+    drifts << "ModelRoutingCondition.within: not defined"
+  else
+    unless within["type"] == "array"
+      drifts << "ModelRoutingCondition.within.type = #{within['type'].inspect}, want \"array\""
+    end
+
+    # Go enforces the window length at its one comparison site rather than
+    # through a named constant, so the bound is read from that comparison
+    # instead of being repeated as a literal here.
+    go_window = model_routing_source[/len\(condition\.Within\)\s*!=\s*(\d+)/, 1]
+    raise "no Go within length comparison" if go_window.nil?
+
+    %w[minItems maxItems].each do |bound|
+      unless within[bound].to_s == go_window
+        drifts << "ModelRoutingCondition.within.#{bound} = #{within[bound].inspect}, want #{go_window}"
+      end
+    end
+
+    items = within["items"]
+    if items.nil?
+      drifts << "ModelRoutingCondition.within.items: not defined"
+    else
+      drifts << "ModelRoutingCondition.within.items.type = #{items['type'].inspect}" unless items["type"] == "string"
+
+      # Go validates the time-of-day format rather than an extra property, so
+      # the guard reads `validRoutingTimeOfDay` itself: the hour and minute
+      # ceilings are parsed out of the comparisons that enforce them, and the
+      # spec pattern must then accept exactly the set Go accepts. A hand-copied
+      # regex would drift the moment Go's bounds moved.
+      validator = model_routing_source[/func validRoutingTimeOfDay.*?\n\}\n/m].to_s
+      ceiling = ->(name) { validator[/#{name}\s*<=\s*(\d+)/, 1]&.to_i }
+      max_hour = ceiling.call("hour")
+      max_minute = ceiling.call("minute")
+      if max_hour.nil? || max_minute.nil?
+        drifts << "ModelRoutingCondition.within: cannot read validRoutingTimeOfDay bounds"
+      else
+        pattern_source = items["pattern"]
+        if pattern_source.nil?
+          drifts << "ModelRoutingCondition.within.items.pattern: not defined"
+        else
+          pattern = begin
+            Regexp.new(pattern_source)
+          rescue RegexpError => error
+            drifts << "ModelRoutingCondition.within.items.pattern is not a regex: #{error.message}"
+            nil
+          end
+          if pattern
+            # Every HH:mm Go accepts must be matched by the spec pattern.
+            accepted = (0..max_hour).flat_map do |hour|
+              (0..max_minute).map { |minute| format("%02d:%02d", hour, minute) }
+            end
+            rejected = accepted.reject { |value| pattern.match?(value) }
+            unless rejected.empty?
+              drifts << "ModelRoutingCondition.within.items.pattern rejects valid #{rejected.first(3).inspect}"
+            end
+            # And the spec must not accept what Go refuses.
+            ["24:00", "9:00", "09:60", "09-00", "0900", "", "09:00 ", "09:000"] .each do |value|
+              drifts << "ModelRoutingCondition.within.items.pattern accepts invalid #{value.inspect}" if pattern.match?(value)
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+# 3. Both classifier documents carry every source the Go validator accepts, and
+#    the response carries the existing_model shape as a reference.
+classifier_sources = go_string_constants(classifier_settings_source, classifier_settings_source[/^\s*(ClassifierSourceInline.*?)\n\n/m, 1].to_s).values
+classifier_settings_required, classifier_settings_optional = go_struct_fields(classifier_settings_source, "ClassifierSettings")
+classifier_existing_keys = go_struct_fields(classifier_settings_source, "ClassifierExistingModelSource").first
+classifier_existing = openapi.dig("components", "schemas", "ClassifierExistingModelSource")
+existing_properties = classifier_existing&.fetch("properties", {})
+
+%w[ClassifierSettings ClassifierSettingsResponse].each do |schema_name|
+  schema = openapi.dig("components", "schemas", schema_name)
+  if schema.nil?
+    drifts << "#{schema_name}: not defined"
+    next
+  end
+
+  enum = schema.dig("properties", "classifier_source", "enum")
+  drift = classifier_sources - Array(enum)
+  drifts << "#{schema_name}: drift=#{drift.inspect}" unless drift.empty?
+
+  raised = schema.dig("properties", "existing_model", "$ref")
+  drifts << "#{schema_name}: existing_model prop = false" unless raised == "#/components/schemas/ClassifierExistingModelSource"
+
+  # The settings face is closed in Go as well (decodePolicy with
+  # DisallowUnknownFields), so an omitted property costs the same here as it
+  # does below: the schema would reject a write the Go validator accepts.
+  # `properties` lists the whole wire shape, required and omitempty alike, so
+  # it is compared against both halves; `required` is compared against the
+  # half that carries no omitempty. The response adds credential_configured,
+  # a fact about the credential store rather than a settings field, so that
+  # one name is the only thing expected on top of the Go struct.
+  missing_settings = (classifier_settings_required + classifier_settings_optional) - schema.fetch("properties", {}).keys
+  drifts << "#{schema_name}: properties drift=#{missing_settings.inspect}" unless missing_settings.empty?
+
+  expected_required = classifier_settings_required.sort
+  expected_required = (expected_required + ["credential_configured"]).sort if schema_name == "ClassifierSettingsResponse"
+  wire_required = Array(schema.fetch("required", [])).sort
+  unless expected_required == wire_required
+    drifts << "#{schema_name}.required drift = #{((expected_required - wire_required) | (wire_required - expected_required)).inspect}"
+  end
+end
+
+if classifier_existing.nil?
+  drifts << "ClassifierExistingModelSource: not defined"
+else
+  # `properties` may be a superset of the Go wire shape — the spec stays open to
+  # extra data — but an omitted member is the asymmetry that rejects a write the
+  # Go validator accepts, which is what this guard exists to catch.
+  missing = classifier_existing_keys - existing_properties.keys
+  drifts << "ClassifierExistingModelSource: drift=#{missing.inspect}" unless missing.empty?
+end
+
+# 4. The dry-run observation face carries every field the Go observation writes,
+#    and the candidate observation keeps all four of its non-omitempty members.
+observation_required, observation_optional = go_struct_fields(model_routing_source, "ModelRoutingFieldObservation")
+observation_items = openapi.dig("components", "schemas", "ClassifierDryRunResponse", "properties", "fields", "items")
+if observation_items.nil?
+  drifts << "ClassifierDryRunResponse.fields.items = false"
+else
+  observation_properties = observation_items.fetch("properties", {})
+  # `properties` lists the whole wire shape, required and omitempty alike, so it
+  # is compared against both halves; `required` is compared against the Go half
+  # that carries no omitempty.
+  missing_observation = (observation_required + observation_optional) - observation_properties.keys
+  unless missing_observation.empty?
+    drifts << "ClassifierDryRunResponse.fields.items drift = #{missing_observation.inspect}"
+  end
+
+  wire_required = Array(observation_items.fetch("required", [])).sort
+  unless observation_required.sort == wire_required
+    drifts << "ClassifierDryRunResponse.fields.items.required drift = #{((observation_required.sort - wire_required) | (wire_required - observation_required.sort)).inspect}"
+  end
+
+  # The candidate observation is the one nested structure this round adds, and
+  # every member of it is unconditional, so `chosen` rides the wire as `false`
+  # rather than being omitted.
+  candidate_required, = go_struct_fields(model_routing_source, "ModelRoutingCandidateObservation")
+  candidate_required.sort!
+  candidate_items = observation_properties.dig("candidates", "items")
+  if candidate_items.nil?
+    drifts << "ClassifierDryRunResponse.fields.items.candidates = false"
+  else
+    candidate_wire = Array(candidate_items.fetch("required", [])).sort
+    unless candidate_required == candidate_wire
+      drifts << "candidates.items.required drift = #{((candidate_required - candidate_wire) | (candidate_wire - candidate_required)).inspect}"
+    end
+  end
+end
+
+# 5. The built-in field table has three hand-written mirrors — the Go
+#    registry the checks above read, the desktop model's operator table, and
+#    the Tauri sidecar's match arms — and a name added to one of them alone
+#    is a field that saves in one place and is unsupported in another. Only
+#    the name sets are compared: the three express kinds differently (the
+#    desktop model folds keyword into its label kind and has no keyword kind
+#    at all), so comparing kinds would report a false finding.
+desktop_routing_path = ROOT.join("../apps/desktop/src/model-routing-group-model.ts")
+desktop_routing_source = desktop_routing_path.read
+desktop_operators = desktop_routing_source[/export const modelRoutingFieldOperators = \{(.*?)\n\} as const;/m, 1]
+raise "no TS modelRoutingFieldOperators table" if desktop_operators.nil?
+
+desktop_facts = desktop_operators.scan(/^  ([a-z0-9_]+):/).flatten.sort
+
+tauri_routing_path = ROOT.join("../apps/desktop/src-tauri/src/failure_policy.rs")
+tauri_routing_source = tauri_routing_path.read
+tauri_kind = tauri_routing_source[/fn routing_field_kind\(.*?\n\}\n/m].to_s
+raise "no Rust routing_field_kind table" if tauri_kind.empty?
+
+# Only the literal arms carry a field name: the wildcard arms that follow
+# them resolve a runtime dimension and refuse an unsupported name, and a
+# kind literal on the right-hand side of an arm is a kind rather than a
+# field. Each arm is therefore split into its pattern side and its result
+# side, and only the pattern side is read.
+tauri_facts = tauri_kind.scan(/((?:"[a-z0-9_]+"\s*\|?\s*)+)\s*=>/).flatten.flat_map { |patterns| patterns.scan(/"([a-z0-9_]+)"/).flatten }.sort
+
+[["desktop model-routing-group-model.ts", desktop_facts], ["Tauri failure_policy.rs", tauri_facts]].each do |label, facts|
+  drift = (go_facts - facts) | (facts - go_facts)
+  drifts << "#{label} routing field set drift = #{drift.inspect}" unless drift.empty?
+end
+
+raise "model routing contract drifted from Go:\n  #{drifts.join("\n  ")}" unless drifts.empty?
+
+puts "validated #{reference_count} local $ref values, frozen fixtures, Alpha relay invariants, retired routing operations, audit patch semantics, and one routing field vocabulary across Go, TypeScript and Rust"

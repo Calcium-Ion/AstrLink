@@ -13,17 +13,25 @@ import { protocolEntryPath } from "./service-presets";
 import { Panel, PanelHeader } from "./components/Panel";
 import { EmptyState } from "./components/EmptyState";
 import { FormMessage } from "./components/FormMessage";
+import { HelpPopover } from "./components/HelpPopover";
+import { ServiceKindIcon } from "./components/ServiceKindIcon";
 import { StatusBadge } from "./components/StatusBadge";
+import { ArrowRight, Brain } from "./components/icons";
+import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import type { ServiceKind } from "./service-model";
 
 /** A session owns this view: no extra navigation or manual session identifiers. */
 export function SessionChannelBindings({
   sessionId,
   serviceNames,
+  serviceKinds = {},
   onSelectRequest,
 }: {
   sessionId: string;
   serviceNames: Record<string, string>;
+  /** Icons for the providers rows name; a row without one shows only the name. */
+  serviceKinds?: Record<string, ServiceKind>;
   onSelectRequest: (requestId: string) => void;
 }) {
   const t = useT();
@@ -125,7 +133,16 @@ export function SessionChannelBindings({
     data?.bindings.filter(
       (binding) => Date.parse(binding.expires_at) > Date.now(),
     ) ?? [];
+  const routingBindings =
+    data?.model_routing_bindings?.filter(
+      (binding) => Date.parse(binding.expires_at) > Date.now(),
+    ) ?? [];
   const events = [...(data?.events ?? []), ...older];
+  // The token only tells rows apart when more than one row is listed.
+  const tokenNote = (token: string) =>
+    activeBindings.length + routingBindings.length > 1 && token
+      ? ` · ${t("binding.token", { id: token.slice(-8) })}`
+      : "";
 
   return (
     <div
@@ -166,52 +183,95 @@ export function SessionChannelBindings({
                   </Button>
                 }
               >
-                <h2 className="text-sm font-semibold">
-                  {t("binding.current")}
-                </h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("binding.releaseHint")}
-                </p>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <h2 className="text-sm font-semibold">
+                    {t("binding.current")}
+                  </h2>
+                  {data.enabled ? null : (
+                    <Badge variant="outline" data-binding-disabled>
+                      {t("binding.disabled")}
+                    </Badge>
+                  )}
+                  <HelpPopover label={t("binding.currentHelpLabel")}>
+                    <div className="grid gap-2">
+                      {data.enabled ? null : <p>{t("binding.disabledHelp")}</p>}
+                      <p>{t("binding.currentHelp")}</p>
+                    </div>
+                  </HelpPopover>
+                </div>
               </PanelHeader>
-              {!data.enabled && (
-                <p className="border-b px-4 py-3 text-xs text-muted-foreground">
-                  {t("binding.disabled")}
-                </p>
-              )}
-              {activeBindings.length === 0 ? (
+              {activeBindings.length === 0 && routingBindings.length === 0 ? (
                 <EmptyState
                   className="min-h-28 border-0"
                   title={t("binding.empty")}
-                  description={t(
-                    data.enabled
-                      ? "binding.emptyHint"
-                      : "binding.emptyDisabled",
-                  )}
                 />
               ) : (
                 <ul className="divide-y">
+                  {routingBindings.map((binding) => (
+                    <li
+                      key={`routing:${binding.local_access_token_id}:${binding.protocol}:${binding.virtual_model_id}`}
+                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
+                      data-routing-binding={binding.virtual_model_id}
+                    >
+                      <div className="min-w-0 flex-1 basis-56">
+                        <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                          <Brain
+                            aria-hidden="true"
+                            className="size-3.5 shrink-0 text-violet-foreground"
+                          />
+                          <span className="truncate font-mono">
+                            {binding.virtual_model_id}
+                          </span>
+                          <ArrowRight
+                            aria-hidden="true"
+                            className="size-3 shrink-0 text-muted-foreground"
+                          />
+                          <span className="truncate">{binding.model}</span>
+                        </p>
+                        <p className="mt-1 break-all text-xs text-muted-foreground">
+                          {service(binding.service_id)} ·{" "}
+                          {protocolEntryPath(binding.protocol)}
+                          {tokenNote(binding.local_access_token_id)}
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground tabular-nums">
+                        {t("binding.expires", {
+                          time: time(binding.expires_at),
+                        })}
+                      </p>
+                    </li>
+                  ))}
                   {activeBindings.map((binding) => (
                     <li
                       key={`${binding.local_access_token_id}:${binding.protocol}:${binding.model}`}
                       className="flex flex-wrap items-center justify-between gap-2 px-4 py-3"
                     >
                       <div className="min-w-0 flex-1 basis-56">
-                        <p
-                          className="truncate text-sm font-medium"
-                          title={service(binding.service_id)}
-                        >
-                          {service(binding.service_id)}
+                        <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                          <span className="truncate">{binding.model}</span>
+                          <ArrowRight
+                            aria-hidden="true"
+                            className="size-3 shrink-0 text-muted-foreground"
+                          />
+                          {serviceKinds[binding.service_id] ? (
+                            <ServiceKindIcon
+                              kind={serviceKinds[binding.service_id]}
+                              size={14}
+                            />
+                          ) : null}
+                          <span
+                            className="truncate"
+                            title={service(binding.service_id)}
+                          >
+                            {service(binding.service_id)}
+                          </span>
                         </p>
                         <p className="mt-1 break-all text-xs text-muted-foreground">
-                          {binding.model} ·{" "}
                           {protocolEntryPath(binding.protocol)}
-                          {activeBindings.length > 1 &&
-                          binding.local_access_token_id
-                            ? ` · ${t("binding.token", { id: binding.local_access_token_id.slice(-8) })}`
-                            : ""}
+                          {tokenNote(binding.local_access_token_id)}
                         </p>
                       </div>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-xs text-muted-foreground tabular-nums">
                         {t("binding.expires", {
                           time: time(binding.expires_at),
                         })}
@@ -220,9 +280,6 @@ export function SessionChannelBindings({
                   ))}
                 </ul>
               )}
-              <p className="border-t px-4 py-2 text-xs text-muted-foreground">
-                {t("binding.strictHint")}
-              </p>
             </Panel>
             <Panel>
               <PanelHeader
@@ -237,12 +294,14 @@ export function SessionChannelBindings({
                   </Button>
                 }
               >
-                <h2 className="text-sm font-semibold">
-                  {t("binding.history")}
-                </h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("binding.historyHint")}
-                </p>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <h2 className="text-sm font-semibold">
+                    {t("binding.history")}
+                  </h2>
+                  <HelpPopover label={t("binding.historyHelpLabel")}>
+                    {t("binding.historyHelp")}
+                  </HelpPopover>
+                </div>
               </PanelHeader>
               {data.events.length === 0 ? (
                 <EmptyState
@@ -307,11 +366,8 @@ export function SessionChannelBindings({
                   ))}
                 </ol>
               )}
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2">
-                <p className="text-xs text-muted-foreground">
-                  {t("binding.retention")}
-                </p>
-                {(olderHasMore ?? data.has_more) && (
+              {(olderHasMore ?? data.has_more) && (
+                <div className="flex justify-end border-t px-4 py-2">
                   <Button
                     size="sm"
                     variant="ghost"
@@ -320,8 +376,8 @@ export function SessionChannelBindings({
                   >
                     {t(loadingOlder ? "common.loading" : "records.loadEarlier")}
                   </Button>
-                )}
-              </div>
+                </div>
+              )}
             </Panel>
           </>
         )}

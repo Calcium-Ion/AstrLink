@@ -6,6 +6,7 @@ const bridge = vi.hoisted(() => ({
   builtinToolAction: vi.fn().mockResolvedValue({ configured: false }),
   getRoutingSettings: vi.fn(),
   updateRoutingSettings: vi.fn(),
+  getClassifierSettings: vi.fn(),
 }));
 vi.mock("./bridge", () => bridge);
 import { RouteManager } from "./RouteManager";
@@ -20,6 +21,10 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
     strategy: "failover_only",
     max_attempts: 6,
     allow_unmatched_failover: false,
+  });
+  bridge.getClassifierSettings.mockResolvedValue({
+    kind: "cloud",
+    dimensions: [],
   });
   const container = document.createElement("div");
   document.body.append(container);
@@ -49,7 +54,9 @@ it("shows default-setting tabs and clears dirty state on unmount under StrictMod
     expect(
       container.querySelector('[data-testid="routing-defaults-panel"]'),
     ).not.toBeNull();
-    const tabs = [...container.querySelectorAll('[role="tab"]')];
+    const tabs = [
+      ...container.querySelectorAll('[data-slot="tabs-list"] [role="tab"]'),
+    ];
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       "请求改写",
       "重定向",

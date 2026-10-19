@@ -111,6 +111,7 @@ import {
 import { rawSealingErrorMessage } from "./raw-sealing-ui";
 import type { AccessTokenSummary } from "./access-token-model";
 import type { RoutableService } from "./service-model";
+import type { ConversionEngineCapability } from "./core-model";
 import {
   requestServiceIdentity,
   type RequestService,
@@ -141,6 +142,7 @@ import {
   type SessionStatus,
 } from "./request-record-model";
 import { RequestConversation } from "./RequestConversation";
+import { RequestModelRoutingPanel } from "./components/RequestModelRoutingPanel";
 import { RequestPrivacyAudit } from "./RequestPrivacyAudit";
 import { RequestTrajectory } from "./RequestTrajectory";
 import {
@@ -214,7 +216,8 @@ type DetailTab =
   | "trajectory"
   | "content"
   | "audit"
-  | "binding";
+  | "binding"
+  | "modelRouting";
 // Copies started from a menu lose their button when it closes, so their
 // outcome is announced beside the actions instead.
 const MENU_COPY_KEYS: ReadonlySet<string> = new Set([
@@ -228,6 +231,7 @@ const DETAIL_TABS: readonly DetailTab[] = [
   "content",
   "audit",
   "binding",
+  "modelRouting",
 ];
 type PendingConfirm =
   | { kind: "audit-risk"; patch: AuditSettingsPatch }
@@ -341,6 +345,10 @@ export function RequestRecords({
   initialDetailTab = "conversation",
   isReady,
   services,
+  conversionEngine,
+  onEditRoutingGroup,
+  onOpenService,
+  onServicesChanged,
   target,
 }: {
   accessTokens: AccessTokenSummary[];
@@ -350,6 +358,13 @@ export function RequestRecords({
   initialDetailTab?: "conversation" | "trajectory";
   isReady: boolean;
   services: (RoutableService & RequestService)[];
+  /** Decides whether a provider can open a missing entry by converting. */
+  conversionEngine?: ConversionEngineCapability | null;
+  onEditRoutingGroup?: (groupID: string) => void;
+  /** Opens a provider's entry protocols. */
+  onOpenService?: (serviceID: string) => void;
+  /** A provider changed from here; reload the list. */
+  onServicesChanged?: () => void;
   /**
    * The narrowing another page opened the list on. Each navigation is a new
    * object, so opening the same target again restores what was cleared.
@@ -2200,6 +2215,11 @@ export function RequestRecords({
               services.map((service) => [service.id, service.name]),
             )}
             services={servicesById}
+            routingServices={services}
+            conversionEngine={conversionEngine}
+            onEditRoutingGroup={onEditRoutingGroup}
+            onOpenService={onOpenService}
+            onServicesChanged={onServicesChanged}
             session={selectedSession}
             turns={selectedTurns}
           />
@@ -2716,10 +2736,21 @@ function RecordDetail({
   onSelectTurn,
   onRegisterRecords,
   onUnlockRaw,
+  routingServices,
+  conversionEngine,
+  onEditRoutingGroup,
+  onOpenService,
+  onServicesChanged,
 }: {
   record: RequestRecord;
   serviceNames: Record<string, string>;
   services: RequestServiceMap;
+  /** Full providers, for the routing panel's names, icons and entries. */
+  routingServices: (RoutableService & RequestService)[];
+  conversionEngine?: ConversionEngineCapability | null;
+  onEditRoutingGroup?: (groupID: string) => void;
+  onOpenService?: (serviceID: string) => void;
+  onServicesChanged?: () => void;
   session: RequestSession;
   turns: RequestRecord[];
   serviceName: string | null;
@@ -3136,12 +3167,20 @@ function RecordDetail({
             >
               {t("records.tabContent")}
             </TabsTrigger>
-            {!isModelDiscoveryProtocol(session.input_protocol) && (
+            {!discovery && (
               <TabsTrigger
                 value="binding"
                 onClick={() => setDetailTab("binding")}
               >
                 {t("binding.tab")}
+              </TabsTrigger>
+            )}
+            {!discovery && (
+              <TabsTrigger
+                value="modelRouting"
+                onClick={() => setDetailTab("modelRouting")}
+              >
+                {t("modelRouting.tab")}
               </TabsTrigger>
             )}
             <TabsTrigger onClick={() => setDetailTab("audit")} value="audit">
@@ -3289,12 +3328,34 @@ function RecordDetail({
             key={session.id}
             sessionId={session.id}
             serviceNames={serviceNames}
+            serviceKinds={Object.fromEntries(
+              routingServices.map((item) => [item.id, item.kind]),
+            )}
             onSelectRequest={(id) => {
               onSelectTurn(id);
               setDetailTab("trajectory");
             }}
           />
         </TabsContent>
+
+        {!discovery && (
+          <TabsContent
+            className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            value="modelRouting"
+          >
+            <RequestModelRoutingPanel
+              key={record.id}
+              record={record}
+              services={routingServices}
+              conversionEngine={conversionEngine}
+              onOpenProviderRouting={() => setDetailTab("trajectory")}
+              onEditGroup={onEditRoutingGroup}
+              onOpenRequest={onSelectTurn}
+              onOpenService={onOpenService}
+              onServicesChanged={onServicesChanged}
+            />
+          </TabsContent>
+        )}
 
         {!discovery && (
           <TabsContent

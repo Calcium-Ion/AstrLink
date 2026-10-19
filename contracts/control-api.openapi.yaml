@@ -2417,6 +2417,204 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/routing/classifier:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Routes]
+      operationId: getClassifierSettings
+      summary: Read the external task-type classifier configuration.
+      description: >
+        The classifier is a singleton resource beside routing settings; the
+        routing-settings document and its whitelists are unchanged. The
+        response reports only whether the API key is configured, never the
+        key itself.
+      responses:
+        "200":
+          description: Current classifier settings and credential status.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassifierSettingsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      x-astrlink-role: operator
+      tags: [Routes]
+      operationId: updateClassifierSettings
+      summary: Replace the external classifier configuration.
+      description: >
+        Whole-document replacement with a strict field whitelist. Disabled
+        drafts may omit protocol, endpoint, and model; an enabled document
+        must be complete. `classifier_source=provider_ref` with
+        `enabled=true` is stored as a future shape and answered with 422
+        `classifier_source_not_supported`. Removing or renaming a dimension
+        that a model routing rule still names is answered with 409
+        `classifier_dimension_in_use`: routing settings are validated
+        against the declared dimensions on every read, so the rule has to
+        go first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassifierSettings"
+      responses:
+        "200":
+          description: Stored classifier settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassifierSettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /control/v1/routing/classifier/credential:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Routes]
+      operationId: getClassifierCredentialStatus
+      summary: Read whether the classifier API key is configured, never its value.
+      responses:
+        "200":
+          description: Credential status.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/BuiltinToolCredentialStatus" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      x-astrlink-role: operator
+      tags: [Routes]
+      operationId: putClassifierCredential
+      summary: Save the classifier API key into sealed storage.
+      description: >
+        Write-only: the key is sealed under a table-bound AAD and never
+        returned by any endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [secret]
+              properties:
+                secret:
+                  {
+                    type: string,
+                    minLength: 1,
+                    maxLength: 16384,
+                    writeOnly: true,
+                  }
+      responses:
+        "200":
+          description: Credential saved.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/BuiltinToolCredentialStatus" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      x-astrlink-role: operator
+      tags: [Routes]
+      operationId: deleteClassifierCredential
+      summary: Clear the stored classifier API key.
+      responses:
+        "200":
+          description: Credential removed.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/BuiltinToolCredentialStatus" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/routing/classifier/dry-run:
+    x-astrlink-implementation-status: implemented
+    post:
+      x-astrlink-role: operator
+      tags: [Routes]
+      operationId: classifierDryRun
+      summary: Classify sample text through the configured provider without any inference upstream.
+      description: >
+        The text passes the same privacy filter as production before it can
+        leave, then one provider call runs with the group's effective prompt,
+        labels, and timeout. Failures answer 200 with a stable
+        fallback_reason; only one dry-run may run at a time. The whole run is
+        bounded by the classifier timeout plus five seconds and answers 504
+        dry_run_timeout past that. Without a cloud classifier no call is made
+        and the group's rules are still judged, every classifier field
+        unknown, with fallback_reason classifier_unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassifierDryRunRequest"
+      responses:
+        "200":
+          description: Classification outcome; check fallback_reason for degradation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassifierDryRunResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /control/v1/model-routing-versions/{group_id}/{version}:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Routes]
+      operationId: getModelRoutingGroupVersion
+      summary: Read one saved configuration of a routing group.
+      description: >
+        Each group's configuration is numbered from 1 and gains a version
+        only when how it routes changes; switching the group on or off does
+        not. Request records name the version they were routed under in
+        model_routing.config_version.
+      parameters:
+        - name: group_id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 64 }
+        - name: version
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: The configuration as it was saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelRoutingGroupVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /control/v1/client-identities:
     x-astrlink-implementation-status: implemented
     get:
@@ -3375,8 +3573,8 @@ paths:
       x-astrlink-role: operator
       tags: [Requests]
       operationId: releaseSessionChannelBindings
-      summary: Release all ordinary channel preferences for this session and fence in-flight writes.
-      description: Preserves request records, audit history and strict Responses or WebSocket bindings. The next ordinary request follows service order and may choose the same channel.
+      summary: Release all ordinary channel preferences and routing-group bindings for this session and fence in-flight writes.
+      description: Preserves request records, audit history and strict Responses or WebSocket bindings. The next ordinary request follows service order and may choose the same channel; the next request to a routing group judges its rules again.
       responses:
         "200":
           description: Updated bindings and audit history.
@@ -4364,6 +4562,278 @@ components:
               openai.chat,
               google.generate_content,
             ]
+    ModelRoutingCondition:
+      type: object
+      description: >
+        One bounded node of a routing condition tree. A node carries exactly one
+        shape: the logical all, any, or not, or a single leaf operator. Trees are
+        at most 4 levels deep and 64 nodes in total.
+      properties:
+        all:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/ModelRoutingCondition"
+        any:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/ModelRoutingCondition"
+        not:
+          $ref: "#/components/schemas/ModelRoutingCondition"
+        field:
+          oneOf:
+            - type: string
+              enum:
+                [
+                  protocol,
+                  media_kind,
+                  task_type,
+                  streaming,
+                  continuation,
+                  has_tools,
+                  has_media,
+                  has_image,
+                  has_audio,
+                  has_video,
+                  turn_count,
+                  user_message_count,
+                  assistant_message_count,
+                  tool_message_count,
+                  tool_declaration_count,
+                  tool_call_count,
+                  input_bytes,
+                  input_text_runes,
+                  estimated_input_context_tokens,
+                  literal_keyword,
+                  system_time,
+                ]
+            - type: string
+              not:
+                enum:
+                  [
+                    protocol,
+                    media_kind,
+                    task_type,
+                    streaming,
+                    continuation,
+                    has_tools,
+                    has_media,
+                    has_image,
+                    has_audio,
+                    has_video,
+                    turn_count,
+                    user_message_count,
+                    assistant_message_count,
+                    tool_message_count,
+                    tool_declaration_count,
+                    tool_call_count,
+                    input_bytes,
+                    input_text_runes,
+                    estimated_input_context_tokens,
+                    literal_keyword,
+                    system_time,
+                  ]
+          description: Fact the leaf reads. The first branch is the closed built-in vocabulary; the second admits the name of a dimension the classifier settings declare, which cannot be enumerated here because dimensions live in a separate resource. A custom dimension is string kind and takes the string operators (in, not_in, equals, not_equals) and no others; a name repeating a built-in is refused when the dimension is saved. Streaming is always false in this release, so write a streaming rule as equals_bool false.
+        in:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: String fields only; negate with not_in.
+        not_in:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: Negation of in. String fields only.
+        equals:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: String fields only; negate with not_equals.
+        not_equals:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Negation of equals. String fields only.
+        equals_bool:
+          type: boolean
+        min:
+          type: integer
+          minimum: 0
+          description: >
+            Inclusive lower bound on a numeric field. Retained for reading older
+            documents; the equivalent over the bounded operators is gte.
+        max:
+          type: integer
+          minimum: 0
+          description: >
+            Inclusive upper bound on a numeric field. Retained for reading older
+            documents; the equivalent over the bounded operators is lte.
+        gt:
+          type: integer
+          minimum: 0
+          description: >
+            Exclusive lower bound on a numeric field. A leaf may carry one lower
+            bound from min, gt or gte, and it must not exceed its upper bound.
+        gte:
+          type: integer
+          minimum: 0
+          description: Inclusive lower bound on a numeric field; equivalent to min.
+        lt:
+          type: integer
+          minimum: 0
+          description: >
+            Exclusive upper bound on a numeric field. A leaf may carry one upper
+            bound from max, lt or lte.
+        lte:
+          type: integer
+          minimum: 0
+          description: Inclusive upper bound on a numeric field; equivalent to max.
+        contains_any:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: Literal keywords; a leaf on literal_keyword uses this operator and no other.
+        not_contains_any:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: Negation of contains_any. Literal_keyword fields only.
+        within:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: string
+            pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          description: >
+            The time leaf: exactly two HH:mm values naming a half-open
+            [start, end) window. Only a system_time field carries it; a window
+            whose start is later than its end crosses midnight. Equal endpoints
+            name a single instant. Exclusion composes through the not leaf
+            instead of a set operator.
+      additionalProperties: false
+    ModelRoutingMember:
+      type: object
+      additionalProperties: false
+      required: [id, service_id, model]
+      description: One concrete provider and model a routing group may select.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          description: Unique within the group; lowercase letters, digits and hyphens, with no leading or trailing hyphen.
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        model:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: A concrete model name. Must not be astrlink-prefixed, astrlink-text-v1, text-v1, or a URL.
+    ModelRoutingRule:
+      type: object
+      additionalProperties: false
+      required: [id, priority, when, target_member_id]
+      description: Selects one member of its group when the condition matches. Lower priority runs first, and each priority is unique in the group.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        when:
+          $ref: "#/components/schemas/ModelRoutingCondition"
+        target_member_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Must name a member of the same group.
+    ModelRoutingGroupVersion:
+      type: object
+      additionalProperties: false
+      required: [group_id, version, latest_version, created_at, group]
+      properties:
+        group_id: { type: string }
+        version: { type: integer, minimum: 1 }
+        latest_version:
+          {
+            type: integer,
+            minimum: 1,
+            description: "The group's newest version when this one was read.",
+          }
+        created_at: { type: string, format: date-time }
+        group: { $ref: "#/components/schemas/ModelRoutingGroup" }
+    ModelRoutingGroup:
+      type: object
+      additionalProperties: false
+      required: [id, enabled, members, default_member_id, rules]
+      description: >
+        A virtual model published as astrlink/<id> that resolves to one member
+        per request. Used when the requested model is that virtual ID.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+          description: Slug used in the virtual model ID. auto and text-v1 are reserved.
+        enabled:
+          type: boolean
+        members:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/ModelRoutingMember"
+        default_member_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Member used when no rule matches. Must name a member of this group.
+        rules:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/ModelRoutingRule"
+        task_type_labels:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: >
+            Optional task_type domain for this group. When omitted or empty, the
+            built-in labels general, research, coding and architect apply. When
+            non-empty, this list is authoritative and task_type condition values
+            must belong to it. A custom label requires a classifier configured to
+            emit that label; the bundled offline classifier emits only the four
+            built-in labels.
     ChannelBindingScope:
       type: object
       required: [session_id, local_access_token_id, protocol, model]
@@ -4412,16 +4882,53 @@ components:
             service_id: { type: string }
             previous_service_id: { type: string }
             request_id: { type: string }
+    ModelRoutingSessionBinding:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          local_access_token_id,
+          protocol,
+          virtual_model_id,
+          service_id,
+          model,
+          expires_at,
+        ]
+      properties:
+        local_access_token_id: { type: string }
+        protocol: { type: string }
+        virtual_model_id:
+          {
+            type: string,
+            description: "The routing group as clients name it, astrlink/<id>.",
+          }
+        service_id: { type: string }
+        model: { type: string }
+        request_id:
+          {
+            type: string,
+            description: "The request whose rule evaluation chose this model; requests reusing the binding keep it.",
+          }
+        expires_at: { type: string, format: date-time }
     ChannelBindingAudit:
       type: object
       additionalProperties: false
-      required: [enabled, bindings, events, has_more]
+      required: [enabled, bindings, model_routing_bindings, events, has_more]
       properties:
-        enabled: { type: boolean }
+        enabled:
+          {
+            type: boolean,
+            description: "Session stickiness. One switch and idle timeout govern API provider bindings and routing-group bindings alike.",
+          }
         bindings:
           type: array
           items:
             $ref: "#/components/schemas/ChannelBinding"
+        model_routing_bindings:
+          type: array
+          description: Routing-group bindings a request would still reuse. A binding whose group is disabled, or whose member left the group, is not listed.
+          items:
+            $ref: "#/components/schemas/ModelRoutingSessionBinding"
         events:
           type: array
           maxItems: 100
@@ -4456,6 +4963,377 @@ components:
       required: [configured]
       properties:
         configured: { type: boolean }
+    ClassifierSettings:
+      type: object
+      additionalProperties: false
+      required: [enabled, classifier_source]
+      properties:
+        enabled:
+          {
+            type: boolean,
+            description: "When false the document is a draft; classification stays on the deterministic fallback.",
+          }
+        classifier_source:
+          {
+            type: string,
+            enum: [inline, provider_ref, existing_model],
+            description: "Only inline and existing_model execute in V1; provider_ref is a stored future shape and answers 422 when enabled.",
+          }
+        inline:
+          $ref: "#/components/schemas/ClassifierInlineSource"
+        provider_ref:
+          $ref: "#/components/schemas/ClassifierProviderRef"
+        existing_model:
+          $ref: "#/components/schemas/ClassifierExistingModelSource"
+        dimensions:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/ClassifierDimension"
+          description: >
+            User-defined classification dimensions. task_type is built in and
+            always occupies one of the six total slots, so at most five custom
+            dimensions are accepted. A name that repeats task_type or a built-in
+            routing field is refused, because the field registry resolves
+            built-ins first and such a rule would read the request instead of the
+            classifier's answer. Omitting the member is the single-dimension shape
+            and is byte-identical to the pre-dimensions classifier.
+    ClassifierInlineSource:
+      type: object
+      additionalProperties: false
+      properties:
+        protocol:
+          {
+            type: string,
+            enum: [jev, openai_decisions],
+            description: "Cloud classification protocol adapter.",
+          }
+        endpoint:
+          {
+            type: string,
+            description: "Absolute http(s) URL without userinfo, query, or fragment.",
+          }
+        credential_ref:
+          {
+            type: string,
+            enum: [local://classifier/default],
+            description: "The sealed credential slot; the API key itself never appears here.",
+          }
+        model: { type: string, maxLength: 256 }
+        prompt:
+          {
+            type: string,
+            maxLength: 4096,
+            description: "Instructions with at most the {{labels}} placeholder; empty uses the built-in prompt.",
+          }
+        timeout_ms:
+          {
+            type: integer,
+            minimum: 1,
+            maximum: 5000,
+            description: "Global call timeout; group values may only tighten it. Default 1000.",
+          }
+        low_confidence_threshold:
+          {
+            type: number,
+            minimum: 0,
+            maximum: 1,
+            description: "Below the threshold the task_type fact becomes unknown. Default 0.5.",
+          }
+        fallback:
+          {
+            type: string,
+            enum: [skip, general, error],
+            description: "Deterministic behavior on classifier failure; error records a code and never blocks. Default skip.",
+          }
+    ClassifierProviderRef:
+      type: object
+      additionalProperties: false
+      required: [ref]
+      properties:
+        ref:
+          {
+            type: string,
+            maxLength: 256,
+            description: "Reserved future classifier profile reference; never a service id.",
+          }
+    ClassifierExistingModelSource:
+      type: object
+      additionalProperties: false
+      required: [service_id, model]
+      description: >
+        Targets a service and model that already exist in the gateway
+        configuration. Its timeout budget is source-specific and independent of
+        the inline classifier's; the two never share values.
+      properties:
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        model:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 256,
+            description: "A concrete model name that already exists in the gateway configuration.",
+          }
+        timeout_ms:
+          {
+            type: integer,
+            minimum: 1,
+            maximum: 60000,
+            description: "Call timeout for this source alone. Default 15000.",
+          }
+    ClassifierDimension:
+      type: object
+      additionalProperties: false
+      required: [name, options]
+      description: >
+        One user-defined classification dimension. The name is the fact a rule
+        reads and the token the prompt writes as {{dim.<name>}}. Names carry no
+        character-set rule, but the placeholder grammar bounds them: no braces,
+        no leading or trailing whitespace, and at most 64 runes.
+      properties:
+        name:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 64,
+            description: "Addressable from {{dim.<name>}}; must not be task_type and must not repeat a built-in routing field.",
+          }
+        description:
+          {
+            type: string,
+            description: "Rendered next to the name in the classifier prompt; never part of the {{dim.<name>}} token grammar.",
+          }
+        options:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/ClassifierDimensionOption"
+          description: "At least one option. An empty list would make every placeholder for this dimension unsatisfiable, so it is refused at save time."
+    ClassifierDimensionOption:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: One selectable value of a dimension.
+      properties:
+        name:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 64,
+            description: "Reported as this dimension's fact value and matched by a rule's in or equals operator.",
+          }
+        description:
+          {
+            type: string,
+            description: "Rendered next to the option name in the classifier prompt.",
+          }
+    ClassifierSettingsResponse:
+      type: object
+      additionalProperties: false
+      required: [enabled, classifier_source, credential_configured]
+      properties:
+        enabled: { type: boolean }
+        classifier_source:
+          { type: string, enum: [inline, provider_ref, existing_model] }
+        inline:
+          $ref: "#/components/schemas/ClassifierInlineSource"
+        provider_ref:
+          $ref: "#/components/schemas/ClassifierProviderRef"
+        existing_model:
+          $ref: "#/components/schemas/ClassifierExistingModelSource"
+        dimensions:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/ClassifierDimension"
+        credential_configured:
+          {
+            type: boolean,
+            description: "Whether the sealed API key exists; its value never crosses this API.",
+          }
+    ClassifierDryRunRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 65536,
+            description: "Sample text; it passes the production privacy filter before any cloud call.",
+          }
+        group_id:
+          {
+            type: string,
+            description: "Optional routing group; the dry-run then also reports every rule's verdict.",
+          }
+        protocol:
+          {
+            type: string,
+            description: "Request-side fact: the protocol the sample stands in for. Must name a known AstrLink protocol; omit to leave the fact unknown.",
+          }
+        media_kind:
+          {
+            type: string,
+            description: "Request-side fact: the media kind of the sample. Omit to leave the fact unknown.",
+          }
+        streaming:
+          {
+            type: boolean,
+            description: "Request-side fact: whether the sample stands in for a streaming request. Omit to leave the fact unknown.",
+          }
+        continuation:
+          {
+            type: boolean,
+            description: "Request-side fact: whether the sample continues an earlier response. Omit to leave the fact unknown.",
+          }
+        system_time:
+          {
+            type: string,
+            pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            description: "Request-side fact: the clock the sample is evaluated at, as HH:MM. Defaults to now.",
+          }
+    ClassifierDryRunResponse:
+      type: object
+      additionalProperties: false
+      required: [configured, duration_ms]
+      properties:
+        configured:
+          {
+            type: boolean,
+            description: "Whether a cloud classifier is configured. When false nothing is called and the rules are judged without it.",
+          }
+        category:
+          {
+            type: string,
+            description: "Chosen label; empty when unknown or failed.",
+          }
+        confidence:
+          {
+            type: number,
+            minimum: 0,
+            maximum: 1,
+            description: "Upstream-reported score passed through verbatim.",
+          }
+        fallback_reason:
+          {
+            type: string,
+            description: "Stable degradation code; empty on success. Never blocks the caller.",
+          }
+        privacy:
+          {
+            type: string,
+            description: "Privacy preflight outcome for the sample text (off, allow, warn, redact, blocked).",
+          }
+        duration_ms: { type: integer, minimum: 0 }
+        timeout_ms:
+          {
+            type: integer,
+            minimum: 1,
+            description: "Classifier timeout this run used, from the classifier settings. Absent when no classifier was called.",
+          }
+        sanitized_preview:
+          {
+            type: string,
+            description: "Bounded preview of the sanitized text the classifier would receive.",
+          }
+        decision:
+          type: object
+          additionalProperties: false
+          required: [member_id, service_id, model, used_default]
+          properties:
+            member_id: { type: string }
+            service_id: { type: string }
+            model: { type: string }
+            rule_id: { type: string }
+            used_default: { type: boolean }
+        rules:
+          type: array
+          description: "Every rule in the group, in evaluation order, with its own verdict. The selected rule is the one a live request would use; the rest are reported so a rule that never fired can be told apart from one that fired and failed."
+          items:
+            type: object
+            additionalProperties: false
+            required: [rule_id, priority, target_member_id, state, selected]
+            properties:
+              rule_id: { type: string }
+              priority: { type: integer }
+              target_member_id: { type: string }
+              target_model: { type: string }
+              state:
+                {
+                  type: string,
+                  enum: [true, false, unknown, not_evaluated],
+                  description: "true/false: evaluated. unknown: evaluated, but a field it reads had no fact. not_evaluated: an earlier rule already won.",
+                }
+              selected: { type: boolean }
+              target_missing:
+                {
+                  type: boolean,
+                  description: "The rule came out true but names a member the group does not define; the walk stops and falls through to the default member.",
+                }
+              fields:
+                type: array
+                description: "Field observations for this rule's own condition, without classifier provenance."
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [field, source, known, match_count]
+                  properties:
+                    field: { type: string }
+                    source: { type: string }
+                    known: { type: boolean }
+                    match_count: { type: integer }
+                    value:
+                      {
+                        type: string,
+                        maxLength: 128,
+                        description: "The fact the condition read, in the evaluator's spelling (true, 12, openai.chat, 14:20). Empty when unknown and always empty for literal_keyword, whose fact is the request text.",
+                      }
+                    skip_reason: { type: string }
+                    error_code: { type: string }
+        fields:
+          type: array
+          description: Field observations from the production evaluator when a group was given.
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, source, known, match_count]
+            properties:
+              field: { type: string }
+              source: { type: string }
+              known: { type: boolean }
+              match_count: { type: integer }
+              value:
+                {
+                  type: string,
+                  maxLength: 128,
+                  description: "The fact the condition read; empty when unknown and for literal_keyword.",
+                }
+              classifier_confidence: { type: number }
+              classifier_id: { type: string }
+              skip_reason: { type: string }
+              error_code: { type: string }
+              candidates:
+                type: array
+                description: >
+                  The candidate sequence a classifier produced for this field,
+                  with each candidate's score, rank and whether it was chosen.
+                  This is the observed output shape only; selection stays
+                  row-order first-match and nothing reads it for scoring.
+                  Absent both on records written before it existed and on
+                  fields that took no scored fallback.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [value, score, rank, chosen]
+                  properties:
+                    value: { type: string }
+                    score: { type: number }
+                    rank: { type: integer }
+                    chosen: { type: boolean }
     BuiltinToolTestResult:
       type: object
       additionalProperties: false
@@ -4585,6 +5463,13 @@ components:
           description: Model redirect table applied to new inference requests before service selection. Always present; empty when no rules exist.
           items:
             $ref: "#/components/schemas/ModelRedirect"
+        model_routing_groups:
+          type: array
+          maxItems: 64
+          default: []
+          description: Model routing groups, each published as the virtual model astrlink/<id>. Always present; empty when no group exists. A group ID or member model must not collide with a redirect.
+          items:
+            $ref: "#/components/schemas/ModelRoutingGroup"
         channel_stickiness:
           $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:
@@ -4735,6 +5620,12 @@ components:
           description: Replaces the whole redirect table. Send an empty array to remove every rule; null is rejected.
           items:
             $ref: "#/components/schemas/ModelRedirect"
+        model_routing_groups:
+          type: array
+          maxItems: 64
+          description: Replaces the whole group table. Send an empty array to remove every group; null is rejected.
+          items:
+            $ref: "#/components/schemas/ModelRoutingGroup"
         channel_stickiness:
           $ref: "#/components/schemas/ChannelStickiness"
         default_recovery_paths:

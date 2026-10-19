@@ -63,12 +63,9 @@ func (handler *Handler) rememberResponseAffinity(ctx context.Context, session *r
 	}
 }
 
-func (handler *Handler) bindResponseAffinity(ctx context.Context, request Request, candidates []endpoint.Resolved) ([]endpoint.Resolved, error) {
-	if request.PreviousResponseID == "" || (request.Protocol != contract.ProtocolOpenAIResponses && request.Protocol != contract.ProtocolOpenAIResponsesCompact) {
-		return candidates, nil
-	}
+func (handler *Handler) loadResponseAffinity(ctx context.Context, responseID string) (storage.ResponseAffinity, bool, error) {
 	principal, _ := AccessTokenIDFromContext(ctx)
-	key := affinityKey{string(principal), request.PreviousResponseID}
+	key := affinityKey{string(principal), responseID}
 	handler.affinities.mu.Lock()
 	entry, found := handler.affinities.entries[key]
 	if found && time.Since(entry.at) >= 24*time.Hour {
@@ -76,17 +73,28 @@ func (handler *Handler) bindResponseAffinity(ctx context.Context, request Reques
 		found = false
 	}
 	handler.affinities.mu.Unlock()
-	binding := entry.binding
-	if !found {
-		if store, ok := handler.requestRecords.(storage.ResponseAffinityStore); ok {
-			lookupCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-			defer cancel()
-			var err error
-			binding, found, err = store.GetResponseAffinity(lookupCtx, key.principal, key.responseID)
-			if err != nil {
-				return nil, fmt.Errorf("response affinity could not be loaded")
-			}
+	if found {
+		return entry.binding, true, nil
+	}
+	if store, ok := handler.requestRecords.(storage.ResponseAffinityStore); ok {
+		lookupCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		binding, found, err := store.GetResponseAffinity(lookupCtx, key.principal, key.responseID)
+		if err != nil {
+			return storage.ResponseAffinity{}, false, fmt.Errorf("response affinity could not be loaded")
 		}
+		return binding, found, nil
+	}
+	return storage.ResponseAffinity{}, false, nil
+}
+
+func (handler *Handler) bindResponseAffinity(ctx context.Context, request Request, candidates []endpoint.Resolved) ([]endpoint.Resolved, error) {
+	if request.PreviousResponseID == "" || (request.Protocol != contract.ProtocolOpenAIResponses && request.Protocol != contract.ProtocolOpenAIResponsesCompact) {
+		return candidates, nil
+	}
+	binding, found, err := handler.loadResponseAffinity(ctx, request.PreviousResponseID)
+	if err != nil {
+		return nil, err
 	}
 	var selected *endpoint.Resolved
 	if found {

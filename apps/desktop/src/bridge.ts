@@ -7,6 +7,10 @@ import {
 } from "./service-test-model";
 import { parseChannelBindingAudit } from "./channel-binding-model";
 import {
+  parseModelRoutingGroupVersion,
+  type ModelRoutingGroupVersion,
+} from "./model-routing-version-model";
+import {
   parseTerminalChoices,
   type ServiceTerminalRequest,
   type TerminalChoice,
@@ -72,6 +76,14 @@ import {
   type AccessTokenPage,
   type AccessTokenUsageResponse,
 } from "./access-token-model";
+import {
+  parseClassifierCredentialStatus,
+  parseClassifierDryRunResult,
+  parseClassifierSettings,
+  type ClassifierDimension,
+  type ClassifierDryRunResult,
+  type ClassifierSettings,
+} from "./classifier-settings-model";
 import {
   parsePrivacyDryRunResult,
   parsePrivacyModelCatalog,
@@ -1256,16 +1268,56 @@ export async function saveTextFile(
   });
 }
 
+// A routing group's rules may name a user-defined classification dimension,
+// and those live in the classifier-settings singleton rather than on the
+// routing document. Every parse of routing settings therefore needs the
+// current dimension list: without it a rule naming a custom dimension fails
+// the field check and the whole routing tab refuses to load, even though Core
+// accepted and stored it.
+//
+// Best-effort by design. A classifier read that fails leaves the list empty,
+// which is the strict reading (built-in fields only) and never admits an
+// unvalidated rule.
+async function knownRoutingDimensions(): Promise<ClassifierDimension[]> {
+  try {
+    const settings = parseClassifierSettings(
+      await invoke<unknown>("get_classifier_settings"),
+    );
+    return settings.dimensions ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getRoutingSettings(): Promise<RoutingSettings> {
   requireNativeBridge();
-  return parseRoutingSettings(await invoke<unknown>("get_routing_settings"));
+  const [settings, dimensions] = await Promise.all([
+    invoke<unknown>("get_routing_settings"),
+    knownRoutingDimensions(),
+  ]);
+  return parseRoutingSettings(settings, dimensions);
 }
 export async function updateRoutingSettings(
   patch: Partial<RoutingSettings>,
 ): Promise<RoutingSettings> {
   requireNativeBridge();
-  return parseRoutingSettings(
-    await invoke<unknown>("update_routing_settings", { patch }),
+  const [settings, dimensions] = await Promise.all([
+    invoke<unknown>("update_routing_settings", { patch }),
+    knownRoutingDimensions(),
+  ]);
+  return parseRoutingSettings(settings, dimensions);
+}
+/** 路由组保存过的一版配置；请求记录里的配置版本号指向它。 */
+export async function getModelRoutingGroupVersion(
+  groupId: string,
+  version: number,
+): Promise<ModelRoutingGroupVersion> {
+  requireNativeBridge();
+  return parseModelRoutingGroupVersion(
+    await invoke<unknown>("get_model_routing_group_version", {
+      groupId,
+      version,
+    }),
   );
 }
 export async function getClientIdentities(): Promise<ClientIdentities> {
@@ -1284,6 +1336,63 @@ export async function builtinToolAction(
     action,
     input,
   });
+}
+
+/**
+ * The classifier settings are a singleton resource of their own: the provider
+ * routing whitelist in `failure_policy.rs` stays untouched, and no API key
+ * travels in this document.
+ */
+export async function getClassifierSettings(): Promise<ClassifierSettings> {
+  requireNativeBridge();
+  return parseClassifierSettings(
+    await invoke<unknown>("get_classifier_settings"),
+  );
+}
+
+export async function updateClassifierSettings(
+  settings: ClassifierSettings,
+): Promise<ClassifierSettings> {
+  requireNativeBridge();
+  return parseClassifierSettings(
+    await invoke<unknown>("update_classifier_settings", { settings }),
+  );
+}
+
+export async function classifierCredentialAction(
+  action: "status" | "save_key" | "delete_key",
+  secret?: string,
+): Promise<{ configured: boolean }> {
+  requireNativeBridge();
+  // The host declares this argument as `secret`; Tauri matches by name and
+  // passes None for anything it does not recognise, so `key` here silently
+  // reduced every save to "missing classifier API key".
+  return parseClassifierCredentialStatus(
+    await invoke<unknown>("classifier_credential_action", { action, secret }),
+  );
+}
+
+/** Runs one classification against the local Core; never a real upstream call. */
+export async function classifierDryRun(input: {
+  text: string;
+  group_id?: string;
+  /**
+   * Request-side facts. The dry-run judges the whole rule table, not just the
+   * classifier, so a request-derived rule needs a request to judge against.
+   * Omitted facts stay unknown — which never matches a rule, and is reported as
+   * such per field rather than silently defaulting to a value nobody sent.
+   */
+  protocol?: string;
+  media_kind?: string;
+  streaming?: boolean;
+  continuation?: boolean;
+  /** "HH:MM"; defaults to now. Pins a time-window rule without waiting. */
+  system_time?: string;
+}): Promise<ClassifierDryRunResult> {
+  requireNativeBridge();
+  return parseClassifierDryRunResult(
+    await invoke<unknown>("classifier_dry_run", { input }),
+  );
 }
 
 /** The configuration-sync surface, over the host's `sync_config` command. */

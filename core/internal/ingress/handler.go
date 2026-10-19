@@ -25,7 +25,6 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
-	"github.com/QuantumNous/astrlink/core/internal/autotext"
 	"github.com/QuantumNous/astrlink/core/internal/builtintools"
 	"github.com/QuantumNous/astrlink/core/internal/endpoint"
 	"github.com/QuantumNous/astrlink/core/internal/imagecompress"
@@ -75,6 +74,10 @@ type Dependencies struct {
 	// Classifier is optional. Missing, timeout, or empty text fail-open to
 	// an empty category so auto routes flatten every configured target.
 	Classifier Classifier
+	// ClassifierSettings supplies the external cloud classifier configuration.
+	// When absent or not enabled, task_type classification stays on the
+	// deterministic fallback path.
+	ClassifierSettings ClassifierSettingsProvider
 	// MaxConcurrentInspections limits how many requests may parse and
 	// classify at once. Zero selects DefaultMaxConcurrentInspections.
 	MaxConcurrentInspections int
@@ -90,6 +93,19 @@ type Dependencies struct {
 
 type Classifier interface {
 	Classify(context.Context, string) autoclassifier.Outcome
+}
+
+// ClassifierSettingsProvider reads the current external classifier settings.
+// Read failures must degrade to the deterministic fallback, never fail the
+// request.
+type ClassifierSettingsProvider interface {
+	GetClassifierSettings(context.Context) (contract.ClassifierSettings, error)
+}
+
+type ClassifierSettingsProviderFunc func(context.Context) (contract.ClassifierSettings, error)
+
+func (function ClassifierSettingsProviderFunc) GetClassifierSettings(ctx context.Context) (contract.ClassifierSettings, error) {
+	return function(ctx)
 }
 
 type ClassifierFunc func(context.Context, string) autoclassifier.Outcome
@@ -118,6 +134,7 @@ type Handler struct {
 	images                   imagecompress.Compressor
 	proxyCredentials         secretstore.SecretStore
 	affinities               responseAffinities
+	routingVersions          modelRoutingVersions
 	resolver                 endpoint.Resolver
 	authorizer               endpoint.Authorizer
 	forwarder                Forwarder
@@ -135,9 +152,12 @@ type Handler struct {
 	maxRequestBodyBytes      int64
 	conversionEngine         relaykitbridge.ConversionEngine
 	classifier               Classifier
-	subscriptionRisk         SubscriptionRiskReporter
-	identities               *accountauth.IdentityRegistry
-	sessionFingerprints      sessionFingerprints
+	classifierSettings       ClassifierSettingsProvider
+	// clock is the time routing rules read; nil reads the system clock.
+	clock               func() time.Time
+	subscriptionRisk    SubscriptionRiskReporter
+	identities          *accountauth.IdentityRegistry
+	sessionFingerprints sessionFingerprints
 }
 
 const (
@@ -254,6 +274,15 @@ func NewNetworkProduction(dependencies Dependencies) (*Handler, error) {
 	return handler, nil
 }
 
+// now is the instant routing rules read, from the system clock unless a test
+// pinned it.
+func (handler *Handler) now() time.Time {
+	if handler.clock != nil {
+		return handler.clock()
+	}
+	return time.Now()
+}
+
 func validateProductionDependencies(dependencies Dependencies) error {
 	if dependencies.Resolver == nil || dependencies.Authorizer == nil {
 		return fmt.Errorf("production resolver and authorizer are required")
@@ -292,6 +321,7 @@ func NewWithDependencies(dependencies Dependencies) *Handler {
 		maxRequestBodyBytes:   int64(dependencies.MaxRequestBodyMiB) << 20,
 		conversionEngine:      dependencies.ConversionEngine,
 		classifier:            dependencies.Classifier,
+		classifierSettings:    dependencies.ClassifierSettings,
 		subscriptionRisk:      dependencies.SubscriptionRisk,
 		identities:            dependencies.Identities,
 	}
@@ -301,7 +331,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	// The policy warning header is owned by this local response boundary.
 	// Strip any client-supplied value so it cannot be spoofed upstream.
 	request.Header.Del(PolicyWarningHeader)
-	if builtinInternalFrom(request.Context()) == nil {
+	if builtinInternalFrom(request.Context()) == nil && classifierInternalFrom(request.Context()) == nil {
 		writer.Header().Set("Access-Control-Allow-Origin", "*")
 		writer.Header().Set("Access-Control-Expose-Headers", "*")
 		if request.Method == http.MethodOptions {
@@ -309,11 +339,11 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
-	if builtinInternalFrom(request.Context()) == nil && request.URL.Path == ReachabilityPath {
+	if builtinInternalFrom(request.Context()) == nil && classifierInternalFrom(request.Context()) == nil && request.URL.Path == ReachabilityPath {
 		handler.serveReachability(writer, request)
 		return
 	}
-	if builtinInternalFrom(request.Context()) == nil && !handler.allowInferenceBoundary(writer, request) {
+	if builtinInternalFrom(request.Context()) == nil && classifierInternalFrom(request.Context()) == nil && !handler.allowInferenceBoundary(writer, request) {
 		return
 	}
 	if isResponsesWebSocket(request) {
@@ -349,7 +379,17 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 
 	var session *recordSession
-	if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
+	if mode := classifierInternalFrom(request.Context()); mode != nil {
+		// A classification sub-call folds into the caller's record when one is
+		// in context; a standalone call (control-plane dry-run) gets an
+		// in-memory session that is never persisted. The parent's classified
+		// request stays authoritative either way.
+		if mode.SharedSession != nil {
+			session = mode.SharedSession
+		} else {
+			session = handler.startRecordSession(request, classified)
+		}
+	} else if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
 		session = mode.SharedSession
 		session.classified = classified
 		session.inputPreview = classified.InputPreview
@@ -359,12 +399,22 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	} else {
 		session = handler.startRecordSession(request, classified)
 	}
-	session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
+	if classifierInternalFrom(request.Context()) == nil || classifierInternalFrom(request.Context()).SharedSession != nil {
+		session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
+	}
 	outWriter := session.wrap(writer)
 	request = request.WithContext(withRecordSession(request.Context(), session))
 	defer func() {
 		if mode := builtinInternalFrom(request.Context()); mode != nil && !mode.Native && session.endpointID != nil {
 			mode.Target = *session.endpointID
+		}
+		if classifierInternalFrom(request.Context()) != nil {
+			// The classification sub-call never finishes its own record: the
+			// shared session belongs to the parent request, and a standalone
+			// session is in-memory only. Its own context may have timed out
+			// without cancelling the parent request, so cancellation is left
+			// to the parent's defer as well.
+			return
 		}
 		if request.Context().Err() != nil {
 			session.noteCancelled()
@@ -376,6 +426,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
 			return
 		}
+		handler.persistModelRoutingBinding(request.Context(), session)
 		// Never delay or fail the client response on persistence errors.
 		session.finish(context.Background(), handler.requestRecords, handler.auditBlobs, handler.recordLogger)
 	}()
@@ -407,8 +458,25 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.serveSearch(outWriter, request, classified, routingSettings)
 		return
 	}
-	if mode := builtinInternalFrom(request.Context()); (mode == nil || (!mode.Native && mode.Model == "")) && !classified.Protocol.IsModelDiscovery() && classified.Model != "" {
-		classified = handler.applyModelRedirect(request.Context(), session, classified, routingSettings)
+	// A classification sub-call names a concrete member model and skips model
+	// routing entirely: routing it again would recurse into classification.
+	builtinMode := builtinInternalFrom(request.Context())
+	if classifierInternalFrom(request.Context()) == nil && (builtinMode == nil || (!builtinMode.Native && builtinMode.Model == "")) && !classified.Protocol.IsModelDiscovery() && classified.Model != "" {
+		classified, err = handler.applyModelRouting(request.Context(), session, classified, routingSettings)
+		if err != nil {
+			session.captureUnreadRequestBody(request)
+			var routingErr *modelRoutingHTTPError
+			if errors.As(err, &routingErr) {
+				writeInferenceError(outWriter, routingErr.status, routingErr.code, routingErr.message, false, nil)
+				session.noteFailed(errorSummaryFromInference(routingErr.code, routingErr.message, false))
+			} else {
+				handler.writeResolveError(outWriter, request, classified, err)
+			}
+			return
+		}
+		if classified.ModelRoutingMember == nil {
+			classified = handler.applyModelRedirect(request.Context(), session, classified, routingSettings)
+		}
 	}
 	if classified.routingModel() == contract.AstrLinkAutoModelID {
 		session.captureUnreadRequestBody(request)
@@ -432,17 +500,41 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	if pinned == "" {
 		session.channelBinding = handler.prepareChannelBinding(session, routingSettings, routingSettingsLoaded)
 	}
-	candidates, err := handler.resolveCandidates(request.Context(), endpoint.ResolveRequest{
+	resolveRequest := endpoint.ResolveRequest{
 		Protocol:      classified.Protocol,
 		Model:         classified.routingModel(),
 		Streaming:     classified.Streaming,
 		Continuation:  classified.PreviousResponseID != "",
-		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil || builtinInternalFrom(request.Context()) != nil,
+		AllCandidates: session.channelBinding != nil || responsesWSTurnFromContext(request.Context()) != nil || builtinInternalFrom(request.Context()) != nil || classifierInternalFrom(request.Context()) != nil,
 		Service:       pinned,
-	})
+	}
+	var candidates []endpoint.Resolved
+	if classified.ModelRoutingMember != nil {
+		candidates, err = handler.resolveMemberCandidates(request.Context(), resolveRequest, *classified.ModelRoutingMember)
+	} else {
+		candidates, err = handler.resolveCandidates(request.Context(), resolveRequest)
+	}
 	if err != nil {
 		// No attempt will read the body, so capture it for the audit now.
 		session.captureUnreadRequestBody(request)
+		if classified.ModelRoutingMember != nil {
+			code, status := "model_routing_member_unavailable", http.StatusServiceUnavailable
+			message := fmt.Sprintf("selected model routing member %q is unavailable", classified.ModelRoutingMember.ID)
+			var capabilityErr *endpoint.CapabilityUnavailableError
+			switch {
+			case pinned != "" && pinned != classified.ModelRoutingMember.ServiceID:
+				// The client named one provider and the group chose a model on
+				// another; sending the request again cannot change either.
+				status = http.StatusUnprocessableEntity
+				message = fmt.Sprintf("model routing group chose model %q on another API provider than %s names", classified.ModelRoutingMember.Model, ServiceHeader)
+			case errors.As(err, &capabilityErr):
+				code, status = "model_routing_member_unsupported", http.StatusUnprocessableEntity
+				message = handler.modelRoutingUnsupportedMessage(request.Context(), classified, *classified.ModelRoutingMember, capabilityErr.Reason)
+			}
+			writeInferenceError(outWriter, status, code, message, status >= http.StatusServiceUnavailable, nil)
+			session.noteFailed(errorSummaryFromInference(code, message, status >= http.StatusServiceUnavailable))
+			return
+		}
 		var limited *endpoint.RateLimitedCandidatesError
 		if errors.As(err, &limited) {
 			for _, limit := range limited.Limits {
@@ -452,8 +544,13 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		handler.writeResolveError(outWriter, request, classified, err)
 		return
 	}
+	candidates = filterClassifierCandidates(request.Context(), candidates)
 	candidates = filterBuiltinCandidates(request.Context(), candidates)
 	if len(candidates) == 0 {
+		if classifierInternalFrom(request.Context()) != nil {
+			writeInferenceError(outWriter, http.StatusServiceUnavailable, "classification_target_unavailable", "configured classification model is unavailable", false, nil)
+			return
+		}
 		writeInferenceError(outWriter, 422, "builtin_tool_provider_unavailable", "configured tool provider must support native Responses", false, nil)
 		return
 	}
@@ -512,9 +609,23 @@ func (handler *Handler) applyPrivacy(
 	classified Request,
 	service contract.Service,
 ) (func(), privacyOutcome, error) {
+	if classifierInternalFrom(request.Context()) != nil {
+		// A classification sub-call carries text model routing already passed
+		// through the policy, and it shares the parent's record: inspecting it
+		// here would report the classifier's call as the parent's attempt.
+		return func() {}, privacyOutcome{}, nil
+	}
 	session := recordSessionFromContext(request.Context())
+	privacyStarted := time.Now()
+	routingPrivacy := contract.ModelRoutingPrivacyUnknown
+	routingFindings := 0
+	routingError := ""
+	defer func() {
+		session.noteModelRoutingPrivacyAttempt(service.ID, routingPrivacy, routingFindings, int(time.Since(privacyStarted).Milliseconds()), routingError)
+	}()
 	session.beginPrivacyAttempt()
 	if handler.privacyFilter == nil {
+		routingPrivacy = contract.ModelRoutingPrivacyNone
 		session.notePrivacyDecision("allow", contract.RequestStatusSucceeded)
 		session.notePrivacyOutcome(contract.PrivacyDecisionNone, nil, nil, nil)
 		return func() {}, privacyOutcome{}, nil
@@ -527,9 +638,11 @@ func (handler *Handler) applyPrivacy(
 		AccessTokenID: accessTokenID,
 	})
 	if err != nil {
+		routingError = privacyErrorCode(err)
 		return func() {}, privacyOutcome{}, err
 	}
 	if !policy.Enabled {
+		routingPrivacy = contract.ModelRoutingPrivacyNone
 		// This branch deliberately does not read, replace, or otherwise touch
 		// request.Body. Disabled policy preserves the original byte path.
 		session.notePrivacyDecision("allow", contract.RequestStatusSucceeded)
@@ -537,6 +650,7 @@ func (handler *Handler) applyPrivacy(
 		return func() {}, privacyOutcome{}, nil
 	}
 	if service.PrivacyTrusted {
+		routingPrivacy = contract.ModelRoutingPrivacyNone
 		// A trusted provider gets the original byte path, as with a
 		// disabled policy, and its attempt keeps no restore mapping.
 		session.notePrivacyTrusted()
@@ -546,11 +660,13 @@ func (handler *Handler) applyPrivacy(
 	}
 	encoding := strings.ToLower(strings.TrimSpace(request.Header.Get("Content-Encoding")))
 	if encoding != "" && encoding != "identity" {
+		routingError = privacyErrorCode(errUnsupportedContentEncoding)
 		return func() {}, privacyOutcome{}, errUnsupportedContentEncoding
 	}
 
 	body, buffered, err := handler.bufferPrivacyBody(request)
 	if err != nil {
+		routingError = privacyErrorCode(err)
 		return func() {}, privacyOutcome{}, err
 	}
 	finish := func() {}
@@ -580,15 +696,18 @@ func (handler *Handler) applyPrivacy(
 		body,
 	)
 	if err != nil {
+		routingError = privacyErrorCode(err)
 		return finish, privacyOutcome{}, err
 	}
 	threshold := privacyThreshold(policy)
 	switch result.Decision {
 	case privacy.DecisionAllow:
+		routingPrivacy = contract.ModelRoutingPrivacyAllow
 		session.notePrivacyDecision("allow", contract.RequestStatusSucceeded)
 		session.notePrivacyOutcome(contract.PrivacyDecisionAllow, nil, result.SuppressedFindings, threshold)
 		return finish, privacyOutcome{}, nil
 	case privacy.DecisionWarn:
+		routingPrivacy = contract.ModelRoutingPrivacyAllow
 		// This is a response-only signal. Never add it to request.Header, where
 		// it could cross the upstream boundary.
 		writer.Header().Set(PolicyWarningHeader, privacy.WarningSummary(result.Findings))
@@ -607,17 +726,23 @@ func (handler *Handler) applyPrivacy(
 		session.notePrivacyOutcome(contract.PrivacyDecisionWarn, result.Findings, result.SuppressedFindings, threshold)
 		return finish, privacyOutcome{}, nil
 	case privacy.DecisionBlock:
+		routingPrivacy = contract.ModelRoutingPrivacyReject
+		routingFindings = len(result.Findings)
 		session.notePrivacyDecision("block", contract.RequestStatusBlocked)
 		session.notePrivacyOutcome(contract.PrivacyDecisionBlock, result.Findings, result.SuppressedFindings, threshold)
 		session.noteProtectedValues(result.Protected)
 		return finish, privacyOutcome{}, errPrivacyBlocked
 	case privacy.DecisionRedact:
+		routingFindings = len(result.Findings)
 		if buffered == nil {
+			routingError = privacyErrorCode(privacy.ErrUnsafeRewrite)
 			return finish, privacyOutcome{}, privacy.ErrUnsafeRewrite
 		}
 		if handler.maxRequestBodyBytes > 0 && int64(len(result.Body)) > handler.maxRequestBodyBytes {
+			routingError = privacyErrorCode(errMetadataTooLarge)
 			return finish, privacyOutcome{}, errMetadataTooLarge
 		}
+		routingPrivacy = contract.ModelRoutingPrivacyAllow
 		buffered.Replace(result.Body)
 		session.notePrivacyOutcome(contract.PrivacyDecisionRedact, result.Findings, result.SuppressedFindings, threshold)
 		session.noteProtectedValues(result.Protected)
@@ -639,6 +764,7 @@ func (handler *Handler) applyPrivacy(
 			toolArguments: policy.RestoreToolArguments,
 		}, nil
 	default:
+		routingError = privacyErrorCode(privacy.ErrPolicyUnavailable)
 		return finish, privacyOutcome{}, privacy.ErrPolicyUnavailable
 	}
 }
@@ -751,6 +877,27 @@ func (handler *Handler) writePrivacyError(writer http.ResponseWriter, request *h
 		writeInferenceError(writer, http.StatusServiceUnavailable, "safety_engine_unavailable", "local safety engine is unavailable", true, nil)
 		session.notePrivacyDecision("safety_engine_unavailable", contract.RequestStatusFailed)
 		session.noteFailed(errorSummaryFromInference("safety_engine_unavailable", "local safety engine is unavailable", true))
+	}
+}
+
+// privacyErrorCode is the code writePrivacyError answers err with, so the
+// privacy attempt a routing record lists names the failure the client saw.
+func privacyErrorCode(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, errMetadataTooLarge):
+		return "request_too_large"
+	case errors.Is(err, errUnsupportedContentEncoding):
+		return "unsupported_content_encoding"
+	case errors.Is(err, privacy.ErrPolicyUnavailable):
+		return "privacy_policy_unavailable"
+	case errors.Is(err, privacy.ErrUnsafeInput):
+		return "privacy_inspection_failed"
+	case errors.Is(err, privacy.ErrUnsafeRewrite):
+		return "privacy_redaction_failed"
+	default:
+		return "safety_engine_unavailable"
 	}
 }
 
@@ -1015,20 +1162,6 @@ func localClientCredential(header http.Header) (string, bool) {
 		}
 	}
 	return credentials[0], true
-}
-
-func (handler *Handler) autoCategory(ctx context.Context, classified Request) string {
-	if classified.Model != contract.AstrLinkAutoModelID {
-		return ""
-	}
-	if handler.classifier == nil || autotext.IsBlank(classified.lastUserText) {
-		return ""
-	}
-	outcome := handler.classifier.Classify(ctx, classified.lastUserText)
-	if !outcome.OK() {
-		return ""
-	}
-	return outcome.Category
 }
 
 func (handler *Handler) classify(request *http.Request) (Request, func(), error) {

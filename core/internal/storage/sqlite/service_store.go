@@ -185,6 +185,9 @@ func (store *Store) UpdateService(
 	if _, err = transaction.ExecContext(ctx, `UPDATE services SET document_json = ?, updated_at = ? WHERE id = ?`, string(document), now, service.ID); err != nil {
 		return record, fmt.Errorf("update service: %w", err)
 	}
+	if err = validateStoredRoutingReferencesTx(ctx, transaction); err != nil {
+		return record, fmt.Errorf("model routing references block service update: %w", err)
+	}
 	if service.Kind.IsHTTP() && credential.Present {
 		if len(credential.Secret) == 0 {
 			if _, err = transaction.ExecContext(ctx, `DELETE FROM service_credentials WHERE service_id = ?`, service.ID); err != nil {
@@ -230,6 +233,9 @@ func (store *Store) DeleteService(ctx context.Context, id contract.ServiceID, ex
 	}
 	if _, err = transaction.ExecContext(ctx, `DELETE FROM services WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete service: %w", err)
+	}
+	if err = validateStoredRoutingReferencesTx(ctx, transaction); err != nil {
+		return fmt.Errorf("model routing references block service delete: %w", err)
 	}
 	if err = transaction.Commit(); err != nil {
 		return fmt.Errorf("commit service delete: %w", err)

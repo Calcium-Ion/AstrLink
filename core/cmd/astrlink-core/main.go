@@ -63,7 +63,7 @@ func main() {
 	flag.IntVar(&parentPID, "parent-pid", 0, "optional desktop parent PID to watch on Unix")
 	flag.StringVar(&dataDirectory, "data-dir", "", "optional persistent application data directory")
 	flag.StringVar(&privacyWorkerPath, "privacy-worker", "", "optional bundled privacy worker executable")
-	flag.StringVar(&classifierWorkerPath, "classifier-worker", "", "optional bundled classifier worker executable")
+	flag.StringVar(&classifierWorkerPath, "classifier-worker", "", "optional bundled classifier worker executable; defaults to the sibling binary")
 	flag.BoolVar(&controlTokenStdin, "control-token-stdin", false, "read the per-start control token from stdin")
 	flag.BoolVar(&observerTokenStdin, "observer-token-stdin", false, "read the per-start observer token from the third stdin line")
 	flag.BoolVar(&localKeyStdin, "kek-stdin", false, "read the local key as 64 hex digits from the second stdin line")
@@ -132,6 +132,7 @@ func main() {
 			stdinLocalKey:            tokens.localKey,
 			localKeyFile:             localKeyFile,
 			privacyWorkerPath:        privacyWorkerPath,
+			classifierWorkerPath:     classifierWorkerPath,
 			maxConcurrentInspections: maxConcurrentInspections,
 			maxRequestBodyMiB:        uint32(maxRequestBodyMiB),
 			responseStartTimeout:     time.Duration(responseStartTimeoutSeconds) * time.Second,

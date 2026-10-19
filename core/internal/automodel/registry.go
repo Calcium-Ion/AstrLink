@@ -51,6 +51,10 @@ type Registry struct {
 	cache map[string]cachedProbe
 }
 
+// NewRegistry creates root/installations and root/staging (0o700). Production
+// builds call it on every startup via cmd/astrlink-core's
+// buildClassifierDependency, so these directories are a startup side effect on
+// the data directory, not something created at model install time.
 func NewRegistry(root string) (*Registry, error) {
 	if root == "" {
 		return nil, ErrInvalidConfig

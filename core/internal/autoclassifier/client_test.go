@@ -28,6 +28,9 @@ func TestClassifyFailOpenAndSuccess(t *testing.T) {
 	if !outcome.OK() || outcome.Category != "general" || len(outcome.Logits) != 4 {
 		t.Fatalf("success outcome = %+v", outcome)
 	}
+	if outcome.ClassifierID != installation.ID {
+		t.Fatalf("classifier id = %q, want %q", outcome.ClassifierID, installation.ID)
+	}
 	if !okClient.EligibleForRouting() {
 		t.Fatal("a ready installation is routing-eligible")
 	}

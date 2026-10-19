@@ -84,6 +84,7 @@ import {
   getAgentDebugStatus,
   installAgentDebug,
   uninstallAgentDebug,
+  classifierCredentialAction,
 } from "./bridge";
 import { defaultPrivacyKindRules } from "./privacy-policy-model";
 import { emptyPrivacyTotals } from "./privacy-summary-model";
@@ -1638,6 +1639,44 @@ describe("desktop bridge contract", () => {
       "astrlink-req_1.txt",
       "plain",
     );
+  });
+});
+
+// The panel tests mock `classifierCredentialAction` itself, so a mismatched
+// argument name never reaches them: Tauri matches command arguments by name and
+// silently passes `None` for anything it does not recognise, which the host then
+// rejects with "missing classifier API key". Only the real invoke call can catch it.
+describe("classifier credential bridge", () => {
+  it("names the secret argument exactly as the host declares it", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+
+    invokeMock.mockResolvedValueOnce({ configured: true });
+    await expect(
+      classifierCredentialAction("save_key", "sk-secret-value"),
+    ).resolves.toEqual({ configured: true });
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "classifier_credential_action",
+      {
+        action: "save_key",
+        secret: "sk-secret-value",
+      },
+    );
+
+    invokeMock.mockResolvedValueOnce({ configured: true });
+    await classifierCredentialAction("status");
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "classifier_credential_action",
+      { action: "status" },
+    );
+
+    invokeMock.mockResolvedValueOnce({ configured: false });
+    await classifierCredentialAction("delete_key");
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "classifier_credential_action",
+      { action: "delete_key" },
+    );
+
+    vi.unstubAllGlobals();
   });
 });
 

@@ -552,6 +552,8 @@ type RequestRecord struct {
 	// ModelRedirect is set when a routing-settings redirect replaced
 	// RequestedModel for provider selection.
 	ModelRedirect *RequestModelRedirect `json:"model_redirect,omitempty"`
+	// ModelRouting records the selected member for a virtual model group.
+	ModelRouting *ModelRoutingDecision `json:"model_routing,omitempty"`
 	// ReasoningEffort is the level the final attempt sent: the explicitly
 	// requested one, or the gateway's when its reasoning settings changed it
 	// ("none" when they turned reasoning off). Nil means unspecified or
@@ -661,6 +663,11 @@ func (record RequestRecord) Validate() error {
 	if record.ModelRedirect != nil {
 		if err := record.ModelRedirect.Validate(); err != nil {
 			return err
+		}
+	}
+	if record.ModelRouting != nil {
+		if err := record.ModelRouting.Validate(); err != nil {
+			return fmt.Errorf("model_routing: %w", err)
 		}
 	}
 	if record.RoutingDecision != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/astrlink/convo"
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
@@ -270,6 +271,56 @@ func TestClassifyUsesConfiguredBodyLimit(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 	if _, err := classify(request, 8<<20); err != errMetadataTooLarge {
 		t.Fatalf("classify error = %v", err)
+	}
+}
+
+// Counterexample for the sanitized rebuild guard: when the sanitized body
+// yields no extractable user text, the rebuild must still drop every
+// pre-redaction text view instead of keeping the raw copies for the routing
+// evaluator and classifier.
+func TestClassifiedWithSanitizedTextDropsPreRedactionViewsWhenExtractionIsEmpty(t *testing.T) {
+	classified := Request{
+		Protocol:             contract.ProtocolOpenAIResponses,
+		routingUserText:      "write go code for alice@example.com",
+		routingUserTextRunes: 35,
+		routingUserTextKnown: true,
+		lastUserText:         "write go code for alice@example.com",
+		InputPreview:         "write go code for alice@example.com",
+		Conversation:         convo.RequestSummary{LastUserText: "write go code for alice@example.com"},
+	}
+	rebuilt := classifiedWithSanitizedText(classified, []byte(`{"input":""}`))
+	if rebuilt.lastUserText != "" || rebuilt.Conversation.LastUserText != "" || rebuilt.InputPreview != "" || rebuilt.routingUserText != "" {
+		t.Fatalf("pre-redaction text survived the rebuild: lastUserText=%q conversation=%q preview=%q routing=%q",
+			rebuilt.lastUserText, rebuilt.Conversation.LastUserText, rebuilt.InputPreview, rebuilt.routingUserText)
+	}
+	// The sanitized body was read, and its user text is empty: that is a
+	// known zero, unlike text the policy withheld.
+	if !rebuilt.routingUserTextKnown || rebuilt.routingUserTextRunes != 0 {
+		t.Fatalf("empty sanitized text: known=%v runes=%d", rebuilt.routingUserTextKnown, rebuilt.routingUserTextRunes)
+	}
+	withheld := classifiedWithSanitizedText(classified, nil)
+	if withheld.routingUserTextKnown || withheld.routingUserText != "" || withheld.lastUserText != "" {
+		t.Fatalf("withheld text must leave nothing to read: %+v", withheld)
+	}
+}
+
+func TestClassifiedWithSanitizedTextRebuildsViewsFromSanitizedUserText(t *testing.T) {
+	classified := Request{
+		Protocol:     contract.ProtocolOpenAIResponses,
+		lastUserText: "write go code for alice@example.com",
+		InputPreview: "write go code for alice@example.com",
+		Conversation: convo.RequestSummary{LastUserText: "write go code for alice@example.com"},
+	}
+	rebuilt := classifiedWithSanitizedText(classified, []byte(`{"input":"write go code for <PRIVATE_EMAIL_1>"}`))
+	if strings.Contains(rebuilt.lastUserText, "alice@example.com") ||
+		strings.Contains(rebuilt.Conversation.LastUserText, "alice@example.com") ||
+		strings.Contains(rebuilt.InputPreview, "alice@example.com") {
+		t.Fatalf("pre-redaction text survived the rebuild: lastUserText=%q conversation=%q preview=%q",
+			rebuilt.lastUserText, rebuilt.Conversation.LastUserText, rebuilt.InputPreview)
+	}
+	if rebuilt.lastUserText == "" || rebuilt.Conversation.LastUserText == "" {
+		t.Fatalf("sanitized user text was dropped: lastUserText=%q conversation=%q",
+			rebuilt.lastUserText, rebuilt.Conversation.LastUserText)
 	}
 }
 

@@ -37,7 +37,7 @@ func builtinInternalFrom(ctx context.Context) *builtinInternal {
 }
 
 func (handler *Handler) tryBuiltinTools(writer http.ResponseWriter, request *http.Request, classified Request, settings contract.RoutingSettings) bool {
-	if builtinInternalFrom(request.Context()) != nil || classified.Protocol != contract.ProtocolOpenAIResponses {
+	if builtinInternalFrom(request.Context()) != nil || classifierInternalFrom(request.Context()) != nil || classified.Protocol != contract.ProtocolOpenAIResponses {
 		return false
 	}
 	if settings.BuiltinTools == nil && !strings.HasPrefix(classified.PreviousResponseID, "resp_tool_") {

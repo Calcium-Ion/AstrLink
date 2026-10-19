@@ -139,7 +139,12 @@ func (handler *Handler) aggregateModelDiscovery(
 			visible = append(visible, entry)
 		}
 	}
-	merged, err := appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
+	var err error
+	visible, err = appendModelRoutingDiscoveryEntries(classified.Protocol, visible, settingsGroupsFromSession(request.Context()))
+	if err == nil {
+		visible, err = appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
+	}
+	merged = visible
 	var body []byte
 	if err == nil {
 		if wantsCodexModelCatalog(request, classified.Protocol) {
@@ -549,6 +554,61 @@ func encodeDiscoveryList(protocol contract.ProtocolID, entries []discoveryEntry)
 		envelope.LastID = &entries[len(entries)-1].id
 	}
 	return json.Marshal(envelope)
+}
+
+func settingsGroupsFromSession(ctx context.Context) []contract.ModelRoutingGroup {
+	session := recordSessionFromContext(ctx)
+	if session == nil || session.routingSettings == nil {
+		return nil
+	}
+	return session.routingSettings.ModelRoutingGroups
+}
+
+func appendModelRoutingDiscoveryEntries(protocol contract.ProtocolID, entries []discoveryEntry, groups []contract.ModelRoutingGroup) ([]discoveryEntry, error) {
+	if len(groups) == 0 {
+		return entries, nil
+	}
+	listed := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		listed[discoveryModelID(protocol, entry.id)] = struct{}{}
+	}
+	for _, group := range groups {
+		if !group.Enabled || group.Validate() != nil {
+			continue
+		}
+		available := true
+		for _, member := range group.Members {
+			if _, ok := listed[member.Model]; !ok {
+				available = false
+				break
+			}
+		}
+		if !available || group.PublicModelID() == contract.AstrLinkAutoModelID {
+			continue
+		}
+		publicID := group.PublicModelID()
+		if _, exists := listed[publicID]; exists {
+			continue
+		}
+		var raw json.RawMessage
+		var err error
+		if protocol == contract.ProtocolGoogleModels {
+			raw, err = json.Marshal(googleSynthesizedModel{Name: "models/" + publicID, DisplayName: publicID})
+		} else {
+			raw, err = json.Marshal(openAISynthesizedModel{ID: publicID, Object: "model", Created: 0, OwnedBy: "system"})
+		}
+		if err != nil {
+			return nil, err
+		}
+		entryID := publicID
+		if protocol == contract.ProtocolGoogleModels {
+			entryID = "models/" + publicID
+		}
+		entries = append(entries, discoveryEntry{id: entryID, raw: raw})
+		listed[publicID] = struct{}{}
+	}
+	sort.Slice(entries, func(left, right int) bool { return entries[left].id < entries[right].id })
+	return entries, nil
 }
 
 // appendRedirectDiscoveryEntries lists each enabled redirect source whose
