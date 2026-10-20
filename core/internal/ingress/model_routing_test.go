@@ -113,7 +113,11 @@ func (store *modelRoutingBindingTestStore) GetModelRoutingBinding(_ context.Cont
 	return *store.binding, nil
 }
 
-func (store *modelRoutingBindingTestStore) UpsertModelRoutingBinding(_ context.Context, binding contract.ModelRoutingBinding, started time.Time) error {
+func (store *modelRoutingBindingTestStore) UpsertModelRoutingBinding(ctx context.Context, binding contract.ModelRoutingBinding, started time.Time) error {
+	// The SQLite store refuses a cancelled context before it writes.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.upsertCalls++
@@ -131,6 +135,35 @@ func (store *modelRoutingBindingTestStore) DeleteModelRoutingBinding(_ context.C
 		store.binding = nil
 	}
 	return nil
+}
+
+// A client may hang up as soon as its response is delivered; the session
+// binding is still written.
+func TestModelRoutingBindingOutlivesTheClientConnection(t *testing.T) {
+	store := &modelRoutingBindingTestStore{redirectSettingsStore: newRedirectSettingsStore()}
+	handler := &Handler{requestRecords: store}
+	request := Request{Protocol: contract.ProtocolOpenAIResponses, Model: "astrlink/group-x"}
+	session := newRecordSession(request, "", contract.AuditSettings{})
+	session.sessionID = "session-x"
+	session.status = contract.RequestStatusSucceeded
+	settings := contract.DefaultRoutingSettings()
+	session.routingSettings = &settings
+	token := contract.AccessTokenID("access-token-x")
+	session.accessTokenID = &token
+	session.modelRouting = &contract.ModelRoutingDecision{
+		VirtualModelID: request.Model, GroupID: "group-x", MemberID: "member-x",
+		MemberServiceID: "service_01", MemberModel: "model-x",
+	}
+	gone, hangUp := context.WithCancel(context.Background())
+	hangUp()
+
+	handler.persistModelRoutingBinding(gone, session)
+	if store.upsertCalls != 1 || store.binding == nil || store.binding.MemberID != "member-x" {
+		t.Fatalf("binding after the client hung up = calls %d, binding %+v", store.upsertCalls, store.binding)
+	}
+	if session.modelRouting.BindingExpiresAt == "" {
+		t.Fatal("decision does not say when the binding expires")
+	}
 }
 
 func TestModelRoutingBindingRequiresAccessToken(t *testing.T) {

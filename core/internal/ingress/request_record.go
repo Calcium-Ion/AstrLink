@@ -1198,6 +1198,7 @@ func (session *recordSession) failFromHTTPError() bool {
 		summary := session.upstreamHTTPErrorSummary(status)
 		session.errorSummary = &summary
 	}
+	session.updateModelRoutingExecution(contract.ModelRoutingExecutionFailed, session.errorSummary.Code)
 	return true
 }
 
@@ -1212,6 +1213,7 @@ func (session *recordSession) failFromStreamError() bool {
 		summary := streamFailureSummary(session.upstreamScanner.protocol, session.upstreamScanner.failure)
 		session.errorSummary = &summary
 	}
+	session.updateModelRoutingExecution(contract.ModelRoutingExecutionFailed, session.errorSummary.Code)
 	return true
 }
 

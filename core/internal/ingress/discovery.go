@@ -140,7 +140,10 @@ func (handler *Handler) aggregateModelDiscovery(
 		}
 	}
 	var err error
-	visible, err = appendModelRoutingDiscoveryEntries(classified.Protocol, visible, settingsGroupsFromSession(request.Context()))
+	classifierSettings := handler.requestClassifierSettings(request.Context(), recordSessionFromContext(request.Context()))
+	visible, err = appendModelRoutingDiscoveryEntries(classified.Protocol, visible, settingsGroupsFromSession(request.Context()), func() []contract.ClassifierDimension {
+		return classifierSettings().Dimensions
+	})
 	if err == nil {
 		visible, err = appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
 	}
@@ -564,7 +567,18 @@ func settingsGroupsFromSession(ctx context.Context) []contract.ModelRoutingGroup
 	return session.routingSettings.ModelRoutingGroups
 }
 
-func appendModelRoutingDiscoveryEntries(protocol contract.ProtocolID, entries []discoveryEntry, groups []contract.ModelRoutingGroup) ([]discoveryEntry, error) {
+// modelRoutingGroupListable reports whether a group is valid as saved. A rule
+// on a custom dimension is valid only against the declared dimensions, which
+// are read only when the cheap check fails, as on the routing path.
+func modelRoutingGroupListable(group contract.ModelRoutingGroup, dimensions func() []contract.ClassifierDimension) bool {
+	if group.Validate() == nil {
+		return true
+	}
+	declared := dimensions()
+	return len(declared) > 0 && group.ValidateWithDimensions(declared) == nil
+}
+
+func appendModelRoutingDiscoveryEntries(protocol contract.ProtocolID, entries []discoveryEntry, groups []contract.ModelRoutingGroup, dimensions func() []contract.ClassifierDimension) ([]discoveryEntry, error) {
 	if len(groups) == 0 {
 		return entries, nil
 	}
@@ -573,7 +587,7 @@ func appendModelRoutingDiscoveryEntries(protocol contract.ProtocolID, entries []
 		listed[discoveryModelID(protocol, entry.id)] = struct{}{}
 	}
 	for _, group := range groups {
-		if !group.Enabled || group.Validate() != nil {
+		if !group.Enabled || !modelRoutingGroupListable(group, dimensions) {
 			continue
 		}
 		available := true

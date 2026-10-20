@@ -2,8 +2,10 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -71,5 +73,45 @@ func TestModelRoutingCustomDimensionRuleRoutesEveryGroup(t *testing.T) {
 	}
 	if versions["astrlink/topical"] != versions["astrlink/superclaude"] {
 		t.Fatalf("one configuration produced two versions: %v", versions)
+	}
+}
+
+// /v1/models lists a routing group whose rules read a custom dimension: the
+// group is valid against the declared dimensions, as it was when it was saved,
+// and the dimensions are read only for the group that needs them.
+func TestModelRoutingDiscoveryListsGroupsOnCustomDimensions(t *testing.T) {
+	dimensions := []contract.ClassifierDimension{{Name: "lang", Options: []contract.ClassifierDimensionOption{{Name: "zh"}, {Name: "en"}}}}
+	plain := cloudTestGroup(nil)
+	plain.ID = "plain"
+	dimensional := cloudTestGroup(nil)
+	dimensional.ID = "dimensional"
+	dimensional.Rules = []contract.ModelRoutingRule{{ID: "zh", Priority: 1, When: contract.ModelRoutingCondition{Field: "lang", Equals: "zh"}, TargetMemberID: "strong"}}
+	var entries []discoveryEntry
+	for _, id := range []string{"fast-model", "strong-model"} {
+		raw, _ := json.Marshal(openAISynthesizedModel{ID: id, Object: "model", OwnedBy: "system"})
+		entries = append(entries, discoveryEntry{id: id, raw: raw})
+	}
+	reads := 0
+	merged, err := appendModelRoutingDiscoveryEntries(contract.ProtocolOpenAIModels, entries, []contract.ModelRoutingGroup{plain, dimensional}, func() []contract.ClassifierDimension {
+		reads++
+		return dimensions
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, entry := range merged {
+		ids = append(ids, entry.id)
+	}
+	if strings.Join(ids, ",") != "astrlink/dimensional,astrlink/plain,fast-model,strong-model" {
+		t.Fatalf("/v1/models ids = %v", ids)
+	}
+	if reads != 1 {
+		t.Fatalf("dimensions read %d times, want once, for the dimensional group", reads)
+	}
+	// Without the dimension declared the group is not valid and stays out.
+	merged, err = appendModelRoutingDiscoveryEntries(contract.ProtocolOpenAIModels, entries, []contract.ModelRoutingGroup{dimensional}, func() []contract.ClassifierDimension { return nil })
+	if err != nil || len(merged) != 2 {
+		t.Fatalf("undeclared dimension: entries = %d, err = %v", len(merged), err)
 	}
 }

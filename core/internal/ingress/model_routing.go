@@ -399,7 +399,12 @@ func (handler *Handler) persistModelRoutingBinding(ctx context.Context, session 
 		Model: decision.MemberModel, ConfigSnapshotVersion: decision.ConfigSnapshotVersion, RequestID: origin,
 		CreatedAt: modelRoutingBindingTime(now), UpdatedAt: modelRoutingBindingTime(now), ExpiresAt: expires,
 	}
-	if err := store.UpsertModelRoutingBinding(ctx, binding, session.startedAt); err != nil {
+	// A client may hang up as soon as the response is delivered — Codex does
+	// on the terminal event — so the write must not depend on its connection,
+	// as the provider binding and response affinity do not.
+	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
+	defer cancel()
+	if err := store.UpsertModelRoutingBinding(persist, binding, session.startedAt); err != nil {
 		if session.persistLogf != nil {
 			session.persistLogf("model routing binding write failed: %v", err)
 		}

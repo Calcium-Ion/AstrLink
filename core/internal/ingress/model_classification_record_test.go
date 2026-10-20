@@ -117,6 +117,15 @@ func TestExistingModelClassificationLeavesTheRecordToTheBusinessCall(t *testing.
 				t.Fatal("no model routing decision recorded")
 			}
 			succeeded := test.wantStatus == contract.RequestStatusSucceeded
+			// The routing decision follows the request to its end, failed
+			// as well as served.
+			wantExecution := contract.ModelRoutingExecutionFailed
+			if succeeded {
+				wantExecution = contract.ModelRoutingExecutionSucceeded
+			}
+			if execution := record.ModelRouting.Execution; execution.Status != wantExecution || execution.AttemptCount != 1 {
+				t.Fatalf("routing execution = %+v, want %s after 1 attempt", execution, wantExecution)
+			}
 			if succeeded {
 				if record.Error != nil {
 					t.Fatalf("record error = %+v on a served request", record.Error)
