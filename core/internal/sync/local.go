@@ -48,6 +48,9 @@ func inScope(scope contract.SyncScope) map[string]bool {
 	if scope.Services && scope.Pricing {
 		kinds[KindPricingConfig] = true
 	}
+	if scope.Tokens {
+		kinds[KindAccessToken] = true
+	}
 	return kinds
 }
 
@@ -75,12 +78,21 @@ func (engine *Engine) localDocument(ctx context.Context, state storage.SyncState
 		}
 		for _, entity := range entities {
 			record := Entity{Revision: base.Revision, UpdatedAt: entity.UpdatedAt}
-			if IsCredentialKind(kind) {
+			switch {
+			case IsCredentialKind(kind):
 				if len(entity.Secret) == 0 {
 					continue
 				}
 				record.Secret = encodeSecret(entity.Secret)
-			} else {
+			case kind == KindAccessToken:
+				// A token must travel whole. An incomplete snapshot would turn
+				// a read failure into a deletion on every other device.
+				if len(entity.Secret) == 0 || len(entity.Document) == 0 {
+					return Document{}, fmt.Errorf("%w: incomplete access token %s", storage.ErrInvalidRecord, entity.LocalID)
+				}
+				record.Document = append(json.RawMessage(nil), entity.Document...)
+				record.Secret = encodeSecret(entity.Secret)
+			default:
 				record.Document = append(json.RawMessage(nil), entity.Document...)
 			}
 			document.Put(kind, entity.LocalID, record)
@@ -260,7 +272,7 @@ func (engine *Engine) currentEntities(ctx context.Context, kinds map[string]bool
 func (engine *Engine) writeEntities(ctx context.Context, merged Document, held map[string]map[string]bool, kinds map[string]bool) error {
 	// Providers first: every other kind references them, and a credential or a
 	// price binding for a provider that is not written yet has nowhere to go.
-	order := []string{KindService, KindPolicy, KindPricingConfig}
+	order := []string{KindService, KindPolicy, KindPricingConfig, KindAccessToken}
 	order = append(order, CredentialKinds()...)
 	for _, kind := range order {
 		if !kinds[kind] {
@@ -279,6 +291,9 @@ func (engine *Engine) writeEntities(ctx context.Context, merged Document, held m
 }
 
 func (engine *Engine) writeEntity(ctx context.Context, kind, id string, entity Entity) error {
+	if kind == KindAccessToken {
+		return engine.writeAccessToken(ctx, id, entity)
+	}
 	if IsCredentialKind(kind) {
 		plaintext, err := decodeSecret(entity.Secret)
 		if err != nil {
@@ -308,6 +323,32 @@ func (engine *Engine) writeEntity(ctx context.Context, kind, id string, entity E
 		return err
 	}
 	return engine.store.DeleteTombstone(ctx, kind, id)
+}
+
+// writeAccessToken stores one access token a merge chose. It is written whole,
+// because the store derives the digest and the hint an authentication reads from
+// the value: metadata stored on its own would name a token nobody can present.
+func (engine *Engine) writeAccessToken(ctx context.Context, id string, entity Entity) error {
+	if len(entity.Document) == 0 {
+		return fmt.Errorf("%w: %s %s has no document", syncseal.ErrPackage, KindAccessToken, id)
+	}
+	value, err := decodeSecret(entity.Secret)
+	if err != nil {
+		return err
+	}
+	defer clear(value)
+	if err := engine.store.SyncWriteAccessToken(ctx, id, entity.Document, value); err != nil {
+		if errors.Is(err, storage.ErrInvalidArgument) {
+			// A token this build refuses — a value that is not a canonical
+			// token, or a name it cannot use — is not stored, but it must not
+			// stop the rest of the merge: the other device still holds it and
+			// the package still carries it.
+			engine.logf("sync skipped %s %s: %v", KindAccessToken, id, err)
+			return nil
+		}
+		return err
+	}
+	return engine.store.DeleteTombstone(ctx, KindAccessToken, id)
 }
 
 // deleteEntities removes what this device holds and the merge did not keep. A

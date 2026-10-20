@@ -29,6 +29,7 @@ import type { SyncConfig } from "./sync-model";
 const storedConfig: SyncConfig = {
   enabled: false,
   device_name: "",
+  force_push: false,
   trigger: {
     mode: "interval",
     interval_minutes: 60,
@@ -40,6 +41,7 @@ const storedConfig: SyncConfig = {
     credentials: true,
     policies: true,
     pricing: true,
+    tokens: true,
   },
   remote: {
     kind: "webdav",
@@ -66,6 +68,8 @@ const status = {
   device_name: "howie-desktop",
   host_name: "howie-desktop",
   pending_changes: 3,
+  first_sync_pending: false,
+  force_push_armed: false,
   conflicts: [],
 };
 
@@ -213,6 +217,91 @@ describe("SyncSettings", () => {
         ?.disabled,
     ).toBe(false);
     expect(container.textContent).toContain("随提供商一起同步");
+  });
+
+  it("keeps the force push switch off while sync is off", async () => {
+    await render();
+    const toggle =
+      container.querySelector<HTMLButtonElement>("#sync-force-push");
+    if (!toggle) throw new Error("missing force push switch");
+    expect(toggle.disabled).toBe(true);
+  });
+
+  it("asks before arming a force push and keeps it in the draft", async () => {
+    bridge.getSyncConfig.mockResolvedValue({ ...storedConfig, enabled: true });
+    await render();
+    const toggle =
+      container.querySelector<HTMLButtonElement>("#sync-force-push");
+    if (!toggle) throw new Error("missing force push switch");
+    expect(toggle.disabled).toBe(false);
+
+    await act(async () => toggle.click());
+    const dialog = document.querySelector("[role='alertdialog']");
+    expect(dialog?.textContent).toContain("会用本机的配置包替换远端的配置包");
+    expect(container.textContent).not.toContain("保存后依然生效");
+
+    await act(async () => {
+      const confirm = dialog
+        ? [...dialog.querySelectorAll("button")].find((candidate) =>
+            candidate.textContent?.includes("开启强制推送"),
+          )
+        : undefined;
+      if (!confirm) throw new Error("missing confirm button");
+      confirm.click();
+    });
+    await settleClosedLayer();
+    expect(container.textContent).toContain("保存后依然生效");
+    expect(button("保存").disabled).toBe(false);
+
+    bridge.configureSync.mockResolvedValue({
+      ...storedConfig,
+      enabled: true,
+      force_push: true,
+    });
+    await act(async () => button("保存").click());
+    await settle();
+    const sent = bridge.configureSync.mock.calls[0]?.[0] as SyncConfig;
+    expect(sent.force_push).toBe(true);
+  });
+
+  it("warns that an armed run overwrites the remote", async () => {
+    bridge.getSyncStatus.mockResolvedValue({
+      ...status,
+      force_push_armed: true,
+    });
+    await render();
+    expect(container.textContent).toContain(
+      "已开启强制推送：下次同步会用本机配置覆盖远端。",
+    );
+  });
+
+  it("says that a first sync adopts the remote", async () => {
+    bridge.getSyncStatus.mockResolvedValue({
+      ...status,
+      first_sync_pending: true,
+    });
+    await render();
+    expect(container.textContent).toContain("首次同步会采用远端已有的配置");
+  });
+
+  it("offers the access tokens as a group of their own", async () => {
+    await render();
+    expect(container.textContent).toContain("访问令牌");
+    const tokens =
+      container.querySelector<HTMLButtonElement>("#sync-scope-tokens");
+    if (!tokens) throw new Error("missing tokens switch");
+    expect(tokens.disabled).toBe(false);
+    expect(tokens.getAttribute("aria-checked")).toBe("true");
+
+    await act(async () => tokens.click());
+    bridge.configureSync.mockResolvedValue({
+      ...storedConfig,
+      scope: { ...storedConfig.scope, tokens: false },
+    });
+    await act(async () => button("保存").click());
+    await settle();
+    const sent = bridge.configureSync.mock.calls[0]?.[0] as SyncConfig;
+    expect(sent.scope.tokens).toBe(false);
   });
 
   it("asks for confirmation before forgetting the passphrase", async () => {

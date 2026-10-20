@@ -19,6 +19,38 @@ import (
 
 const maxMediaBytes = 20 << 20
 
+var mediaHTTPClient = newMediaHTTPClient()
+
+// Media connections stay separate from upstream inference and proxy pools.
+// Reuse their TLS connections, while bounding idle connections and validating
+// every URL, redirect, and newly dialed host as before.
+func newMediaHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:           nil,
+			MaxIdleConns:    100,
+			IdleConnTimeout: 90 * time.Second,
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(address)
+				if err != nil {
+					return nil, err
+				}
+				if err := validateMediaHost(ctx, host); err != nil {
+					return nil, err
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(host, port))
+			},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return errors.New("too many media redirects")
+			}
+			_, err := checkedMediaURL(req.Context(), req.URL.String())
+			return err
+		},
+	}
+}
+
 // ResolveImageData resolves only public HTTP(S) images or bounded data URLs.
 // Tool execution shares the same media boundary as protocol conversion.
 func ResolveImageData(ctx context.Context, raw string) (string, string, error) {
@@ -48,34 +80,12 @@ func resolveMediaURL(ctx context.Context, source types.FileSource, _ ...string) 
 	if err != nil {
 		return "", "", err
 	}
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: nil,
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				host, port, err := net.SplitHostPort(address)
-				if err != nil {
-					return nil, err
-				}
-				if err := validateMediaHost(ctx, host); err != nil {
-					return nil, err
-				}
-				return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(host, port))
-			},
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return errors.New("too many media redirects")
-			}
-			_, err := checkedMediaURL(req.Context(), req.URL.String())
-			return err
-		},
-	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {
 		return "", "", err
 	}
 	request.Header.Set("Referer", "")
-	response, err := client.Do(request)
+	response, err := mediaHTTPClient.Do(request)
 	if err != nil {
 		return "", "", fmt.Errorf("fetch media: %w", err)
 	}

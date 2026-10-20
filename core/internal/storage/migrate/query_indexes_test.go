@@ -58,8 +58,8 @@ FROM records`); err != nil {
 		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND local_access_token_id IN ('token_01', 'token_02') ORDER BY started_at DESC, id DESC`, index: "request_records_root_token_time_idx", allowTempBTree: true},
 		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND local_access_token_id IN ('token_01', 'token_02') AND started_at >= '2026-09-01T00:00:00Z' AND started_at < '2026-10-01T00:00:00Z' ORDER BY started_at DESC, id DESC LIMIT 51`, index: "request_records_root_token_time_idx", allowTempBTree: true},
 		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND COALESCE(session_id, id) = 'session_missing' ORDER BY started_at, id`, index: "request_records_session_turns_idx"},
-		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND previous_response_id IN ('missing') AND session_id IS NOT NULL`, index: "request_records_previous_response_idx"},
-		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND output_response_id IN ('missing') AND session_id IS NOT NULL`, index: "request_records_output_response_id_idx"},
+		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND previous_response_id = 'missing' AND session_id IS NOT NULL ORDER BY started_at DESC, id DESC LIMIT 1`, index: "request_records_previous_latest_idx"},
+		{query: `SELECT id FROM request_records WHERE parent_request_id IS NULL AND output_response_id = 'missing' AND session_id IS NOT NULL ORDER BY started_at DESC, id DESC LIMIT 1`, index: "request_records_output_latest_idx"},
 		{query: `SELECT rowid FROM response_affinities ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET 10000`, index: "response_affinities_created_idx"},
 	} {
 		rows, err := db.Query("EXPLAIN QUERY PLAN " + test.query)

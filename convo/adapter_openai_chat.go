@@ -26,6 +26,29 @@ func (openAIChatAdapter) ExplicitCursors(fields map[string]json.RawMessage) []st
 
 func (openAIChatAdapter) IsStateful(map[string]json.RawMessage) bool { return false }
 
+func (openAIChatAdapter) inspectItem(item json.RawMessage) requestItem {
+	message, ok := jsonx.Object(item)
+	if !ok {
+		return requestItem{}
+	}
+	var result requestItem
+	role, _ := jsonx.String(message["role"])
+	switch role {
+	case "user":
+		texts, hasMedia := stringOrTextParts(message["content"], chatUserTextTypes, chatSkipTypes)
+		result.userText = joinVisible(texts, "\n")
+		result.user = hasMedia || result.userText != ""
+	case "tool":
+		if id, ok := jsonx.String(message["tool_call_id"]); ok {
+			result.echoIDs = []string{id}
+		}
+	case "assistant":
+		result.assistant = true
+		result.echoIDs = chatToolCallIDs(message["tool_calls"])
+	}
+	return result
+}
+
 func (openAIChatAdapter) IsUserTurn(item json.RawMessage) bool {
 	message, ok := jsonx.Object(item)
 	if !ok {

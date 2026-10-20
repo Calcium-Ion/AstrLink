@@ -1255,6 +1255,15 @@ func captureRequestBody(request *http.Request, forceBuffer bool) (*requestBodySo
 		return source, nil
 	}
 	if request.GetBody != nil {
+		if _, capturing := request.Body.(*captureTee); capturing {
+			// The body factory reuses bytes classification already buffered,
+			// but the inbound audit tee still needs to observe the original.
+			if _, err := io.Copy(io.Discard, request.Body); err != nil {
+				_ = request.Body.Close()
+				source.Close()
+				return nil, err
+			}
+		}
 		source.replayable = true
 		source.factory = request.GetBody
 		if err := request.Body.Close(); err != nil {

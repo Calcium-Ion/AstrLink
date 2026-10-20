@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -35,6 +36,8 @@ func (store *Store) SyncEntities(ctx context.Context, kind string) ([]storage.Sy
 		return store.syncSecrets(ctx, kind, times, `SELECT service_id, credential_value, sealed FROM service_proxy_credentials`, serviceProxyCredentialsTable)
 	case syncKindBuiltinToolCredential:
 		return store.syncSecrets(ctx, kind, times, `SELECT kind, credential_value, sealed FROM builtin_tool_credentials`, builtinToolCredentialsTable)
+	case syncKindAccessToken:
+		return store.syncAccessTokens(ctx, times)
 	default:
 		return nil, fmt.Errorf("%w: %s is not an entity kind", storage.ErrInvalidArgument, kind)
 	}
@@ -119,6 +122,55 @@ func (store *Store) syncSecrets(ctx context.Context, kind string, times map[stri
 	return entities, nil
 }
 
+// syncAccessTokens returns every gateway access token this device holds, with
+// the value a client presents. The value is opened here and travels in the
+// package, which is the only place a token is read in the clear for sync.
+//
+// A missing or unreadable value aborts the snapshot. Omitting that token would
+// make the three-way merge interpret the read failure as a local deletion.
+func (store *Store) syncAccessTokens(ctx context.Context, times map[string]string) ([]storage.SyncLocalEntity, error) {
+	rows, err := store.db.QueryContext(ctx, `SELECT token.id, token.name, token.source, token.created_at,
+    secret.token_value, COALESCE(secret.sealed, 1)
+FROM local_access_tokens token
+LEFT JOIN local_access_token_secrets secret ON secret.token_id = token.id`)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", syncKindAccessToken, err)
+	}
+	defer rows.Close()
+	var entities []storage.SyncLocalEntity
+	for rows.Next() {
+		var id, name, source, createdAt string
+		var stored []byte
+		var sealed bool
+		if err := rows.Scan(&id, &name, &source, &createdAt, &stored, &sealed); err != nil {
+			return nil, fmt.Errorf("read %s: %w", syncKindAccessToken, err)
+		}
+		plaintext, err := store.openSecret(accessTokenSecretsTable, id, stored, sealed)
+		if err != nil {
+			return nil, fmt.Errorf("open synced access token %s: %w", id, err)
+		}
+		document, err := json.Marshal(contract.AccessTokenDocument{
+			Name:      name,
+			Source:    source,
+			CreatedAt: parseEntityTime(createdAt),
+		})
+		if err != nil {
+			clear(plaintext)
+			return nil, fmt.Errorf("encode %s: %w", syncKindAccessToken, err)
+		}
+		entities = append(entities, storage.SyncLocalEntity{
+			LocalID:   id,
+			Document:  document,
+			Secret:    plaintext,
+			UpdatedAt: parseEntityTime(times[id]),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", syncKindAccessToken, err)
+	}
+	return entities, nil
+}
+
 // SyncServiceOrder returns the provider priority list, in order.
 func (store *Store) SyncServiceOrder(ctx context.Context) ([]contract.ServiceID, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT id FROM services ORDER BY sort_position, id`)
@@ -171,6 +223,16 @@ FROM service_proxy_credentials credential JOIN services service ON service.id = 
 WHERE entity_kind = 'builtin_tool_credential' GROUP BY entity_id`
 	case syncKindPolicy:
 		return `SELECT id, updated_at FROM policies`
+	case syncKindAccessToken:
+		// A token has no updated_at of its own, so its last change is the newest
+		// change-log entry; a token that has none yet is as old as its creation.
+		return `SELECT token.id, CASE
+    WHEN julianday(MAX(change.changed_at)) >= julianday(token.created_at) THEN MAX(change.changed_at)
+    ELSE token.created_at END
+FROM local_access_tokens token
+LEFT JOIN config_change_log change
+    ON change.entity_kind = 'access_token' AND change.entity_id = token.id
+GROUP BY token.id`
 	case syncKindPricingConfig:
 		change := lastChange(syncKindPricingConfig, "pricing.service_id")
 		return `SELECT pricing.service_id, ` + later("service.updated_at", change) + `

@@ -432,7 +432,9 @@
         "policies": "隐私策略",
         "policiesHint": "脱敏与请求原文策略",
         "pricing": "计费",
-        "pricingHint": "价格绑定、预算与账单日"
+        "pricingHint": "价格绑定、预算与账单日",
+        "tokens": "访问令牌",
+        "tokensHint": "客户端调用本网关所用的令牌，含令牌值"
       },
       "scopeNeedsServices": "随提供商一起同步",
       "passphraseTitle": "同步口令",
@@ -461,6 +463,14 @@
       "pendingChanges_one": "{{count}} 项改动等待打包",
       "pendingChanges_other": "{{count}} 项改动等待打包",
       "pendingChangesNone": "没有等待打包的改动",
+      "firstSyncPending": "本机尚未与该远端交换过配置包。首次同步会采用远端已有的配置，本机未改动过的部分不会被上传覆盖。",
+      "forcePush": "强制推送",
+      "forcePushHint": "已关闭。开启后，下次同步会用本机配置覆盖远端。",
+      "forcePushArmedHint": "已开启：下次同步会覆盖远端，保存后依然生效。",
+      "forcePushTitle": "要用本机配置覆盖远端吗？",
+      "forcePushBody": "下次同步会用本机的配置包替换远端的配置包，而不是合并。远端上本机没有的内容会被删除，其他设备下次同步时也会一并删除。该开关只生效一次，之后的同步恢复为合并。",
+      "forcePushConfirm": "开启强制推送",
+      "forcePushArmed": "已开启强制推送：下次同步会用本机配置覆盖远端。",
       "lastSynced": "上次同步",
       "nextRun": "下次同步",
       "never": "从未",
@@ -492,7 +502,9 @@
         "local_kept": "本机保留",
         "remote_kept": "远程保留",
         "deleted": "已删除",
-        "tie_kept_local": "时间相同，本机保留"
+        "tie_kept_local": "时间相同，本机保留",
+        "remote_adopted": "采用远端",
+        "force_pushed": "已强制推送"
       },
       "kind": {
         "service": "提供商",
@@ -500,7 +512,9 @@
         "service_proxy_credential": "代理密钥",
         "builtin_tool_credential": "工具密钥",
         "policy": "隐私策略",
-        "pricing_config": "计费"
+        "pricing_config": "计费",
+        "remote": "远端",
+        "access_token": "访问令牌"
       }
     }
   },

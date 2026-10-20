@@ -94,6 +94,27 @@ func (normalizer *TextNormalizer) Write(chunk []byte) (int, error) {
 		normalizer.partial = normalizer.partial[:0]
 	}
 	for len(data) > 0 {
+		// Hash ordinary ASCII spans together instead of making one hash.Write
+		// call per byte of a long prompt or tool result. Whitespace, UTF-8 and
+		// the leading think block retain the incremental normalization path.
+		if normalizer.think == thinkOff {
+			end := 0
+			for end < len(data) && data[end] < utf8.RuneSelf && !asciiWhitespace(data[end]) {
+				end++
+			}
+			if end > 0 {
+				if normalizer.pendingSpace {
+					_, _ = normalizer.sink.Write([]byte{' '})
+					normalizer.runes++
+					normalizer.pendingSpace = false
+				}
+				_, _ = normalizer.sink.Write(data[:end])
+				normalizer.runes += end
+				normalizer.started = true
+				data = data[end:]
+				continue
+			}
+		}
 		if !utf8.FullRune(data) {
 			normalizer.partial = append(normalizer.partial[:0], data...)
 			break
@@ -105,9 +126,18 @@ func (normalizer *TextNormalizer) Write(chunk []byte) (int, error) {
 	return len(chunk), nil
 }
 
+func asciiWhitespace(value byte) bool {
+	return value == ' ' || value >= '\t' && value <= '\r'
+}
+
 // WriteString is Write for strings.
 func (normalizer *TextNormalizer) WriteString(text string) {
-	_, _ = normalizer.Write([]byte(text))
+	var chunk [4096]byte
+	for len(text) > 0 {
+		n := copy(chunk[:], text)
+		_, _ = normalizer.Write(chunk[:n])
+		text = text[n:]
+	}
 }
 
 func (normalizer *TextNormalizer) consume(r rune, raw []byte) {

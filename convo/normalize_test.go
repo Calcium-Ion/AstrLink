@@ -2,9 +2,28 @@ package convo
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"math/rand"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestNormalizerLongSpansKeepDigestAndChunkBoundaries(t *testing.T) {
+	prefix := strings.Repeat("abc", 1365) // UTF-8 below straddles the string buffer.
+	want := prefix + "中文\uFFFD tail\x00end"
+	input := " \t<think>hidden</think> " + prefix + "中文\xff\n\t tail\x00end \r"
+	digest := sha256.Sum256([]byte(want))
+	for _, size := range []int{1, 7, 4095, 4096, 4097, len(input)} {
+		n := NewTextNormalizer(true)
+		for start := 0; start < len(input); start += size {
+			n.WriteString(input[start:min(start+size, len(input))])
+		}
+		if !bytes.Equal(n.Digest(), digest[:]) || n.Runes() != utf8.RuneCountInString(want) {
+			t.Fatalf("chunk size %d changed normalized digest or rune count", size)
+		}
+	}
+}
 
 func TestNormalizeTextRules(t *testing.T) {
 	cases := []struct {

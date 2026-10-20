@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,10 +41,12 @@ const (
 	maxOpenConns     = 8
 	maxIdleConns     = 4
 	busyTimeoutMS    = 5000
+	busyStepMS       = 10
 	slowListAfter    = time.Second
 )
 
 type Store struct {
+	serviceDocuments  serviceDocumentCache
 	usageSummaries    historyCache
 	requestSessions   historyCache
 	channelBindingsMu chan struct{}
@@ -169,13 +172,10 @@ func openDatabase(ctx context.Context, absolutePath string) (*sql.DB, error) {
 	if err := prepareDatabaseFiles(absolutePath); err != nil {
 		return nil, err
 	}
-	database, err := sql.Open(driverName, sqliteFileDSN(absolutePath))
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite database: %w", err)
-	}
+	database := openWriterDatabase(sqliteWALDSN(absolutePath, busyStepMS))
 	// WAL in the DSN applies to every pooled connection. A small pool lets
-	// request-record lists share the file with ingress upserts; SQLite still
-	// serializes writers and busy_timeout covers the wait.
+	// request-record lists share the file with ingress upserts. The connector
+	// serializes writers with context-aware admission before SQLite is entered.
 	database.SetMaxOpenConns(maxOpenConns)
 	database.SetMaxIdleConns(maxIdleConns)
 	if err := requireWALMode(ctx, database); err != nil {
@@ -188,8 +188,8 @@ func openDatabase(ctx context.Context, absolutePath string) (*sql.DB, error) {
 // openReadOnly opens an existing database for reading only; see WithReadOnly.
 func openReadOnly(ctx context.Context, absolutePath string, settings openOptions) (*Store, error) {
 	database, err := sql.Open(driverName, fmt.Sprintf(
-		"file:%s?mode=ro&_pragma=busy_timeout(%d)&_pragma=query_only(1)",
-		filepath.ToSlash(absolutePath), busyTimeoutMS,
+		"%s?mode=ro&_pragma=busy_timeout(%d)&_pragma=query_only(1)",
+		sqliteFileURI(absolutePath), busyTimeoutMS,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
@@ -286,11 +286,23 @@ func initialize(ctx context.Context, database *sql.DB, settings openOptions) (*S
 }
 
 func sqliteFileDSN(absolutePath string) string {
+	return sqliteWALDSN(absolutePath, busyTimeoutMS)
+}
+
+func sqliteWALDSN(absolutePath string, busyMS int) string {
 	return fmt.Sprintf(
-		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)",
-		filepath.ToSlash(absolutePath),
-		busyTimeoutMS,
+		"%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_txlock=immediate",
+		sqliteFileURI(absolutePath), busyMS,
 	)
+}
+
+func sqliteFileURI(absolutePath string) string {
+	path := filepath.ToSlash(absolutePath)
+	if !strings.HasPrefix(path, "/") {
+		// An absolute Windows drive path is a URI path, not a hostname.
+		path = "/" + path
+	}
+	return (&url.URL{Scheme: "file", Path: path}).String()
 }
 
 func requireWALMode(ctx context.Context, database *sql.DB) error {

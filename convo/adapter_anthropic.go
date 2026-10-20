@@ -36,6 +36,21 @@ func (anthropicAdapter) ExplicitCursors(fields map[string]json.RawMessage) []str
 
 func (anthropicAdapter) IsStateful(map[string]json.RawMessage) bool { return false }
 
+func (anthropicAdapter) inspectItem(item json.RawMessage) requestItem {
+	message, ok := jsonx.Object(item)
+	if !ok {
+		return requestItem{}
+	}
+	role, _ := jsonx.String(message["role"])
+	result := requestItem{assistant: role == "assistant", echoIDs: anthropicInboundEchoIDs(message)}
+	if role == "user" {
+		texts, hasMedia := stringOrTextParts(message["content"], anthropicTextTypes, anthropicSkipTypes)
+		result.userText = joinVisible(texts, "\n")
+		result.user = hasMedia || result.userText != ""
+	}
+	return result
+}
+
 func (anthropicAdapter) IsUserTurn(item json.RawMessage) bool {
 	message, ok := jsonx.Object(item)
 	if !ok {
@@ -53,6 +68,10 @@ func (anthropicAdapter) InboundEchoIDs(item json.RawMessage) []string {
 	if !ok {
 		return nil
 	}
+	return anthropicInboundEchoIDs(message)
+}
+
+func anthropicInboundEchoIDs(message map[string]json.RawMessage) []string {
 	blocks, ok := jsonx.Array(message["content"])
 	if !ok {
 		return nil

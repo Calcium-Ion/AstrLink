@@ -3,11 +3,14 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
@@ -23,6 +26,7 @@ const (
 	syncKindBuiltinToolCredential  = "builtin_tool_credential"
 	syncKindPolicy                 = "policy"
 	syncKindPricingConfig          = "pricing_config"
+	syncKindAccessToken            = "access_token"
 )
 
 // SyncWriteEntity writes one entity a merge chose, under its local id. A
@@ -71,6 +75,12 @@ func (store *Store) SyncDeleteEntity(ctx context.Context, kind, localID string) 
 	case syncKindPricingConfig:
 		if _, err := store.db.ExecContext(ctx, `DELETE FROM pricing_configs WHERE service_id = ?`, localID); err != nil {
 			return fmt.Errorf("delete synced pricing config: %w", err)
+		}
+		return nil
+	case syncKindAccessToken:
+		// The value a client presents cascades with the row that names it.
+		if _, err := store.db.ExecContext(ctx, `DELETE FROM local_access_tokens WHERE id = ?`, localID); err != nil {
+			return fmt.Errorf("delete synced access token: %w", err)
 		}
 		return nil
 	default:
@@ -507,4 +517,256 @@ func normalizeSyncedPricingConfig(document []byte) ([]byte, error) {
 		return nil, fmt.Errorf("encode synced pricing config: %w", err)
 	}
 	return encoded, nil
+}
+
+// SyncWriteAccessToken writes one gateway access token a merge chose, with the
+// value a client presents. The value is what the token is: the digest an
+// authentication compares and the hint it checks with are derived from it here
+// rather than taken from the package, so a package can neither name a token
+// nobody can present nor point an existing name at another value.
+//
+// A name two devices each used is resolved by their ids, so both tokens are
+// kept and every device ends up with the same names.
+//
+// The creation limit the interface applies is deliberately not enforced here. A
+// merge has to be able to hold what the other devices hold, or the token would
+// be deleted from every device on the next run.
+func (store *Store) SyncWriteAccessToken(ctx context.Context, localID string, document, value []byte) (err error) {
+	id := contract.AccessTokenID(localID)
+	if err := id.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", storage.ErrInvalidArgument, err)
+	}
+	if !validAccessTokenValue(string(value)) {
+		return fmt.Errorf("%w: access token value is not a canonical token", storage.ErrInvalidArgument)
+	}
+	synced, err := decodeSyncedAccessToken(document)
+	if err != nil {
+		return err
+	}
+	name, nameKey, err := normalizeAccessTokenName(synced.Name)
+	if err != nil {
+		return fmt.Errorf("%w: %v", storage.ErrInvalidArgument, err)
+	}
+	source := storage.AccessTokenSource(synced.Source)
+	if !source.Valid() {
+		return fmt.Errorf("%w: access token source %q is unknown", storage.ErrInvalidArgument, synced.Source)
+	}
+	// A package that lost the stamp still names a token; the moment this device
+	// stored it is the only other time there is.
+	createdAt := synced.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = store.now().UTC()
+	}
+	hash := sha256.Sum256(value)
+	unchanged, err := store.accessTokenUnchanged(ctx, id, name, source, createdAt, value, hash)
+	if err != nil {
+		return err
+	}
+	if unchanged {
+		return nil
+	}
+
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin access token write: %w", err)
+	}
+	defer rollbackOnError(transaction, &err)
+	if name, nameKey, err = store.uniqueAccessTokenName(ctx, transaction, id, name); err != nil {
+		return err
+	}
+	// A digest cannot be held twice, so a value already stored under another id
+	// is the same token. Only the package's id can be the one two devices share,
+	// so the other row is the one that goes; the duplicate it leaves behind is
+	// resolved by the next merge.
+	if _, err = transaction.ExecContext(ctx,
+		`DELETE FROM local_access_tokens WHERE token_hash = ? AND id <> ?`, hash[:], id); err != nil {
+		return fmt.Errorf("drop duplicate access token: %w", err)
+	}
+	if _, err = transaction.ExecContext(ctx, `INSERT INTO local_access_tokens
+    (id, name, name_key, token_hash, token_hint, source, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name, name_key = excluded.name_key, token_hash = excluded.token_hash,
+    token_hint = excluded.token_hint, source = excluded.source, created_at = excluded.created_at`,
+		id, name, nameKey, hash[:], accessTokenHint(string(value)), string(source),
+		createdAt.Format(time.RFC3339Nano),
+	); err != nil {
+		return fmt.Errorf("write synced access token: %w", err)
+	}
+	sealed, err := store.keys.sealColumn(accessTokenSecretsTable, string(id), value)
+	if err != nil {
+		return fmt.Errorf("seal synced access token: %w", err)
+	}
+	if _, err = transaction.ExecContext(ctx, `INSERT INTO local_access_token_secrets (token_id, token_value, sealed)
+VALUES (?, ?, 1)
+ON CONFLICT(token_id) DO UPDATE SET token_value = excluded.token_value, sealed = 1`,
+		id, sealed,
+	); err != nil {
+		return fmt.Errorf("write synced access token secret: %w", err)
+	}
+	if err = transaction.Commit(); err != nil {
+		return fmt.Errorf("commit access token write: %w", err)
+	}
+	return nil
+}
+
+// accessTokenUnchanged reports whether a row already holds exactly this token.
+// Rewriting it would fire the change-log trigger, which would schedule a sync
+// for a change that never happened.
+func (store *Store) accessTokenUnchanged(
+	ctx context.Context,
+	id contract.AccessTokenID,
+	name string,
+	source storage.AccessTokenSource,
+	createdAt time.Time,
+	value []byte,
+	hash [sha256.Size]byte,
+) (bool, error) {
+	var storedName, storedSource, storedCreatedAt string
+	var storedHash []byte
+	err := store.db.QueryRowContext(ctx, `SELECT name, source, created_at, token_hash
+FROM local_access_tokens WHERE id = ?`, id).Scan(&storedName, &storedSource, &storedCreatedAt, &storedHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read stored access token: %w", err)
+	}
+	if storedName != name || storedSource != string(source) || !bytes.Equal(storedHash, hash[:]) {
+		return false, nil
+	}
+	storedAt, err := time.Parse(time.RFC3339Nano, storedCreatedAt)
+	if err != nil || !storedAt.Equal(createdAt) {
+		return false, nil
+	}
+	// The names agree, so the value is the only thing left to compare. It is
+	// stored sealed, and a value this device cannot open is rewritten: that is
+	// also how a row left sealed under an older key heals.
+	var stored []byte
+	var sealed bool
+	if err := store.db.QueryRowContext(ctx, `SELECT token_value, sealed FROM local_access_token_secrets WHERE token_id = ?`, id).Scan(&stored, &sealed); err != nil {
+		return false, nil
+	}
+	plaintext, err := store.openSecret(accessTokenSecretsTable, string(id), stored, sealed)
+	if err != nil {
+		return false, nil
+	}
+	defer clear(plaintext)
+	return bytes.Equal(plaintext, value), nil
+}
+
+// uniqueAccessTokenName returns the name and name key the arriving token is
+// stored under.
+//
+// Two devices may each have named a token the same thing before they met, and
+// the table keeps names unique, so one of them has to move. Which one is decided
+// by the ids rather than by which device synced first: the smaller id keeps the
+// name it was given and the larger takes its own id as a suffix. Every device
+// computes the same answer, so the two settle instead of renaming each other's
+// tokens on run after run.
+func (store *Store) uniqueAccessTokenName(
+	ctx context.Context,
+	transaction *sql.Tx,
+	id contract.AccessTokenID,
+	name string,
+) (string, string, error) {
+	nameKey := simpleFoldAccessTokenName(name)
+	holder, err := accessTokenNameHolder(ctx, transaction, nameKey)
+	if err != nil {
+		return "", "", err
+	}
+	if holder == "" || holder == string(id) {
+		return name, nameKey, nil
+	}
+	if string(id) < holder {
+		// This token is the smaller one, so the name is its own and the row that
+		// has to move is the one holding it.
+		holderID := contract.AccessTokenID(holder)
+		moved, movedKey, err := store.freeAccessTokenName(ctx, transaction, holderID, name)
+		if err != nil {
+			return "", "", err
+		}
+		if _, err := transaction.ExecContext(ctx,
+			`UPDATE local_access_tokens SET name = ?, name_key = ? WHERE id = ?`,
+			moved, movedKey, holderID); err != nil {
+			return "", "", fmt.Errorf("rename access token: %w", err)
+		}
+		return name, nameKey, nil
+	}
+	// The token that has the name keeps it: this one takes the name its own id
+	// makes for it.
+	return store.freeAccessTokenName(ctx, transaction, id, name)
+}
+
+// freeAccessTokenName is the suffixed name a token takes when a smaller id holds
+// the name it wanted. The suffix is the token's own id, so the name depends
+// neither on when the token arrived nor on which device stored it first.
+func (store *Store) freeAccessTokenName(
+	ctx context.Context,
+	transaction *sql.Tx,
+	id contract.AccessTokenID,
+	name string,
+) (string, string, error) {
+	for _, candidate := range []string{
+		accessTokenNameWithSuffix(name, accessTokenIDTail(id)),
+		accessTokenNameWithSuffix(name, string(id)),
+	} {
+		key := simpleFoldAccessTokenName(candidate)
+		holder, err := accessTokenNameHolder(ctx, transaction, key)
+		if err != nil {
+			return "", "", err
+		}
+		if holder == "" || holder == string(id) {
+			return candidate, key, nil
+		}
+	}
+	return "", "", fmt.Errorf("%w: no free name for access token %s", storage.ErrConflict, id)
+}
+
+// accessTokenNameHolder returns the id of the token that holds a name key, or an
+// empty string when the name is free.
+func accessTokenNameHolder(ctx context.Context, transaction *sql.Tx, nameKey string) (string, error) {
+	var id string
+	err := transaction.QueryRowContext(ctx, `SELECT id FROM local_access_tokens WHERE name_key = ?`, nameKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read access token name holder: %w", err)
+	}
+	return id, nil
+}
+
+// accessTokenNameWithSuffix appends a suffix to a name, keeping the result
+// inside the length the table allows.
+func accessTokenNameWithSuffix(name, suffix string) string {
+	const limit = 64
+	tail := " (" + suffix + ")"
+	runes := []rune(strings.TrimSpace(name))
+	if room := limit - utf8.RuneCountInString(tail); len(runes) > room {
+		runes = runes[:room]
+	}
+	return strings.TrimRight(string(runes), " ") + tail
+}
+
+// accessTokenIDTail is the last few characters of a token id, which tell two
+// tokens apart in a name without spelling the whole id out.
+func accessTokenIDTail(id contract.AccessTokenID) string {
+	const tail = 6
+	runes := []rune(id)
+	if len(runes) <= tail {
+		return string(runes)
+	}
+	return string(runes[len(runes)-tail:])
+}
+
+// decodeSyncedAccessToken reads the metadata half of a token entity.
+func decodeSyncedAccessToken(document []byte) (contract.AccessTokenDocument, error) {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	var record contract.AccessTokenDocument
+	if err := decoder.Decode(&record); err != nil {
+		return contract.AccessTokenDocument{}, fmt.Errorf("%w: decode synced access token: %v", storage.ErrInvalidArgument, err)
+	}
+	return record, nil
 }

@@ -1,6 +1,6 @@
 // Package syncseal seals a configuration package under a key derived from a
 // sync passphrase the user sets in the sync settings, so the encrypted package
-// can be stored on a remote (WebDAV/S3) that is not trusted (plan §sync).
+// can be stored on a remote (WebDAV/S3) that is not trusted.
 //
 //	passphrase ─Argon2id─▶ K_sync ─AES-256-GCM─▶ package (version‖kdf‖salt‖nonce‖ciphertext)
 //

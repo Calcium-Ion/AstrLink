@@ -17,7 +17,7 @@ import (
 
 // Expression is a parsed schedule.
 type Expression struct {
-	// raw is the accepted text, kept for errors and for storing back.
+	// raw is the accepted text, kept for error messages.
 	raw  string
 	secs []bool // 0-59, only used when hasSeconds
 	mins []bool // 0-59

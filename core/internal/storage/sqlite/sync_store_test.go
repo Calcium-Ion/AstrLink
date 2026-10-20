@@ -2,12 +2,14 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	storagecontract "github.com/QuantumNous/astrlink/core/internal/storage"
 )
@@ -20,7 +22,7 @@ func TestSyncStateDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync state: %v", err)
 	}
-	if state.DeviceID == "" || state.PassphraseState != "unset" || state.Config.Enabled {
+	if state.DeviceID == "" || state.PassphraseState != "unset" || state.Config.Enabled || !state.Config.Scope.Tokens {
 		t.Fatalf("defaults = %+v", state)
 	}
 	// A second read returns the same device identity, not a new one.
@@ -37,6 +39,38 @@ func TestSyncStateDefaultsAndRoundTrip(t *testing.T) {
 	state, err = store.SyncState(ctx)
 	if err != nil || !state.Configured || state.Config.Remote.Endpoint != "https://dav.example/astr" {
 		t.Fatalf("state = %+v, %v", state, err)
+	}
+}
+
+func TestSyncStateDoesNotExpandLegacyTokenScope(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "legacy-sync.db"))
+	defer store.Close()
+	config := contract.DefaultSyncConfig()
+	config.Enabled = true
+	config.Remote = contract.SyncRemote{Kind: contract.SyncRemoteWebDAV, Endpoint: "https://dav.example/astr", Path: "/astrlink"}
+	if err := store.UpdateSyncConfig(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE sync_state SET config_json = json_remove(config_json, '$.scope.tokens') WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.SyncState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Config.Scope.Tokens || !state.Config.Enabled || !state.Config.Scope.Services {
+		t.Fatal("reading a legacy configuration changed its sync scope")
+	}
+	for _, enabled := range []bool{true, false} {
+		config.Scope.Tokens = enabled
+		if err := store.UpdateSyncConfig(ctx, config); err != nil {
+			t.Fatal(err)
+		}
+		state, err := store.SyncState(ctx)
+		if err != nil || state.Config.Scope.Tokens != enabled {
+			t.Fatalf("explicit tokens=%v did not survive a reload: %v", enabled, err)
+		}
 	}
 }
 
@@ -99,8 +133,15 @@ func TestSyncChangeLogFollowsConfigWrites(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
 	defer store.Close()
-	if count, err := store.PendingChanges(ctx); err != nil || count != 0 {
-		t.Fatalf("empty log = %d, %v", count, err)
+	// An access token is configuration a package carries, so a store that has
+	// just been created already has one change waiting: the bootstrap token it
+	// issued for itself.
+	changes, err := store.ChangesSince(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("changes: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Kind != syncKindAccessToken {
+		t.Fatalf("a fresh store recorded %+v", changes)
 	}
 	id := contract.ServiceID("service_alpha")
 	if _, err := store.CreateService(ctx, contract.ServiceFromEndpoint(testEndpoint(id)), storagecontract.CredentialMutation{
@@ -112,7 +153,7 @@ func TestSyncChangeLogFollowsConfigWrites(t *testing.T) {
 	if err != nil || count == 0 {
 		t.Fatalf("after create = %d, %v", count, err)
 	}
-	changes, err := store.ChangesSince(ctx, time.Time{})
+	changes, err = store.ChangesSince(ctx, time.Time{})
 	if err != nil {
 		t.Fatalf("changes: %v", err)
 	}
@@ -234,5 +275,99 @@ func TestExportCredentialRefusesUnknownTable(t *testing.T) {
 	}
 	if _, err := store.ExportCredential(ctx, serviceCredentialsTable, "service_missing"); !errors.Is(err, secretstore.ErrNotFound) {
 		t.Fatalf("missing row = %v, want ErrNotFound", err)
+	}
+}
+
+// A token a device already holds is left alone when the same entity arrives
+// again: the write would fire the change-log trigger and schedule a sync for a
+// change that never happened.
+func TestSyncWriteAccessTokenLeavesAnUnchangedTokenAlone(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	manager, err := accesstoken.NewManager(store)
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	created, err := manager.Create(ctx, "work")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := store.ClearChangesThrough(ctx, time.Now().UTC().Add(time.Hour)); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	document, err := json.Marshal(contract.AccessTokenDocument{
+		Name: created.Token.Name, Source: string(storagecontract.AccessTokenSourceUser),
+		CreatedAt: created.Token.CreatedAt,
+	})
+	if err != nil {
+		t.Fatalf("document: %v", err)
+	}
+	if err := store.SyncWriteAccessToken(ctx, string(created.Token.ID), document, []byte(created.Value)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	count, err := store.PendingChanges(ctx)
+	if err != nil {
+		t.Fatalf("pending: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("re-storing a token this device already holds recorded %d changes", count)
+	}
+	// The value is still the one a client presents, and still readable here.
+	revealed, err := store.RevealAccessToken(ctx, created.Token.ID)
+	if err != nil || revealed != created.Value {
+		t.Fatalf("reveal = %q, %v", revealed, err)
+	}
+}
+
+// A token that arrives with a name this device already holds is stored beside it
+// rather than replacing it, and the name it takes is the one its id decides.
+func TestSyncWriteAccessTokenKeepsBothNames(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "astrlink.db"))
+	defer store.Close()
+	manager, err := accesstoken.NewManager(store)
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	held, err := manager.Create(ctx, "work")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	arriving, err := manager.Create(ctx, "elsewhere")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := store.DeleteAccessToken(ctx, arriving.Token.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	document, err := json.Marshal(contract.AccessTokenDocument{
+		Name: "work", Source: string(storagecontract.AccessTokenSourceUser), CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("document: %v", err)
+	}
+	if err := store.SyncWriteAccessToken(ctx, string(arriving.Token.ID), document, []byte(arriving.Value)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	names := map[string]string{}
+	tokens, err := store.ListAccessTokens(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, token := range tokens {
+		names[token.Name] = string(token.ID)
+	}
+	if names["work"] != string(held.Token.ID) && names["work"] != string(arriving.Token.ID) {
+		t.Fatalf("the plain name went nowhere: %v", names)
+	}
+	if len(names) != 3 {
+		t.Fatalf("one token displaced another: %v", names)
+	}
+	if _, err := manager.Authenticate(ctx, held.Value); err != nil {
+		t.Fatalf("the token that had the name stopped working: %v", err)
+	}
+	if _, err := manager.Authenticate(ctx, arriving.Value); err != nil {
+		t.Fatalf("the arriving token does not work: %v", err)
 	}
 }

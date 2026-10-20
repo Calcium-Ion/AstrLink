@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -14,6 +15,10 @@ import (
 
 type serviceReader interface {
 	ListServices(context.Context, storage.ServiceListOptions) (storage.ServicePage, error)
+}
+
+type singleServiceReader interface {
+	GetService(context.Context, contract.ServiceID) (storage.ServiceRecord, error)
 }
 
 type endpointReader interface {
@@ -123,7 +128,7 @@ func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, requ
 	if request.Protocol.IsModelDiscovery() {
 		model = ""
 	}
-	endpoints, ranking, err := resolver.readServices(ctx, model)
+	endpoints, ranking, err := resolver.readServices(ctx, model, request.Service)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -210,7 +215,7 @@ func (resolver *StoreResolver) ResolveService(ctx context.Context, id contract.S
 	if resolver == nil || resolver.reader == nil {
 		return Resolved{}, ErrUnavailable
 	}
-	services, _, err := resolver.readServices(ctx, "")
+	services, _, err := resolver.readServices(ctx, "", id)
 	if err != nil {
 		return Resolved{}, err
 	}
@@ -250,10 +255,10 @@ func (resolver *StoreResolver) availableCandidates(candidates []Resolved, rankin
 // ranking of every service, with the reason unschedulable ones are left out.
 // An unschedulable service that does not list model is ranked as such: it
 // could not have served the request in any state.
-func (resolver *StoreResolver) readServices(ctx context.Context, model string) ([]contract.Service, []RankedService, error) {
+func (resolver *StoreResolver) readServices(ctx context.Context, model string, pinned contract.ServiceID) ([]contract.Service, []RankedService, error) {
 	byID := make(map[contract.ServiceID]contract.Service)
 	excluded := make(map[contract.ServiceID]contract.RoutingSkipReason)
-	err := resolver.eachService(ctx, func(candidate contract.Service) error {
+	err := resolver.eachServiceFor(ctx, pinned, func(candidate contract.Service) error {
 		if err := candidate.Validate(); err != nil {
 			return fmt.Errorf("persisted endpoint failed validation: %w", err)
 		}
@@ -279,7 +284,7 @@ func (resolver *StoreResolver) readServices(ctx context.Context, model string) (
 		endpoints = append(endpoints, candidate)
 	}
 	positions := map[contract.ServiceID]int{}
-	if ordered, ok := resolver.reader.(storage.ServiceOrderStore); ok {
+	if ordered, ok := resolver.reader.(storage.ServiceOrderStore); ok && pinned == "" {
 		record, err := ordered.GetServiceOrder(ctx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read service order: %w", err)
@@ -315,6 +320,22 @@ func (resolver *StoreResolver) readServices(ctx context.Context, model string) (
 		return before(ranking[left].ServiceID, ranking[right].ServiceID)
 	})
 	return endpoints, ranking, nil
+}
+
+// Named routes do not need to decode and validate unrelated providers. Older
+// readers keep the paginated path and are filtered by the caller as before.
+func (resolver *StoreResolver) eachServiceFor(ctx context.Context, id contract.ServiceID, visit func(contract.Service) error) error {
+	if reader, ok := resolver.reader.(singleServiceReader); ok && id != "" {
+		record, err := reader.GetService(ctx, id)
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read persisted endpoint: %w", err)
+		}
+		return visit(record.Service)
+	}
+	return resolver.eachService(ctx, visit)
 }
 
 // eachService visits every persisted service, page by page.
@@ -362,7 +383,7 @@ func (resolver *StoreResolver) pinnedServiceError(ctx context.Context, id contra
 		return pinned
 	}
 	pinned.Reason = ranking[0].Skip
-	err := resolver.eachService(ctx, func(service contract.Service) error {
+	err := resolver.eachServiceFor(ctx, id, func(service contract.Service) error {
 		if service.ID == id {
 			pinned.Name = service.Name
 		}

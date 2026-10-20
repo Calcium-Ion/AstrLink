@@ -31,10 +31,15 @@ type ChangeLogStore interface {
 // SyncStateRecord is the one row of sync settings and status.
 type SyncStateRecord struct {
 	Config contract.SyncConfig
+	// ForcePushGeneration identifies the currently armed overwrite. Ordinary
+	// settings edits preserve it; rearming or changing its target advances it.
+	ForcePushGeneration int64
 	// PassphraseState is "set" once a sync passphrase produced the cached key.
 	PassphraseState string
-	// KeySalt and KeyParams describe the cached key's derivation, so the same
-	// passphrase on another device produces a different key.
+	// KeySalt and KeyParams are the salt and KDF parameters the cached key was
+	// derived with, so a package can be sealed with the cached key without the
+	// passphrase again. The salt is derived from the passphrase, so the same
+	// passphrase produces the same key on every device.
 	KeySalt    []byte
 	KeyParams  []byte
 	DeviceID   string
@@ -86,6 +91,9 @@ type SyncStore interface {
 	SyncState(context.Context) (SyncStateRecord, error)
 	// UpdateSyncConfig replaces the settings.
 	UpdateSyncConfig(ctx context.Context, config contract.SyncConfig) error
+	// ConsumeForcePush disarms only the overwrite a run completed, preserving
+	// other settings and any newer overwrite request.
+	ConsumeForcePush(ctx context.Context, generation int64) error
 
 	// PutSyncKey stores the cached key sealed under the local key hierarchy,
 	// with the salt and parameters that produced it. It is how automatic sync
@@ -124,6 +132,10 @@ type SyncStore interface {
 	// Baseline returns the stored package. A device that has never synced
 	// reports ErrNotFound.
 	Baseline(ctx context.Context) (payload []byte, revision int64, err error)
+	// HasBaseline reports whether a package is stored, without opening it. A
+	// device that has never exchanged a package with its remote has none, which
+	// is what makes its next run a first contact.
+	HasBaseline(ctx context.Context) (bool, error)
 	// ResetBaseline forgets the merge base, for when the remote now holds a
 	// package this device cannot open or a different remote is configured.
 	// The next merge then treats every remote entity as new.
@@ -164,4 +176,10 @@ type SyncStore interface {
 	SyncImportCredential(ctx context.Context, kind, localID string, plaintext []byte) error
 	// SyncDeleteCredential removes one credential of a kind a package carries.
 	SyncDeleteCredential(ctx context.Context, kind, localID string) error
+	// SyncWriteAccessToken writes one gateway access token a merge decided this
+	// device should hold: its metadata row, which carries the digest and the
+	// hint an authentication reads, and the value itself, sealed again under
+	// this device's keys. The two are written together because the metadata is
+	// derived from the value and neither is usable alone.
+	SyncWriteAccessToken(ctx context.Context, localID string, document, value []byte) error
 }

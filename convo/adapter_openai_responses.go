@@ -50,6 +50,29 @@ func responsesIsUserMessage(item map[string]json.RawMessage) bool {
 	return role == "user" && (itemType == "" || itemType == "message")
 }
 
+func (openAIResponsesAdapter) inspectItem(item json.RawMessage) requestItem {
+	object, ok := jsonx.Object(item)
+	if !ok {
+		return requestItem{}
+	}
+	var result requestItem
+	itemType, role := responsesItemRole(object)
+	user := role == "user" && (itemType == "" || itemType == "message")
+	result.assistant = role == "assistant" && (itemType == "" || itemType == "message")
+	if user {
+		texts, hasMedia := stringOrTextParts(object["content"], responsesUserTextTypes, responsesSkipTypes)
+		result.userText = joinVisible(texts, "\n")
+		result.user = hasMedia || result.userText != ""
+	}
+	if callID, ok := jsonx.String(object["call_id"]); ok && callID != "" {
+		result.echoIDs = append(result.echoIDs, callID)
+	}
+	if id, ok := jsonx.String(object["id"]); ok && id != "" && !user {
+		result.echoIDs = append(result.echoIDs, id)
+	}
+	return result
+}
+
 func (openAIResponsesAdapter) IsUserTurn(item json.RawMessage) bool {
 	object, ok := jsonx.Object(item)
 	if !ok {

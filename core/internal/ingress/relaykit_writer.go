@@ -3,6 +3,7 @@ package ingress
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -28,6 +29,9 @@ type relayKitResponseWriter struct {
 	body        bytes.Buffer
 	stream      relaykitbridge.ResponseStream
 	carry       []byte
+	carryScan   int
+	lineStart   int
+	committed   bool
 	passthrough bool
 }
 
@@ -80,8 +84,17 @@ func (writer *relayKitResponseWriter) Write(value []byte) (int, error) {
 	return len(value), nil
 }
 
-func (writer *relayKitResponseWriter) Flush()                      {}
-func (writer *relayKitResponseWriter) FlushError() error           { return nil }
+func (writer *relayKitResponseWriter) Flush() { _ = writer.FlushError() }
+
+func (writer *relayKitResponseWriter) FlushError() error {
+	// Upstream headers and incomplete events must not commit a response that
+	// can still fail conversion and be retried on another route.
+	if !writer.passthrough && !writer.committed {
+		return nil
+	}
+	return http.NewResponseController(writer.ResponseWriter).Flush()
+}
+
 func (writer *relayKitResponseWriter) Unwrap() http.ResponseWriter { return writer.ResponseWriter }
 
 func (writer *relayKitResponseWriter) Finish() error {
@@ -101,6 +114,7 @@ func (writer *relayKitResponseWriter) Finish() error {
 		writer.diagnostics = output.Diagnostics
 		writer.Header().Set("Content-Type", output.ContentType)
 		writer.ResponseWriter.WriteHeader(output.StatusCode)
+		writer.committed = true
 		_, err = writer.ResponseWriter.Write(output.Body)
 		return err
 	}
@@ -111,7 +125,13 @@ func (writer *relayKitResponseWriter) Finish() error {
 	if err != nil {
 		return err
 	}
-	return writer.writeEvents(events)
+	if err := writer.writeEvents(events); err != nil {
+		return err
+	}
+	if err := writer.FlushError(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	return nil
 }
 
 // responseDiagnostics reports what the response conversion dropped or
@@ -134,31 +154,60 @@ func (writer *relayKitResponseWriter) streamClose() error {
 }
 
 func (writer *relayKitResponseWriter) convertStreamFrames(final bool) error {
-	normalized := bytes.ReplaceAll(writer.carry, []byte("\r\n"), []byte("\n"))
-	frames := bytes.Split(normalized, []byte("\n\n"))
-	if !final {
-		writer.carry = append(writer.carry[:0], frames[len(frames)-1]...)
-		frames = frames[:len(frames)-1]
-	} else {
-		writer.carry = nil
+	// Scan each incoming byte once. Retain the unfinished line's start so a
+	// CRLF split between reads still identifies a blank line correctly.
+	consumed := 0
+	for writer.carryScan < len(writer.carry) {
+		next := bytes.IndexByte(writer.carry[writer.carryScan:], '\n')
+		if next < 0 {
+			writer.carryScan = len(writer.carry)
+			break
+		}
+		newline := writer.carryScan + next
+		blank := newline == writer.lineStart ||
+			(newline == writer.lineStart+1 && writer.carry[writer.lineStart] == '\r')
+		if blank {
+			if err := writer.convertStreamFrame(writer.carry[consumed:writer.lineStart]); err != nil {
+				return err
+			}
+			consumed = newline + 1
+		}
+		writer.lineStart = newline + 1
+		writer.carryScan = newline + 1
 	}
-	for _, frame := range frames {
-		if len(bytes.TrimSpace(frame)) == 0 {
-			continue
+	if consumed > 0 {
+		if consumed == len(writer.carry) {
+			writer.carry = writer.carry[:0]
+		} else {
+			writer.carry = writer.carry[consumed:]
 		}
-		eventType, data := parseSSEFrame(frame)
-		if data == nil {
-			continue
-		}
-		events, err := writer.stream.Convert(context.Background(), relaykitbridge.ResponseEvent{Type: eventType, Data: data})
-		if err != nil {
+		writer.carryScan -= consumed
+		writer.lineStart -= consumed
+	}
+	if final {
+		if err := writer.convertStreamFrame(writer.carry); err != nil {
 			return err
 		}
-		if err := writer.writeEvents(events); err != nil {
-			return err
-		}
+		writer.carry = nil
+		writer.carryScan = 0
+		writer.lineStart = 0
 	}
 	return nil
+}
+
+func (writer *relayKitResponseWriter) convertStreamFrame(frame []byte) error {
+	if len(bytes.TrimSpace(frame)) == 0 {
+		return nil
+	}
+	eventType, data := parseSSEFrame(frame)
+	if data == nil {
+		return nil
+	}
+	events, err := writer.stream.Convert(context.Background(), relaykitbridge.ResponseEvent{Type: eventType, Data: data})
+	if err != nil {
+		return err
+	}
+	return writer.writeEvents(events)
 }
 
 // parseSSEFrame maps one upstream SSE frame onto the engine-neutral event
@@ -175,6 +224,9 @@ func parseSSEFrame(frame []byte) (string, []byte) {
 			data = append(data, bytes.TrimSpace(line[len("data:"):]))
 		}
 	}
+	if len(data) == 0 {
+		return eventType, nil
+	}
 	payload := bytes.Join(data, []byte("\n"))
 	if bytes.Equal(payload, []byte("[DONE]")) {
 		return "done", payload
@@ -188,9 +240,12 @@ func (writer *relayKitResponseWriter) writeEvents(events []relaykitbridge.Respon
 		if wire == nil {
 			continue
 		}
-		if writer.status != 0 {
+		if !writer.committed {
+			if writer.status == 0 {
+				writer.WriteHeader(http.StatusOK)
+			}
 			writer.ResponseWriter.WriteHeader(writer.status)
-			writer.status = 0 // destination has committed; prevent a second header.
+			writer.committed = true
 		}
 		if _, err := writer.ResponseWriter.Write(wire); err != nil {
 			return err

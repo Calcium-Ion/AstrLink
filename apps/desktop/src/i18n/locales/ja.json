@@ -432,7 +432,9 @@
         "policies": "プライバシーポリシー",
         "policiesHint": "マスキングとリクエスト本文のポリシー",
         "pricing": "料金",
-        "pricingHint": "価格の紐付け、予算、請求日"
+        "pricingHint": "価格の紐付け、予算、請求日",
+        "tokens": "アクセストークン",
+        "tokensHint": "クライアントがこのゲートウェイに提示するトークン（値も含む）"
       },
       "scopeNeedsServices": "プロバイダーに含まれる",
       "passphraseTitle": "同期パスフレーズ",
@@ -461,6 +463,14 @@
       "pendingChanges_one": "待機中の変更 {{count}} 件",
       "pendingChanges_other": "待機中の変更 {{count}} 件",
       "pendingChangesNone": "待機中の変更はありません。",
+      "firstSyncPending": "このデバイスは、まだこのリモートと設定パッケージを交換していません。初回の同期では、このデバイスで変更していない部分についてリモートの設定を取り込みます。",
+      "forcePush": "強制プッシュ",
+      "forcePushHint": "オフ。有効にすると、次回の同期でこのデバイスの設定がリモートを上書きします。",
+      "forcePushArmedHint": "有効：次回の同期でリモートを上書きします。保存しても有効のままです。",
+      "forcePushTitle": "このデバイスの設定でリモートを上書きしますか？",
+      "forcePushBody": "次回の同期では、リモート上のパッケージを統合せず、このデバイスの設定で置き換えます。リモートにあってこのデバイスにない内容は破棄され、他のデバイスも次回の同期で削除します。この設定は一度だけ働き、以降の同期は再び統合になります。",
+      "forcePushConfirm": "強制プッシュを有効にする",
+      "forcePushArmed": "強制プッシュが有効です：次回の同期でこのデバイスの設定がリモートを上書きします。",
       "lastSynced": "前回の同期",
       "nextRun": "次回の実行",
       "never": "なし",
@@ -492,7 +502,9 @@
         "local_kept": "このデバイスを保持",
         "remote_kept": "リモートを保持",
         "deleted": "削除済み",
-        "tie_kept_local": "同時刻：このデバイスを保持"
+        "tie_kept_local": "同時刻：このデバイスを保持",
+        "remote_adopted": "リモートを採用",
+        "force_pushed": "強制プッシュ済み"
       },
       "kind": {
         "service": "プロバイダー",
@@ -500,7 +512,9 @@
         "service_proxy_credential": "プロキシキー",
         "builtin_tool_credential": "ツールキー",
         "policy": "プライバシーポリシー",
-        "pricing_config": "料金"
+        "pricing_config": "料金",
+        "remote": "リモート",
+        "access_token": "アクセストークン"
       }
     }
   },

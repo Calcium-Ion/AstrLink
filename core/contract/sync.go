@@ -79,6 +79,11 @@ type SyncScope struct {
 	Policies bool `json:"policies"`
 	// Pricing carries each provider's price bindings, budget, and billing day.
 	Pricing bool `json:"pricing"`
+	// Tokens carries the gateway's access tokens, with the value a client
+	// presents. A token authenticates a caller of this gateway rather than an
+	// upstream, so it is independent of every other group here: a device that
+	// carries no provider still hands out the same tokens as the rest.
+	Tokens bool `json:"tokens"`
 }
 
 // SyncRemote is where a package is stored. Its credentials are part of the
@@ -108,6 +113,14 @@ type SyncConfig struct {
 	// DeviceName is what this device calls itself, shown wherever a device is
 	// named. An empty value leaves the name to the host.
 	DeviceName string `json:"device_name,omitempty"`
+	// ForcePush arms the next run to replace the package at the remote with this
+	// device's configuration instead of merging with it. It is for the rare case
+	// where the remote has to be overwritten from here: a package sealed under a
+	// passphrase this device no longer holds, or a configuration the user wants
+	// published as it stands. The flag is one-shot — a run that stores the
+	// package clears it — so one save overwrites the remote once and every run
+	// after it merges again.
+	ForcePush bool `json:"force_push,omitempty"`
 }
 
 // DefaultSyncConfig returns the configuration a fresh device starts with:
@@ -116,7 +129,7 @@ func DefaultSyncConfig() SyncConfig {
 	return SyncConfig{
 		Enabled: false,
 		Trigger: SyncTriggerSettings{Mode: SyncTriggerInterval, IntervalMinutes: 60, DebounceSeconds: 30},
-		Scope:   SyncScope{Services: true, Credentials: true, Policies: true, Pricing: true},
+		Scope:   SyncScope{Services: true, Credentials: true, Policies: true, Pricing: true, Tokens: true},
 		Remote:  SyncRemote{Path: SyncDefaultFolder, Addressing: SyncS3AddressingPath},
 	}
 }
@@ -184,8 +197,11 @@ type SyncStatus struct {
 	Enabled          bool `json:"enabled"`
 	PassphraseSet    bool `json:"passphrase_set"`
 	RemoteConfigured bool `json:"remote_configured"`
-	Configured       bool `json:"configured"`
-	Running          bool `json:"running"`
+	// Configured reports that a remote is set and a passphrase is stored, which
+	// is everything a run needs besides Enabled. RemoteConfigured is the remote
+	// on its own.
+	Configured bool `json:"configured"`
+	Running    bool `json:"running"`
 	// DeviceID is this device's identity in the remote lock. It is opaque and
 	// stays out of the interface, which shows DeviceName.
 	DeviceID string `json:"device_id"`
@@ -196,7 +212,15 @@ type SyncStatus struct {
 	// falls back to.
 	HostName string `json:"host_name"`
 	// PendingChanges counts configuration writes not yet packaged.
-	PendingChanges int        `json:"pending_changes"`
+	PendingChanges int `json:"pending_changes"`
+	// FirstSyncPending reports that this device has never exchanged a package
+	// with the configured remote, so its next run adopts what is published there
+	// rather than overwriting it with the configuration this installation
+	// started from.
+	FirstSyncPending bool `json:"first_sync_pending"`
+	// ForcePushArmed reports that the next run will overwrite the remote with
+	// this device's configuration instead of merging.
+	ForcePushArmed bool       `json:"force_push_armed"`
 	LastSyncedAt   *time.Time `json:"last_synced_at,omitempty"`
 	NextRunAt      *time.Time `json:"next_run_at,omitempty"`
 	LastError      string     `json:"last_error,omitempty"`

@@ -46,72 +46,13 @@ func (store *Store) FindSessionLink(
 	if len(cleaned) == 0 {
 		return storagecontract.SessionLinkMatch{}, false, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(cleaned)), ", ")
-	valueArgs := make([]any, 0, len(cleaned))
-	for _, value := range cleaned {
-		valueArgs = append(valueArgs, value)
-	}
-
-	scopeClause := strings.Builder{}
-	scopeArgs := make([]any, 0, 2)
-	if scope.SamePrincipal {
-		scopeClause.WriteString(` AND r.local_access_token_id IS ?`)
-		if scope.LocalAccessTokenID != nil {
-			scopeArgs = append(scopeArgs, string(*scope.LocalAccessTokenID))
-		} else {
-			scopeArgs = append(scopeArgs, nil)
-		}
-	}
-	if !scope.NotBefore.IsZero() {
-		scopeClause.WriteString(` AND r.started_at >= ?`)
-		scopeArgs = append(scopeArgs, scope.NotBefore.UTC().Format(time.RFC3339Nano))
-	}
-
-	// The record that produced a value (direction out / output_response_id)
-	// is the true anchor and carries the turn the continuation builds on;
-	// records that merely named the same value (direction in) only serve
-	// client-chosen ids such as prompt_cache_key that no response emits.
-	query := strings.Builder{}
-	args := make([]any, 0, 5*len(cleaned)+2*len(scopeArgs)+1)
-	query.WriteString(`SELECT session_id, turn_index, turn_user_messages, turn_user_fingerprint, value, status FROM (
-SELECT r.session_id, r.turn_index, r.turn_user_messages, r.turn_user_fingerprint, c.value AS value, r.status,
-       CASE WHEN c.direction = 'out' THEN 0 ELSE 1 END AS priority,
-       r.started_at, r.id
-FROM request_record_cursors c
-JOIN request_records r ON r.id = c.request_id
-WHERE c.kind = ? AND c.value IN (` + placeholders + `)`)
-	args = append(args, string(kind))
-	args = append(args, valueArgs...)
-	if kind != contract.SessionCursorExplicit {
-		query.WriteString(` AND c.direction = 'out'`)
-	}
-	query.WriteString(` AND r.parent_request_id IS NULL AND r.session_id IS NOT NULL`)
-	query.WriteString(scopeClause.String())
-	args = append(args, scopeArgs...)
-	if kind == contract.SessionCursorExplicit {
-		// Separate indexed lookups avoid an OR that makes SQLite scan all roots.
-		for priority, column := range []string{"output_response_id", "previous_response_id"} {
-			query.WriteString(`
-UNION ALL
-SELECT r.session_id, r.turn_index, r.turn_user_messages, r.turn_user_fingerprint,
-       r.` + column + ` AS value, r.status, ? AS priority, r.started_at, r.id
-FROM request_records r
-WHERE r.` + column + ` IN (` + placeholders + `)
-  AND r.parent_request_id IS NULL AND r.session_id IS NOT NULL`)
-			args = append(args, priority)
-			args = append(args, valueArgs...)
-			query.WriteString(scopeClause.String())
-			args = append(args, scopeArgs...)
-		}
-	}
-	query.WriteString(`
-) ORDER BY priority ASC, started_at DESC, id DESC LIMIT 1`)
+	query, args := sessionLinkQuery(kind, cleaned, scope)
 
 	var (
 		sessionID, turnUserFingerprint, value, status sql.NullString
 		turnIndex, turnUserMessages                   sql.NullInt64
 	)
-	err := store.db.QueryRowContext(ctx, query.String(), args...).Scan(
+	err := store.db.QueryRowContext(ctx, query, args...).Scan(
 		&sessionID, &turnIndex, &turnUserMessages, &turnUserFingerprint, &value, &status,
 	)
 	if err != nil {

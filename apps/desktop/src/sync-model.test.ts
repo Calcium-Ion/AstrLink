@@ -24,6 +24,7 @@ const storedConfig = {
     credentials: false,
     policies: true,
     pricing: false,
+    tokens: true,
   },
   remote: {
     kind: "webdav",
@@ -39,6 +40,7 @@ describe("sync configuration read model", () => {
     expect(parseSyncConfig(storedConfig)).toEqual({
       enabled: true,
       device_name: "",
+      force_push: false,
       trigger: {
         mode: "interval",
         interval_minutes: 30,
@@ -50,6 +52,7 @@ describe("sync configuration read model", () => {
         credentials: false,
         policies: true,
         pricing: false,
+        tokens: true,
       },
       remote: {
         kind: "webdav",
@@ -117,10 +120,29 @@ describe("sync configuration read model", () => {
     expect(payload).toEqual({
       enabled: true,
       device_name: "",
+      force_push: false,
       trigger: config.trigger,
       scope: config.scope,
       remote: config.remote,
     });
+  });
+
+  it("keeps an armed force push on the way back to Core", () => {
+    const config = parseSyncConfig({ ...storedConfig, force_push: true });
+    expect(config.force_push).toBe(true);
+    expect(syncConfigPayload(config)).toHaveProperty("force_push", true);
+  });
+
+  it("treats a configuration written before the flag as not armed", () => {
+    expect(parseSyncConfig(storedConfig).force_push).toBe(false);
+  });
+
+  it("carries the access token group, and leaves an older configuration out of it", () => {
+    expect(parseSyncConfig(storedConfig).scope.tokens).toBe(true);
+    const { tokens: _tokens, ...withoutTokens } = storedConfig.scope;
+    expect(
+      parseSyncConfig({ ...storedConfig, scope: withoutTokens }).scope.tokens,
+    ).toBe(false);
   });
 
   it("accepts the default configuration it hands out", () => {
@@ -230,6 +252,8 @@ describe("sync status read model", () => {
     device_name: "studio-mac",
     host_name: "studio-mac",
     pending_changes: 4,
+    first_sync_pending: false,
+    force_push_armed: false,
     last_synced_at: "2026-10-11T03:00:00Z",
     conflicts: [],
   };
@@ -256,6 +280,23 @@ describe("sync status read model", () => {
     const parsed = parseSyncStatus(status);
     expect(parsed).not.toHaveProperty("next_run_at");
     expect(parsed).not.toHaveProperty("last_error");
+  });
+
+  it("reports a first sync and an armed force push", () => {
+    const parsed = parseSyncStatus({
+      ...status,
+      first_sync_pending: true,
+      force_push_armed: true,
+    });
+    expect(parsed.first_sync_pending).toBe(true);
+    expect(parsed.force_push_armed).toBe(true);
+  });
+
+  it("refuses a status that leaves the flags to the interface", () => {
+    const { first_sync_pending: _f, ...withoutFirst } = status;
+    expect(() => parseSyncStatus(withoutFirst)).toThrow(
+      "sync_status.first_sync_pending",
+    );
   });
 
   it("parses a merge notice", () => {

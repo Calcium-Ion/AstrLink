@@ -21,7 +21,8 @@ import (
 // A bucket is addressed either in the URL path or in the host name. The path
 // style is served by every S3-compatible store; the suffix style is for a store
 // that expects the virtual-host form, where the endpoint is only the base
-// domain and the host is built from the bucket, the region, and that domain.
+// domain and the host is built from the bucket, the fixed "s3" service label,
+// and that domain.
 //
 // Conditional writes (If-Match, If-None-Match) are what make the remote lock
 // safe, but support varies across S3-compatible stores. The first conditional

@@ -10,6 +10,30 @@ import (
 // ErrInvalidJSON is returned by InspectBody when the body is not a JSON object.
 var ErrInvalidJSON = errors.New("convo: request body is not a JSON object")
 
+// Built-in adapters share one decoded item across request-side observations.
+// The public Adapter interface stays compatible with custom protocols.
+type requestItem struct {
+	user, assistant bool
+	userText        string
+	echoIDs         []string
+}
+
+type requestItemInspector interface {
+	inspectItem(json.RawMessage) requestItem
+}
+
+func inspectRequestItem(adapter Adapter, item json.RawMessage) requestItem {
+	if inspector, ok := adapter.(requestItemInspector); ok {
+		return inspector.inspectItem(item)
+	}
+	result := requestItem{user: adapter.IsUserTurn(item), echoIDs: adapter.InboundEchoIDs(item)}
+	if result.user {
+		result.userText = adapter.UserText(item)
+	}
+	_, result.assistant = adapter.AssistantText(item)
+	return result
+}
+
 // RequestSummary is everything Policy.Resolve needs from one request, plus the
 // user text a host may want for previews. It never contains assistant text.
 type RequestSummary struct {
@@ -102,24 +126,29 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 		echoIDs       []string
 		lastAssistant json.RawMessage
 		haveAssistant bool
+		lastUserText  string
 	)
 	for _, item := range items {
-		if adapter.IsUserTurn(item) {
+		inspected := inspectRequestItem(adapter, item)
+		if inspected.user {
 			summary.UserTurnCount++
 			summary.HasUserMessage = true
-			if text := adapter.UserText(item); text != "" {
+			if text := inspected.userText; text != "" {
 				if summary.FirstUserText == "" {
 					summary.FirstUserText = truncateBytes(text, policy.maxUserTextBytes())
 				}
 				summary.LastUserText = truncateBytes(text, policy.maxUserTextBytes())
-				summary.LastUserDigest = DigestText(text, false)
+				lastUserText = text
 			}
 		}
-		echoIDs = append(echoIDs, adapter.InboundEchoIDs(item)...)
-		if _, isAssistant := adapter.AssistantText(item); isAssistant {
+		echoIDs = append(echoIDs, inspected.echoIDs...)
+		if inspected.assistant {
 			lastAssistant = item
 			haveAssistant = true
 		}
+	}
+	if lastUserText != "" {
+		summary.LastUserDigest = DigestText(lastUserText, false)
 	}
 	summary.EchoIDs = policy.selectInboundEchoIDs(echoIDs)
 	if haveAssistant {

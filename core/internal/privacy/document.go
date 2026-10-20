@@ -2,9 +2,6 @@ package privacy
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
 	"slices"
 	"sort"
 	"strings"
@@ -47,19 +44,12 @@ func extractDocument(
 	if !utf8.Valid(body) {
 		return jsonDocument{}, nil, ErrUnsafeInput
 	}
-	duplicateKeys, err := inspectJSONStructure(body)
+	value, duplicateKeys, err := parsePrivacyJSON(body, true)
 	if err != nil || duplicateKeys {
 		return jsonDocument{}, nil, ErrUnsafeInput
 	}
-
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var root map[string]any
-	if err := decoder.Decode(&root); err != nil || root == nil {
-		return jsonDocument{}, nil, ErrUnsafeInput
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+	root, ok := value.(map[string]any)
+	if !ok || root == nil {
 		return jsonDocument{}, nil, ErrUnsafeInput
 	}
 
@@ -560,75 +550,8 @@ func hasAnyJSONKey(value map[string]any, keys ...string) bool {
 }
 
 func inspectJSONStructure(body []byte) (bool, error) {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	duplicate, err := inspectJSONValue(decoder, 0)
-	if err != nil {
-		return false, err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return false, ErrUnsafeInput
-	}
-	return duplicate, nil
-}
-
-func inspectJSONValue(decoder *json.Decoder, depth int) (bool, error) {
-	if depth > maxJSONDepth {
-		return false, ErrUnsafeInput
-	}
-	token, err := decoder.Token()
-	if err != nil {
-		return false, err
-	}
-	delimiter, composite := token.(json.Delim)
-	if !composite {
-		return false, nil
-	}
-	switch delimiter {
-	case '{':
-		seen := make(map[string]struct{})
-		duplicate := false
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return false, err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return false, ErrUnsafeInput
-			}
-			if _, exists := seen[key]; exists {
-				duplicate = true
-			}
-			seen[key] = struct{}{}
-			childDuplicate, err := inspectJSONValue(decoder, depth+1)
-			if err != nil {
-				return false, err
-			}
-			duplicate = duplicate || childDuplicate
-		}
-		closeToken, err := decoder.Token()
-		if err != nil || closeToken != json.Delim('}') {
-			return false, ErrUnsafeInput
-		}
-		return duplicate, nil
-	case '[':
-		duplicate := false
-		for decoder.More() {
-			childDuplicate, err := inspectJSONValue(decoder, depth+1)
-			if err != nil {
-				return false, err
-			}
-			duplicate = duplicate || childDuplicate
-		}
-		closeToken, err := decoder.Token()
-		if err != nil || closeToken != json.Delim(']') {
-			return false, ErrUnsafeInput
-		}
-		return duplicate, nil
-	default:
-		return false, ErrUnsafeInput
-	}
+	_, duplicate, err := parsePrivacyJSON(body, false)
+	return duplicate, err
 }
 
 type placedFinding struct {

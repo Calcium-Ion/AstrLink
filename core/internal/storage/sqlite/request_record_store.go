@@ -183,8 +183,9 @@ func replaceRequestRecordCursors(ctx context.Context, transaction *sql.Tx, recor
 	}
 	for _, cursor := range record.Cursors {
 		if _, err := transaction.ExecContext(ctx, `INSERT OR IGNORE INTO request_record_cursors (
-    request_id, kind, direction, value
-) VALUES (?, ?, ?, ?)`, string(record.ID), string(cursor.Kind), string(cursor.Direction), cursor.Value); err != nil {
+    request_id, kind, direction, value, started_at, local_access_token_id
+) VALUES (?, ?, ?, ?, ?, ?)`, string(record.ID), string(cursor.Kind), string(cursor.Direction), cursor.Value,
+			record.StartedAt.UTC().Format(time.RFC3339Nano), record.LocalAccessTokenID); err != nil {
 			return fmt.Errorf("insert request record cursor: %w", err)
 		}
 	}

@@ -432,7 +432,9 @@
         "policies": "Privacy policy",
         "policiesHint": "Redaction and request-body policy",
         "pricing": "Pricing",
-        "pricingHint": "Price bindings, budget and billing day"
+        "pricingHint": "Price bindings, budget and billing day",
+        "tokens": "Access tokens",
+        "tokensHint": "Tokens a client presents to this gateway, with their values"
       },
       "scopeNeedsServices": "Included with providers",
       "passphraseTitle": "Sync passphrase",
@@ -461,6 +463,14 @@
       "pendingChanges_one": "{{count}} change waiting",
       "pendingChanges_other": "{{count}} changes waiting",
       "pendingChangesNone": "Nothing waiting",
+      "firstSyncPending": "This device has not exchanged a package with this remote yet. The first sync adopts the remote's configuration for anything you have not changed here.",
+      "forcePush": "Force push",
+      "forcePushHint": "Off. When armed, the next sync overwrites the remote with this device.",
+      "forcePushArmedHint": "Armed: the next sync overwrites the remote. Saving keeps it armed.",
+      "forcePushTitle": "Overwrite the remote with this device?",
+      "forcePushBody": "The next sync replaces the package on the remote with this device's configuration instead of merging with it. Anything stored there that this device does not have is dropped, and the other devices delete it when they next sync. It happens once; the syncs after it merge again.",
+      "forcePushConfirm": "Arm force push",
+      "forcePushArmed": "Force push is armed: the next sync overwrites the remote with this device's configuration.",
       "lastSynced": "Last synced",
       "nextRun": "Next run",
       "never": "Never",
@@ -492,7 +502,9 @@
         "local_kept": "This device kept",
         "remote_kept": "Remote kept",
         "deleted": "Deleted",
-        "tie_kept_local": "Same time: this device kept"
+        "tie_kept_local": "Same time: this device kept",
+        "remote_adopted": "Adopted the remote",
+        "force_pushed": "Force pushed"
       },
       "kind": {
         "service": "Provider",
@@ -500,7 +512,9 @@
         "service_proxy_credential": "Proxy key",
         "builtin_tool_credential": "Tool key",
         "policy": "Privacy policy",
-        "pricing_config": "Pricing"
+        "pricing_config": "Pricing",
+        "remote": "Remote",
+        "access_token": "Access token"
       }
     }
   },

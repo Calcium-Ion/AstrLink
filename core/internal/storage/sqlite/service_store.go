@@ -80,7 +80,7 @@ func (store *Store) GetService(ctx context.Context, id contract.ServiceID) (stor
 		}
 		return storagecontract.ServiceRecord{}, fmt.Errorf("read service: %w", err)
 	}
-	return decodeServiceRecord(string(id), []byte(document))
+	return store.serviceDocuments.decode(string(id), document)
 }
 
 func (store *Store) ListServices(ctx context.Context, options storagecontract.ServiceListOptions) (storagecontract.ServicePage, error) {
@@ -106,7 +106,7 @@ func (store *Store) ListServices(ctx context.Context, options storagecontract.Se
 		if err := rows.Scan(&id, &document); err != nil {
 			return storagecontract.ServicePage{}, fmt.Errorf("scan service: %w", err)
 		}
-		record, err := decodeServiceRecord(id, []byte(document))
+		record, err := store.serviceDocuments.decode(id, document)
 		if err != nil {
 			return storagecontract.ServicePage{}, err
 		}

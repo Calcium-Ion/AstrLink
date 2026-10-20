@@ -28,6 +28,9 @@ const syncBaselineKey = "baseline"
 // defaults on first read. The row is always present after that.
 func (store *Store) SyncState(ctx context.Context) (storage.SyncStateRecord, error) {
 	record := storage.SyncStateRecord{Config: contract.DefaultSyncConfig()}
+	// Only new installations opt in by default. A saved configuration from
+	// before token sync existed must keep its original scope on upgrade.
+	record.Config.Scope.Tokens = false
 	var (
 		configJSON     string
 		keySalt        []byte
@@ -40,11 +43,11 @@ func (store *Store) SyncState(ctx context.Context) (storage.SyncStateRecord, err
 	)
 	err := store.db.QueryRowContext(ctx, `SELECT device_id, config_json, passphrase_state,
     key_salt, key_params_json, remote_identity, remote_etag, remote_revision,
-    last_synced_at, last_error, retained_through
+    last_synced_at, last_error, retained_through, force_push_generation
 FROM sync_state WHERE id = 1`).Scan(
 		&record.DeviceID, &configJSON, &record.PassphraseState,
 		&keySalt, &keyParams, &remoteIdentity, &remoteETag, &record.RemoteRevision,
-		&syncedAt, &lastError, &retained,
+		&syncedAt, &lastError, &retained, &record.ForcePushGeneration,
 	)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -100,8 +103,31 @@ func (store *Store) UpdateSyncConfig(ctx context.Context, config contract.SyncCo
 	if err != nil {
 		return err
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE sync_state SET config_json = ? WHERE id = 1`, string(encoded)); err != nil {
+	// Compare against the row being updated, not an earlier settings read.
+	// Editing a name or schedule must not rearm an in-flight overwrite; a new
+	// target or scope does describe a different overwrite request.
+	if _, err := store.db.ExecContext(ctx, `UPDATE sync_state SET
+    force_push_generation = force_push_generation + CASE
+        WHEN json_extract(?1, '$.force_push') = 1 AND (
+            COALESCE(json_extract(config_json, '$.force_push'), 0) <> 1
+            OR json_extract(config_json, '$.remote') IS NOT json_extract(?1, '$.remote')
+            OR json_extract(config_json, '$.scope') IS NOT json_extract(?1, '$.scope')
+        ) THEN 1 ELSE 0 END,
+    config_json = ?1
+WHERE id = 1`, string(encoded)); err != nil {
 		return fmt.Errorf("write sync config: %w", err)
+	}
+	return nil
+}
+
+// ConsumeForcePush changes only the one-shot flag, and only for the generation
+// the completed run observed. A concurrent save can neither be reverted nor
+// have a newly armed force push cleared by the older run.
+func (store *Store) ConsumeForcePush(ctx context.Context, generation int64) error {
+	if _, err := store.db.ExecContext(ctx, `UPDATE sync_state
+SET config_json = json_set(config_json, '$.force_push', json('false'))
+WHERE id = 1 AND force_push_generation = ? AND json_extract(config_json, '$.force_push') = 1`, generation); err != nil {
+		return fmt.Errorf("consume sync force push: %w", err)
 	}
 	return nil
 }
@@ -375,6 +401,17 @@ func (store *Store) Baseline(ctx context.Context) (payload []byte, revision int6
 		return nil, 0, err
 	}
 	return payload, revision, nil
+}
+
+// HasBaseline reports whether a merge base is stored. It answers the question
+// the status asks without opening the package, which the status does not need.
+func (store *Store) HasBaseline(ctx context.Context) (bool, error) {
+	var stored bool
+	if err := store.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sync_baseline WHERE key = ?)`,
+		syncBaselineKey).Scan(&stored); err != nil {
+		return false, fmt.Errorf("read sync baseline presence: %w", err)
+	}
+	return stored, nil
 }
 
 // ResetBaseline forgets the merge base. It is what the engine calls when the

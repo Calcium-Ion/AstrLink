@@ -33,6 +33,21 @@ func (geminiAdapter) ExplicitCursors(fields map[string]json.RawMessage) []string
 
 func (geminiAdapter) IsStateful(map[string]json.RawMessage) bool { return false }
 
+func (geminiAdapter) inspectItem(item json.RawMessage) requestItem {
+	content, ok := jsonx.Object(item)
+	if !ok {
+		return requestItem{}
+	}
+	role := geminiRole(content)
+	result := requestItem{assistant: role == "model", echoIDs: geminiInboundEchoIDs(content)}
+	if role == "user" {
+		texts, hasMedia := geminiParts(content, false)
+		result.userText = joinVisible(texts, "\n")
+		result.user = hasMedia || result.userText != ""
+	}
+	return result
+}
+
 func geminiRole(content map[string]json.RawMessage) string {
 	role, ok := jsonx.String(content["role"])
 	if !ok || role == "" {
@@ -99,6 +114,10 @@ func (geminiAdapter) InboundEchoIDs(item json.RawMessage) []string {
 	if !ok {
 		return nil
 	}
+	return geminiInboundEchoIDs(content)
+}
+
+func geminiInboundEchoIDs(content map[string]json.RawMessage) []string {
 	parts, ok := jsonx.Array(content["parts"])
 	if !ok {
 		return nil

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { ActionGroup } from "@/components/ActionGroup";
 import { ChoiceCard } from "@/components/ChoiceCard";
@@ -51,6 +51,7 @@ const scopeKeys = [
   "credentials",
   "policies",
   "pricing",
+  "tokens",
 ] as const satisfies readonly (keyof SyncScope)[];
 
 // A group that names another is only meaningful with it: a credential without
@@ -99,6 +100,21 @@ function matchesStoredPassphraseError(error: unknown): boolean {
   );
 }
 
+/**
+ * A WebDAV remote is configured through the endpoint alone, so the folder it
+ * writes under is filled in here rather than left blank, which would put the
+ * package at the server root.
+ */
+function filledRemote(config: SyncConfig): SyncConfig {
+  if (config.remote.kind === "webdav" && config.remote.path.trim() === "") {
+    return {
+      ...config,
+      remote: { ...config.remote, path: defaultSyncFolder },
+    };
+  }
+  return config;
+}
+
 export function SyncSettings({
   onDirtyChange,
 }: {
@@ -113,6 +129,7 @@ export function SyncSettings({
   const [busy, setBusy] = useState<"save" | "sync" | "passphrase" | null>(null);
   const [passphrase, setPassphrase] = useState("");
   const [forgetOpen, setForgetOpen] = useState(false);
+  const [forcePushOpen, setForcePushOpen] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const passphraseId = useId();
 
@@ -121,6 +138,20 @@ export function SyncSettings({
     [stored],
   );
   const dirty = draft !== null && JSON.stringify(draft) !== baseline;
+
+  /**
+   * Reads the stored configuration again, so a flag a run just spent stops
+   * showing in the form.
+   */
+  const reloadStored = useCallback(async (): Promise<void> => {
+    try {
+      const next = filledRemote(await getSyncConfig());
+      setStored(next);
+      setDraft(next);
+    } catch {
+      // Leave the form as it stands; reopening the page reads it again.
+    }
+  }, []);
 
   useEffect(() => {
     onDirtyChange(dirty);
@@ -132,16 +163,7 @@ export function SyncSettings({
     void getSyncConfig()
       .then((config) => {
         if (cancelled) return;
-        // A WebDAV remote is configured through the endpoint alone, so the
-        // folder it writes under is filled in here rather than left blank, which
-        // would put the package at the server root.
-        const filled =
-          config.remote.kind === "webdav" && config.remote.path.trim() === ""
-            ? {
-                ...config,
-                remote: { ...config.remote, path: defaultSyncFolder },
-              }
-            : config;
+        const filled = filledRemote(config);
         setStored(filled);
         setDraft(filled);
         setLoadError(null);
@@ -161,12 +183,19 @@ export function SyncSettings({
     };
   }, [t]);
 
+  const storedForcePush = stored?.force_push ?? false;
   useEffect(() => {
     let cancelled = false;
     const load = () => {
       void getSyncStatus()
         .then((next) => {
-          if (!cancelled) setStatus(next);
+          if (cancelled) return;
+          setStatus(next);
+          // A run spends an armed force push, and a scheduled run spends it
+          // without this form being the caller, so a status that disagrees with
+          // the form's copy is what brings the stored one back.
+          if (!dirty && next.force_push_armed !== storedForcePush)
+            void reloadStored();
         })
         .catch(() => {
           // A failed status read keeps the last one on screen; the run itself
@@ -179,7 +208,7 @@ export function SyncSettings({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [dirty, storedForcePush, reloadStored]);
 
   if (unavailable) {
     return (
@@ -234,6 +263,15 @@ export function SyncSettings({
         if (source === key) scope[dependent as keyof SyncScope] = false;
     setDraft({ ...draft, scope });
   };
+  // Arming a force push overwrites the remote, so the switch asks first;
+  // disarming it takes nothing away.
+  const patchForcePush = (armed: boolean): void => {
+    if (armed) {
+      setForcePushOpen(true);
+      return;
+    }
+    patch({ force_push: false });
+  };
 
   const save = async (): Promise<void> => {
     setBusy("save");
@@ -259,6 +297,9 @@ export function SyncSettings({
     try {
       setStatus(await runSync());
       notify.success(t("settings.sync.syncDone"));
+      // The run may have spent an armed force push, so the form reads the
+      // stored flag again rather than showing one the next run will not use.
+      if (!dirty) await reloadStored();
     } catch (error) {
       const message = messageOf(error, "");
       setActionError(
@@ -666,6 +707,36 @@ export function SyncSettings({
                   );
                 })}
               </div>
+
+              {/* An armed force push is cleared on save while sync is off, so
+                  the switch stays locked until sync is on. */}
+              <DataRow className="rounded-sm border px-3">
+                <Label
+                  className="min-w-0 flex-1 cursor-pointer text-sm font-normal"
+                  htmlFor="sync-force-push"
+                >
+                  {t("settings.sync.forcePush")}
+                  <span
+                    className={cn(
+                      "mt-0.5 block text-xs",
+                      draft.force_push
+                        ? "text-warning-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {draft.force_push
+                      ? t("settings.sync.forcePushArmedHint")
+                      : t("settings.sync.forcePushHint")}
+                  </span>
+                </Label>
+                <Switch
+                  checked={draft.force_push}
+                  className="shrink-0"
+                  disabled={busyAny || !draft.enabled}
+                  id="sync-force-push"
+                  onCheckedChange={patchForcePush}
+                />
+              </DataRow>
             </div>
           </Panel>
         </div>
@@ -765,6 +836,20 @@ export function SyncSettings({
                 </Button>
               </ActionGroup>
             </div>
+
+            {status?.force_push_armed ? (
+              <div className="border-b px-4 py-3">
+                <FormMessage tone="warning">
+                  {t("settings.sync.forcePushArmed")}
+                </FormMessage>
+              </div>
+            ) : status?.first_sync_pending ? (
+              <div className="border-b px-4 py-3">
+                <FormMessage tone="notice">
+                  {t("settings.sync.firstSyncPending")}
+                </FormMessage>
+              </div>
+            ) : null}
 
             <DataRow>
               <span className="min-w-0 flex-1 text-xs text-text-secondary">
@@ -912,6 +997,19 @@ export function SyncSettings({
         }}
         open={forgetOpen}
         title={t("settings.sync.passphraseForgetTitle")}
+        tone="warning"
+      />
+
+      <ConfirmDialog
+        confirmLabel={t("settings.sync.forcePushConfirm")}
+        description={<p>{t("settings.sync.forcePushBody")}</p>}
+        onCancel={() => setForcePushOpen(false)}
+        onConfirm={() => {
+          setForcePushOpen(false);
+          patch({ force_push: true });
+        }}
+        open={forcePushOpen}
+        title={t("settings.sync.forcePushTitle")}
         tone="warning"
       />
     </div>

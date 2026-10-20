@@ -33,7 +33,7 @@ const (
 // it.
 type TextRestorer struct {
 	spellings []restoreSpelling
-	byStart   [256][]int
+	indexes   [restoreGuardCount]restorePrefixIndex
 	mappings  int
 }
 
@@ -48,9 +48,10 @@ const (
 )
 
 type restoreSpelling struct {
-	starts []byte
-	value  string
-	match  func(input string, at int, final bool) (int, matchStatus)
+	prefixes []string
+	guard    restoreGuard
+	value    string
+	match    func(input string, at int, final bool) (int, matchStatus)
 }
 
 // NewTextRestorer builds a restorer for the request's redactions. A redaction
@@ -75,10 +76,13 @@ func NewTextRestorer(redactions []Redaction, encoding ValueEncoding) *TextRestor
 		for _, spelling := range spellings {
 			index := len(restorer.spellings)
 			restorer.spellings = append(restorer.spellings, spelling)
-			for _, start := range spelling.starts {
-				restorer.byStart[start] = append(restorer.byStart[start], index)
+			for _, prefix := range spelling.prefixes {
+				restorer.indexes[spelling.guard].add(prefix, index)
 			}
 		}
+	}
+	for index := range restorer.indexes {
+		restorer.indexes[index].sort()
 	}
 	return restorer
 }
@@ -102,34 +106,27 @@ func (restorer *TextRestorer) Restore(input string, final bool) (restored string
 	var out strings.Builder
 	flushed := 0
 	for at := 0; at < len(input); at++ {
-		candidates := restorer.byStart[input[at]]
-		if len(candidates) == 0 {
-			continue
-		}
-		partial := false
 		bestEnd := -1
-		var best *restoreSpelling
-		for _, index := range candidates {
-			spelling := &restorer.spellings[index]
-			end, status := spelling.match(input, at, final)
-			switch status {
-			case matchPartial:
-				partial = true
-			case matchFull:
-				if end > bestEnd {
-					bestEnd, best = end, spelling
-				}
+		bestIndex := -1
+		for guard := range restorer.indexes {
+			index := &restorer.indexes[guard]
+			if len(index.byStart[input[at]]) == 0 || !restoreGuard(guard).allows(input, at) {
+				continue
+			}
+			candidate, end, partial := index.match(input, at, final, restorer.spellings)
+			if partial {
+				out.WriteString(input[flushed:at])
+				return out.String(), count, len(input) - at
+			}
+			if end > bestEnd || (end == bestEnd && candidate >= 0 && candidate < bestIndex) {
+				bestEnd, bestIndex = end, candidate
 			}
 		}
-		if partial {
-			out.WriteString(input[flushed:at])
-			return out.String(), count, len(input) - at
-		}
-		if best == nil {
+		if bestIndex < 0 {
 			continue
 		}
 		out.WriteString(input[flushed:at])
-		out.WriteString(best.value)
+		out.WriteString(restorer.spellings[bestIndex].value)
 		flushed = bestEnd
 		at = bestEnd - 1
 		count++
@@ -153,18 +150,18 @@ func restoreSpellings(placeholder, value string, encoding ValueEncoding) ([]rest
 		spellings = append(spellings, bareMarkerSpelling(body, encoded))
 		if htmlValue, ok := encodeRestoredValue(html.EscapeString(value), encoding); ok {
 			spellings = append(spellings,
-				escapedMarkerSpelling(htmlMarkerOpens, body, htmlMarkerCloses, htmlValue, false))
+				escapedMarkerSpelling(htmlMarkerEscapes, body, htmlValue, false))
 		}
 		// In decoded text a \u003c is literal, so the value is written for the
 		// JSON document the model is producing. In serialized JSON the escape
 		// decodes to the marker itself, which needs the same escaped value.
 		if jsonValue, ok := EscapeJSONStringContent(value); ok {
 			spellings = append(spellings,
-				escapedMarkerSpelling(unicodeMarkerOpens, body, unicodeMarkerCloses, jsonValue, true))
+				escapedMarkerSpelling(unicodeMarkerEscapes, body, jsonValue, true))
 		}
 		if percentValue, ok := encodeRestoredValue(percentEncode(value), encoding); ok {
 			spellings = append(spellings,
-				escapedMarkerSpelling(percentMarkerOpens, body, percentMarkerCloses, percentValue, false))
+				escapedMarkerSpelling(percentMarkerEscapes, body, percentValue, false))
 		}
 	}
 	return spellings, true
@@ -217,18 +214,16 @@ func markerBody(placeholder string) (string, bool) {
 }
 
 var (
-	htmlMarkerOpens     = []string{"&lt;", "&#60;", "&#x3c;"}
-	htmlMarkerCloses    = []string{"&gt;", "&#62;", "&#x3e;"}
-	unicodeMarkerOpens  = []string{`\u003c`}
-	unicodeMarkerCloses = []string{`\u003e`}
-	percentMarkerOpens  = []string{"%3c"}
-	percentMarkerCloses = []string{"%3e"}
+	htmlMarkerEscapes = newMarkerEscapes(
+		[]string{"&lt;", "&#60;", "&#x3c;"}, []string{"&gt;", "&#62;", "&#x3e;"})
+	unicodeMarkerEscapes = newMarkerEscapes([]string{`\u003c`}, []string{`\u003e`})
+	percentMarkerEscapes = newMarkerEscapes([]string{"%3c"}, []string{"%3e"})
 )
 
 func literalSpelling(placeholder, value string) restoreSpelling {
 	return restoreSpelling{
-		starts: []byte{placeholder[0]},
-		value:  value,
+		prefixes: []string{placeholder},
+		value:    value,
 		match: func(input string, at int, final bool) (int, matchStatus) {
 			return matchLiteral(input, at, placeholder, false, final)
 		},
@@ -241,8 +236,9 @@ func literalSpelling(placeholder, value string) restoreSpelling {
 // from matching inside a longer identifier.
 func bareMarkerSpelling(body, value string) restoreSpelling {
 	return restoreSpelling{
-		starts: []byte{body[0]},
-		value:  value,
+		prefixes: []string{body},
+		guard:    restoreWordStart,
+		value:    value,
 		match: func(input string, at int, final bool) (int, matchStatus) {
 			if at > 0 && isASCIIAlphanumeric(input[at-1]) {
 				return 0, matchNone
@@ -258,10 +254,20 @@ func bareMarkerSpelling(body, value string) restoreSpelling {
 
 // escapedMarkerSpelling matches a marker whose angle brackets were escaped for
 // HTML, JSON or a URL. Escape sequences are case-insensitive; the body is not.
-func escapedMarkerSpelling(opens []string, body string, closes []string, value string, backslash bool) restoreSpelling {
+func escapedMarkerSpelling(escapes markerEscapes, body, value string, backslash bool) restoreSpelling {
+	guard := restoreUnrestricted
+	if backslash {
+		guard = restoreUnescapedBackslash
+	}
+	prefixes := make([]string, len(escapes.prefixes))
+	for index, prefix := range escapes.prefixes {
+		prefixes[index] = prefix + body
+	}
+	opens, closes := escapes.opens, escapes.closes
 	return restoreSpelling{
-		starts: []byte{opens[0][0]},
-		value:  value,
+		prefixes: prefixes,
+		guard:    guard,
+		value:    value,
 		match: func(input string, at int, final bool) (int, matchStatus) {
 			// An escape preceded by an odd run of backslashes is itself escaped,
 			// so it is literal text rather than the bracket it spells.
