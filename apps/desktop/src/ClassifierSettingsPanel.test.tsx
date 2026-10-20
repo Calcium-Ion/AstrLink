@@ -15,9 +15,9 @@ vi.mock("./bridge", () => bridge);
 import {
   classifierPromptProblem,
   classifierProtocolPresets,
-  defaultClassifierPrompt,
+  defaultClassifierPromptFor,
   defaultClassifierSettings,
-  legacyDefaultClassifierPrompt,
+  legacyDefaultClassifierPrompts,
   type ClassifierDimension,
   type ClassifierSettings,
 } from "./classifier-settings-model";
@@ -716,7 +716,7 @@ describe("classifier settings panel", () => {
         container.querySelector<HTMLTextAreaElement>(
           'textarea[aria-label="分类器提示词"]',
         )!;
-      expect(prompt().value).toBe(defaultClassifierPrompt);
+      expect(prompt().value).toBe(defaultClassifierPromptFor([]));
       expect(container.textContent).toContain("提示词使用默认");
       expect(button("恢复默认提示词").disabled).toBe(true);
 
@@ -724,7 +724,7 @@ describe("classifier settings panel", () => {
       expect(container.textContent).toContain("提示词已自定义");
       await click(button("恢复默认提示词"));
 
-      expect(prompt().value).toBe(defaultClassifierPrompt);
+      expect(prompt().value).toBe(defaultClassifierPromptFor([]));
       expect(dirty.at(-1)).toBe(false);
     });
 
@@ -733,7 +733,7 @@ describe("classifier settings panel", () => {
         settings({
           inline: {
             ...defaultClassifierSettings().inline,
-            prompt: legacyDefaultClassifierPrompt,
+            prompt: legacyDefaultClassifierPrompts[0],
           },
         }),
       );
@@ -741,7 +741,7 @@ describe("classifier settings panel", () => {
       const prompt = container.querySelector<HTMLTextAreaElement>(
         'textarea[aria-label="分类器提示词"]',
       )!;
-      expect(prompt.value).toBe(defaultClassifierPrompt);
+      expect(prompt.value).toBe(defaultClassifierPromptFor([]));
       expect(container.textContent).toContain("提示词使用默认");
       expect(dirty.at(-1)).toBe(false);
 
@@ -752,7 +752,7 @@ describe("classifier settings panel", () => {
         .calls[0][0] as ClassifierSettings;
       expect(submitted.inline.prompt).toBe("");
       expect(submitted.inline.low_confidence_threshold).toBe(0.6);
-      expect(prompt.value).toBe(defaultClassifierPrompt);
+      expect(prompt.value).toBe(defaultClassifierPromptFor([]));
       expect(dirty.at(-1)).toBe(false);
     });
 
@@ -820,6 +820,31 @@ describe("classifier settings panel", () => {
       expect(prompt().selectionStart).toBe("Pick {{dim.topic.options}}".length);
     });
 
+    it("writes every dimension into the default prompt and keeps it following them", async () => {
+      await render();
+      const prompt = () =>
+        container.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="分类器提示词"]',
+        )!;
+      expect(prompt().value).toBe(defaultClassifierPromptFor([]));
+
+      await add("添加维度");
+      await type(input("维度名"), "topic");
+      expect(prompt().value).toBe(
+        defaultClassifierPromptFor([{ name: "topic", options: [] }]),
+      );
+      expect(prompt().value).toContain(
+        "{{dim.topic.name}}: {{dim.topic.description}}\nOptions: {{dim.topic.options}}",
+      );
+      expect(container.textContent).toContain("提示词使用默认");
+
+      // A prompt the user wrote stays as written when the dimensions change.
+      await type(prompt(), "My own prompt");
+      await type(input("维度名"), "subject");
+      expect(prompt().value).toBe("My own prompt");
+      expect(container.textContent).toContain("提示词已自定义");
+    });
+
     it("appends a placeholder after a space when the prompt has no caret yet", async () => {
       await render();
       const prompt = container.querySelector<HTMLTextAreaElement>(
@@ -843,7 +868,7 @@ describe("classifier settings panel", () => {
       await settleClosedLayer();
 
       expect(prompt.value).toBe(
-        `${defaultClassifierPrompt} {{dim.task_type.description}}`,
+        `${defaultClassifierPromptFor([])} {{dim.task_type.description}}`,
       );
     });
 

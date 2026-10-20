@@ -51,8 +51,8 @@ import {
   classifierProtocols,
   classifierTimeoutMaxMS,
   classifierTimeoutMinMS,
-  defaultClassifierPrompt,
-  legacyDefaultClassifierPrompt,
+  defaultClassifierPromptFor,
+  legacyDefaultClassifierPrompts,
   linkClassifierProtocol,
   type ClassifierDimension,
   type ClassifierProtocol,
@@ -218,21 +218,25 @@ function PromptPlaceholderMenu({
 
 /**
  * An empty stored prompt means "use the built-in one". Show that text instead
- * of a blank box so the user edits a working instruction, placeholders
- * included. Both draft and baseline get it, so loading alone never marks the
+ * of a blank box so the user edits a working instruction that writes out every
+ * dimension. Both draft and baseline get it, so loading alone never marks the
  * tab dirty; saving it unchanged stores the empty value again. A stored copy
- * of the previous default also means the default, as in Core.
+ * of an earlier default also means the default, as in Core.
  */
 function withDefaultPrompt(settings: ClassifierSettings): ClassifierSettings {
-  const withDimensions = { ...settings, dimensions: settings.dimensions ?? [] };
+  const dimensions = settings.dimensions ?? [];
+  const withDimensions = { ...settings, dimensions };
   if (
     settings.inline.prompt.trim() !== "" &&
-    settings.inline.prompt !== legacyDefaultClassifierPrompt
+    !legacyDefaultClassifierPrompts.includes(settings.inline.prompt)
   )
     return withDimensions;
   return {
     ...withDimensions,
-    inline: { ...settings.inline, prompt: defaultClassifierPrompt },
+    inline: {
+      ...settings.inline,
+      prompt: defaultClassifierPromptFor(dimensions),
+    },
   };
 }
 
@@ -574,11 +578,18 @@ export function ClassifierSettingsPanel({
   ): void => {
     setShowIssues(false);
     setError(null);
-    setDraft((current) =>
-      current === null
-        ? current
-        : { ...current, dimensions: update(current.dimensions ?? []) },
-    );
+    setDraft((current) => {
+      if (current === null) return current;
+      const dimensions = update(current.dimensions ?? []);
+      // The default prompt writes out every dimension, so it follows them; a
+      // prompt the user wrote stays as written.
+      const prompt =
+        current.inline.prompt ===
+        defaultClassifierPromptFor(current.dimensions ?? [])
+          ? defaultClassifierPromptFor(dimensions)
+          : current.inline.prompt;
+      return { ...current, dimensions, inline: { ...current.inline, prompt } };
+    });
   };
 
   const patchLabels = (next: string[]): void => {
@@ -625,7 +636,8 @@ export function ClassifierSettingsPanel({
         // The default prompt is stored empty, so it keeps following the
         // built-in one instead of freezing today's wording.
         const result = await updateClassifierSettings(
-          submitted.inline.prompt === defaultClassifierPrompt
+          submitted.inline.prompt ===
+            defaultClassifierPromptFor(submitted.dimensions ?? [])
             ? { ...submitted, inline: { ...submitted.inline, prompt: "" } }
             : submitted,
         );
@@ -1050,7 +1062,8 @@ export function ClassifierSettingsPanel({
   };
 
   const promptIsDefault =
-    draft !== null && draft.inline.prompt === defaultClassifierPrompt;
+    draft !== null &&
+    draft.inline.prompt === defaultClassifierPromptFor(draft.dimensions ?? []);
   // Every dimension a placeholder can name: the built-in task_type, then the
   // custom ones that already have a name.
   const placeholderDimensions = [
@@ -1564,7 +1577,9 @@ export function ClassifierSettingsPanel({
                     patch({
                       inline: {
                         ...draft.inline,
-                        prompt: defaultClassifierPrompt,
+                        prompt: defaultClassifierPromptFor(
+                          draft.dimensions ?? [],
+                        ),
                       },
                     });
                   }}

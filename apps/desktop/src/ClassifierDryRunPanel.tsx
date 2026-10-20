@@ -190,6 +190,18 @@ function ClassifierAnswers({ result }: { result: ClassifierDryRunResult }) {
           ))}
         </HelpDisclosure>
       )}
+      {result.instruction === null ? null : (
+        // What the classifier was told, placeholders rendered, so what the
+        // prompt says can be checked against what was sent.
+        <HelpDisclosure title={t("dryRunTab.instruction")}>
+          <pre
+            className="m-0 max-h-60 overflow-auto rounded-sm border border-border bg-muted p-2 text-xs break-words whitespace-pre-wrap text-foreground"
+            data-classifier-dry-run-instruction
+          >
+            {result.instruction}
+          </pre>
+        </HelpDisclosure>
+      )}
       {result.sanitized_preview === "" ? null : (
         <HelpDisclosure title={t("dryRunTab.sanitized")}>
           <pre className="m-0 max-h-40 overflow-auto rounded-sm border border-border bg-muted p-2 text-xs whitespace-pre-wrap text-foreground">

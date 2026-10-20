@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
 	"github.com/QuantumNous/astrlink/core/internal/autoclassifier/cloud"
+	"github.com/QuantumNous/astrlink/core/internal/classifieroutput"
 	"github.com/QuantumNous/astrlink/core/internal/modelrouting"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
@@ -201,10 +202,14 @@ type classifierDryRunResponse struct {
 	DurationMS     int                             `json:"duration_ms"`
 	// TimeoutMS is the classifier timeout this run used, the one the
 	// classifier settings give.
-	TimeoutMS        int                                     `json:"timeout_ms,omitempty"`
-	SanitizedPreview string                                  `json:"sanitized_preview,omitempty"`
-	Decision         *classifierDryRunDecision               `json:"decision,omitempty"`
-	Fields           []contract.ModelRoutingFieldObservation `json:"fields,omitempty"`
+	TimeoutMS        int    `json:"timeout_ms,omitempty"`
+	SanitizedPreview string `json:"sanitized_preview,omitempty"`
+	// Instruction is what the classifier was told, placeholders rendered: an
+	// existing model's whole system instruction, or the instructions of a
+	// cloud service's task_type question. Empty when nothing was called.
+	Instruction string                                  `json:"instruction,omitempty"`
+	Decision    *classifierDryRunDecision               `json:"decision,omitempty"`
+	Fields      []contract.ModelRoutingFieldObservation `json:"fields,omitempty"`
 	// Rules is every rule in the group with its own verdict, in evaluation
 	// order, in the same shape a request record keeps. The selection above
 	// reports only the winner, which cannot answer "why did the rule I wrote
@@ -327,6 +332,7 @@ func (handler *Handler) classifierDryRun(writer http.ResponseWriter, request *ht
 	}
 	if secret, ok := handler.dryRunClassifierKey(ctx, settings); ok {
 		response.TimeoutMS = timeoutMS
+		response.Instruction = plan.Prompt
 		started := time.Now()
 		outcome := cloud.Classify(ctx, nil, cloud.Input{
 			Protocol:   cloud.Protocol(plan.Protocol),
@@ -368,6 +374,8 @@ func (handler *Handler) classifierDryRun(writer http.ResponseWriter, request *ht
 		// An existing gateway model classifies through the code a live request
 		// runs, so instruction, parsing and failure codes cannot drift apart.
 		response.TimeoutMS = timeoutMS
+		// Built by the function the live call uses, from the same plan.
+		response.Instruction, _ = classifieroutput.ExistingModelInstruction(plan)
 		started := time.Now()
 		taskType, response.Confidence = handler.modelClassifier.ExistingModelTaskType(ctx, sanitized, group, settings)
 		response.DurationMS = int(time.Since(started).Milliseconds())

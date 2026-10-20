@@ -122,6 +122,7 @@ function classified(
     duration_ms: 42,
     timeout_ms: 1000,
     sanitized_preview: "write a parser for [EMAIL_1]",
+    instruction: null,
     decision: null,
     // 桥接层用 parseClassifierDryRunResult 解析响应，所以这些键在这里总是数组。
     fields: [],
@@ -536,6 +537,23 @@ describe("dry run tab", () => {
     // Nothing was called: the header shows neither the call nor a duration.
     expect(container.textContent).not.toContain("会调用一次分类器");
     expect(container.textContent).not.toContain("0 ms");
+  });
+
+  it("shows the instruction the classifier received", async () => {
+    bridge.classifierDryRun.mockResolvedValue(
+      classified({
+        instruction:
+          "Classify the text.\n\ntopic: 编程任务主题\nOptions: 前端 | 后端",
+      }),
+    );
+    await render();
+    await runOnce();
+
+    expect(container.textContent).toContain("分类器收到的指令");
+    expect(
+      container.querySelector("[data-classifier-dry-run-instruction]")
+        ?.textContent,
+    ).toBe("Classify the text.\n\ntopic: 编程任务主题\nOptions: 前端 | 后端");
   });
 
   it("explains a run the privacy check stopped before any rule", async () => {

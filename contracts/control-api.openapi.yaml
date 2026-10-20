@@ -5026,7 +5026,7 @@ components:
           {
             type: string,
             maxLength: 4096,
-            description: "Instructions; empty uses the built-in prompt. Placeholders: {{dim.<name>}} for a whole dimension, {{dim.<name>.name}}, {{dim.<name>.description}} and {{dim.<name>.options}} for one part, task_type included, and the older {{labels}} for the task_type labels. An existing-model classifier gets every dimension's description and the answer format after it.",
+            description: "Instructions; empty uses the built-in prompt, which writes out every dimension with its placeholders and follows the dimensions as they change. Placeholders: {{dim.<name>}} for a whole dimension, {{dim.<name>.name}}, {{dim.<name>.description}} and {{dim.<name>.options}} for one part, task_type included, and the older {{labels}} for the task_type labels. An existing-model classifier gets the answer format after it, with a description of every dimension the prompt leaves out.",
           }
         timeout_ms:
           {
@@ -5243,6 +5243,11 @@ components:
           {
             type: string,
             description: "Bounded preview of the sanitized text the classifier would receive.",
+          }
+        instruction:
+          {
+            type: string,
+            description: "What the classifier was told, placeholders rendered: an existing model's whole system instruction, or the instructions of a cloud service's task_type question. Absent when no classifier was called.",
           }
         decision:
           type: object
