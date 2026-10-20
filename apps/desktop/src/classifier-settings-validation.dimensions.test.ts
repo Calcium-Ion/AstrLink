@@ -84,6 +84,16 @@ describe("classifier dimension validation", () => {
     expect(problems([dimension({ name: "my topic" })])).toEqual([]);
   });
 
+  it("rejects a name ending in a placeholder part, as Go does", () => {
+    // {{dim.topic.options}} addresses a part of topic, so a dimension named
+    // "topic.options" could never be addressed as a whole.
+    for (const name of ["topic.name", "topic.description", "topic.options"]) {
+      expect(problems([dimension({ name })])).toEqual(["nameFieldSuffix"]);
+    }
+    expect(problems([dimension({ name: "options" })])).toEqual([]);
+    expect(problems([dimension({ name: "a. options" })])).toEqual([]);
+  });
+
   it("rejects a name that a built-in would shadow", () => {
     expect(problems([dimension({ name: "task_type" })])).toEqual([
       "nameReservedTaskType",

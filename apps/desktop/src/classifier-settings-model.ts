@@ -766,17 +766,46 @@ export function classifierPlaceholder(
   return `{{dim.${dimension}${part === "" ? "" : `.${part}`}}}`;
 }
 
+/** A prompt's `{{…}}` tokens, each running to the next `}}`, as Go reads them. */
+function classifierPromptTokens(prompt: string): string[] {
+  const tokens: string[] = [];
+  for (let index = 0; ; ) {
+    const open = prompt.indexOf("{{", index);
+    if (open < 0) return tokens;
+    const close = prompt.indexOf("}}", open);
+    if (close < 0) return tokens;
+    tokens.push(prompt.slice(open, close + 2));
+    index = close + 2;
+  }
+}
+
+/**
+ * Whether a token has the shape `{{dim.<name>}}` or `{{dim.<name>.<part>}}`,
+ * mirroring Go `dimensionToken`: the `{{dim.` prefix is exact, and only the
+ * name inside it is trimmed.
+ */
+function isClassifierDimensionToken(token: string): boolean {
+  if (!token.startsWith("{{dim.") || !token.endsWith("}}")) return false;
+  const inner = token.slice("{{dim.".length, -"}}".length);
+  const trimmed = inner.trim();
+  const part = classifierPlaceholderParts.find(
+    (candidate) => candidate !== "" && trimmed.endsWith(`.${candidate}`),
+  );
+  const name = (
+    part === undefined ? inner : trimmed.slice(0, -(part.length + 1))
+  ).trim();
+  return name !== "" && !name.includes("{") && !name.includes("}");
+}
+
 /**
  * Placeholders a prompt may use, mirroring Go `ValidateClassifierPrompt`:
- * `{{labels}}`, `{{dim.<name>}}` and `{{dim.<name>.<part>}}`. Anything else is
- * rejected before saving. Whether a referenced dimension actually exists is
- * checked by Core on save.
+ * `{{labels}}` exactly, `{{dim.<name>}}` and `{{dim.<name>.<part>}}`. Anything
+ * else is rejected before saving. Whether a referenced dimension actually
+ * exists is checked by Core on save.
  */
 export function classifierPromptProblem(prompt: string): string | null {
-  for (const match of prompt.matchAll(/\{\{([^}]*)\}\}/g)) {
-    const token = match[1].trim();
-    if (token === "labels") continue;
-    if (token.startsWith("dim.") && token.slice(4).trim() !== "") continue;
+  for (const token of classifierPromptTokens(prompt)) {
+    if (token === "{{labels}}" || isClassifierDimensionToken(token)) continue;
     return "unknownPlaceholder";
   }
   // A single unmatched brace would render literally; surface it as a typo.

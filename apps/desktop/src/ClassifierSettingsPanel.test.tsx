@@ -150,10 +150,17 @@ async function flush(): Promise<void> {
  * popover has handed focus back (see the panel's `openAfterClose`).
  */
 async function settle(): Promise<void> {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settleClosedLayer();
+  await settleClosedLayer();
+}
+
+/** Opens the `?` with this name and returns what it explains. */
+async function helpText(label: string): Promise<string> {
+  await click(button(label));
+  return (
+    [...document.querySelectorAll('[data-slot="popover-content"]')].at(-1)
+      ?.textContent ?? ""
+  );
 }
 
 async function add(label: string): Promise<void> {
@@ -620,7 +627,10 @@ describe("classifier settings panel", () => {
 
       expect(button("添加维度").disabled).toBe(true);
       expect(container.textContent).toContain("自定义 5 / 5");
-      expect(container.textContent).toContain("最多 5 个自定义维度");
+      expect(container.textContent).not.toContain("最多 5 个自定义维度");
+      expect(await helpText("自定义维度的上限")).toContain(
+        "最多 5 个自定义维度",
+      );
     });
   });
 
@@ -690,7 +700,9 @@ describe("classifier settings panel", () => {
       await render();
 
       expect(button("给「任务类型」添加选项").disabled).toBe(true);
-      expect(container.textContent).toContain("请先新建一个路由组");
+      expect(await helpText("关于任务类型的选项")).toContain(
+        "请先新建一个路由组",
+      );
     });
 
     it("says when the groups disagree on their options", async () => {
@@ -705,7 +717,7 @@ describe("classifier settings panel", () => {
       expect(
         container.querySelector('[data-classifier-option="writing"]'),
       ).not.toBeNull();
-      expect(container.textContent).toContain("目前不一致");
+      expect(await helpText("关于任务类型的选项")).toContain("目前不一致");
     });
   });
 
@@ -884,6 +896,21 @@ describe("classifier settings panel", () => {
       expect(classifierPromptProblem("Pick {{bogus}}")).toBe(
         "unknownPlaceholder",
       );
+    });
+
+    it("reads placeholders exactly as Core does", () => {
+      // Only the name inside {{dim.…}} is trimmed; the rest is exact.
+      expect(classifierPromptProblem("Pick {{dim. topic }}")).toBe(null);
+      for (const prompt of [
+        "Pick {{ labels }}",
+        "Pick {{ dim.topic }}",
+        "Pick {{dim.}}",
+        "Pick {{a}b}}",
+      ]) {
+        expect(classifierPromptProblem(prompt), prompt).toBe(
+          "unknownPlaceholder",
+        );
+      }
     });
 
     it("edits the timeout budget of the chosen source", async () => {

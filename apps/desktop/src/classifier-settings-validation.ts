@@ -4,6 +4,7 @@ import {
   classifierExistingModelTimeoutMaxMS,
   classifierExistingModelTimeoutMinMS,
   classifierMaxCustomDimensions,
+  classifierPlaceholderParts,
   classifierPromptProblem,
   classifierTimeoutMaxMS,
   type ClassifierDimension,
@@ -145,6 +146,14 @@ export function calculateClassifierDimensionIssues(
       issues.push({ index, target: "name", problem: "nameTooLong" });
     } else if (dimension.name.includes("{") || dimension.name.includes("}")) {
       issues.push({ index, target: "name", problem: "nameBraces" });
+    } else if (
+      classifierPlaceholderParts.some(
+        (part) => part !== "" && name.endsWith(`.${part}`),
+      )
+    ) {
+      // {{dim.<name>.options}} and its siblings address one part of a
+      // dimension, so such a name would read as a part of another one.
+      issues.push({ index, target: "name", problem: "nameFieldSuffix" });
     } else if (dimension.name !== name) {
       issues.push({ index, target: "name", problem: "nameWhitespace" });
     } else if (name === "task_type") {

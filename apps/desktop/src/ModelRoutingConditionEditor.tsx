@@ -1,5 +1,6 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
+import { HelpPopover } from "@/components/HelpPopover";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { Brain, ChevronDown, Plus } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -68,7 +69,16 @@ function EditorFooter({
   );
 }
 
-function EditorHeader({ field, custom }: { field: string; custom: boolean }) {
+/** 浮层顶部：字段名，以及这个条件怎么取值的说明（收在 ? 里）。 */
+function EditorHeader({
+  field,
+  custom,
+  help,
+}: {
+  field: string;
+  custom: boolean;
+  help?: string;
+}) {
   const t = useT();
   const classifier = isClassifierField(field);
   return (
@@ -83,6 +93,11 @@ function EditorHeader({ field, custom }: { field: string; custom: boolean }) {
         <span className={custom ? "truncate font-mono" : "truncate"}>
           {routingFieldName(field)}
         </span>
+        {help ? (
+          <HelpPopover label={t("routingConditions.editor.helpLabel")}>
+            {help}
+          </HelpPopover>
+        ) : null}
       </span>
       {classifier ? (
         <span className="shrink-0 text-micro text-muted-foreground">
@@ -116,6 +131,131 @@ function parseCount(text: string): number | undefined | null {
 }
 
 /**
+ * 数量条件的编辑器。模式是独立状态，不从边界推出来：清空输入框时边界暂时为空，
+ * 若按边界推，「不超过」会跳回「至少」，接着输入的数字写进下界；「介于」清空左框
+ * 会变成「不超过」，正在输入的框被卸载。只有条件带着当前模式显示不了的边界时
+ * （比如放弃修改换回了别的边界），才改按边界显示。
+ */
+function CountPhraseEditor({
+  phrase,
+  header,
+  footer,
+  disabled,
+  onChange,
+}: {
+  phrase: Extract<RoutingPhrase, { kind: "count" }>;
+  header: ReactNode;
+  footer: ReactNode;
+  disabled: boolean;
+  onChange: (phrase: RoutingPhrase) => void;
+}) {
+  const t = useT();
+  const [chosen, setChosen] = useState<CountMode>(() => countMode(phrase));
+  const hidden =
+    (chosen === "atLeast" && phrase.max !== undefined) ||
+    (chosen === "atMost" && phrase.min !== undefined);
+  const mode = hidden ? countMode(phrase) : chosen;
+  const tokens = phrase.field === "estimated_input_context_tokens";
+  const setMode = (next: CountMode) => {
+    setChosen(next);
+    const anchor = phrase.min ?? phrase.max ?? 0;
+    if (next === "atLeast")
+      onChange({ ...phrase, min: anchor, max: undefined });
+    else if (next === "atMost")
+      onChange({ ...phrase, min: undefined, max: phrase.max ?? anchor });
+    else
+      onChange({
+        ...phrase,
+        min: phrase.min ?? 0,
+        max: phrase.max ?? Math.max(anchor, phrase.min ?? 0),
+      });
+  };
+  const bound = (side: "min" | "max") => (
+    <Input
+      type="number"
+      min={0}
+      step={1}
+      inputMode="numeric"
+      className="h-8 w-28 tabular-nums"
+      aria-label={t(
+        side === "min"
+          ? "routingConditions.editor.min"
+          : "routingConditions.editor.max",
+      )}
+      disabled={disabled}
+      value={phrase[side] === undefined ? "" : String(phrase[side])}
+      onChange={(event) => {
+        const parsed = parseCount(event.target.value);
+        if (parsed === null) return;
+        onChange({ ...phrase, [side]: parsed });
+      }}
+    />
+  );
+  const single = mode === "atMost" ? "max" : "min";
+  const shown = phrase[single];
+  return (
+    <>
+      {header}
+      <SegmentedControl
+        label={t("routingConditions.editor.countMode")}
+        value={mode}
+        disabled={disabled}
+        options={(["atLeast", "atMost", "between"] as const).map((value) => ({
+          value,
+          label: t(`routingConditions.editor.${value}`),
+        }))}
+        onValueChange={setMode}
+      />
+      {mode === "between" ? (
+        <div className="flex items-center gap-2">
+          {bound("min")}
+          <span className="text-muted-foreground">–</span>
+          {bound("max")}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          {bound(single)}
+          {tokens && shown !== undefined && shown >= 1_000 ? (
+            <span className="text-xs text-muted-foreground">
+              {t("routingConditions.editor.approx", {
+                value: formatRoutingCount(phrase.field, shown),
+              })}
+            </span>
+          ) : null}
+        </div>
+      )}
+      {tokens && mode !== "between" ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-micro text-muted-foreground">
+            {t("routingConditions.editor.common")}
+          </span>
+          {tokenPresets.map((preset) => (
+            <Button
+              key={preset}
+              type="button"
+              size="xs"
+              variant={shown === preset ? "secondary" : "outline"}
+              disabled={disabled}
+              onClick={() => onChange({ ...phrase, [single]: preset })}
+            >
+              {formatRoutingCount(phrase.field, preset)}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      {phrase.min !== undefined &&
+      phrase.max !== undefined &&
+      phrase.min > phrase.max ? (
+        <p role="alert" className="text-xs text-danger-foreground">
+          {t("routingConditions.editor.rangeError")}
+        </p>
+      ) : null}
+      {footer}
+    </>
+  );
+}
+
+/**
  * 一个条件的编辑器，放在条件短语的浮层里。五类条件各有一种写法：
  * 选项勾选、两段切换、数量边界、关键词、时间段。
  */
@@ -142,7 +282,25 @@ export function RoutingPhraseEditor({
   const custom = dimensions.some(
     (dimension) => dimension.name === phrase.field,
   );
-  const header = <EditorHeader field={phrase.field} custom={custom} />;
+  const help =
+    phrase.kind === "options"
+      ? isClassifierField(phrase.field)
+        ? t("routingConditions.editor.manageOptions")
+        : undefined
+      : phrase.kind === "boolean"
+        ? t("routingConditions.editor.localNote")
+        : phrase.kind === "count"
+          ? phrase.field === "estimated_input_context_tokens"
+            ? t("routingConditions.editor.tokenNote")
+            : undefined
+          : phrase.kind === "keywords"
+            ? t("routingConditions.editor.keywordsNote", {
+                max: maxModelRoutingKeywords,
+              })
+            : t("routingConditions.editor.timeNote");
+  const header = (
+    <EditorHeader field={phrase.field} custom={custom} help={help} />
+  );
   const footer = <EditorFooter onRemove={onRemove} disabled={disabled} />;
 
   switch (phrase.kind) {
@@ -222,20 +380,15 @@ export function RoutingPhraseEditor({
               })}
             </div>
           )}
-          {isClassifierField(phrase.field) ? (
-            <p className="flex flex-wrap items-center gap-x-1.5 text-micro text-muted-foreground">
-              {t("routingConditions.editor.manageOptions")}
-              {onManageOptions ? (
-                <Button
-                  type="button"
-                  variant="link"
-                  className="h-auto p-0 text-micro text-primary"
-                  onClick={onManageOptions}
-                >
-                  {t("routingConditions.editor.manageOptionsAction")}
-                </Button>
-              ) : null}
-            </p>
+          {isClassifierField(phrase.field) && onManageOptions ? (
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto justify-self-start p-0 text-xs text-primary"
+              onClick={onManageOptions}
+            >
+              {t("routingConditions.editor.manageOptionsAction")}
+            </Button>
           ) : null}
           {footer}
         </>
@@ -257,119 +410,19 @@ export function RoutingPhraseEditor({
               onChange({ ...phrase, value: value === "true" })
             }
           />
-          <p className="text-micro text-muted-foreground">
-            {t("routingConditions.editor.localNote")}
-          </p>
           {footer}
         </>
       );
-    case "count": {
-      const mode = countMode(phrase);
-      const tokens = phrase.field === "estimated_input_context_tokens";
-      const setMode = (next: CountMode) => {
-        const anchor = phrase.min ?? phrase.max ?? 0;
-        if (next === "atLeast")
-          onChange({ ...phrase, min: anchor, max: undefined });
-        else if (next === "atMost")
-          onChange({ ...phrase, min: undefined, max: phrase.max ?? anchor });
-        else
-          onChange({
-            ...phrase,
-            min: phrase.min ?? 0,
-            max: phrase.max ?? Math.max(anchor, phrase.min ?? 0),
-          });
-      };
-      const bound = (side: "min" | "max") => (
-        <Input
-          type="number"
-          min={0}
-          step={1}
-          inputMode="numeric"
-          className="h-8 w-28 tabular-nums"
-          aria-label={t(
-            side === "min"
-              ? "routingConditions.editor.min"
-              : "routingConditions.editor.max",
-          )}
+    case "count":
+      return (
+        <CountPhraseEditor
+          phrase={phrase}
+          header={header}
+          footer={footer}
           disabled={disabled}
-          value={phrase[side] === undefined ? "" : String(phrase[side])}
-          onChange={(event) => {
-            const parsed = parseCount(event.target.value);
-            if (parsed === null) return;
-            onChange({ ...phrase, [side]: parsed });
-          }}
+          onChange={onChange}
         />
       );
-      const single = mode === "atMost" ? "max" : "min";
-      const shown = phrase[single];
-      return (
-        <>
-          {header}
-          <SegmentedControl
-            label={t("routingConditions.editor.countMode")}
-            value={mode}
-            disabled={disabled}
-            options={(["atLeast", "atMost", "between"] as const).map(
-              (value) => ({
-                value,
-                label: t(`routingConditions.editor.${value}`),
-              }),
-            )}
-            onValueChange={setMode}
-          />
-          {mode === "between" ? (
-            <div className="flex items-center gap-2">
-              {bound("min")}
-              <span className="text-muted-foreground">–</span>
-              {bound("max")}
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              {bound(single)}
-              {tokens && shown !== undefined && shown >= 1_000 ? (
-                <span className="text-xs text-muted-foreground">
-                  {t("routingConditions.editor.approx", {
-                    value: formatRoutingCount(phrase.field, shown),
-                  })}
-                </span>
-              ) : null}
-            </div>
-          )}
-          {tokens && mode !== "between" ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-micro text-muted-foreground">
-                {t("routingConditions.editor.common")}
-              </span>
-              {tokenPresets.map((preset) => (
-                <Button
-                  key={preset}
-                  type="button"
-                  size="xs"
-                  variant={shown === preset ? "secondary" : "outline"}
-                  disabled={disabled}
-                  onClick={() => onChange({ ...phrase, [single]: preset })}
-                >
-                  {formatRoutingCount(phrase.field, preset)}
-                </Button>
-              ))}
-            </div>
-          ) : null}
-          {phrase.min !== undefined &&
-          phrase.max !== undefined &&
-          phrase.min > phrase.max ? (
-            <p role="alert" className="text-xs text-danger-foreground">
-              {t("routingConditions.editor.rangeError")}
-            </p>
-          ) : null}
-          {tokens ? (
-            <p className="text-micro text-muted-foreground">
-              {t("routingConditions.editor.tokenNote")}
-            </p>
-          ) : null}
-          {footer}
-        </>
-      );
-    }
     case "keywords":
       return (
         <>
@@ -416,11 +469,6 @@ export function RoutingPhraseEditor({
               })
             }
           />
-          <p className="text-micro text-muted-foreground">
-            {t("routingConditions.editor.keywordsNote", {
-              max: maxModelRoutingKeywords,
-            })}
-          </p>
           {routingPhraseIssue(phrase) === "tooLong" ? (
             <p role="alert" className="text-xs text-danger-foreground">
               {t("routingConditions.editor.keywordTooLong", {
@@ -474,9 +522,6 @@ export function RoutingPhraseEditor({
               {t("routingConditions.editor.singleInstant")}
             </p>
           ) : null}
-          <p className="text-micro text-muted-foreground">
-            {t("routingConditions.editor.timeNote")}
-          </p>
           {footer}
         </>
       );

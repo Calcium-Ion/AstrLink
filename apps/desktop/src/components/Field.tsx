@@ -15,7 +15,8 @@ import { cn } from "@/lib/utils";
  * `tooltip` moves an explanation into a `?` beside the label instead of a text
  * block under the control. Hints that push a control row taller than its
  * neighbours are what made the dense grids look ragged, so a field that takes
- * `tooltip` should drop its `hint`.
+ * `tooltip` should drop its `hint`. Set `inDialog` when the field sits in a
+ * dialog, so its `?` opens above the dialog rather than beneath it.
  */
 export function Field({
   children,
@@ -23,6 +24,7 @@ export function Field({
   group = false,
   hint,
   htmlFor,
+  inDialog = false,
   label,
   tooltip,
   tooltipLabel,
@@ -32,6 +34,7 @@ export function Field({
   group?: boolean;
   hint?: ReactNode;
   htmlFor?: string;
+  inDialog?: boolean;
   label: ReactNode;
   tooltip?: ReactNode;
   /** Accessible name of the `?` trigger; defaults to the label text. */
@@ -50,6 +53,7 @@ export function Field({
         {tooltip ? (
           <HelpPopover
             label={tooltipLabel ?? (typeof label === "string" ? label : "")}
+            inDialog={inDialog}
           >
             {tooltip}
           </HelpPopover>

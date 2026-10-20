@@ -247,13 +247,13 @@ function RuleVerdictRow({
         {rule ? (
           <ModelRoutingPhraseTags rule={rule} />
         ) : (
-          <span className="font-mono text-text-secondary">
-            {verdict.rule_id}
+          <span className="text-text-secondary">
+            {t("routingProcess.removedRule")}
           </span>
         )}
         <span className="text-muted-foreground">→</span>
         <span className={hit ? "font-semibold" : undefined}>
-          {model || verdict.target_member_id}
+          {model || t("routingProcess.removedMember")}
         </span>
         {reason ? (
           <span

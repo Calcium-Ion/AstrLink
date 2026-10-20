@@ -155,7 +155,7 @@ export function RequestRoutingProcess({
   const service = services.find(
     (item) => item.id === decision.member_service_id,
   );
-  const provider = service?.name ?? decision.member_service_id;
+  const provider = service?.name ?? t("binding.removedService");
   const model = decision.member_model;
   const rules = recordRuleVerdicts(decision);
   const dimensions = recordDimensions(decision);
@@ -197,11 +197,7 @@ export function RequestRoutingProcess({
       (rules.findIndex((rule) => rule.selected) + 1 || null);
     summary =
       index === null
-        ? t("routingProcess.chosenByRuleId", {
-            model,
-            provider,
-            rule: decision.rule_id ?? "",
-          })
+        ? t("routingProcess.chosenByUnlistedRule", { model, provider })
         : t("routingProcess.chosenByRule", { model, provider, index });
   }
   if (reset && tone !== "error") summary = `${summary}${reset}`;

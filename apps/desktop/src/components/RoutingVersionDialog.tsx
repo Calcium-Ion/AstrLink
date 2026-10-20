@@ -40,7 +40,9 @@ function VersionRules({
       <span className="inline-flex min-w-0 items-center gap-1.5">
         {service ? <ServiceKindIcon kind={service.kind} size={14} /> : null}
         <span className="truncate">
-          {member ? member.model : memberModel(group, memberID) || memberID}
+          {member
+            ? member.model
+            : memberModel(group, memberID) || t("routingProcess.removedMember")}
         </span>
       </span>
     );

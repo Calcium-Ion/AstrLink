@@ -23,7 +23,7 @@ function gapText(gap: RoutingFormatGap, t: ReturnType<typeof useT>): string {
   ];
   return [
     gap.member.model,
-    gap.service?.name ?? gap.member.service_id,
+    gap.service?.name ?? t("binding.removedService"),
     ...places,
   ].join(" · ");
 }

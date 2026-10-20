@@ -320,7 +320,7 @@ function outcomeText(
   }
   const provider =
     services.find((service) => service.id === decision.service_id)?.name ??
-    decision.service_id;
+    i18n.t("binding.removedService");
   const ruleIndex =
     decision.rule_id === null
       ? -1
@@ -335,10 +335,9 @@ function outcomeText(
             provider,
             index: ruleIndex + 1,
           })
-        : i18n.t("dryRunTab.outcomeRuleId", {
+        : i18n.t("dryRunTab.outcomeUnlistedRule", {
             model: decision.model,
             provider,
-            rule: decision.rule_id ?? "",
           }),
   };
 }
@@ -679,14 +678,15 @@ export function ClassifierDryRunPanel({
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="grid w-80 gap-3 text-xs">
-                    <div className="grid gap-0.5">
-                      <p className="text-sm font-medium">
-                        {t("dryRunTab.factsTitle")}
-                      </p>
-                      <p className="text-micro text-muted-foreground">
-                        {t("dryRunTab.factsHint")}
-                      </p>
-                    </div>
+                    <p className="flex items-center gap-1 text-sm font-medium">
+                      {t("dryRunTab.factsTitle")}
+                      <HelpPopover label={t("dryRunTab.factsTitle")}>
+                        <span className="grid gap-1.5">
+                          <span>{t("dryRunTab.factsHint")}</span>
+                          <span>{t("dryRunTab.factsUnavailable")}</span>
+                        </span>
+                      </HelpPopover>
+                    </p>
                     <Field label={t("dryRunTab.protocol")}>
                       <Select
                         value={protocol === "" ? unknownFact : protocol}
@@ -781,9 +781,6 @@ export function ClassifierDryRunPanel({
                         )}
                       </span>
                     </Field>
-                    <p className="text-micro text-muted-foreground">
-                      {t("dryRunTab.factsUnavailable")}
-                    </p>
                   </PopoverContent>
                 </Popover>
                 <Select

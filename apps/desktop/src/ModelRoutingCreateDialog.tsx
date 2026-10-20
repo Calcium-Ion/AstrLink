@@ -89,21 +89,23 @@ export function ModelRoutingCreateDialog({
         >
           <Field
             label={t("routingGroups.create.name")}
-            hint={
-              touched && issue
-                ? undefined
-                : t("routingGroups.create.nameHint", {
-                    model: modelRoutingPublicModelID(name || "…"),
-                  })
-            }
+            inDialog
+            tooltip={t("routingGroups.create.nameHint", {
+              model: modelRoutingPublicModelID(name || "…"),
+            })}
           >
-            <Input
-              className="font-mono"
-              value={name}
-              maxLength={64}
-              aria-invalid={touched && issue !== null}
-              onChange={(event) => setName(event.target.value.toLowerCase())}
-            />
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="shrink-0 font-mono text-sm text-muted-foreground">
+                astrlink/
+              </span>
+              <Input
+                className="font-mono"
+                value={name}
+                maxLength={64}
+                aria-invalid={touched && issue !== null}
+                onChange={(event) => setName(event.target.value.toLowerCase())}
+              />
+            </span>
           </Field>
           {touched && issue ? (
             <p role="alert" className="-mt-2 text-xs text-danger-foreground">
@@ -113,7 +115,8 @@ export function ModelRoutingCreateDialog({
           <Field
             group
             label={t("routingGroups.create.defaultModel")}
-            hint={t("routingGroups.create.defaultModelHint")}
+            inDialog
+            tooltip={t("routingGroups.create.defaultModelHint")}
           >
             <ModelRoutingTargetSelect
               services={services}

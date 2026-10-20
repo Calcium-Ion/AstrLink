@@ -91,7 +91,10 @@ function RenamePopover({
         </IconButton>
       </PopoverTrigger>
       <PopoverContent align="start" className="grid w-80 gap-2">
-        <Field label={t("routingGroups.create.name")}>
+        <Field
+          label={t("routingGroups.create.name")}
+          tooltip={t("routingGroups.editor.renameHint")}
+        >
           <span className="flex min-w-0 items-center gap-1">
             <span className="shrink-0 font-mono text-sm text-muted-foreground">
               astrlink/
@@ -113,11 +116,7 @@ function RenamePopover({
           <p role="alert" className="text-xs text-danger-foreground">
             {issue}
           </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            {t("routingGroups.editor.renameHint")}
-          </p>
-        )}
+        ) : null}
         <Button
           type="button"
           size="sm"
@@ -236,7 +235,7 @@ export function ModelRoutingGroupEditor({
     const accepted = memberAcceptedFormats(member, services);
     const provider =
       services.find((service) => service.id === member.service_id)?.name ??
-      member.service_id;
+      t("binding.removedService");
     return [
       accepted.length > 0
         ? t("routingFormats.memberAccepts", {

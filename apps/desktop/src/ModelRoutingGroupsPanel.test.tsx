@@ -22,6 +22,7 @@ import type { ModelRoutingGroup } from "./model-routing-group-model";
 import { ModelRoutingGroupsPanel } from "./ModelRoutingGroupsPanel";
 import type { RoutableService } from "./service-model";
 import type { ConversionEngineCapability } from "./core-model";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 
 const services: RoutableService[] = [
   {
@@ -459,10 +460,8 @@ describe("routing groups panel", () => {
     await chooseMenuItem('[data-routing-field="literal_keyword"]');
     // The new condition's editor opens and stays open once the menu has
     // closed and would have handed focus back to its trigger.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settleClosedLayer();
+    await settleClosedLayer();
     expect(
       document.querySelector('[data-slot="popover-content"]')?.textContent,
     ).toContain("包含关键词");

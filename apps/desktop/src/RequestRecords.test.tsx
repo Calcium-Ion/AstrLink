@@ -4357,10 +4357,9 @@ describe("RequestRecords", () => {
     expect(
       panel?.querySelector("[data-request-routing-summary]")?.textContent,
     ).toContain(
-      i18n.t("routingProcess.chosenByRuleId", {
+      i18n.t("routingProcess.chosenByUnlistedRule", {
         model: "gpt-4.1",
         provider: "Primary gateway",
-        rule: "coding",
       }),
     );
     // Names, never IDs or the configuration hash.

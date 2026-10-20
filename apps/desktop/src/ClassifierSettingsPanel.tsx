@@ -6,6 +6,7 @@ import { ConditionChip } from "./components/ConditionChip";
 import { Field } from "./components/Field";
 import { FormMessage } from "./components/FormMessage";
 import { HelpDisclosure } from "./components/HelpDisclosure";
+import { HelpPopover } from "./components/HelpPopover";
 import { Panel, PanelHeader } from "./components/Panel";
 import { SegmentedControl } from "./components/SegmentedControl";
 import {
@@ -335,7 +336,14 @@ function OptionChip({
       aria-label={t("classifierTab.editOption", { name: shown })}
       data-classifier-option={dataOption}
     >
-      <Field label={t("classifierTab.option")}>
+      <Field
+        label={t("classifierTab.option")}
+        tooltip={
+          !describable && display !== name
+            ? t("classifierTab.optionShownAs", { display })
+            : undefined
+        }
+      >
         <Input
           className="h-8 font-mono"
           value={name}
@@ -351,15 +359,10 @@ function OptionChip({
           onChange={(event) => onRename(event.target.value)}
         />
       </Field>
-      {!describable && display !== name ? (
-        <p className="text-micro text-muted-foreground">
-          {t("classifierTab.optionShownAs", { display })}
-        </p>
-      ) : null}
       {describable ? (
         <Field
           label={t("classifierTab.optionDescription")}
-          hint={t("classifierTab.optionDescriptionHint")}
+          tooltip={t("classifierTab.optionDescriptionHint")}
         >
           <Input
             className="h-8"
@@ -756,6 +759,21 @@ export function ClassifierSettingsPanel({
   const atDimensionCapacity =
     dimensions.length >= classifierMaxCustomDimensions;
 
+  // Why the task type options read or lock the way they do, behind the row's ?.
+  const labelNotes = [
+    ...(labels !== null && groups.length === 0
+      ? [t("classifierTab.labelsNoGroups")]
+      : []),
+    ...(labelsDiverge ? [t("classifierTab.labelsDiverge")] : []),
+    ...(labels !== null && labels.length >= maxModelRoutingTaskTypeLabels
+      ? [
+          t("classifierTab.labelLimit", {
+            max: maxModelRoutingTaskTypeLabels,
+          }),
+        ]
+      : []),
+  ];
+
   const labelIssueText = (issue: TaskTypeLabelIssue) =>
     t(`classifierTab.labelErrors.${issue.problem}`, {
       label: issue.label ?? "",
@@ -771,6 +789,15 @@ export function ClassifierSettingsPanel({
             {t("classifierTab.taskType")}
           </span>
           <Badge variant="secondary">{t("classifierTab.builtIn")}</Badge>
+          {labelNotes.length > 0 ? (
+            <HelpPopover label={t("classifierTab.taskTypeHelpLabel")}>
+              <span className="grid gap-1.5">
+                {labelNotes.map((note) => (
+                  <span key={note}>{note}</span>
+                ))}
+              </span>
+            </HelpPopover>
+          ) : null}
         </span>
         <code className="font-mono text-micro text-muted-foreground">
           task_type
@@ -835,23 +862,6 @@ export function ClassifierSettingsPanel({
             />
           </div>
         )}
-        {labels !== null && groups.length === 0 ? (
-          <span className="text-xs text-muted-foreground">
-            {t("classifierTab.labelsNoGroups")}
-          </span>
-        ) : null}
-        {labelsDiverge ? (
-          <span className="text-xs text-muted-foreground">
-            {t("classifierTab.labelsDiverge")}
-          </span>
-        ) : null}
-        {labels !== null && labels.length >= maxModelRoutingTaskTypeLabels ? (
-          <span className="text-xs text-muted-foreground">
-            {t("classifierTab.labelLimit", {
-              max: maxModelRoutingTaskTypeLabels,
-            })}
-          </span>
-        ) : null}
         {shownLabelIssues
           // An empty option is marked on its own chip, which is open for typing.
           .filter((issue) => issue.problem !== "empty")
@@ -1000,7 +1010,7 @@ export function ClassifierSettingsPanel({
           >
             <Field
               label={t("classifierTab.dimensionName")}
-              hint={
+              tooltip={
                 // Built outside i18n: the braces of {{dim.x}} would read as
                 // an interpolation.
                 <span className="flex min-w-0 flex-wrap items-center gap-1">
@@ -1338,6 +1348,13 @@ export function ClassifierSettingsPanel({
                     max: classifierMaxCustomDimensions,
                   })}
                 </span>
+                {atDimensionCapacity ? (
+                  <HelpPopover label={t("classifierTab.dimensionLimitLabel")}>
+                    {t("classifierTab.dimensionLimit", {
+                      max: classifierMaxCustomDimensions,
+                    })}
+                  </HelpPopover>
+                ) : null}
                 <Button
                   type="button"
                   size="sm"
@@ -1394,13 +1411,6 @@ export function ClassifierSettingsPanel({
               )}
             </p>
           ))}
-          {atDimensionCapacity ? (
-            <p className="border-t px-4 py-2 text-xs text-muted-foreground">
-              {t("classifierTab.dimensionLimit", {
-                max: classifierMaxCustomDimensions,
-              })}
-            </p>
-          ) : null}
           <DimensionIssue
             issue={dimensionIssue(
               blockingDimensions,

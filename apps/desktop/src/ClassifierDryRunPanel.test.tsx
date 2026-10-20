@@ -462,6 +462,49 @@ describe("dry run tab", () => {
     expect(fallback?.textContent).toContain("选用");
   });
 
+  it("names a provider, rule and model that are gone without their IDs", async () => {
+    bridge.getRoutingSettings.mockResolvedValue(routingSettings([codingGroup]));
+    bridge.classifierDryRun.mockResolvedValue(
+      classified({
+        decision: {
+          member_id: "member-gone",
+          service_id: "svc-gone",
+          model: "deepseek-chat",
+          rule_id: "rule-gone",
+          used_default: false,
+        },
+        rules: [
+          {
+            rule_id: "rule-gone",
+            priority: 5,
+            target_member_id: "member-gone",
+            target_model: "",
+            state: "true",
+            selected: true,
+            target_missing: false,
+            fields: [],
+          },
+        ],
+      }),
+    );
+    await render({ group: "coding-auto" });
+    await runOnce();
+
+    const outcome = container.querySelector(
+      "[data-classifier-dry-run-outcome]",
+    );
+    expect(outcome?.textContent).toContain(
+      "会选用 deepseek-chat（已删除的 API 提供商），由一条规则选出",
+    );
+    const row = container.querySelector(
+      '[data-classifier-dry-run-rule="rule-gone"]',
+    );
+    expect(row?.textContent).toContain("已删除的规则");
+    expect(row?.textContent).toContain("已移出路由组的模型");
+    for (const id of ["svc-gone", "rule-gone", "member-gone"])
+      expect(container.textContent).not.toContain(id);
+  });
+
   it("warns when a matching rule points at a member the group lost", async () => {
     bridge.getRoutingSettings.mockResolvedValue(routingSettings([codingGroup]));
     const result = routedResult();

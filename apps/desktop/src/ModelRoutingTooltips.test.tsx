@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 
 /**
- * §8.3: the required explanations must stay on screen where they are needed.
- * After the redesign most of them are visible text next to the control they
- * explain (the time window's rules sit in its editor, the label scope and the
- * reuse of an existing model in the classifier tab); the rest live behind a
- * `?` that must be a real, keyboard-focusable button. This suite pins both, so
- * a dropped explanation fails here instead of in review.
+ * §8.3: the required explanations must stay reachable where they are needed.
+ * A section's scope reads as its description (the label scope and the reuse
+ * of an existing model in the classifier tab); an explanation of one control
+ * lives behind a `?` beside it (the time window's rules in its editor), which
+ * must be a real, keyboard-focusable button. This suite pins both, so a
+ * dropped explanation fails here instead of in review.
  */
 
 import { act, type ReactNode } from "react";
@@ -150,18 +150,31 @@ describe("model routing explanations", () => {
       ),
     );
     const editor = document.querySelector('[data-slot="popover-content"]')!;
-    // 2 time zone, 3 half-open window, 4 cross-midnight.
-    expect(editor.textContent).toContain(
-      i18n.t("routingConditions.editor.timeNote"),
-    );
-    expect(editor.textContent).toContain("本地时间");
-    expect(editor.textContent).toContain("不包含结束时刻");
+    // 4 cross-midnight reads off the window being edited.
     expect(editor.textContent).toContain(
       i18n.t("routingConditions.editor.crossesMidnight", {
         start: "22:00",
         end: "08:00",
       }),
     );
+    // 2 time zone and 3 half-open window sit behind the editor's ?, not
+    // under its inputs.
+    expect(editor.textContent).not.toContain(
+      i18n.t("routingConditions.editor.timeNote"),
+    );
+    await click(
+      editor.querySelector(
+        `[aria-label="${i18n.t("routingConditions.editor.helpLabel")}"]`,
+      ),
+    );
+    const help = [
+      ...document.querySelectorAll('[data-slot="popover-content"]'),
+    ].at(-1)!;
+    expect(help.textContent).toContain(
+      i18n.t("routingConditions.editor.timeNote"),
+    );
+    expect(help.textContent).toContain("本地时间");
+    expect(help.textContent).toContain("不包含结束时刻");
   });
 
   it("states the classifier's scope and credentials in its tab", async () => {
