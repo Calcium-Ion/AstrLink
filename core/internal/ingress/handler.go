@@ -379,17 +379,13 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 
 	var session *recordSession
-	if mode := classifierInternalFrom(request.Context()); mode != nil {
-		// A classification sub-call folds into the caller's record when one is
-		// in context; a standalone call (control-plane dry-run) gets an
-		// in-memory session that is never persisted. The parent's classified
-		// request stays authoritative either way.
-		if mode.SharedSession != nil {
-			session = mode.SharedSession
-		} else {
-			session = handler.startRecordSession(request, classified)
-			session.keepInMemory()
-		}
+	if classifierInternalFrom(request.Context()) != nil {
+		// A classification sub-call, a live request's or a control-plane
+		// dry-run's, gets an in-memory session that is never persisted. Sharing
+		// the parent's would make the classifier's response the parent's
+		// status, HTTP status, first attempt, output id and affinity.
+		session = handler.startRecordSession(request, classified)
+		session.keepInMemory()
 	} else if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
 		session = mode.SharedSession
 		session.classified = classified
@@ -400,7 +396,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	} else {
 		session = handler.startRecordSession(request, classified)
 	}
-	if classifierInternalFrom(request.Context()) == nil || classifierInternalFrom(request.Context()).SharedSession != nil {
+	if classifierInternalFrom(request.Context()) == nil {
 		session.persistPending(request.Context(), handler.requestRecords, handler.recordLogger)
 	}
 	outWriter := session.wrap(writer)
@@ -410,11 +406,9 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			mode.Target = *session.endpointID
 		}
 		if classifierInternalFrom(request.Context()) != nil {
-			// The classification sub-call never finishes its own record: the
-			// shared session belongs to the parent request, and a standalone
-			// session is in-memory only. Its own context may have timed out
-			// without cancelling the parent request, so cancellation is left
-			// to the parent's defer as well.
+			// The classification sub-call keeps no record of its own: its
+			// session is in-memory only, and its context may have timed out
+			// without cancelling the parent request.
 			return
 		}
 		if request.Context().Err() != nil {
@@ -612,8 +606,7 @@ func (handler *Handler) applyPrivacy(
 ) (func(), privacyOutcome, error) {
 	if classifierInternalFrom(request.Context()) != nil {
 		// A classification sub-call carries text model routing already passed
-		// through the policy, and it shares the parent's record: inspecting it
-		// here would report the classifier's call as the parent's attempt.
+		// through the parent request's policy.
 		return func() {}, privacyOutcome{}, nil
 	}
 	session := recordSessionFromContext(request.Context())

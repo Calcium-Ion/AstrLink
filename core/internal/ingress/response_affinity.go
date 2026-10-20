@@ -24,7 +24,9 @@ type responseAffinities struct {
 }
 
 func (handler *Handler) rememberResponseAffinity(ctx context.Context, session *recordSession, candidate endpoint.Resolved, plan contract.ExecutionPlan) {
-	if session == nil || session.classified.Protocol != contract.ProtocolOpenAIResponses {
+	// An in-memory session, a classification sub-call's, answers no client
+	// that could continue from its response.
+	if session == nil || session.inMemory || session.classified.Protocol != contract.ProtocolOpenAIResponses {
 		return
 	}
 	session.captureOutputID()

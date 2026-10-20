@@ -20,15 +20,18 @@ import (
 // mode carries tool semantics (native target pinning, event streaming) that
 // do not apply here, and reusing it would make the two exemption sets drift
 // apart. The flag buys the same per-point exemptions in ServeHTTP: inference
-// boundary, record-session reuse, no second record, no recursive model
-// routing, and no privacy check of its own — model routing already passed the
-// text this sub-call carries through the parent request's policy.
+// boundary, no recursive model routing, and no privacy check of its own —
+// model routing already passed the text this sub-call carries through the
+// parent request's policy. Unlike a builtin tool call it never shares the
+// parent's record: it runs on an in-memory record session of its own, so its
+// status, HTTP status, attempt, output id and affinity cannot become the
+// parent request's. What the parent keeps of it is the classification result,
+// returned to model routing and written into the routing decision.
 type classifierInternalKey struct{}
 
 type classifierInternal struct {
-	SharedSession *recordSession
-	Target        contract.ServiceID
-	Model         string
+	Target contract.ServiceID
+	Model  string
 }
 
 func classifierInternalFrom(ctx context.Context) *classifierInternal {
@@ -138,9 +141,8 @@ func (handler *Handler) ClassifyModel(ctx context.Context, serviceID contract.Se
 	// The URL above is a placeholder never dialed: resolution picks the real
 	// target from the service registry, same as the builtin tool seam.
 	request = request.WithContext(context.WithValue(callCtx, classifierInternalKey{}, &classifierInternal{
-		SharedSession: recordSessionFromContext(callCtx),
-		Target:        serviceID,
-		Model:         model,
+		Target: serviceID,
+		Model:  model,
 	}))
 	capture := &builtinCapture{header: make(http.Header)}
 	handler.ServeHTTP(capture, request)

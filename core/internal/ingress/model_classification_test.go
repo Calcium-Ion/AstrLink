@@ -249,13 +249,13 @@ func TestModelRoutingExistingModelClassifiesRedactedText(t *testing.T) {
 	if decision == nil || decision.MemberID != "strong" {
 		t.Fatalf("decision = %+v, want the coding rule's member", decision)
 	}
-	// The classification call is the record's first attempt; the business
-	// call is the second, and only its check is listed.
+	// The classification call keeps no attempt in the parent's record, so
+	// the business call is the record's first attempt and the only check.
 	if len(decision.PrivacyAttempts) != 1 {
 		t.Fatalf("privacy attempts = %+v, want the business attempt alone", decision.PrivacyAttempts)
 	}
 	attempt := decision.PrivacyAttempts[0]
-	if attempt.AttemptIndex != 2 || attempt.ServiceID != "endpoint_test" ||
+	if attempt.AttemptIndex != 1 || attempt.ServiceID != "endpoint_test" ||
 		attempt.Decision != contract.ModelRoutingPrivacyAllow || attempt.FindingCount != 1 || attempt.ErrorCode != "" {
 		t.Fatalf("privacy attempt = %+v", attempt)
 	}
