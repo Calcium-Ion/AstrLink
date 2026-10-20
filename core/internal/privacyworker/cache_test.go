@@ -22,6 +22,8 @@ import (
 const (
 	testFrameLog    = "frames.log"
 	testGateRelease = "release"
+	// testReadyRelease lets a ready-gated helper report ready.
+	testReadyRelease = "ready-release"
 )
 
 func segmentsInput(values ...string) privacy.DetectInput {
@@ -36,7 +38,14 @@ func segmentsInput(values ...string) privacy.DetectInput {
 func testFrames(t *testing.T, client *Client) [][]string {
 	t.Helper()
 	installation, _ := client.model.ReadyInstallation(testInstallationID)
-	data, err := os.ReadFile(filepath.Join(installation.Directory, testFrameLog))
+	return framesInDirectory(t, installation.Directory)
+}
+
+// framesInDirectory lists the frames the helper worker of one model
+// directory received.
+func framesInDirectory(t *testing.T, directory string) [][]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(directory, testFrameLog))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

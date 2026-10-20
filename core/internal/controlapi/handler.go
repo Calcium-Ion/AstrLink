@@ -70,6 +70,9 @@ type Dependencies struct {
 	// PrivacyWarnings is the feed of requests the warn action let through.
 	// Optional; without it the route is not registered.
 	PrivacyWarnings PrivacyWarningFeed
+	// ModelPreparation reports how the policy's model is being made ready
+	// on this device. Optional; without it no installation reports one.
+	ModelPreparation func(contract.PrivacyModelID) *contract.PrivacyModelPreparation
 	// RawVault guards raw audit parts. Nil until raw sealing is set up
 	// by the runtime; see RawVault.
 	RawVault RawVault
@@ -156,6 +159,7 @@ type Handler struct {
 	privacyFilter      privacy.Filter
 	privacyWarnings    PrivacyWarningFeed
 	policyChanged      func(contract.Policy)
+	preparation        func(contract.PrivacyModelID) *contract.PrivacyModelPreparation
 	requestRecords     storage.RequestRecordStore
 	auditSettings      storage.AuditSettingsStore
 	auditKeys          storage.AuditKeyStore
@@ -231,6 +235,7 @@ func newHandler(version contract.VersionResponse, dependencies Dependencies) (*H
 		privacyFilter:      dependencies.PrivacyFilter,
 		privacyWarnings:    dependencies.PrivacyWarnings,
 		policyChanged:      dependencies.PolicyChanged,
+		preparation:        dependencies.ModelPreparation,
 		requestRecords:     dependencies.RequestRecords,
 		auditSettings:      dependencies.AuditSettings,
 		auditKeys:          dependencies.AuditKeys,

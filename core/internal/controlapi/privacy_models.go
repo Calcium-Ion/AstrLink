@@ -155,9 +155,12 @@ func (handler *Handler) privacyModelCollection(
 	}
 	switch request.Method {
 	case http.MethodGet:
-		writeJSON(writer, http.StatusOK, contract.PrivacyModelInstallationList{
-			Items: handler.privacyModels.ListInstallations(),
-		})
+		installations := handler.privacyModels.ListInstallations()
+		items := make([]contract.PrivacyModelInstallationView, len(installations))
+		for index, installation := range installations {
+			items[index] = handler.installationView(installation)
+		}
+		writeJSON(writer, http.StatusOK, contract.PrivacyModelInstallationList{Items: items})
 	case http.MethodPost:
 		handler.installPrivacyModel(writer, request)
 	default:
@@ -186,7 +189,7 @@ func (handler *Handler) installPrivacyModel(
 		handler.writePrivacyModelRegistryError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusAccepted, installation)
+	writeJSON(writer, http.StatusAccepted, handler.installationView(installation))
 }
 
 func (handler *Handler) privacyModelItem(
@@ -237,7 +240,7 @@ func (handler *Handler) privacyModelItem(
 			handler.writePrivacyModelRegistryError(writer, err)
 			return
 		}
-		writeJSON(writer, http.StatusOK, installation)
+		writeJSON(writer, http.StatusOK, handler.installationView(installation))
 		return
 	}
 	switch request.Method {
@@ -247,7 +250,7 @@ func (handler *Handler) privacyModelItem(
 			handler.writePrivacyModelRegistryError(writer, err)
 			return
 		}
-		writeJSON(writer, http.StatusOK, installation)
+		writeJSON(writer, http.StatusOK, handler.installationView(installation))
 	case http.MethodDelete:
 		handler.deletePrivacyModelInstallation(writer, request, id)
 	default:
@@ -284,6 +287,19 @@ func (handler *Handler) deletePrivacyModelInstallation(
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+// installationView adds the runtime preparation state, which only the policy's
+// model can have, to a stored installation.
+func (handler *Handler) installationView(
+	installation contract.PrivacyModelInstallation,
+) contract.PrivacyModelInstallationView {
+	view := contract.PrivacyModelInstallationView{PrivacyModelInstallation: installation}
+	if handler.preparation != nil &&
+		installation.Status == contract.PrivacyModelStatusReady {
+		view.Preparation = handler.preparation(installation.ID)
+	}
+	return view
 }
 
 func (handler *Handler) writePrivacyModelRegistryError(

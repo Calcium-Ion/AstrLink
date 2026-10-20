@@ -167,15 +167,21 @@ func (scanner *usageScanner) observeStreaming(chunk []byte) {
 		scanner.carry = nil
 		return
 	}
+	consumed := 0
 	for {
-		newline := bytes.IndexByte(scanner.carry, '\n')
+		newline := bytes.IndexByte(scanner.carry[consumed:], '\n')
 		if newline < 0 {
+			// Compact an unfinished line once per chunk, rather than copying the
+			// remaining batch after every SSE line.
+			scanner.carry = scanner.carry[:copy(scanner.carry, scanner.carry[consumed:])]
 			return
 		}
-		line := scanner.carry[:newline]
-		scanner.carry = append([]byte(nil), scanner.carry[newline+1:]...)
+		newline += consumed
+		line := scanner.carry[consumed:newline]
+		consumed = newline + 1
 		scanner.observeSSELine(line)
 		if scanner.disabled {
+			scanner.carry = nil
 			return
 		}
 	}

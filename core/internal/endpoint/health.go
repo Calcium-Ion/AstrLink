@@ -8,9 +8,9 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 )
 
-// rateLimits holds the cooldowns an upstream asked for with HTTP 429. Each
-// one covers only the exact service, upstream protocol, model, and plan that
-// was limited; routing never withholds a provider on its own judgement.
+// rateLimits holds cooldowns for upstream rate limits and explicit overloads.
+// Each covers only the exact service, upstream protocol, model, and plan that
+// was refused; unrelated routes on the same provider remain available.
 type rateLimits struct {
 	mu        sync.Mutex
 	deadlines map[string]time.Time
@@ -81,7 +81,7 @@ func rateLimitKey(candidate Resolved) string {
 }
 
 // ReleaseRateLimits drops all route cooldowns for a service after an operator
-// restores its scheduling. A later upstream 429 can establish a new cooldown.
+// restores its scheduling. A later rate limit or overload can cool it again.
 func (resolver *StoreResolver) ReleaseRateLimits(serviceID contract.ServiceID) {
 	if resolver != nil {
 		resolver.limits.release(serviceID)

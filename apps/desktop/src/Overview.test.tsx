@@ -856,7 +856,7 @@ describe("Overview", () => {
     expect(container.textContent).toContain("请求数");
     expect(container.textContent).toContain("总 Token");
     expect(container.textContent).toContain("输入 / 输出");
-    expect(container.textContent).toContain("缓存命中");
+    expect(container.textContent).toContain("缓存命中率");
     expect(container.textContent).toContain("100 / 20");
     expect(container.textContent).toContain("40%");
     expect(container.textContent).toContain("折算金额");

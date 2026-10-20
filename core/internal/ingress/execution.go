@@ -673,6 +673,15 @@ func (handler *Handler) executeCandidatesWithTest(
 		}
 		var startFailure *streamFailure
 		var startErr error
+		var responseRetryAfter time.Duration
+		coolOverload := func(event []byte, retryAfter time.Duration) time.Duration {
+			if limiter == nil || !streamFailureOverloaded(plan.UpstreamProtocol, event) {
+				return retryAfter
+			}
+			duration := max(streamOverloadCooldown, retryAfter, time.Duration(policy.InitialDelayMS)*time.Millisecond)
+			limiter.RecordRateLimit(candidate, duration)
+			return duration
+		}
 		forwardTarget.WrapResponseBody = func(status int, header http.Header, body io.ReadCloser) io.ReadCloser {
 			if holdStart && holdsStreamResponse(status, header) {
 				// The response has started; only the client waits for the hold.
@@ -695,6 +704,7 @@ func (handler *Handler) executeCandidatesWithTest(
 				test.observer.Response(response.StatusCode)
 			}
 			startWriter.markStarted(response.StatusCode)
+			responseRetryAfter = parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
 			if startErr != nil {
 				// Nothing reached the client, so the stream failed like a
 				// dropped connection.
@@ -775,7 +785,10 @@ func (handler *Handler) executeCandidatesWithTest(
 						}
 					}
 				}
-				retryAfter := parseRetryAfter(response.Header.Get("Retry-After"), time.Now())
+				retryAfter := responseRetryAfter
+				if startFailure != nil {
+					retryAfter = coolOverload(startFailure.event, retryAfter)
+				}
 				if risk.scope == subscriptionRiskModel {
 					retryAfter = max(retryAfter, risk.cooldown)
 				}
@@ -854,6 +867,13 @@ func (handler *Handler) executeCandidatesWithTest(
 			forwardErr = turn.forward(startWriter, attemptRequest, forwardTarget, candidate, upstreamModel)
 		} else {
 			forwardErr = handler.forwarder.Forward(startWriter, attemptRequest, forwardTarget)
+		}
+		if startFailure == nil && recordSession != nil && recordSession.upstreamScanner != nil {
+			// A late overload cannot be retried after commitment, but it must
+			// still keep new requests off this route. A completed response
+			// clears the scanner's error and establishes no cooldown.
+			_ = recordSession.upstreamScanner.Usage()
+			coolOverload(recordSession.upstreamScanner.failure, responseRetryAfter)
 		}
 		if test != nil {
 			var responseErr *transport.ResponseError

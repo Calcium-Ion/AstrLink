@@ -16,8 +16,8 @@ import (
 var (
 	ErrNoEndpoint = errors.New("no endpoint provides the requested capability")
 	// ErrNoHealthyEndpoint means every candidate is still cooling down after
-	// its upstream answered HTTP 429.
-	ErrNoHealthyEndpoint = errors.New("every candidate is rate limited by its upstream")
+	// its upstream reported a rate limit or explicit overload.
+	ErrNoHealthyEndpoint = errors.New("every candidate is cooling down after an upstream rate limit or overload")
 	ErrUnavailable       = errors.New("endpoint resolver is unavailable")
 )
 
@@ -226,9 +226,9 @@ func (UnavailableResolver) Resolve(context.Context, ResolveRequest) (Resolved, e
 	return Resolved{}, ErrUnavailable
 }
 
-// RateLimitController applies the cooldown an upstream requested with HTTP
-// 429. RateLimitedUntil is checked immediately before each attempt, when the
-// candidate carries its final upstream protocol and model.
+// RateLimitController applies cooldowns for upstream rate limits and explicit
+// overloads. RateLimitedUntil is checked immediately before each attempt,
+// when the candidate carries its final upstream protocol and model.
 type RateLimitController interface {
 	RecordRateLimit(Resolved, time.Duration)
 	RateLimitedUntil(Resolved) time.Time

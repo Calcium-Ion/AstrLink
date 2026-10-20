@@ -93,6 +93,7 @@ export function defaultTrayPreferences(): TrayPreferences {
 export interface Preferences {
   close_behavior: CloseBehavior;
   autostart: boolean;
+  autostart_hidden: boolean;
   core_auto_start: boolean;
   core_auto_recover: boolean;
   use_system_proxy: boolean;
@@ -239,6 +240,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     [
       "close_behavior",
       "autostart",
+      "autostart_hidden",
       "core_auto_start",
       "core_auto_recover",
       "use_system_proxy",
@@ -274,6 +276,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   }
   for (const field of [
     "autostart",
+    "autostart_hidden",
     "core_auto_start",
     "core_auto_recover",
     "use_system_proxy",

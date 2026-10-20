@@ -17,6 +17,31 @@ import (
 
 func intPtr(value int) *int { return &value }
 
+func TestUsageScannerCompactsBatchesWithoutLosingSplitLines(t *testing.T) {
+	stream := []byte("event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_split\"}}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"你好\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_split\",\"usage\":{\"input_tokens\":3,\"output_tokens\":5,\"total_tokens\":8}}}\n\ndata: [DONE]\n\n")
+	for _, size := range []int{1, 7, 64, len(stream)} {
+		scanner := newUsageScanner(contract.ProtocolOpenAIResponses, true)
+		for start := 0; start < len(stream); start += size {
+			scanner.observe(stream[start:min(start+size, len(stream))])
+		}
+		if usage := scanner.Usage(); usage == nil || usage.TotalTokens != 8 || scanner.OutputID() != "resp_split" || !scanner.complete {
+			t.Fatalf("chunk size=%d usage=%+v id=%s complete=%v", size, usage, scanner.OutputID(), scanner.complete)
+		}
+	}
+}
+
+func BenchmarkUsageScannerStreamingBatch(b *testing.B) {
+	frame := []byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"some generated text\"}\n\n")
+	chunk := bytes.Repeat(frame, 32768/len(frame))
+	b.SetBytes(int64(len(chunk)))
+	b.ReportAllocs()
+	for b.Loop() {
+		newUsageScanner(contract.ProtocolOpenAIResponses, true).observe(chunk)
+	}
+}
+
 func TestUsageScannerProtocols(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -560,5 +562,60 @@ func TestPrivacyModelDownloadActions(t *testing.T) {
 		if response.Code != http.StatusNotFound {
 			t.Fatalf("%s: %d", suffix, response.Code)
 		}
+	}
+}
+
+func TestPrivacyModelInstallationsReportOnlyThePolicyModelPreparation(t *testing.T) {
+	store, err := openControlTestStore(t, context.Background(), filepath.Join(t.TempDir(), "astrlink.db"))
+	if err != nil {
+		t.Fatalf("open SQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	registry := newFakePrivacyModelRegistry()
+	installation := readyTestInstallation()
+	fallback := contract.PrivacyModelPreparationFallbackRegex
+	handler, err := NewWithDependencies(contract.DefaultVersionResponse("0.1.0-test", "abc1234"), Dependencies{
+		ServiceStore: store, PolicyStore: store, PrivacyModels: registry,
+		ControlToken: testControlToken,
+		ModelPreparation: func(id contract.PrivacyModelID) *contract.PrivacyModelPreparation {
+			if id != installation.ID {
+				return nil
+			}
+			return &contract.PrivacyModelPreparation{
+				State:    contract.PrivacyModelPreparationPreparing,
+				Fallback: &fallback,
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWithDependencies: %v", err)
+	}
+	want := `"preparation":{"state":"preparing","fallback":"regex"}`
+	for _, path := range []string{
+		PrivacyModelsPath,
+		PrivacyModelsPath + "/" + string(installation.ID),
+	} {
+		response := policyRequest(t, handler, http.MethodGet, path, "", "", "")
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), want) {
+			t.Fatalf("GET %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+
+	// Installations that are not ready never report a preparation, and the
+	// field stays present as null.
+	other := installation
+	other.ID = "model_00000000000000000000000000000002"
+	other.Status = contract.PrivacyModelStatusDownloading
+	registry.installations[other.ID] = other
+	response := policyRequest(t, handler, http.MethodGet, PrivacyModelsPath+"/"+string(other.ID), "", "", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"preparation":null`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	// The stored record never carries runtime state.
+	_, plain, _ := newPolicyHandler(t)
+	response = policyRequest(t, plain, http.MethodGet, PrivacyModelsPath, "", "", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"preparation":null`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }

@@ -238,7 +238,7 @@ export interface PrivacyModelVariant {
   estimated_ram_bytes: number;
   recommended: boolean;
   supported: boolean;
-  unsupported_reason: null | "cpu_only";
+  unsupported_reason: null | "cpu_only" | "requires_macos_26";
 }
 
 export interface PrivacyCatalogModel {
@@ -317,6 +317,21 @@ export interface PrivacyModelInstallation {
   error: PrivacyModelInstallationError | null;
   label_mapping: PrivacyLabelMapping;
   installed_at: string | null;
+  preparation: PrivacyModelPreparation | null;
+}
+
+export type PrivacyModelPreparationState = "preparing" | "ready" | "failed";
+export type PrivacyModelPreparationFallback = "local_model" | "regex";
+
+/**
+ * Core prepares the policy's Core ML model as soon as it is selected: the
+ * worker starts and compiles the model for this Mac. `fallback` is the
+ * previous detector, which inspects requests until the model is ready and
+ * after it failed; without one, requests wait, then fail once it failed.
+ */
+export interface PrivacyModelPreparation {
+  state: PrivacyModelPreparationState;
+  fallback: PrivacyModelPreparationFallback | null;
 }
 
 export interface PrivacyModelInstallationList {
@@ -640,8 +655,9 @@ function parseVariant(value: unknown, path: string): PrivacyModelVariant {
   const unsupportedReason =
     variant.unsupported_reason === null
       ? null
-      : variant.unsupported_reason === "cpu_only"
-        ? "cpu_only"
+      : variant.unsupported_reason === "cpu_only" ||
+          variant.unsupported_reason === "requires_macos_26"
+        ? variant.unsupported_reason
         : invalid(`${path}.unsupported_reason`, "unknown unsupported reason");
   if (supported !== (unsupportedReason === null)) {
     invalid(path, "supported state and unsupported reason are inconsistent");
@@ -1573,6 +1589,7 @@ export function parsePrivacyModelInstallation(
       "error",
       "label_mapping",
       "installed_at",
+      "preparation",
     ],
     [],
     path,
@@ -1646,6 +1663,13 @@ export function parsePrivacyModelInstallation(
   ) {
     invalid(path, "installation lifecycle fields are inconsistent");
   }
+  const preparation = parsePreparation(
+    installation.preparation,
+    `${path}.preparation`,
+  );
+  if (preparation !== null && status !== "ready") {
+    invalid(`${path}.preparation`, "only a ready installation is prepared");
+  }
   return {
     id: installationIDAt(installation.id, `${path}.id`),
     source: installation.source,
@@ -1686,7 +1710,32 @@ export function parsePrivacyModelInstallation(
       `${path}.label_mapping`,
     ),
     installed_at: installedAt,
+    preparation,
   };
+}
+
+function parsePreparation(
+  value: unknown,
+  path: string,
+): PrivacyModelPreparation | null {
+  if (value === null) return null;
+  const preparation = objectAt(value, path);
+  keysAt(preparation, ["state", "fallback"], [], path);
+  const fallback =
+    preparation.fallback === null
+      ? null
+      : preparation.fallback === "local_model" ||
+          preparation.fallback === "regex"
+        ? preparation.fallback
+        : invalid(`${path}.fallback`, "unknown preparation fallback");
+  const state = preparation.state;
+  if (
+    !(state === "preparing" || state === "failed") &&
+    !(state === "ready" && fallback === null)
+  ) {
+    invalid(`${path}.state`, "unknown preparation state");
+  }
+  return { state, fallback };
 }
 
 export function parsePrivacyModelInstallationList(
@@ -1749,6 +1798,15 @@ export function validatePrivacyModelInstallationID(
   installationID: string,
 ): string {
   return installationIDAt(installationID, "$.installation_id");
+}
+
+/**
+ * Core offers a local FP16 model on Apple silicon as Core ML variants named
+ * `coreml_fp16_<units>`. Core ML compiles the model the first time the worker
+ * loads it, so that first start is slow.
+ */
+export function isCoreMLVariantID(variantID: string): boolean {
+  return variantID.startsWith("coreml_");
 }
 
 export function isResourceHeavyVariant(

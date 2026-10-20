@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -145,6 +146,12 @@ func (store *Store) ListRequestSessions(
 	ctx context.Context,
 	options storagecontract.RequestSessionListOptions,
 ) (storagecontract.RequestSessionPage, error) {
+	return cachedHistoryRead(ctx, store.db, &store.requestSessions, options, func(conn *sql.Conn) (storagecontract.RequestSessionPage, error) {
+		return listRequestSessions(ctx, conn, options)
+	})
+}
+
+func listRequestSessions(ctx context.Context, reader historyReader, options storagecontract.RequestSessionListOptions) (storagecontract.RequestSessionPage, error) {
 	if options.Kind != "" && options.Kind != "inference" && options.Kind != "discovery" {
 		return storagecontract.RequestSessionPage{}, fmt.Errorf("%w: kind must be inference or discovery", storagecontract.ErrInvalidArgument)
 	}
@@ -170,7 +177,7 @@ func (store *Store) ListRequestSessions(
 	query, args := requestSessionScan(options)
 	started := time.Now()
 	defer logSlowRequestList("request sessions list slow", started)
-	rows, err := store.db.QueryContext(ctx, query, args...)
+	rows, err := reader.QueryContext(ctx, query, args...)
 	if err != nil {
 		logRequestListFailure("request sessions list failed", err)
 		return storagecontract.RequestSessionPage{}, fmt.Errorf("list request sessions: %w", err)
@@ -233,19 +240,14 @@ func (store *Store) ListRequestSessions(
 		}
 		page.NextCursor = encodeRequestRecordCursor(lastStarted, contract.RequestID(last.id))
 	}
-	turnsBySession, err := store.loadSessionSummaries(ctx, matched)
+	summaries, err := loadSessionSummaries(ctx, reader, matched)
 	if err != nil {
 		return storagecontract.RequestSessionPage{}, err
 	}
 	for _, item := range matched {
-		session, err := sessionFromTurns(turnsBySession[item.id])
-		if err != nil {
-			logRequestListFailure("request sessions list failed", err)
-			return storagecontract.RequestSessionPage{}, err
-		}
-		page.Items = append(page.Items, session)
+		page.Items = append(page.Items, summaries[item.id])
 	}
-	if err := store.loadSessionRuntimes(ctx, page.Items); err != nil {
+	if err := loadSessionRuntimes(ctx, reader, page.Items); err != nil {
 		return storagecontract.RequestSessionPage{}, err
 	}
 	return page, nil
@@ -337,6 +339,10 @@ func (store *Store) GetRequestSession(
 // contain only the final attempt's latency. Idle gaps between calls never count.
 // Keep open starts separate so clients can tick without changing idle snapshots.
 func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract.RequestSession) error {
+	return loadSessionRuntimes(ctx, store.db, sessions)
+}
+
+func loadSessionRuntimes(ctx context.Context, reader historyReader, sessions []contract.RequestSession) error {
 	if len(sessions) == 0 {
 		return nil
 	}
@@ -351,19 +357,19 @@ func (store *Store) loadSessionRuntimes(ctx context.Context, sessions []contract
 		performance[string(session.ID)] = &sessionPerformance{}
 		args[i] = string(session.ID)
 	}
-	rows, err := store.db.QueryContext(ctx, sessionRuntimeQuery(len(args)), args...)
+	rows, err := reader.QueryContext(ctx, sessionRuntimeQuery(len(args)), args...)
 	if err != nil {
 		return fmt.Errorf("load session runtimes: %w", err)
 	}
 	defer rows.Close()
+	var id, startedAt, status string
+	var completedAt, errorCode sql.NullString
+	var latency sql.NullInt64
+	var rootID, callID, protocol string
+	var turn, firstToken, outputTokens sql.NullInt64
+	var streaming bool
+	var incomplete sql.NullBool
 	for rows.Next() {
-		var id, startedAt, status string
-		var completedAt, errorCode sql.NullString
-		var latency sql.NullInt64
-		var rootID, callID, protocol string
-		var turn, firstToken, outputTokens sql.NullInt64
-		var streaming bool
-		var incomplete sql.NullBool
 		if err := rows.Scan(&id, &startedAt, &completedAt, &status, &latency, &errorCode,
 			&rootID, &turn, &callID, &protocol, &streaming, &firstToken, &outputTokens, &incomplete); err != nil {
 			return fmt.Errorf("scan session runtime: %w", err)
@@ -442,17 +448,14 @@ func logSlowRequestList(op string, started time.Time) {
 	log.Printf("%s: %s", op, elapsed.Round(time.Millisecond))
 }
 
-// Reuse the record decoder to validate summary fields, while omitting large
-// detail-only JSON and cursor lookups. The full projection is used on expansion.
+// Lists need one summary per session, not a retained RequestRecord per call.
+// Read only summary fields and fold them in index order.
 const requestSessionSummaryColumns = `
-    id, NULL, attempt_index, started_at, completed_at, status, input_protocol,
-    requested_model, reasoning_effort, streaming, NULL, service_id, local_access_token_id, NULL,
-    http_status, NULL, NULL, NULL, '{}', NULL,
-    session_id, NULL, NULL, input_preview, NULL, created_at,
-    turn_index, NULL, NULL, NULL, NULL,
+    id, COALESCE(session_id, id), started_at, completed_at, status, input_protocol,
+    requested_model, reasoning_effort, service_id, local_access_token_id,
+    http_status, turn_index, input_preview,
     (SELECT COUNT(*) FROM request_records children
-     WHERE children.parent_request_id = request_records.id), NULL, NULL, model_redirect_json, NULL, NULL, client_type,
-    privacy_decision, NULL, NULL, NULL, NULL`
+     WHERE children.parent_request_id = request_records.id), model_redirect_json, client_type, privacy_decision`
 
 // sessionSummaryQuery reads the root turns of sessions, each session's in
 // time order. Without statistics SQLite takes `parent_request_id IS NULL`,
@@ -482,8 +485,8 @@ func sessionPlaceholders(count int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
 
-func (store *Store) loadSessionSummaries(ctx context.Context, items []sessionAggregate) (map[string][]contract.RequestRecord, error) {
-	result := make(map[string][]contract.RequestRecord, len(items))
+func loadSessionSummaries(ctx context.Context, reader historyReader, items []sessionAggregate) (map[string]contract.RequestSession, error) {
+	result := make(map[string]contract.RequestSession, len(items))
 	if len(items) == 0 {
 		return result, nil
 	}
@@ -491,23 +494,136 @@ func (store *Store) loadSessionSummaries(ctx context.Context, items []sessionAgg
 	for i, item := range items {
 		args[i] = item.id
 	}
-	rows, err := store.db.QueryContext(ctx, sessionSummaryQuery(len(items)), args...)
+	rows, err := reader.QueryContext(ctx, sessionSummaryQuery(len(items)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list session summaries: %w", err)
 	}
 	defer rows.Close()
+	var id, sessionID, startedAt, status, protocol string
+	var completedAt, model, reasoning, service, token, preview, redirect, client, decision sql.NullString
+	var httpStatus, turn sql.NullInt64
+	var children int
+	var current contract.RequestSession
+	var previousTurn sql.NullInt64
+	var hadSuccess bool
+	finish := func() error {
+		if current.ID == "" {
+			return nil
+		}
+		if current.Title == "" && current.RequestedModel != nil {
+			current.Title = contract.ClampRunes(*current.RequestedModel, contract.MaxSessionTitleRunes)
+		}
+		if current.Status == contract.SessionStatusCancelled && hadSuccess {
+			current.Status = contract.SessionStatusInterrupted
+		}
+		if err := current.Validate(); err != nil {
+			return fmt.Errorf("%w: session summary: %v", storagecontract.ErrInvalidRecord, err)
+		}
+		result[string(current.ID)] = current
+		return nil
+	}
 	for rows.Next() {
-		record, err := scanRequestRecord(rows)
-		if err != nil {
+		if err := rows.Scan(&id, &sessionID, &startedAt, &completedAt, &status, &protocol,
+			&model, &reasoning, &service, &token, &httpStatus, &turn, &preview,
+			&children, &redirect, &client, &decision); err != nil {
 			return nil, err
 		}
-		id := string(record.ID)
-		if record.SessionID != nil {
-			id = string(*record.SessionID)
+		if string(current.ID) != sessionID {
+			if err := finish(); err != nil {
+				return nil, err
+			}
+			current = contract.RequestSession{ID: contract.SessionID(sessionID)}
+			previousTurn, hadSuccess = sql.NullInt64{}, false
 		}
-		result[id] = append(result[id], record)
+		started, err := time.Parse(time.RFC3339Nano, startedAt)
+		if err != nil {
+			return nil, fmt.Errorf("%w: session timestamp", storagecontract.ErrInvalidRecord)
+		}
+		record := contract.RequestRecord{ID: contract.RequestID(id), StartedAt: started,
+			Status: contract.RequestStatus(status), InputProtocol: contract.ProtocolID(protocol),
+			Audit: contract.NotCapturedAuditSummary(), ClientType: contract.ClientType(client.String)}
+		if completedAt.Valid {
+			completed, err := time.Parse(time.RFC3339Nano, completedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("%w: session completion", storagecontract.ErrInvalidRecord)
+			}
+			record.CompletedAt = &completed
+		}
+		if model.Valid {
+			record.RequestedModel = &model.String
+		}
+		if reasoning.Valid {
+			record.ReasoningEffort = &reasoning.String
+		}
+		if service.Valid {
+			value := contract.ServiceID(service.String)
+			record.ServiceID = &value
+		}
+		if token.Valid {
+			value := contract.AccessTokenID(token.String)
+			record.LocalAccessTokenID = &value
+		}
+		if httpStatus.Valid {
+			value := int(httpStatus.Int64)
+			record.HTTPStatus = &value
+		}
+		if preview.Valid {
+			record.InputPreview = &preview.String
+		}
+		if turn.Valid {
+			value := int(turn.Int64)
+			record.TurnIndex = &value
+		}
+		if decision.Valid {
+			value := contract.PrivacyDecision(decision.String)
+			record.PrivacyDecision = &value
+		}
+		if redirect.Valid {
+			record.ModelRedirect = &contract.RequestModelRedirect{}
+			if err := json.Unmarshal([]byte(redirect.String), record.ModelRedirect); err != nil {
+				return nil, fmt.Errorf("%w: session model redirect", storagecontract.ErrInvalidRecord)
+			}
+		}
+		if err := record.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: session call: %v", storagecontract.ErrInvalidRecord, err)
+		}
+		if current.CallCount == 0 {
+			current.StartedAt = started
+		}
+		if !turn.Valid || !previousTurn.Valid || turn.Int64 != previousTurn.Int64 {
+			current.TurnCount++
+		}
+		previousTurn = turn
+		current.CallCount += 1 + children
+		if current.Title == "" && preview.String != "" {
+			current.Title = contract.ClampRunes(preview.String, contract.MaxSessionTitleRunes)
+		}
+		current.LastStartedAt, current.CompletedAt = started, record.CompletedAt
+		current.Status = contract.SessionStatusFromRequest(record.EffectiveStatus())
+		hadSuccess = hadSuccess || record.EffectiveStatus() == contract.RequestStatusSucceeded
+		current.InputProtocol, current.ClientType = record.InputProtocol, record.ClientType
+		current.RequestedModel, current.ReasoningEffort = nil, nil
+		// NullString is reused by Scan; retain independent values only for the
+		// latest row instead of allocating and retaining every historical call.
+		if model.Valid {
+			value := model.String
+			current.RequestedModel = &value
+		}
+		if reasoning.Valid {
+			value := reasoning.String
+			current.ReasoningEffort = &value
+		}
+		current.ServiceID, current.LocalAccessTokenID = record.ServiceID, record.LocalAccessTokenID
+		current.ModelRedirect = record.ModelRedirect
+		current.PrivacyWarned = current.PrivacyWarned || decision.String == string(contract.PrivacyDecisionWarn)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := finish(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (store *Store) listSessionTurns(ctx context.Context, sessionOrRequestID string) ([]contract.RequestRecord, error) {

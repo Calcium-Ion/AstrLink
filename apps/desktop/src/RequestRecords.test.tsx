@@ -1323,6 +1323,42 @@ describe("RequestRecords", () => {
     expect(bridgeMocks.listRequestRecordChildren).not.toHaveBeenCalled();
   });
 
+  it("waits for a slow live detail before polling it again", async () => {
+    const pending: RequestRecord = {
+      ...firstRecord,
+      status: "pending",
+      completed_at: null,
+      http_status: null,
+      latency_ms: null,
+      usage: null,
+      audit: { ...emptyAudit },
+    };
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [sessionFromRecord(pending)],
+      next_cursor: null,
+    });
+    bridgeMocks.getRequestSession.mockResolvedValueOnce(sessionDetail(pending));
+    const slow = deferred<ReturnType<typeof sessionDetail>>();
+    bridgeMocks.getRequestSession.mockReturnValue(slow.promise);
+    await renderRecords();
+    await act(async () => {
+      sessionRow(pending.id).click();
+    });
+    await flush();
+    bridgeMocks.getRequestSession.mockClear();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100);
+    });
+    expect(bridgeMocks.getRequestSession).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      slow.resolve(sessionDetail(pending));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(bridgeMocks.getRequestSession).toHaveBeenCalledTimes(2);
+  });
+
   // Opening a session hid the list at once and drew the detail only when it
   // arrived, so the whole workspace flashed blank on every click.
   it("keeps the list on screen until the session detail arrives", async () => {
@@ -3874,6 +3910,57 @@ describe("RequestRecords", () => {
       limit: 50,
       kind: "discovery",
       local_access_token_ids: ["token_01"],
+    });
+  });
+
+  it("keeps the model menu in place while a chosen model narrows the list", async () => {
+    bridgeMocks.listRequestSessions.mockImplementation(
+      async (query: { models?: string[] }) => ({
+        items: [secondRecord, firstRecord]
+          .filter(
+            (record) =>
+              !query.models ||
+              query.models.includes(record.requested_model ?? ""),
+          )
+          .map((record) => sessionFromRecord(record)),
+        next_cursor: null,
+      }),
+    );
+    await renderRecords();
+
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="模型筛选"]')!
+        .click(),
+    );
+    const modelOption = (name: string) =>
+      document.querySelector<HTMLButtonElement>(
+        `[role="listbox"] [role="checkbox"][aria-label="${name}"]`,
+      )!;
+    const modelNames = () =>
+      [...document.querySelectorAll('[role="listbox"] [role="checkbox"]')].map(
+        (option) => option.getAttribute("aria-label"),
+      );
+    // No provider lists gpt-4.1-mini; only a loaded call names it.
+    expect(modelNames()).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
+
+    await act(async () => modelOption("gpt-4.1").click());
+    await flush();
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "inference",
+      models: ["gpt-4.1"],
+    });
+    expect(
+      container.querySelector(`[data-session-id="${secondRecord.id}"]`),
+    ).toBeNull();
+    expect(modelNames()).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
+
+    await act(async () => modelOption("gpt-4.1-mini").click());
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "inference",
+      models: ["gpt-4.1", "gpt-4.1-mini"],
     });
   });
 

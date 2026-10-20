@@ -19,7 +19,11 @@ import (
 // mention deleted tokens; those IDs are intentionally excluded from current
 // token breakdowns.
 func (store *Store) currentAccessTokenIDs(ctx context.Context) (map[string]struct{}, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT id FROM local_access_tokens ORDER BY id`)
+	return currentAccessTokenIDs(ctx, store.db)
+}
+
+func currentAccessTokenIDs(ctx context.Context, reader historyReader) (map[string]struct{}, error) {
+	rows, err := reader.QueryContext(ctx, `SELECT id FROM local_access_tokens ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("list current access token IDs: %w", err)
 	}

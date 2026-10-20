@@ -57,6 +57,7 @@ import {
 } from "./bridge";
 import type { AccessTokenSummary } from "./access-token-model";
 import type { DirectClient } from "./client-config-model";
+import { controlErrorCode } from "./control-error";
 import { currentLocale, i18n } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
@@ -109,6 +110,24 @@ function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+/** Why the create dialog refused, and whether the name field is to blame. */
+type CreateError = { message: string; nameInvalid: boolean };
+
+function createErrorOf(error: unknown): CreateError {
+  switch (controlErrorCode(error)) {
+    // Core compares names ignoring case; nothing else collides on create.
+    case "conflict":
+      return { message: i18n.t("tokens.nameTaken"), nameInvalid: true };
+    case "access_token_limit":
+      return { message: i18n.t("tokens.limitReached"), nameInvalid: false };
+    default:
+      return {
+        message: messageOf(error, i18n.t("tokens.createFailed")),
+        nameInvalid: false,
+      };
+  }
+}
+
 function createdAtLabel(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return i18n.t("tokens.unknown");
@@ -153,9 +172,12 @@ export function AccessTokenManager({
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  // The dialog covers the page message, so it shows its own failures.
+  const [createError, setCreateError] = useState<CreateError | null>(null);
   // Closing clears the draft; keep the exit animation on what was entered.
   const shownName = useExitSnapshot(name, createOpen);
   const shownCreating = useExitSnapshot(creating, createOpen);
+  const shownCreateError = useExitSnapshot(createError, createOpen);
   const [deletingID, setDeletingID] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AccessTokenSummary | null>(
     null,
@@ -183,6 +205,7 @@ export function AccessTokenManager({
     setQuery("");
     setName("");
     setCreating(false);
+    setCreateError(null);
     setDeletingID(null);
     setPendingDelete(null);
     setCopyingID(null);
@@ -273,18 +296,30 @@ export function AccessTokenManager({
     };
   }, [refreshTokenUsage, coreSessionKey]);
 
+  const closeCreate = () => {
+    setCreateOpen(false);
+    setName("");
+    setCreateError(null);
+  };
+
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     // The closing frame still shows the draft that was just cleared.
     if (!createOpen) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError(i18n.t("tokens.nameRequired"));
+      setCreateError({
+        message: i18n.t("tokens.nameRequired"),
+        nameInvalid: true,
+      });
       nameInput.current?.focus();
       return;
     }
     if ([...trimmedName].length > 64) {
-      setError(i18n.t("tokens.nameTooLong"));
+      setCreateError({
+        message: i18n.t("tokens.nameTooLong"),
+        nameInvalid: true,
+      });
       nameInput.current?.focus();
       return;
     }
@@ -292,18 +327,19 @@ export function AccessTokenManager({
 
     const generation = sessionGeneration.current;
     setCreating(true);
-    setError(null);
+    setCreateError(null);
     try {
       const result = await createAccessToken(trimmedName);
       if (sessionGeneration.current !== generation) return;
       onTokenCreated(result.token);
       setCopiedID(null);
-      setCreateOpen(false);
-      setName("");
+      closeCreate();
       notify.success(i18n.t("tokens.created", { name: result.token.name }));
     } catch (requestError) {
       if (sessionGeneration.current === generation) {
-        setError(messageOf(requestError, i18n.t("tokens.createFailed")));
+        const failure = createErrorOf(requestError);
+        setCreateError(failure);
+        if (failure.nameInvalid) nameInput.current?.focus();
       }
     } finally {
       if (sessionGeneration.current === generation) setCreating(false);
@@ -790,10 +826,7 @@ export function AccessTokenManager({
       <Dialog
         open={createOpen}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && !creating) {
-            setCreateOpen(false);
-            setName("");
-          }
+          if (!nextOpen && !creating) closeCreate();
         }}
       >
         <DialogContent showCloseButton={!shownCreating}>
@@ -807,25 +840,38 @@ export function AccessTokenManager({
             <DialogDescription>{t("tokens.createHint")}</DialogDescription>
           </DialogHeader>
           <form onSubmit={(event) => void submitCreate(event)}>
-            <Field htmlFor="access-token-name" label={t("tokens.name")}>
-              <Input
-                autoComplete="off"
-                id="access-token-name"
-                maxLength={64}
-                onChange={(event) => setName(event.currentTarget.value)}
-                placeholder={t("tokens.namePlaceholder")}
-                ref={nameInput}
-                value={shownName}
-              />
-            </Field>
+            <div className="grid gap-1">
+              <Field htmlFor="access-token-name" label={t("tokens.name")}>
+                <Input
+                  aria-describedby={
+                    shownCreateError?.nameInvalid
+                      ? "access-token-name-error"
+                      : undefined
+                  }
+                  aria-invalid={shownCreateError?.nameInvalid || undefined}
+                  autoComplete="off"
+                  id="access-token-name"
+                  maxLength={64}
+                  onChange={(event) => {
+                    setName(event.currentTarget.value);
+                    setCreateError(null);
+                  }}
+                  placeholder={t("tokens.namePlaceholder")}
+                  ref={nameInput}
+                  value={shownName}
+                />
+              </Field>
+              {shownCreateError ? (
+                <FormMessage id="access-token-name-error" tone="error">
+                  {shownCreateError.message}
+                </FormMessage>
+              ) : null}
+            </div>
             <DialogFooter className="mt-5">
               <Button
                 variant="outline"
                 disabled={shownCreating}
-                onClick={() => {
-                  setCreateOpen(false);
-                  setName("");
-                }}
+                onClick={closeCreate}
                 type="button"
               >
                 {t("common.cancel")}

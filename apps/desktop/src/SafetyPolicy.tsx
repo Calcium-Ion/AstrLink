@@ -25,6 +25,7 @@ import { UsageRangeSelect } from "@/components/UsageRangeSelect";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState } from "@/components/EmptyState";
 import { FormMessage } from "@/components/FormMessage";
+import { LoadingState } from "@/components/LoadingState";
 import { IconButton } from "@/components/IconButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +83,7 @@ import {
   compareReleaseVersions,
   DEFAULT_PRIVACY_RESTORE_SETTINGS,
   defaultPrivacyKindRules,
+  isCoreMLVariantID,
   isResourceHeavyVariant,
   localModelActive,
   MAX_PRIVACY_ALLOWLIST_RULES,
@@ -111,6 +113,7 @@ import {
   type PrivacyLabelMapping,
   type PrivacyModelInstallation,
   type PrivacyModelInstallInput,
+  type PrivacyModelPreparation,
   type PrivacyModelProbe,
   type PrivacyModelVariant,
   type PrivacyPolicyPatch,
@@ -495,6 +498,28 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
+// Core names variants in English. The Core ML variants it offers are shown
+// in the user's language, by id; any other id keeps the name Core sent.
+function variantName(id: string, name: string): string {
+  switch (id) {
+    case "coreml_fp16_gpu":
+      return i18n.t("safety.coreMLVariantGPU");
+    case "coreml_fp16_ane":
+      return i18n.t("safety.coreMLVariantNeuralEngine");
+    case "coreml_fp16_all":
+      return i18n.t("safety.coreMLVariantAllUnits");
+    default:
+      return name;
+  }
+}
+
+function unsupportedVariantSuffix(variant: PrivacyModelVariant): string {
+  if (variant.supported) return "";
+  return variant.unsupported_reason === "requires_macos_26"
+    ? i18n.t("safety.unsupportedRequiresMacOS26")
+    : i18n.t("safety.unsupported");
+}
+
 function summarizeDryRunFindings(result: PrivacyDryRunResultData): string {
   if (result.findings.length === 0) {
     return i18n.t("privacy.noHit");
@@ -705,6 +730,73 @@ function LabelMappingDialog({
   );
 }
 
+/**
+ * How Core is getting the policy's Core ML model ready on this Mac. While it
+ * compiles, the previous detector keeps checking requests, or requests wait.
+ */
+function ModelPreparationNotice({
+  preparation,
+  retrying,
+  onRetry,
+}: {
+  preparation: PrivacyModelPreparation;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const t = useT();
+  if (preparation.state === "preparing") {
+    return (
+      <div className="grid gap-0.5" data-testid="model-preparation">
+        <LoadingState
+          className="justify-start text-xs"
+          label={t("safety.modelCompiling")}
+        />
+        <p className="pl-5.5 text-xs text-muted-foreground">
+          {preparation.fallback === "local_model"
+            ? t("safety.modelCompilingLocalFallback")
+            : preparation.fallback === "regex"
+              ? t("safety.modelCompilingRegexFallback")
+              : t("safety.modelCompilingWait")}
+        </p>
+      </div>
+    );
+  }
+  if (preparation.state === "ready") {
+    return (
+      <FormMessage data-testid="model-preparation" tone="success">
+        {t("safety.modelReadyOnMac")}
+      </FormMessage>
+    );
+  }
+  return (
+    <FormMessage
+      asChild
+      className="flex flex-wrap items-center justify-between gap-2"
+      data-testid="model-preparation"
+      tone="error"
+    >
+      <div>
+        <span>
+          {preparation.fallback === "local_model"
+            ? t("safety.modelPrepareFailedLocalFallback")
+            : preparation.fallback === "regex"
+              ? t("safety.modelPrepareFailedRegexFallback")
+              : t("safety.modelPrepareFailedBlocked")}
+        </span>
+        <Button
+          disabled={retrying}
+          onClick={onRetry}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {t("safety.retryPrepare")}
+        </Button>
+      </div>
+    </FormMessage>
+  );
+}
+
 interface ModelActionDialogProps {
   action: PendingModelAction;
   installation: PrivacyModelInstallation;
@@ -786,6 +878,11 @@ function ModelActionDialog({
           <FormMessage tone={heavy ? "warning" : "notice"}>
             {heavy ? t("safety.heavyConfirm") : t("safety.normalConfirm")}
           </FormMessage>
+          {isCoreMLVariantID(installation.variant_id) ? (
+            <FormMessage tone="notice">
+              {t("safety.coreMLCompileOnEnable")}
+            </FormMessage>
+          ) : null}
         </>
       ) : null}
     </>
@@ -900,6 +997,11 @@ function InstalledModelPicker({
             {t(heavy ? "safety.heavyConfirm" : "safety.normalConfirm")}
           </FormMessage>
         ) : null}
+        {selected && isCoreMLVariantID(selected.variant_id) ? (
+          <FormMessage tone="notice">
+            {t("safety.coreMLCompileOnEnable")}
+          </FormMessage>
+        ) : null}
         {error ? <FormMessage tone="error">{error}</FormMessage> : null}
         <DialogFooter className="shrink-0 flex-row flex-wrap items-center">
           <Button
@@ -945,7 +1047,7 @@ function InstallationResourceDialog({
           <p>
             {t("safety.heavyResource", {
               name: pending.name,
-              variant: pending.variant.name,
+              variant: variantName(pending.variant.id, pending.variant.name),
             })}
           </p>
           <dl className="grid grid-cols-2 gap-2.5">
@@ -1531,18 +1633,24 @@ export function SafetyPolicy({
     if (initialView) setWorkspace(initialView);
   }, [initialView]);
 
-  const downloadingIDs = useMemo(
+  // Downloads report progress, and Core reports when the policy's Core ML
+  // model finishes compiling, only when asked.
+  const pollingIDs = useMemo(
     () =>
       installations
-        .filter((installation) => installation.status === "downloading")
+        .filter(
+          (installation) =>
+            installation.status === "downloading" ||
+            installation.preparation?.state === "preparing",
+        )
         .map((installation) => installation.id)
         .sort(),
     [installations],
   );
-  const downloadingSignature = downloadingIDs.join(",");
+  const pollingSignature = pollingIDs.join(",");
 
   useEffect(() => {
-    if (!isReady || coreSessionKey === null || downloadingIDs.length === 0) {
+    if (!isReady || coreSessionKey === null || pollingIDs.length === 0) {
       return;
     }
     const generation = generationRef.current;
@@ -1563,7 +1671,7 @@ export function SafetyPolicy({
     const poll = async () => {
       try {
         const updates = await Promise.all(
-          downloadingIDs.map((id) => getPrivacyModelInstallation(id)),
+          pollingIDs.map((id) => getPrivacyModelInstallation(id)),
         );
         if (!stillCurrent()) return;
         setInstallations((current) =>
@@ -1594,7 +1702,7 @@ export function SafetyPolicy({
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [coreSessionKey, downloadingSignature, isReady]);
+  }, [coreSessionKey, pollingSignature, isReady]);
 
   const refresh = () => {
     if (
@@ -1625,6 +1733,37 @@ export function SafetyPolicy({
     void load(generation, true);
   };
 
+  // Core reports a preparation only for the policy's Core ML model, and
+  // starts it as the policy changes, so read that model again after a save.
+  const syncPreparation = (
+    policy: PrivacyPolicyRecord["policy"],
+    generation: number,
+  ) => {
+    const active = localModelActive(policy) ? policy.local_model_id : null;
+    setInstallations((items) =>
+      items.map((item) =>
+        item.id !== active && item.preparation !== null
+          ? { ...item, preparation: null }
+          : item,
+      ),
+    );
+    if (active === null) return;
+    void (async () => {
+      try {
+        const update = await getPrivacyModelInstallation(active);
+        if (generationRef.current !== generation) return;
+        if (!update || typeof update.id !== "string") return;
+        setInstallations((items) =>
+          items.some((item) => item.id === update.id)
+            ? mergeInstallation(items, update)
+            : items,
+        );
+      } catch {
+        // The policy saved; the page shows the state on its next load.
+      }
+    })();
+  };
+
   const patchPolicy = async (
     patch: PrivacyPolicyPatch,
     successNotice = i18n.t("safety.saved"),
@@ -1633,13 +1772,21 @@ export function SafetyPolicy({
     const generation = generationRef.current;
     const previous = record;
     policyMutationVersion.current += 1;
-    const unloadsModel = patchUnloadsLocalModel(record.policy, patch);
+    const nextPolicy = { ...record.policy, ...patch };
+    // Core keeps the previous detector while a Core ML model compiles.
+    const unloadsModel =
+      patchUnloadsLocalModel(record.policy, patch) &&
+      !(
+        localModelActive(nextPolicy) &&
+        installations.some(
+          (installation) =>
+            installation.id === nextPolicy.local_model_id &&
+            isCoreMLVariantID(installation.variant_id),
+        )
+      );
     setRecord({
       ...record,
-      policy: {
-        ...record.policy,
-        ...patch,
-      },
+      policy: nextPolicy,
     });
     setSaving(true);
     setUnloadingModel(unloadsModel);
@@ -1659,6 +1806,7 @@ export function SafetyPolicy({
       if (generationRef.current !== generation) return false;
       cacheRecord(next);
       setRecord(next);
+      syncPreparation(next.policy, generation);
       notify.success(
         unloadsModel && !localModelActive(next.policy)
           ? t("safety.modelClosed")
@@ -1701,6 +1849,14 @@ export function SafetyPolicy({
           (installation) => installation.id === record.policy.local_model_id,
         ) ?? null);
   const selectedModelReady = selectedInstallation?.status === "ready";
+  const activePreparation =
+    record !== null && localModelActive(record.policy)
+      ? (selectedInstallation?.preparation ?? null)
+      : null;
+  const retryPreparation = () => {
+    const id = record?.policy.local_model_id;
+    if (id) void patchPolicy({ local_model_id: id });
+  };
 
   const requestModelActivation = (
     installation: PrivacyModelInstallation,
@@ -2654,8 +2810,8 @@ export function SafetyPolicy({
   const installationSummary = (installation: PrivacyModelInstallation) => {
     const release = installationRelease(installation);
     return release === null
-      ? installation.variant_name
-      : `${installation.variant_name} · ${release}`;
+      ? variantName(installation.variant_id, installation.variant_name)
+      : `${variantName(installation.variant_id, installation.variant_name)} · ${release}`;
   };
   // The update check reports the newest compatible release, so every other
   // catalog revision of that model is older. Once installed, the newer
@@ -2753,6 +2909,11 @@ export function SafetyPolicy({
               <span className="text-xs text-muted-foreground">
                 {t("common.saving")}
               </span>
+            ) : activePreparation?.state === "preparing" ? (
+              <LoadingState
+                className="gap-1.5 text-xs text-muted-foreground"
+                label={t("safety.preparingModel")}
+              />
             ) : null}
             {policy !== null ? (
               <>
@@ -2970,6 +3131,15 @@ export function SafetyPolicy({
                       value="local_model"
                     />
                   </RadioGroup>
+                  {activePreparation === null ? null : (
+                    <div className="mt-2">
+                      <ModelPreparationNotice
+                        preparation={activePreparation}
+                        retrying={saving}
+                        onRetry={retryPreparation}
+                      />
+                    </div>
+                  )}
                 </fieldset>
 
                 {policy.detector === "regex" ? (
@@ -4263,13 +4433,14 @@ export function SafetyPolicy({
                                       key={candidate.id}
                                       value={candidate.id}
                                     >
-                                      {candidate.name}
+                                      {variantName(
+                                        candidate.id,
+                                        candidate.name,
+                                      )}
                                       {candidate.recommended
                                         ? t("safety.recommended")
                                         : ""}
-                                      {!candidate.supported
-                                        ? t("safety.unsupported")
-                                        : ""}
+                                      {unsupportedVariantSuffix(candidate)}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -4449,8 +4620,11 @@ export function SafetyPolicy({
                                   {installation.name}
                                 </strong>
                                 <span className="mt-1 block text-xs leading-snug text-muted-foreground">
-                                  {installation.variant_name} ·{" "}
-                                  {installation.quantization}
+                                  {variantName(
+                                    installation.variant_id,
+                                    installation.variant_name,
+                                  )}{" "}
+                                  · {installation.quantization}
                                   {release === null ? null : ` · ${release}`}
                                 </span>
                               </div>
@@ -4544,6 +4718,13 @@ export function SafetyPolicy({
                                     )}
                               </p>
                             )}
+                            {selected && activePreparation !== null ? (
+                              <ModelPreparationNotice
+                                preparation={activePreparation}
+                                retrying={saving}
+                                onRetry={retryPreparation}
+                              />
+                            ) : null}
                             {Object.keys(installation.label_mapping).length >
                             0 ? (
                               <details className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
@@ -4772,18 +4953,24 @@ export function SafetyPolicy({
                                 key={variant.id}
                                 value={variant.id}
                               >
-                                {variant.name}
+                                {variantName(variant.id, variant.name)}
                                 {variant.recommended
                                   ? t("safety.recommended")
                                   : ""}
-                                {!variant.supported
-                                  ? t("safety.unsupported")
-                                  : ""}
+                                {unsupportedVariantSuffix(variant)}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </Label>
+                      {probe.variants.some(
+                        (variant) =>
+                          variant.supported && isCoreMLVariantID(variant.id),
+                      ) ? (
+                        <FormMessage tone="notice">
+                          {t("safety.coreMLCompileOnEnable")}
+                        </FormMessage>
+                      ) : null}
 
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <span className="mr-auto text-sm leading-relaxed text-muted-foreground">
@@ -4943,13 +5130,11 @@ export function SafetyPolicy({
                                 key={variant.id}
                                 value={variant.id}
                               >
-                                {variant.name}
+                                {variantName(variant.id, variant.name)}
                                 {variant.recommended
                                   ? t("safety.recommended")
                                   : ""}
-                                {!variant.supported
-                                  ? t("safety.unsupported")
-                                  : ""}
+                                {unsupportedVariantSuffix(variant)}
                               </SelectItem>
                             ))}
                           </SelectContent>

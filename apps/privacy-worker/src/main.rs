@@ -21,11 +21,15 @@ use protocol::{DetectResponse, PROTOCOL_VERSION, read_request, write_ready, writ
 // Model contract rejections are reported by code so a misconfigured model is
 // distinguishable from a generic startup failure. Other error text is never
 // echoed.
-const CONTRACT_STARTUP_FAILURES: [&str; 4] = [
+const CONTRACT_STARTUP_FAILURES: [&str; 8] = [
     "invalid_decoder_contract",
     "invalid_decoder_contract_adapter",
     "invalid_span_contract",
     "invalid_span_contract_adapter",
+    "coreml_unavailable",
+    "coreml_requires_macos_26",
+    "coreml_session_failed",
+    "unsupported_execution_provider",
 ];
 // Core sizes the pool for the device. A core that predates --intra-threads
 // gets the old fixed pool, so a mismatched development build still runs.

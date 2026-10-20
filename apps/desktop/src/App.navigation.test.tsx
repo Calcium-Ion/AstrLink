@@ -1148,6 +1148,7 @@ describe("App workspace navigation", () => {
       values: {
         close_behavior: "hide_to_tray",
         autostart: false,
+        autostart_hidden: false,
         core_auto_start: true,
         core_auto_recover: true,
         use_system_proxy: true,
@@ -1421,6 +1422,7 @@ describe("App workspace navigation", () => {
       values: {
         close_behavior: "hide_to_tray",
         autostart: false,
+        autostart_hidden: false,
         core_auto_start: true,
         core_auto_recover: true,
         use_system_proxy: true,
@@ -1464,6 +1466,7 @@ describe("App workspace navigation", () => {
       values: {
         close_behavior: "hide_to_tray",
         autostart: false,
+        autostart_hidden: false,
         core_auto_start: true,
         core_auto_recover: true,
         use_system_proxy: true,
@@ -1615,6 +1618,7 @@ describe("App workspace navigation", () => {
       values: {
         close_behavior: "hide_to_tray",
         autostart: false,
+        autostart_hidden: false,
         core_auto_start: true,
         core_auto_recover: true,
         use_system_proxy: true,

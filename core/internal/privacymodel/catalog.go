@@ -30,6 +30,8 @@ type runtimeSpec struct {
 	maxRequestTokens      int
 	inputNames            normalizedInputNames
 	outputName            string
+	// execution is nil for the CPU path; see coreml.go.
+	execution *normalizedExecution
 }
 
 type variantPlan struct {

@@ -1411,9 +1411,9 @@ type errorDetail struct {
 	RetryAfterSeconds int      `json:"retry_after_seconds,omitempty"`
 }
 
-// writeRateLimited reports that every route is waiting out the delay its
-// upstream asked for with HTTP 429, so nothing was sent upstream. The record
-// keeps the same text the client received.
+// writeRateLimited reports that every route is cooling after an upstream
+// rate limit or overload, so nothing was sent upstream. The record keeps
+// the same text the client received.
 func writeRateLimited(
 	writer http.ResponseWriter,
 	classified Request,
@@ -1433,7 +1433,7 @@ func writeRateLimited(
 			details = append(details, errorDetail{
 				Protocol:          string(classified.Protocol),
 				ServiceID:         string(limit.Service),
-				Reason:            fmt.Sprintf("upstream answered HTTP 429 for model %q", limit.Model),
+				Reason:            fmt.Sprintf("upstream reported a rate limit or overload for model %q", limit.Model),
 				RetryAfterSeconds: seconds,
 			})
 			routes = append(routes, fmt.Sprintf("%s (model %q, %ds left)", name, limit.Model, seconds))
@@ -1447,7 +1447,7 @@ func writeRateLimited(
 		subject = fmt.Sprintf("model %q", classified.Model)
 	}
 	message := fmt.Sprintf(
-		"every provider for %s answered HTTP 429 and is waiting out the retry delay it asked for; nothing was sent upstream",
+		"every provider for %s is waiting out an upstream rate limit or overload cooldown; nothing was sent upstream",
 		subject,
 	)
 	if len(routes) > 0 {

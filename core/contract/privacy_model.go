@@ -245,8 +245,66 @@ type PrivacyModelInstallation struct {
 	InstalledAt       *string                        `json:"installed_at"`
 }
 
+// PrivacyModelInstallationView is an installation as the control API reports
+// it: the stored record plus runtime state. Preparation is never persisted,
+// because stored installations are decoded strictly and an older Core would
+// reject the extra field.
+type PrivacyModelInstallationView struct {
+	PrivacyModelInstallation
+	Preparation *PrivacyModelPreparation `json:"preparation"`
+}
+
 type PrivacyModelInstallationList struct {
-	Items []PrivacyModelInstallation `json:"items"`
+	Items []PrivacyModelInstallationView `json:"items"`
+}
+
+type PrivacyModelPreparationState string
+type PrivacyModelPreparationFallback string
+
+const (
+	// PrivacyModelPreparationPreparing: the worker is starting. A Core ML
+	// model is compiled for this device and warmed up before it is ready.
+	PrivacyModelPreparationPreparing PrivacyModelPreparationState = "preparing"
+	PrivacyModelPreparationReady     PrivacyModelPreparationState = "ready"
+	PrivacyModelPreparationFailed    PrivacyModelPreparationState = "failed"
+
+	// The detector of the previous policy keeps inspecting requests until
+	// the model is ready, and after a failure. Without one, requests wait
+	// for the model, and fail once it has failed.
+	PrivacyModelPreparationFallbackLocalModel PrivacyModelPreparationFallback = "local_model"
+	PrivacyModelPreparationFallbackRegex      PrivacyModelPreparationFallback = "regex"
+)
+
+// PrivacyModelPreparation reports how the policy's model is being made ready
+// on this device. Core prepares Core ML installations as soon as the policy
+// selects them; other installations still start on the first request, and
+// report no preparation.
+type PrivacyModelPreparation struct {
+	State    PrivacyModelPreparationState     `json:"state"`
+	Fallback *PrivacyModelPreparationFallback `json:"fallback"`
+}
+
+func ValidatePrivacyModelPreparation(preparation *PrivacyModelPreparation) error {
+	if preparation == nil {
+		return nil
+	}
+	switch preparation.State {
+	case PrivacyModelPreparationPreparing, PrivacyModelPreparationFailed:
+	case PrivacyModelPreparationReady:
+		if preparation.Fallback != nil {
+			return fmt.Errorf("a ready privacy model has no fallback")
+		}
+	default:
+		return fmt.Errorf("unknown privacy model preparation state")
+	}
+	if preparation.Fallback != nil {
+		switch *preparation.Fallback {
+		case PrivacyModelPreparationFallbackLocalModel, PrivacyModelPreparationFallbackRegex:
+		default:
+			return fmt.Errorf("unknown privacy model preparation fallback")
+		}
+	}
+	return nil
 }
 
 // ReadyPrivacyModelInstallation is an in-process-only handoff. Filesystem
@@ -371,7 +429,8 @@ func validatePrivacyModelVariant(variant PrivacyModelVariant) error {
 			return fmt.Errorf("supported privacy model variant is invalid")
 		}
 	} else if variant.UnsupportedReason == nil ||
-		*variant.UnsupportedReason != "cpu_only" {
+		(*variant.UnsupportedReason != "cpu_only" &&
+			*variant.UnsupportedReason != "requires_macos_26") {
 		return fmt.Errorf("unsupported privacy model variant is invalid")
 	}
 	return nil

@@ -4,6 +4,7 @@ import {
   compareReleaseVersions,
   defaultPrivacyAllowlistRules,
   defaultPrivacyKindRules,
+  isCoreMLVariantID,
   isResourceHeavyVariant,
   localModelActive,
   missingDefaultPrivacyAllowlistRules,
@@ -90,9 +91,48 @@ const readyInstallation = {
   error: null,
   label_mapping: { EMAIL: "email", OTHER: null },
   installed_at: "2026-07-24T10:30:00Z",
+  preparation: null,
 } as const;
 
 describe("privacy-policy IPC contract", () => {
+  it("accepts the policy model's preparation only on a ready installation", () => {
+    for (const preparation of [
+      { state: "preparing", fallback: "local_model" },
+      { state: "preparing", fallback: null },
+      { state: "failed", fallback: "regex" },
+      { state: "ready", fallback: null },
+    ] as const) {
+      expect(
+        parsePrivacyModelInstallation({ ...readyInstallation, preparation }),
+      ).toEqual({ ...readyInstallation, preparation });
+    }
+    for (const preparation of [
+      { state: "compiling", fallback: null },
+      { state: "ready", fallback: "regex" },
+      { state: "preparing", fallback: "cloud" },
+      { state: "preparing" },
+      { state: "preparing", fallback: null, progress: 1 },
+      "preparing",
+    ]) {
+      expect(() =>
+        parsePrivacyModelInstallation({ ...readyInstallation, preparation }),
+      ).toThrow();
+    }
+    expect(() =>
+      parsePrivacyModelInstallation({
+        ...readyInstallation,
+        status: "downloading",
+        bytes_downloaded: 45,
+        installed_at: null,
+        preparation: { state: "preparing", fallback: null },
+      }),
+    ).toThrow("only a ready installation");
+    const { preparation: _omitted, ...missing } = readyInstallation;
+    expect(() => parsePrivacyModelInstallation(missing)).toThrow(
+      "missing field",
+    );
+  });
+
   it("strictly parses the singleton policy with a nullable local model selection", () => {
     expect(
       parsePrivacyPolicyPage({ items: [policy], next_cursor: null }),
@@ -578,6 +618,35 @@ describe("privacy-policy IPC contract", () => {
       ...probe,
       license: null,
     });
+    const coreMLBeforeMacOS26 = {
+      ...variant,
+      id: "coreml_fp16_gpu",
+      name: "Core ML FP16 · GPU",
+      quantization: "f16",
+      recommended: false,
+      supported: false,
+      unsupported_reason: "requires_macos_26",
+    } as const;
+    expect(
+      parsePrivacyModelProbe({
+        ...probe,
+        variants: [coreMLBeforeMacOS26, variant],
+      }).variants,
+    ).toEqual([coreMLBeforeMacOS26, variant]);
+    expect(() =>
+      parsePrivacyModelProbe({
+        ...probe,
+        variants: [
+          { ...coreMLBeforeMacOS26, unsupported_reason: "requires_macos_15" },
+        ],
+      }),
+    ).toThrow("unknown unsupported reason");
+    expect(() =>
+      parsePrivacyModelProbe({
+        ...probe,
+        variants: [{ ...coreMLBeforeMacOS26, supported: true }],
+      }),
+    ).toThrow("inconsistent");
     expect(() =>
       parsePrivacyModelCatalog({
         items: [
@@ -810,6 +879,9 @@ describe("privacy-policy IPC contract", () => {
       }),
     ).toThrow("lowercase commit");
     expect(isResourceHeavyVariant(variant)).toBe(false);
+    expect(isCoreMLVariantID("coreml_fp16_ane")).toBe(true);
+    expect(isCoreMLVariantID(variant.id)).toBe(false);
+    expect(isCoreMLVariantID("gpu_f16")).toBe(false);
     expect(
       isResourceHeavyVariant({
         bytes_total: 1024 ** 3,

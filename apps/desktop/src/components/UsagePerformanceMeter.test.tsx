@@ -56,7 +56,7 @@ describe("performance detail popover", () => {
     await act(async () =>
       host
         .querySelector<HTMLButtonElement>(
-          'button[aria-label="查看 Test target 的缓存率与 TPS"]',
+          'button[aria-label="查看 Test target 的缓存命中率与 TPS"]',
         )!
         .click(),
     );

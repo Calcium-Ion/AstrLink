@@ -18,9 +18,9 @@
     "test:watch": "vitest --maxWorkers=1",
     "tauri": "tauri",
     "sidecar:build": "bun scripts/build-sidecar.mjs",
-    "desktop:dev": "bun run branding:sync && bun run sidecar:build && tauri dev --config src-tauri/tauri.dev.conf.json",
-    "desktop:start": "bun run branding:sync && bun run sidecar:build && rsbuild build && tauri dev --no-watch --no-dev-server --config src-tauri/tauri.start.conf.json",
-    "desktop:build": "bun run branding:sync && bun run sidecar:build && tauri build",
+    "desktop:dev": "bun run branding:sync && bun run sidecar:build && tauri dev --config src-tauri/tauri.dev.conf.json --config src-tauri/binaries/tauri.onnxruntime.conf.json",
+    "desktop:start": "bun run branding:sync && bun run sidecar:build && rsbuild build && tauri dev --no-watch --no-dev-server --config src-tauri/tauri.start.conf.json --config src-tauri/binaries/tauri.onnxruntime.conf.json",
+    "desktop:build": "bun run branding:sync && bun run sidecar:build && tauri build --config src-tauri/binaries/tauri.onnxruntime.conf.json",
     "macos:notarize": "bun scripts/notarize-macos.mjs",
     "build:web": "PUBLIC_ASTRLINK_EDITION=web bun run build"
   },

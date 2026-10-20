@@ -687,7 +687,7 @@ const TurnView = memo(function TurnView({
   const shownSegments = open ? segments : [];
   return (
     <li
-      className="max-w-[92ch] border-b py-5 last:border-b-0"
+      className="min-w-0 border-b py-5 last:border-b-0"
       data-testid="conversation-turn"
       data-turn-id={turn.id}
       ref={refFor}

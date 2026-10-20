@@ -44,6 +44,8 @@ const (
 )
 
 type Store struct {
+	usageSummaries    historyCache
+	requestSessions   historyCache
 	channelBindingsMu chan struct{}
 	db                *sql.DB
 	keys              *keyRing

@@ -388,7 +388,7 @@ jobs:
           src-tauri/binaries
       - name: Build Tauri bundle
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true'
-        run: bun run tauri build --ci --bundles ${{ matrix.bundle }} --config '{"build":{"beforeBuildCommand":null}}'
+        run: bun run tauri build --ci --bundles ${{ matrix.bundle }} --config '{"build":{"beforeBuildCommand":null}}' --config src-tauri/binaries/tauri.onnxruntime.conf.json
       - name: Inspect packaged macOS application contents
         if: env.ASTRLINK_CI_BUILD_ARTIFACTS == 'true' && runner.os == 'macOS'
         run: >-

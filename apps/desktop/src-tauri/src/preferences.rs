@@ -223,6 +223,7 @@ impl TrayPreferences {
 pub struct Preferences {
     pub close_behavior: CloseBehavior,
     pub autostart: bool,
+    pub autostart_hidden: bool,
     pub core_auto_start: bool,
     pub core_auto_recover: bool,
     pub use_system_proxy: bool,
@@ -250,6 +251,7 @@ impl Default for Preferences {
         Self {
             close_behavior: CloseBehavior::HideToTray,
             autostart: false,
+            autostart_hidden: false,
             core_auto_start: true,
             core_auto_recover: true,
             use_system_proxy: true,
@@ -601,6 +603,30 @@ mod tests {
             reloaded.values.updates,
             crate::updates::UpdatePreferences::default()
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn autostart_hidden_defaults_off_for_existing_preferences_and_is_persisted() {
+        let directory = temporary_directory("autostart-hidden");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(FILE_NAME), br#"{"autostart":true}"#).unwrap();
+        let store = load(&directory);
+        let mut values = store.snapshot().values;
+        assert!(values.autostart);
+        assert!(!values.autostart_hidden);
+        assert_eq!(store.snapshot().load_warning, None);
+
+        values.autostart_hidden = true;
+        store.replace(values).unwrap();
+        assert!(load(&directory).snapshot().values.autostart_hidden);
+
+        let mut values = store.snapshot().values;
+        values.autostart = false;
+        store.replace(values).unwrap();
+        let reloaded = load(&directory).snapshot().values;
+        assert!(!reloaded.autostart);
+        assert!(reloaded.autostart_hidden);
         fs::remove_dir_all(directory).unwrap();
     }
 

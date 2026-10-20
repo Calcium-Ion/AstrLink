@@ -232,6 +232,25 @@ async function invoke<T>(
   }
 }
 
+const pendingHistoryReads = new Map<string, Promise<unknown>>();
+
+// Several panels can ask for the same history snapshot at once. Share only
+// in-flight reads; settled results and failures must never delay a refresh.
+function invokeHistoryRead(
+  command: "get_usage_summary" | "get_request_session",
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const key = JSON.stringify([command, args]);
+  const existing = pendingHistoryReads.get(key);
+  if (existing) return existing;
+  const pending = invoke<unknown>(command, args).finally(() => {
+    if (pendingHistoryReads.get(key) === pending)
+      pendingHistoryReads.delete(key);
+  });
+  pendingHistoryReads.set(key, pending);
+  return pending;
+}
+
 // These local reads should finish promptly. A stuck native event loop must not
 // leave settings loading forever or keep displaying an old ready snapshot.
 async function invokeDesktopRead(
@@ -266,16 +285,19 @@ export async function restartCore(): Promise<AppSnapshot> {
     throw new Error(i18n.t("bridge.restartDesktopOnly"));
   }
 
+  pendingHistoryReads.clear();
   return parseAppSnapshot(await invoke<unknown>("restart_core"));
 }
 
 export async function startCore(): Promise<AppSnapshot> {
   requireNativeBridge();
+  pendingHistoryReads.clear();
   return parseAppSnapshot(await invoke<unknown>("start_core"));
 }
 
 export async function stopCore(): Promise<AppSnapshot> {
   requireNativeBridge();
+  pendingHistoryReads.clear();
   return parseAppSnapshot(await invoke<unknown>("stop_core"));
 }
 
@@ -653,7 +675,7 @@ export async function getRequestSession(
 ): Promise<RequestSessionDetail> {
   requireNativeBridge();
   return parseRequestSessionDetail(
-    await invoke<unknown>("get_request_session", { sessionId }),
+    await invokeHistoryRead("get_request_session", { sessionId }),
   );
 }
 
@@ -876,7 +898,7 @@ export async function getUsageSummary(
 ): Promise<UsageSummary> {
   requireNativeBridge();
   return parseUsageSummary(
-    await invoke<unknown>("get_usage_summary", {
+    await invokeHistoryRead("get_usage_summary", {
       from: window.from,
       to: window.to,
       timeZone: window.time_zone || "UTC",

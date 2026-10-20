@@ -10,6 +10,7 @@ const valid = {
   values: {
     close_behavior: "hide_to_tray",
     autostart: false,
+    autostart_hidden: false,
     core_auto_start: true,
     core_auto_recover: true,
     use_system_proxy: true,
@@ -34,6 +35,25 @@ const valid = {
 describe("preferences IPC contract", () => {
   it("strictly parses the complete settings snapshot", () => {
     expect(parseSettingsSnapshot(valid)).toEqual(valid);
+  });
+
+  it("requires a boolean preference for hiding on autostart", () => {
+    for (const autostart_hidden of [false, true]) {
+      expect(
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, autostart_hidden },
+        }).values.autostart_hidden,
+      ).toBe(autostart_hidden);
+    }
+    for (const autostart_hidden of [undefined, null, "true", 1]) {
+      expect(() =>
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, autostart_hidden },
+        }),
+      ).toThrow("$.values.autostart_hidden");
+    }
   });
 
   it("validates the tray section", () => {

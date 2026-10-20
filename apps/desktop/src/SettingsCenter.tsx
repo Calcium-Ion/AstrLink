@@ -824,6 +824,16 @@ export function SettingsCenter({
                   onChange={(autostart) => void applyInstant({ autostart })}
                 />
 
+                <SettingsToggle
+                  checked={prefs.autostart_hidden}
+                  disabled={prefsBusy || !prefs.autostart}
+                  hint={t("settings.autostartHiddenHint")}
+                  label={t("settings.autostartHidden")}
+                  onChange={(autostart_hidden) =>
+                    void applyInstant({ autostart_hidden })
+                  }
+                />
+
                 <p className="px-4 py-2.5 text-xs text-muted-foreground">
                   {t("settings.trayHint")}
                 </p>

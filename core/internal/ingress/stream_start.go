@@ -18,10 +18,13 @@ import (
 // received a byte.
 const (
 	// streamStartHoldLimit bounds how long the client waits for held events.
-	// Refusals arrive at once; a slow first token goes out as it is.
+	// After it, even announcements go out and the stream cannot be retried.
 	streamStartHoldLimit = 10 * time.Second
 	// streamStartHoldBytes bounds the announcements held in memory.
 	streamStartHoldBytes = 1 << 20
+	// An explicit capacity refusal cools only this model route. Retry-After
+	// can extend it; another model on the same account remains available.
+	streamOverloadCooldown = 30 * time.Second
 )
 
 // holdsStreamStart reports whether a stream in this upstream protocol tells
@@ -73,6 +76,35 @@ func classifyStreamStart(protocol contract.ProtocolID, frame []byte) streamStart
 		switch eventType {
 		case "response.created", "response.in_progress", "response.queued":
 			return streamStartAnnouncement
+		case "response.output_item.added":
+			item := gjson.GetBytes(data, "item")
+			switch item.Get("type").Str {
+			case "message", "reasoning":
+				// Empty containers can precede an overload, even though their
+				// names mention output. Populated or encrypted content commits.
+				encrypted := item.Get("encrypted_content")
+				if emptyStreamStartArray(item.Get("content")) && emptyStreamStartArray(item.Get("summary")) &&
+					(encrypted.Type == gjson.Null || encrypted.Type == gjson.String && encrypted.Str == "") {
+					return streamStartAnnouncement
+				}
+			}
+		case "response.content_part.added", "response.reasoning_summary_part.added":
+			part := gjson.GetBytes(data, "part")
+			field := "text"
+			switch part.Get("type").Str {
+			case "refusal":
+				field = "refusal"
+			case "output_text", "summary_text":
+			default:
+				return streamStartProgress
+			}
+			if value := part.Get(field); value.Type == gjson.String && value.Str == "" {
+				return streamStartAnnouncement
+			}
+		case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+			if delta := gjson.GetBytes(data, "delta"); delta.Type == gjson.String && delta.Str == "" {
+				return streamStartAnnouncement
+			}
 		}
 	case contract.ProtocolAnthropicMessages:
 		switch eventType {
@@ -81,6 +113,10 @@ func classifyStreamStart(protocol contract.ProtocolID, frame []byte) streamStart
 		}
 	}
 	return streamStartProgress
+}
+
+func emptyStreamStartArray(value gjson.Result) bool {
+	return value.Type == gjson.Null || value.IsArray() && len(value.Array()) == 0
 }
 
 // streamOutcome is what one event says about how a stream ends.
@@ -162,10 +198,24 @@ func responsesFailureStatus(code, errType string) int {
 	case "context_length_exceeded", "invalid_prompt", "invalid_request_error", "invalid_value", "bad_request", "cyber_policy":
 		return http.StatusBadRequest
 	}
-	if errType == "invalid_request_error" {
+	switch errType {
+	case "service_unavailable_error":
+		return http.StatusServiceUnavailable
+	case "invalid_request_error":
 		return http.StatusBadRequest
 	}
 	return http.StatusBadGateway
+}
+
+// Only explicit capacity errors establish an overload cooldown. Generic
+// server errors and connection failures do not withhold otherwise usable routes.
+func streamFailureOverloaded(protocol contract.ProtocolID, event []byte) bool {
+	errType, code, _ := streamFailureFields(event)
+	if protocol == contract.ProtocolAnthropicMessages {
+		return errType == "overloaded_error"
+	}
+	return protocol == contract.ProtocolOpenAIResponses &&
+		(code == "server_is_overloaded" || code == "slow_down" || errType == "service_unavailable_error")
 }
 
 // anthropicErrorStatus follows Anthropic's documented error types.

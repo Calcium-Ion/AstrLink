@@ -6731,7 +6731,7 @@ components:
         unsupported_reason:
           oneOf:
             - type: string
-              enum: [cpu_only]
+              enum: [cpu_only, requires_macos_26]
             - type: "null"
       additionalProperties: false
     PrivacyModelCatalogItem:
@@ -6959,6 +6959,7 @@ components:
         - error
         - label_mapping
         - installed_at
+        - preparation
       properties:
         id:
           $ref: "#/components/schemas/PrivacyModelInstallationId"
@@ -7040,6 +7041,36 @@ components:
           oneOf:
             - type: string
               format: date-time
+            - type: "null"
+        preparation:
+          description: |
+            Runtime state, never stored. Core prepares a Core ML installation
+            as soon as the policy selects it, and at startup when the policy
+            already uses it: the worker starts, compiles the model for this
+            device and warms it up. Null for every other installation,
+            including CPU installations, which still start on their first
+            request.
+          oneOf:
+            - $ref: "#/components/schemas/PrivacyModelPreparation"
+            - type: "null"
+      additionalProperties: false
+    PrivacyModelPreparation:
+      type: object
+      required: [state, fallback]
+      properties:
+        state:
+          type: string
+          enum: [preparing, ready, failed]
+        fallback:
+          description: |
+            The detector of the previous policy, which inspects requests
+            while the model is preparing and after it failed. Null when no
+            detector inspected requests before (and always once ready):
+            requests then wait for the model within the usual timeouts, and
+            fail with `safety_engine_unavailable` once it has failed.
+          oneOf:
+            - type: string
+              enum: [local_model, regex]
             - type: "null"
       additionalProperties: false
     PrivacyModelInstallationList:

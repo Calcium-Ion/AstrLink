@@ -1162,6 +1162,20 @@ func TestPrivacyWorkerHelper(t *testing.T) {
 	if mode == "missing_ready" {
 		os.Exit(0)
 	}
+	// A ready-gated worker loads until the test creates the ready release
+	// file, the way a Core ML worker compiles before it reports ready.
+	if mode == "ready_gated" || mode == "ready_gated_fail" {
+		for {
+			if _, err := os.Stat(filepath.Join(modelDirectory, testReadyRelease)); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if mode == "ready_gated_fail" {
+			os.Exit(9)
+		}
+		mode = "per_text"
+	}
 	readyPayload, err := json.Marshal(workerReady{
 		Version: protocolVersion,
 		Ready:   true,

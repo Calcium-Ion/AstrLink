@@ -400,7 +400,7 @@ describe("ServiceManager", () => {
           )!,
       );
     expect(meters()).toHaveLength(2);
-    expect(meters()[0].textContent).toContain("26.0%");
+    expect(meters()[0].textContent).toContain("缓存命中率26.0%");
     expect(meters()[0].textContent).toContain("49.0 tok/s");
     expect(meters()[1].textContent).toContain("—");
     // Missing values keep their units only as invisible spacers.

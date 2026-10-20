@@ -56,6 +56,9 @@ type normalizedManifest struct {
 	OutputName            string                             `json:"output_name"`
 	LabelMapping          map[string]*contract.CanonicalKind `json:"label_mapping"`
 	Files                 []normalizedFile                   `json:"files"`
+	// Execution is omitted for CPU installations so their manifests stay
+	// byte-identical to the format that predates it.
+	Execution *normalizedExecution `json:"execution,omitempty"`
 }
 
 func buildNormalizedManifest(
@@ -84,6 +87,7 @@ func buildNormalizedManifest(
 		Stride: runtime.stride, MaxRequestTokens: runtime.maxRequestTokens,
 		InputNames: runtime.inputNames, OutputName: runtime.outputName,
 		LabelMapping: cloneLabelMapping(installation.LabelMapping), Files: files,
+		Execution: cloneExecution(runtime.execution),
 	}
 }
 
@@ -254,6 +258,13 @@ func validateNormalizedManifest(manifest normalizedManifest) error {
 		manifest.Window > manifest.MaxRequestTokens ||
 		manifest.MaxRequestTokens > 131_072 {
 		return ErrInvalidConfig
+	}
+	if err := validateExecution(
+		manifest.Execution,
+		manifest.Adapter,
+		manifest.Window,
+	); err != nil {
+		return err
 	}
 	if !tensorNamePattern.MatchString(manifest.InputNames.InputIDs) ||
 		!tensorNamePattern.MatchString(manifest.InputNames.AttentionMask) ||

@@ -17,6 +17,12 @@ import (
 // GetUsageSummary streams only the fields used by inference statistics. Detailed
 // plans, events, audit data, cursors, discovery and retry children stay in the database.
 func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSummaryOptions) (storage.UsageSummary, error) {
+	return cachedHistoryRead(ctx, store.db, &store.usageSummaries, options, func(conn *sql.Conn) (storage.UsageSummary, error) {
+		return getUsageSummary(ctx, conn, options)
+	})
+}
+
+func getUsageSummary(ctx context.Context, reader historyReader, options storage.UsageSummaryOptions) (storage.UsageSummary, error) {
 	result := storage.UsageSummary{
 		ByDay: []storage.UsageTimeBucket{}, ByHour: []storage.UsageTimeBucket{},
 		ByService: []storage.UsageGroup{}, ByModel: []storage.UsageGroup{}, ByToken: []storage.UsageGroup{},
@@ -25,7 +31,7 @@ func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSu
 	if err != nil {
 		return result, err
 	}
-	tokenWhitelist, err := store.currentAccessTokenIDs(ctx)
+	tokenWhitelist, err := currentAccessTokenIDs(ctx, reader)
 	if err != nil {
 		return result, err
 	}
@@ -39,7 +45,7 @@ func (store *Store) GetUsageSummary(ctx context.Context, options storage.UsageSu
 	// desktop, where a recorded "blocked" is its own outcome rather than a
 	// failure, and where a legacy row stored as succeeded with a 4xx/5xx
 	// counts as failed.
-	rows, err := store.db.QueryContext(ctx, `SELECT started_at, status, http_status,
+	rows, err := reader.QueryContext(ctx, `SELECT started_at, status, http_status,
     service_id, COALESCE(
         NULLIF(json_extract(NULLIF(recovery_json, ''), '$.upstream_model'), ''),
         NULLIF(json_extract(NULLIF(model_redirect_json, ''), '$.to'), ''),
@@ -57,11 +63,10 @@ WHERE parent_request_id IS NULL AND started_at >= ? AND started_at < ?
 	services, models, tokens := map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}, map[string]*storage.UsageGroup{}
 	performance := map[string]*servicePerformance{}
 	tokenPerformance := map[string]*servicePerformance{}
+	var startedAt, status string
+	var httpStatus, latency sql.NullInt64
+	var service, model, localAccessTokenID, usageJSON sql.NullString
 	for rows.Next() {
-		var startedAt, status string
-		var httpStatus sql.NullInt64
-		var latency sql.NullInt64
-		var service, model, localAccessTokenID, usageJSON sql.NullString
 		if err := rows.Scan(&startedAt, &status, &httpStatus, &service, &model, &localAccessTokenID, &usageJSON, &latency); err != nil {
 			return result, fmt.Errorf("scan usage summary: %w", err)
 		}

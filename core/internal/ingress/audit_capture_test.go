@@ -30,6 +30,66 @@ type memoryAuditSettings struct {
 	settings contract.AuditSettings
 }
 
+type metadataCountingStore struct {
+	memoryRequestRecordStore
+	writes   int
+	failNext bool
+}
+
+func (store *metadataCountingStore) UpsertRequestRecord(ctx context.Context, record contract.RequestRecord) error {
+	store.writes++
+	if store.failNext {
+		store.failNext = false
+		return io.ErrUnexpectedEOF
+	}
+	return store.memoryRequestRecordStore.UpsertRequestRecord(ctx, record)
+}
+
+func TestMetadataPersistenceSkipsUnchangedSnapshotsAndRetriesFailures(t *testing.T) {
+	store := &metadataCountingStore{}
+	session := newRecordSession(Request{Protocol: contract.ProtocolOpenAIResponses, Model: "m"}, "", contract.DefaultAuditSettings())
+	session.persistPending(t.Context(), store, nil)
+	session.persistAvailableAudit(t.Context())
+	if store.writes != 1 {
+		t.Fatalf("unchanged metadata wrote %d times", store.writes)
+	}
+	session.plan = &contract.ExecutionPlan{ServiceID: "service_before"}
+	session.persistAvailableAudit(t.Context())
+	session.plan.ServiceID = "service_after"
+	session.persistAvailableAudit(t.Context())
+	if store.writes != 3 {
+		t.Fatalf("mutated plan not persisted: %d writes", store.writes)
+	}
+	store.failNext = true
+	session.classified.Model = "changed"
+	session.persistAvailableAudit(t.Context())
+	session.persistAvailableAudit(t.Context())
+	if store.writes != 5 || store.records[0].RequestedModel == nil || *store.records[0].RequestedModel != "changed" {
+		t.Fatalf("failed persistence was not retried: %d writes, %+v", store.writes, store.records)
+	}
+}
+
+func TestInferenceWithoutCaptureWritesOnlyChangedMetadata(t *testing.T) {
+	store := &metadataCountingStore{}
+	beforeForward := 0
+	settings := contract.DefaultAuditSettings()
+	settings.RequestBodyEnabled, settings.ResponseContentEnabled, settings.HTTPMetaEnabled = false, false, false
+	handler := NewWithDependencies(Dependencies{
+		Resolver:       candidateResolver{candidates: []endpoint.Resolved{{Endpoint: validEndpoint(contract.ProtocolOpenAIResponses, false)}}},
+		RequestRecords: store, AuditSettings: &memoryAuditSettings{settings: settings}, RecordLogger: func(string, ...any) {},
+		Forwarder: transport.New(roundTripFunc(func(*http.Request) (*http.Response, error) {
+			beforeForward = store.writes
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{"id":"response_metadata","status":"completed"}`))}, nil
+		})),
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"m","input":"hello"}`)))
+	if response.Code != http.StatusOK || beforeForward != 2 || store.writes != 3 {
+		t.Fatalf("status=%d metadata writes before upstream=%d total=%d", response.Code, beforeForward, store.writes)
+	}
+}
+
 func (store *memoryAuditSettings) GetAuditSettings(context.Context) (contract.AuditSettings, error) {
 	return store.settings, nil
 }

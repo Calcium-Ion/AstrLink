@@ -45,6 +45,8 @@ const (
 	maxModelFiles                = 128
 	maxModelLabels               = 256
 	maxModelRequestTokens        = 128 * 1024
+	// Token ids index the embedding table; no tokenizer comes close to this.
+	maxPadTokenID = 1<<24 - 1
 
 	// A frame carries at most this much text, which bounds how long another
 	// request waits for the worker.
@@ -541,6 +543,31 @@ func (plan *inspection) result() []privacy.Finding {
 		merged = append(merged, finding)
 	}
 	return append(findings, merged...)
+}
+
+// prepare starts the worker of the selected model ahead of its first request.
+// It holds the worker slot meanwhile, so a request for this model waits for
+// that worker instead of starting another.
+func (client *Client) prepare(ctx context.Context) error {
+	select {
+	case client.slot <- struct{}{}:
+		defer func() { <-client.slot }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	client.mu.Lock()
+	modelID := client.modelID
+	client.mu.Unlock()
+	_, err := client.ensureProcess(ctx, modelID)
+	return err
+}
+
+// servable reports whether the client may still inspect requests for its
+// model: it is active and has not latched a failure.
+func (client *Client) servable() bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.active && client.failed == nil
 }
 
 func (client *Client) expectedModelActive(expected contract.PrivacyModelID) bool {
@@ -1099,6 +1126,17 @@ type installationManifest struct {
 	OutputName            string                             `json:"output_name"`
 	LabelMapping          map[string]*contract.CanonicalKind `json:"label_mapping"`
 	Files                 []installationFile                 `json:"files"`
+	Execution             *installationExecution             `json:"execution"`
+}
+
+// installationExecution is present only for static-shape installations, such
+// as FP16 exports run through Core ML. CPU installations omit it.
+type installationExecution struct {
+	Provider             string  `json:"provider"`
+	ModelFormat          *string `json:"model_format"`
+	ComputeUnits         *string `json:"compute_units"`
+	StaticSequenceLength int     `json:"static_sequence_length"`
+	PadTokenID           int     `json:"pad_token_id"`
 }
 
 type installationInputNames struct {
@@ -1344,6 +1382,38 @@ func validateInstallationManifest(
 		if _, exists := declared[requiredPath]; !exists {
 			return errors.New("required model file is not declared")
 		}
+	}
+	return validateInstallationExecution(manifest)
+}
+
+func validateInstallationExecution(manifest installationManifest) error {
+	execution := manifest.Execution
+	if execution == nil {
+		return nil
+	}
+	if manifest.Adapter != contract.PrivacyModelAdapterHFToken ||
+		execution.StaticSequenceLength <= 0 ||
+		execution.StaticSequenceLength != manifest.Window ||
+		execution.PadTokenID < 0 || execution.PadTokenID > maxPadTokenID {
+		return errors.New("invalid model execution")
+	}
+	switch execution.Provider {
+	case "cpu":
+		if execution.ModelFormat != nil || execution.ComputeUnits != nil {
+			return errors.New("invalid CPU execution")
+		}
+	case "coreml":
+		if execution.ModelFormat == nil || *execution.ModelFormat != "mlprogram" ||
+			execution.ComputeUnits == nil {
+			return errors.New("invalid Core ML execution")
+		}
+		switch *execution.ComputeUnits {
+		case "cpu_and_gpu", "cpu_and_neural_engine", "all":
+		default:
+			return errors.New("invalid Core ML compute units")
+		}
+	default:
+		return errors.New("invalid execution provider")
 	}
 	return nil
 }

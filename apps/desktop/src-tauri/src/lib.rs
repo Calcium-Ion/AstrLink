@@ -81,6 +81,8 @@ struct SettingsSnapshot {
 struct PreferencesInput {
     close_behavior: CloseBehavior,
     autostart: bool,
+    #[serde(default)]
+    autostart_hidden: bool,
     core_auto_start: bool,
     core_auto_recover: bool,
     use_system_proxy: bool,
@@ -104,6 +106,7 @@ impl From<PreferencesInput> for Preferences {
         Self {
             close_behavior: input.close_behavior,
             autostart: input.autostart,
+            autostart_hidden: input.autostart_hidden,
             core_auto_start: input.core_auto_start,
             core_auto_recover: input.core_auto_recover,
             use_system_proxy: input.use_system_proxy,
@@ -2397,6 +2400,20 @@ fn platform_initialization_script(platform: &str) -> String {
     format!("window.__ASTRLINK_DESKTOP_PLATFORM__ = {encoded};")
 }
 
+const AUTOSTART_ARG: &str = "--autostart";
+
+fn should_hide_on_autostart(
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+    preferences: &Preferences,
+) -> bool {
+    preferences.autostart
+        && preferences.autostart_hidden
+        && args
+            .into_iter()
+            .skip(1)
+            .any(|arg| arg.as_ref() == AUTOSTART_ARG)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Before the development bundle is staged: `make dev` stages its own.
@@ -2414,14 +2431,19 @@ pub fn run() {
     let explicit_quit = Arc::new(AtomicBool::new(false));
 
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            show_main_window(app);
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let hidden = app
+                .try_state::<Arc<PreferencesStore>>()
+                .is_some_and(|store| should_hide_on_autostart(args, &store.snapshot().values));
+            if !hidden {
+                show_main_window(app);
+            }
         }))
         // After single-instance, which forwards a second launch's link here.
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![AUTOSTART_ARG]),
         ))
         .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2579,12 +2601,15 @@ pub fn run() {
             let raw_key_pins = Arc::new(raw_key_pin::RawKeyPins::system(&config_directory));
             app.manage(raw_key_pins);
             let values = preferences.snapshot().values;
+            let start_hidden = should_hide_on_autostart(std::env::args_os(), &values);
             apply_native_theme(app.handle(), values.theme);
             if let Some(window) = app.get_webview_window("main") {
                 if let Err(error) = startup_window::fit_to_monitor(&window) {
                     eprintln!("failed to size AstrLink for the current display: {error}");
                 }
-                window.show()?;
+                if !start_hidden {
+                    window.show()?;
+                }
             }
             setup_manager.configure(&values);
             let autostart = app.autolaunch();
@@ -2592,13 +2617,14 @@ pub fn run() {
                 .is_enabled()
                 .map_err(|error| error.to_string())
                 .and_then(|actual| {
-                    if actual == values.autostart {
-                        return Ok(());
-                    }
                     if values.autostart {
+                        // Refresh existing login items too: older versions
+                        // registered them without the autostart argument.
                         autostart.enable().map_err(|error| error.to_string())
-                    } else {
+                    } else if actual {
                         autostart.disable().map_err(|error| error.to_string())
+                    } else {
+                        Ok(())
                     }
                 });
             if let Err(error) = reconciliation {
@@ -2616,6 +2642,16 @@ pub fn run() {
             updates.start(app.handle().clone());
 
             tray::build(app.handle())?;
+            if start_hidden {
+                window_reclaim::hidden(app.handle(), "main");
+                #[cfg(target_os = "macos")]
+                if let Err(error) = app
+                    .handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                {
+                    eprintln!("unable to remove AstrLink from the Dock: {error}");
+                }
+            }
             tray::start(app.handle());
             model_updates::start(app.handle());
 
@@ -2789,6 +2825,49 @@ pub fn run() {
 mod tests {
     use super::*;
     use sidecar::CorePhase;
+
+    #[test]
+    fn only_autostart_launches_with_both_preferences_enabled_stay_hidden() {
+        for autostart in [false, true] {
+            for autostart_hidden in [false, true] {
+                let preferences = Preferences {
+                    autostart,
+                    autostart_hidden,
+                    ..Preferences::default()
+                };
+                assert_eq!(
+                    should_hide_on_autostart(["AstrLink", AUTOSTART_ARG], &preferences),
+                    autostart && autostart_hidden
+                );
+                // Each new launch uses its own arguments, so manually opening
+                // an already-running background instance reveals its window.
+                for args in [
+                    vec!["AstrLink"],
+                    vec!["AstrLink", "astrlink://import?data=test"],
+                    vec!["AstrLink", "--autostart=false"],
+                    vec![AUTOSTART_ARG],
+                ] {
+                    assert!(!should_hide_on_autostart(args, &preferences));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preferences_input_keeps_the_autostart_hidden_preference() {
+        let values = Preferences {
+            autostart: true,
+            autostart_hidden: true,
+            ..Preferences::default()
+        };
+        let mut json = serde_json::to_value(&values).unwrap();
+        let input: PreferencesInput = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(Preferences::from(input), values);
+
+        json.as_object_mut().unwrap().remove("autostart_hidden");
+        let input: PreferencesInput = serde_json::from_value(json).unwrap();
+        assert!(!Preferences::from(input).autostart_hidden);
+    }
 
     #[derive(Default)]
     struct MemoryPins(std::sync::Mutex<std::collections::BTreeMap<String, String>>);

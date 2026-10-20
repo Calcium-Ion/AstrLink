@@ -19,22 +19,43 @@ import { downloadWithRetry } from "./download-with-retry.mjs";
 import { stageWindowsVcRuntime } from "./stage-windows-vc-runtime.mjs";
 
 const onnxRuntimeVersion = "1.23.2";
+// Core ML models load their own ONNX Runtime: before 1.24.1 the Core ML
+// provider refused every FP16 node on macOS. CPU models keep 1.23.2 so their
+// results stay byte-identical. Microsoft publishes 1.24 for macOS on Apple
+// silicon only, and Core ML variants are offered there only, so Intel Macs
+// ship 1.23.2 alone.
+const coreMLRuntimeVersion = "1.24.4";
 const macOSRuntimeLibraryName = `libonnxruntime.${onnxRuntimeVersion}.dylib`;
+const coreMLRuntimeLibraryName = `libonnxruntime.${coreMLRuntimeVersion}.dylib`;
 const linuxRuntimeLibraryName = `libonnxruntime.so.${onnxRuntimeVersion}`;
-const onnxRuntimeNotices = [
-  {
-    source: "LICENSE",
-    destination: `onnxruntime-${onnxRuntimeVersion}-LICENSE.txt`,
-    sha256: "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
-    size: 1_073,
-  },
-  {
-    source: "ThirdPartyNotices.txt",
-    destination: `onnxruntime-${onnxRuntimeVersion}-ThirdPartyNotices.txt`,
-    sha256: "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc",
-    size: 326_866,
-  },
-];
+const onnxRuntimeLicense = {
+  source: "LICENSE",
+  name: "LICENSE.txt",
+  sha256: "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+  size: 1_073,
+};
+const onnxRuntimeNotices = {
+  [onnxRuntimeVersion]: [
+    onnxRuntimeLicense,
+    {
+      source: "ThirdPartyNotices.txt",
+      name: "ThirdPartyNotices.txt",
+      sha256:
+        "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc",
+      size: 326_866,
+    },
+  ],
+  [coreMLRuntimeVersion]: [
+    onnxRuntimeLicense,
+    {
+      source: "ThirdPartyNotices.txt",
+      name: "ThirdPartyNotices.txt",
+      sha256:
+        "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+      size: 325_054,
+    },
+  ],
+};
 const macOSRuntimeAssets = {
   "aarch64-apple-darwin": {
     archive: `onnxruntime-osx-arm64-${onnxRuntimeVersion}.tgz`,
@@ -47,6 +68,14 @@ const macOSRuntimeAssets = {
     directory: `onnxruntime-osx-x86_64-${onnxRuntimeVersion}`,
     sha256: "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
     size: 11_676_322,
+  },
+};
+const coreMLRuntimeAssets = {
+  "aarch64-apple-darwin": {
+    archive: `onnxruntime-osx-arm64-${coreMLRuntimeVersion}.tgz`,
+    directory: `onnxruntime-osx-arm64-${coreMLRuntimeVersion}`,
+    sha256: "93787795f47e1eee369182e43ed51b9e5da0878ab0346aecf4258979b8bba989",
+    size: 30_937_282,
   },
 };
 const linuxRuntimeAssets = {
@@ -113,20 +142,27 @@ const cliOutput = path.join(
   binariesDirectory,
   `astrlink-cli-${target}${executableSuffix}`,
 );
+// Tauri config files are per OS, not per architecture. The bundle scripts
+// merge this generated file (`tauri --config`) so only Apple silicon builds
+// add the Core ML runtime and its notices; it is empty everywhere else.
+const runtimeConfigOutput = path.join(
+  binariesDirectory,
+  "tauri.onnxruntime.conf.json",
+);
 
 mkdirSync(binariesDirectory, { recursive: true });
 
-async function stageOnnxRuntimeNotices() {
+async function stageOnnxRuntimeNotices(version) {
   const cacheDirectory = path.join(
     workerDirectory,
     "target",
     "onnxruntime",
-    onnxRuntimeVersion,
+    version,
     "notices",
   );
   mkdirSync(cacheDirectory, { recursive: true });
 
-  for (const notice of onnxRuntimeNotices) {
+  for (const notice of onnxRuntimeNotices[version]) {
     const cached = path.join(cacheDirectory, notice.source);
     if (
       existsSync(cached) &&
@@ -137,14 +173,14 @@ async function stageOnnxRuntimeNotices() {
     if (!existsSync(cached)) {
       const url =
         `https://raw.githubusercontent.com/microsoft/onnxruntime/` +
-        `v${onnxRuntimeVersion}/${notice.source}`;
+        `v${version}/${notice.source}`;
       const bytes = await downloadWithRetry(
         url,
-        `pinned ONNX Runtime ${notice.source}`,
+        `pinned ONNX Runtime ${version} ${notice.source}`,
       );
       if (bytes.byteLength !== notice.size || sha256(bytes) !== notice.sha256) {
         throw new Error(
-          `Pinned ONNX Runtime ${notice.source} failed integrity verification.`,
+          `Pinned ONNX Runtime ${version} ${notice.source} failed integrity verification.`,
         );
       }
       const temporary = `${cached}.${Date.now()}.download`;
@@ -155,17 +191,23 @@ async function stageOnnxRuntimeNotices() {
         rmSync(temporary, { force: true });
       }
     }
-    copyFileSync(cached, path.join(binariesDirectory, notice.destination));
+    copyFileSync(
+      cached,
+      path.join(binariesDirectory, `onnxruntime-${version}-${notice.name}`),
+    );
   }
-  console.log(
-    `Staged pinned ONNX Runtime ${onnxRuntimeVersion} license notices.`,
-  );
+  console.log(`Staged pinned ONNX Runtime ${version} license notices.`);
 }
 
-async function stageMacOSRuntime() {
-  const asset = macOSRuntimeAssets[target];
+async function stageMacOSRuntime(
+  version = onnxRuntimeVersion,
+  assets = macOSRuntimeAssets,
+  libraryName = macOSRuntimeLibraryName,
+  workerDirectories = [workerDirectory, classifierWorkerDirectory],
+) {
+  const asset = assets[target];
   if (!asset) {
-    if (target.endsWith("-apple-darwin")) {
+    if (target.endsWith("-apple-darwin") && assets === macOSRuntimeAssets) {
       throw new Error(`Unsupported macOS target for ONNX Runtime: ${target}`);
     }
     return;
@@ -175,7 +217,7 @@ async function stageMacOSRuntime() {
     workerDirectory,
     "target",
     "onnxruntime",
-    onnxRuntimeVersion,
+    version,
     target,
   );
   const archivePath = path.join(cacheDirectory, asset.archive);
@@ -191,14 +233,14 @@ async function stageMacOSRuntime() {
   if (!existsSync(archivePath)) {
     const url =
       `https://github.com/microsoft/onnxruntime/releases/download/` +
-      `v${onnxRuntimeVersion}/${asset.archive}`;
+      `v${version}/${asset.archive}`;
     const bytes = await downloadWithRetry(
       url,
-      `pinned ONNX Runtime ${onnxRuntimeVersion}`,
+      `pinned ONNX Runtime ${version}`,
     );
     if (bytes.byteLength !== asset.size || sha256(bytes) !== asset.sha256) {
       throw new Error(
-        `Pinned ONNX Runtime ${onnxRuntimeVersion} archive failed integrity verification.`,
+        `Pinned ONNX Runtime ${version} archive failed integrity verification.`,
       );
     }
     const temporaryArchive = `${archivePath}.download`;
@@ -215,25 +257,60 @@ async function stageMacOSRuntime() {
     extractionDirectory,
     asset.directory,
     "lib",
-    macOSRuntimeLibraryName,
+    libraryName,
   );
   if (!existsSync(runtimeSource)) {
-    throw new Error(
-      `Pinned ONNX Runtime archive is missing ${macOSRuntimeLibraryName}.`,
-    );
+    throw new Error(`Pinned ONNX Runtime archive is missing ${libraryName}.`);
   }
 
   const runtimeDestinations = [
-    path.join(workerDirectory, "target", "release", macOSRuntimeLibraryName),
-    path.join(
-      classifierWorkerDirectory,
-      "target",
-      "release",
-      macOSRuntimeLibraryName,
+    ...workerDirectories.map((directory) =>
+      path.join(directory, "target", "release", libraryName),
     ),
-    path.join(binariesDirectory, macOSRuntimeLibraryName),
+    path.join(binariesDirectory, libraryName),
   ];
-  return { runtimeSource, runtimeDestinations };
+  return { runtimeSource, runtimeDestinations, version };
+}
+
+function stageCoreMLRuntime() {
+  return stageMacOSRuntime(
+    coreMLRuntimeVersion,
+    coreMLRuntimeAssets,
+    coreMLRuntimeLibraryName,
+    [workerDirectory],
+  );
+}
+
+function writeRuntimeConfig(coreMLRuntime) {
+  let config = {};
+  if (coreMLRuntime) {
+    // A merged array replaces the configured one, so start from the list
+    // the build would otherwise use: the macOS file's, if it has one.
+    const bundleConfig = (name) =>
+      JSON.parse(
+        readFileSync(path.join(desktopDirectory, "src-tauri", name), "utf8"),
+      ).bundle;
+    const frameworks =
+      bundleConfig("tauri.macos.conf.json")?.macOS?.frameworks ??
+      bundleConfig("tauri.conf.json").macOS.frameworks;
+    config = {
+      bundle: {
+        macOS: {
+          frameworks: [...frameworks, `binaries/${coreMLRuntimeLibraryName}`],
+        },
+        resources: Object.fromEntries(
+          onnxRuntimeNotices[coreMLRuntimeVersion].map((notice) => [
+            `binaries/onnxruntime-${coreMLRuntimeVersion}-${notice.name}`,
+            `notices/onnxruntime-${coreMLRuntimeVersion}/${notice.name}`,
+          ]),
+        ),
+      },
+    };
+  }
+  writeFileSync(runtimeConfigOutput, `${JSON.stringify(config, null, 2)}\n`);
+  console.log(
+    `Wrote Tauri runtime config for ${target}: ${runtimeConfigOutput}`,
+  );
 }
 
 async function stageLinuxRuntime() {
@@ -394,7 +471,10 @@ if (process.argv.includes("--test-runtime-only")) {
   process.exit(0);
 }
 
-await stageOnnxRuntimeNotices();
+await stageOnnxRuntimeNotices(onnxRuntimeVersion);
+if (coreMLRuntimeAssets[target]) {
+  await stageOnnxRuntimeNotices(coreMLRuntimeVersion);
+}
 await stageWindowsVcRuntime({ target, binariesDirectory });
 
 // Release jobs stamp the tag into package.json before this script runs, so
@@ -435,6 +515,7 @@ if (!target.includes("windows")) {
 console.log(`Staged astrlink-cli for Tauri: ${cliOutput}`);
 
 const macOSRuntime = await stageMacOSRuntime();
+const coreMLRuntime = await stageCoreMLRuntime();
 const linuxRuntime = await stageLinuxRuntime();
 
 if (!reuseWindowsWorkers) {
@@ -457,13 +538,15 @@ if (!reuseWindowsWorkers) {
   }
 }
 
-if (macOSRuntime) {
-  for (const destination of macOSRuntime.runtimeDestinations) {
+for (const runtime of [macOSRuntime, coreMLRuntime]) {
+  if (!runtime) continue;
+  for (const destination of runtime.runtimeDestinations) {
     mkdirSync(path.dirname(destination), { recursive: true });
-    copyFileSync(macOSRuntime.runtimeSource, destination);
+    copyFileSync(runtime.runtimeSource, destination);
   }
-  console.log(`Staged pinned ONNX Runtime ${onnxRuntimeVersion} for macOS.`);
+  console.log(`Staged pinned ONNX Runtime ${runtime.version} for macOS.`);
 }
+writeRuntimeConfig(coreMLRuntime);
 
 if (linuxRuntime) {
   for (const destination of linuxRuntime.runtimeDestinations) {

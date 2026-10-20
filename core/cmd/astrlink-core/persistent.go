@@ -114,7 +114,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 	if err != nil {
 		return nil, fmt.Errorf("open persistent store: %w", err)
 	}
-	var privacyWorker *privacyworker.Client
+	var privacyWorker *privacyworker.Handover
 	var closeClassifier func()
 	fail := func(format string, err error) (*persistentCore, error) {
 		if closeClassifier != nil {
@@ -164,7 +164,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 			return fail("locate local privacy worker: %w", err)
 		}
 	}
-	privacyWorker, err = privacyworker.New(privacyworker.Config{
+	privacyWorker, err = privacyworker.NewHandover(privacyworker.Config{
 		ExecutablePath: privacyWorkerPath,
 		Model:          privacyModel,
 	})
@@ -299,6 +299,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		PrivacyFilter:      privacyFilter,
 		PrivacyWarnings:    privacyWarnings,
 		PolicyChanged:      privacyWorker.ApplyPolicy,
+		ModelPreparation:   privacyWorker.Preparation,
 		RequestRecords:     store,
 		AuditSettings:      store,
 		AuditKeys:          store,

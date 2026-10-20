@@ -154,7 +154,9 @@ jobs:
       - name: Stage Core and worker sidecars
         run: bun run sidecar:build
       - name: Build release app
-        run: bun run tauri build --ci --no-bundle
+        # sidecar:build writes the runtime config; on Apple silicon it adds the
+        # Core ML ONNX Runtime and its notices to the bundle.
+        run: bun run tauri build --ci --no-bundle --config src-tauri/binaries/tauri.onnxruntime.conf.json
       - name: Bundle Developer ID signed app and DMG
         env:
           # With CI=true Tauri skips the Finder script that applies the DMG
@@ -166,7 +168,8 @@ jobs:
           # prints the bundle_dmg.sh output that Tauri otherwise hides.
           bundle_dir="$PWD/src-tauri/target/release/bundle"
           for attempt in 1 2 3; do
-            if bun run tauri bundle --ci --verbose --bundles app,dmg; then
+            if bun run tauri bundle --ci --verbose --bundles app,dmg \
+              --config src-tauri/binaries/tauri.onnxruntime.conf.json; then
               exit 0
             fi
             echo "::warning::macOS bundling failed on attempt $attempt"

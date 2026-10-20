@@ -22,9 +22,18 @@ EXECUTABLES = (
     "astrlink-privacy-worker",
     "astrlink-classifier-worker",
 )
+RUNTIME = "1.23.2"
+# Core ML models load their own runtime, shipped on Apple silicon only.
+COREML_RUNTIME = "1.24.4"
 NOTICES = {
-    "LICENSE.txt": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
-    "ThirdPartyNotices.txt": "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc",
+    RUNTIME: {
+        "LICENSE.txt": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        "ThirdPartyNotices.txt": "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc",
+    },
+    COREML_RUNTIME: {
+        "LICENSE.txt": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        "ThirdPartyNotices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+    },
 }
 
 
@@ -139,20 +148,29 @@ def main():
 
     if args.platform == "macos":
         bin_dir = root / "Contents/MacOS"
-        runtime = root / "Contents/Frameworks/libonnxruntime.1.23.2.dylib"
-        notices = root / "Contents/Resources/notices/onnxruntime-1.23.2"
+        runtime = root / f"Contents/Frameworks/libonnxruntime.{RUNTIME}.dylib"
+        notices = root / f"Contents/Resources/notices/onnxruntime-{RUNTIME}"
+        coreml_runtime = root / f"Contents/Frameworks/libonnxruntime.{COREML_RUNTIME}.dylib"
+        coreml_notices = root / f"Contents/Resources/notices/onnxruntime-{COREML_RUNTIME}"
     else:
         bin_dir = root / "usr/bin"
         lib_dir = root / "usr/lib"
-        runtime = one(lib_dir.glob("*/onnxruntime/libonnxruntime.so.1.23.2"), "ONNX Runtime")
-        notices = one(lib_dir.glob("*/notices/onnxruntime-1.23.2"), "ONNX Runtime notices")
+        runtime = one(lib_dir.glob(f"*/onnxruntime/libonnxruntime.so.{RUNTIME}"), "ONNX Runtime")
+        notices = one(lib_dir.glob(f"*/notices/onnxruntime-{RUNTIME}"), "ONNX Runtime notices")
+    runtimes = {RUNTIME: (runtime, notices)}
+    if args.platform == "macos" and args.arch == "arm64":
+        runtimes[COREML_RUNTIME] = (coreml_runtime, coreml_notices)
+    elif args.platform == "macos":
+        require(not coreml_runtime.exists() and not coreml_notices.exists(),
+                f"Intel packages must not ship ONNX Runtime {COREML_RUNTIME}")
 
     executables = {name: bin_dir / name for name in EXECUTABLES}
-    for path in [*executables.values(), runtime]:
+    for path in [*executables.values(), *(path for path, _ in runtimes.values())]:
         check_binary(path, args.platform, args.arch, args.logs)
-    for name, digest in NOTICES.items():
-        require(hashlib.sha256((notices / name).read_bytes()).hexdigest() == digest,
-                f"Packaged ONNX Runtime {name} does not match the pinned notice")
+    for version, (_, directory) in runtimes.items():
+        for name, digest in NOTICES[version].items():
+            require(hashlib.sha256((directory / name).read_bytes()).hexdigest() == digest,
+                    f"Packaged ONNX Runtime {version} {name} does not match the pinned notice")
 
     repository = Path(__file__).resolve().parents[3]
     licenses = notices.parent.parent / "licenses"
@@ -165,11 +183,14 @@ def main():
         _fields_ = [("get_api", ctypes.c_void_p),
                     ("get_version", ctypes.CFUNCTYPE(ctypes.c_char_p))]
 
-    library = ctypes.CDLL(str(runtime))
-    library.OrtGetApiBase.restype = ctypes.POINTER(ApiBase)
-    version = library.OrtGetApiBase().contents.get_version().decode()
-    require(version == "1.23.2", f"Unexpected packaged ONNX Runtime: {version}")
-    (args.logs / "onnxruntime-version.txt").write_text(version + "\n")
+    loaded = []
+    for expected, (path, _) in runtimes.items():
+        library = ctypes.CDLL(str(path))
+        library.OrtGetApiBase.restype = ctypes.POINTER(ApiBase)
+        version = library.OrtGetApiBase().contents.get_version().decode()
+        require(version == expected, f"Unexpected packaged ONNX Runtime: {version}, want {expected}")
+        loaded.append(version)
+    (args.logs / "onnxruntime-version.txt").write_text("\n".join(loaded) + "\n")
     smoke_sidecars(executables, runtime, args.logs)
     print(f"Verified {args.platform} {args.arch}: binaries, notices, runtime, sidecars and Core health")
 

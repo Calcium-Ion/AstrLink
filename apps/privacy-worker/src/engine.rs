@@ -13,14 +13,18 @@ use std::path::PathBuf;
 use ort::{
     environment::Environment,
     logging::LogLevel,
-    session::{Session, SessionInputValue, builder::GraphOptimizationLevel},
+    session::{
+        Session, SessionInputValue,
+        builder::{GraphOptimizationLevel, SessionBuilder},
+    },
+    tensor::TensorElementType,
     value::Tensor,
 };
 use tokenizers::{Encoding, Tokenizer};
 
 use crate::{
     decoder::{Decoder, offset_contract},
-    manifest::{Adapter, ModelManifest},
+    manifest::{Adapter, ExecutionProvider, ModelManifest},
     priority,
     protocol::{DetectedSpan, TextInput},
     sensitive::SensitiveGuard,
@@ -49,10 +53,63 @@ pub struct PrivacyEngine {
     attention_mask_name: String,
     token_type_ids_name: Option<String>,
     output_name: String,
+    static_padding: Option<StaticPadding>,
+    coreml: bool,
+}
+
+/// Compiled Core ML models live next to the installation they came from: the
+/// directory is unique per installation id and is removed with it, and Core
+/// already gives the worker's user exclusive access to it. Core never
+/// declares a model file under this name.
+const COREML_CACHE_DIRECTORY: &str = "coreml-cache";
+
+/// A static-shape model sees every window padded to `length`; the padded
+/// positions carry `pad_token_id`, attention mask 0 and token type 0.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StaticPadding {
+    length: usize,
+    pad_token_id: i64,
 }
 
 impl PrivacyEngine {
     pub fn load(
+        model_directory: &Path,
+        intra_threads: usize,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        match Self::load_once(model_directory, intra_threads) {
+            // Core ML compiles on first use; a prediction at startup moves
+            // that cost out of the first request and proves the cache works.
+            Ok(mut engine) if engine.coreml => {
+                if engine.warm_up().is_ok() {
+                    return Ok(engine);
+                }
+            }
+            Err(error) if error.to_string() == "coreml_session_failed" => {}
+            // CPU models, and every other load error, are returned as they are.
+            other => return other,
+        }
+        // A compiled model left by a worker killed while Core ML was
+        // compiling, or by another runtime build, can fail at session
+        // creation or at the first prediction. Rebuild it from the ONNX file
+        // once; a second failure is reported, never hidden.
+        coreml::clear_cache(&model_directory.join(COREML_CACHE_DIRECTORY));
+        let mut engine = Self::load_once(model_directory, intra_threads)
+            .map_err(|_| io::Error::other("coreml_session_failed"))?;
+        engine
+            .warm_up()
+            .map_err(|_| io::Error::other("coreml_session_failed"))?;
+        Ok(engine)
+    }
+
+    fn warm_up(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.detect(&[TextInput {
+            id: 0,
+            text: "AstrLink warm-up".into(),
+        }])
+        .map(|_| ())
+    }
+
+    fn load_once(
         model_directory: &Path,
         intra_threads: usize,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -148,18 +205,36 @@ impl PrivacyEngine {
             .filter(|window| *window > manifest.stride)
             .ok_or_else(|| io::Error::other("invalid_model_window"))?;
 
-        initialize_onnx_runtime()?;
-        // Without spinning, idle pool threads sleep between operators instead
-        // of holding their cores while the main thread tokenizes and decodes.
-        let builder = Session::builder()?
-            .with_log_level(LogLevel::Error)?
-            .with_intra_threads(intra_threads)?
-            .with_intra_op_spinning(false)?
-            .with_inter_threads(INTER_OP_THREADS)?
-            .with_parallel_execution(false)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?;
-        let session = priority::lower_pool_threads(builder)?
-            .commit_from_file(manifest.resolve(model_directory, &manifest.model_path))?;
+        let static_padding = match &manifest.execution {
+            Some(execution) => {
+                if tokenizer.id_to_token(execution.pad_token_id).is_none() {
+                    return Err(io::Error::other("invalid_model_manifest").into());
+                }
+                Some(StaticPadding {
+                    length: execution.static_sequence_length,
+                    pad_token_id: i64::from(execution.pad_token_id),
+                })
+            }
+            None => None,
+        };
+
+        let coreml = manifest
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.provider == ExecutionProvider::Coreml);
+        if coreml {
+            // Checked before the Core ML runtime is loaded, so it is never
+            // loaded on a system the gate refuses.
+            coreml::check_platform()?;
+        }
+        initialize_onnx_runtime(coreml)?;
+        let model_path = manifest.resolve(model_directory, &manifest.model_path);
+        let session = if coreml {
+            coreml::commit_session(&manifest, model_directory, &model_path, intra_threads)?
+        } else {
+            priority::lower_pool_threads(session_builder(intra_threads)?)?
+                .commit_from_file(model_path)?
+        };
         validate_session(&session, &manifest)?;
 
         Ok(Self {
@@ -177,6 +252,8 @@ impl PrivacyEngine {
             attention_mask_name: manifest.input_names.attention_mask,
             token_type_ids_name: manifest.input_names.token_type_ids,
             output_name: manifest.output_name,
+            static_padding,
+            coreml,
         })
     }
 
@@ -217,16 +294,22 @@ impl PrivacyEngine {
         for (start, end) in
             chunk_ranges_with(ids.len(), self.content_window_tokens, self.overlap_tokens)
         {
-            let window = prepare_model_window(
+            let mut window = prepare_model_window(
                 &self.tokenizer,
                 encoding,
                 start,
                 end,
                 self.apply_post_processor,
             )?;
-            let sequence_length = window.input_ids.len();
+            let mut sequence_length = window.input_ids.len();
             if sequence_length > self.model_window_tokens {
                 return Err(io::Error::other("invalid_model_window").into());
+            }
+            if let Some(padding) = self.static_padding {
+                // content_positions all index the unpadded prefix, so the
+                // padded tail never reaches the stitched scores.
+                pad_model_window(&mut window, padding)?;
+                sequence_length = padding.length;
             }
             let input_ids = Tensor::from_array(([1, sequence_length], window.input_ids))?;
             let attention_mask = Tensor::from_array(([1, sequence_length], window.attention_mask))?;
@@ -411,6 +494,371 @@ fn prepare_model_window(
     })
 }
 
+// Without spinning, idle pool threads sleep between operators instead of
+// holding their cores while the main thread tokenizes and decodes.
+fn session_builder(intra_threads: usize) -> ort::Result<SessionBuilder> {
+    Session::builder()?
+        .with_log_level(LogLevel::Error)?
+        .with_intra_threads(intra_threads)?
+        .with_intra_op_spinning(false)?
+        .with_inter_threads(INTER_OP_THREADS)?
+        .with_parallel_execution(false)?
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+}
+
+fn pad_model_window(window: &mut ModelWindow, padding: StaticPadding) -> io::Result<()> {
+    let length = window.input_ids.len();
+    if length == 0
+        || length > padding.length
+        || window.attention_mask.len() != length
+        || window.token_type_ids.len() != length
+        || window
+            .content_positions
+            .last()
+            .is_some_and(|position| *position >= length)
+    {
+        return Err(io::Error::other("invalid_model_window"));
+    }
+    window
+        .input_ids
+        .resize(padding.length, padding.pad_token_id);
+    window.attention_mask.resize(padding.length, 0);
+    window.token_type_ids.resize(padding.length, 0);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+mod coreml {
+    use std::{
+        ffi::CStr,
+        fs,
+        io::{self, ErrorKind},
+        os::unix::fs::DirBuilderExt,
+        path::{Path, PathBuf},
+        ptr,
+    };
+
+    use ort::{
+        ep::{self, ExecutionProvider},
+        session::Session,
+    };
+
+    use super::{COREML_CACHE_DIRECTORY as CACHE_DIRECTORY, session_builder};
+    use crate::{
+        manifest::{CoreMlComputeUnits, ModelManifest},
+        priority,
+    };
+
+    /// Core ML models run only on Apple silicon with macOS 26 or later.
+    /// ONNX Runtime issue #32569 reports wrong FP16 results from the Core ML
+    /// provider on macOS 15, and no release before 26 has been tested, so
+    /// older systems are refused instead of trusted. Core applies the same
+    /// gate before it offers the variants.
+    const MINIMUM_MACOS_MAJOR: u32 = 26;
+    /// Darwin 25 is the kernel of macOS 26.
+    const MINIMUM_DARWIN_MAJOR: u32 = 25;
+
+    pub fn check_platform() -> io::Result<()> {
+        if !cfg!(target_arch = "aarch64") {
+            return Err(io::Error::other("unsupported_execution_provider"));
+        }
+        let product = sysctl_string(c"kern.osproductversion");
+        let darwin = sysctl_string(c"kern.osrelease");
+        if supported_macos(product.as_deref(), darwin.as_deref()) {
+            Ok(())
+        } else {
+            Err(io::Error::other("coreml_requires_macos_26"))
+        }
+    }
+
+    /// The product version ("26.0.1") is checked first; the Darwin release
+    /// ("25.0.0") covers a product version that is missing or reported in a
+    /// compatibility form. Anything unreadable counts as too old.
+    fn supported_macos(product: Option<&str>, darwin: Option<&str>) -> bool {
+        major_version(product).is_some_and(|major| major >= MINIMUM_MACOS_MAJOR)
+            || major_version(darwin).is_some_and(|major| major >= MINIMUM_DARWIN_MAJOR)
+    }
+
+    fn major_version(version: Option<&str>) -> Option<u32> {
+        let major = version?.trim().split('.').next()?;
+        if major.is_empty() || major.len() > 4 || !major.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        major.parse().ok()
+    }
+
+    fn sysctl_string(name: &CStr) -> Option<String> {
+        let mut buffer = [0_u8; 64];
+        let mut size: libc::size_t = buffer.len();
+        // SAFETY: the name is NUL-terminated, the buffer is writable for
+        // `size` bytes, and no new value is set.
+        let result = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if result != 0 || size == 0 || size > buffer.len() {
+            return None;
+        }
+        CStr::from_bytes_until_nul(&buffer[..size])
+            .ok()?
+            .to_str()
+            .ok()
+            .map(str::to_owned)
+    }
+
+    /// ONNX Runtime keys its Core ML cache by the model alone, so a cache
+    /// written by another runtime build or with other options would be
+    /// loaded as it is and fail at the first prediction. Each runtime build
+    /// and option set therefore gets its own subdirectory of the cache, and
+    /// the others are removed.
+    pub fn commit_session(
+        manifest: &ModelManifest,
+        model_directory: &Path,
+        model_path: &Path,
+        intra_threads: usize,
+    ) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
+        let execution = manifest
+            .execution
+            .as_ref()
+            .ok_or_else(|| io::Error::other("invalid_model_manifest"))?;
+        let units = execution
+            .compute_units
+            .ok_or_else(|| io::Error::other("invalid_model_manifest"))?;
+        if manifest
+            .files
+            .iter()
+            .any(|file| file.path.split('/').next() == Some(CACHE_DIRECTORY))
+        {
+            return Err(io::Error::other("invalid_model_manifest").into());
+        }
+        let key = cache_key(ort::info(), units, execution.static_sequence_length);
+        let cache = prepare_cache(model_directory, &key)?;
+        let cache_path = cache
+            .to_str()
+            .ok_or_else(|| io::Error::other("invalid_model_installation"))?;
+        let provider = ep::CoreML::default()
+            .with_model_format(ep::coreml::ModelFormat::MLProgram)
+            .with_compute_units(compute_units(units))
+            .with_static_input_shapes(true)
+            .with_model_cache_dir(cache_path);
+        if !provider
+            .is_available()
+            .map_err(|_| io::Error::other("coreml_unavailable"))?
+        {
+            return Err(io::Error::other("coreml_unavailable").into());
+        }
+        // Registration errors are fatal rather than silently leaving the
+        // whole graph on the CPU. CPU comes second and takes only the nodes
+        // Core ML does not claim.
+        let builder = session_builder(intra_threads)
+            .and_then(|builder| {
+                builder.with_execution_providers([
+                    provider.build().error_on_failure(),
+                    ep::CPU::default().build().error_on_failure(),
+                ])
+            })
+            .map_err(|_| io::Error::other("coreml_unavailable"))?;
+        Ok(priority::lower_pool_threads(builder)
+            .and_then(|builder| builder.commit_from_file(model_path))
+            .map_err(|_| io::Error::other("coreml_session_failed"))?)
+    }
+
+    pub fn clear_cache(cache: &Path) {
+        // Best effort: a cache that cannot be removed fails the rebuild.
+        let _ = fs::remove_dir_all(cache);
+    }
+
+    fn compute_units(units: CoreMlComputeUnits) -> ep::coreml::ComputeUnits {
+        match units {
+            CoreMlComputeUnits::CpuAndGpu => ep::coreml::ComputeUnits::CPUAndGPU,
+            CoreMlComputeUnits::CpuAndNeuralEngine => ep::coreml::ComputeUnits::CPUAndNeuralEngine,
+            CoreMlComputeUnits::All => ep::coreml::ComputeUnits::All,
+        }
+    }
+
+    /// FNV-1a over the runtime build string (it names the release branch
+    /// and commit) and the options that shape the compiled model.
+    pub fn cache_key(
+        runtime_build: &str,
+        units: CoreMlComputeUnits,
+        static_sequence_length: usize,
+    ) -> String {
+        let units = match units {
+            CoreMlComputeUnits::CpuAndGpu => "cpu_and_gpu",
+            CoreMlComputeUnits::CpuAndNeuralEngine => "cpu_and_neural_engine",
+            CoreMlComputeUnits::All => "all",
+        };
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for byte in [
+            runtime_build.as_bytes(),
+            b"\0mlprogram\0static\0",
+            units.as_bytes(),
+            b"\0",
+            static_sequence_length.to_string().as_bytes(),
+        ]
+        .concat()
+        {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("{hash:016x}")
+    }
+
+    fn prepare_cache(model_directory: &Path, key: &str) -> io::Result<PathBuf> {
+        let root = model_directory.join(CACHE_DIRECTORY);
+        create_private_directory(&root)?;
+        if let Ok(entries) = fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                if entry.file_name() != key {
+                    let path = entry.path();
+                    let _ = match entry.file_type() {
+                        Ok(kind) if kind.is_dir() => fs::remove_dir_all(path),
+                        _ => fs::remove_file(path),
+                    };
+                }
+            }
+        }
+        let cache = root.join(key);
+        create_private_directory(&cache)?;
+        Ok(cache)
+    }
+
+    fn create_private_directory(path: &Path) -> io::Result<()> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                Err(io::Error::other("invalid_model_installation"))
+            }
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => fs::DirBuilder::new()
+                .mode(0o700)
+                .create(path)
+                .map_err(|_| io::Error::other("invalid_model_installation")),
+            Err(_) => Err(io::Error::other("invalid_model_installation")),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn core_ml_requires_macos_26() {
+            for (product, darwin, expected) in [
+                (Some("26.0"), Some("25.0.0"), true),
+                (Some("26"), None, true),
+                (Some("27.0.1\n"), Some("26.0.0"), true),
+                (Some("15.7.1"), Some("24.6.0"), false),
+                (Some("14.0"), Some("23.0.0"), false),
+                // A compatibility product version on a macOS 26 kernel.
+                (Some("16.0"), Some("25.1.0"), true),
+                (None, Some("25.0.0"), true),
+                (None, Some("24.6.0"), false),
+                (Some(""), Some(""), false),
+                (Some("x26"), Some("v25"), false),
+                (Some("99999.0"), None, false),
+                (None, None, false),
+            ] {
+                assert_eq!(
+                    supported_macos(product, darwin),
+                    expected,
+                    "{product:?} / {darwin:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn reads_the_running_macos_version() {
+            let product = sysctl_string(c"kern.osproductversion");
+            let darwin = sysctl_string(c"kern.osrelease");
+            assert!(major_version(product.as_deref()).is_some(), "{product:?}");
+            assert!(major_version(darwin.as_deref()).is_some(), "{darwin:?}");
+            assert_eq!(
+                check_platform().is_ok(),
+                cfg!(target_arch = "aarch64")
+                    && supported_macos(product.as_deref(), darwin.as_deref())
+            );
+        }
+
+        #[test]
+        fn cache_key_changes_with_runtime_build_and_options() {
+            let build = "ORT Build Info: git-branch=rel-1.24.4, git-commit-id=abc";
+            let key = cache_key(build, CoreMlComputeUnits::CpuAndGpu, 512);
+            assert_eq!(key.len(), 16);
+            assert_eq!(key, cache_key(build, CoreMlComputeUnits::CpuAndGpu, 512));
+            for other in [
+                cache_key(
+                    "ORT Build Info: git-branch=rel-1.31.0, git-commit-id=def",
+                    CoreMlComputeUnits::CpuAndGpu,
+                    512,
+                ),
+                cache_key(build, CoreMlComputeUnits::CpuAndNeuralEngine, 512),
+                cache_key(build, CoreMlComputeUnits::All, 512),
+                cache_key(build, CoreMlComputeUnits::CpuAndGpu, 256),
+            ] {
+                assert_ne!(key, other);
+            }
+        }
+
+        #[test]
+        fn cache_preparation_keeps_only_the_current_key() {
+            let directory = std::env::temp_dir().join(format!(
+                "astrlink-privacy-worker-coreml-cache-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&directory);
+            fs::create_dir_all(directory.join(CACHE_DIRECTORY).join("stale")).expect("stale");
+            fs::write(directory.join(CACHE_DIRECTORY).join("loose"), b"x").expect("loose");
+            let cache = prepare_cache(&directory, "0123456789abcdef").expect("prepare");
+            let names = fs::read_dir(directory.join(CACHE_DIRECTORY))
+                .expect("list cache")
+                .map(|entry| entry.expect("entry").file_name())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["0123456789abcdef"]);
+            assert!(cache.is_dir());
+            let _ = fs::remove_dir_all(&directory);
+
+            fs::create_dir_all(&directory).expect("fixture");
+            fs::write(directory.join(CACHE_DIRECTORY), b"not a directory").expect("file");
+            assert_eq!(
+                prepare_cache(&directory, "0123456789abcdef")
+                    .expect_err("a file in place of the cache is refused")
+                    .to_string(),
+                "invalid_model_installation"
+            );
+            let _ = fs::remove_dir_all(&directory);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod coreml {
+    use std::{io, path::Path};
+
+    use ort::session::Session;
+
+    use crate::manifest::ModelManifest;
+
+    pub fn check_platform() -> io::Result<()> {
+        Err(io::Error::other("unsupported_execution_provider"))
+    }
+
+    pub fn commit_session(
+        _manifest: &ModelManifest,
+        _model_directory: &Path,
+        _model_path: &Path,
+        _intra_threads: usize,
+    ) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
+        Err(io::Error::other("unsupported_execution_provider").into())
+    }
+
+    pub fn clear_cache(_cache: &Path) {}
+}
+
 fn validate_session(session: &Session, manifest: &ModelManifest) -> io::Result<()> {
     let actual_inputs = session
         .inputs()
@@ -432,18 +880,58 @@ fn validate_session(session: &Session, manifest: &ModelManifest) -> io::Result<(
     {
         return Err(io::Error::other("invalid_model_io"));
     }
+    if let Some(execution) = &manifest.execution {
+        // Static padding is only correct for a graph that declares exactly
+        // that shape; a dynamic graph would also keep Core ML off every node.
+        // The logits are read as float32; FP16 exports that also emit
+        // float16 logits are refused here, before the first prediction.
+        let expected = [1, execution.static_sequence_length as i64];
+        if session.inputs().iter().any(|input| {
+            input.dtype().tensor_type() != Some(TensorElementType::Int64)
+                || input.dtype().tensor_shape().map(|shape| &shape[..]) != Some(&expected[..])
+        }) || session.outputs().iter().any(|output| {
+            output.name() == manifest.output_name
+                && output.dtype().tensor_type() != Some(TensorElementType::Float32)
+        }) {
+            return Err(io::Error::other("invalid_model_io"));
+        }
+    }
     Ok(())
 }
 
-fn initialize_onnx_runtime() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+// CPU models keep the runtime they have always used, so their output stays
+// byte-identical. Core ML needs 1.24.1 or later: before it the Core ML
+// provider refused every FP16 node on macOS and ran them on the CPU.
+#[cfg(target_os = "macos")]
+const MACOS_RUNTIME_NAME: &str = "libonnxruntime.1.23.2.dylib";
+#[cfg(target_os = "macos")]
+const MACOS_COREML_RUNTIME_NAME: &str = "libonnxruntime.1.24.4.dylib";
+
+#[cfg(target_os = "macos")]
+fn macos_runtime_name(coreml: bool) -> &'static str {
+    if coreml {
+        MACOS_COREML_RUNTIME_NAME
+    } else {
+        MACOS_RUNTIME_NAME
+    }
+}
+
+fn initialize_onnx_runtime(
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] coreml: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(target_os = "macos")]
     {
-        const RUNTIME_NAME: &str = "libonnxruntime.1.23.2.dylib";
         let executable = env::current_exe()?;
-        let runtime = runtime_library_candidates(&executable, RUNTIME_NAME)
+        let runtime = runtime_library_candidates(&executable, macos_runtime_name(coreml))
             .into_iter()
             .find(|candidate| candidate.is_file())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "onnx_runtime_not_installed"))?;
+            .ok_or_else(|| {
+                if coreml {
+                    io::Error::new(io::ErrorKind::NotFound, "coreml_unavailable")
+                } else {
+                    io::Error::new(io::ErrorKind::NotFound, "onnx_runtime_not_installed")
+                }
+            })?;
         let _ = ort::init_from(runtime)?
             .with_name("astrlink-privacy-worker")
             .commit();
@@ -695,6 +1183,39 @@ mod tests {
         101, 10, 2, 8, 33, 66, 4, 10, 0, 16, 13,
     ];
 
+    // The micro fixture above with both inputs and the output fixed to a
+    // sequence of 4, like an FP16 export for Core ML.
+    const STATIC_MICRO_ONNX_MODEL: &[u8] = &[
+        8, 9, 18, 21, 97, 115, 116, 114, 108, 105, 110, 107, 45, 116, 101, 115, 116, 45, 102, 105,
+        120, 116, 117, 114, 101, 58, 162, 4, 10, 31, 10, 9, 105, 110, 112, 117, 116, 95, 105, 100,
+        115, 18, 11, 105, 110, 112, 117, 116, 95, 115, 104, 97, 112, 101, 34, 5, 83, 104, 97, 112,
+        101, 10, 63, 18, 17, 108, 97, 98, 101, 108, 95, 119, 105, 100, 116, 104, 95, 118, 97, 108,
+        117, 101, 34, 8, 67, 111, 110, 115, 116, 97, 110, 116, 42, 32, 10, 5, 118, 97, 108, 117,
+        101, 42, 20, 8, 1, 16, 7, 58, 1, 33, 66, 11, 108, 97, 98, 101, 108, 95, 119, 105, 100, 116,
+        104, 160, 1, 4, 10, 67, 10, 11, 105, 110, 112, 117, 116, 95, 115, 104, 97, 112, 101, 10,
+        17, 108, 97, 98, 101, 108, 95, 119, 105, 100, 116, 104, 95, 118, 97, 108, 117, 101, 18, 12,
+        111, 117, 116, 112, 117, 116, 95, 115, 104, 97, 112, 101, 34, 6, 67, 111, 110, 99, 97, 116,
+        42, 11, 10, 4, 97, 120, 105, 115, 24, 0, 160, 1, 2, 10, 201, 1, 18, 17, 98, 97, 115, 101,
+        95, 108, 111, 103, 105, 116, 115, 95, 118, 97, 108, 117, 101, 34, 8, 67, 111, 110, 115,
+        116, 97, 110, 116, 42, 169, 1, 10, 5, 118, 97, 108, 117, 101, 42, 156, 1, 8, 1, 8, 1, 8,
+        33, 16, 1, 34, 132, 1, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0,
+        32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0,
+        32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0,
+        32, 65, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0,
+        32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0,
+        32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 0, 0, 32, 193, 66, 11, 98, 97, 115,
+        101, 95, 108, 111, 103, 105, 116, 115, 160, 1, 4, 10, 49, 10, 17, 98, 97, 115, 101, 95,
+        108, 111, 103, 105, 116, 115, 95, 118, 97, 108, 117, 101, 10, 12, 111, 117, 116, 112, 117,
+        116, 95, 115, 104, 97, 112, 101, 18, 6, 108, 111, 103, 105, 116, 115, 34, 6, 69, 120, 112,
+        97, 110, 100, 18, 29, 97, 115, 116, 114, 108, 105, 110, 107, 95, 109, 105, 99, 114, 111,
+        95, 112, 114, 105, 118, 97, 99, 121, 95, 102, 105, 108, 116, 101, 114, 90, 27, 10, 9, 105,
+        110, 112, 117, 116, 95, 105, 100, 115, 18, 14, 10, 12, 8, 7, 18, 8, 10, 2, 8, 1, 10, 2, 8,
+        4, 90, 32, 10, 14, 97, 116, 116, 101, 110, 116, 105, 111, 110, 95, 109, 97, 115, 107, 18,
+        14, 10, 12, 8, 7, 18, 8, 10, 2, 8, 1, 10, 2, 8, 4, 98, 28, 10, 6, 108, 111, 103, 105, 116,
+        115, 18, 18, 10, 16, 8, 1, 18, 12, 10, 2, 8, 1, 10, 2, 8, 4, 10, 2, 8, 33, 66, 4, 10, 0,
+        16, 13,
+    ];
+
     // The micro fixture above with the 21 Guard BIO labels: every token
     // prefers I-ip_address, then B-ip_address.
     const GUARD_CONTRACT_ONNX_MODEL: &[u8] = &[
@@ -935,6 +1456,13 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_core_ml_models_load_their_own_runtime() {
+        assert_eq!(macos_runtime_name(false), "libonnxruntime.1.23.2.dylib");
+        assert_eq!(macos_runtime_name(true), "libonnxruntime.1.24.4.dylib");
+    }
+
     #[test]
     fn onnx_environment_outlives_concurrent_sessions() {
         const CHILD_ENV: &str = "ASTRLINK_TEST_ORT_LIFETIME_CHILD";
@@ -958,7 +1486,7 @@ mod tests {
             return;
         }
 
-        initialize_onnx_runtime().expect("initialize runtime");
+        initialize_onnx_runtime(false).expect("initialize runtime");
         let environment = ort::environment::get_environment().expect("get environment");
         let weak = std::sync::Arc::downgrade(&environment);
         drop(environment);
@@ -973,7 +1501,7 @@ mod tests {
                 scope.spawn(|| {
                     start.wait();
                     for _ in 0..256 {
-                        initialize_onnx_runtime().expect("reuse runtime");
+                        initialize_onnx_runtime(false).expect("reuse runtime");
                         drop(Session::builder().expect("create concurrent session builder"));
                     }
                 });
@@ -1177,6 +1705,184 @@ mod tests {
             (spans[3].start, spans[3].end),
             ("你好 secret 你好 ".len(), "你好 secret 你好 secret".len())
         );
+    }
+
+    #[test]
+    fn static_padding_fills_the_tail_and_keeps_content_positions() {
+        let padding = StaticPadding {
+            length: 6,
+            pad_token_id: 1,
+        };
+        let mut window = ModelWindow {
+            input_ids: vec![0, 7, 8, 2],
+            attention_mask: vec![1, 1, 1, 1],
+            token_type_ids: vec![0, 0, 0, 0],
+            content_positions: vec![1, 2],
+        };
+        pad_model_window(&mut window, padding).expect("pad window");
+        assert_eq!(window.input_ids, [0, 7, 8, 2, 1, 1]);
+        assert_eq!(window.attention_mask, [1, 1, 1, 1, 0, 0]);
+        assert_eq!(window.token_type_ids, [0, 0, 0, 0, 0, 0]);
+        assert_eq!(window.content_positions, [1, 2]);
+
+        // A full window is left as it is.
+        pad_model_window(&mut window, padding).expect("pad full window");
+        assert_eq!(window.input_ids.len(), 6);
+
+        for mut invalid in [
+            ModelWindow {
+                input_ids: vec![0; 7],
+                attention_mask: vec![1; 7],
+                token_type_ids: vec![0; 7],
+                content_positions: vec![1],
+            },
+            ModelWindow {
+                input_ids: vec![0, 1],
+                attention_mask: vec![1],
+                token_type_ids: vec![0, 0],
+                content_positions: vec![0],
+            },
+            ModelWindow {
+                input_ids: vec![0, 1],
+                attention_mask: vec![1, 1],
+                token_type_ids: vec![0, 0],
+                content_positions: vec![2],
+            },
+            ModelWindow {
+                input_ids: Vec::new(),
+                attention_mask: Vec::new(),
+                token_type_ids: Vec::new(),
+                content_positions: Vec::new(),
+            },
+        ] {
+            assert_eq!(
+                pad_model_window(&mut invalid, padding)
+                    .expect_err("invalid window must be rejected")
+                    .to_string(),
+                "invalid_model_window"
+            );
+        }
+    }
+
+    #[test]
+    fn static_execution_pads_windows_and_matches_the_dynamic_model() {
+        let text = "你好 secret 你好 secret 你好";
+        let dynamic = static_fixture_directory(MICRO_ONNX_MODEL, None);
+        let expected = (|| {
+            PrivacyEngine::load(&dynamic, TEST_INTRA_THREADS)?.detect(&[TextInput {
+                id: 5,
+                text: text.into(),
+            }])
+        })();
+        let _ = fs::remove_dir_all(&dynamic);
+        let expected = expected.expect("run dynamic fixture");
+
+        let padded = static_fixture_directory(
+            STATIC_MICRO_ONNX_MODEL,
+            Some(serde_json::json!({
+                "provider": "cpu",
+                "model_format": null,
+                "compute_units": null,
+                "static_sequence_length": 4,
+                "pad_token_id": 0,
+            })),
+        );
+        let actual = (|| {
+            let mut engine = PrivacyEngine::load(&padded, TEST_INTRA_THREADS)?;
+            assert_eq!(
+                engine.static_padding,
+                Some(StaticPadding {
+                    length: 4,
+                    pad_token_id: 0
+                })
+            );
+            engine.detect(&[TextInput {
+                id: 5,
+                text: text.into(),
+            }])
+        })();
+        let _ = fs::remove_dir_all(&padded);
+        let actual = actual.expect("run static fixture");
+        assert!(!expected.is_empty());
+        assert_eq!(
+            serde_json::to_value(&actual).expect("serialize static spans"),
+            serde_json::to_value(&expected).expect("serialize dynamic spans")
+        );
+    }
+
+    #[test]
+    fn static_execution_rejects_a_dynamic_graph_and_an_unknown_pad_token() {
+        let cpu = serde_json::json!({
+            "provider": "cpu",
+            "model_format": null,
+            "compute_units": null,
+            "static_sequence_length": 4,
+            "pad_token_id": 0,
+        });
+        let directory = static_fixture_directory(MICRO_ONNX_MODEL, Some(cpu.clone()));
+        assert_eq!(load_error(&directory), "invalid_model_io");
+
+        let mut unknown_pad = cpu;
+        unknown_pad["pad_token_id"] = 4096.into();
+        let directory = static_fixture_directory(STATIC_MICRO_ONNX_MODEL, Some(unknown_pad));
+        assert_eq!(load_error(&directory), "invalid_model_manifest");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn coreml_execution_is_refused_off_macos() {
+        let directory = static_fixture_directory(
+            STATIC_MICRO_ONNX_MODEL,
+            Some(serde_json::json!({
+                "provider": "coreml",
+                "model_format": "mlprogram",
+                "compute_units": "cpu_and_gpu",
+                "static_sequence_length": 4,
+                "pad_token_id": 0,
+            })),
+        );
+        assert_eq!(load_error(&directory), "unsupported_execution_provider");
+    }
+
+    /// The generic HF fixture with 4-token windows, the given model and an
+    /// optional execution block.
+    fn static_fixture_directory(model: &[u8], execution: Option<serde_json::Value>) -> PathBuf {
+        let directory = micro_model_directory();
+        fs::write(directory.join("onnx/model_q4.onnx"), model).expect("write fixture model");
+        let manifest_path = directory.join(crate::manifest::MANIFEST_NAME);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("read fixture manifest"))
+                .expect("parse fixture manifest");
+        configure_template_windows(&directory, &mut manifest);
+        manifest["adapter"] = "hf_token_classification".into();
+        manifest["calibration_path"] = serde_json::Value::Null;
+        manifest["label_mapping"] = serde_json::json!({
+            "account_number": "account",
+            "private_address": "private_address",
+            "private_date": "private_date",
+            "private_email": "email",
+            "private_person": "private_person",
+            "private_phone": "phone",
+            "private_url": "url",
+            "secret": "common_secret",
+        });
+        for file in manifest["files"]
+            .as_array_mut()
+            .expect("fixture file descriptors")
+        {
+            if file["path"] == "onnx/model_q4.onnx" {
+                file["size"] = model.len().into();
+            }
+        }
+        if let Some(execution) = execution {
+            manifest["execution"] = execution;
+        }
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&manifest).expect("serialize fixture manifest"),
+        )
+        .expect("write fixture manifest");
+        directory
     }
 
     #[test]

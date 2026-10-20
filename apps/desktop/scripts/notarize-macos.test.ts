@@ -101,6 +101,45 @@ describe("macOS release signing gates", () => {
     ).toBe(false);
   });
 
+  it("checks every bundled runtime, including one only Apple silicon adds", () => {
+    const options = fixture();
+    const frameworks = path.join(
+      options.bundleDirectory,
+      "macos/AstrLink.app/Contents/Frameworks",
+    );
+    mkdirSync(frameworks, { recursive: true });
+    for (const name of [
+      "libonnxruntime.1.23.2.dylib",
+      "libonnxruntime.1.24.4.dylib",
+    ])
+      writeFileSync(path.join(frameworks, name), "synthetic runtime");
+    const normal = options.runCommand.getMockImplementation()!;
+    options.runCommand.mockImplementation((command, args) => {
+      if (
+        command === "codesign" &&
+        args[0] === "--verify" &&
+        args.at(-1)?.endsWith("libonnxruntime.1.24.4.dylib")
+      ) {
+        throw new Error("unsigned Core ML runtime");
+      }
+      return normal(command, args);
+    });
+    expect(() => notarizeMacOS(options)).toThrow("unsigned Core ML runtime");
+    const verified = options.runCommand.mock.calls
+      .filter(
+        ([command, args]) => command === "codesign" && args[0] === "--verify",
+      )
+      .map(([, args]) => path.basename(args.at(-1) ?? ""));
+    expect(
+      verified.filter((name) => name === "libonnxruntime.1.23.2.dylib"),
+    ).toHaveLength(1);
+    expect(
+      options.runCommand.mock.calls.some(
+        ([, args]) => args[0] === "notarytool",
+      ),
+    ).toBe(false);
+  });
+
   it.each(["Invalid", "Rejected", "In Progress"])(
     "never staples or passes Gatekeeper on Apple status %s",
     (status) => {

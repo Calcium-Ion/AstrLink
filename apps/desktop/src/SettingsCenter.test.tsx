@@ -55,6 +55,7 @@ const settings = {
   values: {
     close_behavior: "hide_to_tray" as const,
     autostart: false,
+    autostart_hidden: false,
     core_auto_start: true,
     core_auto_recover: true,
     use_system_proxy: true,
@@ -531,6 +532,58 @@ describe("SettingsCenter", () => {
       }),
     );
     expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+  });
+
+  it("remembers hiding to tray while autostart is toggled off and on", async () => {
+    bridge.updatePreferences.mockImplementation(async (values) => ({
+      ...settings,
+      values,
+      autostart_actual: values.autostart,
+    }));
+    await act(async () => {
+      root.render(
+        <SettingsCenter
+          onCoreSnapshot={vi.fn()}
+          onDirtyChange={vi.fn()}
+          snapshot={snapshot}
+        />,
+      );
+    });
+
+    const switches =
+      container.querySelectorAll<HTMLButtonElement>('[role="switch"]');
+    const autostart = switches[0];
+    const hidden = switches[1];
+    if (!autostart || !hidden) throw new Error("missing startup switches");
+    expect(hidden.labels?.[0]?.textContent).toContain("自启动时隐藏到托盘");
+    expect(hidden.disabled).toBe(true);
+    expect(hidden.getAttribute("aria-checked")).toBe("false");
+    expect(container.textContent).toContain("手动打开应用仍显示主窗口");
+    await act(async () => hidden.click());
+    expect(bridge.updatePreferences).not.toHaveBeenCalled();
+
+    await act(async () => autostart.click());
+    expect(hidden.disabled).toBe(false);
+    await act(async () => hidden.click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ autostart: true, autostart_hidden: true }),
+    );
+    expect(hidden.getAttribute("aria-checked")).toBe("true");
+
+    await act(async () => autostart.click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ autostart: false, autostart_hidden: true }),
+    );
+    expect(hidden.disabled).toBe(true);
+    expect(hidden.getAttribute("aria-checked")).toBe("true");
+
+    await act(async () => autostart.click());
+    expect(hidden.disabled).toBe(false);
+    expect(hidden.getAttribute("aria-checked")).toBe("true");
+    await act(async () => hidden.click());
+    expect(bridge.updatePreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ autostart: true, autostart_hidden: false }),
+    );
   });
 
   it("switches the interface language immediately", async () => {

@@ -195,3 +195,32 @@ func TestValidatePrivacyModelProbeResponseAllowsNullableLicense(t *testing.T) {
 func canonicalKindPointer(value CanonicalKind) *CanonicalKind {
 	return &value
 }
+
+func TestValidatePrivacyModelPreparation(t *testing.T) {
+	local := PrivacyModelPreparationFallbackLocalModel
+	regex := PrivacyModelPreparationFallbackRegex
+	unknown := PrivacyModelPreparationFallback("cloud")
+	valid := []*PrivacyModelPreparation{
+		nil,
+		{State: PrivacyModelPreparationPreparing},
+		{State: PrivacyModelPreparationPreparing, Fallback: &local},
+		{State: PrivacyModelPreparationFailed, Fallback: &regex},
+		{State: PrivacyModelPreparationFailed},
+		{State: PrivacyModelPreparationReady},
+	}
+	for _, preparation := range valid {
+		if err := ValidatePrivacyModelPreparation(preparation); err != nil {
+			t.Fatalf("%+v: %v", preparation, err)
+		}
+	}
+	invalid := []*PrivacyModelPreparation{
+		{State: "compiling"},
+		{State: PrivacyModelPreparationReady, Fallback: &local},
+		{State: PrivacyModelPreparationPreparing, Fallback: &unknown},
+	}
+	for _, preparation := range invalid {
+		if ValidatePrivacyModelPreparation(preparation) == nil {
+			t.Fatalf("accepted %+v", preparation)
+		}
+	}
+}

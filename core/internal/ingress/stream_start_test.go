@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
@@ -129,6 +131,203 @@ func TestStreamRefusalFailsOverBeforeTheClientSeesIt(t *testing.T) {
 	}
 	if child.Recovery == nil || child.Recovery.Action != "failover" || child.Recovery.Reason != "stream_503" {
 		t.Fatalf("failed attempt recovery = %+v", child.Recovery)
+	}
+}
+
+// Issue #86: empty output containers are still announcements. None of these
+// events should commit the response before the subsequent overload arrives.
+func TestResponsesMetadataBeforeOverloadFailsOver(t *testing.T) {
+	t.Parallel()
+	for _, metadata := range []string{
+		`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[]}}`,
+		`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","summary":[],"encrypted_content":null}}`,
+		`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","summary":[],"encrypted_content":""}}`,
+		`{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","content":[]}}`,
+		`{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}`,
+		`{"type":"response.reasoning_summary_part.added","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}`,
+		`{"type":"response.output_text.delta","delta":""}`,
+		`{"type":"response.reasoning_summary_text.delta","delta":""}`,
+	} {
+		t.Run(metadata, func(t *testing.T) {
+			store := &memoryRequestRecordStore{}
+			refused := strings.Replace(overloadedCodexStream, "event: error", "data: "+metadata+"\n\nevent: error", 1)
+			response, attempts := serveStream(t, streamCandidates(contract.ProtocolOpenAIResponses, 2, contract.FailoverOnly), store,
+				"/v1/responses", `{"model":"m","input":"hi","stream":true}`,
+				map[string]string{"A.example": refused, "B.example": completedCodexStream})
+			if response.Code != http.StatusOK || response.Body.String() != completedCodexStream ||
+				!reflect.DeepEqual(attempts, []string{"A.example", "B.example"}) {
+				t.Fatalf("response = %d %q after %v", response.Code, response.Body.String(), attempts)
+			}
+			root, children := splitRecords(t, store)
+			if root.Status != contract.RequestStatusSucceeded || len(children) != 1 ||
+				children[0].FirstTokenMs != nil || children[0].Recovery == nil || children[0].Recovery.Reason != "stream_503" {
+				t.Fatalf("root = %s, children = %+v", root.Status, children)
+			}
+		})
+	}
+}
+
+// Content and unknown event types must remain committed, including tool calls
+// and encrypted reasoning which do not necessarily have a text delta.
+func TestResponsesOutputBeforeOverloadIsNotRetried(t *testing.T) {
+	t.Parallel()
+	for _, output := range []string{
+		`{"type":"response.output_text.delta","delta":"partial"}`,
+		`{"type":"response.reasoning_summary_text.delta","delta":"Thinking"}`,
+		`{"type":"response.output_item.added","item":{"type":"message","content":[{"type":"output_text","text":"partial"}]}}`,
+		`{"type":"response.output_item.added","item":{"type":"reasoning","summary":[{"type":"summary_text","text":"Thinking"}]}}`,
+		`{"type":"response.output_item.added","item":{"type":"reasoning","summary":[],"encrypted_content":"ciphertext"}}`,
+		`{"type":"response.content_part.added","part":{"type":"output_text","text":"partial"}}`,
+		`{"type":"response.output_item.added","item":{"type":"function_call","name":"run_command","arguments":""}}`,
+		`{"type":"response.output_item.added","item":{"type":"web_search_call","status":"in_progress"}}`,
+		`{"type":"response.image_generation_call.partial_image","partial_image_b64":"image"}`,
+		`{"type":"future.event","content":"opaque"}`,
+	} {
+		t.Run(output, func(t *testing.T) {
+			broken := strings.Replace(overloadedCodexStream, "event: error", "data: "+output+"\n\nevent: error", 1)
+			response, attempts := serveStream(t, streamCandidates(contract.ProtocolOpenAIResponses, 2, contract.FailoverOnly), nil,
+				"/v1/responses", `{"model":"m","input":"hi","stream":true}`, map[string]string{"A.example": broken})
+			if response.Code != http.StatusOK || response.Body.String() != broken || !reflect.DeepEqual(attempts, []string{"A.example"}) {
+				t.Fatalf("response = %d %q after %v", response.Code, response.Body.String(), attempts)
+			}
+		})
+	}
+}
+
+func TestStreamOverloadCoolsOnlyItsRouteForLaterRequests(t *testing.T) {
+	t.Parallel()
+	const output = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"
+	recovered := strings.Split(overloadedCodexStream, "event: response.failed")[0] + completedCodexStream
+	generic := strings.NewReplacer("server_is_overloaded", "server_error", "service_unavailable_error", "server_error").Replace(overloadedCodexStream)
+	withoutCode := strings.ReplaceAll(overloadedCodexStream, `"code":"server_is_overloaded",`, "")
+	for _, test := range []struct {
+		name, body, retryAfter string
+		failover, cooldown     bool
+	}{
+		{"held refusal", overloadedCodexStream, "", true, true},
+		{"held refusal without code", withoutCode, "", true, true},
+		{"held refusal with Retry-After", overloadedCodexStream, "120", true, true},
+		{"committed failure", output + overloadedCodexStream, "120", false, true},
+		{"recovered error", recovered, "120", false, false},
+		{"generic failure", generic, "", true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidates := streamCandidates(contract.ProtocolOpenAIResponses, 2, contract.FailoverOnly)
+			services := redirectServices{}
+			for _, candidate := range candidates {
+				service := candidate.CanonicalService()
+				service.Models = []string{"m", "other"}
+				policy := *candidate.FailurePolicy
+				policy.MaxRetries = 0
+				service.FailurePolicy = &policy
+				services = append(services, service)
+			}
+			resolver, err := endpoint.NewStoreResolver(services)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var attempts []string
+			first := true
+			handler := NewWithDependencies(Dependencies{
+				Resolver: resolver,
+				Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					attempts = append(attempts, request.URL.Host)
+					if first && request.URL.Host == "A.example" {
+						first = false
+						response := sseResponse(test.body)
+						if test.retryAfter != "" {
+							response.Header.Set("Retry-After", test.retryAfter)
+						}
+						return response, nil
+					}
+					return sseResponse(completedCodexStream), nil
+				})),
+			})
+			serve := func(model string) {
+				t.Helper()
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses",
+					strings.NewReader(`{"model":"`+model+`","input":"hi","stream":true}`)))
+				if response.Code != http.StatusOK {
+					t.Fatalf("response = %d %s", response.Code, response.Body.String())
+				}
+			}
+			before := time.Now()
+			serve("m")
+			want := []string{"A.example", "B.example"}
+			if !test.failover {
+				want = want[:1]
+			}
+			if !reflect.DeepEqual(attempts, want) {
+				t.Fatalf("first request attempts = %v, want %v", attempts, want)
+			}
+			// Fresh sessions must skip A for m, but can still use its other model.
+			request := endpoint.ResolveRequest{Protocol: contract.ProtocolOpenAIResponses, Model: "m", Streaming: true}
+			resolved, _, err := resolver.ResolveRankedCandidates(context.Background(), request)
+			count, firstIndex := 2, 0
+			if test.cooldown {
+				count, firstIndex = 1, 1
+			}
+			if err != nil || len(resolved) != count || resolved[0].CanonicalService().ID != candidates[firstIndex].CanonicalService().ID {
+				t.Fatalf("cooled candidates = %+v, %v", resolved, err)
+			}
+			limited := candidates[0]
+			limited.UpstreamProtocol, limited.UpstreamModel = request.Protocol, request.Model
+			until := resolver.RateLimitedUntil(limited)
+			if test.cooldown {
+				minimum := max(30*time.Second, parseRetryAfter(test.retryAfter, before))
+				if until.Before(before.Add(minimum)) {
+					t.Fatalf("cooldown = %v, want at least %s", until, minimum)
+				}
+			} else if !until.IsZero() {
+				t.Fatalf("non-overload response established cooldown until %v", until)
+			}
+			attempts = nil
+			serve("m")
+			serve("other")
+			resolver.ReleaseRateLimits(candidates[0].CanonicalService().ID)
+			serve("m")
+			want = []string{"A.example", "A.example", "A.example"}
+			if test.cooldown {
+				want[0] = "B.example"
+			}
+			if !reflect.DeepEqual(attempts, want) {
+				t.Fatalf("later attempts = %v", attempts)
+			}
+		})
+	}
+}
+
+func TestEveryStreamRouteCoolingReportsOverloadWithoutAnotherAttempt(t *testing.T) {
+	t.Parallel()
+	service := streamCandidates(contract.ProtocolOpenAIResponses, 1, contract.FailoverOnly)[0].CanonicalService()
+	service.Models = []string{"m"}
+	resolver, err := endpoint.NewStoreResolver(redirectServices{service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	handler := NewWithDependencies(Dependencies{
+		Resolver: resolver,
+		Forwarder: transport.New(roundTripFunc(func(*http.Request) (*http.Response, error) {
+			attempts++
+			return sseResponse(overloadedCodexStream), nil
+		})),
+	})
+	serve := func() *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses",
+			strings.NewReader(`{"model":"m","input":"hi","stream":true}`)))
+		return response
+	}
+	if first := serve(); first.Code != http.StatusOK || first.Body.String() != overloadedCodexStream {
+		t.Fatalf("first response = %d %q", first.Code, first.Body.String())
+	}
+	response := serve()
+	envelope := assertInferenceError(t, response, http.StatusTooManyRequests, "upstream_rate_limited")
+	if attempts != 1 || !strings.Contains(envelope.Error.Message, "overload") ||
+		strings.Contains(envelope.Error.Message, "answered HTTP 429") || parseRetryAfter(response.Header().Get("Retry-After"), time.Now()) <= 0 {
+		t.Fatalf("cooling response = %s, headers = %v, attempts = %d", response.Body, response.Header(), attempts)
 	}
 }
 
@@ -356,6 +555,7 @@ func TestStreamFailureStatus(t *testing.T) {
 		status   int
 	}{
 		{contract.ProtocolOpenAIResponses, `{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded"}}`, http.StatusServiceUnavailable},
+		{contract.ProtocolOpenAIResponses, `{"type":"error","error":{"type":"service_unavailable_error","message":"Our servers are currently overloaded"}}`, http.StatusServiceUnavailable},
 		{contract.ProtocolOpenAIResponses, `{"type":"response.failed","response":{"error":{"code":"slow_down"}}}`, http.StatusServiceUnavailable},
 		{contract.ProtocolOpenAIResponses, `{"type":"response.failed","response":{"error":{"code":"usage_limit_reached"}}}`, http.StatusTooManyRequests},
 		{contract.ProtocolOpenAIResponses, `{"type":"error","code":"rate_limit_exceeded","message":"slow down"}`, http.StatusTooManyRequests},

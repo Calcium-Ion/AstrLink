@@ -8,6 +8,8 @@ use serde::Deserialize;
 
 pub const MANIFEST_NAME: &str = "astrlink-model.json";
 pub const MAX_REQUEST_TOKENS: usize = 128 * 1024;
+// Token ids index the embedding table; no tokenizer comes close to this.
+const MAX_PAD_TOKEN_ID: u32 = (1 << 24) - 1;
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 const MAX_SYNTHETIC_FIXTURE_BYTES: u64 = 1024 * 1024;
 const SYNTHETIC_INSTALLATION_ID: &str = "model_00000000000000000000000000000000";
@@ -53,6 +55,43 @@ pub enum TagScheme {
     Bioes,
 }
 
+/// Where the ONNX session runs. Absent for the CPU path, which keeps every
+/// existing manifest valid unchanged.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProvider {
+    Cpu,
+    Coreml,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreMlModelFormat {
+    Mlprogram,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreMlComputeUnits {
+    CpuAndGpu,
+    CpuAndNeuralEngine,
+    All,
+}
+
+/// Runtime facts for a model exported with a static `[1, length]` input.
+/// Every window is padded to `static_sequence_length` with `pad_token_id`,
+/// attention mask 0 and token type 0, and the padded positions are dropped
+/// from the logits.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Execution {
+    pub provider: ExecutionProvider,
+    pub model_format: Option<CoreMlModelFormat>,
+    pub compute_units: Option<CoreMlComputeUnits>,
+    pub static_sequence_length: usize,
+    pub pad_token_id: u32,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelManifest {
@@ -78,6 +117,8 @@ pub struct ModelManifest {
     pub output_name: String,
     pub label_mapping: BTreeMap<String, Option<String>>,
     pub files: Vec<ModelFile>,
+    #[serde(default)]
+    pub execution: Option<Execution>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -203,6 +244,12 @@ impl ModelManifest {
                     return Err(io::Error::other("invalid_model_manifest"));
                 }
             }
+        }
+
+        if let Some(execution) = &self.execution
+            && !valid_execution(execution, self.adapter, self.window)
+        {
+            return Err(io::Error::other("invalid_model_manifest"));
         }
 
         if self.files.is_empty() || self.files.len() > 128 || self.label_mapping.len() > 256 {
@@ -374,6 +421,23 @@ fn manifest_fields_present(bytes: &[u8]) -> bool {
     })
 }
 
+fn valid_execution(execution: &Execution, adapter: Adapter, window: usize) -> bool {
+    let provider_options = match execution.provider {
+        ExecutionProvider::Cpu => {
+            execution.model_format.is_none() && execution.compute_units.is_none()
+        }
+        ExecutionProvider::Coreml => {
+            execution.model_format == Some(CoreMlModelFormat::Mlprogram)
+                && execution.compute_units.is_some()
+        }
+    };
+    provider_options
+        && adapter == Adapter::HfTokenClassification
+        && execution.static_sequence_length > 0
+        && execution.static_sequence_length == window
+        && execution.pad_token_id <= MAX_PAD_TOKEN_ID
+}
+
 fn valid_installation_id(value: &str) -> bool {
     value
         .strip_prefix("model_")
@@ -501,6 +565,120 @@ mod tests {
         );
     }
 
+    #[test]
+    fn execution_is_optional_and_strictly_validated() {
+        let base = synthetic_manifest_json();
+        assert!(parse(&base).is_ok_and(|manifest| manifest.execution.is_none()));
+
+        let coreml = serde_json::json!({
+            "provider": "coreml",
+            "model_format": "mlprogram",
+            "compute_units": "cpu_and_gpu",
+            "static_sequence_length": 512,
+            "pad_token_id": 1,
+        });
+        for units in ["cpu_and_gpu", "cpu_and_neural_engine", "all"] {
+            let mut execution = coreml.clone();
+            execution["compute_units"] = units.into();
+            let manifest = parse(&with_execution(&base, execution)).expect("valid Core ML");
+            let execution = manifest.execution.expect("execution");
+            assert_eq!(execution.provider, ExecutionProvider::Coreml);
+            assert_eq!(execution.model_format, Some(CoreMlModelFormat::Mlprogram));
+            assert_eq!(execution.static_sequence_length, 512);
+            assert_eq!(execution.pad_token_id, 1);
+        }
+        let cpu = serde_json::json!({
+            "provider": "cpu",
+            "model_format": null,
+            "compute_units": null,
+            "static_sequence_length": 512,
+            "pad_token_id": 1,
+        });
+        assert!(parse(&with_execution(&base, cpu.clone())).is_ok());
+
+        let mut invalid = Vec::new();
+        for (field, value) in [
+            ("compute_units", serde_json::Value::Null),
+            ("model_format", serde_json::Value::Null),
+            ("static_sequence_length", 256.into()),
+            ("static_sequence_length", 0.into()),
+            ("pad_token_id", (MAX_PAD_TOKEN_ID + 1).into()),
+            ("compute_units", "cpu_only".into()),
+            ("model_format", "neural_network".into()),
+            ("provider", "cuda".into()),
+            ("pad_token_id", (-1).into()),
+        ] {
+            let mut execution = coreml.clone();
+            execution[field] = value;
+            invalid.push(execution);
+        }
+        let mut cpu_with_units = cpu;
+        cpu_with_units["compute_units"] = "all".into();
+        invalid.push(cpu_with_units);
+        let mut unknown_field = coreml.clone();
+        unknown_field["cache_dir"] = "/tmp".into();
+        invalid.push(unknown_field);
+        for execution in invalid {
+            assert!(
+                parse(&with_execution(&base, execution.clone())).is_err(),
+                "accepted {execution}"
+            );
+        }
+
+        let mut openai = with_execution(&base, coreml);
+        openai["adapter"] = "openai_bioes_viterbi".into();
+        openai["tag_scheme"] = "bioes".into();
+        assert!(parse(&openai).is_err());
+    }
+
+    fn parse(value: &serde_json::Value) -> Result<ModelManifest, String> {
+        let manifest: ModelManifest =
+            serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+        manifest.validate().map_err(|error| error.to_string())?;
+        Ok(manifest)
+    }
+
+    fn with_execution(base: &serde_json::Value, execution: serde_json::Value) -> serde_json::Value {
+        let mut manifest = base.clone();
+        manifest["execution"] = execution;
+        manifest
+    }
+
+    fn synthetic_manifest_json() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "installation_id": SYNTHETIC_INSTALLATION_ID,
+            "identity": format!("{SYNTHETIC_REPO_ID}@{SYNTHETIC_REVISION}#{SYNTHETIC_VARIANT_ID}"),
+            "repo_id": SYNTHETIC_REPO_ID,
+            "revision": SYNTHETIC_REVISION,
+            "variant_id": SYNTHETIC_VARIANT_ID,
+            "adapter": "hf_token_classification",
+            "model_path": "model.onnx",
+            "external_data_paths": [],
+            "tokenizer_path": "tokenizer.json",
+            "config_path": "config.json",
+            "calibration_path": null,
+            "secret_rules_path": null,
+            "secret_calibration_path": null,
+            "tag_scheme": "bio",
+            "window": 512,
+            "stride": 128,
+            "max_request_tokens": MAX_REQUEST_TOKENS,
+            "input_names": {
+                "input_ids": "input_ids",
+                "attention_mask": "attention_mask",
+                "token_type_ids": "token_type_ids",
+            },
+            "output_name": "logits",
+            "label_mapping": {"EMAIL": "email"},
+            "files": [
+                {"path": "model.onnx", "size": 128, "sha256": "0".repeat(64)},
+                {"path": "tokenizer.json", "size": 64, "sha256": "1".repeat(64)},
+                {"path": "config.json", "size": 32, "sha256": "2".repeat(64)},
+            ],
+        })
+    }
+
     fn synthetic_manifest() -> ModelManifest {
         ModelManifest {
             version: 1,
@@ -533,6 +711,7 @@ mod tests {
                 size: 128,
                 sha256: "0".repeat(64),
             }],
+            execution: None,
         }
     }
 }

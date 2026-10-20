@@ -539,12 +539,17 @@ installation = openapi.dig("components", "schemas", "PrivacyModelInstallation")
 expected_installation_fields = %w[
   id source catalog_id catalog_source name license languages repo_id revision
   variant_id variant_name quantization adapter status bytes_downloaded bytes_total
-  estimated_ram_bytes error label_mapping installed_at
+  estimated_ram_bytes error label_mapping installed_at preparation
 ]
 raise "privacy installation shape drifted" unless installation.fetch("required") == expected_installation_fields &&
                                                    installation.fetch("properties").keys == expected_installation_fields
 catalog_source_values = installation.dig("properties", "catalog_source", "oneOf", 0, "enum")
 raise "privacy catalog provenance values drifted" unless catalog_source_values == %w[official community]
+preparation = openapi.dig("components", "schemas", "PrivacyModelPreparation")
+raise "privacy model preparation shape drifted" unless preparation.fetch("required") == %w[state fallback] &&
+                                                       preparation.fetch("properties").keys == %w[state fallback] &&
+                                                       preparation.dig("properties", "state", "enum") == %w[preparing ready failed] &&
+                                                       preparation.dig("properties", "fallback", "oneOf", 0, "enum") == %w[local_model regex]
 installation_source_values = installation.dig("properties", "source", "enum")
 raise "privacy installation source values drifted" unless installation_source_values == %w[catalog custom local]
 

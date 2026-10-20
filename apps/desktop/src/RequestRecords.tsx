@@ -603,7 +603,10 @@ export function RequestRecords({
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
+    let running = false;
     const load = async () => {
+      if (cancelled || running) return;
+      running = true;
       try {
         const detail = await getRequestSession(selectedId);
         if (cancelled) return;
@@ -625,6 +628,8 @@ export function RequestRecords({
         });
       } catch {
         /* detail view shows missing via selectedSession === null */
+      } finally {
+        running = false;
       }
     };
     const fresh = freshDetailRef.current === selectedId;
@@ -635,7 +640,9 @@ export function RequestRecords({
         cancelled = true;
       };
     }
-    const timer = window.setInterval(() => void load(), POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void load();
+    }, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -671,21 +678,33 @@ export function RequestRecords({
       ...(seen.has("unknown") ? (["unknown"] as const) : []),
     ];
   }, [allRecords, filters.clientType]);
-  // The models providers list, plus any a loaded call names and the ones
+  // Every model a loaded call named. Core narrows the list to the chosen
+  // models, so names an earlier list showed stay: choosing one model must not
+  // drop the others from the menu or move the rows below them.
+  const [calledModels, setCalledModels] = useWorkspaceSnapshot<
+    readonly string[]
+  >(`request-models:${coreSessionKey}`, []);
+  useEffect(() => {
+    setCalledModels((current) => {
+      const names = new Set(current);
+      allRecords.forEach((session) => {
+        if (session.requested_model) names.add(session.requested_model);
+        if (session.model_redirect?.to) names.add(session.model_redirect.to);
+      });
+      return names.size === current.length ? current : [...names];
+    });
+  }, [allRecords, setCalledModels]);
+  // The models providers list, plus any a loaded call named and the ones
   // chosen, so a choice never drops out of its own list.
   const modelOptions = useMemo(() => {
-    const names = new Set(models);
+    const names = new Set([...models, ...calledModels]);
     services.forEach((service) =>
       service.models.forEach((model) => names.add(model)),
     );
-    allRecords.forEach((session) => {
-      if (session.requested_model) names.add(session.requested_model);
-      if (session.model_redirect?.to) names.add(session.model_redirect.to);
-    });
     return [...names]
       .sort((left, right) => left.localeCompare(right))
       .map((model) => ({ value: model, label: model }));
-  }, [allRecords, models, services]);
+  }, [calledModels, models, services]);
 
   useEffect(() => {
     const generation = generationRef.current + 1;

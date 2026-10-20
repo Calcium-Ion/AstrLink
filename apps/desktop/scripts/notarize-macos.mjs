@@ -79,9 +79,20 @@ export function notarizeMacOS({
   const binaries = (config.bundle.externalBin ?? []).map((binary) =>
     path.join(app, "Contents/MacOS", path.basename(binary)),
   );
-  const frameworks = (config.bundle.macOS.frameworks ?? []).map((framework) =>
-    path.join(app, "Contents/Frameworks", path.basename(framework)),
-  );
+  // Apple silicon bundles add the Core ML runtime through a generated config
+  // (see build-sidecar.mjs), so check what the bundle holds as well as what
+  // tauri.conf.json lists.
+  const frameworksDirectory = path.join(app, "Contents/Frameworks");
+  const frameworks = [
+    ...new Set([
+      ...(config.bundle.macOS.frameworks ?? []).map((framework) =>
+        path.basename(framework),
+      ),
+      ...(existsSync(frameworksDirectory)
+        ? readdirSync(frameworksDirectory)
+        : []),
+    ]),
+  ].map((name) => path.join(frameworksDirectory, name));
   console.log(
     "Checking Developer ID signatures, Team ID, timestamps and Hardened Runtime.",
   );
