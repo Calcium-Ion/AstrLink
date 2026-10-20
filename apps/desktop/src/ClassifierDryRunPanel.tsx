@@ -147,7 +147,7 @@ function ClassifierAnswers({ result }: { result: ClassifierDryRunResult }) {
         {t("dryRunTab.classifierTitle")}
       </h3>
       {!result.configured ? (
-        // Without a cloud classifier nothing was asked; one line says so
+        // Without a classifier set up nothing was asked; one line says so
         // instead of a list of answers that are all unknown.
         <FormMessage tone="notice" data-classifier-dry-run-not-called>
           {t("dryRunTab.notConfigured")}
@@ -410,9 +410,10 @@ function TriState({
  * Classifier testing and routing testing live here together: the classifier's
  * answers are what the rules read, so one run shows both.
  *
- * It never issues a real upstream inference request. It does call the
- * cloud classifier for real, once per run; without one the rules are judged
- * with every classifier field unknown.
+ * The text never goes on to a routed model. It does call the classifier for
+ * real, once per run — the cloud service, or the existing model the classifier
+ * settings name; without one the rules are judged with every classifier field
+ * unknown.
  */
 export function ClassifierDryRunPanel({
   ready,

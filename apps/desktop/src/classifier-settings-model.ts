@@ -130,11 +130,15 @@ export interface ClassifierSettings {
   dimensions?: ClassifierDimension[];
 }
 
-/** `POST …/classifier/dry-run` result. Local only — never a real upstream call. */
+/**
+ * `POST …/classifier/dry-run` result. The classifier is called once; the text
+ * never goes on to a routed model.
+ */
 export interface ClassifierDryRunResult {
   /**
-   * False when no cloud classifier is configured. Nothing is called then, and
-   * the rules are still judged with every classifier field unknown.
+   * False when no classifier the run can call is set up — neither the cloud
+   * service nor an existing model. Nothing is called then, and the rules are
+   * still judged with every classifier field unknown.
    */
   configured: boolean;
   category: string;

@@ -15,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/accesstoken"
+	"github.com/QuantumNous/astrlink/core/internal/modelrouting"
 	"github.com/QuantumNous/astrlink/core/internal/pricing"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/relaykitbridge"
@@ -22,12 +23,14 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/subscription"
 )
 
-// ModelClassificationCaller performs one bounded, non-streaming generation
-// call against an existing gateway model and returns the assistant-visible
-// text. The control plane consumes it for the classifier dry-run; the
-// ingress handler is the production implementation.
+// ModelClassificationCaller classifies text through the existing_model
+// classifier source exactly as production routing does — the same
+// instruction, bounded in-process call, strict parsing and failure codes —
+// and returns the shared carrier with the score the model gave its label.
+// The control plane consumes it for the classifier dry-run; the ingress
+// handler is the production implementation.
 type ModelClassificationCaller interface {
-	ClassifyModel(ctx context.Context, serviceID contract.ServiceID, model, instruction, sanitizedText string, timeoutMS int) (string, error)
+	ExistingModelTaskType(ctx context.Context, text string, group *contract.ModelRoutingGroup, settings contract.ClassifierSettings) (modelrouting.TaskTypeOutcome, float64)
 }
 
 const (
@@ -83,12 +86,12 @@ type Dependencies struct {
 	CodingPlans   CodingPlanUsage
 	ServiceModels ServiceModelProber
 	ServiceTester ServiceTester
-	// ModelClassifier performs one bounded in-process generation call for
-	// existing_model classifier sources; the classifier dry-run shares the
-	// production execution chain through it. Optional: without it, dry-runs
-	// of existing_model sources report the unavailable fallback. Declared
-	// locally so controlapi does not import the ingress package; the ingress
-	// handler satisfies it structurally.
+	// ModelClassifier classifies through existing_model classifier sources;
+	// the classifier dry-run shares the production classification path
+	// through it. Optional: without it, dry-runs of existing_model sources
+	// report the unavailable fallback. Declared locally so controlapi does
+	// not import the ingress package; the ingress handler satisfies it
+	// structurally.
 	ModelClassifier  ModelClassificationCaller
 	AutoClassifiers  AutoClassifierRegistry
 	AutoClassifier   AutoClassifier

@@ -463,3 +463,77 @@ func TestTaskTypeCandidateLabelsConversion(t *testing.T) {
 		}
 	}
 }
+
+// The classifier dry-run classifies through ExistingModelTaskType, the code a
+// live request runs: one in-process call carrying the strict-JSON instruction
+// and the text alone as input, parsed into the shared carrier. Without a
+// group the labels come from the classifier settings, and the standalone call
+// keeps no request record.
+func TestExistingModelTaskTypeClassifiesLikeALiveRequest(t *testing.T) {
+	store := newRedirectSettingsStore()
+	group := cloudTestGroup(nil)
+	handler, outbound := classificationRoutingHandler(t, existingModelSettings(), group, store)
+	for name, group := range map[string]*contract.ModelRoutingGroup{"group": &group, "no group": nil} {
+		outcome, reported := handler.ExistingModelTaskType(context.Background(), "write go code", group, existingModelSettings())
+		if outcome.Code != "" || outcome.Value != "coding" || outcome.Confidence != 0.9 || outcome.ClassifierID != "existing_model" || reported != 0.9 {
+			t.Fatalf("%s: outcome = %+v, reported = %v", name, outcome, reported)
+		}
+	}
+	calls := outbound()
+	if len(calls) != 2 {
+		t.Fatalf("upstream calls = %d, want one per classification", len(calls))
+	}
+	for _, call := range calls {
+		var body struct {
+			Model        string `json:"model"`
+			Instructions string `json:"instructions"`
+			Input        string `json:"input"`
+		}
+		if err := json.Unmarshal([]byte(call.body), &body); err != nil {
+			t.Fatalf("classification body: %v", err)
+		}
+		if body.Model != "classify-model" || body.Input != "write go code" || !strings.Contains(body.Instructions, "Return exactly one JSON object") {
+			t.Fatalf("classification body = %+v", body)
+		}
+	}
+	if records := store.records.records; len(records) != 0 {
+		t.Fatalf("standalone classification persisted %d records", len(records))
+	}
+}
+
+// A score under the threshold leaves the label unknown, as for a live request,
+// while the caller still learns the score the model gave.
+func TestExistingModelTaskTypeReportsALowScore(t *testing.T) {
+	settings := existingModelSettings()
+	threshold := 0.95
+	settings.Inline = &contract.ClassifierInlineSource{LowConfidenceThreshold: &threshold}
+	handler, _ := classificationRoutingHandler(t, settings, cloudTestGroup(nil), newRedirectSettingsStore())
+	outcome, reported := handler.ExistingModelTaskType(context.Background(), "write go code", nil, settings)
+	if outcome.Code != modelrouting.CodeClassifierLowConfidence || outcome.Value != "" || outcome.Confidence != 0 || reported != 0.9 {
+		t.Fatalf("outcome = %+v, reported = %v", outcome, reported)
+	}
+}
+
+// With nothing to classify, or no existing model to classify with, the answer
+// is classifier_unavailable and nothing is called.
+func TestExistingModelTaskTypeNeedsTextAndASource(t *testing.T) {
+	handler, outbound := classificationRoutingHandler(t, existingModelSettings(), cloudTestGroup(nil), newRedirectSettingsStore())
+	disabled := existingModelSettings()
+	disabled.Enabled = false
+	cases := map[string]struct {
+		text     string
+		settings contract.ClassifierSettings
+	}{
+		"blank text": {text: "  ", settings: existingModelSettings()},
+		"disabled":   {text: "write go code", settings: disabled},
+	}
+	for name, input := range cases {
+		outcome, reported := handler.ExistingModelTaskType(context.Background(), input.text, nil, input.settings)
+		if outcome.Code != autoclassifier.FallbackUnavailable || reported != 0 {
+			t.Fatalf("%s: outcome = %+v, reported = %v", name, outcome, reported)
+		}
+	}
+	if calls := outbound(); len(calls) != 0 {
+		t.Fatalf("upstream calls = %d, want none", len(calls))
+	}
+}

@@ -482,7 +482,7 @@ describe("dry run tab", () => {
     ).toContain("第 3 条规则满足，但它指向的模型已不在这个路由组里");
   });
 
-  it("judges the rules without a cloud classifier and says none was called", async () => {
+  it("judges the rules without a classifier and says none was called", async () => {
     bridge.getRoutingSettings.mockResolvedValue(routingSettings([codingGroup]));
     bridge.classifierDryRun.mockResolvedValue(
       classified({
@@ -524,7 +524,9 @@ describe("dry run tab", () => {
     expect(
       container.querySelector("[data-classifier-dry-run-not-called]")
         ?.textContent,
-    ).toBe("没有配置云端分类器，这次没有调用分类器；依赖它的规则按未知处理。");
+    ).toBe(
+      "分类器未启用或没配置完整，这次没有调用分类器；依赖它的规则按未知处理。",
+    );
     expect(
       container.querySelector("[data-classifier-dry-run-fallback]"),
     ).toBeNull();

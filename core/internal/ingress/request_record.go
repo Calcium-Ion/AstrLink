@@ -284,6 +284,10 @@ type recordSession struct {
 	persistBlobs   AuditBlobPersister
 	persistLogf    func(string, ...any)
 	persistedAudit map[storage.AuditDirection]bool
+	// inMemory marks a session nothing may persist: the standalone
+	// classification call a control-plane dry-run makes. Every write below
+	// checks it, whichever store a step offers.
+	inMemory bool
 }
 
 func newRecordSession(
@@ -339,6 +343,14 @@ func (session *recordSession) bindPersistence(
 	session.persistLogf = logf
 }
 
+// keepInMemory unbinds the session from storage for good: nothing it records
+// is written, whatever store a later step offers.
+func (session *recordSession) keepInMemory() {
+	session.inMemory = true
+	session.persistStore = nil
+	session.persistBlobs = nil
+}
+
 func (session *recordSession) persistPending(
 	ctx context.Context,
 	store RequestRecordStore,
@@ -347,7 +359,7 @@ func (session *recordSession) persistPending(
 	if session == nil {
 		return
 	}
-	if store != nil {
+	if store != nil && !session.inMemory {
 		session.persistStore = store
 	}
 	if logf != nil {
@@ -882,7 +894,7 @@ func (session *recordSession) beginNetworkAttempt(
 	serviceName := string(candidate.Service.ID)
 	session.addEvent(contract.RequestEventRouted, contract.RequestStatusSucceeded, string(plan.Type)+" · "+serviceName)
 	session.addEvent(contract.RequestEventUpstream, contract.RequestStatusPending, string(plan.UpstreamProtocol))
-	if store != nil {
+	if store != nil && !session.inMemory {
 		session.persistStore = store
 	}
 	if logf != nil {
@@ -1269,7 +1281,7 @@ func (session *recordSession) demoteCurrentAttemptToChild(
 	child.SessionLink = nil
 
 	pendingBlobs := make([]storage.AuditBlob, 0, 3)
-	if blobs != nil {
+	if blobs != nil && !session.inMemory {
 		key, keyErr := session.prepareUpstreamAuditKey(ctx, blobs, logf)
 		if keyErr == nil && key != nil {
 			if blob, ok := session.sealCapture(storage.AuditDirectionUpstreamRequest, &session.upstreamRequestCapture, key, completed, logf); ok {
@@ -1307,7 +1319,7 @@ func (session *recordSession) commitPendingAttempt(ctx context.Context, store Re
 	if err := child.Validate(); err != nil {
 		logRequestRecordFailure(logf, "child_validate", err)
 		persisted = false
-	} else if store != nil {
+	} else if store != nil && !session.inMemory {
 		if err := store.InsertRequestRecord(ctx, child); err != nil {
 			logRequestRecordFailure(logf, "child_insert", err)
 			persisted = false
@@ -1395,7 +1407,7 @@ func (session *recordSession) finish(
 		return
 	}
 	session.syncCaptureTees()
-	if store == nil {
+	if store == nil || session.inMemory {
 		logIngressAccess(logf, session)
 		return
 	}

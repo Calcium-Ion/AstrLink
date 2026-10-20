@@ -589,17 +589,16 @@ func (handler *Handler) modelRoutingTaskType(ctx context.Context, classified Req
 	if !classified.routingUserTextKnown {
 		text = classified.lastUserText
 	}
-	if strings.TrimSpace(text) == "" {
+	text, ok := classificationText(text)
+	if !ok {
 		return modelrouting.TaskTypeOutcome{Code: autoclassifier.FallbackUnavailable}
-	}
-	if len(text) > 64*1024 {
-		text = text[:64*1024]
 	}
 	if settings.CloudConfigured() {
 		return handler.modelRoutingTaskTypeCloud(ctx, text, group, settings)
 	}
-	if existingModelConfigured(settings) {
-		return handler.modelRoutingTaskTypeExistingModel(ctx, text, group, settings)
+	if settings.ExistingModelConfigured() {
+		outcome, _ := handler.modelRoutingTaskTypeExistingModel(ctx, text, &group, settings)
+		return outcome
 	}
 	if handler.classifier == nil {
 		return modelrouting.TaskTypeOutcome{Code: autoclassifier.FallbackUnavailable}
@@ -645,11 +644,31 @@ func (handler *Handler) modelRoutingTaskType(ctx context.Context, classified Req
 	return result
 }
 
-func existingModelConfigured(settings contract.ClassifierSettings) bool {
-	return settings.Enabled && settings.Source() == contract.ClassifierSourceExistingModel &&
-		settings.ExistingModel != nil &&
-		settings.ExistingModel.ServiceID != "" &&
-		settings.ExistingModel.Model != ""
+// classificationText bounds what every classifier source is given: a blank
+// text has nothing to classify, and a longer one is cut to 64 KiB.
+func classificationText(text string) (string, bool) {
+	if strings.TrimSpace(text) == "" {
+		return "", false
+	}
+	if len(text) > 64*1024 {
+		text = text[:64*1024]
+	}
+	return text, true
+}
+
+// ExistingModelTaskType classifies text through the existing_model source the
+// way a live request does: the same bounds on the text, instruction, call,
+// strict parsing and failure codes. The classifier dry-run calls it, so a
+// preview cannot classify differently from production, and its standalone
+// call keeps no request record. group may be nil; the labels then come from
+// the classifier settings alone. The second result is the score the model
+// gave its label, reported even below the threshold.
+func (handler *Handler) ExistingModelTaskType(ctx context.Context, text string, group *contract.ModelRoutingGroup, settings contract.ClassifierSettings) (modelrouting.TaskTypeOutcome, float64) {
+	text, ok := classificationText(text)
+	if !ok || !settings.ExistingModelConfigured() {
+		return modelrouting.TaskTypeOutcome{Code: autoclassifier.FallbackUnavailable}, 0
+	}
+	return handler.modelRoutingTaskTypeExistingModel(ctx, text, group, settings)
 }
 
 // classificationInstruction compiles the existing_model classification
@@ -673,9 +692,12 @@ func classificationInstruction(labels []string, dimensions []contract.Classifier
 // modelRoutingTaskTypeExistingModel classifies through an existing gateway
 // model: one bounded in-process generation call, then the shared strict
 // extraction core. Every failure maps to a fallback code; classification
-// never blocks the request (fail-open is not negotiable).
-func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, text string, group contract.ModelRoutingGroup, settings contract.ClassifierSettings) modelrouting.TaskTypeOutcome {
-	plan := settings.ResolveCallPlan(&group)
+// never blocks the request (fail-open is not negotiable). A nil group takes
+// its labels from the classifier settings. The second result is the score the
+// model gave its label, set on low confidence too, where the outcome leaves
+// the label unknown.
+func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, text string, group *contract.ModelRoutingGroup, settings contract.ClassifierSettings) (modelrouting.TaskTypeOutcome, float64) {
+	plan := settings.ResolveCallPlan(group)
 	result := modelrouting.TaskTypeOutcome{
 		ClassifierID:           "existing_model",
 		LowConfidenceThreshold: plan.LowConfidenceThreshold,
@@ -685,14 +707,14 @@ func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, t
 		// Unreachable with a validated group (the label snapshot is never
 		// empty), but a broken catalog must still fail open, not block.
 		result.Code = "classifier_unavailable"
-		return result
+		return result, 0
 	}
 	start := time.Now()
 	assistantText, err := handler.ClassifyModel(ctx, settings.ExistingModel.ServiceID, settings.ExistingModel.Model, instruction, text, plan.TimeoutMS)
 	result.DurationMS = int(time.Since(start).Milliseconds())
 	if err != nil {
 		result.Code = existingModelFailureCode(ctx, err)
-		return result
+		return result, 0
 	}
 	var parsed classifieroutput.TaskType
 	if len(plan.Dimensions) == 0 {
@@ -702,10 +724,10 @@ func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, t
 		if parsed, err = classifieroutput.ParseTaskType(assistantText, plan.Labels); err != nil {
 			if errors.Is(err, classifieroutput.ErrRefusal) {
 				result.Code = "classifier_refusal"
-				return result
+				return result, 0
 			}
 			result.Code = "classifier_invalid_output"
-			return result
+			return result, 0
 		}
 	} else {
 		// Multi dimension: one envelope keyed by dimension name, task_type
@@ -716,10 +738,10 @@ func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, t
 		if dimensionErr != nil {
 			if errors.Is(dimensionErr, classifieroutput.ErrRefusal) {
 				result.Code = "classifier_refusal"
-				return result
+				return result, 0
 			}
 			result.Code = "classifier_invalid_output"
-			return result
+			return result, 0
 		}
 		taskType, ok := dimensions[contract.BuiltInTaskTypeDimension]
 		if !ok {
@@ -727,7 +749,7 @@ func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, t
 			// routing decision still needs a task_type, so this is the same
 			// unusable reply as a malformed one.
 			result.Code = "classifier_invalid_output"
-			return result
+			return result, 0
 		}
 		result.Dimensions = dimensionScores(dimensions)
 		// Carry the ranked sequence through: the evaluator's scored-fallback
@@ -735,9 +757,9 @@ func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, t
 		// for every group as soon as one custom dimension was configured.
 		parsed = classifieroutput.TaskType{Label: taskType.Label, Score: taskType.Score, Candidates: taskType.Candidates}
 	}
-	if !group.ValidTaskTypeLabel(parsed.Label) {
+	if group != nil && !group.ValidTaskTypeLabel(parsed.Label) {
 		result.Code = "classifier_invalid_output"
-		return result
+		return result, 0
 	}
 	if parsed.Score < plan.LowConfidenceThreshold {
 		// Low confidence is not a failure and never takes a fallback: this
@@ -748,12 +770,12 @@ func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, t
 		// tells that apart from a real fallback.
 		result.Code = modelrouting.CodeClassifierLowConfidence
 		result.Candidates = autoclassifierCandidates(parsed.Candidates)
-		return result
+		return result, parsed.Score
 	}
 	result.Value = parsed.Label
 	result.Confidence = parsed.Score
 	result.Candidates = autoclassifierCandidates(parsed.Candidates)
-	return result
+	return result, parsed.Score
 }
 
 // dimensionScores moves the strict extraction core's parsed dimensions onto

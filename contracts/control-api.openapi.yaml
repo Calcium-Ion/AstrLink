@@ -2548,15 +2548,17 @@ paths:
       x-astrlink-role: operator
       tags: [Routes]
       operationId: classifierDryRun
-      summary: Classify sample text through the configured provider without any inference upstream.
+      summary: Classify sample text through the configured classifier and judge a routing group's rules.
       description: >
         The text passes the same privacy filter as production before it can
-        leave, then one provider call runs with the group's effective prompt,
-        labels, and timeout. Failures answer 200 with a stable
-        fallback_reason; only one dry-run may run at a time. The whole run is
-        bounded by the classifier timeout plus five seconds and answers 504
-        dry_run_timeout past that. Without a cloud classifier no call is made
-        and the group's rules are still judged, every classifier field
+        leave, then one classifier call runs with the group's effective prompt,
+        labels, and timeout: the cloud service, or the existing gateway model
+        through the same path a live request takes. The text never goes on to
+        a routed model, and nothing is recorded. Failures answer 200 with a
+        stable fallback_reason; only one dry-run may run at a time. The whole
+        run is bounded by the classifier timeout plus five seconds and answers
+        504 dry_run_timeout past that. Without a classifier set up no call is
+        made and the group's rules are still judged, every classifier field
         unknown, with fallback_reason classifier_unavailable.
       requestBody:
         required: true
@@ -5204,7 +5206,7 @@ components:
         configured:
           {
             type: boolean,
-            description: "Whether a cloud classifier is configured. When false nothing is called and the rules are judged without it.",
+            description: "Whether a classifier the run can call is set up: the cloud service or an existing gateway model. When false nothing is called and the rules are judged without it.",
           }
         category:
           {
@@ -5216,7 +5218,7 @@ components:
             type: number,
             minimum: 0,
             maximum: 1,
-            description: "Upstream-reported score passed through verbatim.",
+            description: "The score the classifier gave its label, passed through verbatim, also when it is below the threshold.",
           }
         fallback_reason:
           {

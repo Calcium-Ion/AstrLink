@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
+	"github.com/QuantumNous/astrlink/core/internal/modelrouting"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
@@ -225,110 +226,203 @@ func TestClassifierDryRunUnconfiguredAnswersFallback(t *testing.T) {
 	}
 }
 
-// Without a cloud classifier a dry-run calls nothing and still judges the
-// rules, as a live request whose classifier is unavailable does: a classifier
-// condition stays unknown, the request facts decide the rest, and with
-// nothing matched the group's default is used.
-func TestClassifierDryRunWithoutCloudClassifierJudgesRules(t *testing.T) {
-	cases := map[string]func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings{
-		"disabled": func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings {
-			return contract.ClassifierSettings{Inline: inline}
+// dryRunRoutingFixture switches the classifier to settings(inline), where
+// inline is the cloud source the handler was built with, and stores the group
+// the classifier-source tests judge: a task_type rule, a streaming rule and a
+// default member.
+func dryRunRoutingFixture(t *testing.T, handler *Handler, settings func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings) {
+	t.Helper()
+	current, err := handler.classifierSettings.GetClassifierSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.classifierSettings.UpdateClassifierSettings(context.Background(), settings(current.Inline)); err != nil {
+		t.Fatal(err)
+	}
+	store := handler.serviceStore.(storage.ServiceStore)
+	service := contract.Service{
+		ID: "service_01", Name: "Classifier source dry-run service", Kind: contract.ServiceKindOpenAI, Enabled: true,
+		Models: []string{"fast-model", "strong-model", "stream-model"},
+		HTTP:   &contract.HTTPConnection{BaseURL: "https://example.test", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeNone}},
+		Capabilities: []contract.Capability{{
+			Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true,
+		}},
+	}
+	if _, err := store.CreateService(context.Background(), service, storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	group := contract.ModelRoutingGroup{
+		ID: "sources", Enabled: true,
+		Members: []contract.ModelRoutingMember{
+			{ID: "fast", ServiceID: "service_01", Model: "fast-model"},
+			{ID: "strong", ServiceID: "service_01", Model: "strong-model"},
+			{ID: "stream", ServiceID: "service_01", Model: "stream-model"},
 		},
-		"existing model": func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings {
-			return contract.ClassifierSettings{
-				Enabled: true, ClassifierSource: contract.ClassifierSourceExistingModel, Inline: inline,
-				ExistingModel: &contract.ClassifierExistingModelSource{ServiceID: "service_01", Model: "fast-model"},
-			}
+		DefaultMemberID: "fast",
+		Rules: []contract.ModelRoutingRule{
+			{ID: "coding", Priority: 1, When: contract.ModelRoutingCondition{Field: "task_type", In: []string{"coding"}}, TargetMemberID: "strong"},
+			{ID: "stream", Priority: 2, When: contract.ModelRoutingCondition{Field: "streaming", EqualsBool: boolPtrDryRun(true)}, TargetMemberID: "stream"},
 		},
 	}
-	for name, settings := range cases {
+	if err := handler.routingSettings.UpdateRoutingSettings(context.Background(), contractRoutingSettingsWithGroup(group)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type dryRunSourceResult struct {
+	Configured     bool     `json:"configured"`
+	Category       *string  `json:"category"`
+	Confidence     *float64 `json:"confidence"`
+	FallbackReason string   `json:"fallback_reason"`
+	TimeoutMS      *int     `json:"timeout_ms"`
+	Decision       *struct {
+		MemberID    string `json:"member_id"`
+		RuleID      string `json:"rule_id"`
+		UsedDefault bool   `json:"used_default"`
+	} `json:"decision"`
+	Rules []struct {
+		RuleID string `json:"rule_id"`
+		State  string `json:"state"`
+	} `json:"rules"`
+}
+
+func runDryRunSource(t *testing.T, handler *Handler, body string) dryRunSourceResult {
+	t.Helper()
+	response := controlRequest(t, handler, http.MethodPost, ClassifierSettingsPath+"/dry-run", "application/json", body, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("dry-run %s = %d %s", body, response.Code, response.Body.String())
+	}
+	var result dryRunSourceResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+// Without a classifier it can call, a dry-run calls nothing and still judges
+// the rules, as a live request whose classifier is unavailable does: a
+// classifier condition stays unknown, the request facts decide the rest, and
+// with nothing matched the group's default is used.
+func TestClassifierDryRunWithoutClassifierJudgesRules(t *testing.T) {
+	cases := map[string]struct {
+		settings   func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings
+		configured bool
+	}{
+		"disabled": {
+			settings: func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings {
+				return contract.ClassifierSettings{Inline: inline}
+			},
+		},
+		// The source is set up, but this Core has no classification caller.
+		"existing model without a caller": {
+			settings: func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings {
+				return contract.ClassifierSettings{
+					Enabled: true, ClassifierSource: contract.ClassifierSourceExistingModel, Inline: inline,
+					ExistingModel: &contract.ClassifierExistingModelSource{ServiceID: "service_01", Model: "fast-model"},
+				}
+			},
+			configured: true,
+		},
+	}
+	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
 			var cloudBodies []string
 			cloudServer := newClassifierCloudServer(t, `{"answers":{"task_type":{"choice":"coding","confidence":0.95}}}`, &cloudBodies)
 			handler := newClassifierDryRunHandler(t, cloudServer.URL, privacy.Policy{})
 			putClassifierCredential(t, handler)
-			current, err := handler.classifierSettings.GetClassifierSettings(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := handler.classifierSettings.UpdateClassifierSettings(context.Background(), settings(current.Inline)); err != nil {
-				t.Fatal(err)
-			}
-			store := handler.serviceStore.(storage.ServiceStore)
-			service := contract.Service{
-				ID: "service_01", Name: "Unclassified dry-run service", Kind: contract.ServiceKindOpenAI, Enabled: true,
-				Models: []string{"fast-model", "strong-model", "stream-model"},
-				HTTP:   &contract.HTTPConnection{BaseURL: "https://example.test", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeNone}},
-				Capabilities: []contract.Capability{{
-					Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true,
-				}},
-			}
-			if _, err := store.CreateService(context.Background(), service, storage.CredentialMutation{}); err != nil {
-				t.Fatal(err)
-			}
-			group := contract.ModelRoutingGroup{
-				ID: "unclassified", Enabled: true,
-				Members: []contract.ModelRoutingMember{
-					{ID: "fast", ServiceID: "service_01", Model: "fast-model"},
-					{ID: "strong", ServiceID: "service_01", Model: "strong-model"},
-					{ID: "stream", ServiceID: "service_01", Model: "stream-model"},
-				},
-				DefaultMemberID: "fast",
-				Rules: []contract.ModelRoutingRule{
-					{ID: "coding", Priority: 1, When: contract.ModelRoutingCondition{Field: "task_type", In: []string{"coding"}}, TargetMemberID: "strong"},
-					{ID: "stream", Priority: 2, When: contract.ModelRoutingCondition{Field: "streaming", EqualsBool: boolPtrDryRun(true)}, TargetMemberID: "stream"},
-				},
-			}
-			if err := handler.routingSettings.UpdateRoutingSettings(context.Background(), contractRoutingSettingsWithGroup(group)); err != nil {
-				t.Fatal(err)
-			}
-			type result struct {
-				Configured     bool    `json:"configured"`
-				FallbackReason string  `json:"fallback_reason"`
-				TimeoutMS      *int    `json:"timeout_ms"`
-				Category       *string `json:"category"`
-				Decision       *struct {
-					MemberID    string `json:"member_id"`
-					RuleID      string `json:"rule_id"`
-					UsedDefault bool   `json:"used_default"`
-				} `json:"decision"`
-				Rules []struct {
-					RuleID string `json:"rule_id"`
-					State  string `json:"state"`
-				} `json:"rules"`
-			}
-			run := func(body string) result {
+			dryRunRoutingFixture(t, handler, test.settings)
+			run := func(body string) dryRunSourceResult {
 				t.Helper()
-				response := controlRequest(t, handler, http.MethodPost, ClassifierSettingsPath+"/dry-run", "application/json", body, "")
-				if response.Code != http.StatusOK {
-					t.Fatalf("dry-run %s = %d %s", body, response.Code, response.Body.String())
+				result := runDryRunSource(t, handler, body)
+				if result.Configured != test.configured || result.FallbackReason != "classifier_unavailable" ||
+					result.TimeoutMS != nil || result.Category != nil || result.Decision == nil || len(result.Rules) != 2 {
+					t.Fatalf("dry-run %s = %+v", body, result)
 				}
-				var decoded result
-				if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
-					t.Fatal(err)
+				if result.Rules[0].RuleID != "coding" || result.Rules[0].State != "unknown" {
+					t.Fatalf("classifier rule = %+v, want unknown", result.Rules[0])
 				}
-				if decoded.Configured || decoded.FallbackReason != "classifier_unavailable" ||
-					decoded.TimeoutMS != nil || decoded.Category != nil || decoded.Decision == nil || len(decoded.Rules) != 2 {
-					t.Fatalf("dry-run %s = %s", body, response.Body.String())
-				}
-				if decoded.Rules[0].RuleID != "coding" || decoded.Rules[0].State != "unknown" {
-					t.Fatalf("classifier rule = %+v, want unknown", decoded.Rules[0])
-				}
-				return decoded
+				return result
 			}
 
-			unmatched := run(`{"text":"write go code","group_id":"unclassified"}`)
+			unmatched := run(`{"text":"write go code","group_id":"sources"}`)
 			if !unmatched.Decision.UsedDefault || unmatched.Decision.MemberID != "fast" || unmatched.Rules[1].State != "unknown" {
 				t.Fatalf("no fact set: decision %+v, rules %+v; want the default", *unmatched.Decision, unmatched.Rules)
 			}
-			streaming := run(`{"text":"write go code","group_id":"unclassified","streaming":true}`)
+			streaming := run(`{"text":"write go code","group_id":"sources","streaming":true}`)
 			if streaming.Decision.UsedDefault || streaming.Decision.MemberID != "stream" || streaming.Decision.RuleID != "stream" {
 				t.Fatalf("streaming: decision %+v; want the streaming rule", *streaming.Decision)
 			}
 			if len(cloudBodies) != 0 {
-				t.Fatalf("dry-run without a cloud classifier called it: %v", cloudBodies)
+				t.Fatalf("dry-run without a callable classifier called the cloud: %v", cloudBodies)
 			}
 		})
+	}
+}
+
+// fakeModelClassifier stands in for the ingress handler's existing-model
+// classification and records what each call was given.
+type fakeModelClassifier struct {
+	outcome  modelrouting.TaskTypeOutcome
+	reported float64
+	texts    []string
+	groups   []*contract.ModelRoutingGroup
+	sources  []string
+}
+
+func (fake *fakeModelClassifier) ExistingModelTaskType(_ context.Context, text string, group *contract.ModelRoutingGroup, settings contract.ClassifierSettings) (modelrouting.TaskTypeOutcome, float64) {
+	fake.texts = append(fake.texts, text)
+	fake.groups = append(fake.groups, group)
+	fake.sources = append(fake.sources, settings.Source())
+	return fake.outcome, fake.reported
+}
+
+// An existing gateway model classifies a dry-run the way it classifies a live
+// request: the sanitized text and the chosen group go to the same
+// classification path, its answer decides the rules, and the run reports the
+// existing model's own timeout. The cloud source is not asked.
+func TestClassifierDryRunClassifiesThroughTheExistingModel(t *testing.T) {
+	var cloudBodies []string
+	cloudServer := newClassifierCloudServer(t, `{"answers":{"task_type":{"choice":"general","confidence":0.95}}}`, &cloudBodies)
+	handler := newClassifierDryRunHandler(t, cloudServer.URL, privacy.Policy{Enabled: true, Mode: privacy.ModeRegex, Action: privacy.ActionRedact})
+	putClassifierCredential(t, handler)
+	timeout := 3000
+	dryRunRoutingFixture(t, handler, func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings {
+		return contract.ClassifierSettings{
+			Enabled: true, ClassifierSource: contract.ClassifierSourceExistingModel, Inline: inline,
+			ExistingModel: &contract.ClassifierExistingModelSource{ServiceID: "service_01", Model: "fast-model", TimeoutMS: &timeout},
+		}
+	})
+	classifier := &fakeModelClassifier{
+		outcome:  modelrouting.TaskTypeOutcome{Value: "coding", Confidence: 0.9, ClassifierID: "existing_model", LowConfidenceThreshold: 0.5},
+		reported: 0.9,
+	}
+	handler.modelClassifier = classifier
+
+	routed := runDryRunSource(t, handler, `{"text":"write go code and email alice@example.com","group_id":"sources"}`)
+	if !routed.Configured || routed.FallbackReason != "" || routed.Category == nil || *routed.Category != "coding" ||
+		routed.Confidence == nil || *routed.Confidence != 0.9 || routed.TimeoutMS == nil || *routed.TimeoutMS != timeout {
+		t.Fatalf("dry-run = %+v", routed)
+	}
+	if routed.Decision == nil || routed.Decision.UsedDefault || routed.Decision.MemberID != "strong" || routed.Decision.RuleID != "coding" {
+		t.Fatalf("decision = %+v, want the coding rule", routed.Decision)
+	}
+	if len(classifier.texts) != 1 || strings.Contains(classifier.texts[0], "alice@example.com") || !strings.Contains(classifier.texts[0], "write go code") {
+		t.Fatalf("classifier texts = %q, want one sanitized text", classifier.texts)
+	}
+	if classifier.groups[0] == nil || classifier.groups[0].ID != "sources" || classifier.sources[0] != contract.ClassifierSourceExistingModel {
+		t.Fatalf("classifier group = %+v, source = %q", classifier.groups[0], classifier.sources[0])
+	}
+
+	// Without a group the classifier still answers; there is nothing to judge.
+	classifierOnly := runDryRunSource(t, handler, `{"text":"write go code"}`)
+	if classifierOnly.Category == nil || *classifierOnly.Category != "coding" || classifierOnly.Decision != nil {
+		t.Fatalf("classifier-only dry-run = %+v", classifierOnly)
+	}
+	if len(classifier.groups) != 2 || classifier.groups[1] != nil {
+		t.Fatalf("classifier-only call got group %+v, want none", classifier.groups)
+	}
+	if len(cloudBodies) != 0 {
+		t.Fatalf("existing-model dry-run called the cloud source: %v", cloudBodies)
 	}
 }
 

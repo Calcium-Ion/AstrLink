@@ -634,6 +634,15 @@ func (settings ClassifierSettings) CloudConfigured() bool {
 		settings.Inline.CredentialRef == ClassifierCredentialRef
 }
 
+// ExistingModelConfigured reports whether the existing_model classifier is
+// enabled and names the service and model to classify with.
+func (settings ClassifierSettings) ExistingModelConfigured() bool {
+	return settings.Enabled && settings.Source() == ClassifierSourceExistingModel &&
+		settings.ExistingModel != nil &&
+		settings.ExistingModel.ServiceID != "" &&
+		settings.ExistingModel.Model != ""
+}
+
 // ClassifierCallPlan is the resolved per-request classifier input shared by
 // the inference path and the control-plane dry-run, so both apply the same
 // precedence: global setting first, built-in default last. The group

@@ -3746,7 +3746,7 @@
       "has-query": "The endpoint must not carry a query string or fragment."
     },
     "dryRun": {
-      "textHint": "The text is privacy-filtered on this machine before it reaches the cloud classifier, so the classifier only sees the redacted content.",
+      "textHint": "The text is privacy-filtered on this machine before it reaches the classifier, so the classifier only sees the redacted content.",
       "runHint": "Running this calls the classifier once for real, so it costs one classification. It is not a local simulation and does not use the model you are chatting with.",
       "runHintLabel": "About the dry run cost",
       "running": "Running…",
@@ -4389,7 +4389,7 @@
     "outcomeRuleId": "Would use {{model}} ({{provider}}), picked by rule {{rule}}",
     "outcomeDefault": "Would use {{model}} ({{provider}}); no rule matched, so the Otherwise model is used",
     "outcomeTargetMissing": "Rule {{index}} matched, but its model is no longer in this routing group, so the Otherwise model is used.",
-    "notConfigured": "No cloud classifier is set up, so this run did not call one; rules that depend on it count as unknown.",
+    "notConfigured": "The classifier is off or not fully set up, so this run did not call it; rules that depend on it count as unknown.",
     "privacyStopped": "The privacy check did not pass ({{reason}}), so this run neither called the classifier nor judged any rule.",
     "groupMissing": "Routing group {{group}} was not found, so this run judged no rule.",
     "unsaved": "{{group}} has unsaved changes; this run uses the saved version.",

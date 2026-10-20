@@ -388,6 +388,7 @@ func (handler *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 			session = mode.SharedSession
 		} else {
 			session = handler.startRecordSession(request, classified)
+			session.keepInMemory()
 		}
 	} else if mode := builtinInternalFrom(request.Context()); mode != nil && mode.SharedSession != nil {
 		session = mode.SharedSession

@@ -190,6 +190,8 @@ type classifierDryRunDecision struct {
 }
 
 type classifierDryRunResponse struct {
+	// Configured reports whether a classifier the run can call is set up: the
+	// cloud service, or an existing gateway model.
 	Configured     bool                            `json:"configured"`
 	Category       string                          `json:"category,omitempty"`
 	Confidence     float64                         `json:"confidence,omitempty"`
@@ -225,10 +227,12 @@ type dryRunDimensionScore struct {
 }
 
 // classifierDryRun previews one classification locally: the text passes the
-// same privacy filter as production, then the configured provider is asked
-// once. No inference upstream is contacted and nothing is persisted.
+// same privacy filter as production, then the configured classifier is asked
+// once — the cloud service, or an existing gateway model through the path a
+// live request takes. The text never goes on to a routed model and nothing is
+// persisted.
 //
-// Without a cloud classifier the provider is not asked and the rules are still
+// Without a configured classifier nothing is asked and the rules are still
 // judged: every classifier field stays unknown, as it does for a live request
 // whose classifier is unavailable, so the group's other rules and its default
 // decide.
@@ -289,7 +293,7 @@ func (handler *Handler) classifierDryRun(writer http.ResponseWriter, request *ht
 		handler.writeStoreError(writer, err)
 		return
 	}
-	response := classifierDryRunResponse{Configured: settings.CloudConfigured()}
+	response := classifierDryRunResponse{Configured: settings.CloudConfigured() || settings.ExistingModelConfigured()}
 	// The classifier call keeps the timeout its settings give it; the whole
 	// run gets that timeout plus dryRunSlack and then answers dry_run_timeout.
 	timeoutMS := settings.EffectiveTimeoutMS()
@@ -360,6 +364,13 @@ func (handler *Handler) classifierDryRun(writer http.ResponseWriter, request *ht
 			failure := autoclassifier.FailureTaskType(outcome, response.DurationMS)
 			taskType.Code = failure.Code
 		}
+	} else if settings.ExistingModelConfigured() && handler.modelClassifier != nil {
+		// An existing gateway model classifies through the code a live request
+		// runs, so instruction, parsing and failure codes cannot drift apart.
+		response.TimeoutMS = timeoutMS
+		started := time.Now()
+		taskType, response.Confidence = handler.modelClassifier.ExistingModelTaskType(ctx, sanitized, group, settings)
+		response.DurationMS = int(time.Since(started).Milliseconds())
 	}
 	// The classifier's own timeout is a result (classifier_timeout); running
 	// out of the whole run's time is not, because nothing ran to completion.
