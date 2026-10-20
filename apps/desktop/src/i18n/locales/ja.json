@@ -3724,7 +3724,7 @@
     "credentialMissing": "キー未設定",
     "deleteKey": "キーを削除",
     "prompt": "分類器のプロンプト",
-    "promptHint": "分類器に送る指示です。組み込みの既定プロンプトが入力済みです。{{labels}} は現在有効な task_type のラベルに、{{dim.name}} はそのカスタムディメンションの定義と選択肢に置き換わります。",
+    "promptHint": "分類器に送る指示です。組み込みの既定プロンプトが入力済みです。プレースホルダーで任意のディメンションを参照できます（タスクの種類は task_type）：{{dim.<ディメンション名>.name}} は名前、{{dim.<ディメンション名>.description}} は説明、{{dim.<ディメンション名>.options}} は選択肢とそれぞれの説明、{{dim.<ディメンション名>}} はその 3 つすべてです。従来の {{labels}} も引き続き使えます。既存のモデルで分類する場合は、すべてのディメンションの説明と回答形式がプロンプトの後に自動で追加されます。",
     "advanced": "詳細設定",
     "timeout": "タイムアウト（ms）",
     "timeoutHint": "分類器の 1 回の呼び出しにかける時間の上限で、最大 {{max}} ms です。タイムアウトしてもメインのリクエストは止まりません。そのリクエストはモデルルーティンググループの既定のメンバーが処理し、理由はリクエスト履歴に記録されます。",
@@ -4460,7 +4460,7 @@
     "unnamedOption": "名前なし",
     "dimensionName": "ディメンション名",
     "dimensionNamePlaceholder": "例：topic",
-    "dimensionPlaceholderHint": "プロンプトでは次のプレースホルダーで参照します：",
+    "dimensionPlaceholderHint": "プロンプトでは次のように参照できます：",
     "dimensionDescription": "説明",
     "dimensionDescriptionPlaceholder": "このディメンションで何を判断するかを分類器に伝えます。例：リクエストの業務トピック",
     "editDimension": "ディメンション {{name}} を編集",
@@ -4474,6 +4474,13 @@
     "promptDefault": "既定",
     "promptCustom": "カスタマイズ済み",
     "resetPrompt": "既定のプロンプトに戻す",
+    "insertPlaceholder": "プレースホルダーを挿入",
+    "placeholderParts": {
+      "name": "名前",
+      "description": "説明",
+      "options": "選択肢",
+      "all": "すべて"
+    },
     "saved": "すべての変更を保存しました",
     "unsaved": "未保存の変更",
     "dimensionErrors": {

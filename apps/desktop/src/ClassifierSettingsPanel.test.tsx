@@ -17,9 +17,11 @@ import {
   classifierProtocolPresets,
   defaultClassifierPrompt,
   defaultClassifierSettings,
+  legacyDefaultClassifierPrompt,
   type ClassifierDimension,
   type ClassifierSettings,
 } from "./classifier-settings-model";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 import { ClassifierSettingsPanel } from "./ClassifierSettingsPanel";
 import { defaultFailurePolicy } from "./failure-policy-model";
 import { applyLocale } from "./i18n";
@@ -423,7 +425,13 @@ describe("classifier settings panel", () => {
       // The new dimension opens its editor straight away.
       await type(input("维度名"), "topic");
       await type(input("维度说明"), "用户问题所属的业务主题");
-      expect(document.body.textContent).toContain("{{dim.topic}}");
+      // The editor shows how the prompt references each part of it.
+      for (const token of [
+        "{{dim.topic.name}}",
+        "{{dim.topic.description}}",
+        "{{dim.topic.options}}",
+      ])
+        expect(document.body.textContent).toContain(token);
 
       await add("给「topic」添加选项");
       await type(input("选项"), "billing");
@@ -442,10 +450,11 @@ describe("classifier settings panel", () => {
           options: [{ name: "billing", description: "账单、发票、付款" }],
         },
       ]);
-      // The rest of the singleton travels with the save untouched.
+      // The rest of the singleton travels with the save untouched; the
+      // default prompt is stored empty so it keeps following the built-in one.
       expect(submitted.inline).toEqual({
         ...defaultClassifierSettings().inline,
-        prompt: defaultClassifierPrompt,
+        prompt: "",
       });
       // Labels were not touched, so the groups are not rewritten.
       expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
@@ -719,10 +728,134 @@ describe("classifier settings panel", () => {
       expect(dirty.at(-1)).toBe(false);
     });
 
+    it("shows a stored copy of the previous default as the default, and saves the default as empty", async () => {
+      bridge.getClassifierSettings.mockResolvedValue(
+        settings({
+          inline: {
+            ...defaultClassifierSettings().inline,
+            prompt: legacyDefaultClassifierPrompt,
+          },
+        }),
+      );
+      await render();
+      const prompt = container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="分类器提示词"]',
+      )!;
+      expect(prompt.value).toBe(defaultClassifierPrompt);
+      expect(container.textContent).toContain("提示词使用默认");
+      expect(dirty.at(-1)).toBe(false);
+
+      await type(input("低置信阈值"), "0.6");
+      await save();
+
+      const submitted = bridge.updateClassifierSettings.mock
+        .calls[0][0] as ClassifierSettings;
+      expect(submitted.inline.prompt).toBe("");
+      expect(submitted.inline.low_confidence_threshold).toBe(0.6);
+      expect(prompt.value).toBe(defaultClassifierPrompt);
+      expect(dirty.at(-1)).toBe(false);
+    });
+
+    it("inserts a placeholder for any part of any dimension where the caret is", async () => {
+      bridge.getClassifierSettings.mockResolvedValue(
+        settings({}, [
+          {
+            name: "topic",
+            description: "编程任务主题",
+            options: [{ name: "前端" }, { name: "后端" }],
+          },
+        ]),
+      );
+      await render();
+      const prompt = () =>
+        container.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="分类器提示词"]',
+        )!;
+      await type(prompt(), "Pick  now");
+      await act(async () => {
+        prompt().focus();
+        prompt().setSelectionRange(5, 5);
+        prompt().dispatchEvent(
+          new KeyboardEvent("keyup", { key: "ArrowLeft", bubbles: true }),
+        );
+        await Promise.resolve();
+      });
+
+      await click(
+        container.querySelector<HTMLButtonElement>(
+          "[data-classifier-insert-placeholder]",
+        )!,
+      );
+      expect(
+        [
+          ...document.querySelectorAll(
+            "[data-classifier-placeholder-dimension]",
+          ),
+        ].map((item) => item.textContent),
+      ).toEqual(["任务类型", "topic"]);
+      await click(
+        document.querySelector<HTMLElement>(
+          '[data-classifier-placeholder-dimension="topic"]',
+        )!,
+      );
+      expect(
+        [...document.querySelectorAll("[data-classifier-placeholder]")].map(
+          (item) => item.getAttribute("data-classifier-placeholder"),
+        ),
+      ).toEqual([
+        "{{dim.topic.name}}",
+        "{{dim.topic.description}}",
+        "{{dim.topic.options}}",
+        "{{dim.topic}}",
+      ]);
+      await click(
+        document.querySelector<HTMLElement>(
+          '[data-classifier-placeholder="{{dim.topic.options}}"]',
+        )!,
+      );
+      await settleClosedLayer();
+
+      expect(prompt().value).toBe("Pick {{dim.topic.options}} now");
+      expect(document.activeElement).toBe(prompt());
+      expect(prompt().selectionStart).toBe("Pick {{dim.topic.options}}".length);
+    });
+
+    it("appends a placeholder after a space when the prompt has no caret yet", async () => {
+      await render();
+      const prompt = container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="分类器提示词"]',
+      )!;
+      await click(
+        container.querySelector<HTMLButtonElement>(
+          "[data-classifier-insert-placeholder]",
+        )!,
+      );
+      await click(
+        document.querySelector<HTMLElement>(
+          '[data-classifier-placeholder-dimension="task_type"]',
+        )!,
+      );
+      await click(
+        document.querySelector<HTMLElement>(
+          '[data-classifier-placeholder="{{dim.task_type.description}}"]',
+        )!,
+      );
+      await settleClosedLayer();
+
+      expect(prompt.value).toBe(
+        `${defaultClassifierPrompt} {{dim.task_type.description}}`,
+      );
+    });
+
     it("accepts a {{dim.<name>}} placeholder in the prompt", () => {
       expect(classifierPromptProblem("Pick {{dim.topic}} and {{labels}}")).toBe(
         null,
       );
+      expect(
+        classifierPromptProblem(
+          "{{dim.task_type.name}} from {{dim.task_type.options}}; {{dim.topic.description}}",
+        ),
+      ).toBe(null);
       expect(classifierPromptProblem("Pick {{bogus}}")).toBe(
         "unknownPlaceholder",
       );

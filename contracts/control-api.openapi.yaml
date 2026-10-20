@@ -5026,7 +5026,7 @@ components:
           {
             type: string,
             maxLength: 4096,
-            description: "Instructions with at most the {{labels}} placeholder; empty uses the built-in prompt.",
+            description: "Instructions; empty uses the built-in prompt. Placeholders: {{dim.<name>}} for a whole dimension, {{dim.<name>.name}}, {{dim.<name>.description}} and {{dim.<name>.options}} for one part, task_type included, and the older {{labels}} for the task_type labels. An existing-model classifier gets every dimension's description and the answer format after it.",
           }
         timeout_ms:
           {
@@ -5090,21 +5090,23 @@ components:
       required: [name, options]
       description: >
         One user-defined classification dimension. The name is the fact a rule
-        reads and the token the prompt writes as {{dim.<name>}}. Names carry no
+        reads and the token the prompt writes as {{dim.<name>}}, or
+        {{dim.<name>.name|description|options}} for one part. Names carry no
         character-set rule, but the placeholder grammar bounds them: no braces,
-        no leading or trailing whitespace, and at most 64 runes.
+        no leading or trailing whitespace, no trailing .name, .description or
+        .options, and at most 64 runes.
       properties:
         name:
           {
             type: string,
             minLength: 1,
             maxLength: 64,
-            description: "Addressable from {{dim.<name>}}; must not be task_type and must not repeat a built-in routing field.",
+            description: "Addressable from {{dim.<name>}}; must not be task_type, must not repeat a built-in routing field, and must not end in .name, .description or .options.",
           }
         description:
           {
             type: string,
-            description: "Rendered next to the name in the classifier prompt; never part of the {{dim.<name>}} token grammar.",
+            description: "Rendered next to the name in the classifier prompt and by {{dim.<name>.description}}; never part of the token grammar.",
           }
         options:
           type: array

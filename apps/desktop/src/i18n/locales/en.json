@@ -3724,7 +3724,7 @@
     "credentialMissing": "No key configured",
     "deleteKey": "Delete key",
     "prompt": "Classifier prompt",
-    "promptHint": "The instruction sent to the classifier, pre-filled with the built-in default. {{labels}} becomes the task_type labels in effect; {{dim.name}} becomes that custom dimension's definition and options.",
+    "promptHint": "The instruction sent to the classifier, pre-filled with the built-in default. Placeholders reference any dimension (the task type is task_type): {{dim.<dimension>.name}} is its name, {{dim.<dimension>.description}} its description, {{dim.<dimension>.options}} its options with their descriptions, and {{dim.<dimension>}} all three. The older {{labels}} still works. When an existing model classifies, every dimension's description and the answer format are added after the prompt automatically.",
     "advanced": "Advanced",
     "timeout": "Timeout (ms)",
     "timeoutHint": "Upper bound for one classifier call, at most {{max}} ms. A timeout never blocks the main request: the model routing group serves it with its default member, and the request history records why.",
@@ -4474,6 +4474,13 @@
     "promptDefault": "default",
     "promptCustom": "customized",
     "resetPrompt": "Restore the default prompt",
+    "insertPlaceholder": "Insert placeholder",
+    "placeholderParts": {
+      "name": "Name",
+      "description": "Description",
+      "options": "Options",
+      "all": "All three"
+    },
     "saved": "All changes saved",
     "unsaved": "Unsaved changes",
     "dimensionErrors": {

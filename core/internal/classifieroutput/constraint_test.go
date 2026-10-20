@@ -99,8 +99,10 @@ func TestSystemPromptCarriesSchemaWithoutGatewayIdentity(t *testing.T) {
 			t.Errorf("prompt schema omits label %q", label)
 		}
 	}
-	if !strings.Contains(prompt, `"anyOf"`) && !strings.Contains(prompt, "anyOf") {
-		t.Error("prompt schema omits the label-or-candidates rule")
+	// Every answer must carry its score: a label without one reads as 0 and
+	// can never clear the confidence threshold.
+	if !strings.Contains(prompt, `"required":["label","score"]`) {
+		t.Error("prompt schema does not require a label and a score")
 	}
 	if strings.Contains(strings.ToLower(prompt), "astrlink") {
 		t.Error("system prompt leaks the gateway identity")

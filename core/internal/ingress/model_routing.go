@@ -672,21 +672,19 @@ func (handler *Handler) ExistingModelTaskType(ctx context.Context, text string, 
 }
 
 // classificationInstruction compiles the existing_model classification
-// instruction from one immutable label snapshot. The output constraint's JSON
-// shape demand and schema section is the whole instruction, so nothing stored
-// can drop the shape requirement the strict parser depends on. There is
-// deliberately no fallback to the legacy bare-label DefaultClassifierPrompt —
-// an obedient answer to it can never parse.
-func classificationInstruction(labels []string, dimensions []contract.ClassifierDimension) (string, error) {
+// instruction from one immutable label snapshot. The rendered classifier
+// prompt opens it as the task framing; the output constraint follows with
+// every dimension's description and the JSON shape demand and schema, so no
+// stored prompt can drop the shape the strict parser depends on.
+func classificationInstruction(prompt string, labels []string, dimensions []contract.ClassifierDimension) (string, error) {
 	// The sub-call re-enters the pipeline as a native /v1/responses request;
 	// with no verified native capability recorded the plan is JSON-only, and
-	// SystemPrompt is identical in every constraint mode. With no dimensions
-	// declared this is byte-identical to the single-dimension instruction.
+	// SystemPrompt is identical in every constraint mode.
 	constraint, err := classifieroutput.PlanWithDimensions(contract.ProtocolOpenAIResponses, nil, labels, dimensions)
 	if err != nil {
 		return "", err
 	}
-	return constraint.SystemPrompt(), nil
+	return constraint.WithPrompt(prompt).SystemPrompt(), nil
 }
 
 // modelRoutingTaskTypeExistingModel classifies through an existing gateway
@@ -702,7 +700,7 @@ func (handler *Handler) modelRoutingTaskTypeExistingModel(ctx context.Context, t
 		ClassifierID:           "existing_model",
 		LowConfidenceThreshold: plan.LowConfidenceThreshold,
 	}
-	instruction, err := classificationInstruction(plan.Labels, plan.Dimensions)
+	instruction, err := classificationInstruction(plan.Prompt, plan.Labels, plan.Dimensions)
 	if err != nil {
 		// Unreachable with a validated group (the label snapshot is never
 		// empty), but a broken catalog must still fail open, not block.

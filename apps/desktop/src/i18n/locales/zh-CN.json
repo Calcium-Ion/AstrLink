@@ -3724,7 +3724,7 @@
     "credentialMissing": "尚未配置密钥",
     "deleteKey": "删除密钥",
     "prompt": "分类器提示词",
-    "promptHint": "送进分类器的指令，已预填内置默认提示词。{{labels}} 会替换成当前生效的 task_type 标签，{{dim.维度名}} 会替换成该自定义维度的定义与取值。",
+    "promptHint": "送进分类器的指令，已预填内置默认提示词。占位符可以引用任何分类维度（任务类型的维度名是 task_type）：{{dim.维度名.name}} 是维度名，{{dim.维度名.description}} 是维度说明，{{dim.维度名.options}} 是可选项及各自的说明，{{dim.维度名}} 是三者全部；旧写法 {{labels}} 仍然可用。复用已接入的模型分类时，提示词后面会自动附上所有维度的说明和回答格式。",
     "advanced": "高级设置",
     "timeout": "超时（毫秒）",
     "timeoutHint": "分类器调用的超时上限，最大 {{max}} 毫秒。超时不阻断主请求：本次按模型路由组的默认成员处理，请求历史会记下原因。",
@@ -4460,7 +4460,7 @@
     "unnamedOption": "未命名",
     "dimensionName": "维度名",
     "dimensionNamePlaceholder": "例如 topic",
-    "dimensionPlaceholderHint": "提示词里用这个占位符引用：",
+    "dimensionPlaceholderHint": "提示词里可以这样引用：",
     "dimensionDescription": "维度说明",
     "dimensionDescriptionPlaceholder": "告诉分类器这个维度判断什么，例如：用户问题所属的业务主题",
     "editDimension": "编辑维度 {{name}}",
@@ -4474,6 +4474,13 @@
     "promptDefault": "使用默认",
     "promptCustom": "已自定义",
     "resetPrompt": "恢复默认提示词",
+    "insertPlaceholder": "插入占位符",
+    "placeholderParts": {
+      "name": "维度名",
+      "description": "维度说明",
+      "options": "可选项",
+      "all": "全部"
+    },
     "saved": "所有修改已保存",
     "unsaved": "有未保存的修改",
     "dimensionErrors": {

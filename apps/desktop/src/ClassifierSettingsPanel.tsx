@@ -8,9 +8,23 @@ import { FormMessage } from "./components/FormMessage";
 import { HelpDisclosure } from "./components/HelpDisclosure";
 import { Panel, PanelHeader } from "./components/Panel";
 import { SegmentedControl } from "./components/SegmentedControl";
-import { MessageSquare, Plus, SquarePen } from "./components/icons";
+import {
+  ChevronDown,
+  MessageSquare,
+  Plus,
+  SquarePen,
+} from "./components/icons";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
 import { Input } from "./components/ui/input";
 import {
   Popover,
@@ -32,10 +46,13 @@ import {
   classifierExistingModelTimeoutMaxMS,
   classifierExistingModelTimeoutMinMS,
   classifierMaxCustomDimensions,
+  classifierPlaceholder,
+  classifierPlaceholderParts,
   classifierProtocols,
   classifierTimeoutMaxMS,
   classifierTimeoutMinMS,
   defaultClassifierPrompt,
+  legacyDefaultClassifierPrompt,
   linkClassifierProtocol,
   type ClassifierDimension,
   type ClassifierProtocol,
@@ -120,14 +137,99 @@ function DimensionIssue({
 }
 
 /**
+ * Inserts a placeholder for one part of a dimension into the prompt. task_type
+ * and every custom dimension offer the same parts, so the prompt can embed any
+ * of them without the user knowing the token syntax.
+ */
+function PromptPlaceholderMenu({
+  dimensions,
+  onInsert,
+  onInserted,
+}: {
+  dimensions: readonly { name: string; title: string }[];
+  onInsert: (token: string) => void;
+  /** Runs once the menu has closed after an insert, to return to the prompt. */
+  onInserted: () => void;
+}) {
+  const t = useT();
+  // The menu hands focus back to its trigger as it closes; after an insert the
+  // caret belongs in the prompt instead.
+  const inserted = useRef(false);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          data-classifier-insert-placeholder
+        >
+          {t("classifierTab.insertPlaceholder")}
+          <ChevronDown aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="w-52"
+        onCloseAutoFocus={(event) => {
+          if (!inserted.current) return;
+          inserted.current = false;
+          event.preventDefault();
+          onInserted();
+        }}
+      >
+        {dimensions.map((dimension) => (
+          <DropdownMenuSub key={dimension.name}>
+            <DropdownMenuSubTrigger
+              data-classifier-placeholder-dimension={dimension.name}
+            >
+              <span className="truncate">{dimension.title}</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-72">
+              {classifierPlaceholderParts.map((part) => {
+                const token = classifierPlaceholder(dimension.name, part);
+                return (
+                  <DropdownMenuItem
+                    key={part}
+                    data-classifier-placeholder={token}
+                    onSelect={() => {
+                      inserted.current = true;
+                      onInsert(token);
+                    }}
+                  >
+                    <span className="shrink-0">
+                      {t(
+                        `classifierTab.placeholderParts.${part === "" ? "all" : part}`,
+                      )}
+                    </span>
+                    <code className="ml-auto min-w-0 truncate font-mono text-micro text-muted-foreground">
+                      {token}
+                    </code>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
  * An empty stored prompt means "use the built-in one". Show that text instead
- * of a blank box so the user edits a working instruction, `{{labels}}`
- * placeholder included. Both draft and baseline get it, so loading alone never
- * marks the tab dirty; saving it unchanged behaves exactly like the empty value.
+ * of a blank box so the user edits a working instruction, placeholders
+ * included. Both draft and baseline get it, so loading alone never marks the
+ * tab dirty; saving it unchanged stores the empty value again. A stored copy
+ * of the previous default also means the default, as in Core.
  */
 function withDefaultPrompt(settings: ClassifierSettings): ClassifierSettings {
   const withDimensions = { ...settings, dimensions: settings.dimensions ?? [] };
-  if (settings.inline.prompt.trim() !== "") return withDimensions;
+  if (
+    settings.inline.prompt.trim() !== "" &&
+    settings.inline.prompt !== legacyDefaultClassifierPrompt
+  )
+    return withDimensions;
   return {
     ...withDimensions,
     inline: { ...settings.inline, prompt: defaultClassifierPrompt },
@@ -364,6 +466,10 @@ export function ClassifierSettingsPanel({
   const credentialDraftRef = useRef(credentialDraft);
   credentialDraftRef.current = credentialDraft;
   const mutationVersion = useRef(0);
+  const promptField = useRef<HTMLTextAreaElement>(null);
+  // Where the caret last was in the prompt, so a placeholder picked from the
+  // menu lands there; null appends it.
+  const promptCaret = useRef<{ start: number; end: number } | null>(null);
   const settingsDirty = draft !== null && JSON.stringify(draft) !== baseline;
   const labelsDirty =
     labels !== null && JSON.stringify(labels) !== labelBaseline;
@@ -516,7 +622,13 @@ export function ClassifierSettingsPanel({
         if (credentialDraftRef.current === submittedKey) setCredentialDraft("");
       }
       if (writeSettings) {
-        const result = await updateClassifierSettings(submitted);
+        // The default prompt is stored empty, so it keeps following the
+        // built-in one instead of freezing today's wording.
+        const result = await updateClassifierSettings(
+          submitted.inline.prompt === defaultClassifierPrompt
+            ? { ...submitted, inline: { ...submitted.inline, prompt: "" } }
+            : submitted,
+        );
         const shown = withDefaultPrompt(result);
         setSavedSettings(result);
         setSavedDimensions(result.dimensions ?? []);
@@ -881,11 +993,19 @@ export function ClassifierSettingsPanel({
                 // an interpolation.
                 <span className="flex min-w-0 flex-wrap items-center gap-1">
                   {t("classifierTab.dimensionPlaceholderHint")}
-                  <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-text-secondary">
-                    {"{{dim."}
-                    {dimension.name === "" ? "…" : dimension.name}
-                    {"}}"}
-                  </code>
+                  {classifierPlaceholderParts
+                    .filter((part) => part !== "")
+                    .map((part) => (
+                      <code
+                        key={part}
+                        className="rounded-sm bg-muted px-1 py-0.5 font-mono text-text-secondary"
+                      >
+                        {classifierPlaceholder(
+                          dimension.name === "" ? "…" : dimension.name,
+                          part,
+                        )}
+                      </code>
+                    ))}
                 </span>
               }
             >
@@ -931,6 +1051,41 @@ export function ClassifierSettingsPanel({
 
   const promptIsDefault =
     draft !== null && draft.inline.prompt === defaultClassifierPrompt;
+  // Every dimension a placeholder can name: the built-in task_type, then the
+  // custom ones that already have a name.
+  const placeholderDimensions = [
+    { name: "task_type", title: t("classifierTab.taskType") },
+    ...dimensions
+      .filter((dimension) => dimension.name.trim() !== "")
+      .map((dimension) => ({ name: dimension.name, title: dimension.name })),
+  ];
+  const insertIntoPrompt = (token: string) => {
+    if (draft === null) return;
+    const prompt = draft.inline.prompt;
+    const caret = promptCaret.current;
+    const start = Math.min(caret?.start ?? prompt.length, prompt.length);
+    const end = Math.min(caret?.end ?? prompt.length, prompt.length);
+    // Appended without a caret, the token keeps a space from the text before.
+    const text =
+      caret === null && /\S$/.test(prompt.slice(0, start))
+        ? ` ${token}`
+        : token;
+    const after = start + text.length;
+    promptCaret.current = { start: after, end: after };
+    patch({
+      inline: {
+        ...draft.inline,
+        prompt: prompt.slice(0, start) + text + prompt.slice(end),
+      },
+    });
+  };
+  const returnToPrompt = () => {
+    const field = promptField.current;
+    const caret = promptCaret.current;
+    if (field === null) return;
+    field.focus({ preventScroll: true });
+    if (caret !== null) field.setSelectionRange(caret.start, caret.end);
+  };
   const timeoutValue =
     draft === null
       ? 0
@@ -1370,32 +1525,49 @@ export function ClassifierSettingsPanel({
                 tooltip={t("classifier.promptHint")}
               >
                 <Textarea
+                  ref={promptField}
                   rows={3}
                   value={draft.inline.prompt}
                   aria-label={t("classifier.prompt")}
                   aria-invalid={issueFor(blocking, "prompt") !== undefined}
-                  onChange={(event) =>
+                  onSelect={(event) => {
+                    promptCaret.current = {
+                      start: event.currentTarget.selectionStart,
+                      end: event.currentTarget.selectionEnd,
+                    };
+                  }}
+                  onChange={(event) => {
+                    promptCaret.current = {
+                      start: event.target.selectionStart,
+                      end: event.target.selectionEnd,
+                    };
                     patch({
                       inline: { ...draft.inline, prompt: event.target.value },
-                    })
-                  }
+                    });
+                  }}
                 />
                 <FieldIssue issue={issueFor(blocking, "prompt")} />
               </Field>
-              <div>
+              <div className="flex flex-wrap items-center gap-1">
+                <PromptPlaceholderMenu
+                  dimensions={placeholderDimensions}
+                  onInsert={insertIntoPrompt}
+                  onInserted={returnToPrompt}
+                />
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
                   disabled={promptIsDefault}
-                  onClick={() =>
+                  onClick={() => {
+                    promptCaret.current = null;
                     patch({
                       inline: {
                         ...draft.inline,
                         prompt: defaultClassifierPrompt,
                       },
-                    })
-                  }
+                    });
+                  }}
                 >
                   {t("classifierTab.resetPrompt")}
                 </Button>

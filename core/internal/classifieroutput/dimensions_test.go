@@ -188,6 +188,64 @@ func TestPlanSingleDimensionSchemaIsByteIdenticalToLegacy(t *testing.T) {
 	}
 }
 
+// The existing-model instruction opens with the classifier prompt and then
+// describes every dimension it wants answered — name, description, options and
+// their descriptions — so a model knows what each one means even when the
+// prompt mentions none of them, and it asks for a score with every label.
+func TestSystemPromptDescribesEveryDimension(t *testing.T) {
+	constraint, err := PlanWithDimensions(contract.ProtocolOpenAIResponses, nil, defaultLabels, dimensionFixtures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := constraint.WithPrompt("Route requests for the support desk.").SystemPrompt()
+	if !strings.HasPrefix(prompt, "Route requests for the support desk.\n\n") {
+		t.Fatalf("instruction does not open with the classifier prompt:\n%s", prompt)
+	}
+	for _, want := range []string{
+		"Answer every dimension below.",
+		"your confidence from 0 to 1 that this option is right",
+		"- task_type: " + contract.BuiltInTaskTypeDescription + "\n  Options: general | research | coding | architect\n",
+		"- sentiment: How the user feels about the task.\n  Options: positive (Content or pleased) | neutral (No strong feeling) | negative (Frustrated or blocked)\n",
+		"- domain\n  Options: frontend | backend\n",
+		"one key per dimension, each with a label and a score",
+		"Return exactly one JSON object",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("instruction is missing %q:\n%s", want, prompt)
+		}
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Required []string `json:"required"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(promptSchemaOf(t, constraint)), &schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"task_type", "sentiment", "domain"} {
+		if required := strings.Join(schema.Properties[name].Required, ","); required != "label,score" {
+			t.Errorf("%s requires %q, want label and score", name, required)
+		}
+	}
+}
+
+// With task_type alone the instruction still describes it and asks for its
+// score; without a prompt it starts with the instruction itself.
+func TestSystemPromptDescribesTaskTypeAlone(t *testing.T) {
+	constraint, err := PlanWithDimensions(contract.ProtocolOpenAIResponses, nil, defaultLabels, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := constraint.SystemPrompt()
+	if !strings.HasPrefix(prompt, "Choose the option that fits the user text best and give a score") {
+		t.Fatalf("instruction opens with %q", prompt[:min(len(prompt), 80)])
+	}
+	if !strings.Contains(prompt, "Dimension:\n- task_type: "+contract.BuiltInTaskTypeDescription+"\n") ||
+		!strings.Contains(prompt, "with a label and a score") {
+		t.Fatalf("single-dimension instruction:\n%s", prompt)
+	}
+}
+
 // TestPlanMultiDimensionSchemaNamesEveryDimension: the multi-dimension
 // envelope's properties are exactly the addressed dimensions, so the prompt
 // never asks for a value the parser would then reject as an unknown key.
