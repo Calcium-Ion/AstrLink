@@ -575,11 +575,18 @@ interface ParsedCondition {
   nodes: number;
 }
 
+/**
+ * 分类器设置里已声明的自定义维度名称。`null` 表示没读到分类器设置：这时不对内置
+ * 字段以外的名称下结论，一律当作自定义维度，交给 Core 判定——这份文档本来就是
+ * Core 按它自己的维度表校验过才保存的，读不到维度不该让整页路由设置打不开。
+ */
+export type KnownRoutingDimensions = readonly string[] | null;
+
 function conditionAt(
   value: unknown,
   path: string,
   depth: number,
-  knownDimensions: readonly string[] = [],
+  knownDimensions: KnownRoutingDimensions = [],
 ): ParsedCondition {
   if (depth > maxModelRoutingConditionDepth) fail(path, "条件过深");
   const node = objectAt(value, path);
@@ -621,11 +628,12 @@ function conditionAt(
 function leafConditionAt(
   node: Record<string, unknown>,
   path: string,
-  knownDimensions: readonly string[] = [],
+  knownDimensions: KnownRoutingDimensions = [],
 ): ModelRoutingLeafCondition {
   const field = textAt(node.field, `${path}.field`);
   const isBuiltin = (modelRoutingFields as readonly string[]).includes(field);
-  const isKnownDimension = knownDimensions.includes(field);
+  const isKnownDimension =
+    knownDimensions === null || knownDimensions.includes(field);
   if (!isBuiltin && !isKnownDimension) fail(`${path}.field`, "字段不属于 V1");
   const typed = field as ModelRoutingField;
 
@@ -769,7 +777,7 @@ function ruleAt(
   value: unknown,
   path: string,
   memberIDs: ReadonlySet<string>,
-  knownDimensions: readonly string[],
+  knownDimensions: KnownRoutingDimensions,
 ): ModelRoutingRule {
   const rule = objectAt(value, path);
   keysAt(rule, ["id", "priority", "when", "target_member_id"], [], path);
@@ -857,7 +865,7 @@ function validateTaskTypeConditionLabels(
 function groupAt(
   value: unknown,
   path: string,
-  knownDimensions: readonly string[],
+  knownDimensions: KnownRoutingDimensions,
 ): ModelRoutingGroup {
   const group = objectAt(value, path);
   keysAt(
@@ -928,11 +936,12 @@ function assertUniqueIDs(ids: readonly string[], path: string) {
  * `model_routing_groups` 的严格 parser。`undefined`/`null` 规范化为空数组
  * （旧文档没有这个 key），其余任何非法输入抛错。
  *
- * @param knownDimensions - 分类器已配置的自定义维度名称列表，用于验证规则条件中的字段引用
+ * @param knownDimensions - 分类器已配置的自定义维度名称列表，用于验证规则条件中的字段引用；
+ *   `null` 表示没读到，见 {@link KnownRoutingDimensions}
  */
 export function parseModelRoutingGroups(
   value: unknown,
-  knownDimensions: readonly string[] = [],
+  knownDimensions: KnownRoutingDimensions = [],
 ): ModelRoutingGroup[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) fail("model_routing_groups", "应为数组");

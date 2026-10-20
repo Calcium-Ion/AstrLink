@@ -572,9 +572,14 @@ function parseImageCompression(value: unknown): ImageCompression {
   };
 }
 
+/**
+ * `dimensions` are the custom dimensions the classifier settings declare, which
+ * rules may name; `null` when they could not be read, which leaves every name
+ * that is not a built-in field to Core rather than refusing the document.
+ */
 export function parseRoutingSettings(
   value: unknown,
-  dimensions?: ClassifierDimension[],
+  dimensions?: ClassifierDimension[] | null,
 ): RoutingSettings {
   const settings = object(value, "routing_settings");
   keys(
@@ -602,7 +607,9 @@ export function parseRoutingSettings(
   const redirects = parseModelRedirects(settings.model_redirects);
   const modelRoutingGroups = parseModelRoutingGroups(
     settings.model_routing_groups,
-    (dimensions ?? []).map((dimension) => dimension.name),
+    dimensions === null
+      ? null
+      : (dimensions ?? []).map((dimension) => dimension.name),
   );
   const parsed = parseFailoverPolicy({
     enabled: settings.allow_unmatched_failover,

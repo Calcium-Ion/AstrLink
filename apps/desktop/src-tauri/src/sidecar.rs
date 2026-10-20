@@ -24,7 +24,7 @@ use zeroize::Zeroizing;
 // Legacy installation migration and ordinary startup filesystem work can still
 // take longer on slow disks even though model weights are verified lazily.
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(180);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(12);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 const STOP_POLL_DELAY: Duration = Duration::from_millis(25);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -2698,19 +2698,19 @@ impl CoreManager {
     /// sibling resource instead — the same one `get_classifier_settings`
     /// already exposes, through the same authenticated control channel.
     ///
-    /// This lookup is deliberately best-effort, and that is the point. An
-    /// empty list means "no custom dimensions", which is exactly the
-    /// built-in-only table the validator applied before dimensions existed. A
-    /// classifier-settings read that fails, is malformed, or races Core's
-    /// readiness therefore degrades to the previous behaviour rather than
-    /// inventing a new way to reject a routing document. Being unable to
+    /// This lookup is deliberately best-effort, and that is the point. A
+    /// classifier-settings read that fails or races Core's readiness answers
+    /// `None`, and the validator then leaves every name outside the built-in
+    /// table to Core instead of refusing it: Core stored the document against
+    /// the dimensions it holds, and an empty list here would reject every rule
+    /// naming one and keep the routing page from loading. Being unable to
     /// resolve dimensions must never be able to reject a document Core would
     /// accept, so this function never returns an error.
-    async fn known_classifier_dimensions(&self) -> Vec<String> {
-        match self.get_classifier_settings().await {
-            Ok(settings) => classifier_dimension_names(&settings),
-            Err(_) => Vec::new(),
-        }
+    async fn known_classifier_dimensions(&self) -> Option<Vec<String>> {
+        self.get_classifier_settings()
+            .await
+            .ok()
+            .map(|settings| classifier_dimension_names(&settings))
     }
 
     pub async fn get_routing_settings(&self) -> Result<serde_json::Value, String> {
@@ -2719,7 +2719,11 @@ impl CoreManager {
             .await?;
         let value = serde_json::from_slice(&body)
             .map_err(|error| format!("invalid routing settings: {error}"))?;
-        validate_routing_settings(&value, false, &self.known_classifier_dimensions().await)?;
+        validate_routing_settings(
+            &value,
+            false,
+            self.known_classifier_dimensions().await.as_deref(),
+        )?;
         Ok(value)
     }
 
@@ -2729,9 +2733,15 @@ impl CoreManager {
     ) -> Result<serde_json::Value, String> {
         // Fetched once and reused: dimensions belong to the classifier
         // settings, so this PATCH cannot change them between the precheck and
-        // the response validation below.
-        let known_dimensions = self.known_classifier_dimensions().await;
-        validate_routing_settings(&patch, true, &known_dimensions)?;
+        // the response validation below. Only a patch carrying groups needs
+        // them; any other leaves the stored groups, which Core validated, to
+        // Core.
+        let known_dimensions = if patch.get("model_routing_groups").is_some() {
+            self.known_classifier_dimensions().await
+        } else {
+            None
+        };
+        validate_routing_settings(&patch, true, known_dimensions.as_deref())?;
         let (_, body) = self
             .authenticated_control(
                 Method::PATCH,
@@ -2742,7 +2752,7 @@ impl CoreManager {
             .await?;
         let value = serde_json::from_slice(&body)
             .map_err(|error| format!("invalid routing settings: {error}"))?;
-        validate_routing_settings(&value, false, &known_dimensions)?;
+        validate_routing_settings(&value, false, known_dimensions.as_deref())?;
         Ok(value)
     }
 

@@ -161,7 +161,7 @@ fn redirect_model(value: Option<&serde_json::Value>) -> Result<&str, String> {
 fn validate_model_routing_groups(
     value: &serde_json::Value,
     redirects: Option<&serde_json::Value>,
-    known_dimensions: &[String],
+    known_dimensions: Option<&[String]>,
 ) -> Result<(), String> {
     let groups = value
         .as_array()
@@ -447,7 +447,10 @@ fn valid_service_id(value: &str) -> bool {
 ///
 /// `known_dimensions` is the other source, and it is runtime context rather
 /// than a vocabulary: the names of the dimensions the classifier settings
-/// currently declare. A custom dimension always resolves to `"string"`, the
+/// currently declare, or `None` when they could not be read. Unread, a name
+/// outside the frozen table is taken for a dimension and left to Core, which
+/// validated the document against its own dimensions before storing it; an
+/// empty list in its place would refuse every rule naming one. A custom dimension always resolves to `"string"`, the
 /// same as in Go, because its options are free-form names rather than a fixed
 /// enum. That one kind is what lets a dimension accept exactly the operators
 /// of any other string field (`in`, `not_in`, `equals`, `not_equals`) and
@@ -456,7 +459,7 @@ fn valid_service_id(value: &str) -> bool {
 ///
 /// A name in neither source is unsupported, which is what keeps a typo or a
 /// retired field name out of a saved document.
-fn routing_field_kind(field: &str, known_dimensions: &[String]) -> Option<&'static str> {
+fn routing_field_kind(field: &str, known_dimensions: Option<&[String]>) -> Option<&'static str> {
     Some(match field {
         "protocol" | "media_kind" | "task_type" => "string",
         "streaming" | "continuation" | "has_tools" | "has_media" | "has_image" | "has_audio"
@@ -476,7 +479,13 @@ fn routing_field_kind(field: &str, known_dimensions: &[String]) -> Option<&'stat
         // resolves first in Go too, and ClassifierSettings.validateDimensions
         // refuses a dimension whose name shadows a built-in field, so the two
         // sources cannot disagree in practice.
-        _ if known_dimensions.iter().any(|name| name == field) => "string",
+        _ if match known_dimensions {
+            Some(names) => names.iter().any(|name| name == field),
+            None => true,
+        } =>
+        {
+            "string"
+        }
         _ => return None,
     })
 }
@@ -493,7 +502,7 @@ fn validate_routing_condition(
     depth: usize,
     nodes: &mut usize,
     task_type_labels: &[String],
-    known_dimensions: &[String],
+    known_dimensions: Option<&[String]>,
 ) -> Result<(), String> {
     if depth > MAX_MODEL_ROUTING_CONDITION_DEPTH {
         return Err(format!(
@@ -507,6 +516,29 @@ fn validate_routing_condition(
         ));
     }
     let condition = value.as_object().ok_or("condition must be an object")?;
+    // Mirrors ModelRoutingCondition.UnmarshalJSON: a closed key set, each key
+    // decoding to one JSON type, and null standing for an absent key.
+    for (key, item) in condition {
+        if item.is_null() {
+            continue;
+        }
+        let typed = match key.as_str() {
+            "all" | "any" => item.is_array(),
+            "not" => item.is_object(),
+            "field" | "equals" | "not_equals" => item.is_string(),
+            "equals_bool" => item.is_boolean(),
+            "min" | "max" | "gt" | "gte" | "lt" | "lte" => item.is_i64(),
+            "in" | "not_in" | "contains_any" | "not_contains_any" | "within" => item
+                .as_array()
+                .is_some_and(|items| items.iter().all(serde_json::Value::is_string)),
+            _ => return Err(format!("unknown routing condition field {key:?}")),
+        };
+        if !typed {
+            return Err(format!(
+                "routing condition field {key:?} has the wrong type"
+            ));
+        }
+    }
     let branches = ["all", "any", "not"]
         .iter()
         .filter(|key| condition.get(**key).is_some_and(|v| !v.is_null()))
@@ -849,14 +881,15 @@ pub(crate) fn classifier_dimension_names(value: &serde_json::Value) -> Vec<Strin
 /// Go/Rust field whitelist that must not grow for this feature. The caller is
 /// therefore responsible for fetching that resource and passing the names in.
 ///
-/// An empty slice is the correct and safe value whenever the names are
-/// unavailable: it restores exactly the built-in-only table this validator
-/// used before dimensions existed, so a missing dimension list can only make
-/// the validator behave as it always has, never stricter than Core.
+/// `None` is the value whenever the names are unavailable: a rule naming a
+/// field outside the built-in table is then left to Core rather than refused.
+/// An empty slice would be stricter than Core, which accepted and stored the
+/// rule against the dimensions it holds, and would keep the whole routing page
+/// from loading.
 pub(crate) fn validate_routing_settings(
     value: &serde_json::Value,
     patch: bool,
-    known_dimensions: &[String],
+    known_dimensions: Option<&[String]>,
 ) -> Result<(), String> {
     let object = value
         .as_object()
@@ -1130,7 +1163,9 @@ mod tests {
     fn validates_builtin_tool_settings_without_credentials() {
         let disabled = json!({"enabled":false,"backend":"upstream"});
         let tools = json!({"web_search":{"enabled":true,"backend":"external","base_url":"https://search.example"},"image_generation":disabled});
-        assert!(validate_routing_settings(&json!({"builtin_tools":tools}), true, &[]).is_ok());
+        assert!(
+            validate_routing_settings(&json!({"builtin_tools":tools}), true, Some(&[])).is_ok()
+        );
         for tool in [
             json!({"enabled":false}),
             json!({"enabled":true,"backend":"external"}),
@@ -1160,11 +1195,13 @@ mod tests {
         assert!(validate_failure_policy(&value).is_ok());
         value["openai_function_output_recovery"] = json!(true);
         assert!(validate_failure_policy(&value).is_ok());
-        assert!(validate_routing_settings(&json!({"default_failure_policy":value,"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}),false, &[]).is_ok());
-        assert!(
-            validate_routing_settings(&json!({"default_failure_policy":policy()}), true, &[])
-                .is_ok()
-        );
+        assert!(validate_routing_settings(&json!({"default_failure_policy":value,"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}),false, Some(&[])).is_ok());
+        assert!(validate_routing_settings(
+            &json!({"default_failure_policy":policy()}),
+            true,
+            Some(&[])
+        )
+        .is_ok());
     }
     #[test]
     fn validates_subscription_identity_settings() {
@@ -1182,10 +1219,12 @@ mod tests {
             "grok_identity_auto_learn",
         ] {
             for enabled in [true, false] {
-                assert!(validate_routing_settings(&json!({key: enabled}), true, &[]).is_ok());
+                assert!(validate_routing_settings(&json!({key: enabled}), true, Some(&[])).is_ok());
             }
             for invalid in [json!(null), json!("false"), json!(0)] {
-                assert!(validate_routing_settings(&json!({key: invalid}), true, &[]).is_err());
+                assert!(
+                    validate_routing_settings(&json!({key: invalid}), true, Some(&[])).is_err()
+                );
             }
         }
         for key in [
@@ -1195,7 +1234,7 @@ mod tests {
         ] {
             for version in ["", "2.1.300", "0.160.0", "2.2.0-beta.1", "1.0.0+build.5"] {
                 assert_eq!(
-                    validate_routing_settings(&json!({key: version}), true, &[]),
+                    validate_routing_settings(&json!({key: version}), true, Some(&[])),
                     Ok(()),
                     "{key} {version}"
                 );
@@ -1210,7 +1249,7 @@ mod tests {
                 json!(format!("1.0.0-{}", "a".repeat(64))),
             ] {
                 assert!(
-                    validate_routing_settings(&json!({key: invalid}), true, &[]).is_err(),
+                    validate_routing_settings(&json!({key: invalid}), true, Some(&[])).is_err(),
                     "{key} {invalid}"
                 );
             }
@@ -1249,7 +1288,10 @@ mod tests {
                 "image_generation": {"enabled": false, "backend": "upstream"}
             }
         });
-        assert_eq!(validate_routing_settings(&settings, false, &[]), Ok(()));
+        assert_eq!(
+            validate_routing_settings(&settings, false, Some(&[])),
+            Ok(())
+        );
     }
     #[test]
     fn validates_global_prompt_and_thinking_settings() {
@@ -1283,7 +1325,7 @@ mod tests {
         }
         for patch in valid {
             assert_eq!(
-                validate_routing_settings(&patch, true, &[]),
+                validate_routing_settings(&patch, true, Some(&[])),
                 Ok(()),
                 "{patch}"
             );
@@ -1331,7 +1373,7 @@ mod tests {
             json!({"adaptive_preset": "everyday", "adaptive_min": "high", "adaptive_max": "medium"}),
         ] {
             assert!(
-                validate_routing_settings(&invalid, true, &[]).is_err(),
+                validate_routing_settings(&invalid, true, Some(&[])).is_err(),
                 "{invalid}"
             );
         }
@@ -1342,25 +1384,34 @@ mod tests {
             "max_attempts": 6,
         });
         // Every key above is optional in a full document too.
-        assert_eq!(validate_routing_settings(&settings, false, &[]), Ok(()));
+        assert_eq!(
+            validate_routing_settings(&settings, false, Some(&[])),
+            Ok(())
+        );
         settings["reasoning_mode"] = json!("fixed");
         settings["reasoning_level"] = json!("off");
-        assert_eq!(validate_routing_settings(&settings, false, &[]), Ok(()));
+        assert_eq!(
+            validate_routing_settings(&settings, false, Some(&[])),
+            Ok(())
+        );
         settings["adaptive_preset"] = json!("custom");
         settings["adaptive_min"] = json!("medium");
         settings["adaptive_max"] = json!("medium");
-        assert_eq!(validate_routing_settings(&settings, false, &[]), Ok(()));
+        assert_eq!(
+            validate_routing_settings(&settings, false, Some(&[])),
+            Ok(())
+        );
         settings["adaptive_min"] = json!("high");
-        assert!(validate_routing_settings(&settings, false, &[]).is_err());
+        assert!(validate_routing_settings(&settings, false, Some(&[])).is_err());
         settings["adaptive_min"] = json!("low");
         settings["reasoning_override"] = json!("");
-        assert!(validate_routing_settings(&settings, false, &[]).is_err());
+        assert!(validate_routing_settings(&settings, false, Some(&[])).is_err());
         settings
             .as_object_mut()
             .unwrap()
             .remove("reasoning_override");
         settings["system_prompt_prefix"] = json!(format!("{}x", "提".repeat(20000)));
-        assert!(validate_routing_settings(&settings, false, &[]).is_err());
+        assert!(validate_routing_settings(&settings, false, Some(&[])).is_err());
     }
     #[test]
     fn validates_image_compression_settings() {
@@ -1370,7 +1421,7 @@ mod tests {
             json!({"enabled": true, "mode": "lossy", "quality": 100}),
         ] {
             assert_eq!(
-                validate_routing_settings(&json!({ "image_compression": valid }), true, &[]),
+                validate_routing_settings(&json!({ "image_compression": valid }), true, Some(&[])),
                 Ok(()),
                 "{valid}"
             );
@@ -1388,8 +1439,12 @@ mod tests {
             json!({"enabled": true, "mode": "lossy", "quality": 80, "max_side": 2048}),
         ] {
             assert!(
-                validate_routing_settings(&json!({ "image_compression": invalid }), true, &[])
-                    .is_err(),
+                validate_routing_settings(
+                    &json!({ "image_compression": invalid }),
+                    true,
+                    Some(&[])
+                )
+                .is_err(),
                 "{invalid}"
             );
         }
@@ -1398,7 +1453,7 @@ mod tests {
         json!({"from":from,"to":to,"enabled":true})
     }
     fn redirects(rules: serde_json::Value) -> Result<(), String> {
-        validate_routing_settings(&json!({ "model_redirects": rules }), true, &[])
+        validate_routing_settings(&json!({ "model_redirects": rules }), true, Some(&[]))
     }
     #[test]
     fn accepts_valid_model_redirects() {
@@ -1419,7 +1474,7 @@ mod tests {
         ] {
             assert!(redirects(rules.clone()).is_ok(), "{rules}");
         }
-        assert!(validate_routing_settings(&json!({"model_redirects":[redirect("a","b")],"default_failure_policy":policy(),"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}),false, &[]).is_ok());
+        assert!(validate_routing_settings(&json!({"model_redirects":[redirect("a","b")],"default_failure_policy":policy(),"allow_unmatched_failover":false,"strategy":"retry_first","max_attempts":6}),false, Some(&[])).is_ok());
     }
     #[test]
     fn rejects_invalid_model_redirects() {
@@ -1491,12 +1546,12 @@ mod tests {
             value.as_object_mut().unwrap().remove(key);
             assert!(validate_failure_policy(&value).is_err(), "{key}");
         }
-        assert!(validate_routing_settings(&json!({"max_attempts":21}), true, &[]).is_err());
-        assert!(validate_routing_settings(&json!({"default_failure_policy":policy(),"allow_unmatched_failover":false,"strategy":"retry_first"}),false, &[]).is_err());
+        assert!(validate_routing_settings(&json!({"max_attempts":21}), true, Some(&[])).is_err());
+        assert!(validate_routing_settings(&json!({"default_failure_policy":policy(),"allow_unmatched_failover":false,"strategy":"retry_first"}),false, Some(&[])).is_err());
     }
 
     fn groups(value: serde_json::Value) -> Result<(), String> {
-        groups_with_dimensions(value, &[])
+        groups_with_dimensions(value, Some(&[]))
     }
 
     /// groups_with_dimensions drives the same document through the same public
@@ -1504,7 +1559,7 @@ mod tests {
     /// of the routing-settings document itself.
     fn groups_with_dimensions(
         value: serde_json::Value,
-        known_dimensions: &[String],
+        known_dimensions: Option<&[String]>,
     ) -> Result<(), String> {
         validate_routing_settings(
             &json!({ "model_routing_groups": value }),
@@ -1547,7 +1602,7 @@ mod tests {
                     ],
                 }),
                 true,
-                &[],
+                Some(&[]),
             ),
             Ok(())
         );
@@ -1644,7 +1699,7 @@ mod tests {
     /// set, so a rule may name a custom dimension.
     fn condition_with_dimensions(
         when: serde_json::Value,
-        known_dimensions: &[String],
+        known_dimensions: Option<&[String]>,
     ) -> Result<(), String> {
         groups_with_dimensions(json!([rules(when)]), known_dimensions)
     }
@@ -1863,12 +1918,12 @@ mod tests {
             })
         };
         assert_eq!(
-            validate_routing_settings(&settings("other-model"), true, &[]),
+            validate_routing_settings(&settings("other-model"), true, Some(&[])),
             Ok(())
         );
         for colliding in ["gpt-5.6-luna", "astrlink/coding"] {
             assert!(
-                validate_routing_settings(&settings(colliding), true, &[]).is_err(),
+                validate_routing_settings(&settings(colliding), true, Some(&[])).is_err(),
                 "{colliding}"
             );
         }
@@ -1904,7 +1959,7 @@ mod tests {
             "literal_keyword",
             "system_time",
         ] {
-            let kind = routing_field_kind(field, &[]).unwrap_or_else(|| {
+            let kind = routing_field_kind(field, Some(&[])).unwrap_or_else(|| {
                 panic!("built-in field {field:?} no longer resolves");
             });
             // The table is frozen at 21 entries across 5 kinds.
@@ -1916,7 +1971,7 @@ mod tests {
             // particular must not turn one into a custom string field.
             let dimensions = vec!["brand".to_string()];
             assert_eq!(
-                routing_field_kind(field, &dimensions),
+                routing_field_kind(field, Some(&dimensions)),
                 Some(kind),
                 "{field}"
             );
@@ -1940,7 +1995,7 @@ mod tests {
             };
             assert!(condition(when.clone()).is_ok(), "{when}");
             assert!(
-                condition_with_dimensions(when.clone(), &dimensions).is_ok(),
+                condition_with_dimensions(when.clone(), Some(&dimensions)).is_ok(),
                 "{when}"
             );
         }
@@ -1970,7 +2025,7 @@ mod tests {
         ];
         assert_eq!(names.len(), 21);
         for name in names {
-            assert!(routing_field_kind(name, &[]).is_some(), "{name}");
+            assert!(routing_field_kind(name, Some(&[])).is_some(), "{name}");
         }
     }
 
@@ -1998,7 +2053,7 @@ mod tests {
             json!({"not": {"field": "brand", "equals": "acme"}}),
         ] {
             assert!(
-                condition_with_dimensions(when.clone(), &dimensions).is_ok(),
+                condition_with_dimensions(when.clone(), Some(&dimensions)).is_ok(),
                 "{when}"
             );
             // Without the declaration it is an unsupported field, exactly as
@@ -2025,7 +2080,7 @@ mod tests {
             json!({"field": "brand"}),
         ] {
             assert!(
-                condition_with_dimensions(when.clone(), &dimensions).is_err(),
+                condition_with_dimensions(when.clone(), Some(&dimensions)).is_err(),
                 "{when}"
             );
         }
@@ -2091,18 +2146,63 @@ mod tests {
         let none: [String; 0] = [];
         for (field, kind) in frozen {
             assert_eq!(
-                routing_field_kind(field, &none),
+                routing_field_kind(field, Some(&none)),
                 Some(kind),
                 "built-in field {field} drifted; update all three mirrors together"
             );
         }
         // Custom dimensions resolve after the frozen table and never enter it.
         let dimensions = vec!["topic".to_string()];
-        assert_eq!(routing_field_kind("topic", &dimensions), Some("string"));
-        assert_eq!(routing_field_kind("topic", &none), None);
-        assert_eq!(routing_field_kind("ghost", &dimensions), None);
+        assert_eq!(
+            routing_field_kind("topic", Some(&dimensions)),
+            Some("string")
+        );
+        assert_eq!(routing_field_kind("topic", Some(&none)), None);
+        assert_eq!(routing_field_kind("ghost", Some(&dimensions)), None);
         // A dimension cannot shadow a built-in: the table wins first.
         let shadow = vec!["task_type".to_string()];
-        assert_eq!(routing_field_kind("task_type", &shadow), Some("string"));
+        assert_eq!(
+            routing_field_kind("task_type", Some(&shadow)),
+            Some("string")
+        );
+    }
+
+    /// Core decodes a condition into a closed struct, so a key it does not
+    /// know or a value of the wrong JSON type is refused before any rule is
+    /// read; null stands for an absent key on both sides.
+    #[test]
+    fn refuses_a_condition_key_core_cannot_decode() {
+        for when in [
+            json!({"field": "streaming", "equals_bool": true, "regex": "x"}),
+            json!({"field": "streaming", "equals_bool": "true"}),
+            json!({"field": "protocol", "in": ["openai.chat"], "equals": 5}),
+            json!({"all": [{"field": "streaming", "equals_bool": true}], "field": 5}),
+            json!({"field": "turn_count", "gt": 1.5}),
+            json!({"field": "turn_count", "gt": "1"}),
+            json!({"field": "task_type", "in": ["coding", 1]}),
+            json!({"field": "system_time", "within": ["09:00", 5]}),
+            json!({"not": [{"field": "streaming", "equals_bool": true}]}),
+        ] {
+            assert!(condition(when.clone()).is_err(), "{when}");
+        }
+        assert_eq!(
+            condition(json!({"field": "streaming", "equals_bool": true, "in": null, "gt": null})),
+            Ok(())
+        );
+    }
+
+    /// Unread dimensions leave a name outside the built-in table to Core,
+    /// which stored the rule against the dimensions it holds; the built-in
+    /// fields keep their own rules.
+    #[test]
+    fn leaves_a_dimension_to_core_when_the_dimensions_are_unread() {
+        let topic = json!({"field": "topic", "in": ["billing"]});
+        assert_eq!(condition_with_dimensions(topic.clone(), None), Ok(()));
+        assert!(condition_with_dimensions(topic, Some(&[])).is_err());
+        assert_eq!(routing_field_kind("streaming", None), Some("bool"));
+        assert!(
+            condition_with_dimensions(json!({"field": "turn_count", "in": ["1"]}), None).is_err()
+        );
+        assert!(condition_with_dimensions(json!({"field": "topic", "gt": 1}), None).is_err());
     }
 }

@@ -68,8 +68,19 @@ describe("routing settings with custom dimensions", () => {
     expect(saved.model_routing_groups?.[0]?.rules).toHaveLength(1);
   });
 
-  it("stays strict when the classifier read fails", async () => {
+  // Core stored the rule against the dimensions it holds, so a classifier
+  // read that fails leaves the name to Core instead of failing the whole tab.
+  it("leaves a dimension to Core when the classifier read fails", async () => {
     route(new Error("core offline"));
+    const loaded = await getRoutingSettings();
+    expect(loaded.model_routing_groups?.[0]?.rules[0]?.when).toEqual({
+      field: "topic",
+      in: ["billing"],
+    });
+  });
+
+  it("refuses a dimension the classifier settings do not declare", async () => {
+    route({ classifier_source: "inline", dimensions: [] });
     await expect(getRoutingSettings()).rejects.toThrow();
   });
 });

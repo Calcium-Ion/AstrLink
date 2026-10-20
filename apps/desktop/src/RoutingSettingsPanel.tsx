@@ -112,7 +112,7 @@ const same = (left: unknown, right: unknown) =>
 function planAutosave(
   original: RoutingSettings,
   draft: RoutingSettings,
-  dimensions: ClassifierDimension[],
+  dimensions: ClassifierDimension[] | null,
 ) {
   type Unit = (document: RoutingSettings) => RoutingSettings;
   let units: { key: RoutingSettingKey; apply: Unit }[] = [];
@@ -190,7 +190,11 @@ export function RoutingSettingsPanel({
     "routing-settings",
     null,
   );
-  const [dimensions, setDimensions] = useState<ClassifierDimension[]>([]);
+  // null until known, or when the classifier settings cannot be read; rules
+  // naming a dimension are then left to Core.
+  const [dimensions, setDimensions] = useState<ClassifierDimension[] | null>(
+    null,
+  );
   const [draft, setDraft] = useState<RoutingSettings | null>(() =>
     settings ? withRedirects(settings) : null,
   );
@@ -245,11 +249,18 @@ export function RoutingSettingsPanel({
     if (!ready) return;
     let active = true;
     const version = mutationVersion.current;
-    void Promise.all([getRoutingSettings(), getClassifierSettings()])
+    void Promise.all([
+      getRoutingSettings(),
+      getClassifierSettings().catch(() => null),
+    ])
       .then(([settings, classifierSettings]) => {
         if (!active || mutationVersion.current !== version) return;
         setSettings(settings);
-        setDimensions(classifierSettings.dimensions ?? []);
+        setDimensions(
+          classifierSettings === null
+            ? null
+            : (classifierSettings.dimensions ?? []),
+        );
         // Reconnection and retry must never replace an unsaved draft.
         if (!dirtyRef.current) {
           setDraft(withRedirects(settings));

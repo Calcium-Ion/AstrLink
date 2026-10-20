@@ -1297,17 +1297,18 @@ export async function saveTextFile(
 // the field check and the whole routing tab refuses to load, even though Core
 // accepted and stored it.
 //
-// Best-effort by design. A classifier read that fails leaves the list empty,
-// which is the strict reading (built-in fields only) and never admits an
-// unvalidated rule.
-async function knownRoutingDimensions(): Promise<ClassifierDimension[]> {
+// Best-effort by design. A classifier read that fails answers null, and a name
+// that is not a built-in field is then left to Core, which validated the
+// document against its own dimensions before storing it: an empty list would
+// refuse every rule naming a dimension and keep the tab from loading.
+async function knownRoutingDimensions(): Promise<ClassifierDimension[] | null> {
   try {
     const settings = parseClassifierSettings(
       await invoke<unknown>("get_classifier_settings"),
     );
     return settings.dimensions ?? [];
   } catch {
-    return [];
+    return null;
   }
 }
 
