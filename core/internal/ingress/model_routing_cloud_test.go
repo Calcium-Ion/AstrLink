@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
@@ -231,8 +230,11 @@ func TestModelRoutingCloudFailureMatrixFailsOpen(t *testing.T) {
 }
 
 func TestModelRoutingCloudTimeoutFailsOpen(t *testing.T) {
+	// Never answers; returns once the classifier call gives up and hangs up,
+	// which the server sees only after the body has been read.
 	cloudServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		time.Sleep(5 * time.Second)
+		_, _ = io.Copy(io.Discard, request.Body)
+		<-request.Context().Done()
 	}))
 	defer cloudServer.Close()
 	store := newRedirectSettingsStore()

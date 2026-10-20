@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -182,7 +183,8 @@ func TestClassifierWorkerHelper(t *testing.T) {
 			os.Exit(0)
 		}
 		if mode == "hang" {
-			time.Sleep(time.Second)
+			// Never answers; exits once the client stops it.
+			_, _ = io.Copy(io.Discard, os.Stdin)
 			os.Exit(0)
 		}
 		var request classifyRequest

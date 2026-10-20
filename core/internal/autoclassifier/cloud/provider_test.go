@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/QuantumNous/astrlink/core/internal/autoclassifier"
 )
@@ -222,9 +221,11 @@ func TestClassifyOutboundHeaderWhitelist(t *testing.T) {
 // never surface an error that could block the caller's request.
 func TestClassifyFailureMatrixFailsOpen(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
+		// Never answers; returns once the caller hangs up, which the server
+		// sees only after the body has been read.
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			time.Sleep(300 * time.Millisecond)
-			writer.WriteHeader(200)
+			_, _ = io.Copy(io.Discard, request.Body)
+			<-request.Context().Done()
 		}))
 		defer server.Close()
 		input := testInput(server.URL)

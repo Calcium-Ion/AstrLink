@@ -714,9 +714,11 @@ func TestClassifierDryRunFailureMappingMirrorsProduction(t *testing.T) {
 // A timed-out classification surfaces the stable classifier_timeout code in
 // the dry-run, not the raw provider reason ("timeout").
 func TestClassifierDryRunTimeoutUsesStableCode(t *testing.T) {
+	// Never answers; returns once the classifier call gives up and hangs up,
+	// which the server sees only after the body has been read.
 	hangServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		time.Sleep(3 * time.Second)
-		_, _ = writer.Write([]byte(`{}`))
+		_, _ = io.Copy(io.Discard, request.Body)
+		<-request.Context().Done()
 	}))
 	t.Cleanup(hangServer.Close)
 	var cloudBodies []string
