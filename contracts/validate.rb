@@ -333,6 +333,7 @@ operator_reads = %w[
   /control/v1/access-tokens/{token_id}/secret
   /control/v1/services/{service_id}/authorization
   /control/v1/builtin-tools/{kind}/credential
+  /control/v1/routing/classifier/credential
   /control/v1/audit/raw-access
   /control/v1/network-addresses
 ]
@@ -774,41 +775,65 @@ else
   drifts << "ClassifierExistingModelSource: drift=#{missing.inspect}" unless missing.empty?
 end
 
-# 4. The dry-run observation face carries every field the Go observation writes,
-#    and the candidate observation keeps all four of its non-omitempty members.
-observation_required, observation_optional = go_struct_fields(model_routing_source, "ModelRoutingFieldObservation")
-observation_items = openapi.dig("components", "schemas", "ClassifierDryRunResponse", "properties", "fields", "items")
-if observation_items.nil?
-  drifts << "ClassifierDryRunResponse.fields.items = false"
-else
-  observation_properties = observation_items.fetch("properties", {})
-  # `properties` lists the whole wire shape, required and omitempty alike, so it
-  # is compared against both halves; `required` is compared against the Go half
-  # that carries no omitempty.
-  missing_observation = (observation_required + observation_optional) - observation_properties.keys
-  unless missing_observation.empty?
-    drifts << "ClassifierDryRunResponse.fields.items drift = #{missing_observation.inspect}"
-  end
+# 4. A request record and the dry-run preview describe an evaluation with the
+#    same Go structs, so the spec keeps one component per struct and both faces
+#    reference it. Each component, and the dry-run response itself, is compared
+#    with its Go struct in both directions: these are closed output shapes, so
+#    a member Go writes that the spec lacks makes a real record fail the
+#    published contract, and a member only the spec lists documents something
+#    nothing sends. `required` is the Go half that carries no omitempty, so a
+#    member that always rides the wire (`chosen: false`) is never optional.
+def struct_drift(label, schema, required, optional)
+  return ["#{label}: not defined"] if schema.nil?
 
-  wire_required = Array(observation_items.fetch("required", [])).sort
-  unless observation_required.sort == wire_required
-    drifts << "ClassifierDryRunResponse.fields.items.required drift = #{((observation_required.sort - wire_required) | (wire_required - observation_required.sort)).inspect}"
+  drift = []
+  go_names = (required + optional).sort
+  names = schema.fetch("properties", {}).keys.sort
+  drift << "#{label}.properties drift = #{((go_names - names) | (names - go_names)).inspect}" unless go_names == names
+  wire_required = Array(schema.fetch("required", [])).sort
+  unless required.sort == wire_required
+    drift << "#{label}.required drift = #{((required.sort - wire_required) | (wire_required - required.sort)).inspect}"
   end
+  drift
+end
 
-  # The candidate observation is the one nested structure this round adds, and
-  # every member of it is unconditional, so `chosen` rides the wire as `false`
-  # rather than being omitted.
-  candidate_required, = go_struct_fields(model_routing_source, "ModelRoutingCandidateObservation")
-  candidate_required.sort!
-  candidate_items = observation_properties.dig("candidates", "items")
-  if candidate_items.nil?
-    drifts << "ClassifierDryRunResponse.fields.items.candidates = false"
-  else
-    candidate_wire = Array(candidate_items.fetch("required", [])).sort
-    unless candidate_required == candidate_wire
-      drifts << "candidates.items.required drift = #{((candidate_required - candidate_wire) | (candidate_wire - candidate_required)).inspect}"
-    end
-  end
+schemas = openapi.dig("components", "schemas")
+%w[
+  ModelRoutingDecision ModelRoutingFieldObservation ModelRoutingCandidateObservation ModelRoutingRuleVerdict
+  ModelRoutingClassifierAnswers ModelRoutingDimensionAnswer ModelRoutingBindingReset ModelRoutingExecution
+  ModelRoutingPrivacyAttempt
+].each do |name|
+  drifts.concat(struct_drift(name, schemas[name], *go_struct_fields(model_routing_source, name)))
+end
+
+dry_run_source = ROOT.join("../core/internal/controlapi/classifier_settings.go").read
+dry_run = schemas["ClassifierDryRunResponse"]
+{
+  "ClassifierDryRunResponse" => [dry_run, "classifierDryRunResponse"],
+  "ClassifierDryRunResponse.decision" => [dry_run&.dig("properties", "decision"), "classifierDryRunDecision"],
+  "ClassifierDryRunResponse.dimensions" => [dry_run&.dig("properties", "dimensions", "additionalProperties"), "dryRunDimensionScore"],
+}.each do |label, (schema, struct_name)|
+  drifts.concat(struct_drift(label, schema, *go_struct_fields(dry_run_source, struct_name)))
+end
+
+{
+  %w[RequestRecord model_routing] => "ModelRoutingDecision",
+  %w[ClassifierDryRunResponse fields items] => "ModelRoutingFieldObservation",
+  %w[ClassifierDryRunResponse rules items] => "ModelRoutingRuleVerdict",
+  %w[ModelRoutingDecision fields items] => "ModelRoutingFieldObservation",
+  %w[ModelRoutingDecision rules items] => "ModelRoutingRuleVerdict",
+  %w[ModelRoutingDecision classifier] => "ModelRoutingClassifierAnswers",
+  %w[ModelRoutingDecision binding_reset] => "ModelRoutingBindingReset",
+  %w[ModelRoutingDecision execution] => "ModelRoutingExecution",
+  %w[ModelRoutingDecision privacy_attempts items] => "ModelRoutingPrivacyAttempt",
+  %w[ModelRoutingRuleVerdict fields items] => "ModelRoutingFieldObservation",
+  %w[ModelRoutingFieldObservation candidates items] => "ModelRoutingCandidateObservation",
+  %w[ModelRoutingClassifierAnswers dimensions items] => "ModelRoutingDimensionAnswer",
+}.each do |(schema_name, *path), component|
+  reference = schemas.dig(schema_name, "properties", *path, "$ref")
+  next if reference == "#/components/schemas/#{component}"
+
+  drifts << "#{([schema_name] + path).join('.')} must reference #{component} (got #{reference.inspect})"
 end
 
 # 5. The built-in field table has three hand-written mirrors — the Go

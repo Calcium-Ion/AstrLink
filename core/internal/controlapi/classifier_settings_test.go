@@ -3,6 +3,8 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/modelrouting"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
+	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 )
@@ -26,6 +29,86 @@ func putClassifierCredential(t *testing.T, handler *Handler) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":true`) {
 		t.Fatalf("credential put = %d %s", response.Code, response.Body.String())
 	}
+}
+
+// Saving an enabled existing-model classifier checks its target the way a
+// routing group member is checked, and says what is wrong with it; a draft
+// keeps whatever was picked.
+func TestClassifierSettingsRefuseAModelTheGatewayCannotCall(t *testing.T) {
+	store, handler := newRouteHandler(t)
+	for id, enabled := range map[contract.ServiceID]bool{"service_on": true, "service_off": false} {
+		service := contract.Service{
+			ID: id, Name: string(id), Kind: contract.ServiceKindOpenAI, Enabled: enabled, Models: []string{"fast-model"},
+			HTTP:         &contract.HTTPConnection{BaseURL: "https://example.test", Auth: contract.ServiceAuth{Scheme: contract.AuthSchemeNone}},
+			Capabilities: []contract.Capability{{Protocol: contract.ProtocolOpenAIChat, Mode: contract.CapabilityModeNative, Streaming: true}},
+		}
+		if _, err := store.CreateService(context.Background(), service, storage.CredentialMutation{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put := func(enabled bool, serviceID, model string) *httptest.ResponseRecorder {
+		document := fmt.Sprintf(`{"enabled":%t,"classifier_source":"existing_model","existing_model":{"service_id":%q,"model":%q}}`, enabled, serviceID, model)
+		return controlRequest(t, handler, http.MethodPut, ClassifierSettingsPath, "application/json", document, "")
+	}
+	for name, test := range map[string]struct{ serviceID, model, code, reason string }{
+		"no service":       {"", "fast-model", "invalid_classifier_settings", "service_id is required"},
+		"missing service":  {"service_gone", "fast-model", "classifier_model_unavailable", "does not exist"},
+		"disabled service": {"service_off", "fast-model", "classifier_model_unavailable", "is disabled"},
+		"unlisted model":   {"service_on", "slow-model", "classifier_model_unavailable", "is not configured"},
+	} {
+		response := put(true, test.serviceID, test.model)
+		body := response.Body.String()
+		if response.Code != http.StatusUnprocessableEntity || !strings.Contains(body, `"code":"`+test.code+`"`) || !strings.Contains(body, test.reason) {
+			t.Fatalf("%s: put = %d %s, want 422 %s saying %q", name, response.Code, body, test.code, test.reason)
+		}
+		if response := put(false, test.serviceID, test.model); response.Code != http.StatusOK {
+			t.Fatalf("%s: disabled draft = %d %s", name, response.Code, response.Body.String())
+		}
+	}
+	if response := put(true, "service_on", "fast-model"); response.Code != http.StatusOK {
+		t.Fatalf("callable model = %d %s", response.Code, response.Body.String())
+	}
+}
+
+// lostKeyStore cannot open the stored classifier key, as after the data
+// directory moved to a machine without its keyring.
+type lostKeyStore struct{ *sqlite.Store }
+
+func (store lostKeyStore) Get(ctx context.Context, ref secretstore.Ref) ([]byte, error) {
+	if ref == classifierCredentialRef {
+		return nil, errors.New("unseal classifier credential: message authentication failed")
+	}
+	return store.Store.Get(ctx, ref)
+}
+
+// Whether a key is configured is read without opening it: a key the keyring
+// can no longer open still loads the settings as configured, and the key can
+// be entered again.
+func TestClassifierSettingsLoadWhenTheKeyCannotBeOpened(t *testing.T) {
+	ctx := context.Background()
+	store, err := openControlTestStore(t, ctx, t.TempDir()+"/store.sqlite")
+	if err != nil {
+		t.Fatalf("open SQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Put(ctx, classifierCredentialRef, []byte("sk-sealed-elsewhere")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewWithDependencies(contract.DefaultVersionResponse("0.1.0-test", "abc1234"),
+		Dependencies{ServiceStore: lostKeyStore{store}, ControlToken: testControlToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, configured := range map[string]string{
+		ClassifierSettingsPath:                 `"credential_configured":true`,
+		ClassifierSettingsPath + "/credential": `"configured":true`,
+	} {
+		response := controlRequest(t, handler, http.MethodGet, path, "", "", "")
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), configured) {
+			t.Fatalf("GET %s = %d %s, want 200 with %s", path, response.Code, response.Body.String(), configured)
+		}
+	}
+	putClassifierCredential(t, handler)
 }
 
 func TestClassifierSettingsResourceRoundTrip(t *testing.T) {
@@ -237,13 +320,6 @@ func TestClassifierDryRunUnconfiguredAnswersFallback(t *testing.T) {
 // default member.
 func dryRunRoutingFixture(t *testing.T, handler *Handler, settings func(inline *contract.ClassifierInlineSource) contract.ClassifierSettings) {
 	t.Helper()
-	current, err := handler.classifierSettings.GetClassifierSettings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := handler.classifierSettings.UpdateClassifierSettings(context.Background(), settings(current.Inline)); err != nil {
-		t.Fatal(err)
-	}
 	store := handler.serviceStore.(storage.ServiceStore)
 	service := contract.Service{
 		ID: "service_01", Name: "Classifier source dry-run service", Kind: contract.ServiceKindOpenAI, Enabled: true,
@@ -254,6 +330,13 @@ func dryRunRoutingFixture(t *testing.T, handler *Handler, settings func(inline *
 		}},
 	}
 	if _, err := store.CreateService(context.Background(), service, storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := handler.classifierSettings.GetClassifierSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.classifierSettings.UpdateClassifierSettings(context.Background(), settings(current.Inline)); err != nil {
 		t.Fatal(err)
 	}
 	group := contract.ModelRoutingGroup{
@@ -835,5 +918,31 @@ func TestClassifierDryRunMediaKindMatchesLiveRequests(t *testing.T) {
 		`{"text":"look at this","media_kind":"pdf"}`, "")
 	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "invalid_dry_run") {
 		t.Fatalf("media_kind pdf = %d %s", response.Code, response.Body.String())
+	}
+}
+
+// When the privacy policy cannot be read the text cannot be checked, so the
+// dry-run stops before the classifier, as a live request does, instead of
+// classifying an empty text into a plausible answer.
+func TestClassifierDryRunStopsWhenThePrivacyPolicyIsUnavailable(t *testing.T) {
+	var cloudBodies []string
+	cloudServer := newClassifierCloudServer(t, `{"answers":{"task_type":{"choice":"coding","confidence":0.97}}}`, &cloudBodies)
+	handler := newClassifierDryRunHandler(t, cloudServer.URL, privacy.Policy{})
+	putClassifierCredential(t, handler)
+	filter, err := privacy.New(privacy.PolicyProviderFunc(func(context.Context, privacy.Scope) (privacy.Policy, error) {
+		return privacy.Policy{}, errors.New("policy store down")
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.privacyFilter = filter
+	response := controlRequest(t, handler, http.MethodPost, ClassifierSettingsPath+"/dry-run", "application/json", `{"text":"my secret text"}`, "")
+	body := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(body, `"privacy":"unavailable"`) ||
+		!strings.Contains(body, `"fallback_reason":"privacy_policy_unavailable"`) || strings.Contains(body, `"category"`) {
+		t.Fatalf("dry-run = %d %s", response.Code, body)
+	}
+	if len(cloudBodies) != 0 {
+		t.Fatalf("the classifier was called without a privacy check: %q", cloudBodies)
 	}
 }

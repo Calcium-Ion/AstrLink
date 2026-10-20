@@ -3731,7 +3731,9 @@
       "status": "The local Core answered {{status}}. Try again; if it keeps failing, check the logs.",
       "codeUnknown": "The local Core reported the error {{code}}. Try again; if it keeps failing, check the logs.",
       "unknownDryRunProtocol": "AstrLink does not serve that protocol yet; pick one from the list.",
-      "dimensionInUse": "A dimension you removed or renamed is still used by a routing rule. Remove the conditions that use it from the routing groups first, then save."
+      "dimensionInUse": "A dimension you removed or renamed is still used by a routing rule. Remove the conditions that use it from the routing groups first, then save.",
+      "classifierModelUnavailable": "The classification model can't be called: its API provider was deleted or disabled, or no longer offers the model. Choose the classification model again, then save.",
+      "routingReference": "A routing group uses this API provider's models. Replace the members that use it under Intelligent routing › Routing groups first, then delete or disable the provider or remove the model."
     }
   },
   "classifier": {
@@ -4597,6 +4599,7 @@
     "fieldKnown": "available"
   },
   "controlErrors": {
+    "model_routing_reference": "A routing group uses this API provider's models. Replace the members that use it under Intelligent routing › Routing groups first, then delete or disable the provider or remove the model.",
     "image_provider_not_found": "The API provider chosen for image generation no longer exists. Choose another provider or turn image generation off.",
     "image_provider_unsupported": "The API provider chosen for image generation has no Images API. Provider’s Images API works with OpenAI, OpenAI-compatible, New API, and MiniMax providers. For a Codex subscription, choose Responses · image_generation instead.",
     "search_provider_not_found": "The API provider chosen for web search no longer exists. Choose another provider or turn web search off.",

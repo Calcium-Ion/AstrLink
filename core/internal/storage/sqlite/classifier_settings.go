@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,8 +20,9 @@ import (
 const classifierRefPrefix = "local://classifier/"
 
 // GetClassifierSettings returns the singleton document, or defaults when no
-// row exists yet. A stored document that no longer validates loads as
-// disabled: an unreadable classifier must never take routing down.
+// row exists yet. A stored document that no longer decodes is ErrInvalidRecord;
+// the request path reads any error as no classifier, so an unreadable
+// classifier never takes routing down.
 func (store *Store) GetClassifierSettings(ctx context.Context) (contract.ClassifierSettings, error) {
 	settings := contract.ClassifierSettings{ClassifierSource: contract.ClassifierSourceInline}
 	var document string
@@ -53,6 +55,9 @@ func (store *Store) UpdateClassifierSettings(ctx context.Context, settings contr
 	if err = validateClassifierDimensionRemovalTx(ctx, transaction, settings.Dimensions); err != nil {
 		return err
 	}
+	if err = validateClassifierTargetTx(ctx, transaction, settings); err != nil {
+		return err
+	}
 	if _, err = transaction.ExecContext(ctx, `INSERT INTO classifier_settings (id, document_json, updated_at) VALUES (1, ?, ?)
 ON CONFLICT(id) DO UPDATE SET document_json = excluded.document_json, updated_at = excluded.updated_at`,
 		string(document), store.now().UTC().Format(time.RFC3339Nano)); err != nil {
@@ -60,6 +65,35 @@ ON CONFLICT(id) DO UPDATE SET document_json = excluded.document_json, updated_at
 	}
 	if err = transaction.Commit(); err != nil {
 		return fmt.Errorf("commit classifier settings write: %w", err)
+	}
+	return nil
+}
+
+// validateClassifierTargetTx refuses an enabled existing-model classifier the
+// gateway cannot call, checked in the write transaction the way a routing
+// group member is: the service must exist and be enabled and list the model.
+func validateClassifierTargetTx(ctx context.Context, tx *sql.Tx, settings contract.ClassifierSettings) error {
+	if !settings.ExistingModelConfigured() {
+		return nil
+	}
+	target := settings.ExistingModel
+	var document string
+	err := tx.QueryRowContext(ctx, `SELECT document_json FROM services WHERE id = ?`, target.ServiceID).Scan(&document)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: service %q does not exist", storagecontract.ErrClassifierTarget, target.ServiceID)
+	}
+	if err != nil {
+		return fmt.Errorf("read classifier service: %w", err)
+	}
+	var service contract.Service
+	if err := json.Unmarshal([]byte(document), &service); err != nil {
+		return fmt.Errorf("%w: service %q", storagecontract.ErrInvalidRecord, target.ServiceID)
+	}
+	if !service.Enabled {
+		return fmt.Errorf("%w: service %q is disabled", storagecontract.ErrClassifierTarget, target.ServiceID)
+	}
+	if !slices.Contains(service.Models, target.Model) {
+		return fmt.Errorf("%w: model %q is not configured on service %q", storagecontract.ErrClassifierTarget, target.Model, target.ServiceID)
 	}
 	return nil
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/modelrouting"
 	"github.com/QuantumNous/astrlink/core/internal/privacy"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
+	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
 
 // ClassifierSettingsPath is the singleton external-classifier resource. It
@@ -70,6 +71,10 @@ func (handler *Handler) classifierResource(writer http.ResponseWriter, request *
 				writeError(writer, http.StatusConflict, "classifier_dimension_in_use", inUse.Error())
 				return
 			}
+			if errors.Is(err, storage.ErrClassifierTarget) {
+				writeError(writer, http.StatusUnprocessableEntity, "classifier_model_unavailable", err.Error())
+				return
+			}
 			handler.writeStoreError(writer, err)
 			return
 		}
@@ -81,15 +86,10 @@ func (handler *Handler) classifierResource(writer http.ResponseWriter, request *
 }
 
 func (handler *Handler) writeClassifierSettings(writer http.ResponseWriter, request *http.Request, settings contract.ClassifierSettings) {
-	configured := false
-	if secrets, ok := handler.serviceStore.(secretstore.SecretStore); ok {
-		value, err := secrets.Get(request.Context(), classifierCredentialRef)
-		clear(value)
-		if err != nil && !errors.Is(err, secretstore.ErrNotFound) {
-			writeError(writer, http.StatusInternalServerError, "credential_unavailable", "could not read classifier credential status")
-			return
-		}
-		configured = err == nil
+	configured, err := handler.classifierCredentialConfigured(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "credential_unavailable", "could not read classifier credential status")
+		return
 	}
 	writeJSON(writer, http.StatusOK, classifierSettingsResponse{
 		ClassifierSettings:   settings,
@@ -100,6 +100,22 @@ func (handler *Handler) writeClassifierSettings(writer http.ResponseWriter, requ
 type classifierSettingsResponse struct {
 	contract.ClassifierSettings
 	CredentialConfigured bool `json:"credential_configured"`
+}
+
+// classifierCredentialStatus reports whether the sealed classifier key exists
+// without unsealing it. A key the keyring can no longer open, as after a move
+// to another machine, still reads as configured, so the settings page loads
+// and the key can be entered again.
+type classifierCredentialStatus interface {
+	ClassifierCredentialConfigured(context.Context) (bool, error)
+}
+
+func (handler *Handler) classifierCredentialConfigured(ctx context.Context) (bool, error) {
+	status, ok := handler.serviceStore.(classifierCredentialStatus)
+	if !ok {
+		return false, nil
+	}
+	return status.ClassifierCredentialConfigured(ctx)
 }
 
 func (handler *Handler) classifierSubResource(writer http.ResponseWriter, request *http.Request) {
@@ -122,13 +138,12 @@ func (handler *Handler) classifierCredentialResource(writer http.ResponseWriter,
 	}
 	switch request.Method {
 	case http.MethodGet:
-		value, err := secrets.Get(request.Context(), classifierCredentialRef)
-		defer clear(value)
-		if err != nil && !errors.Is(err, secretstore.ErrNotFound) {
+		configured, err := handler.classifierCredentialConfigured(request.Context())
+		if err != nil {
 			writeError(writer, http.StatusInternalServerError, "credential_unavailable", "could not read classifier credential status")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]bool{"configured": err == nil})
+		writeJSON(writer, http.StatusOK, map[string]bool{"configured": configured})
 	case http.MethodPut:
 		var input struct {
 			Secret string `json:"secret"`
@@ -311,8 +326,15 @@ func (handler *Handler) classifierDryRun(writer http.ResponseWriter, request *ht
 	}
 	response.Privacy = privacyState
 	response.SanitizedPreview = boundedDryRunPreview(sanitized)
-	if privacyState == "blocked" || privacyState == "inspection_failed" {
+	switch privacyState {
+	case "blocked", "inspection_failed":
 		response.FallbackReason = "privacy_" + privacyState
+	case "unavailable":
+		// Without the policy the text cannot be checked, so it may not leave
+		// either; a live request stops with the same code.
+		response.FallbackReason = "privacy_policy_unavailable"
+	}
+	if response.FallbackReason != "" {
 		writeJSON(writer, http.StatusOK, response)
 		return
 	}

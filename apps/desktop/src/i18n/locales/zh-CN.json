@@ -3731,7 +3731,9 @@
       "status": "本地 Core 返回了 {{status}}。请重试；若仍失败，请查看日志。",
       "codeUnknown": "本地 Core 返回了错误 {{code}}。请重试；若仍失败，请查看日志。",
       "unknownDryRunProtocol": "该协议 AstrLink 目前不支持，请从列表中选择一个已支持的协议。",
-      "dimensionInUse": "删除或改名的维度还在被路由规则使用。请先在路由组里删掉用到它的条件，再保存。"
+      "dimensionInUse": "删除或改名的维度还在被路由规则使用。请先在路由组里删掉用到它的条件，再保存。",
+      "classifierModelUnavailable": "分类用的模型无法调用：所选的 API 提供商已删除或停用，或已不再提供这个模型。请重新选择分类模型后再保存。",
+      "routingReference": "智能路由的路由组正在使用这个 API 提供商的模型。请先在「智能路由 › 路由组」里换掉用到它的成员，再删除或停用它、或移除对应的模型。"
     }
   },
   "classifier": {
@@ -4597,6 +4599,7 @@
     "fieldKnown": "已取得"
   },
   "controlErrors": {
+    "model_routing_reference": "智能路由的路由组正在使用这个 API 提供商的模型。请先在「智能路由 › 路由组」里换掉用到它的成员，再删除或停用它、或移除对应的模型。",
     "image_provider_not_found": "图片生成选用的 API 提供商已不存在。请换一个提供商，或关闭图片生成。",
     "image_provider_unsupported": "图片生成选用的 API 提供商没有 Images API。「提供商的 Images API」可以选用 OpenAI、OpenAI 兼容、New API 和 MiniMax 提供商。Codex 订阅请改选「Responses · image_generation」。",
     "search_provider_not_found": "网页搜索选用的 API 提供商已不存在。请换一个提供商，或关闭网页搜索。",

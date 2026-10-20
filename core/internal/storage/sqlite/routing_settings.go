@@ -2,8 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
 )
@@ -18,9 +20,15 @@ import (
 // row, unreadable document, or malformed JSON. nil is the strict reading —
 // only built-in routing fields validate — so a failure here degrades to
 // refusing a custom-dimension rule, never to admitting an unvalidated one.
-func (store *Store) routingSettingsDimensions(ctx context.Context) []contract.ClassifierDimension {
+//
+// A write passes its transaction, so the dimensions it validates against are
+// the ones it commits beside: a dimension removed concurrently either lands
+// first and refuses this write, or lands after and sees the rule that names it.
+func routingSettingsDimensions(ctx context.Context, query interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}) []contract.ClassifierDimension {
 	var document string
-	if err := store.db.QueryRowContext(ctx, `SELECT document_json FROM classifier_settings WHERE id = 1`).Scan(&document); err != nil {
+	if err := query.QueryRowContext(ctx, `SELECT document_json FROM classifier_settings WHERE id = 1`).Scan(&document); err != nil {
 		return nil
 	}
 	var settings contract.ClassifierSettings
@@ -59,7 +67,7 @@ func (store *Store) GetRoutingSettings(ctx context.Context) (contract.RoutingSet
 	case "auto":
 		settings.ReasoningMode = contract.ReasoningModeAdaptive
 	}
-	if err := settings.ValidateWithDimensions(store.routingSettingsDimensions(ctx)); err != nil {
+	if err := settings.ValidateWithDimensions(routingSettingsDimensions(ctx, store.db)); err != nil {
 		return settings, fmt.Errorf("%w: routing settings: %v", storage.ErrInvalidRecord, err)
 	}
 	return settings, nil

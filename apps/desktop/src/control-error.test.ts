@@ -53,6 +53,19 @@ describe("controlErrorMessage", () => {
     );
   });
 
+  it("says which change a routing group blocks on a service", () => {
+    expect(
+      controlErrorMessage(
+        new Error(
+          'DELETE /control/v1/services/service_x returned 409 Conflict: {"error":{"code":"model_routing_reference","message":"a model routing group depends on the service: group \\"coding\\" member \\"fast\\" service \\"service_x\\" is unavailable"}}',
+        ),
+        "fallback",
+      ),
+    ).toBe(
+      "智能路由的路由组正在使用这个 API 提供商的模型。请先在「智能路由 › 路由组」里换掉用到它的成员，再删除或停用它、或移除对应的模型。",
+    );
+  });
+
   it("keeps the message of a code without a translation", () => {
     const error = hostError(
       "invalid_routing_settings",

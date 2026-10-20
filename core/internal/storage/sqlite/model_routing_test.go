@@ -59,6 +59,37 @@ func TestModelRoutingRecordAndBindingRoundTrip(t *testing.T) {
 	}
 }
 
+// Writing a binding clears the expired ones, which no request reads again,
+// so the table does not grow with every session that ever used a group.
+func TestModelRoutingBindingWriteClearsExpiredBindings(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "routing.db"))
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	past := now.Add(-time.Hour).Format(time.RFC3339Nano)
+	mustExec(t, store, `INSERT INTO model_routing_bindings (`+modelRoutingBindingColumns+`, request_started_at) VALUES ('principal_old', 'session_old', 'openai.responses', 'astrlink/superclaude', 'superclaude', 'strong', 'service_01', 'model-strong', '', 'request_old', ?, ?, ?, ?)`, past, past, past, past)
+	binding := contract.ModelRoutingBinding{Principal: "principal_01", SessionID: "session_01", Protocol: contract.ProtocolOpenAIResponses, VirtualModelID: "astrlink/superclaude", GroupID: "superclaude", MemberID: "strong", ServiceID: "service_01", Model: "model-strong", CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)}
+	if err := store.UpsertModelRoutingBinding(ctx, binding, now); err != nil {
+		t.Fatal(err)
+	}
+	var sessions []string
+	rows, err := store.db.Query(`SELECT session_id FROM model_routing_bindings ORDER BY session_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var session string
+		if err := rows.Scan(&session); err != nil {
+			t.Fatal(err)
+		}
+		sessions = append(sessions, session)
+	}
+	if len(sessions) != 1 || sessions[0] != "session_01" {
+		t.Fatalf("bindings after a write = %v, want only the live session_01", sessions)
+	}
+}
+
 // The live path writes a pending row before routing runs, then upserts the
 // same row once the decision exists and again when execution ends. Each
 // upsert must carry the decision; the first insert alone never has one.

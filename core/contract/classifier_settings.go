@@ -316,6 +316,9 @@ func (settings ClassifierSettings) Validate() error {
 		if settings.ExistingModel == nil {
 			return fmt.Errorf("existing_model classifier source is required when enabled")
 		}
+		if settings.ExistingModel.ServiceID == "" {
+			return fmt.Errorf("existing_model.service_id is required when enabled")
+		}
 		if settings.ExistingModel.Model == "" {
 			return fmt.Errorf("existing_model.model is required when enabled")
 		}
@@ -866,8 +869,8 @@ func RenderClassifierOptions(options []ClassifierDimensionOption) string {
 // EffectivePrompt returns the configured prompt or the built-in default.
 
 // ResolveCallPlan resolves the global classifier settings against one group's
-// task_type label domain. Only the labels come from the group; the prompt,
-// timeout and fallback are global settings with built-in defaults.
+// task_type label domain. Only the labels come from the group; the prompt
+// and timeout are global settings with built-in defaults.
 func (settings ClassifierSettings) ResolveCallPlan(group *ModelRoutingGroup) ClassifierCallPlan {
 	plan := ClassifierCallPlan{
 		Prompt:                 settings.EffectivePrompt(),

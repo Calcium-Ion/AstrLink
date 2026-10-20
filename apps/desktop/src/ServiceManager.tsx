@@ -24,6 +24,7 @@ import { OrderedList } from "./components/OrderedList";
 import { ClientTypeIcons } from "./components/ClientTypeIcon";
 import { useGatewayResponseTimeout } from "./use-gateway-response-timeout";
 import { useRoutingDefaults } from "./use-routing-defaults";
+import { controlErrorMessage } from "./control-error";
 import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
 import {
   modelRedirectIssues,
@@ -740,8 +741,9 @@ function draftSignature(draft: Draft): string {
   return JSON.stringify(draft);
 }
 
+/** A Control API error code with a localized message is shown in it. */
 function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
+  return controlErrorMessage(error, fallback);
 }
 
 function authForDraft(draft: Draft) {

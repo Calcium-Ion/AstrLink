@@ -650,6 +650,10 @@ paths:
       tags: [Services]
       operationId: updateService
       summary: Update service metadata or an HTTP service connection.
+      description: >
+        A change that would disable the service or remove a model a model
+        routing group member uses is refused with 409 model_routing_reference;
+        the message names the group and the member.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -676,6 +680,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -685,6 +691,9 @@ paths:
       tags: [Services]
       operationId: deleteService
       summary: Delete one service after route-reference checks.
+      description: >
+        A service a model routing group member uses is refused with 409
+        model_routing_reference; the message names the group and the member.
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       responses:
@@ -2427,8 +2436,8 @@ paths:
       description: >
         The classifier is a singleton resource beside routing settings; the
         routing-settings document and its whitelists are unchanged. The
-        response reports only whether the API key is configured, never the
-        key itself.
+        response reports only whether an API key is stored, never the key
+        itself, and reads that without opening the key.
       responses:
         "200":
           description: Current classifier settings and credential status.
@@ -2451,11 +2460,13 @@ paths:
         drafts may omit protocol, endpoint, and model; an enabled document
         must be complete. `classifier_source=provider_ref` with
         `enabled=true` is stored as a future shape and answered with 422
-        `classifier_source_not_supported`. Removing or renaming a dimension
-        that a model routing rule still names is answered with 409
-        `classifier_dimension_in_use`: routing settings are validated
-        against the declared dimensions on every read, so the rule has to
-        go first.
+        `classifier_source_not_supported`. An enabled `existing_model`
+        document must name a service that exists, is enabled and lists the
+        model, or it is answered with 422 `classifier_model_unavailable`.
+        Removing or renaming a dimension that a model routing rule still
+        names is answered with 409 `classifier_dimension_in_use`: routing
+        settings are validated against the declared dimensions on every
+        read, so the rule has to go first.
       requestBody:
         required: true
         content:
@@ -2480,7 +2491,7 @@ paths:
   /control/v1/routing/classifier/credential:
     x-astrlink-implementation-status: implemented
     get:
-      x-astrlink-role: observer
+      x-astrlink-role: operator
       tags: [Routes]
       operationId: getClassifierCredentialStatus
       summary: Read whether the classifier API key is configured, never its value.
@@ -5033,7 +5044,7 @@ components:
             type: integer,
             minimum: 1,
             maximum: 5000,
-            description: "Global call timeout; group values may only tighten it. Default 1000.",
+            description: "Call timeout for the cloud classifier. Default 1000.",
           }
         low_confidence_threshold:
           {
@@ -5046,7 +5057,8 @@ components:
           {
             type: string,
             enum: [skip, general, error],
-            description: "Deterministic behavior on classifier failure; error records a code and never blocks. Default skip.",
+            deprecated: true,
+            description: "Deprecated and ignored. A failed classification always leaves its facts unknown, so every rule testing them is skipped and the group's default member serves the request; the member is still accepted so a document stored by an earlier build decodes.",
           }
     ClassifierProviderRef:
       type: object
@@ -5222,6 +5234,31 @@ components:
             maximum: 1,
             description: "The score the classifier gave its label, passed through verbatim, also when it is below the threshold.",
           }
+        dimensions:
+          type: object
+          maxProperties: 5
+          description: "The classifier's answer for each custom dimension, keyed by dimension name. Absent when no classifier was called or no dimension is declared."
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [label, score, known, produced]
+            properties:
+              label:
+                {
+                  type: string,
+                  description: "The option the classifier chose; empty when it answered none.",
+                }
+              score: { type: number, minimum: 0, maximum: 1 }
+              known:
+                {
+                  type: boolean,
+                  description: "The answer reached the threshold, so a rule can match on it.",
+                }
+              produced:
+                {
+                  type: boolean,
+                  description: "The classifier answered this dimension at all; produced but not known means it answered below the threshold.",
+                }
         fallback_reason:
           {
             type: string,
@@ -5230,7 +5267,8 @@ components:
         privacy:
           {
             type: string,
-            description: "Privacy preflight outcome for the sample text (off, allow, warn, redact, blocked).",
+            enum: ["off", allow, warn, redact, blocked, unavailable, inspection_failed],
+            description: "Privacy preflight outcome for the sample text. blocked, unavailable (the privacy policy could not be read) and inspection_failed call no classifier and answer with fallback_reason privacy_blocked, privacy_policy_unavailable or privacy_inspection_failed.",
           }
         duration_ms: { type: integer, minimum: 0 }
         timeout_ms:
@@ -5261,88 +5299,16 @@ components:
             used_default: { type: boolean }
         rules:
           type: array
+          maxItems: 128
           description: "Every rule in the group, in evaluation order, with its own verdict. The selected rule is the one a live request would use; the rest are reported so a rule that never fired can be told apart from one that fired and failed."
           items:
-            type: object
-            additionalProperties: false
-            required: [rule_id, priority, target_member_id, state, selected]
-            properties:
-              rule_id: { type: string }
-              priority: { type: integer }
-              target_member_id: { type: string }
-              target_model: { type: string }
-              state:
-                {
-                  type: string,
-                  enum: [true, false, unknown, not_evaluated],
-                  description: "true/false: evaluated. unknown: evaluated, but a field it reads had no fact. not_evaluated: an earlier rule already won.",
-                }
-              selected: { type: boolean }
-              target_missing:
-                {
-                  type: boolean,
-                  description: "The rule came out true but names a member the group does not define; the walk stops and falls through to the default member.",
-                }
-              fields:
-                type: array
-                description: "Field observations for this rule's own condition, without classifier provenance."
-                items:
-                  type: object
-                  additionalProperties: false
-                  required: [field, source, known, match_count]
-                  properties:
-                    field: { type: string }
-                    source: { type: string }
-                    known: { type: boolean }
-                    match_count: { type: integer }
-                    value:
-                      {
-                        type: string,
-                        maxLength: 128,
-                        description: "The fact the condition read, in the evaluator's spelling (true, 12, openai.chat, 14:20). Empty when unknown and always empty for literal_keyword, whose fact is the request text.",
-                      }
-                    skip_reason: { type: string }
-                    error_code: { type: string }
+            $ref: "#/components/schemas/ModelRoutingRuleVerdict"
         fields:
           type: array
+          maxItems: 64
           description: Field observations from the production evaluator when a group was given.
           items:
-            type: object
-            additionalProperties: false
-            required: [field, source, known, match_count]
-            properties:
-              field: { type: string }
-              source: { type: string }
-              known: { type: boolean }
-              match_count: { type: integer }
-              value:
-                {
-                  type: string,
-                  maxLength: 128,
-                  description: "The fact the condition read; empty when unknown and for literal_keyword.",
-                }
-              classifier_confidence: { type: number }
-              classifier_id: { type: string }
-              skip_reason: { type: string }
-              error_code: { type: string }
-              candidates:
-                type: array
-                description: >
-                  The candidate sequence a classifier produced for this field,
-                  with each candidate's score, rank and whether it was chosen.
-                  This is the observed output shape only; selection stays
-                  row-order first-match and nothing reads it for scoring.
-                  Absent both on records written before it existed and on
-                  fields that took no scored fallback.
-                items:
-                  type: object
-                  additionalProperties: false
-                  required: [value, score, rank, chosen]
-                  properties:
-                    value: { type: string }
-                    score: { type: number }
-                    rank: { type: integer }
-                    chosen: { type: boolean }
+            $ref: "#/components/schemas/ModelRoutingFieldObservation"
     BuiltinToolTestResult:
       type: object
       additionalProperties: false
@@ -7458,6 +7424,8 @@ components:
           description: Model name sent by the client, before any model redirect.
         model_redirect:
           $ref: "#/components/schemas/RequestModelRedirect"
+        model_routing:
+          $ref: "#/components/schemas/ModelRoutingDecision"
         reasoning_effort:
           type: [string, "null"]
           minLength: 1
@@ -7795,6 +7763,254 @@ components:
           minLength: 1
           maxLength: 256
           description: Model used for service selection.
+    ModelRoutingDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - virtual_model_id
+        - group_id
+        - config_snapshot_version
+        - selection_source
+        - used_default
+        - fields
+        - member_id
+        - member_service_id
+        - member_model
+        - execution
+        - privacy_attempts
+        - duration_ms
+      description: How a routing group chose the member that served this request. Present only when the client named a routing group, astrlink/<group_id>.
+      properties:
+        schema_version:
+          type: integer
+          const: 1
+        virtual_model_id:
+          type: string
+          maxLength: 73
+          description: The routing group as the client named it, astrlink/<group_id>.
+        group_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        config_snapshot_version:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the group configuration the request was routed under.
+        config_version:
+          type: integer
+          minimum: 1
+          description: The group's saved configuration version the request was routed under. Absent on records written before versions existed.
+        selection_source:
+          type: string
+          enum: [rule, default_member, group_binding, response_affinity, websocket_connection]
+          description: What chose the member. group_binding, response_affinity and websocket_connection reuse an earlier choice without judging the rules.
+        rule_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The rule that chose the member; absent when no rule did.
+        rule_priority:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        used_default:
+          type: boolean
+          description: The group's default member served the request because no rule chose one.
+        fields:
+          type: array
+          maxItems: 64
+          description: The facts the rules read, with their classifier provenance.
+          items:
+            $ref: "#/components/schemas/ModelRoutingFieldObservation"
+        rules:
+          type: array
+          maxItems: 128
+          description: Every rule's own verdict in evaluation order. Absent when no rule was judged, such as a reused session binding or a record written before verdicts were kept.
+          items:
+            $ref: "#/components/schemas/ModelRoutingRuleVerdict"
+        classifier:
+          $ref: "#/components/schemas/ModelRoutingClassifierAnswers"
+        binding_request_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+          description: The request whose rule evaluation chose the member a reused session binding names.
+        binding_expires_at:
+          type: string
+          format: date-time
+          description: When the session binding lapses after this request.
+        binding_reset:
+          $ref: "#/components/schemas/ModelRoutingBindingReset"
+        member_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        member_service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        member_model:
+          type: string
+          minLength: 1
+          maxLength: 256
+        fallback_reason:
+          type: string
+          description: Stable code for why the classifier's answer could not be used; absent when it was used or not needed.
+        execution:
+          $ref: "#/components/schemas/ModelRoutingExecution"
+        privacy_attempts:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/ModelRoutingPrivacyAttempt"
+        duration_ms:
+          type: integer
+          minimum: 0
+          description: Time spent choosing the member, classifier included.
+        classifier_duration_ms:
+          type: integer
+          minimum: 0
+        error_code:
+          type: string
+    ModelRoutingFieldObservation:
+      type: object
+      additionalProperties: false
+      required: [field, source, known, match_count]
+      properties:
+        field: { type: string, minLength: 1, maxLength: 128 }
+        source: { type: string }
+        known: { type: boolean }
+        match_count: { type: integer, minimum: 0 }
+        value:
+          {
+            type: string,
+            maxLength: 128,
+            description: "The fact the condition read, in the evaluator's spelling (true, 12, openai.chat, 14:20). Empty when unknown and always empty for literal_keyword, whose fact is the request text.",
+          }
+        classifier_confidence: { type: number }
+        classifier_id: { type: string }
+        skip_reason: { type: string }
+        error_code: { type: string }
+        candidates:
+          type: array
+          description: >
+            The candidate sequence a classifier produced for this field,
+            with each candidate's score, rank and whether it was chosen.
+            This is the observed output shape only; selection stays
+            row-order first-match and nothing reads it for scoring.
+            Absent both on records written before it existed and on
+            fields that took no scored fallback.
+          items:
+            $ref: "#/components/schemas/ModelRoutingCandidateObservation"
+    ModelRoutingCandidateObservation:
+      type: object
+      additionalProperties: false
+      required: [value, score, rank, chosen]
+      properties:
+        value: { type: string, minLength: 1, maxLength: 128 }
+        score: { type: number, minimum: 0, maximum: 1 }
+        rank: { type: integer, minimum: 0 }
+        chosen: { type: boolean }
+    ModelRoutingRuleVerdict:
+      type: object
+      additionalProperties: false
+      required: [rule_id, priority, target_member_id, state, selected]
+      properties:
+        rule_id: { type: string, maxLength: 64 }
+        priority: { type: integer, minimum: 0, maximum: 1000000000 }
+        target_member_id: { type: string, maxLength: 64 }
+        target_model: { type: string, minLength: 1, maxLength: 256 }
+        state:
+          {
+            type: string,
+            enum: ["true", "false", unknown, not_evaluated],
+            description: "true/false: evaluated. unknown: evaluated, but a field it reads had no fact. not_evaluated: an earlier rule already won.",
+          }
+        selected: { type: boolean }
+        target_missing:
+          {
+            type: boolean,
+            description: "The rule came out true but names a member the group does not define; the walk stops and falls through to the default member.",
+          }
+        fields:
+          type: array
+          maxItems: 64
+          description: "Field observations for this rule's own condition. Classifier provenance (classifier_confidence, classifier_id, candidates) is reported once for the run and never here."
+          items:
+            $ref: "#/components/schemas/ModelRoutingFieldObservation"
+    ModelRoutingClassifierAnswers:
+      type: object
+      additionalProperties: false
+      description: What the classifier answered for this request, recorded once rather than on every rule that read it. task_type is absent when the answer was unusable; fallback_reason says why.
+      properties:
+        task_type: { type: string, maxLength: 128 }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        dimensions:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/ModelRoutingDimensionAnswer"
+    ModelRoutingDimensionAnswer:
+      type: object
+      additionalProperties: false
+      required: [name, known, produced]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        label: { type: string, maxLength: 128 }
+        score: { type: number, minimum: 0, maximum: 1 }
+        known:
+          {
+            type: boolean,
+            description: "The answer reached the threshold, so a rule can match on it.",
+          }
+        produced:
+          {
+            type: boolean,
+            description: "The classifier answered this dimension at all; produced but not known means it answered below the threshold.",
+          }
+    ModelRoutingBindingReset:
+      type: object
+      additionalProperties: false
+      required: [reason, member_id, service_id, model]
+      description: The session binding this request could not reuse, so the rules were judged again.
+      properties:
+        reason:
+          type: string
+          enum: [member_removed]
+        member_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        model:
+          type: string
+          minLength: 1
+          maxLength: 256
+    ModelRoutingExecution:
+      type: object
+      additionalProperties: false
+      required: [status, attempt_count]
+      properties:
+        status:
+          type: string
+          enum: [pending, selected, succeeded, failed, cancelled]
+        attempt_count: { type: integer, minimum: 0 }
+        error_code: { type: string }
+    ModelRoutingPrivacyAttempt:
+      type: object
+      additionalProperties: false
+      required: [attempt_index, service_id, decision, finding_count, duration_ms]
+      properties:
+        attempt_index: { type: integer, minimum: 0 }
+        service_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        decision:
+          type: string
+          enum: [none, allow, reject, unknown]
+        finding_count: { type: integer, minimum: 0 }
+        duration_ms: { type: integer, minimum: 0 }
+        error_code: { type: string }
     RequestRoutingDecision:
       type: object
       additionalProperties: false

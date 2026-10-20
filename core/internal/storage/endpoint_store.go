@@ -17,6 +17,13 @@ var (
 	ErrUnsupportedRef  = errors.New("credential reference backend is unsupported")
 	ErrLimitReached    = errors.New("storage resource limit reached")
 	ErrAuditDecrypt    = errors.New("audit content cannot be decrypted")
+	// ErrModelRoutingReference marks a service change a model routing group
+	// still depends on: the change would remove or disable the service, or
+	// take away a model one of its members uses.
+	ErrModelRoutingReference = errors.New("a model routing group depends on the service")
+	// ErrClassifierTarget marks classifier settings whose existing model
+	// cannot serve: its service is missing or disabled, or does not list it.
+	ErrClassifierTarget = errors.New("the classifier model is unavailable")
 )
 
 // EndpointRecord couples a validated Endpoint document with the strong entity

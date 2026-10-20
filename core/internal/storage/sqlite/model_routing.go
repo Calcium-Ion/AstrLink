@@ -71,6 +71,12 @@ func (store *Store) UpsertModelRoutingBinding(ctx context.Context, binding contr
 	if _, err = tx.ExecContext(ctx, `INSERT INTO model_routing_bindings (`+modelRoutingBindingColumns+`, request_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(principal, session_id, protocol, virtual_model_id) DO UPDATE SET group_id = excluded.group_id, member_id = excluded.member_id, service_id = excluded.service_id, model = excluded.model, config_snapshot_version = excluded.config_snapshot_version, request_id = excluded.request_id, updated_at = excluded.updated_at, expires_at = excluded.expires_at, request_started_at = excluded.request_started_at`, binding.Principal, binding.SessionID, binding.Protocol, binding.VirtualModelID, binding.GroupID, binding.MemberID, binding.ServiceID, binding.Model, binding.ConfigSnapshotVersion, binding.RequestID, binding.CreatedAt, binding.UpdatedAt, binding.ExpiresAt, bindingTime(started)); err != nil {
 		return err
 	}
+	// Every new session adds a row, so the table is kept bounded the way API
+	// provider bindings are: an expired row is never read again, and past
+	// 10000 rows the ones expiring soonest go first.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM model_routing_bindings WHERE expires_at <= ? OR rowid IN (SELECT rowid FROM model_routing_bindings ORDER BY expires_at DESC LIMIT -1 OFFSET 10000)`, bindingTime(store.now())); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -203,14 +209,14 @@ func (store *Store) UpdateRoutingSettingsAtomic(ctx context.Context, settings co
 	if settings.ModelRedirects == nil {
 		settings.ModelRedirects = []contract.ModelRedirect{}
 	}
-	if err := settings.ValidateWithDimensions(store.routingSettingsDimensions(ctx)); err != nil {
-		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
-	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer rollbackOnError(tx, &err)
+	if err = settings.ValidateWithDimensions(routingSettingsDimensions(ctx, tx)); err != nil {
+		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
+	}
 	if err = validateModelRoutingReferencesTx(ctx, tx, settings.ModelRoutingGroups); err != nil {
 		return fmt.Errorf("%w: %v", storagecontract.ErrInvalidArgument, err)
 	}
@@ -237,14 +243,14 @@ func validateModelRoutingReferencesTx(ctx context.Context, tx *sql.Tx, groups []
 		for _, member := range group.Members {
 			var document string
 			if err := tx.QueryRowContext(ctx, `SELECT document_json FROM services WHERE id = ?`, member.ServiceID).Scan(&document); err != nil {
-				return fmt.Errorf("member %q service %q is unavailable", member.ID, member.ServiceID)
+				return fmt.Errorf("group %q member %q service %q is unavailable", group.ID, member.ID, member.ServiceID)
 			}
 			var service contract.Service
 			if err := json.Unmarshal([]byte(document), &service); err != nil {
 				return fmt.Errorf("service %q is invalid", member.ServiceID)
 			}
 			if !service.Enabled {
-				return fmt.Errorf("member %q service %q is disabled", member.ID, member.ServiceID)
+				return fmt.Errorf("group %q member %q service %q is disabled", group.ID, member.ID, member.ServiceID)
 			}
 			found := false
 			for _, model := range service.Models {
@@ -254,7 +260,7 @@ func validateModelRoutingReferencesTx(ctx context.Context, tx *sql.Tx, groups []
 				}
 			}
 			if !found {
-				return fmt.Errorf("member %q model %q is not configured on service %q", member.ID, member.Model, member.ServiceID)
+				return fmt.Errorf("group %q member %q model %q is not configured on service %q", group.ID, member.ID, member.Model, member.ServiceID)
 			}
 		}
 	}
@@ -272,22 +278,16 @@ func validateStoredRoutingReferencesTx(ctx context.Context, tx *sql.Tx) error {
 	}
 	// The dimensions live in their own singleton; read them inside the same
 	// transaction so a group naming a custom dimension still validates here.
-	// A missing or unreadable document leaves dimensions nil, which is the
-	// strict reading: the custom-dimension rule is then refused rather than
-	// admitted unvalidated.
-	var classifierDocument string
-	var dimensions []contract.ClassifierDimension
-	if err := tx.QueryRowContext(ctx, `SELECT document_json FROM classifier_settings WHERE id = 1`).Scan(&classifierDocument); err == nil {
-		var classifier contract.ClassifierSettings
-		if json.Unmarshal([]byte(classifierDocument), &classifier) == nil {
-			dimensions = classifier.Dimensions
-		}
-	}
-	if err := settings.ValidateWithDimensions(dimensions); err != nil {
-		return err
+	if err := settings.ValidateWithDimensions(routingSettingsDimensions(ctx, tx)); err != nil {
+		return fmt.Errorf("%w: stored routing settings: %v", storagecontract.ErrInvalidRecord, err)
 	}
 	if settings.ModelRoutingGroups == nil {
 		settings.ModelRoutingGroups = []contract.ModelRoutingGroup{}
 	}
-	return validateModelRoutingReferencesTx(ctx, tx, settings.ModelRoutingGroups)
+	// The stored groups were valid before this change, so a member that no
+	// longer resolves is the change's doing.
+	if err := validateModelRoutingReferencesTx(ctx, tx, settings.ModelRoutingGroups); err != nil {
+		return fmt.Errorf("%w: %v", storagecontract.ErrModelRoutingReference, err)
+	}
+	return nil
 }

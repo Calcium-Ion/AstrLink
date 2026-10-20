@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
@@ -123,4 +127,69 @@ func TestClassifierSettingsRefusesRemovingDimensionInUse(t *testing.T) {
 	if err := store.UpdateClassifierSettings(ctx, classifier); err != nil {
 		t.Fatalf("removing a dimension no rule names any more: %v", err)
 	}
+}
+
+// A dimension removal and a routing save that names the dimension both take
+// the write lock, and the routing save reads the dimensions under it, so the
+// one that commits second sees the first: the stored routing document never
+// names a dimension the classifier no longer declares. The removal is held in
+// its transaction, after it found no rule naming the dimension, until the
+// routing save queues for the lock; a save that read the dimensions before
+// queueing validated against the dimension about to go and stored a document
+// every later read refuses.
+func TestRoutingSaveBehindADimensionRemovalSeesIt(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "dimension-race.db"))
+	defer store.Close()
+	if _, err := store.CreateService(ctx, pathTestService("service_a"), storage.CredentialMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	topic := contract.ClassifierDimension{Name: "topic", Options: []contract.ClassifierDimensionOption{{Name: "billing"}, {Name: "support"}}}
+	declared := contract.ClassifierSettings{ClassifierSource: contract.ClassifierSourceInline, Dimensions: []contract.ClassifierDimension{topic}}
+	if err := store.UpdateClassifierSettings(ctx, declared); err != nil {
+		t.Fatal(err)
+	}
+
+	inTransaction := make(chan struct{})
+	release := make(chan struct{})
+	var held atomic.Bool
+	store.now = func() time.Time {
+		if held.CompareAndSwap(false, true) {
+			close(inTransaction)
+			<-release
+		}
+		return time.Now()
+	}
+	removed := make(chan error, 1)
+	go func() {
+		removed <- store.UpdateClassifierSettings(ctx, contract.ClassifierSettings{ClassifierSource: contract.ClassifierSourceInline})
+	}()
+	<-inTransaction
+	saved := make(chan error, 1)
+	go func() { saved <- store.UpdateRoutingSettings(ctx, dimensionRoutingSettings()) }()
+	for !writerQueued() {
+		select {
+		case err := <-saved:
+			t.Fatalf("routing save finished while the removal held the write lock: %v", err)
+		default:
+			runtime.Gosched()
+		}
+	}
+	close(release)
+
+	if err := <-removed; err != nil {
+		t.Fatalf("dimension removal: %v", err)
+	}
+	if err := <-saved; !errors.Is(err, storage.ErrInvalidArgument) {
+		t.Fatalf("routing save behind the removal err = %v, want ErrInvalidArgument", err)
+	}
+	if _, err := store.GetRoutingSettings(ctx); err != nil {
+		t.Fatalf("routing settings after the removal: %v", err)
+	}
+}
+
+// writerQueued reports whether a goroutine waits for the writer gate.
+func writerQueued() bool {
+	buffer := make([]byte, 1<<20)
+	return strings.Contains(string(buffer[:runtime.Stack(buffer, true)]), "sqlite.(*writerConn).acquire(")
 }

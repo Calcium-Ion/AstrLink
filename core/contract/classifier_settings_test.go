@@ -41,6 +41,25 @@ func TestClassifierSettingsValidate(t *testing.T) {
 	}
 }
 
+// An enabled existing-model classifier names the service and the model it
+// calls; a document missing either would save and then never run.
+func TestClassifierExistingModelNeedsItsTargetWhenEnabled(t *testing.T) {
+	for name, target := range map[string]*ClassifierExistingModelSource{
+		"no target":  nil,
+		"no service": {Model: "claude-haiku"},
+		"no model":   {ServiceID: "service_01"},
+	} {
+		settings := ClassifierSettings{Enabled: true, ClassifierSource: ClassifierSourceExistingModel, ExistingModel: target}
+		if err := settings.Validate(); err == nil {
+			t.Fatalf("%s: enabled settings accepted", name)
+		}
+		settings.Enabled = false
+		if err := settings.Validate(); err != nil {
+			t.Fatalf("%s: disabled draft refused: %v", name, err)
+		}
+	}
+}
+
 func TestClassifierInlineSourceValidate(t *testing.T) {
 	base := *enabledInlineSettings().Inline
 	tests := []struct {
