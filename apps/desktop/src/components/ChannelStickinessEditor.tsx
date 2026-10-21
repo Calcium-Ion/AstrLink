@@ -7,10 +7,6 @@ import { HelpPopover } from "./HelpPopover";
 import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 
-/**
- * 会话粘性：同一会话沿用之前智能路由选中的模型和 API 提供商。一个开关、一个闲置
- * 过期时间同时管两者；怎么工作写在 ? 里，界面上不放说明小字。
- */
 export function ChannelStickinessEditor({
   value,
   onChange,
