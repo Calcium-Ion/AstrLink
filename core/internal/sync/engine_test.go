@@ -302,7 +302,8 @@ func TestEngineSyncsConfigurationAndCredentials(t *testing.T) {
 	}
 }
 
-// A device that has never synced adopts the package's own salt and parameters,
+// A device that has never synced derives the same salt from the passphrase as
+// the device that sealed the package and uses the same default KDF parameters,
 // so the same passphrase produces the key that opens the stored package.
 func TestSecondDeviceAdoptsThePackageKey(t *testing.T) {
 	pair := newPair(t)

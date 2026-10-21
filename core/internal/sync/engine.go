@@ -57,9 +57,9 @@ var (
 // Debounce bounds and the poll interval the scheduler wakes on.
 const (
 	defaultDebounceSeconds = 30
-	// pollInterval is how often the scheduler looks for work. It is shorter
-	// than the shortest interval and the shortest debounce, so a due run starts
-	// close to when it became due.
+	// pollInterval is how often the scheduler looks for work. It is no longer
+	// than the shortest debounce and far shorter than the shortest interval, so
+	// a due run starts within one poll of the moment it became due.
 	pollInterval = 5 * time.Second
 	// runTimeout bounds one sync, including the remote round trips.
 	runTimeout = 5 * time.Minute
@@ -405,11 +405,11 @@ func (engine *Engine) oldestPendingChange(ctx context.Context) (*time.Time, erro
 }
 
 // planAnchor is the moment the interval or cron plan counts from: the last
-// successful sync, or a later attempt, because a failed run waits for the next
-// scheduled moment instead of retrying on the next poll. A device that has
-// never synced has the zero time, which puts the first plan moment in the past
-// so the first run is due at once. The result is in the location of the wall
-// clock a cron expression is written in.
+// successful sync, or a later attempt, so a failed run does not become due
+// again on every poll while its remote is down; pending changes still retry on
+// their own debounce. A device that has never synced has the zero time, which
+// puts the first plan moment in the past so the first run is due at once. The
+// result is in the location of the wall clock a cron expression is written in.
 func planAnchor(state storage.SyncStateRecord, lastAttempt time.Time, location *time.Location) time.Time {
 	anchor := time.Time{}
 	if state.LastSyncedAt != nil {
