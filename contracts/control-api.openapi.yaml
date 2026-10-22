@@ -6196,12 +6196,12 @@ components:
             - type: "null"
         preparation:
           description: |
-            Runtime state, never stored. Core prepares a Core ML installation
-            as soon as the policy selects it, and at startup when the policy
-            already uses it: the worker starts, compiles the model for this
-            device and warms it up. Null for every other installation,
-            including CPU installations, which still start on their first
-            request.
+            Runtime state, never stored. Core prepares a Core ML or DirectML
+            installation as soon as the policy selects it, and at startup when
+            the policy already uses it: the worker starts, loads the model
+            (Core ML compiles it for this device) and warms it up. Null for
+            every other installation, including CPU installations, which still
+            start on their first request.
           oneOf:
             - $ref: "#/components/schemas/PrivacyModelPreparation"
             - type: "null"

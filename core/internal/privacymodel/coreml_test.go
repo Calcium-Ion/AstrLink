@@ -198,7 +198,7 @@ func TestLocalProbeOffersCoreMLVariantsForStaticFP16Models(t *testing.T) {
 	assertVariantIDs(t, probe.Variants,
 		"coreml_fp16_gpu", "coreml_fp16_ane", "cpu_int8")
 	for index, variant := range probe.Variants[:2] {
-		if want := coreMLEstimatedRAM(variant.BytesTotal, coreMLVariantChoices[index].ramMultiplier); variant.EstimatedRAMBytes != want {
+		if want := acceleratedEstimatedRAM(variant.BytesTotal, coreMLVariantChoices[index].ramMultiplier); variant.EstimatedRAMBytes != want {
 			t.Fatalf("%s estimated RAM=%d, want %d", variant.ID, variant.EstimatedRAMBytes, want)
 		}
 		if !variant.Supported || variant.UnsupportedReason != nil || variant.Recommended ||
@@ -297,7 +297,21 @@ func TestLocalProbeListsCoreMLVariantsAsUnsupportedBeforeMacOS26(t *testing.T) {
 }
 
 func TestLocalProbeKeepsUnfitFP16ModelsUnsupported(t *testing.T) {
-	setLocalCoreMLSupport(t, coreMLSupported)
+	for accelerator, enable := range localAccelerators {
+		t.Run(accelerator, func(t *testing.T) {
+			enable(t)
+			testLocalProbeKeepsUnfitFP16ModelsUnsupported(t)
+		})
+	}
+}
+
+// localAccelerators turns on each accelerated execution provider alone.
+var localAccelerators = map[string]func(*testing.T){
+	"coreml":   func(t *testing.T) { setLocalCoreMLSupport(t, coreMLSupported) },
+	"directml": func(t *testing.T) { setLocalDirectMLSupport(t, true) },
+}
+
+func testLocalProbeKeepsUnfitFP16ModelsUnsupported(t *testing.T) {
 	for name, fixture := range map[string]struct {
 		inputs [][]byte
 		pad    bool
@@ -332,8 +346,16 @@ func TestLocalProbeKeepsUnfitFP16ModelsUnsupported(t *testing.T) {
 	}
 }
 
-func TestLocalProbeOffersCoreMLOnlyForFloatLogits(t *testing.T) {
-	setLocalCoreMLSupport(t, coreMLSupported)
+func TestLocalProbeOffersAcceleratedVariantsOnlyForFloatLogits(t *testing.T) {
+	for accelerator, enable := range localAccelerators {
+		t.Run(accelerator, func(t *testing.T) {
+			enable(t)
+			testLocalProbeOffersAcceleratedVariantsOnlyForFloatLogits(t)
+		})
+	}
+}
+
+func testLocalProbeOffersAcceleratedVariantsOnlyForFloatLogits(t *testing.T) {
 	const onnxElementTypeFloat16 = 10
 	for name, output := range map[string][]byte{
 		"float16 logits":   onnxValueInfo("logits", onnxElementTypeFloat16, 1, 512, 21),
@@ -377,6 +399,26 @@ func TestExecutionValidationMatchesTheWorkerContract(t *testing.T) {
 	cpu := &normalizedExecution{Provider: executionProviderCPU, StaticSequenceLength: 512}
 	if err := validateExecution(cpu, contract.PrivacyModelAdapterHFToken, 512); err != nil {
 		t.Fatalf("cpu: %v", err)
+	}
+	directML := &normalizedExecution{Provider: executionProviderDirectML, StaticSequenceLength: 512, PadTokenID: 1}
+	if err := validateExecution(directML, contract.PrivacyModelAdapterHFToken, 512); err != nil {
+		t.Fatalf("directml: %v", err)
+	}
+	units := coreMLComputeUnitsCPUAndGPU
+	for name, edit := range map[string]func(*normalizedExecution){
+		"directml with format": func(execution *normalizedExecution) { execution.ModelFormat = &format },
+		"directml with units":  func(execution *normalizedExecution) { execution.ComputeUnits = &units },
+		"directml length":      func(execution *normalizedExecution) { execution.StaticSequenceLength = 256 },
+		"directml large pad":   func(execution *normalizedExecution) { execution.PadTokenID = maxPadTokenID + 1 },
+	} {
+		execution := *directML
+		edit(&execution)
+		if validateExecution(&execution, contract.PrivacyModelAdapterHFToken, 512) == nil {
+			t.Fatalf("%s accepted: %#v", name, execution)
+		}
+	}
+	if validateExecution(directML, contract.PrivacyModelAdapterOpenAIBIOES, 512) == nil {
+		t.Fatal("openai_bioes_viterbi accepted DirectML")
 	}
 	if err := validateExecution(nil, contract.PrivacyModelAdapterOpenAIBIOES, 512); err != nil {
 		t.Fatalf("absent execution: %v", err)
@@ -459,11 +501,16 @@ func TestReadONNXGraphIOSkipsInitializersAndRejectsTruncation(t *testing.T) {
 	}
 }
 
+// setLocalCoreMLSupport also turns DirectML off, so the Core ML tests see
+// the same variants on every platform.
 func setLocalCoreMLSupport(t *testing.T, support coreMLSupport) {
 	t.Helper()
 	previous := localCoreMLSupport
 	localCoreMLSupport = func() coreMLSupport { return support }
 	t.Cleanup(func() { localCoreMLSupport = previous })
+	previousDirectML := localDirectMLSupport
+	localDirectMLSupport = func() bool { return false }
+	t.Cleanup(func() { localDirectMLSupport = previousDirectML })
 }
 
 func assertVariantIDs(t *testing.T, variants []contract.PrivacyModelVariant, ids ...string) {
