@@ -26,6 +26,18 @@ const (
 	astrLinkGuardDecoderContract      = "bio-offset-consistency-v1"
 	astrLinkGuardSpanContractField    = "astrlink_guard_span_contract"
 	astrLinkGuardSpanContract         = "existing-ip-and-dynamic-url-v1"
+
+	// The FP16 build is a single ONNX file with static 1x512 inputs and
+	// float32 logits, without external data. Every accelerated variant
+	// installs the same files and differs only in its execution block.
+	astrLinkGuardFP16Folder = "fp16"
+	astrLinkGuardFP16Model  = "model_fp16_static512.onnx"
+	astrLinkGuardFP16Bytes  = 75_462_203
+
+	// The tokenizer of every release so far pads with <pad>, id 1. A release
+	// with another tokenizer has its pad id read from the file instead.
+	astrLinkGuardTokenizerSHA256 = "0cf3b235ef125658015a6c8026a5fe6f28088bf825101a990ec18a10200feef4"
+	astrLinkGuardPadTokenID      = 1
 )
 
 // Guard labels in id2label order; each label is its own canonical kind.
@@ -37,55 +49,141 @@ var astrLinkGuardKinds = [...]contract.CanonicalKind{
 	contract.CanonicalKindDate, contract.CanonicalKindPerson,
 }
 
+// astrLinkGuardCatalogEntry is the pinned release as this system offers it.
 func astrLinkGuardCatalogEntry() contract.PrivacyModelCatalogItem {
-	version := astrLinkGuardVersion
+	item := astrLinkGuardPinnedEntry()
+	item.Variants = offeredAstrLinkGuardVariants(item.Variants)
+	return item
+}
+
+// astrLinkGuardPinnedEntry is the pinned release with every variant it has
+// on any system. Installations are checked against it wherever they load.
+// The pinned 0.1.2 has no FP16 build; newer releases can offer one.
+func astrLinkGuardPinnedEntry() contract.PrivacyModelCatalogItem {
+	return astrLinkGuardEntry(astrLinkGuardRevision, astrLinkGuardVersion, false)
+}
+
+func astrLinkGuardEntry(revision, version string, fp16 bool) contract.PrivacyModelCatalogItem {
 	return contract.PrivacyModelCatalogItem{
 		ID: CatalogAstrLinkGuard, Name: "AstrLink Guard",
 		Summary:  "AstrLink's own compact Chinese and English privacy model, tuned for prompts and code. Detects personal information, credentials, IP addresses and URLs locally.",
 		Source:   contract.PrivacyModelCatalogSourceOfficial,
 		RepoID:   astrLinkGuardRepoID,
-		Revision: astrLinkGuardRevision, Version: &version,
+		Revision: revision, Version: &version,
 		License: "Apache-2.0", Languages: []string{"zh", "en"},
 		Adapter: contract.PrivacyModelAdapterHFToken, Recommended: true,
-		Variants: []contract.PrivacyModelVariant{
-			{
-				ID: "cpu_int8", Name: "CPU INT8", Quantization: "int8",
-				BytesTotal: 38_971_636, EstimatedRAMBytes: 268_435_456,
-				Recommended: true, Supported: true,
-			},
-			{
-				ID: "cpu_fp32", Name: "CPU FP32", Quantization: "fp32",
-				BytesTotal: 149_179_699, EstimatedRAMBytes: 402_653_184,
-				Supported: true,
-			},
-		},
+		Variants: astrLinkGuardVariants(fp16),
 	}
 }
 
+// astrLinkGuardVariants lists the CPU variants and, with fp16, one variant
+// per accelerated choice of any system, under the ids and names local FP16
+// imports use. INT8 on the CPU stays the recommended variant.
+func astrLinkGuardVariants(fp16 bool) []contract.PrivacyModelVariant {
+	variants := []contract.PrivacyModelVariant{
+		{
+			ID: "cpu_int8", Name: "CPU INT8", Quantization: "int8",
+			BytesTotal: 38_971_636, EstimatedRAMBytes: 268_435_456,
+			Recommended: true, Supported: true,
+		},
+		{
+			ID: "cpu_fp32", Name: "CPU FP32", Quantization: "fp32",
+			BytesTotal: 149_179_699, EstimatedRAMBytes: 402_653_184,
+			Supported: true,
+		},
+	}
+	if !fp16 {
+		return variants
+	}
+	for _, choice := range allAcceleratedChoices() {
+		variants = append(variants, contract.PrivacyModelVariant{
+			ID: choice.id, Name: choice.name, Quantization: "f16",
+			BytesTotal: astrLinkGuardFP16Bytes,
+			// Every release keeps the estimate of the pin, which its
+			// installations are checked against.
+			EstimatedRAMBytes: acceleratedEstimatedRAM(astrLinkGuardFP16Bytes, choice.ramMultiplier),
+			Supported:         true,
+		})
+	}
+	return variants
+}
+
+// offeredAstrLinkGuardVariants keeps the accelerated variants this system
+// offers: Core ML on Apple silicon, listed as unsupported before macOS 26,
+// and DirectML on Windows x64 from build 19041. The CPU variants stay.
+func offeredAstrLinkGuardVariants(
+	variants []contract.PrivacyModelVariant,
+) []contract.PrivacyModelVariant {
+	choices, unsupported := localAcceleratedChoices()
+	offered := make(map[string]bool, len(choices))
+	for _, choice := range choices {
+		offered[choice.id] = true
+	}
+	result := make([]contract.PrivacyModelVariant, 0, len(variants))
+	for _, variant := range variants {
+		if _, accelerated := astrLinkGuardAccelerated(variant.ID); accelerated {
+			if !offered[variant.ID] {
+				continue
+			}
+			if unsupported != nil {
+				variant.Supported = false
+				variant.UnsupportedReason = cloneString(unsupported)
+			}
+		}
+		result = append(result, variant)
+	}
+	return result
+}
+
 // Each variant is a self-contained folder; releases keep this layout and
-// change only file contents.
+// change only file contents. The accelerated variants share fp16/.
 func astrLinkGuardLayout(variant string) (string, string, bool) {
 	switch variant {
 	case "cpu_int8":
 		return "int8", "model_int8.onnx", true
 	case "cpu_fp32":
 		return "fp32", "model.onnx", true
-	default:
-		return "", "", false
 	}
+	if _, accelerated := astrLinkGuardAccelerated(variant); accelerated {
+		return astrLinkGuardFP16Folder, astrLinkGuardFP16Model, true
+	}
+	return "", "", false
 }
 
-func astrLinkGuardFolderFiles(model string) []string {
-	return []string{
-		model, model + "_data",
-		"config.json", "tokenizer.json", "tokenizer_config.json",
+// astrLinkGuardAccelerated reports whether a variant runs the FP16 build.
+func astrLinkGuardAccelerated(variant string) (acceleratedChoice, bool) {
+	for _, choice := range allAcceleratedChoices() {
+		if choice.id == variant {
+			return choice, true
+		}
 	}
+	return acceleratedChoice{}, false
+}
+
+// astrLinkGuardFolderFiles are the files a variant installs from its folder.
+// The CPU exports keep their weights in external data; the FP16 build does
+// not.
+func astrLinkGuardFolderFiles(variant string) []string {
+	_, model, _ := astrLinkGuardLayout(variant)
+	files := []string{model}
+	if _, accelerated := astrLinkGuardAccelerated(variant); !accelerated {
+		files = append(files, model+"_data")
+	}
+	return append(files, "config.json", "tokenizer.json", "tokenizer_config.json")
 }
 
 func astrLinkGuardRuntime(variant string) runtimeSpec {
 	folder, model, _ := astrLinkGuardLayout(variant)
 	runtime := hfRuntime(folder + "/" + model)
-	runtime.externalData = []string{folder + "/" + model + "_data"}
+	if choice, accelerated := astrLinkGuardAccelerated(variant); accelerated {
+		// The execution block a local import of the FP16 build writes.
+		execution := choice.execution
+		execution.StaticSequenceLength = runtime.window
+		execution.PadTokenID = astrLinkGuardPadTokenID
+		runtime.execution = cloneExecution(&execution)
+	} else {
+		runtime.externalData = []string{folder + "/" + model + "_data"}
+	}
 	runtime.tokenizerPath = folder + "/tokenizer.json"
 	runtime.configPath = folder + "/config.json"
 	tokenTypeIDs := "token_type_ids"
@@ -96,7 +194,7 @@ func astrLinkGuardRuntime(variant string) runtimeSpec {
 func astrLinkGuardAssets(variant string) []Asset {
 	shared := []Asset{
 		{Path: "config.json", Size: 1_804, SHA256: "2c20003590d642e273c03c4c7c82d9849fa75f64bf29a71ec0a0c9a20ba4a150"},
-		{Path: "tokenizer.json", Size: 1_502_881, SHA256: "0cf3b235ef125658015a6c8026a5fe6f28088bf825101a990ec18a10200feef4"},
+		{Path: "tokenizer.json", Size: 1_502_881, SHA256: astrLinkGuardTokenizerSHA256},
 		{Path: "tokenizer_config.json", Size: 205, SHA256: "3a7cf4d70bb7c0376f18cc6ad23c143853de5b4478084c414d5dbbd35ea5c589"},
 	}
 	var assets []Asset
@@ -112,7 +210,12 @@ func astrLinkGuardAssets(variant string) []Asset {
 			{Path: "model.onnx_data", Size: 147_443_712, SHA256: "2298b89ea747a212820abb81260027b2bc6383fa6615277e24546e535031b734"},
 		}
 	default:
-		return nil
+		if _, accelerated := astrLinkGuardAccelerated(variant); !accelerated {
+			return nil
+		}
+		assets = []Asset{
+			{Path: astrLinkGuardFP16Model, Size: 73_945_956, SHA256: "ade35d3d5dbec10860d3cea5b25ad0facb27fa59c0e6547d91598afaa0012af6"},
+		}
 	}
 	folder, _, _ := astrLinkGuardLayout(variant)
 	result := make([]Asset, 0, len(assets)+len(shared)+1)

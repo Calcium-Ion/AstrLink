@@ -198,37 +198,55 @@ type acceleratedChoice struct {
 func localAcceleratedChoices() (choices []acceleratedChoice, unsupported *string) {
 	switch support := localCoreMLSupport(); support {
 	case coreMLSupported, coreMLRequiresMacOS26:
-		format := coreMLModelFormatMLProgram
-		for _, choice := range coreMLVariantChoices {
-			units := choice.computeUnits
-			choices = append(choices, acceleratedChoice{
-				id:            "coreml_fp16_" + choice.suffix,
-				name:          choice.name,
-				ramMultiplier: choice.ramMultiplier,
-				execution: normalizedExecution{
-					Provider:     executionProviderCoreML,
-					ModelFormat:  &format,
-					ComputeUnits: &units,
-				},
-			})
-		}
 		if support == coreMLRequiresMacOS26 {
 			reason := unsupportedReasonRequiresMacOS26
 			unsupported = &reason
 		}
-		return choices, unsupported
+		return coreMLAcceleratedChoices(), unsupported
 	}
 	if localDirectMLSupport() {
-		for _, choice := range directMLVariantChoices {
-			choices = append(choices, acceleratedChoice{
-				id:            "directml_fp16_" + choice.suffix,
-				name:          choice.name,
-				ramMultiplier: choice.ramMultiplier,
-				execution:     normalizedExecution{Provider: executionProviderDirectML},
-			})
-		}
+		return directMLAcceleratedChoices(), nil
 	}
-	return choices, nil
+	return nil, nil
+}
+
+// allAcceleratedChoices lists the accelerated choices of every platform.
+// Catalog installations are checked against it, so one that loads on
+// another system keeps its provenance; the worker decides whether it runs.
+func allAcceleratedChoices() []acceleratedChoice {
+	return append(coreMLAcceleratedChoices(), directMLAcceleratedChoices()...)
+}
+
+func coreMLAcceleratedChoices() []acceleratedChoice {
+	choices := make([]acceleratedChoice, 0, len(coreMLVariantChoices))
+	for _, choice := range coreMLVariantChoices {
+		format := coreMLModelFormatMLProgram
+		units := choice.computeUnits
+		choices = append(choices, acceleratedChoice{
+			id:            "coreml_fp16_" + choice.suffix,
+			name:          choice.name,
+			ramMultiplier: choice.ramMultiplier,
+			execution: normalizedExecution{
+				Provider:     executionProviderCoreML,
+				ModelFormat:  &format,
+				ComputeUnits: &units,
+			},
+		})
+	}
+	return choices
+}
+
+func directMLAcceleratedChoices() []acceleratedChoice {
+	choices := make([]acceleratedChoice, 0, len(directMLVariantChoices))
+	for _, choice := range directMLVariantChoices {
+		choices = append(choices, acceleratedChoice{
+			id:            "directml_fp16_" + choice.suffix,
+			name:          choice.name,
+			ramMultiplier: choice.ramMultiplier,
+			execution:     normalizedExecution{Provider: executionProviderDirectML},
+		})
+	}
+	return choices
 }
 
 // expandLocalAcceleratedVariants replaces each FP16 entry that is

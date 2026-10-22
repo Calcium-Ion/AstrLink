@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -23,6 +24,10 @@ const (
 var (
 	releaseTagPattern  = regexp.MustCompile(`^v(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$`)
 	errReleaseMismatch = errors.New("privacy model release does not match")
+	// errReleaseFilesDisagree marks release files whose checksums, Hub blob
+	// metadata and contents disagree, unlike a Hub that cannot be reached.
+	// It is still ErrRemoteMetadata to every caller.
+	errReleaseFilesDisagree = fmt.Errorf("%w: release files disagree", ErrRemoteMetadata)
 )
 
 type catalogRelease struct {
@@ -192,9 +197,7 @@ func (registry *Registry) resolveAstrLinkGuardRelease(
 		if !wantedTag {
 			wantedSHA = wanted
 		}
-		release, err := registry.fetchAstrLinkGuardRelease(
-			ctx, pinned, tag, wantedSHA,
-		)
+		release, err := registry.fetchAstrLinkGuardRelease(ctx, tag, wantedSHA)
 		switch {
 		case err == nil:
 			return release, nil
@@ -253,9 +256,15 @@ func (registry *Registry) astrLinkGuardTags(ctx context.Context) ([]string, erro
 // fetchAstrLinkGuardRelease pins every file from the per-folder checksums,
 // cross-checked against the Hub's blob metadata, and rejects releases whose
 // labels or decoding contracts this build cannot run.
+//
+// The int8/ and fp32/ folders are required. The fp16/ folder is optional:
+// releases before 0.1.3 have none, and one that fails any check (checksums,
+// Hub metadata, config) drops only the accelerated variants, so a broken
+// FP16 upload never takes the CPU variants down with it. A Hub that cannot
+// be reached still fails the whole check, which is retried later, instead
+// of caching a release without its FP16 build.
 func (registry *Registry) fetchAstrLinkGuardRelease(
 	ctx context.Context,
-	pinned catalogRelease,
 	tag string,
 	wantedSHA string,
 ) (catalogRelease, error) {
@@ -293,18 +302,27 @@ func (registry *Registry) fetchAstrLinkGuardRelease(
 		Path: astrLinkGuardLicense, Size: int64(len(licenseDocument)),
 		SHA256: sha256Hex(licenseDocument),
 	}
-	item := copyCatalogItem(pinned.item)
-	item.Revision = metadata.SHA
-	version := tag[1:]
-	item.Version = &version
-	plans := make(map[string]variantPlan, len(item.Variants))
-	for index := range item.Variants {
-		variant := &item.Variants[index]
-		assets, err := registry.fetchAstrLinkGuardAssets(ctx, &metadata, variant.ID)
-		if err != nil {
-			return catalogRelease{}, err
+	item := astrLinkGuardEntry(metadata.SHA, tag[1:], true)
+	offered := offeredAstrLinkGuardVariants(item.Variants)
+	item.Variants = make([]contract.PrivacyModelVariant, 0, len(offered))
+	folders := make(map[string]releaseFolder, 3)
+	plans := make(map[string]variantPlan, len(offered))
+	for _, variant := range offered {
+		name, _, _ := astrLinkGuardLayout(variant.ID)
+		folder, fetched := folders[name]
+		if !fetched {
+			folder = registry.fetchAstrLinkGuardFolder(ctx, &metadata, variant.ID)
+			folders[name] = folder
 		}
-		assets = append(assets, license)
+		if folder.err != nil {
+			if name == astrLinkGuardFP16Folder &&
+				(errors.Is(folder.err, ErrUnsupportedModel) ||
+					errors.Is(folder.err, errReleaseFilesDisagree)) {
+				continue
+			}
+			return catalogRelease{}, folder.err
+		}
+		assets := append(copyAssets(folder.assets), license)
 		var total int64
 		for _, asset := range assets {
 			if total > contract.MaxPrivacyModelByteCount-asset.Size {
@@ -313,9 +331,16 @@ func (registry *Registry) fetchAstrLinkGuardRelease(
 			total += asset.Size
 		}
 		variant.BytesTotal = total
+		item.Variants = append(item.Variants, variant)
+		if !variant.Supported {
+			continue
+		}
+		runtime := astrLinkGuardRuntime(variant.ID)
+		if runtime.execution != nil {
+			runtime.execution.PadTokenID = folder.padTokenID
+		}
 		plans[variant.ID] = variantPlan{
-			variant: *variant, assets: assets,
-			runtime: astrLinkGuardRuntime(variant.ID),
+			variant: variant, assets: assets, runtime: runtime,
 		}
 	}
 	for id, plan := range plans {
@@ -325,26 +350,81 @@ func (registry *Registry) fetchAstrLinkGuardRelease(
 	return catalogRelease{item: item, plans: plans}, nil
 }
 
+// releaseFolder is one checked variant folder of a release.
+type releaseFolder struct {
+	assets []Asset
+	// padTokenID is read from the tokenizer for the FP16 build.
+	padTokenID int
+	err        error
+}
+
+func (registry *Registry) fetchAstrLinkGuardFolder(
+	ctx context.Context,
+	metadata *hfModelMetadata,
+	variant string,
+) releaseFolder {
+	assets, checksums, err := registry.fetchAstrLinkGuardAssets(ctx, metadata, variant)
+	if err != nil {
+		return releaseFolder{err: err}
+	}
+	folder := releaseFolder{assets: assets}
+	if _, accelerated := astrLinkGuardAccelerated(variant); accelerated {
+		folder.padTokenID, folder.err = registry.fetchAstrLinkGuardPadTokenID(
+			ctx, metadata, checksums["tokenizer.json"],
+		)
+	}
+	return folder
+}
+
+// fetchAstrLinkGuardPadTokenID knows the pad id of the tokenizer every
+// release so far ships, and reads any other tokenizer from the release.
+func (registry *Registry) fetchAstrLinkGuardPadTokenID(
+	ctx context.Context,
+	metadata *hfModelMetadata,
+	checksum releaseChecksum,
+) (int, error) {
+	if checksum.SHA256 == astrLinkGuardTokenizerSHA256 {
+		return astrLinkGuardPadTokenID, nil
+	}
+	if checksum.Size > maxProbeJSONAssetBytes {
+		return 0, ErrUnsupportedModel
+	}
+	document, err := registry.fetchReleaseFile(
+		ctx, metadata, astrLinkGuardFP16Folder+"/tokenizer.json", checksum.Size,
+	)
+	if err != nil {
+		return 0, err
+	}
+	if sha256Hex(document) != checksum.SHA256 {
+		return 0, errReleaseFilesDisagree
+	}
+	padTokenID, ok := tokenizerPadTokenID(document)
+	if !ok {
+		return 0, ErrUnsupportedModel
+	}
+	return padTokenID, nil
+}
+
 func (registry *Registry) fetchAstrLinkGuardAssets(
 	ctx context.Context,
 	metadata *hfModelMetadata,
 	variant string,
-) ([]Asset, error) {
-	folder, model, ok := astrLinkGuardLayout(variant)
+) ([]Asset, map[string]releaseChecksum, error) {
+	folder, _, ok := astrLinkGuardLayout(variant)
 	if !ok {
-		return nil, ErrUnsupportedModel
+		return nil, nil, ErrUnsupportedModel
 	}
 	document, err := registry.fetchReleaseFile(
 		ctx, metadata, folder+"/"+releaseChecksumsName, maxReleaseChecksumBytes,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var checksums map[string]releaseChecksum
 	if json.Unmarshal(document, &checksums) != nil {
-		return nil, ErrUnsupportedModel
+		return nil, nil, ErrUnsupportedModel
 	}
-	files := astrLinkGuardFolderFiles(model)
+	files := astrLinkGuardFolderFiles(variant)
 	assets := make([]Asset, 0, len(files)+1)
 	for _, name := range files {
 		checksum, exists := checksums[name]
@@ -353,10 +433,10 @@ func (registry *Registry) fetchAstrLinkGuardAssets(
 			SHA256: checksum.SHA256,
 		}
 		if !exists || !validPinnedAsset(asset) {
-			return nil, ErrUnsupportedModel
+			return nil, nil, ErrUnsupportedModel
 		}
 		if !siblingMatchesAsset(metadata.Siblings, asset) {
-			return nil, ErrRemoteMetadata
+			return nil, nil, errReleaseFilesDisagree
 		}
 		assets = append(assets, asset)
 	}
@@ -364,15 +444,15 @@ func (registry *Registry) fetchAstrLinkGuardAssets(
 		ctx, metadata, folder+"/config.json", maxConfigBytes,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if sha256Hex(config) != checksums["config.json"].SHA256 {
-		return nil, ErrRemoteMetadata
+		return nil, nil, errReleaseFilesDisagree
 	}
 	if err := validateAstrLinkGuardConfig(config); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return assets, nil
+	return assets, checksums, nil
 }
 
 func (registry *Registry) fetchReleaseFile(
@@ -393,7 +473,7 @@ func (registry *Registry) fetchReleaseFile(
 		return nil, err
 	}
 	if !pinSibling(metadata, filename, document) {
-		return nil, ErrRemoteMetadata
+		return nil, errReleaseFilesDisagree
 	}
 	return document, nil
 }
@@ -421,23 +501,39 @@ func pinnedAstrLinkGuardRelease() catalogRelease {
 	item := astrLinkGuardCatalogEntry()
 	plans := make(map[string]variantPlan, len(item.Variants))
 	for _, variant := range item.Variants {
+		if !variant.Supported {
+			continue
+		}
 		if plan, exists := builtinVariantPlan(item.RepoID, item.Revision, variant.ID); exists {
+			plan.item = copyCatalogItem(item)
 			plans[variant.ID] = plan
 		}
 	}
 	return catalogRelease{item: item, plans: plans}
 }
 
-// astrLinkGuardReleaseTemplate describes any Guard release offline: releases
-// keep the pinned runtime and file layout, while sizes and hashes vary.
+// astrLinkGuardReleaseTemplate describes any other Guard release offline:
+// releases keep the pinned runtime and file layout, while sizes and hashes
+// vary. It knows the FP16 variants even while the pin has none, because a
+// newer release can offer them.
 func astrLinkGuardReleaseTemplate(
 	repoID, revision, variantID string,
 ) (variantPlan, bool) {
-	if repoID != astrLinkGuardRepoID ||
+	if repoID != astrLinkGuardRepoID || revision == astrLinkGuardRevision ||
 		contract.ValidatePrivacyModelRevision(revision) != nil {
 		return variantPlan{}, false
 	}
-	return builtinVariantPlan(repoID, astrLinkGuardRevision, variantID)
+	item := astrLinkGuardEntry(astrLinkGuardRevision, astrLinkGuardVersion, true)
+	for _, variant := range item.Variants {
+		if variant.ID == variantID {
+			return variantPlan{
+				item: item, variant: variant,
+				assets:  astrLinkGuardAssets(variantID),
+				runtime: astrLinkGuardRuntime(variantID),
+			}, true
+		}
+	}
+	return variantPlan{}, false
 }
 
 func parseReleaseVersion(tag string) (releaseVersion, bool) {
