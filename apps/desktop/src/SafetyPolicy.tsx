@@ -518,6 +518,15 @@ function variantName(id: string, name: string): string {
   }
 }
 
+// The catalog recommends INT8 on the CPU, so its Core ML GPU variant does
+// not also claim to be recommended, as it does next to the Neural Engine one
+// in a Core ML import.
+function catalogVariantName(variant: PrivacyModelVariant): string {
+  return variant.id === "coreml_fp16_gpu"
+    ? i18n.t("safety.coreMLVariantGPUInCatalog")
+    : variantName(variant.id, variant.name);
+}
+
 // What happens when the policy starts using an accelerated variant: Core ML
 // compiles the model for this Mac, DirectML loads it onto the GPU.
 function enableHint(variantID: string): string | null {
@@ -4387,6 +4396,8 @@ export function SafetyPolicy({
                         ? switchTarget
                         : null;
                     const variantSelectID = `privacy-catalog-variant-${model.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+                    const variantHint =
+                      variant === null ? null : enableHint(variant.id);
                     return (
                       <Panel asChild className="flex flex-col" key={model.id}>
                         <article>
@@ -4474,10 +4485,7 @@ export function SafetyPolicy({
                                       key={candidate.id}
                                       value={candidate.id}
                                     >
-                                      {variantName(
-                                        candidate.id,
-                                        candidate.name,
-                                      )}
+                                      {catalogVariantName(candidate)}
                                       {candidate.recommended
                                         ? t("safety.recommended")
                                         : ""}
@@ -4487,6 +4495,11 @@ export function SafetyPolicy({
                                 </SelectContent>
                               </Select>
                             </Field>
+                            {variantHint === null ? null : (
+                              <FormMessage tone="notice">
+                                {variantHint}
+                              </FormMessage>
+                            )}
                           </div>
                           <PanelFooter
                             actions={

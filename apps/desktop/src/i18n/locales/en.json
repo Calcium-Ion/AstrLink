@@ -1808,6 +1808,7 @@
     "unsupported": " · not supported now",
     "unsupportedRequiresMacOS26": " · requires macOS 26 or later",
     "coreMLVariantGPU": "Core ML FP16 · GPU (recommended)",
+    "coreMLVariantGPUInCatalog": "Core ML FP16 · GPU",
     "coreMLVariantNeuralEngine": "Core ML FP16 · Neural Engine (slower)",
     "coreMLVariantAllUnits": "Core ML FP16 · All units",
     "coreMLCompileOnEnable": "When you start using a Core ML version, AstrLink compiles it for this Mac right away and shows the progress. The first time takes about 15–25 seconds; later starts are fast.",
