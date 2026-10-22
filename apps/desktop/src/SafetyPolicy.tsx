@@ -83,7 +83,9 @@ import {
   compareReleaseVersions,
   DEFAULT_PRIVACY_RESTORE_SETTINGS,
   defaultPrivacyKindRules,
+  isAcceleratedVariantID,
   isCoreMLVariantID,
+  isDirectMLVariantID,
   isResourceHeavyVariant,
   localModelActive,
   MAX_PRIVACY_ALLOWLIST_RULES,
@@ -498,8 +500,9 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-// Core names variants in English. The Core ML variants it offers are shown
-// in the user's language, by id; any other id keeps the name Core sent.
+// Core names variants in English. The Core ML and DirectML variants it
+// offers are shown in the user's language, by id; any other id keeps the
+// name Core sent.
 function variantName(id: string, name: string): string {
   switch (id) {
     case "coreml_fp16_gpu":
@@ -508,9 +511,23 @@ function variantName(id: string, name: string): string {
       return i18n.t("safety.coreMLVariantNeuralEngine");
     case "coreml_fp16_all":
       return i18n.t("safety.coreMLVariantAllUnits");
+    case "directml_fp16_gpu":
+      return i18n.t("safety.directMLVariantGPU");
     default:
       return name;
   }
+}
+
+// What happens when the policy starts using an accelerated variant: Core ML
+// compiles the model for this Mac, DirectML loads it onto the GPU.
+function enableHint(variantID: string): string | null {
+  if (isCoreMLVariantID(variantID)) {
+    return i18n.t("safety.coreMLCompileOnEnable");
+  }
+  if (isDirectMLVariantID(variantID)) {
+    return i18n.t("safety.directMLLoadOnEnable");
+  }
+  return null;
 }
 
 function unsupportedVariantSuffix(variant: PrivacyModelVariant): string {
@@ -731,25 +748,29 @@ function LabelMappingDialog({
 }
 
 /**
- * How Core is getting the policy's Core ML model ready on this Mac. While it
- * compiles, the previous detector keeps checking requests, or requests wait.
+ * How Core is getting the policy's accelerated model ready: a Core ML model
+ * compiles for this Mac, a DirectML model loads onto the GPU. Meanwhile the
+ * previous detector keeps checking requests, or requests wait.
  */
 function ModelPreparationNotice({
+  variantID,
   preparation,
   retrying,
   onRetry,
 }: {
+  variantID: string;
   preparation: PrivacyModelPreparation;
   retrying: boolean;
   onRetry: () => void;
 }) {
   const t = useT();
+  const gpu = isDirectMLVariantID(variantID);
   if (preparation.state === "preparing") {
     return (
       <div className="grid gap-0.5" data-testid="model-preparation">
         <LoadingState
           className="justify-start text-xs"
-          label={t("safety.modelCompiling")}
+          label={t(gpu ? "safety.modelLoadingOnGPU" : "safety.modelCompiling")}
         />
         <p className="pl-5.5 text-xs text-muted-foreground">
           {preparation.fallback === "local_model"
@@ -764,7 +785,7 @@ function ModelPreparationNotice({
   if (preparation.state === "ready") {
     return (
       <FormMessage data-testid="model-preparation" tone="success">
-        {t("safety.modelReadyOnMac")}
+        {t(gpu ? "safety.modelReadyOnGPU" : "safety.modelReadyOnMac")}
       </FormMessage>
     );
   }
@@ -778,10 +799,22 @@ function ModelPreparationNotice({
       <div>
         <span>
           {preparation.fallback === "local_model"
-            ? t("safety.modelPrepareFailedLocalFallback")
+            ? t(
+                gpu
+                  ? "safety.modelLoadFailedOnGPULocalFallback"
+                  : "safety.modelPrepareFailedLocalFallback",
+              )
             : preparation.fallback === "regex"
-              ? t("safety.modelPrepareFailedRegexFallback")
-              : t("safety.modelPrepareFailedBlocked")}
+              ? t(
+                  gpu
+                    ? "safety.modelLoadFailedOnGPURegexFallback"
+                    : "safety.modelPrepareFailedRegexFallback",
+                )
+              : t(
+                  gpu
+                    ? "safety.modelLoadFailedOnGPUBlocked"
+                    : "safety.modelPrepareFailedBlocked",
+                )}
         </span>
         <Button
           disabled={retrying}
@@ -878,9 +911,9 @@ function ModelActionDialog({
           <FormMessage tone={heavy ? "warning" : "notice"}>
             {heavy ? t("safety.heavyConfirm") : t("safety.normalConfirm")}
           </FormMessage>
-          {isCoreMLVariantID(installation.variant_id) ? (
+          {enableHint(installation.variant_id) !== null ? (
             <FormMessage tone="notice">
-              {t("safety.coreMLCompileOnEnable")}
+              {enableHint(installation.variant_id)}
             </FormMessage>
           ) : null}
         </>
@@ -997,9 +1030,9 @@ function InstalledModelPicker({
             {t(heavy ? "safety.heavyConfirm" : "safety.normalConfirm")}
           </FormMessage>
         ) : null}
-        {selected && isCoreMLVariantID(selected.variant_id) ? (
+        {selected && enableHint(selected.variant_id) !== null ? (
           <FormMessage tone="notice">
-            {t("safety.coreMLCompileOnEnable")}
+            {enableHint(selected.variant_id)}
           </FormMessage>
         ) : null}
         {error ? <FormMessage tone="error">{error}</FormMessage> : null}
@@ -1633,8 +1666,8 @@ export function SafetyPolicy({
     if (initialView) setWorkspace(initialView);
   }, [initialView]);
 
-  // Downloads report progress, and Core reports when the policy's Core ML
-  // model finishes compiling, only when asked.
+  // Downloads report progress, and Core reports when the policy's
+  // accelerated model is ready, only when asked.
   const pollingIDs = useMemo(
     () =>
       installations
@@ -1733,7 +1766,7 @@ export function SafetyPolicy({
     void load(generation, true);
   };
 
-  // Core reports a preparation only for the policy's Core ML model, and
+  // Core reports a preparation only for the policy's accelerated model, and
   // starts it as the policy changes, so read that model again after a save.
   const syncPreparation = (
     policy: PrivacyPolicyRecord["policy"],
@@ -1773,7 +1806,8 @@ export function SafetyPolicy({
     const previous = record;
     policyMutationVersion.current += 1;
     const nextPolicy = { ...record.policy, ...patch };
-    // Core keeps the previous detector while a Core ML model compiles.
+    // Core keeps the previous detector while an accelerated model gets
+    // ready.
     const unloadsModel =
       patchUnloadsLocalModel(record.policy, patch) &&
       !(
@@ -1781,7 +1815,7 @@ export function SafetyPolicy({
         installations.some(
           (installation) =>
             installation.id === nextPolicy.local_model_id &&
-            isCoreMLVariantID(installation.variant_id),
+            isAcceleratedVariantID(installation.variant_id),
         )
       );
     setRecord({
@@ -2778,6 +2812,12 @@ export function SafetyPolicy({
     probe?.variants.find(
       (variant) => variant.id === probeVariantID && variant.supported,
     ) ?? null;
+  // A system offers one kind of accelerated variant, so one hint covers them.
+  const importHint =
+    probe?.variants
+      .filter((variant) => variant.supported)
+      .map((variant) => enableHint(variant.id))
+      .find((hint) => hint !== null) ?? null;
   const unresolvedCustomLabels =
     probe?.labels.filter(
       (label) =>
@@ -3134,6 +3174,7 @@ export function SafetyPolicy({
                   {activePreparation === null ? null : (
                     <div className="mt-2">
                       <ModelPreparationNotice
+                        variantID={selectedInstallation?.variant_id ?? ""}
                         preparation={activePreparation}
                         retrying={saving}
                         onRetry={retryPreparation}
@@ -4720,6 +4761,7 @@ export function SafetyPolicy({
                             )}
                             {selected && activePreparation !== null ? (
                               <ModelPreparationNotice
+                                variantID={installation.variant_id}
                                 preparation={activePreparation}
                                 retrying={saving}
                                 onRetry={retryPreparation}
@@ -4963,13 +5005,8 @@ export function SafetyPolicy({
                           </SelectContent>
                         </Select>
                       </Label>
-                      {probe.variants.some(
-                        (variant) =>
-                          variant.supported && isCoreMLVariantID(variant.id),
-                      ) ? (
-                        <FormMessage tone="notice">
-                          {t("safety.coreMLCompileOnEnable")}
-                        </FormMessage>
+                      {importHint !== null ? (
+                        <FormMessage tone="notice">{importHint}</FormMessage>
                       ) : null}
 
                       <div className="flex flex-wrap items-center justify-end gap-2">

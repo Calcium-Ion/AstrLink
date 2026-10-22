@@ -2115,6 +2115,249 @@ describe("SafetyPolicy", () => {
     );
   });
 
+  it("names the DirectML variant and notes the GPU load on local import", async () => {
+    const directMLVariant = {
+      id: "directml_fp16_gpu",
+      name: "DirectML FP16 · GPU",
+      quantization: "f16",
+      bytes_total: 74_000_000,
+      estimated_ram_bytes: 370_000_000,
+      recommended: false,
+      supported: true,
+      unsupported_reason: null,
+    } as const;
+    const localProbe = probe({
+      repo_id: "local/model-aaaaaaaaaaaa",
+      requested_revision: revision,
+      name: "Guard FP16",
+      variants: [directMLVariant, catalogModel.variants[0]],
+    });
+    bridgeMocks.probeLocalPrivacyModel.mockResolvedValueOnce(localProbe);
+    await renderPolicy();
+    await openModels();
+    await act(async () => button("本地导入").click());
+    await setInput(
+      '[aria-label="本地模型路径"]',
+      "C:\\models\\guard\\model_fp16_static512.onnx",
+    );
+    await act(async () => {
+      button("检查本地模型").click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain(
+      "开始使用 DirectML 版本时，AstrLink 会立即把模型加载到显卡上并显示进度，一般几秒钟就能完成。",
+    );
+    expect(container.textContent).not.toContain("Core ML");
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '[aria-label="本地模型版本"]',
+    )!;
+    await act(async () => {
+      trigger.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerType: "mouse",
+        }),
+      );
+      await Promise.resolve();
+    });
+    const options = [
+      ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ].map((option) => option.textContent);
+    expect(options).toContain("DirectML FP16 · GPU");
+  });
+
+  function directMLInstallation(
+    overrides: Partial<PrivacyModelInstallation> = {},
+  ): PrivacyModelInstallation {
+    return {
+      ...readyInstallation(),
+      id: customInstallationID,
+      name: "Guard FP16",
+      variant_id: "directml_fp16_gpu",
+      variant_name: "DirectML FP16 · GPU",
+      quantization: "f16",
+      ...overrides,
+    };
+  }
+
+  it("notes the GPU load when a DirectML model is chosen for the policy", async () => {
+    const cpu = readyInstallation();
+    const directML = directMLInstallation();
+    const hint = "开始使用 DirectML 版本时，AstrLink 会立即把模型加载到显卡上";
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        enabled: true,
+        detector: "local_model",
+        local_model_id: cpu.id,
+      }),
+    );
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({
+      items: [cpu, directML],
+    });
+    await renderPolicy();
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>("#privacy-detector-local-model")!
+        .click(),
+    );
+    const picker = () =>
+      document.querySelector('[role="dialog"]')?.textContent ?? "";
+    expect(picker()).not.toContain(hint);
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          `#privacy-model-choice-${directML.id}`,
+        )!
+        .click(),
+    );
+    expect(picker()).toContain(hint);
+    expect(picker()).not.toContain("Core ML");
+    await act(async () => button("取消").click());
+    await settleClosedLayer();
+
+    await openModels();
+    await act(async () => button("已安装 2").click());
+    const useButton = [...container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "用于策略",
+    )!;
+    await act(async () => {
+      useButton.click();
+      await Promise.resolve();
+    });
+    const dialog = document.querySelector('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain(hint);
+  });
+
+  it("shows a spinner while the policy's DirectML model loads onto the GPU, then that it is ready", async () => {
+    vi.useFakeTimers();
+    const directML = directMLInstallation({
+      preparation: { state: "preparing", fallback: "regex" },
+    });
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        enabled: true,
+        detector: "local_model",
+        local_model_id: directML.id,
+      }),
+    );
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({
+      items: [directML],
+    });
+    bridgeMocks.getPrivacyModelInstallation.mockResolvedValueOnce({
+      ...directML,
+      preparation: { state: "ready", fallback: null },
+    });
+    await renderPolicy();
+
+    const notice = () =>
+      container.querySelector('[data-testid="model-preparation"]');
+    expect(
+      notice()?.querySelector('[role="status"][aria-busy="true"]'),
+    ).not.toBeNull();
+    expect(notice()?.textContent).toContain("正在显卡上加载模型…");
+    expect(notice()?.textContent).toContain(
+      "就绪之前，正则规则会继续检查请求。",
+    );
+    expect(notice()?.textContent).not.toContain("Mac");
+    expect(container.textContent).toContain("正在准备本地模型…");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(900);
+      await Promise.resolve();
+    });
+    expect(notice()?.textContent).toBe("已加载到显卡上，可以使用。");
+    expect(container.textContent).not.toContain("正在准备本地模型…");
+  });
+
+  it("explains a failed DirectML preparation without mentioning the Mac", async () => {
+    const directML = directMLInstallation({
+      preparation: { state: "failed", fallback: "local_model" },
+    });
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        enabled: true,
+        detector: "local_model",
+        local_model_id: directML.id,
+      }),
+    );
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({
+      items: [directML],
+    });
+    await renderPolicy();
+
+    const notice = container.querySelector('[data-testid="model-preparation"]');
+    expect(notice?.getAttribute("role")).toBe("alert");
+    expect(notice?.textContent).toBe(
+      "这个模型没能加载到显卡上。之前的本地模型会继续检查请求。重试",
+    );
+  });
+
+  it("keeps the previous model while a newly chosen DirectML model loads", async () => {
+    const cpu = { ...readyInstallation(), preparation: null };
+    const directML = directMLInstallation();
+    bridgeMocks.getPrivacyPolicy.mockResolvedValueOnce(
+      policyRecord({
+        enabled: true,
+        detector: "local_model",
+        local_model_id: cpu.id,
+      }),
+    );
+    bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({
+      items: [cpu, directML],
+    });
+    const pending = deferred<PrivacyPolicyRecord>();
+    bridgeMocks.updatePrivacyPolicy.mockReturnValueOnce(pending.promise);
+    bridgeMocks.getPrivacyModelInstallation.mockResolvedValueOnce({
+      ...directML,
+      preparation: { state: "preparing", fallback: "local_model" },
+    });
+    await renderPolicy();
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>("#privacy-detector-local-model")!
+        .click(),
+    );
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          `#privacy-model-choice-${directML.id}`,
+        )!
+        .click(),
+    );
+    await act(async () => {
+      button("使用所选模型").click();
+      await Promise.resolve();
+    });
+    expect(bridgeMocks.updatePrivacyPolicy).toHaveBeenCalledWith(etag, {
+      detector: "local_model",
+      local_model_id: directML.id,
+    });
+    // Core keeps the previous model, so nothing is being closed.
+    expect(
+      container.querySelector('[data-testid="privacy-model-unloading"]'),
+    ).toBeNull();
+
+    await act(async () => {
+      pending.resolve(
+        policyRecord({
+          enabled: true,
+          detector: "local_model",
+          local_model_id: directML.id,
+        }),
+      );
+      await Promise.resolve();
+    });
+    await flush();
+    await flush();
+    const notice = container.querySelector('[data-testid="model-preparation"]');
+    expect(notice?.textContent).toContain("正在显卡上加载模型…");
+    expect(notice?.textContent).toContain(
+      "就绪之前，之前的本地模型会继续检查请求。",
+    );
+  });
+
   it("shows an in-app confirmation and feedback when deleting a model", async () => {
     const ready = readyInstallation();
     bridgeMocks.listPrivacyModelInstallations.mockResolvedValueOnce({
