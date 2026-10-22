@@ -263,7 +263,8 @@ type PrivacyModelPreparationFallback string
 
 const (
 	// PrivacyModelPreparationPreparing: the worker is starting. A Core ML
-	// model is compiled for this device and warmed up before it is ready.
+	// model is compiled for this device and warmed up before it is ready; a
+	// DirectML model is loaded onto the GPU and warmed up.
 	PrivacyModelPreparationPreparing PrivacyModelPreparationState = "preparing"
 	PrivacyModelPreparationReady     PrivacyModelPreparationState = "ready"
 	PrivacyModelPreparationFailed    PrivacyModelPreparationState = "failed"
@@ -276,9 +277,9 @@ const (
 )
 
 // PrivacyModelPreparation reports how the policy's model is being made ready
-// on this device. Core prepares Core ML installations as soon as the policy
-// selects them; other installations still start on the first request, and
-// report no preparation.
+// on this device. Core prepares Core ML and DirectML installations as soon as
+// the policy selects them; other installations still start on the first
+// request, and report no preparation.
 type PrivacyModelPreparation struct {
 	State    PrivacyModelPreparationState     `json:"state"`
 	Fallback *PrivacyModelPreparationFallback `json:"fallback"`

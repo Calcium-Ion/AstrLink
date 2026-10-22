@@ -23,9 +23,9 @@ const (
 )
 
 type handoverModel struct {
-	id     contract.PrivacyModelID
-	mode   string
-	coreML bool
+	id         contract.PrivacyModelID
+	mode       string
+	preparable bool
 }
 
 type handoverFixture struct {
@@ -39,7 +39,7 @@ func newTestHandover(t *testing.T, models ...handoverModel) *handoverFixture {
 	t.Helper()
 	provider := &testModelProvider{installations: map[contract.PrivacyModelID]InstalledModel{}}
 	modes := map[string]string{}
-	coreML := map[string]bool{}
+	preparable := map[string]bool{}
 	directories := map[contract.PrivacyModelID]string{}
 	for index, model := range models {
 		directory := t.TempDir()
@@ -51,7 +51,7 @@ func newTestHandover(t *testing.T, models ...handoverModel) *handoverFixture {
 			Directory: directory, Identity: identity, ManifestSHA256: manifestSHA256,
 		})
 		modes[directory] = model.mode
-		coreML[directory] = model.coreML
+		preparable[directory] = model.preparable
 		directories[model.id] = directory
 	}
 	config := Config{ExecutablePath: os.Args[0], Model: provider, Timeout: 30 * time.Second}
@@ -59,8 +59,8 @@ func newTestHandover(t *testing.T, models ...handoverModel) *handoverFixture {
 	if err != nil {
 		t.Fatalf("NewHandover: %v", err)
 	}
-	handover.usesCoreML = func(installation InstalledModel) bool {
-		return coreML[installation.Directory]
+	handover.preparable = func(installation InstalledModel) bool {
+		return preparable[installation.Directory]
 	}
 	handover.newClient = func() (*Client, error) {
 		client, err := New(config)
@@ -168,7 +168,7 @@ func clientActive(client *Client) bool {
 func TestHandoverServesWithPreviousModelUntilCoreMLWorkerIsReady(t *testing.T) {
 	fixture := newTestHandover(t,
 		handoverModel{id: handoverCPUModel, mode: "per_text"},
-		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", coreML: true},
+		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", preparable: true},
 	)
 	handover := fixture.handover
 	handover.ApplyPolicy(localModelPolicy(handoverCPUModel))
@@ -204,7 +204,7 @@ func TestHandoverServesWithPreviousModelUntilCoreMLWorkerIsReady(t *testing.T) {
 
 func TestHandoverServesWithPreviousRegexDetectorUntilCoreMLWorkerIsReady(t *testing.T) {
 	fixture := newTestHandover(t,
-		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", coreML: true},
+		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", preparable: true},
 	)
 	handover := fixture.handover
 	regex := contract.DefaultPrivacyPolicy()
@@ -232,7 +232,7 @@ func TestHandoverServesWithPreviousRegexDetectorUntilCoreMLWorkerIsReady(t *test
 func TestHandoverKeepsPreviousModelWhenCoreMLPreparationFails(t *testing.T) {
 	fixture := newTestHandover(t,
 		handoverModel{id: handoverCPUModel, mode: "per_text"},
-		handoverModel{id: handoverCoreMLModel, mode: "startup_fail", coreML: true},
+		handoverModel{id: handoverCoreMLModel, mode: "startup_fail", preparable: true},
 	)
 	handover := fixture.handover
 	handover.ApplyPolicy(localModelPolicy(handoverCPUModel))
@@ -265,7 +265,7 @@ func TestHandoverKeepsPreviousModelWhenCoreMLPreparationFails(t *testing.T) {
 
 func TestHandoverWaitsForCoreMLWorkerWithoutPreviousDetector(t *testing.T) {
 	fixture := newTestHandover(t,
-		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", coreML: true},
+		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", preparable: true},
 	)
 	handover := fixture.handover
 	// As at Core startup: no detector inspected requests before.
@@ -302,7 +302,7 @@ func TestHandoverWaitsForCoreMLWorkerWithoutPreviousDetector(t *testing.T) {
 
 func TestHandoverFailsClosedWhenCoreMLPreparationFailsWithoutPreviousDetector(t *testing.T) {
 	fixture := newTestHandover(t,
-		handoverModel{id: handoverCoreMLModel, mode: "startup_fail", coreML: true},
+		handoverModel{id: handoverCoreMLModel, mode: "startup_fail", preparable: true},
 	)
 	handover := fixture.handover
 	handover.ApplyPolicy(localModelPolicy(handoverCoreMLModel))
@@ -316,7 +316,7 @@ func TestHandoverFailsClosedWhenCoreMLPreparationFailsWithoutPreviousDetector(t 
 
 func TestHandoverStopsPreparationWhenPolicyLeavesModelMode(t *testing.T) {
 	fixture := newTestHandover(t,
-		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", coreML: true},
+		handoverModel{id: handoverCoreMLModel, mode: "ready_gated", preparable: true},
 	)
 	handover := fixture.handover
 	handover.ApplyPolicy(localModelPolicy(handoverCoreMLModel))
@@ -363,7 +363,7 @@ func TestHandoverLeavesCPUModelsToTheirFirstRequest(t *testing.T) {
 	}
 }
 
-func TestInstallationRunsCoreMLReadsTheBoundManifest(t *testing.T) {
+func TestInstallationIsAcceleratedReadsTheBoundManifest(t *testing.T) {
 	directory := t.TempDir()
 	write := func(document string) string {
 		t.Helper()
@@ -374,17 +374,25 @@ func TestInstallationRunsCoreMLReadsTheBoundManifest(t *testing.T) {
 		return hex.EncodeToString(digest[:])
 	}
 	coreML := write(`{"execution":{"provider":"coreml","model_format":"mlprogram","compute_units":"cpu_and_gpu","static_sequence_length":512,"pad_token_id":1}}`)
-	if !installationRunsCoreML(InstalledModel{Directory: directory, ManifestSHA256: coreML}) {
+	if !installationIsAccelerated(InstalledModel{Directory: directory, ManifestSHA256: coreML}) {
 		t.Fatal("a Core ML manifest was not recognized")
 	}
-	if installationRunsCoreML(InstalledModel{Directory: directory, ManifestSHA256: hex.EncodeToString(make([]byte, 32))}) {
+	directML := write(`{"execution":{"provider":"directml","model_format":null,"compute_units":null,"static_sequence_length":512,"pad_token_id":1}}`)
+	if !installationIsAccelerated(InstalledModel{Directory: directory, ManifestSHA256: directML}) {
+		t.Fatal("a DirectML manifest was not recognized")
+	}
+	if installationIsAccelerated(InstalledModel{Directory: directory, ManifestSHA256: hex.EncodeToString(make([]byte, 32))}) {
 		t.Fatal("a manifest that does not match its binding was trusted")
 	}
-	cpu := write(`{"execution":null}`)
-	if installationRunsCoreML(InstalledModel{Directory: directory, ManifestSHA256: cpu}) {
-		t.Fatal("a CPU manifest was taken for Core ML")
+	staticCPU := write(`{"execution":{"provider":"cpu","model_format":null,"compute_units":null,"static_sequence_length":512,"pad_token_id":1}}`)
+	if installationIsAccelerated(InstalledModel{Directory: directory, ManifestSHA256: staticCPU}) {
+		t.Fatal("a static CPU manifest was taken for an accelerated one")
 	}
-	if installationRunsCoreML(InstalledModel{Directory: filepath.Join(directory, "missing"), ManifestSHA256: cpu}) {
-		t.Fatal("a missing installation was taken for Core ML")
+	cpu := write(`{"execution":null}`)
+	if installationIsAccelerated(InstalledModel{Directory: directory, ManifestSHA256: cpu}) {
+		t.Fatal("a CPU manifest was taken for an accelerated one")
+	}
+	if installationIsAccelerated(InstalledModel{Directory: filepath.Join(directory, "missing"), ManifestSHA256: cpu}) {
+		t.Fatal("a missing installation was taken for an accelerated one")
 	}
 }

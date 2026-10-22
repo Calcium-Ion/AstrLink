@@ -424,7 +424,7 @@ func inspectLocalModelAssets(
 	if err != nil {
 		return contract.PrivacyModelProbeResponse{}, nil, ErrUnsupportedModel
 	}
-	variants, plans, err = expandLocalCoreMLVariants(
+	variants, plans, err = expandLocalAcceleratedVariants(
 		ctx, directory, adapter, tokenizerDocument, variants, plans,
 	)
 	if err != nil {
