@@ -11,10 +11,21 @@ import (
 )
 
 const (
-	astrLinkGuardRepoID   = "QuantumNous/astrlink-guard"
-	astrLinkGuardRevision = "33dfcc586f8a50529e98ce5fe2ba46836dbeab8f"
-	astrLinkGuardVersion  = "0.1.2"
-	astrLinkGuardLicense  = "LICENSE"
+	astrLinkGuardRepoID  = "QuantumNous/astrlink-guard"
+	astrLinkGuardLicense = "LICENSE"
+
+	// astrLinkGuardFP16Revision is the commit of tag v0.1.3, the first
+	// release with an fp16/ folder. While it is not a valid commit the pin
+	// stays at 0.1.2, which has no FP16 build.
+	//
+	// TODO(v0.1.3 upload): replace "" with the 40-character commit sha of
+	// tag v0.1.3 on QuantumNous/astrlink-guard.
+	astrLinkGuardFP16Revision = ""
+
+	// 0.1.3 keeps the int8/ and fp32/ files of 0.1.2 and adds fp16/.
+	astrLinkGuardCPURevision = "33dfcc586f8a50529e98ce5fe2ba46836dbeab8f"
+	astrLinkGuardCPUVersion  = "0.1.2"
+	astrLinkGuardFP16Version = "0.1.3"
 
 	// The Hub counts a download only for requests to the repository's root
 	// config.json, which the variant folders never match. This is the first
@@ -40,6 +51,18 @@ const (
 	astrLinkGuardPadTokenID      = 1
 )
 
+// The pinned release, chosen by astrLinkGuardFP16Revision. Tests swap it.
+var astrLinkGuardRevision, astrLinkGuardVersion, astrLinkGuardPinnedFP16 = astrLinkGuardPin(astrLinkGuardFP16Revision)
+
+// astrLinkGuardPin pins 0.1.3 with its FP16 build once its commit is known,
+// and 0.1.2 without one until then.
+func astrLinkGuardPin(fp16Revision string) (revision, version string, fp16 bool) {
+	if contract.ValidatePrivacyModelRevision(fp16Revision) != nil {
+		return astrLinkGuardCPURevision, astrLinkGuardCPUVersion, false
+	}
+	return fp16Revision, astrLinkGuardFP16Version, true
+}
+
 // Guard labels in id2label order; each label is its own canonical kind.
 var astrLinkGuardKinds = [...]contract.CanonicalKind{
 	contract.CanonicalKindEmail, contract.CanonicalKindPhone,
@@ -58,9 +81,8 @@ func astrLinkGuardCatalogEntry() contract.PrivacyModelCatalogItem {
 
 // astrLinkGuardPinnedEntry is the pinned release with every variant it has
 // on any system. Installations are checked against it wherever they load.
-// The pinned 0.1.2 has no FP16 build; newer releases can offer one.
 func astrLinkGuardPinnedEntry() contract.PrivacyModelCatalogItem {
-	return astrLinkGuardEntry(astrLinkGuardRevision, astrLinkGuardVersion, false)
+	return astrLinkGuardEntry(astrLinkGuardRevision, astrLinkGuardVersion, astrLinkGuardPinnedFP16)
 }
 
 func astrLinkGuardEntry(revision, version string, fp16 bool) contract.PrivacyModelCatalogItem {
