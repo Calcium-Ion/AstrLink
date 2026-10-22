@@ -641,6 +641,132 @@ describe("SafetyPolicy", () => {
   });
 
   it.each([
+    {
+      system: "macOS 26",
+      accelerated: [
+        ["coreml_fp16_gpu", "Core ML FP16 · GPU"],
+        ["coreml_fp16_ane", "Core ML FP16 · Neural Engine"],
+      ],
+      reason: null,
+      shown: ["Core ML FP16 · GPU", "Core ML FP16 · 神经网络引擎（较慢）"],
+      choose: "Core ML FP16 · GPU",
+      hint: "开始使用 Core ML 版本时",
+    },
+    {
+      system: "macOS 15",
+      accelerated: [
+        ["coreml_fp16_gpu", "Core ML FP16 · GPU"],
+        ["coreml_fp16_ane", "Core ML FP16 · Neural Engine"],
+      ],
+      reason: "requires_macos_26" as const,
+      shown: [
+        "Core ML FP16 · GPU · 需要 macOS 26 或更高版本",
+        "Core ML FP16 · 神经网络引擎（较慢） · 需要 macOS 26 或更高版本",
+      ],
+      choose: null,
+      hint: null,
+    },
+    {
+      system: "Windows",
+      accelerated: [["directml_fp16_gpu", "DirectML FP16 · GPU"]],
+      reason: null,
+      shown: ["DirectML FP16 · GPU"],
+      choose: "DirectML FP16 · GPU",
+      hint: "开始使用 DirectML 版本时",
+    },
+  ])(
+    "offers AstrLink Guard's FP16 variants from the catalog on $system",
+    async ({ accelerated, reason, shown, choose, hint }) => {
+      const guard: PrivacyCatalogModel = {
+        ...catalogModel,
+        id: "catalog_astrlink_guard",
+        name: "AstrLink Guard",
+        source: "official",
+        repo_id: "QuantumNous/astrlink-guard",
+        version: "0.1.3",
+        recommended: true,
+        variants: [
+          catalogModel.variants[0],
+          ...accelerated.map(([id, name]) => ({
+            ...catalogModel.variants[0],
+            id,
+            name,
+            quantization: "f16",
+            bytes_total: 75_462_203,
+            recommended: false,
+            supported: reason === null,
+            unsupported_reason: reason,
+          })),
+        ],
+      };
+      bridgeMocks.getPrivacyModelCatalog.mockResolvedValueOnce({
+        items: [guard],
+      });
+      await renderPolicy();
+      await openModels();
+
+      const selector = '[aria-label="AstrLink Guard 模型版本"]';
+      const trigger = container.querySelector<HTMLButtonElement>(selector);
+      expect(trigger?.textContent).toBe("CPU INT8 · 推荐");
+      expect(container.textContent).not.toContain("开始使用");
+      await act(async () => {
+        trigger?.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            button: 0,
+            pointerType: "mouse",
+          }),
+        );
+        await Promise.resolve();
+      });
+      const options = [
+        ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+      ];
+      // INT8 stays the one recommended variant; the Core ML GPU name does
+      // not claim it too.
+      expect(options.map((option) => option.textContent?.trim())).toEqual([
+        "CPU INT8 · 推荐",
+        ...shown,
+      ]);
+      expect(
+        options.slice(1).map((option) => option.dataset.disabled !== undefined),
+      ).toEqual(accelerated.map(() => reason !== null));
+      await act(async () => {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+        );
+        await Promise.resolve();
+      });
+      if (choose === null || hint === null) return;
+
+      await chooseOption(selector, choose);
+      expect(trigger?.textContent).toBe(choose);
+      expect(container.textContent).toContain(hint);
+      expect(container.textContent).toContain("下载 72 MB");
+
+      bridgeMocks.probePrivacyModel.mockResolvedValueOnce(
+        probe({
+          repo_id: guard.repo_id,
+          requested_revision: revision,
+          name: guard.name,
+          variants: guard.variants,
+          labels: [{ label: "email", suggested_kind: "email" }],
+          requires_label_mapping: false,
+        }),
+      );
+      bridgeMocks.installPrivacyModel.mockResolvedValueOnce(installation());
+      await act(async () => button("检查并安装").click());
+      expect(bridgeMocks.installPrivacyModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repo_id: guard.repo_id,
+          revision,
+          variant_id: accelerated[0][0],
+        }),
+      );
+    },
+  );
+
+  it.each([
     new Error("privacy model probe label has missing or unexpected fields"),
     "privacy model probe label has missing or unexpected fields",
   ])(
