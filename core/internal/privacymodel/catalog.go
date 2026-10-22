@@ -173,8 +173,13 @@ func legacyCatalogEntries() []contract.PrivacyModelCatalogItem {
 	}
 }
 
+// builtinVariantPlan finds a variant of a pinned or legacy release. Guard
+// variants are found whichever of them this system offers, so installations
+// keep their provenance on any system; installs go through the offered
+// release instead (see Registry.astrLinkGuardRelease).
 func builtinVariantPlan(repoID, revision, variantID string) (variantPlan, bool) {
-	for _, item := range append(builtinCatalogEntries(), legacyCatalogEntries()...) {
+	entries := []contract.PrivacyModelCatalogItem{astrLinkGuardPinnedEntry()}
+	for _, item := range append(entries, legacyCatalogEntries()...) {
 		if item.RepoID != repoID || item.Revision != revision {
 			continue
 		}

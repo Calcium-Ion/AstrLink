@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -29,6 +30,8 @@ type fakeGuardRelease struct {
 	files map[string][]byte
 	// lfsSHA overrides the Hub's blob digest for a file.
 	lfsSHA map[string]string
+	// unavailable files fail with 503, as from an unreachable Hub.
+	unavailable map[string]bool
 }
 
 type fakeGuardHub struct {
@@ -37,6 +40,8 @@ type fakeGuardHub struct {
 	requests atomic.Int64
 	// downloadCounts records the HEADs the Hub counts as downloads.
 	downloadCounts atomic.Int64
+	// fetched records every file path requested from any revision.
+	fetched sync.Map
 }
 
 func newFakeGuardHub(t *testing.T, releases ...fakeGuardRelease) *fakeGuardHub {
@@ -85,8 +90,13 @@ func (hub *fakeGuardHub) serveHTTP(writer http.ResponseWriter, request *http.Req
 		})
 	case strings.HasPrefix(request.URL.Path, resolve):
 		revision, path, _ := strings.Cut(strings.TrimPrefix(request.URL.Path, resolve), "/")
+		hub.fetched.Store(path, true)
 		release, exists := hub.release(revision)
 		document, found := release.files[path]
+		if exists && release.unavailable[path] {
+			http.Error(writer, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		if !exists || !found {
 			http.NotFound(writer, request)
 			return
@@ -248,7 +258,18 @@ func TestAstrLinkGuardBuiltinManifestSurvivesPersistence(t *testing.T) {
 // the pin moves on, that record must still load offline as a Guard release;
 // a rejected provenance stops the whole registry from starting.
 func TestAstrLinkGuardInstallOfAnEarlierPinStaysReady(t *testing.T) {
-	const revision = "49e8b7b83d34fd75a86cf07698bd80972d444ff3"
+	assertEarlierGuardPinStaysReady(t, "49e8b7b83d34fd75a86cf07698bd80972d444ff3", []Asset{
+		{Path: "int8/model_int8.onnx", Size: 324_054, SHA256: "6cacc676cf1eea9fccc9654c0587484c181102b5835600ffaf1362e53c2641a9"},
+		{Path: "int8/model_int8.onnx_data", Size: 37_046_272, SHA256: "fe5918effd2a04684d071aa4e6bf880963318c4ed6edd6189a1ae439f225c83b"},
+		{Path: "int8/config.json", Size: 1_804, SHA256: "2c20003590d642e273c03c4c7c82d9849fa75f64bf29a71ec0a0c9a20ba4a150"},
+		{Path: "int8/tokenizer.json", Size: 1_502_881, SHA256: "0cf3b235ef125658015a6c8026a5fe6f28088bf825101a990ec18a10200feef4"},
+		{Path: "int8/tokenizer_config.json", Size: 205, SHA256: "3a7cf4d70bb7c0376f18cc6ad23c143853de5b4478084c414d5dbbd35ea5c589"},
+		{Path: "LICENSE", Size: 11_357, SHA256: "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"},
+	})
+}
+
+func assertEarlierGuardPinStaysReady(t *testing.T, revision string, assets []Asset) {
+	t.Helper()
 	if revision == astrLinkGuardRevision {
 		t.Fatal("the fixture must predate the pinned release")
 	}
@@ -256,6 +277,10 @@ func TestAstrLinkGuardInstallOfAnEarlierPinStaysReady(t *testing.T) {
 	catalogID := CatalogAstrLinkGuard
 	catalogSource := contract.PrivacyModelCatalogSourceOfficial
 	license, installedAt := "Apache-2.0", "2026-10-01T00:00:00Z"
+	var total int64
+	for _, asset := range assets {
+		total += asset.Size
+	}
 	installation := contract.PrivacyModelInstallation{
 		ID: id, Source: contract.PrivacyModelSourceCatalog,
 		CatalogID: &catalogID, CatalogSource: &catalogSource,
@@ -264,18 +289,11 @@ func TestAstrLinkGuardInstallOfAnEarlierPinStaysReady(t *testing.T) {
 		VariantID: "cpu_int8", VariantName: "CPU INT8", Quantization: "int8",
 		Adapter:         contract.PrivacyModelAdapterHFToken,
 		Status:          contract.PrivacyModelStatusReady,
-		BytesDownloaded: 38_886_573, BytesTotal: 38_886_573,
+		BytesDownloaded: total, BytesTotal: total,
 		EstimatedRAMBytes: 268_435_456,
 		LabelMapping:      defaultAstrLinkGuardLabelMapping(), InstalledAt: &installedAt,
 	}
-	manifest := buildNormalizedManifest(installation, astrLinkGuardRuntime("cpu_int8"), []Asset{
-		{Path: "int8/model_int8.onnx", Size: 324_054, SHA256: "6cacc676cf1eea9fccc9654c0587484c181102b5835600ffaf1362e53c2641a9"},
-		{Path: "int8/model_int8.onnx_data", Size: 37_046_272, SHA256: "fe5918effd2a04684d071aa4e6bf880963318c4ed6edd6189a1ae439f225c83b"},
-		{Path: "int8/config.json", Size: 1_804, SHA256: "2c20003590d642e273c03c4c7c82d9849fa75f64bf29a71ec0a0c9a20ba4a150"},
-		{Path: "int8/tokenizer.json", Size: 1_502_881, SHA256: "0cf3b235ef125658015a6c8026a5fe6f28088bf825101a990ec18a10200feef4"},
-		{Path: "int8/tokenizer_config.json", Size: 205, SHA256: "3a7cf4d70bb7c0376f18cc6ad23c143853de5b4478084c414d5dbbd35ea5c589"},
-		{Path: "LICENSE", Size: 11_357, SHA256: "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"},
-	})
+	manifest := buildNormalizedManifest(installation, astrLinkGuardRuntime("cpu_int8"), assets)
 	root := filepath.Join(t.TempDir(), "models")
 	directory := filepath.Join(root, "installations", string(id))
 	if err := os.MkdirAll(directory, 0o700); err != nil {
