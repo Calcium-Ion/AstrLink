@@ -56,12 +56,14 @@ pub enum TagScheme {
 }
 
 /// Where the ONNX session runs. Absent for the CPU path, which keeps every
-/// existing manifest valid unchanged.
+/// existing manifest valid unchanged. Core ML runs only on macOS and
+/// DirectML only on Windows.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionProvider {
     Cpu,
     Coreml,
+    Directml,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -423,7 +425,9 @@ fn manifest_fields_present(bytes: &[u8]) -> bool {
 
 fn valid_execution(execution: &Execution, adapter: Adapter, window: usize) -> bool {
     let provider_options = match execution.provider {
-        ExecutionProvider::Cpu => {
+        // DirectML takes no options: the worker always asks for the
+        // high-performance GPU.
+        ExecutionProvider::Cpu | ExecutionProvider::Directml => {
             execution.model_format.is_none() && execution.compute_units.is_none()
         }
         ExecutionProvider::Coreml => {
@@ -595,6 +599,19 @@ mod tests {
             "pad_token_id": 1,
         });
         assert!(parse(&with_execution(&base, cpu.clone())).is_ok());
+        let directml = serde_json::json!({
+            "provider": "directml",
+            "model_format": null,
+            "compute_units": null,
+            "static_sequence_length": 512,
+            "pad_token_id": 1,
+        });
+        let manifest = parse(&with_execution(&base, directml.clone())).expect("valid DirectML");
+        let execution = manifest.execution.expect("execution");
+        assert_eq!(execution.provider, ExecutionProvider::Directml);
+        assert_eq!(execution.model_format, None);
+        assert_eq!(execution.compute_units, None);
+        assert_eq!(execution.static_sequence_length, 512);
 
         let mut invalid = Vec::new();
         for (field, value) in [
@@ -615,6 +632,20 @@ mod tests {
         let mut cpu_with_units = cpu;
         cpu_with_units["compute_units"] = "all".into();
         invalid.push(cpu_with_units);
+        for (field, value) in [
+            ("compute_units", serde_json::Value::from("cpu_and_gpu")),
+            ("model_format", "mlprogram".into()),
+            ("static_sequence_length", 256.into()),
+            ("pad_token_id", (MAX_PAD_TOKEN_ID + 1).into()),
+            ("provider", "dml".into()),
+        ] {
+            let mut execution = directml.clone();
+            execution[field] = value;
+            invalid.push(execution);
+        }
+        let mut directml_device = directml;
+        directml_device["device_id"] = 1.into();
+        invalid.push(directml_device);
         let mut unknown_field = coreml.clone();
         unknown_field["cache_dir"] = "/tmp".into();
         invalid.push(unknown_field);

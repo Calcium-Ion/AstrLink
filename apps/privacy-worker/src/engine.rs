@@ -54,7 +54,7 @@ pub struct PrivacyEngine {
     token_type_ids_name: Option<String>,
     output_name: String,
     static_padding: Option<StaticPadding>,
-    coreml: bool,
+    provider: ExecutionProvider,
 }
 
 /// Compiled Core ML models live next to the installation they came from: the
@@ -79,12 +79,22 @@ impl PrivacyEngine {
         match Self::load_once(model_directory, intra_threads) {
             // Core ML compiles on first use; a prediction at startup moves
             // that cost out of the first request and proves the cache works.
-            Ok(mut engine) if engine.coreml => {
+            Ok(mut engine) if engine.provider == ExecutionProvider::Coreml => {
                 if engine.warm_up().is_ok() {
                     return Ok(engine);
                 }
             }
             Err(error) if error.to_string() == "coreml_session_failed" => {}
+            // DirectML allocates its GPU resources at the first prediction.
+            // A prediction at startup proves the GPU path works before Core
+            // is told the worker is ready. There is no cache to rebuild, so
+            // a failure here is final.
+            Ok(mut engine) if engine.provider == ExecutionProvider::Directml => {
+                engine
+                    .warm_up()
+                    .map_err(|_| io::Error::other("directml_session_failed"))?;
+                return Ok(engine);
+            }
             // CPU models, and every other load error, are returned as they are.
             other => return other,
         }
@@ -218,22 +228,28 @@ impl PrivacyEngine {
             None => None,
         };
 
-        let coreml = manifest
+        let provider = manifest
             .execution
             .as_ref()
-            .is_some_and(|execution| execution.provider == ExecutionProvider::Coreml);
-        if coreml {
+            .map_or(ExecutionProvider::Cpu, |execution| execution.provider);
+        match provider {
             // Checked before the Core ML runtime is loaded, so it is never
             // loaded on a system the gate refuses.
-            coreml::check_platform()?;
+            ExecutionProvider::Coreml => coreml::check_platform()?,
+            ExecutionProvider::Directml => directml::check_platform()?,
+            ExecutionProvider::Cpu => {}
         }
-        initialize_onnx_runtime(coreml)?;
+        initialize_onnx_runtime(provider == ExecutionProvider::Coreml)?;
         let model_path = manifest.resolve(model_directory, &manifest.model_path);
-        let session = if coreml {
-            coreml::commit_session(&manifest, model_directory, &model_path, intra_threads)?
-        } else {
-            priority::lower_pool_threads(session_builder(intra_threads)?)?
-                .commit_from_file(model_path)?
+        let session = match provider {
+            ExecutionProvider::Coreml => {
+                coreml::commit_session(&manifest, model_directory, &model_path, intra_threads)?
+            }
+            ExecutionProvider::Directml => directml::commit_session(&model_path, intra_threads)?,
+            ExecutionProvider::Cpu => {
+                priority::lower_pool_threads(session_builder(intra_threads)?)?
+                    .commit_from_file(model_path)?
+            }
         };
         validate_session(&session, &manifest)?;
 
@@ -253,7 +269,7 @@ impl PrivacyEngine {
             token_type_ids_name: manifest.input_names.token_type_ids,
             output_name: manifest.output_name,
             static_padding,
-            coreml,
+            provider,
         })
     }
 
@@ -859,6 +875,102 @@ mod coreml {
     pub fn clear_cache(_cache: &Path) {}
 }
 
+/// DirectML runs FP16 models on the GPU through Direct3D 12. ONNX Runtime
+/// chooses the adapter: with a performance preference it lists the hardware
+/// GPUs through DXCore and takes the high-performance one, so a laptop with
+/// an integrated and a discrete GPU uses the discrete one. The plain
+/// device-id registration would take the first DXGI adapter instead, which
+/// is usually the integrated GPU that drives the display. DXCore ships with
+/// Windows 10 version 2004 and later; on older systems, and without a
+/// hardware GPU, registration fails and the worker reports it.
+#[cfg(target_os = "windows")]
+mod directml {
+    use std::{ffi::CStr, io, path::Path};
+
+    use ort::{
+        AsPointer,
+        ep::{self, ExecutionProvider},
+        session::{Session, builder::SessionBuilder},
+    };
+
+    use super::session_builder;
+    use crate::priority;
+
+    const PROVIDER_OPTIONS: [(&CStr, &CStr); 2] = [
+        (c"performance_preference", c"high_performance"),
+        (c"device_filter", c"gpu"),
+    ];
+
+    pub fn check_platform() -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn commit_session(
+        model_path: &Path,
+        intra_threads: usize,
+    ) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
+        let unavailable = || io::Error::other("directml_unavailable");
+        if !ep::DirectML::default()
+            .is_available()
+            .map_err(|_| unavailable())?
+        {
+            return Err(unavailable().into());
+        }
+        // DirectML requires sequential execution, which session_builder
+        // already sets, and no memory pattern. Registration errors are fatal
+        // rather than silently leaving the whole graph on the CPU. CPU comes
+        // second and takes only the nodes DirectML does not claim.
+        let mut builder = session_builder(intra_threads)
+            .and_then(|builder| builder.with_memory_pattern(false))
+            .map_err(|_| unavailable())?;
+        append_directml(&mut builder).map_err(|_| unavailable())?;
+        let builder = builder
+            .with_execution_providers([ep::CPU::default().build().error_on_failure()])
+            .map_err(|_| unavailable())?;
+        Ok(priority::lower_pool_threads(builder)
+            .and_then(|builder| builder.commit_from_file(model_path))
+            .map_err(|_| io::Error::other("directml_session_failed"))?)
+    }
+
+    /// ort's DirectML provider only takes a device id, so the provider is
+    /// appended through the generic ONNX Runtime call, which also accepts
+    /// the adapter preference and filter.
+    fn append_directml(builder: &mut SessionBuilder) -> ort::Result<()> {
+        let keys = PROVIDER_OPTIONS.map(|(key, _)| key.as_ptr());
+        let values = PROVIDER_OPTIONS.map(|(_, value)| value.as_ptr());
+        // SAFETY: the builder owns live session options, and the provider
+        // name, keys and values are NUL-terminated statics that ONNX Runtime
+        // copies before it returns.
+        unsafe {
+            ort::error::status_to_result((ort::api().SessionOptionsAppendExecutionProvider)(
+                builder.ptr_mut(),
+                c"DML".as_ptr(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                keys.len(),
+            ))
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+mod directml {
+    use std::{io, path::Path};
+
+    use ort::session::Session;
+
+    pub fn check_platform() -> io::Result<()> {
+        Err(io::Error::other("unsupported_execution_provider"))
+    }
+
+    pub fn commit_session(
+        _model_path: &Path,
+        _intra_threads: usize,
+    ) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
+        Err(io::Error::other("unsupported_execution_provider").into())
+    }
+}
+
 fn validate_session(session: &Session, manifest: &ModelManifest) -> io::Result<()> {
     let actual_inputs = session
         .inputs()
@@ -882,7 +994,8 @@ fn validate_session(session: &Session, manifest: &ModelManifest) -> io::Result<(
     }
     if let Some(execution) = &manifest.execution {
         // Static padding is only correct for a graph that declares exactly
-        // that shape; a dynamic graph would also keep Core ML off every node.
+        // that shape; a dynamic graph would also keep Core ML off every node
+        // and make DirectML rebuild its kernels for every shape.
         // The logits are read as float32; FP16 exports that also emit
         // float16 logits are refused here, before the first prediction.
         let expected = [1, execution.static_sequence_length as i64];
@@ -1826,6 +1939,77 @@ mod tests {
         unknown_pad["pad_token_id"] = 4096.into();
         let directory = static_fixture_directory(STATIC_MICRO_ONNX_MODEL, Some(unknown_pad));
         assert_eq!(load_error(&directory), "invalid_model_manifest");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn directml_execution_is_refused_off_windows() {
+        let directory = static_fixture_directory(
+            STATIC_MICRO_ONNX_MODEL,
+            Some(serde_json::json!({
+                "provider": "directml",
+                "model_format": null,
+                "compute_units": null,
+                "static_sequence_length": 4,
+                "pad_token_id": 0,
+            })),
+        );
+        assert_eq!(load_error(&directory), "unsupported_execution_provider");
+    }
+
+    /// A machine with a hardware GPU runs the static fixture on DirectML and
+    /// gets the CPU spans, with scores within GPU rounding; one without (such
+    /// as a CI runner) is refused with a code instead of falling back to the
+    /// CPU.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn directml_execution_matches_the_cpu_or_fails_with_a_code() {
+        let text = "你好 secret 你好 secret 你好";
+        let execution = |provider: &str| {
+            serde_json::json!({
+                "provider": provider,
+                "model_format": null,
+                "compute_units": null,
+                "static_sequence_length": 4,
+                "pad_token_id": 0,
+            })
+        };
+        let run = |provider: &str| {
+            let directory =
+                static_fixture_directory(STATIC_MICRO_ONNX_MODEL, Some(execution(provider)));
+            let spans = (|| {
+                PrivacyEngine::load(&directory, TEST_INTRA_THREADS)?.detect(&[TextInput {
+                    id: 5,
+                    text: text.into(),
+                }])
+            })()
+            .map_err(|error| error.to_string());
+            let _ = fs::remove_dir_all(&directory);
+            spans
+        };
+        let expected = run("cpu").expect("run static fixture on the CPU");
+        assert!(!expected.is_empty());
+        match run("directml") {
+            Ok(actual) => {
+                assert_eq!(actual.len(), expected.len());
+                for (actual, expected) in actual.iter().zip(&expected) {
+                    assert_eq!(
+                        (actual.text_id, &actual.label, actual.start, actual.end),
+                        (
+                            expected.text_id,
+                            &expected.label,
+                            expected.start,
+                            expected.end
+                        )
+                    );
+                    assert!((actual.score - expected.score).abs() < 1e-3);
+                }
+            }
+            Err(code) => assert!(
+                code == "directml_unavailable" || code == "directml_session_failed",
+                "unexpected DirectML failure {code}"
+            ),
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
