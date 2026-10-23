@@ -542,7 +542,8 @@ impl Default for CoreInner {
             inference_listen: crate::preferences::InferenceListen::Loopback,
             started_launch: None,
             max_concurrent_inspections: 16,
-            response_start_timeout_seconds: 0,
+            response_start_timeout_seconds:
+                crate::preferences::DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
             max_request_body_mib: 0,
             use_system_proxy: true,
             locale: Locale::En,
@@ -2539,6 +2540,25 @@ impl CoreManager {
             .map_err(|error| format!("request session list returned invalid JSON: {error}"))
     }
 
+    pub async fn get_request_activity(&self, since: &str) -> Result<serde_json::Value, String> {
+        if !timestamp_query_charset_ok(since) {
+            return Err("request activity since has an invalid timestamp charset".to_string());
+        }
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!(
+                    "/control/v1/request-activity?since={}",
+                    percent_encode_query(since)
+                ),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("request activity returned invalid JSON: {error}"))
+    }
+
     pub async fn get_request_session(&self, session_id: &str) -> Result<serde_json::Value, String> {
         validate_resource_id(session_id)?;
         let (_, body) = self
@@ -4070,7 +4090,12 @@ fn validate_privacy_dry_run_kind(kind: &str) -> Result<(), String> {
 fn validate_privacy_suppression_reason(value: &serde_json::Value) -> Result<(), String> {
     match value.as_str() {
         Some(
-            "low_confidence" | "kind_disabled" | "allowlisted" | "placeholder" | "unrepresentable",
+            "low_confidence"
+            | "kind_disabled"
+            | "allowlisted"
+            | "placeholder"
+            | "unrepresentable"
+            | "astrlink_identifier",
         ) => Ok(()),
         _ => Err("privacy policy dry-run finding reason is unknown".to_string()),
     }
@@ -7446,6 +7471,14 @@ mod tests {
             }]
         });
         assert!(parse_privacy_dry_run_result(&serde_json::to_vec(&result).unwrap()).is_ok());
+
+        let mut own_identifier = result.clone();
+        own_identifier["suppressed_findings"][0]["kind"] = serde_json::json!("common_secret");
+        own_identifier["suppressed_findings"][0]["reason"] =
+            serde_json::json!("astrlink_identifier");
+        assert!(
+            parse_privacy_dry_run_result(&serde_json::to_vec(&own_identifier).unwrap()).is_ok()
+        );
 
         let mut unknown_reason = result.clone();
         unknown_reason["suppressed_findings"][0]["reason"] = serde_json::json!("vibes");

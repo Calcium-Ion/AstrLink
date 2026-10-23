@@ -126,6 +126,34 @@ func TestClassifyDoesNotPreviewRetrievalInput(t *testing.T) {
 	}
 }
 
+// DeepSeek Harness sends its runtime and clock snapshots as user messages
+// after the prompt, so its preview comes from the prompt. Another client
+// sending the same body keeps the newest user text.
+func TestClassifyPreviewsDeepSeekHarnessPrompt(t *testing.T) {
+	body := `{"model":"glm-5.3-flash","messages":[
+		{"role":"system","content":"You are DeepSeek Harness."},
+		{"role":"user","content":"把 relay 的重试改成指数退避"},
+		{"role":"user","content":"Current runtime context. This snapshot supersedes earlier runtime-context snapshots."},
+		{"role":"user","content":"Time sampled while preparing turn 1, step 1: 2026-10-23T14:34:56+08:00[Asia/Shanghai]"}]}`
+	for _, test := range []struct {
+		userAgent, preview string
+		users              int
+	}{
+		{"deepseek-harness/0.2.1 (+https://github.com/deepseek-ai/deepseek-harness)", "把 relay 的重试改成指数退避", 1},
+		{"OpenAI/JS 5.0.0", "Time sampled while preparing turn 1, step 1:", 3},
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+		request.Header.Set("User-Agent", test.userAgent)
+		got, err := classify(request, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(got.InputPreview, test.preview) || got.Conversation.UserTurnCount != test.users {
+			t.Fatalf("%s: preview = %q, user messages = %d", test.userAgent, got.InputPreview, got.Conversation.UserTurnCount)
+		}
+	}
+}
+
 func TestClassifyRejectsMalformedMetadataAndPreservesItsBody(t *testing.T) {
 	for _, body := range []string{
 		`{"stream":true`,

@@ -1789,7 +1789,10 @@ paths:
         Returns the fixed kind and pattern pairs used by the builtin Regex
         detector. Intended to seed custom_regex_rules; the catalog itself is
         not editable. Custom mode compiles patterns only and does not reuse
-        built-in validators such as Luhn or IBAN checks.
+        built-in validators such as Luhn or IBAN checks, or boundary checks
+        such as the one that keeps a local access token from matching inside
+        a longer base64url run. Value groups are part of the patterns and
+        apply in custom mode too.
       responses:
         "200":
           description: Built-in Regex rules.
@@ -3460,6 +3463,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PurgeResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /control/v1/request-activity:
+    x-astrlink-implementation-status: implemented
+    get:
+      x-astrlink-role: observer
+      tags: [Requests]
+      operationId: getRequestActivity
+      summary: List the spans of model calls that overlap a recent window.
+      description: |
+        Returns root model calls still running or ended at or after since, so a
+        client can chart how many conversations ran at once. Calls that started
+        more than an hour before since, model discovery, and calls a Core
+        restart interrupted are left out. Retries stay inside their root's span.
+        Does not return request or response content.
+      parameters:
+        - name: since
+          in: query
+          required: true
+          description: Start of the window. It must lie within the last hour.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Calls overlapping the window, newest first.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestActivity"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -6461,7 +6499,13 @@ components:
           type: string
           minLength: 1
           maxLength: 512
-          description: Go RE2 regular expression; compiled by Core on save and inspect.
+          description: >
+            Go RE2 regular expression; compiled by Core on save and inspect.
+            Each match is replaced as a whole unless the pattern has a capture
+            group named value, as in `token=(?P<value>[A-Za-z0-9_-]{12,})`;
+            then only the first value group that took part in the match is
+            replaced, and a match whose value group is empty is not a finding.
+            Other capture groups do not change what is replaced.
       additionalProperties: false
     PolicyRegexBuiltinRulesResponse:
       type: object
@@ -6529,12 +6573,15 @@ components:
             - allowlisted
             - placeholder
             - unrepresentable
+            - astrlink_identifier
           description: >
             Why the span was left in the request. Absent on accepted findings.
             placeholder means the value already belonged to a placeholder
             namespace, so redacting it again would make the innermost original
             unrecoverable. unrepresentable means the kind ran out of reserved
-            stand-ins and fell back to a token placeholder.
+            stand-ins and fell back to a token placeholder. astrlink_identifier
+            means the value is an identifier AstrLink generated itself, such as
+            a local access token id or a request id, which grants no access.
       additionalProperties: false
     PolicyDryRunRedaction:
       type: object
@@ -7476,6 +7523,8 @@ components:
           type: [integer, "null"]
           minimum: 0
           description: Milliseconds from sending the upstream request to the first generated content that is not reasoning (text, a refusal, a tool call, or media). At least first_token_ms; the difference is how long the model thought before answering. Null without first_token_ms, for calls that only reasoned, and on historical rows.
+        output:
+          $ref: "#/components/schemas/OutputActivity"
         usage:
           oneOf:
             - $ref: "#/components/schemas/Usage"
@@ -7652,14 +7701,16 @@ components:
       required: [kind, reason, count]
       description: |
         Matches of one kind the policy left in the request for one reason. A
-        match that was already a placeholder is not counted. Never carries the
-        matched value.
+        match that was already a placeholder is not counted. astrlink_identifier
+        counts identifiers AstrLink generated itself, such as local access token
+        ids, which grant no access. Never carries the matched value.
       properties:
         kind:
           $ref: "#/components/schemas/PrivacyCanonicalKind"
         reason:
           type: string
-          enum: [kind_disabled, low_confidence, allowlisted]
+          enum:
+            [kind_disabled, low_confidence, allowlisted, astrlink_identifier]
         count:
           type: integer
           minimum: 1
@@ -8119,6 +8170,59 @@ components:
           type: integer
           minimum: 0
       additionalProperties: false
+    OutputActivity:
+      type: object
+      description: >
+        What a call's response produces. While the call streams, kind is the
+        part arriving now and is refreshed at most twice a second; once the
+        call ends, the last part. After a call that ended on a tool call, the
+        client is running the named tools. Absent before any output and on
+        historical records.
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [reasoning, text, tool]
+        tools:
+          type: array
+          description: Names of the tool calls the response made, in order.
+          maxItems: 8
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+      additionalProperties: false
+    RequestActivity:
+      type: object
+      required: [now, calls]
+      properties:
+        now:
+          type: string
+          format: date-time
+          description: The gateway's clock when the calls were read; chart the window against it.
+        calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestActivityCall"
+      additionalProperties: false
+    RequestActivityCall:
+      type: object
+      required: [session_id, started_at, completed_at, status]
+      properties:
+        session_id:
+          $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
+        client_type:
+          $ref: "#/components/schemas/ClientType"
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+          description: Null while the call is running.
+        status:
+          $ref: "#/components/schemas/RequestStatus"
+      additionalProperties: false
     RequestSession:
       type: object
       required:
@@ -8192,6 +8296,10 @@ components:
           oneOf:
             - $ref: ./protocol-capabilities.schema.json#/$defs/ResourceId
             - type: "null"
+        output:
+          allOf:
+            - $ref: "#/components/schemas/OutputActivity"
+          description: The latest call's output, so a list can tell whether a conversation is thinking, answering, or running tools.
         privacy_warned:
           type: boolean
           description: Present and true when the privacy policy's warn action let at least one call of the session through.

@@ -94,6 +94,8 @@ describe("update IPC", () => {
     ).toBe("available");
     expect(updateNotice({ ...base, phase: "manual" })).toBe("manual");
     expect(updateNotice({ ...base, phase: "ready" })).toBe("ready");
+    expect(updateNotice({ ...base, phase: "error" })).toBe("error");
+    expect(updateNotice({ ...base, phase: "error", release: null })).toBeNull();
     expect(updateNotice({ ...base, phase: "downloading" })).toBeNull();
     expect(updateNotice({ ...base, phase: "ready", release: null })).toBeNull();
   });

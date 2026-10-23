@@ -2005,6 +2005,11 @@ pub fn start(app: &AppHandle) {
                 }
                 crate::raw_approval::notify_pending(&watcher);
             }
+            // It floats only while a request waits; once none is left, other
+            // windows cover it again.
+            if (pending_raw_access > 0) != (last_pending_raw_access > 0) {
+                crate::raw_approval::set_floating(&watcher, pending_raw_access > 0);
+            }
             last_pending_raw_access = pending_raw_access;
             // A key replaced while the app was closed, or through another
             // client of this Core, is only noticed by comparing it with the

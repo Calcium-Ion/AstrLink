@@ -35,6 +35,7 @@ const ERROR_KEYS = new Set([
   "version",
   "unsupported",
   "command",
+  "permission",
   "timeout",
   "changed",
   "unchanged",
@@ -244,6 +245,12 @@ export function LocalClientUpdates({ compact = false }: { compact?: boolean }) {
                   >
                     {t(
                       `localClients.errors.${ERROR_KEYS.has(client.error_code ?? "") ? client.error_code : "command"}`,
+                      {
+                        place:
+                          client.wsl === null
+                            ? t("clientSetup.placeLocal")
+                            : t("agentDebug.wslPlace", { name: client.wsl }),
+                      },
                     )}
                   </p>
                 ) : null}

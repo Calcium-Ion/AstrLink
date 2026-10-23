@@ -36,6 +36,7 @@ export { Maximize } from "./maximize";
 export { Menu } from "./menu";
 export { MessageSquare } from "./message-square";
 export { Minimize } from "./minimize";
+export { PanelLeft } from "./panel-left";
 export { Pin } from "./pin";
 export { Plus } from "./plus";
 export { RefreshCw } from "./refresh-cw";

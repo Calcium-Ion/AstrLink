@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -17,9 +18,9 @@ import (
 // failure policy like the HTTP error it stands for, before the client has
 // received a byte.
 const (
-	// streamStartHoldLimit bounds how long the client waits for held events.
-	// After it, even announcements go out and the stream cannot be retried.
-	streamStartHoldLimit = 10 * time.Second
+	// An error can be followed by a recovered response. Bound that wait if
+	// the upstream never sends another event or closes its stream.
+	streamStartErrorWaitLimit = 10 * time.Second
 	// streamStartHoldBytes bounds the announcements held in memory.
 	streamStartHoldBytes = 1 << 20
 	// An explicit capacity refusal cools only this model route. Retry-After
@@ -74,7 +75,7 @@ func classifyStreamStart(protocol contract.ProtocolID, frame []byte) streamStart
 	switch protocol {
 	case contract.ProtocolOpenAIResponses:
 		switch eventType {
-		case "response.created", "response.in_progress", "response.queued":
+		case "response.created", "response.in_progress", "response.queued", "response.metadata":
 			return streamStartAnnouncement
 		case "response.output_item.added":
 			item := gjson.GetBytes(data, "item")
@@ -288,12 +289,18 @@ func streamFailureSummary(protocol contract.ProtocolID, event []byte) contract.E
 // means it did. An error event means it did not once the stream fails or ends
 // after it. holdStreamStart returns a body that replays what it read and then
 // the rest of the stream, the failure, and the read error when the stream
-// broke before either. Announcements that outlast limit, or a stream that
-// ends among them, go out as they are.
-func holdStreamStart(body io.ReadCloser, protocol contract.ProtocolID, limit time.Duration) (io.ReadCloser, *streamFailure, error) {
+// broke before either. Announcements remain held until output, failure,
+// cancellation, EOF or the memory bound; elapsed time alone must not commit
+// a response that has generated nothing.
+func holdStreamStart(ctx context.Context, body io.ReadCloser, protocol contract.ProtocolID) (io.ReadCloser, *streamFailure, error) {
 	held := &heldStream{ReadCloser: body}
-	timer := time.NewTimer(limit)
-	defer timer.Stop()
+	var errorTimer *time.Timer
+	var errorTimeout <-chan time.Time
+	defer func() {
+		if errorTimer != nil {
+			errorTimer.Stop()
+		}
+	}()
 	var failure *streamFailure
 	refused := func() (io.ReadCloser, *streamFailure, error) {
 		failure.held = len(held.held)
@@ -301,7 +308,10 @@ func holdStreamStart(body io.ReadCloser, protocol contract.ProtocolID, limit tim
 	}
 	var unread []byte // bytes after the last whole event, with LF line ends
 	for len(held.held) <= streamStartHoldBytes {
-		// The read runs aside so the limit can end the hold. Only that
+		if err := context.Cause(ctx); err != nil {
+			return held, nil, err
+		}
+		// The read runs aside so cancellation can end the hold. Only that
 		// goroutine touches body until it delivers.
 		reads := make(chan heldRead, 1)
 		go func() {
@@ -312,12 +322,12 @@ func holdStreamStart(body io.ReadCloser, protocol contract.ProtocolID, limit tim
 		var read heldRead
 		select {
 		case read = <-reads:
-		case <-timer.C:
+		case <-ctx.Done():
 			held.pending = reads
-			if failure != nil {
-				return refused()
-			}
-			return held, nil, nil
+			return held, nil, context.Cause(ctx)
+		case <-errorTimeout:
+			held.pending = reads
+			return refused()
 		}
 		held.held = append(held.held, read.data...)
 		held.err = read.err
@@ -338,6 +348,8 @@ func holdStreamStart(body io.ReadCloser, protocol contract.ProtocolID, limit tim
 			if class != streamStartAnnouncement && failure == nil {
 				_, event := parseSSEFrame(frame)
 				failure = newStreamFailure(protocol, event)
+				errorTimer = time.NewTimer(streamStartErrorWaitLimit)
+				errorTimeout = errorTimer.C
 			}
 			if class == streamStartFailed {
 				return refused()

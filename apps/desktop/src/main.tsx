@@ -16,6 +16,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import App from "./App";
+import { getAppBranding } from "./app-branding";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { getPreferences } from "./bridge";
 import { applyLocale, i18n, isLocale, useT } from "./i18n";
@@ -45,6 +46,10 @@ if (!root) {
 }
 
 const desktopPlatform = getDesktopPlatform();
+const branding = getAppBranding();
+document.title = branding.name;
+const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+if (favicon) favicon.href = branding.logo;
 document.documentElement.dataset.desktopPlatform = desktopPlatform;
 // The tray popover paints its own panel on a transparent window: no title
 // bar, no page background.

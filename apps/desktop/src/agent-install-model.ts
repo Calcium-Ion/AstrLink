@@ -1,4 +1,4 @@
-export type AgentToolId = "cursor" | "claude" | "codex" | "grok" | "pi";
+export type AgentToolId = "cursor" | "claude" | "codex" | "grok" | "pi" | "dsh";
 
 /**
  * A skill AstrLink can install. Only `astrlink-debug` drives the AstrLink CLI,
@@ -17,7 +17,8 @@ export type AgentGuardKind = "deny_rules" | "instructions" | "skill_only";
  * How the host lets agents run the AstrLink CLI without asking each time:
  * allow rules (Claude Code), a rules file that also lifts the sandbox (Codex),
  * a prompt on first use (hosts without a verified mechanism), or nothing at
- * all (hosts that run every command without asking, such as Pi).
+ * all (hosts that run every command without asking, such as Pi and DeepSeek
+ * Harness).
  */
 export type AgentCliAccessKind =
   | "allow_rules"
@@ -46,7 +47,7 @@ export interface AgentToolStatus {
 
 export interface AgentInstallStatus {
   cli_binary: boolean;
-  /** This computer's five tools, then the tools found in WSL distributions. */
+  /** This computer's six tools, then the tools found in WSL distributions. */
   tools: AgentToolStatus[];
   shared_paths: string[];
   /** WSL distributions whose tools went unchecked because they were stopped. */
@@ -85,6 +86,7 @@ const TOOL_IDS: readonly AgentToolId[] = [
   "codex",
   "grok",
   "pi",
+  "dsh",
 ];
 const GUARD_KINDS: readonly AgentGuardKind[] = [
   "deny_rules",
@@ -270,6 +272,6 @@ export function parseAgentInstallReceipt(value: unknown): AgentInstallReceipt {
 
 export function toolLabelKey(
   id: AgentToolId,
-): "cursor" | "claude" | "codex" | "grok" | "pi" {
+): "cursor" | "claude" | "codex" | "grok" | "pi" | "dsh" {
   return id;
 }

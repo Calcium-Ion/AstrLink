@@ -189,17 +189,20 @@ type recordSession struct {
 	routingSettings *contract.RoutingSettings
 	// sentReasoningEffort is the level the current attempt sent when the
 	// reasoning settings changed the client's; nil keeps the client's level.
-	sentReasoningEffort   *string
-	pendingAttempt        *pendingAttemptRecord
-	recovery              *contract.RequestRecovery
-	modelRedirect         *contract.RequestModelRedirect
-	modelRouting          *contract.ModelRoutingDecision
-	id                    contract.RequestID
-	startedAt             time.Time
-	classified            Request
-	accessTokenID         *contract.AccessTokenID
-	scanner               *usageScanner
-	upstreamScanner       *usageScanner
+	sentReasoningEffort *string
+	pendingAttempt      *pendingAttemptRecord
+	recovery            *contract.RequestRecovery
+	modelRedirect       *contract.RequestModelRedirect
+	modelRouting        *contract.ModelRoutingDecision
+	id                  contract.RequestID
+	startedAt           time.Time
+	classified          Request
+	accessTokenID       *contract.AccessTokenID
+	scanner             *usageScanner
+	upstreamScanner     *usageScanner
+	// outputFlushedAt is when the stream last stored its output; only the
+	// goroutine reading the upstream body touches it.
+	outputFlushedAt       time.Time
 	status                contract.RequestStatus
 	httpStatus            int
 	hasHTTPStatus         bool
@@ -600,6 +603,7 @@ func (session *recordSession) recordSnapshot(
 		decision := session.privacyDecision
 		record.PrivacyDecision = &decision
 	}
+	record.Output = session.upstreamScanner.outputActivity()
 	if session.upstreamScanner != nil && !session.upstreamScanner.firstOutputAt.IsZero() {
 		firstTokenMs := int(max(0, session.upstreamScanner.firstOutputAt.Sub(session.startedAt).Milliseconds()))
 		record.FirstTokenMs = &firstTokenMs
@@ -1075,6 +1079,7 @@ func (body *upstreamResponseCaptureBody) Read(p []byte) (int, error) {
 		body.upstreamError.observe(p[:n])
 		if body.session.upstreamScanner != nil {
 			body.session.upstreamScanner.observe(p[:n])
+			body.session.flushLiveOutput()
 		}
 	}
 	return n, err

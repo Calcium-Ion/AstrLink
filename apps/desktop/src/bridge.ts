@@ -116,10 +116,12 @@ import {
   parseAuditContent,
   parsePurgeResult,
   parseRequestRecord,
+  parseRequestActivity,
   parseRequestRecordPage,
   parseRequestSessionDetail,
   parseRequestSessionPage,
   type AuditContent,
+  type RequestActivity,
   type RequestRecord,
   type RequestRecordListQuery,
   type RequestRecordPage,
@@ -667,6 +669,19 @@ export async function listRequestSessions(
         ...(query.kind === undefined ? {} : { kind: query.kind }),
       },
     }),
+  );
+}
+
+/**
+ * The spans of model calls running at or after `since`, for the live board.
+ * It covers every model call, whatever the request list is filtered to.
+ */
+export async function getRequestActivity(
+  since: string,
+): Promise<RequestActivity> {
+  requireNativeBridge();
+  return parseRequestActivity(
+    await invoke<unknown>("get_request_activity", { since }),
   );
 }
 

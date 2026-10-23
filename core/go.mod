@@ -1,6 +1,6 @@
 module github.com/QuantumNous/astrlink/core
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/QuantumNous/astrlink/convo v0.0.0

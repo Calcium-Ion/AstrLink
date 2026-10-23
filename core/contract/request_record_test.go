@@ -285,6 +285,8 @@ func TestRequestRecordValidation(t *testing.T) {
 			record.PrivacyIgnored = []PrivacyIgnored{
 				{Kind: CanonicalKindEmail, Reason: PrivacyIgnoreAllowlisted, Count: 2},
 				{Kind: CanonicalKindEmail, Reason: PrivacyIgnoreLowConfidence, Count: 1},
+				{Kind: CanonicalKindCommonSecret, Reason: PrivacyIgnoreAstrLinkIdentifier, Count: 3},
+				{Kind: CanonicalKindAccount, Reason: PrivacyIgnoreAstrLinkIdentifier, Count: 1},
 			}
 		}},
 		{name: "rejects placeholder as an ignore reason", mutate: func(record *RequestRecord) {

@@ -164,7 +164,7 @@ const (
 	DefaultMaxConcurrentInspections    = 16
 	MinMaxConcurrentInspections        = 4
 	MaxMaxConcurrentInspections        = 128
-	DefaultResponseStartTimeoutSeconds = 0
+	DefaultResponseStartTimeoutSeconds = 600
 	MaxResponseStartTimeoutSeconds     = 86400
 )
 
@@ -187,10 +187,10 @@ func ValidateMaxConcurrentInspections(n int) error {
 }
 
 func ValidateResponseStartTimeoutSeconds(n int) error {
-	if n < DefaultResponseStartTimeoutSeconds || n > MaxResponseStartTimeoutSeconds {
+	if n < 0 || n > MaxResponseStartTimeoutSeconds {
 		return fmt.Errorf(
 			"response start timeout must be between %d and %d seconds",
-			DefaultResponseStartTimeoutSeconds,
+			0,
 			MaxResponseStartTimeoutSeconds,
 		)
 	}
@@ -240,7 +240,9 @@ func AccessTokenIDFromContext(ctx context.Context) (contract.AccessTokenID, bool
 }
 
 func New() *Handler {
-	return NewWithDependencies(Dependencies{})
+	return NewWithDependencies(Dependencies{
+		ResponseStartTimeout: time.Duration(DefaultResponseStartTimeoutSeconds) * time.Second,
+	})
 }
 
 // NewProduction requires the complete minimum loopback gate before a resolver

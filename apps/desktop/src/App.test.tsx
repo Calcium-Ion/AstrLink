@@ -1,9 +1,45 @@
+// @vitest-environment happy-dom
+
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import logo from "./assets/astrlink-logo.svg";
+import developmentLogo from "./assets/astrlink-dev-logo.svg";
 
 describe("desktop application shell", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete window.__ASTRLINK_ISOLATED__;
+  });
+
+  it.each([
+    { isolated: true, environment: "production", development: true },
+    { isolated: false, environment: "development", development: false },
+    { isolated: undefined, environment: "development", development: true },
+    { isolated: undefined, environment: "production", development: false },
+  ])(
+    "shows the instance branding for isolated=$isolated, NODE_ENV=$environment",
+    ({ isolated, environment, development }) => {
+      vi.stubEnv("NODE_ENV", environment);
+      window.__ASTRLINK_ISOLATED__ = isolated;
+
+      const markup = renderToStaticMarkup(<App />);
+      const container = document.createElement("div");
+      container.innerHTML = markup;
+      const brand = container.querySelector('[data-slot="app-brand"]');
+      expect(brand?.getAttribute("aria-label")).toBe(
+        development ? "AstrLink Dev" : "AstrLink",
+      );
+      expect(brand?.querySelector("img")?.getAttribute("src")).toBe(
+        development ? developmentLogo : logo,
+      );
+      expect(brand?.querySelector('[data-slot="badge"]')?.textContent).toBe(
+        development ? "DEV" : undefined,
+      );
+    },
+  );
+
   it("renders task pages instead of the former marketing homepage", () => {
     const markup = renderToStaticMarkup(<App />);
 

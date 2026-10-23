@@ -11,7 +11,8 @@ type PrivacyTotals struct {
 	// Requests is every finished root inference call, checked or not.
 	Requests int64 `json:"requests"`
 	// Allowed calls had nothing to protect. A match of a kind the user
-	// turned off still counts as allowed.
+	// turned off, or one of AstrLink's own identifiers, still counts as
+	// allowed.
 	Allowed int64 `json:"allowed"`
 	// Ignored calls were allowed only because every match was allowlisted or
 	// below the confidence threshold.

@@ -1,5 +1,5 @@
 {
   "name": "astrlink-debug",
   "version": "0.3.0",
-  "adapters": ["cursor", "claude", "codex", "grok", "pi"]
+  "adapters": ["cursor", "claude", "codex", "grok", "pi", "dsh"]
 }

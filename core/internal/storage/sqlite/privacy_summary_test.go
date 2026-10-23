@@ -48,6 +48,9 @@ func TestPrivacySummaryCountsDecisionsValuesAndKinds(t *testing.T) {
 		// A disabled kind is the user's choice, not a match left behind.
 		{id: "allowed_disabled_kind", status: contract.RequestStatusSucceeded, at: from, decision: decision(contract.PrivacyDecisionAllow),
 			ignored: []contract.PrivacyIgnored{{Kind: contract.CanonicalKindURL, Reason: contract.PrivacyIgnoreKindDisabled, Count: 4}}},
+		// AstrLink's own identifiers hold nothing to protect either.
+		{id: "allowed_own_identifier", status: contract.RequestStatusSucceeded, at: from, decision: decision(contract.PrivacyDecisionAllow),
+			ignored: []contract.PrivacyIgnored{{Kind: contract.CanonicalKindCommonSecret, Reason: contract.PrivacyIgnoreAstrLinkIdentifier, Count: 2}}},
 		{id: "ignored", status: contract.RequestStatusSucceeded, at: from, decision: decision(contract.PrivacyDecisionAllow), ignored: allowlisted},
 		{id: "fail_open", status: contract.RequestStatusSucceeded, at: from, decision: decision(contract.PrivacyDecisionFailOpen)},
 		{id: "off", status: contract.RequestStatusSucceeded, at: from, decision: decision(contract.PrivacyDecisionNone)},
@@ -82,7 +85,7 @@ func TestPrivacySummaryCountsDecisionsValuesAndKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := storage.PrivacyTotals{Requests: 13, Allowed: 2, Ignored: 1, Warned: 1, Redacted: 3, Blocked: 2, FailOpen: 1, Trusted: 1,
+	want := storage.PrivacyTotals{Requests: 14, Allowed: 3, Ignored: 1, Warned: 1, Redacted: 3, Blocked: 2, FailOpen: 1, Trusted: 1,
 		Replaced: 7, Restored: 9, RestoredVisible: 6, RestoredToolArguments: 2, Unrestored: 2,
 		IgnoredAllowlisted: 2, IgnoredLowConfidence: 3}
 	if summary.Totals != want {

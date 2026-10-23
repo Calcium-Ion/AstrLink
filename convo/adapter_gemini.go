@@ -41,11 +41,33 @@ func (geminiAdapter) inspectItem(item json.RawMessage) requestItem {
 	role := geminiRole(content)
 	result := requestItem{assistant: role == "model", echoIDs: geminiInboundEchoIDs(content)}
 	if role == "user" {
-		texts, hasMedia := geminiParts(content, false)
+		texts, hasMedia, answered := scanGeminiParts(content, false)
 		result.userText = joinVisible(texts, "\n")
 		result.user = hasMedia || result.userText != ""
+		result.toolResult = answered
+	} else if role != "model" {
+		result.toolResult = geminiHasFunctionResponse(content)
 	}
 	return result
+}
+
+// geminiHasFunctionResponse reports whether a content answers a function
+// call, whatever text sits beside the functionResponse parts.
+func geminiHasFunctionResponse(content map[string]json.RawMessage) bool {
+	parts, ok := jsonx.Array(content["parts"])
+	if !ok {
+		return false
+	}
+	for _, raw := range parts {
+		part, ok := jsonx.Object(raw)
+		if !ok {
+			continue
+		}
+		if _, isResponse := part["functionResponse"]; isResponse {
+			return true
+		}
+	}
+	return false
 }
 
 func geminiRole(content map[string]json.RawMessage) string {
@@ -59,9 +81,16 @@ func geminiRole(content map[string]json.RawMessage) string {
 // geminiParts splits a content's parts into visible texts and a flag for
 // non-text user attachments. functionResponse parts are neither.
 func geminiParts(content map[string]json.RawMessage, includeThoughts bool) (texts []string, hasMedia bool) {
+	texts, hasMedia, _ = scanGeminiParts(content, includeThoughts)
+	return texts, hasMedia
+}
+
+// scanGeminiParts is geminiParts that also reports whether a part answers a
+// function call, from the same decode of the parts.
+func scanGeminiParts(content map[string]json.RawMessage, includeThoughts bool) (texts []string, hasMedia, functionResponse bool) {
 	parts, ok := jsonx.Array(content["parts"])
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 	for _, raw := range parts {
 		part, ok := jsonx.Object(raw)
@@ -69,6 +98,7 @@ func geminiParts(content map[string]json.RawMessage, includeThoughts bool) (text
 			continue
 		}
 		if _, isResponse := part["functionResponse"]; isResponse {
+			functionResponse = true
 			continue
 		}
 		if _, isCall := part["functionCall"]; isCall {
@@ -94,7 +124,7 @@ func geminiParts(content map[string]json.RawMessage, includeThoughts bool) (text
 			hasMedia = true
 		}
 	}
-	return texts, hasMedia
+	return texts, hasMedia, functionResponse
 }
 
 func (geminiAdapter) IsUserTurn(item json.RawMessage) bool {
@@ -107,6 +137,14 @@ func (geminiAdapter) IsUserTurn(item json.RawMessage) bool {
 	}
 	texts, hasMedia := geminiParts(content, false)
 	return hasMedia || joinVisible(texts, "\n") != ""
+}
+
+func (geminiAdapter) IsToolResult(item json.RawMessage) bool {
+	content, ok := jsonx.Object(item)
+	if !ok {
+		return false
+	}
+	return geminiRole(content) != "model" && geminiHasFunctionResponse(content)
 }
 
 func (geminiAdapter) InboundEchoIDs(item json.RawMessage) []string {

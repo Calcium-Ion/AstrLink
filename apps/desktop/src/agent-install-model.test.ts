@@ -112,16 +112,18 @@ describe("agent-install-model", () => {
     ).toThrow(/unexpected field/);
   });
 
-  it("accepts Pi, which runs commands without asking", () => {
-    const pi = {
-      ...status.tools[0],
-      id: "pi",
-      cli_access: "unrestricted",
-      guard: "skill_only",
-    };
-    expect(
-      parseAgentInstallStatus({ ...status, tools: [pi] }).tools[0],
-    ).toMatchObject({ id: "pi", cli_access: "unrestricted" });
+  it("accepts Pi and DeepSeek Harness, which run commands without asking", () => {
+    for (const id of ["pi", "dsh"]) {
+      const tool = {
+        ...status.tools[0],
+        id,
+        cli_access: "unrestricted",
+        guard: "skill_only",
+      };
+      expect(
+        parseAgentInstallStatus({ ...status, tools: [tool] }).tools[0],
+      ).toMatchObject({ id, cli_access: "unrestricted" });
+    }
   });
 
   it("validates the CLI access fields", () => {

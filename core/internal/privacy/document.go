@@ -55,6 +55,7 @@ func extractDocument(
 
 	document := jsonDocument{body: body, duplicateKeys: duplicateKeys}
 	protected := continuationPaths(protocol, root)
+	addToolIdentityPaths(protocol, root, protected)
 	addToolResultReferencePaths(protocol, root, protected)
 	if options.InspectToolDeclarations {
 		roots = append(roots, toolDeclarationRoots(protocol)...)

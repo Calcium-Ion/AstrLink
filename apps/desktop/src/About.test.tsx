@@ -197,6 +197,23 @@ describe("About updates", () => {
     await act(async () => button("检查更新").click());
     expect(mocks.checkAppUpdate).toHaveBeenCalledTimes(2);
   });
+  it("allows an interrupted automatic download to be retried immediately", async () => {
+    await render({
+      ...ready,
+      phase: "error",
+      error_code: "download",
+      error_detail: "Connection interrupted",
+    });
+    expect(container.textContent).toContain("下载失败");
+    expect(button("重试").disabled).toBe(false);
+    expect(button("查看版本与下载")).toBeDefined();
+    mocks.downloadAppUpdate.mockResolvedValue(ready);
+    await act(async () => button("重试").click());
+    expect(mocks.downloadAppUpdate).toHaveBeenCalledOnce();
+    expect(mocks.checkAppUpdate).not.toHaveBeenCalled();
+    expect(receive).toHaveBeenLastCalledWith(ready);
+  });
+
   it("leaves scrolling to the page scrollport", async () => {
     await render();
     await act(async () =>

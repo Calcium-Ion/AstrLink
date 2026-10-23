@@ -16,6 +16,12 @@ follows semantic versioning; tags use the nested-module form `convo/vX.Y.Z`.
   end of a message; every other closed `<tag>…</tag>` wrapper is unwrapped (text
   outside wins, else the last block's inner text), so Cursor's `<user_query>`
   and Paseo's `<skill>` + prompt both yield the typed text without naming them.
+- `Policy.NotesFollowPrompt` is for clients that send their own notes as plain
+  user messages after the prompt, as DeepSeek Harness does with its runtime and
+  clock snapshots. Only the user message that opens a turn then counts and
+  supplies `LastUserText`; the rest of its run and user messages after tool
+  results are notes. `Adapter` gains `IsToolResult` to tell where a turn's tool
+  loop is.
 - Initial extraction from AstrLink Core: protocol adapters for OpenAI Chat,
   OpenAI Responses, Anthropic Messages, and Gemini GenerateContent; typed
   session cursors (`explicit`, `echo_id`, `fingerprint`); streaming text

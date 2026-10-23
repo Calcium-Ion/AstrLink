@@ -371,6 +371,9 @@ describe("RawAccessApprovalWindow", () => {
     expect(grants?.textContent).toContain("可读取原文的 Agent");
     expect(grants?.textContent).toContain("Codex");
     expect(grants?.textContent).toContain("所有请求 · 剩余 ");
+    expect(grants?.textContent).toContain(
+      "关闭窗口后，这些 Agent 照常可以读取原文。",
+    );
     expect(container.textContent).toContain("没有待批准的申请");
 
     await act(async () => button("撤销").click());

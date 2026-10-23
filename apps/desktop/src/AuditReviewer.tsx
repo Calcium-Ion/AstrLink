@@ -54,6 +54,7 @@ import {
   type ResponsePreview,
 } from "./response-preview-model";
 import {
+  isEventStream,
   parseSSEIncremental,
   SSEParseCancelledError,
   type SSEEvent,
@@ -536,7 +537,7 @@ function AuditPartView({
   protocol: string;
 }) {
   const t = i18n.t.bind(i18n);
-  const isStream = part.media_type.toLowerCase().includes("text/event-stream");
+  const isStream = isEventStream(part);
   return (
     <div>
       <div className="mb-2.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -978,8 +979,12 @@ function StreamEventList({
   }, [events, matcher]);
   useEffect(() => setRenderLimit(EVENT_RENDER_BATCH), [activeQuery]);
 
+  const rawFallback =
+    parseState !== "parsing" &&
+    events.length === 0 &&
+    part.content.trim() !== "";
   const onResult = find?.onResult;
-  const finding = find !== undefined && matcher !== null;
+  const finding = find !== undefined && matcher !== null && !rawFallback;
   useEffect(() => {
     if (!finding) return;
     onResult?.({ count: filtered.length, capped: false });
@@ -1011,6 +1016,13 @@ function StreamEventList({
   );
 
   const t = i18n.t.bind(i18n);
+  // An HTML/text error mislabeled as SSE must remain readable. No parsed
+  // events means the parser's incomplete-tail warning is not a diagnosis.
+  if (rawFallback) {
+    return (
+      <RawSegmentView bounded={false} content={part.content} find={find} />
+    );
+  }
   const showStatus =
     parseState !== "ready" ||
     parseSummary.invalidJsonCount > 0 ||
@@ -1291,10 +1303,6 @@ function eventPreview(event: SSEEvent): string {
       .join(" · ");
   if (response.status) return jsonString(response.status);
   return event.data.replace(/\s+/g, " ").slice(0, 200);
-}
-
-function isEventStream(part: AuditContentPart): boolean {
-  return part.media_type.toLowerCase().includes("text/event-stream");
 }
 
 /** A body worth offering as a JSON tree, judged without parsing it. */

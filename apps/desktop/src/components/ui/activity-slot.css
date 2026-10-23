@@ -1,0 +1,53 @@
+/* The slot a running conversation occupies on the request list. A soft band
+   sweeps across it while a call runs; between calls it shows hatching. Only
+   the background moves, so nothing is composited inside the list scroller. */
+.activity-slot {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background-color: var(--card);
+}
+
+.activity-slot[data-state="running"] {
+  background-image: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--primary) 7%, transparent) 50%,
+    transparent 70%
+  );
+  background-repeat: no-repeat;
+  background-size: 250% 100%;
+  animation: activity-slot-sweep 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.activity-slot[data-state="idle"] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 5px,
+    color-mix(in srgb, var(--border) 60%, transparent) 5px 6px
+  );
+}
+
+@keyframes activity-slot-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-slot[data-state="running"] {
+    animation: none;
+    background-image: none;
+    background-color: color-mix(in srgb, var(--primary) 4%, var(--card));
+  }
+}
+
+@media (forced-colors: active) {
+  .activity-slot {
+    background-image: none;
+  }
+}

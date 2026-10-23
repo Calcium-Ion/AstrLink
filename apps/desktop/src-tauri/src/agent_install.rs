@@ -115,6 +115,8 @@ pub enum AgentToolId {
     Codex,
     Grok,
     Pi,
+    /// DeepSeek Harness, whose command is `dsh`.
+    Dsh,
 }
 
 /// How a host can be kept away from AstrLink's local files. Only Claude Code
@@ -282,19 +284,21 @@ struct CodexInstructionsRecord {
 }
 
 impl AgentToolId {
-    fn all() -> [Self; 5] {
+    fn all() -> [Self; 6] {
         [
             Self::Cursor,
             Self::Claude,
             Self::Codex,
             Self::Grok,
             Self::Pi,
+            Self::Dsh,
         ]
     }
 
-    /// Codex and Pi both discover the shared `~/.agents/skills` directory.
+    /// Codex, Pi, and DeepSeek Harness all discover the shared
+    /// `~/.agents/skills` directory.
     fn uses_shared_skills(self) -> bool {
-        matches!(self, Self::Codex | Self::Pi)
+        matches!(self, Self::Codex | Self::Pi | Self::Dsh)
     }
 }
 
@@ -762,6 +766,7 @@ fn tool_dir(home: Home, id: AgentToolId) -> PathBuf {
         AgentToolId::Codex => home.codex_dir(),
         AgentToolId::Grok => home.grok_dir(),
         AgentToolId::Pi => home.pi_dir(),
+        AgentToolId::Dsh => home.join(".dsh"),
     }
 }
 
@@ -779,20 +784,23 @@ fn tool_skill_dir(home: Home, bundle: &SkillBundle, id: AgentToolId) -> PathBuf 
         AgentToolId::Claude => home.claude_dir().join("skills").join(bundle.name),
         AgentToolId::Grok => home.grok_dir().join("skills").join(bundle.name),
         // Pi's own skill directory moves with PI_CODING_AGENT_DIR, which the
-        // desktop cannot see; the shared one does not.
-        AgentToolId::Codex | AgentToolId::Pi => canonical_skill_dir(&home, bundle),
+        // desktop cannot see; the shared one does not. DeepSeek Harness reads
+        // both its own and the shared one, so one copy keeps it listed once.
+        AgentToolId::Codex | AgentToolId::Pi | AgentToolId::Dsh => {
+            canonical_skill_dir(&home, bundle)
+        }
     }
 }
 
 /// Where the MCP-based installer registered its server for each host. It
-/// never supported Pi.
+/// never supported Pi or DeepSeek Harness.
 fn legacy_mcp_config_path(home: &Path, id: AgentToolId) -> Option<PathBuf> {
     match id {
         AgentToolId::Cursor => Some(home.join(".cursor").join("mcp.json")),
         AgentToolId::Claude => Some(home.join(".claude.json")),
         AgentToolId::Codex => Some(home.join(".codex").join("config.toml")),
         AgentToolId::Grok => Some(home.join(".grok").join("config.toml")),
-        AgentToolId::Pi => None,
+        AgentToolId::Pi | AgentToolId::Dsh => None,
     }
 }
 
@@ -837,8 +845,8 @@ fn skill_status(
         preview_paths.push(display_path(&receipt_path(&home)).unwrap_or_default());
     }
     deduplicate_paths(&mut preview_paths);
-    // Codex and Pi share one directory, so a copy there only counts for a
-    // tool that is actually present.
+    // Codex, Pi, and DeepSeek Harness share one directory, so a copy there
+    // only counts for a tool that is actually present.
     AgentSkillStatus {
         id: skill,
         installed: detected && skill_present(&dir, &canonical_skill_dir(&home, bundle)),
@@ -886,8 +894,9 @@ fn write_canonical_skill(home: Home, bundle: &SkillBundle) -> Result<PathBuf, St
 
 fn install_tool(home: Home, bundle: &SkillBundle, id: AgentToolId) -> Result<String, String> {
     let skill = tool_skill_dir(home, bundle, id);
-    // Codex and Pi discover the shared directory, so only write it when one
-    // of them is selected, and never next to a duplicate Codex copy.
+    // Codex, Pi, and DeepSeek Harness discover the shared directory, so only
+    // write it when one of them is selected, and never next to a duplicate
+    // Codex copy.
     if id.uses_shared_skills() {
         migrate_legacy_codex_skill(home, bundle)?;
     }
@@ -899,7 +908,7 @@ fn uninstall_tool(home: Home, bundle: &SkillBundle, id: AgentToolId) -> Result<(
     // The shared skill is removed once, after all tool-specific installations.
     let skill = match id {
         AgentToolId::Codex => legacy_codex_skill_dir(&home, bundle),
-        AgentToolId::Pi => return Ok(()),
+        AgentToolId::Pi | AgentToolId::Dsh => return Ok(()),
         _ => tool_skill_dir(home, bundle, id),
     };
     if is_ours_skill(&skill, &canonical_skill_dir(&home, bundle), bundle) {
@@ -1201,7 +1210,7 @@ fn remove_legacy_mcp(home: &Path) -> Result<(), String> {
                 }
                 remove_toml_mcp(&raw)?
             }
-            AgentToolId::Pi => continue,
+            AgentToolId::Pi | AgentToolId::Dsh => continue,
         };
         write_text(&path, &next)?;
     }
@@ -1245,8 +1254,9 @@ fn tool_cli_access_kind(id: AgentToolId) -> AgentCliAccessKind {
         // documents no rule file, so both ask the user on first use.
         AgentToolId::Cursor | AgentToolId::Grok => AgentCliAccessKind::Prompt,
         // Pi has no permission prompts: every enabled tool runs with the
-        // process's own permissions.
-        AgentToolId::Pi => AgentCliAccessKind::Unrestricted,
+        // process's own permissions. DeepSeek Harness asks only to widen its
+        // sandbox, which confines file writes and lets the CLI read.
+        AgentToolId::Pi | AgentToolId::Dsh => AgentCliAccessKind::Unrestricted,
     }
 }
 
@@ -1318,9 +1328,10 @@ fn tool_guard_kind(id: AgentToolId) -> AgentGuardKind {
         // documented file, and Grok Build documents no global instructions
         // file, so neither is written.
         AgentToolId::Cursor | AgentToolId::Grok => AgentGuardKind::SkillOnly,
-        // Pi's global AGENTS.md moves with PI_CODING_AGENT_DIR, which the
-        // desktop cannot see, so it is not written either.
-        AgentToolId::Pi => AgentGuardKind::SkillOnly,
+        // Pi's global AGENTS.md moves with PI_CODING_AGENT_DIR, and DeepSeek
+        // Harness's with DSH_HOME, which the desktop cannot see, so neither is
+        // written either.
+        AgentToolId::Pi | AgentToolId::Dsh => AgentGuardKind::SkillOnly,
     }
 }
 
@@ -1885,7 +1896,7 @@ mod tests {
     #[test]
     fn install_and_uninstall_detected_tools() {
         let home = unique_temp("agent-install");
-        for dir in [".cursor", ".claude", ".codex", ".grok", ".pi"] {
+        for dir in [".cursor", ".claude", ".codex", ".grok", ".pi", ".dsh"] {
             fs::create_dir_all(home.join(dir)).unwrap();
         }
         let cursor_mcp = r#"{"mcpServers":{"keep":{"command":"x"}}}"#;
@@ -1948,7 +1959,7 @@ mod tests {
 
         let after = status(&context);
         let shared_path = display_path(&canonical_skill_dir(&home, DEBUG)).unwrap();
-        // Codex and Pi both read the one shared copy.
+        // Codex, Pi, and DeepSeek Harness all read the one shared copy.
         assert_eq!(
             after
                 .tools
@@ -1959,7 +1970,7 @@ mod tests {
                     .contains(&shared_path))
                 .map(|tool| tool.id)
                 .collect::<Vec<_>>(),
-            [AgentToolId::Codex, AgentToolId::Pi]
+            [AgentToolId::Codex, AgentToolId::Pi, AgentToolId::Dsh]
         );
         assert!(!after
             .tools
@@ -1972,7 +1983,7 @@ mod tests {
             let access = match tool.id {
                 AgentToolId::Claude => AgentCliAccessKind::AllowRules,
                 AgentToolId::Codex => AgentCliAccessKind::ExecPolicy,
-                AgentToolId::Pi => AgentCliAccessKind::Unrestricted,
+                AgentToolId::Pi | AgentToolId::Dsh => AgentCliAccessKind::Unrestricted,
                 AgentToolId::Cursor | AgentToolId::Grok => AgentCliAccessKind::Prompt,
             };
             assert!(
@@ -2093,7 +2104,7 @@ mod tests {
                 let config = match id {
                     AgentToolId::Cursor | AgentToolId::Claude => &json_config,
                     AgentToolId::Codex | AgentToolId::Grok => &toml_config,
-                    AgentToolId::Pi => continue,
+                    AgentToolId::Pi | AgentToolId::Dsh => continue,
                 };
                 fs::write(legacy_mcp_config_path(&home, id).unwrap(), config).unwrap();
             }
@@ -2746,13 +2757,14 @@ mod tests {
             ),
             (DEBUG_ONLY, vec![AgentToolId::Pi]),
             (&both[..], vec![AgentToolId::Claude, AgentToolId::Pi]),
+            (&both[..], vec![AgentToolId::Dsh]),
             (
                 &placeholder_only[..],
                 vec![AgentToolId::Claude, AgentToolId::Codex],
             ),
         ] {
             let home = unique_temp("agent-selected");
-            for dir in [".cursor", ".claude", ".codex", ".grok", ".pi"] {
+            for dir in [".cursor", ".claude", ".codex", ".grok", ".pi", ".dsh"] {
                 fs::create_dir_all(home.join(dir)).unwrap();
             }
             let cli_source = home.join("src-astrlink-cli");
@@ -2794,8 +2806,8 @@ mod tests {
             for tool in after.tools {
                 let chosen = selected.contains(&tool.id);
                 for skill in &tool.skills {
-                    // Codex and Pi share a directory, so choosing either one
-                    // installs the skill for both.
+                    // Codex, Pi, and DeepSeek Harness share a directory, so
+                    // choosing any one installs the skill for all of them.
                     let installed = skills.contains(&skill.id)
                         && (chosen || tool.id.uses_shared_skills() && shared);
                     assert_eq!(skill.installed, installed, "{:?} {:?}", tool.id, skill.id);
@@ -2908,7 +2920,7 @@ mod tests {
     #[test]
     fn placeholder_skill_alone_brings_no_cli_rules_or_guards() {
         let home = unique_temp("agent-placeholder-only");
-        for dir in [".cursor", ".claude", ".codex", ".grok", ".pi"] {
+        for dir in [".cursor", ".claude", ".codex", ".grok", ".pi", ".dsh"] {
             fs::create_dir_all(home.join(dir)).unwrap();
         }
         let settings = claude_settings_path(Home::local(&home));
@@ -2994,78 +3006,84 @@ mod tests {
     }
 
     #[test]
-    fn pi_uses_the_shared_directory_and_leaves_other_hosts_alone() {
-        let home = unique_temp("agent-pi");
-        let cli_source = home.join("src-astrlink-cli");
-        fs::write(&cli_source, b"cli").unwrap();
-        let context = InstallContext {
-            home: home.clone(),
-            cli_source,
-            data_directories: Vec::new(),
-            raw_key_pins: Vec::new(),
-            dirs: ToolDirs::default(),
-            wsl: Vec::new(),
-        };
-        let pi = |context: &InstallContext| {
-            status(context)
-                .tools
-                .into_iter()
-                .find(|tool| tool.id == AgentToolId::Pi)
-                .unwrap()
-        };
-        assert!(!pi(&context).detected);
-        assert!(install_local(&context, DEBUG_ONLY, &[AgentToolId::Pi])
-            .unwrap_err()
-            .contains("no longer detected"));
+    fn pi_and_dsh_use_the_shared_directory_and_leave_other_hosts_alone() {
+        // Each host's own directory stays untouched: Pi's agent directory, and
+        // DeepSeek Harness's skills and global AGENTS.md.
+        for (id, host_dir, own) in [
+            (AgentToolId::Pi, ".pi", &["agent"][..]),
+            (AgentToolId::Dsh, ".dsh", &["skills", "AGENTS.md"][..]),
+        ] {
+            let home = unique_temp("agent-shared-host");
+            let cli_source = home.join("src-astrlink-cli");
+            fs::write(&cli_source, b"cli").unwrap();
+            let context = InstallContext {
+                home: home.clone(),
+                cli_source,
+                data_directories: Vec::new(),
+                raw_key_pins: Vec::new(),
+                dirs: ToolDirs::default(),
+                wsl: Vec::new(),
+            };
+            let tool = |context: &InstallContext| {
+                status(context)
+                    .tools
+                    .into_iter()
+                    .find(|tool| tool.id == id)
+                    .unwrap()
+            };
+            assert!(!tool(&context).detected, "{id:?}");
+            assert!(install_local(&context, DEBUG_ONLY, &[id])
+                .unwrap_err()
+                .contains("no longer detected"));
 
-        for dir in [".pi", ".cursor", ".claude", ".codex", ".grok"] {
-            fs::create_dir_all(home.join(dir)).unwrap();
-        }
-        let settings = claude_settings_path(Home::local(&home));
-        fs::write(&settings, "{}").unwrap();
-        let receipt = install_local(&context, &AgentSkillId::all(), &[AgentToolId::Pi]).unwrap();
-        for skill in AgentSkillId::all() {
-            let bundle = skill.bundle();
-            let shared = home.join(".agents").join("skills").join(bundle.name);
-            assert_eq!(
-                tool_skill_dir(Home::local(&home), bundle, AgentToolId::Pi),
-                shared
-            );
-            assert_real_skill_copy(&home, bundle, &shared);
-            assert!(receipt.files.contains(&display_path(&shared).unwrap()));
-            for id in [AgentToolId::Cursor, AgentToolId::Claude, AgentToolId::Grok] {
-                assert!(
-                    !tool_skill_dir(Home::local(&home), bundle, id).exists(),
-                    "{id:?}"
-                );
+            for dir in [host_dir, ".cursor", ".claude", ".codex", ".grok"] {
+                fs::create_dir_all(home.join(dir)).unwrap();
             }
-            assert!(!legacy_codex_skill_dir(&home, bundle).exists());
-            assert!(!home.join(".pi").join("agent").exists());
-        }
-        // Pi runs commands without asking, so it needs the CLI but no rules,
-        // and the Claude Code and Codex files stay as they were.
-        assert!(cli_binary_dest(&home).is_file());
-        assert!(!codex_rules_path(Home::local(&home)).exists());
-        assert!(!codex_agents_path(Home::local(&home)).exists());
-        assert!(!host_guards_path(&home).exists());
-        assert_eq!(fs::read_to_string(&settings).unwrap(), "{}");
-        let status = pi(&context);
-        assert!(status.detected && status.skills.iter().all(|skill| skill.installed));
-        assert_eq!(
-            (status.cli_access, status.cli_access_installed),
-            (AgentCliAccessKind::Unrestricted, false)
-        );
-        assert_eq!(
-            (status.guard, status.guard_installed),
-            (AgentGuardKind::SkillOnly, false)
-        );
+            let settings = claude_settings_path(Home::local(&home));
+            fs::write(&settings, "{}").unwrap();
+            let receipt = install_local(&context, &AgentSkillId::all(), &[id]).unwrap();
+            for skill in AgentSkillId::all() {
+                let bundle = skill.bundle();
+                let shared = home.join(".agents").join("skills").join(bundle.name);
+                assert_eq!(tool_skill_dir(Home::local(&home), bundle, id), shared);
+                assert_real_skill_copy(&home, bundle, &shared);
+                assert!(receipt.files.contains(&display_path(&shared).unwrap()));
+                for other in [AgentToolId::Cursor, AgentToolId::Claude, AgentToolId::Grok] {
+                    assert!(
+                        !tool_skill_dir(Home::local(&home), bundle, other).exists(),
+                        "{id:?} {other:?}"
+                    );
+                }
+                assert!(!legacy_codex_skill_dir(&home, bundle).exists());
+            }
+            for name in own {
+                assert!(!home.join(host_dir).join(name).exists(), "{id:?} {name}");
+            }
+            // Neither host asks before running the CLI, so it needs no rules,
+            // and the Claude Code and Codex files stay as they were.
+            assert!(cli_binary_dest(&home).is_file());
+            assert!(!codex_rules_path(Home::local(&home)).exists());
+            assert!(!codex_agents_path(Home::local(&home)).exists());
+            assert!(!host_guards_path(&home).exists());
+            assert_eq!(fs::read_to_string(&settings).unwrap(), "{}");
+            let status = tool(&context);
+            assert!(status.detected && status.skills.iter().all(|skill| skill.installed));
+            assert_eq!(
+                (status.cli_access, status.cli_access_installed),
+                (AgentCliAccessKind::Unrestricted, false)
+            );
+            assert_eq!(
+                (status.guard, status.guard_installed),
+                (AgentGuardKind::SkillOnly, false)
+            );
 
-        uninstall(&context).unwrap();
-        for skill in AgentSkillId::all() {
-            assert!(!canonical_skill_dir(&home, skill.bundle()).exists());
+            uninstall(&context).unwrap();
+            for skill in AgentSkillId::all() {
+                assert!(!canonical_skill_dir(&home, skill.bundle()).exists());
+            }
+            assert!(tool(&context).skills.iter().all(|skill| !skill.installed));
+            let _ = fs::remove_dir_all(&home);
         }
-        assert!(pi(&context).skills.iter().all(|skill| !skill.installed));
-        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]
@@ -3427,7 +3445,7 @@ mod tests {
     #[test]
     fn install_writes_host_guards_and_uninstall_restores_user_files() {
         let home = unique_temp("agent-guards");
-        for dir in [".cursor", ".claude", ".codex", ".grok", ".pi"] {
+        for dir in [".cursor", ".claude", ".codex", ".grok", ".pi", ".dsh"] {
             fs::create_dir_all(home.join(dir)).unwrap();
         }
         let settings = claude_settings_path(Home::local(&home));

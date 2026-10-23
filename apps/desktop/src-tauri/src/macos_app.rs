@@ -18,23 +18,36 @@ struct DevBundle {
     identifier: &'static str,
     name: &'static str,
     link_scheme: &'static str,
+    icon: &'static [u8],
 }
 
 #[cfg(any(dev, test))]
 const DEV_BUNDLE: DevBundle = DevBundle {
-    directory: "AstrLink Dev.app",
+    directory: "AstrLink.app",
     identifier: "com.astrlink.desktop.dev",
     name: "AstrLink",
     link_scheme: crate::instance::LINK_SCHEME,
+    icon: include_bytes!("../icons/icon.icns"),
 };
 
 #[cfg(any(dev, test))]
 const ISOLATED_BUNDLE: DevBundle = DevBundle {
-    directory: "AstrLink Isolated.app",
+    directory: "AstrLink Dev.app",
     identifier: crate::instance::ISOLATED_IDENTIFIER,
     name: crate::instance::ISOLATED_NAME,
     link_scheme: crate::instance::ISOLATED_LINK_SCHEME,
+    icon: include_bytes!("../icons/dev/icon.icns"),
 };
+
+#[cfg(any(dev, test))]
+impl DevBundle {
+    fn icon_filename(&self) -> String {
+        use sha2::{Digest, Sha256};
+
+        // Give an updated icon a new resource path for the bundle cache.
+        format!("icon-{:x}.icns", Sha256::digest(self.icon))
+    }
+}
 
 #[link(name = "CoreServices", kind = "framework")]
 extern "C" {
@@ -149,6 +162,7 @@ fn stage_dev_bundle(
     // ONNX workers resolve their dylib from Contents/Frameworks in an app bundle.
     replace_symlink(frameworks, &contents.join("Frameworks"))?;
 
+    let icon_filename = target.icon_filename();
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -157,7 +171,7 @@ fn stage_dev_bundle(
 <key>CFBundleName</key><string>{name}</string>
 <key>CFBundleDisplayName</key><string>{name}</string>
 <key>CFBundleExecutable</key><string>astrlink-desktop</string>
-<key>CFBundleIconFile</key><string>icon.icns</string>
+<key>CFBundleIconFile</key><string>{icon_filename}</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleURLTypes</key><array><dict>
@@ -176,10 +190,7 @@ fn stage_dev_bundle(
         apple_events = APPLE_EVENTS_USAGE,
     );
     fs::write(contents.join("Info.plist"), plist)?;
-    fs::write(
-        resources.join("icon.icns"),
-        include_bytes!("../icons/icon.icns"),
-    )?;
+    fs::write(resources.join(icon_filename), target.icon)?;
 
     // A symlink for the main executable gets canonicalized back to Cargo's bare
     // binary. Copy it atomically so both Cocoa and Tauri see the bundle path.
@@ -265,7 +276,7 @@ mod tests {
             b"runtime"
         );
         assert_eq!(
-            fs::read(contents.join("Resources/icon.icns")).unwrap(),
+            fs::read(contents.join("Resources").join(DEV_BUNDLE.icon_filename())).unwrap(),
             include_bytes!("../icons/icon.icns")
         );
         // Read through macOS's bundle API, not a string match on generated XML.
@@ -275,7 +286,7 @@ mod tests {
         for (key, expected) in [
             ("CFBundleIdentifier", DEV_BUNDLE.identifier),
             ("CFBundleDisplayName", "AstrLink"),
-            ("CFBundleIconFile", "icon.icns"),
+            ("CFBundleIconFile", DEV_BUNDLE.icon_filename().as_str()),
             ("NSAppleEventsUsageDescription", APPLE_EVENTS_USAGE),
         ] {
             let value = info.get(CFString::new(key)).downcast::<CFString>().unwrap();
@@ -292,12 +303,23 @@ mod tests {
         let isolated = stage_dev_bundle(&executable, &frameworks, &ISOLATED_BUNDLE).unwrap();
         assert_ne!(isolated, bundled);
         let isolated_bundle = bundle_for_executable(&isolated).unwrap();
+        assert_eq!(isolated_bundle.file_name().unwrap(), "AstrLink Dev.app");
+        assert_eq!(
+            fs::read(
+                isolated_bundle
+                    .join("Contents/Resources")
+                    .join(ISOLATED_BUNDLE.icon_filename())
+            )
+            .unwrap(),
+            include_bytes!("../icons/dev/icon.icns")
+        );
         let info = CFBundle::new(CFURL::from_path(isolated_bundle, true).unwrap())
             .unwrap()
             .info_dictionary();
         for (key, expected) in [
             ("CFBundleIdentifier", crate::instance::ISOLATED_IDENTIFIER),
             ("CFBundleDisplayName", crate::instance::ISOLATED_NAME),
+            ("CFBundleIconFile", ISOLATED_BUNDLE.icon_filename().as_str()),
         ] {
             let value = info.get(CFString::new(key)).downcast::<CFString>().unwrap();
             assert_eq!(value.to_string(), expected);

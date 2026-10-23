@@ -1,4 +1,7 @@
-import { BuiltinToolsEditor } from "./components/BuiltinToolsEditor";
+import {
+  BuiltinToolsEditor,
+  type BuiltinToolDrafts,
+} from "./components/BuiltinToolsEditor";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -206,6 +209,7 @@ export function RoutingSettingsPanel({
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
   const [editingRedirect, setEditingRedirect] = useState(false);
+  const [builtinToolDrafts] = useState<BuiltinToolDrafts>(() => new Map());
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [reload, setReload] = useState(0);
@@ -456,6 +460,7 @@ export function RoutingSettingsPanel({
               </fieldset>
               <BuiltinToolsEditor
                 value={draft.builtin_tools}
+                backendDrafts={builtinToolDrafts}
                 services={services}
                 disabled={!ready}
                 onChange={(builtin_tools) =>

@@ -12,6 +12,7 @@ export function PageHeader({
   className,
   description,
   headingLevel = 1,
+  overline,
   title,
   titleGroupClassName,
   titleId,
@@ -29,6 +30,7 @@ export function PageHeader({
   className?: string;
   description?: ReactNode;
   headingLevel?: 1 | 2;
+  overline?: ReactNode;
   title: string;
   titleGroupClassName?: string;
   titleId?: string;
@@ -48,10 +50,19 @@ export function PageHeader({
           : !compact
             ? "mb-5 border-b pb-4"
             : null,
+        overline && "flex-wrap",
         className,
       )}
       data-slot="page-header"
     >
+      {overline ? (
+        <div
+          className="flex min-w-0 basis-full items-center"
+          data-slot="page-header-overline"
+        >
+          {overline}
+        </div>
+      ) : null}
       <div
         className={cn(
           "min-w-0",

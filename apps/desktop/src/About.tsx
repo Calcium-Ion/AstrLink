@@ -43,7 +43,8 @@ import {
   type UpdateSnapshot,
 } from "./update-model";
 import { i18n, useT } from "./i18n";
-import logo from "./assets/astrlink-logo.svg";
+import { getAppBranding } from "./app-branding";
+import { DevelopmentBadge } from "./components/DevelopmentBadge";
 
 export function About({
   snapshot,
@@ -57,6 +58,7 @@ export function About({
   hasUnsavedChanges: () => boolean;
 }) {
   const t = useT();
+  const branding = getAppBranding();
   const id = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -213,13 +215,15 @@ export function About({
                 className="flex items-center gap-4"
                 aria-label={t("about.application")}
               >
-                <img src={logo} alt="" className="size-14 shrink-0" />
+                <img src={branding.logo} alt="" className="size-14 shrink-0" />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-xl font-semibold tracking-tight">
                       AstrLink
                     </h2>
-                    {snapshot.development ? (
+                    {branding.development ? (
+                      <DevelopmentBadge />
+                    ) : snapshot.development ? (
                       <Badge variant="secondary">
                         {t("about.developmentBadge")}
                       </Badge>

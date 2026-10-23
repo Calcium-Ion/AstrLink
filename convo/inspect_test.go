@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -89,6 +90,84 @@ func TestInspectOpenAIChatHarnessMessagesUnwrap(t *testing.T) {
 	}
 	if summary.AssistantDigest == nil {
 		t.Fatal("the last assistant reply is long enough to fingerprint")
+	}
+}
+
+// DeepSeek Harness sends its runtime and clock snapshots as plain user
+// messages after the prompt, and another clock note after tool results once
+// ten minutes have passed. By default each counts as a user message and the
+// newest is the clock; with NotesFollowPrompt only the turn openers count.
+func TestInspectNotesFollowPrompt(t *testing.T) {
+	body := readFixture(t, "openai_chat", "deepseek_harness_notes.json")
+	summary, err := DefaultPolicy().InspectBody(OpenAIChat, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.UserTurnCount != 6 || !strings.HasPrefix(summary.LastUserText, "Time sampled while preparing turn 2") {
+		t.Fatalf("default policy: UserTurnCount = %d, LastUserText = %q", summary.UserTurnCount, summary.LastUserText)
+	}
+
+	policy := DefaultPolicy()
+	policy.NotesFollowPrompt = true
+	summary, err = policy.InspectBody(OpenAIChat, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.UserTurnCount != 2 || !summary.HasUserMessage {
+		t.Fatalf("UserTurnCount = %d, want 2", summary.UserTurnCount)
+	}
+	if summary.FirstUserText != "把 relay 的重试改成指数退避" || summary.LastUserText != "再补上单元测试" {
+		t.Fatalf("user text = %q / %q", summary.FirstUserText, summary.LastUserText)
+	}
+	if !reflect.DeepEqual(summary.LastUserDigest, DigestText("再补上单元测试", false)) {
+		t.Fatal("LastUserDigest must digest the prompt, not the clock note after it")
+	}
+}
+
+// A note after tool results is not a new turn in any protocol: the next call
+// of the loop keeps the prompt that opened it.
+func TestInspectNotesFollowPromptAfterToolResults(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.NotesFollowPrompt = true
+	for _, test := range []struct {
+		name     string
+		protocol Protocol
+		body     string
+	}{
+		{"openai chat", OpenAIChat, `{"messages":[
+			{"role":"user","content":"Fix the retry loop"},
+			{"role":"user","content":"Current runtime context."},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"func retry() {}"},
+			{"role":"user","content":"Time sampled while preparing turn 1, step 2."}]}`},
+		{"anthropic", AnthropicMessages, `{"messages":[
+			{"role":"user","content":"Fix the retry loop"},
+			{"role":"user","content":"Current runtime context."},
+			{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"read","input":{}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"func retry() {}"},{"type":"text","text":"Time sampled while preparing turn 1, step 2."}]},
+			{"role":"user","content":"Background job 1 finished."}]}`},
+		{"openai responses", OpenAIResponses, `{"input":[
+			{"role":"user","content":[{"type":"input_text","text":"Fix the retry loop"}]},
+			{"role":"user","content":[{"type":"input_text","text":"Current runtime context."}]},
+			{"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":"func retry() {}"},
+			{"role":"user","content":[{"type":"input_text","text":"Time sampled while preparing turn 1, step 2."}]}]}`},
+		{"gemini", GeminiGenerateContent, `{"contents":[
+			{"role":"user","parts":[{"text":"Fix the retry loop"}]},
+			{"role":"user","parts":[{"text":"Current runtime context."}]},
+			{"role":"model","parts":[{"functionCall":{"name":"read","args":{}}}]},
+			{"role":"user","parts":[{"functionResponse":{"name":"read","response":{"text":"func retry() {}"}}}]},
+			{"role":"user","parts":[{"text":"Time sampled while preparing turn 1, step 2."}]}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			summary, err := policy.InspectBody(test.protocol, []byte(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary.UserTurnCount != 1 || summary.LastUserText != "Fix the retry loop" {
+				t.Fatalf("UserTurnCount = %d, LastUserText = %q", summary.UserTurnCount, summary.LastUserText)
+			}
+		})
 	}
 }
 

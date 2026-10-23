@@ -1,3 +1,15 @@
 {
-  "identifier": "com.astrlink.desktop.isolated"
+  "productName": "AstrLink Dev",
+  "identifier": "com.astrlink.desktop.isolated",
+  "bundle": {
+    "icon": [
+      "icons/dev/32x32.png",
+      "icons/dev/64x64.png",
+      "icons/dev/128x128.png",
+      "icons/dev/128x128@2x.png",
+      "icons/dev/icon.png",
+      "icons/dev/icon.icns",
+      "icons/dev/icon.ico"
+    ]
+  }
 }

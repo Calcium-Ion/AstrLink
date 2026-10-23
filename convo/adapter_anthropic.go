@@ -44,9 +44,12 @@ func (anthropicAdapter) inspectItem(item json.RawMessage) requestItem {
 	role, _ := jsonx.String(message["role"])
 	result := requestItem{assistant: role == "assistant", echoIDs: anthropicInboundEchoIDs(message)}
 	if role == "user" {
-		texts, hasMedia := stringOrTextParts(message["content"], anthropicTextTypes, anthropicSkipTypes)
+		// anthropicSkipTypes holds only tool_result, so a skipped block is a
+		// tool result and the text pass answers both without a second decode.
+		texts, hasMedia, toolResult := scanTextParts(message["content"], anthropicTextTypes, anthropicSkipTypes)
 		result.userText = joinVisible(texts, "\n")
 		result.user = hasMedia || result.userText != ""
+		result.toolResult = toolResult
 	}
 	return result
 }
@@ -61,6 +64,34 @@ func (anthropicAdapter) IsUserTurn(item json.RawMessage) bool {
 	}
 	texts, hasMedia := stringOrTextParts(message["content"], anthropicTextTypes, anthropicSkipTypes)
 	return hasMedia || joinVisible(texts, "\n") != ""
+}
+
+func (anthropicAdapter) IsToolResult(item json.RawMessage) bool {
+	message, ok := jsonx.Object(item)
+	if !ok {
+		return false
+	}
+	role, _ := jsonx.String(message["role"])
+	return role == "user" && anthropicHasToolResult(message)
+}
+
+// anthropicHasToolResult reports whether a user message carries tool_result
+// blocks, whatever text sits beside them.
+func anthropicHasToolResult(message map[string]json.RawMessage) bool {
+	blocks, ok := jsonx.Array(message["content"])
+	if !ok {
+		return false
+	}
+	for _, raw := range blocks {
+		block, ok := jsonx.Object(raw)
+		if !ok {
+			continue
+		}
+		if blockType, _ := jsonx.String(block["type"]); blockType == "tool_result" {
+			return true
+		}
+	}
+	return false
 }
 
 func (anthropicAdapter) InboundEchoIDs(item json.RawMessage) []string {

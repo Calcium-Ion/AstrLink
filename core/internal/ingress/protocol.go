@@ -374,7 +374,7 @@ func inspectConversationBestEffort(result *Request, request *http.Request, maxBo
 		return raw, nil
 	}
 	result.ReasoningEffort = extractReasoningEffort(result.Protocol, fields)
-	summary, err := conversationPolicy.InspectFields(convoProto, fields)
+	summary, err := conversationPolicyFor(detectClientType(request.Header)).InspectFields(convoProto, fields)
 	if err != nil {
 		return raw, nil
 	}
@@ -481,7 +481,7 @@ func inspectJSONMetadata(request *http.Request, protocol contract.ProtocolID, ma
 	if convoProto, ok := convoProtocol(protocol); ok {
 		// The summary walks the history once; conversation cursors and the
 		// preview both come from it so the two never disagree.
-		summary, err := conversationPolicy.InspectFields(convoProto, fields)
+		summary, err := conversationPolicyFor(detectClientType(request.Header)).InspectFields(convoProto, fields)
 		if err == nil {
 			metadata.Conversation = summary
 			metadata.ConversationID = conversationCursor(summary, metadata.PreviousResponseID)

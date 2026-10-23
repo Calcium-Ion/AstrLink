@@ -2,6 +2,7 @@ package convo
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/QuantumNous/astrlink/convo/internal/jsonx"
 )
@@ -50,6 +51,12 @@ func responsesIsUserMessage(item map[string]json.RawMessage) bool {
 	return role == "user" && (itemType == "" || itemType == "message")
 }
 
+// responsesIsToolOutput matches function_call_output and the other
+// *_call_output items that answer a tool call.
+func responsesIsToolOutput(itemType string) bool {
+	return strings.HasSuffix(itemType, "_call_output")
+}
+
 func (openAIResponsesAdapter) inspectItem(item json.RawMessage) requestItem {
 	object, ok := jsonx.Object(item)
 	if !ok {
@@ -59,6 +66,7 @@ func (openAIResponsesAdapter) inspectItem(item json.RawMessage) requestItem {
 	itemType, role := responsesItemRole(object)
 	user := role == "user" && (itemType == "" || itemType == "message")
 	result.assistant = role == "assistant" && (itemType == "" || itemType == "message")
+	result.toolResult = responsesIsToolOutput(itemType)
 	if user {
 		texts, hasMedia := stringOrTextParts(object["content"], responsesUserTextTypes, responsesSkipTypes)
 		result.userText = joinVisible(texts, "\n")
@@ -83,6 +91,15 @@ func (openAIResponsesAdapter) IsUserTurn(item json.RawMessage) bool {
 	}
 	texts, hasMedia := stringOrTextParts(object["content"], responsesUserTextTypes, responsesSkipTypes)
 	return hasMedia || joinVisible(texts, "\n") != ""
+}
+
+func (openAIResponsesAdapter) IsToolResult(item json.RawMessage) bool {
+	object, ok := jsonx.Object(item)
+	if !ok {
+		return false
+	}
+	itemType, _ := responsesItemRole(object)
+	return responsesIsToolOutput(itemType)
 }
 
 func (openAIResponsesAdapter) InboundEchoIDs(item json.RawMessage) []string {

@@ -20,11 +20,14 @@ const TICK_MS = 1_000;
 export function ActiveRawGrants({
   className,
   grants,
+  note,
   onRevoked,
   title,
 }: {
   className?: string;
   grants: RawAccessGrant[];
+  /** Shown under the list, and gone with it. */
+  note?: ReactNode;
   onRevoked: (grant: RawAccessGrant) => void;
   /** Shown above the list, and gone with it once nothing is running. */
   title: ReactNode;
@@ -104,6 +107,7 @@ export function ActiveRawGrants({
           </DataRow>
         ))}
       </div>
+      {note ? <p className="text-micro text-muted-foreground">{note}</p> : null}
       {error ? <FormMessage tone="error">{error}</FormMessage> : null}
     </div>
   );

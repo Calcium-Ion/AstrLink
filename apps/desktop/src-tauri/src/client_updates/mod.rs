@@ -223,6 +223,18 @@ impl ClientError {
             .any(|marker| detail.contains(marker))
         {
             "network"
+        } else if ["command", "unchanged"].contains(&code)
+            && [
+                "eacces",
+                "eperm",
+                "permission denied",
+                "operation not permitted",
+                "access is denied",
+            ]
+            .iter()
+            .any(|marker| detail.to_ascii_lowercase().contains(marker))
+        {
+            "permission"
         } else {
             code
         };
@@ -756,6 +768,11 @@ fn update_command(
                     "--global".into(),
                     "--prefix".into(),
                     environment.path_arg(prefix),
+                    // Earlier sudo installs can leave ~/.npm owned by root.
+                    // Keep update downloads in this user's separate cache,
+                    // using a Linux path for a client inside WSL.
+                    "--cache".into(),
+                    environment.path_arg(&environment.home.join(".cache/astrlink/npm")),
                     // npm 12 skips install scripts missing from allowScripts
                     // and still exits 0. Claude Code's postinstall replaces
                     // the bin/claude.exe stub with its native binary.

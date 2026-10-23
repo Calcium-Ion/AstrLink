@@ -1,5 +1,5 @@
 {
   "name": "redaction-placeholders",
   "version": "0.1.0",
-  "adapters": ["cursor", "claude", "codex", "grok", "pi"]
+  "adapters": ["cursor", "claude", "codex", "grok", "pi", "dsh"]
 }

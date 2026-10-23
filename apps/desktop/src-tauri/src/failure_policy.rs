@@ -1118,8 +1118,11 @@ pub(crate) fn validate_builtin_tool(kind: &str, value: &serde_json::Value) -> Re
         crate::recovery_path::id(&serde_json::Value::String(text("service_id").into()))?;
     }
     let backend = text("backend");
-    if !matches!(backend, "" | "upstream" | "external" | "service_images")
-        || (backend == "service_images" && kind != "image_generation")
+    if !matches!(
+        backend,
+        "" | "upstream" | "external" | "service_images" | "service_search"
+    ) || (backend == "service_images" && kind != "image_generation")
+        || (backend == "service_search" && kind != "web_search")
     {
         return Err("invalid builtin backend".into());
     }
@@ -1141,7 +1144,7 @@ pub(crate) fn validate_builtin_tool(kind: &str, value: &serde_json::Value) -> Re
     }
     if config.get("enabled").and_then(serde_json::Value::as_bool) == Some(true)
         && (backend.is_empty()
-            || (matches!(backend, "upstream" | "service_images")
+            || (matches!(backend, "upstream" | "service_images" | "service_search")
                 && (text("service_id").is_empty() || text("model").is_empty()))
             || (backend == "external"
                 && (text("base_url").is_empty()
@@ -1181,6 +1184,30 @@ mod tests {
             &json!({"enabled":true,"backend":"service_images","service_id":"newapi_main"})
         )
         .is_err());
+    }
+
+    #[test]
+    fn validates_provider_search_for_settings_and_tests() {
+        let search = json!({"enabled":true,"backend":"service_search","service_id":"codex_main","model":"gpt-5.5"});
+        assert!(validate_builtin_tool("web_search", &search).is_ok());
+        let tools =
+            json!({"web_search":search,"image_generation":{"enabled":false,"backend":"upstream"}});
+        assert!(
+            validate_routing_settings(&json!({"builtin_tools":tools}), true, Some(&[])).is_ok()
+        );
+        for enabled in [false, true] {
+            let mut tool = search.clone();
+            tool["enabled"] = json!(enabled);
+            assert!(validate_builtin_tool("image_generation", &tool).is_err());
+            for field in ["service_id", "model"] {
+                let mut incomplete = tool.clone();
+                incomplete.as_object_mut().unwrap().remove(field);
+                assert_eq!(
+                    validate_builtin_tool("web_search", &incomplete).is_ok(),
+                    !enabled
+                );
+            }
+        }
     }
 
     #[test]

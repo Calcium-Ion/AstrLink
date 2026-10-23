@@ -448,6 +448,134 @@ describe("TrajectoryInspectorWindow", () => {
     );
   });
 
+  it.each(["application/json", "text/event-stream; charset=utf-8"])(
+    "opens a failed upstream call on its error reason and JSON body with %s",
+    async (mediaType) => {
+      const message = "thinking.budget_tokens must be less than max_tokens";
+      const content = JSON.stringify({
+        type: "error",
+        error: { type: "invalid_request_error", message },
+      });
+      const failed: RequestRecord = {
+        ...record,
+        status: "failed",
+        http_status: 400,
+        error: {
+          category: "upstream",
+          code: "upstream_http_error",
+          message,
+          retryable: false,
+        },
+      };
+      bridgeMocks.getRequestAuditContent.mockResolvedValue({
+        ...auditContent,
+        upstream_response_content: {
+          content,
+          media_type: mediaType,
+          captured_bytes: content.length,
+          truncated: false,
+        },
+      });
+      hostState.current = {
+        selection: { record: failed, row: { ...row, status: "failed" } },
+        pinned: false,
+      };
+      await render();
+      const body = container.querySelector(
+        '[data-testid="inspector-upstream-body"]',
+      );
+      expect(body?.getAttribute("data-view")).toBe("response");
+      const diagnosis = body?.querySelector(
+        '[data-testid="inspector-diagnosis"]',
+      );
+      expect(diagnosis?.textContent).toContain("invalid_request_error");
+      expect(diagnosis?.textContent).toContain(message);
+      expect(diagnosis?.textContent?.split(message)).toHaveLength(2);
+      expect(
+        body?.querySelector('[data-testid="json-tree"]')?.textContent,
+      ).toContain(message);
+      expect(body?.textContent).not.toContain("末尾事件不完整");
+      expect(body?.textContent).not.toContain("没有可解析的事件");
+      const original = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "原文",
+      )!;
+      await act(async () => original.click());
+      expect(
+        body?.querySelector('[data-testid="audit-raw"] pre')?.textContent,
+      ).toBe(content);
+      expect(
+        body?.querySelector('[data-testid="inspector-diagnosis"]')?.textContent,
+      ).toContain(message);
+    },
+  );
+
+  it.each([null, "unrecognized provider error"])(
+    "uses the recorded upstream error when the body cannot supply it: %s",
+    async (content) => {
+      const message = "thinking.budget_tokens must be less than max_tokens";
+      const failed: RequestRecord = {
+        ...record,
+        status: "failed",
+        http_status: 400,
+        error: {
+          category: "upstream",
+          code: "upstream_http_error",
+          message,
+          retryable: false,
+        },
+      };
+      bridgeMocks.getRequestAuditContent.mockResolvedValue({
+        ...auditContent,
+        upstream_response_content:
+          content === null
+            ? null
+            : {
+                content,
+                media_type: "text/event-stream",
+                captured_bytes: content.length,
+                truncated: false,
+              },
+      });
+      hostState.current = {
+        selection: { record: failed, row: { ...row, status: "failed" } },
+        pinned: false,
+      };
+      await render();
+      const body = container.querySelector(
+        '[data-testid="inspector-upstream-body"]',
+      );
+      expect(
+        body?.querySelector('[data-testid="inspector-diagnosis"]')?.textContent,
+      ).toContain(message);
+      if (content)
+        expect(
+          body?.querySelector('[data-testid="audit-raw"] pre')?.textContent,
+        ).toBe(content);
+      else
+        expect(
+          body?.querySelector('[data-testid="inspector-missing-body"]'),
+        ).not.toBeNull();
+
+      // A later local failure must not be attributed to the provider.
+      await act(async () =>
+        pushSelection({
+          record: {
+            ...failed,
+            error: {
+              ...failed.error!,
+              category: "privacy",
+              code: "privacy_restore_failed",
+            },
+          },
+          row,
+        }),
+      );
+      expect(
+        body?.querySelector('[data-testid="inspector-diagnosis"]'),
+      ).toBeNull();
+    },
+  );
+
   it("keeps differing upstream bytes separate from the actual client output", async () => {
     const part = (content: string) => ({
       content,

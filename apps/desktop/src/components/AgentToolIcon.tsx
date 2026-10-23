@@ -2,6 +2,7 @@ import {
   ClaudeCodeColor,
   CodexColor,
   CursorMono,
+  DeepSeekHarnessMono,
   GrokMono,
   PiColor,
 } from "@/components/brand-icons";
@@ -15,6 +16,7 @@ const marks = {
   codex: CodexColor,
   grok: GrokMono,
   pi: PiColor,
+  dsh: DeepSeekHarnessMono,
 } satisfies Record<AgentToolId | "pi", typeof CursorMono>;
 export type AgentToolIconId = keyof typeof marks;
 

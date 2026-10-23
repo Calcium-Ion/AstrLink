@@ -264,7 +264,11 @@ func (source PolicyRegexSource) Effective() PolicyRegexSource {
 	return source
 }
 
-// PolicyRegexRule is one user-authored Regex detector rule.
+// PolicyRegexRule is one user-authored Regex detector rule. Each match is a
+// finding as a whole, unless Pattern has a capture group named value, as in
+// token=(?P<value>...); then the finding is only the first such group that
+// took part in the match, and a match whose value group is empty reports
+// nothing.
 type PolicyRegexRule struct {
 	Kind    string `json:"kind"`
 	Pattern string `json:"pattern"`

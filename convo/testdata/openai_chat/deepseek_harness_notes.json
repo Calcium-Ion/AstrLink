@@ -1,0 +1,48 @@
+{
+  "model": "glm-5.3-flash",
+  "stream": true,
+  "messages": [
+    { "role": "system", "content": "You are DeepSeek Harness." },
+    { "role": "user", "content": "把 relay 的重试改成指数退避" },
+    {
+      "role": "user",
+      "content": "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent working directory: \"/Users/me/relay\".\n\nCurrent DSH file policy: workspace-write."
+    },
+    {
+      "role": "user",
+      "content": "Time sampled while preparing turn 1, step 1: 2026-10-23T14:34:56+08:00[Asia/Shanghai]\nBrowser time zone for this request: Asia/Shanghai. Interpret otherwise-unqualified dates and times in this zone.\nElapsed since the preceding model-visible message: unavailable."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_9e4b7a2c5d8f1e3a6b0c",
+          "type": "function",
+          "function": {
+            "name": "read",
+            "arguments": "{\"path\":\"relay/retry.go\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_9e4b7a2c5d8f1e3a6b0c",
+      "content": "func retry(attempt int) time.Duration {"
+    },
+    {
+      "role": "user",
+      "content": "Time sampled while preparing turn 1, step 9: 2026-10-23T14:45:02+08:00[Asia/Shanghai]\nBrowser time zone for this request: Asia/Shanghai. Interpret otherwise-unqualified dates and times in this zone.\nElapsed since the preceding step context: 10m 6s."
+    },
+    {
+      "role": "assistant",
+      "content": "重试间隔已改成指数退避，上限 30 秒，并保留了原来的最大重试次数。"
+    },
+    { "role": "user", "content": "再补上单元测试" },
+    {
+      "role": "user",
+      "content": "Time sampled while preparing turn 2, step 1: 2026-10-23T14:58:40+08:00[Asia/Shanghai]\nBrowser time zone for this request: Asia/Shanghai. Interpret otherwise-unqualified dates and times in this zone.\nElapsed since the preceding model-visible message: 13m 2s."
+    }
+  ]
+}

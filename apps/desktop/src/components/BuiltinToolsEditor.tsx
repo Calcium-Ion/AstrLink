@@ -26,6 +26,32 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 
+/** In-memory drafts owned by the routing page, separate from saved settings. */
+export type BuiltinToolDrafts = Map<
+  `${BuiltinToolKind}/${BuiltinTool["backend"]}`,
+  BuiltinTool
+>;
+
+function activeToolConfig(
+  kind: BuiltinToolKind,
+  value: BuiltinTool,
+): BuiltinTool {
+  const { enabled, backend } = value;
+  return backend === "external"
+    ? {
+        enabled,
+        backend,
+        base_url: value.base_url ?? "",
+        ...(kind === "image_generation" ? { model: value.model ?? "" } : {}),
+      }
+    : {
+        enabled,
+        backend,
+        service_id: value.service_id ?? "",
+        model: value.model ?? "",
+      };
+}
+
 /**
  * Typed text reaches the routing draft only on selection, Enter, or blur.
  * Routing autosaves, and a saved tool applies to the next request, so a
@@ -73,6 +99,7 @@ function ToolEditor({
   services,
   disabled,
   testHintId,
+  drafts,
   onChange,
 }: {
   kind: BuiltinToolKind;
@@ -80,6 +107,7 @@ function ToolEditor({
   services: readonly RoutableService[];
   disabled: boolean;
   testHintId: string;
+  drafts: BuiltinToolDrafts;
   onChange: (value: BuiltinTool) => void;
 }) {
   const t = useT();
@@ -143,7 +171,7 @@ function ToolEditor({
   const change = (patch: Partial<BuiltinTool>) => {
     setMessage("");
     setError("");
-    onChange({ ...value, ...patch });
+    onChange(activeToolConfig(kind, { ...value, ...patch }));
   };
   const model = useCommittedText(value.model, (model) => change({ model }));
   const missing = (
@@ -162,31 +190,38 @@ function ToolEditor({
               t(direct ? "builtinTools.imageModel" : "builtinTools.model"),
           ]
   ).filter((field): field is string => Boolean(field));
-  // For image generation the model is a chat model when one executes the
-  // tool and an image model otherwise, so it only carries over between the
-  // Images API backends.
+  // Each backend owns its fields. Keep inactive drafts outside the autosaved
+  // document so browsing another backend cannot erase or submit them.
   const changeBackend = (next: BuiltinTool["backend"]) => {
-    const service_id = providersFor(next).some(
-      (service) => service.id === value.service_id,
-    )
-      ? value.service_id
-      : "";
-    change(
-      kind === "image_generation" &&
-        (backend === "upstream") !== (next === "upstream")
-        ? { backend: next, service_id, model: "" }
-        : { backend: next, service_id },
-    );
+    if (next === backend) return;
+    drafts.set(`${kind}/${backend}`, activeToolConfig(kind, value));
+    const restored = activeToolConfig(kind, {
+      ...drafts.get(`${kind}/${next}`),
+      enabled: value.enabled,
+      backend: next,
+    });
+    if (
+      next !== "external" &&
+      restored.service_id &&
+      !providersFor(next).some((service) => service.id === restored.service_id)
+    ) {
+      restored.service_id = "";
+      restored.model = "";
+    }
+    setMessage("");
+    setError("");
+    onChange(restored);
   };
   const act = async (action: "save_key" | "delete_key" | "test") => {
     setBusy(true);
     setError("");
     setMessage("");
     try {
+      const config = activeToolConfig(kind, { ...value, enabled: true });
       if (action === "test")
         parseBuiltinTools({
           ...defaultBuiltinTools(),
-          [kind]: { ...value, enabled: true },
+          [kind]: config,
         });
       const result = await builtinToolAction(
         kind,
@@ -194,7 +229,7 @@ function ToolEditor({
         action === "save_key"
           ? { secret }
           : action === "test"
-            ? { ...value, enabled: true }
+            ? config
             : undefined,
       );
       if (action !== "test") {
@@ -226,7 +261,9 @@ function ToolEditor({
               size="sm"
               variant="outline"
               aria-describedby={testHintId}
-              disabled={busy || disabled || Boolean(secret)}
+              disabled={
+                busy || disabled || (backend === "external" && Boolean(secret))
+              }
               onClick={() => void act("test")}
             >
               {busy ? t("builtinTools.testing") : t("builtinTools.test")}
@@ -259,6 +296,7 @@ function ToolEditor({
               </div>
               <div className="grid gap-1">
                 <p className="font-medium">{t("builtinTools.executionHelp")}</p>
+                <p>{t("builtinTools.switchHint")}</p>
                 <p>
                   {t(
                     backend === "external"
@@ -479,15 +517,18 @@ export function BuiltinToolsEditor({
   value,
   services,
   disabled,
+  backendDrafts,
   onChange,
 }: {
   value?: BuiltinTools;
   services: readonly RoutableService[];
   disabled: boolean;
+  backendDrafts?: BuiltinToolDrafts;
   onChange: (value: BuiltinTools) => void;
 }) {
   const t = useT();
   const id = useId();
+  const [localDrafts] = useState<BuiltinToolDrafts>(() => new Map());
   const testHintId = `${id}-test-hint`;
   const tools = value ?? defaultBuiltinTools();
   return (
@@ -525,6 +566,7 @@ export function BuiltinToolsEditor({
             services={services}
             disabled={disabled}
             testHintId={testHintId}
+            drafts={backendDrafts ?? localDrafts}
             onChange={(next) => onChange({ ...tools, [kind]: next })}
           />
         ))}

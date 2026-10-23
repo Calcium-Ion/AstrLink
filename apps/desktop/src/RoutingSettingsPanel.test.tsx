@@ -2150,6 +2150,161 @@ describe("shared global recovery settings", () => {
     expect(status()).toBe("已自动保存，新请求立即生效");
   });
 
+  it("retains backend drafts across tabs and saves only the complete active backend", async () => {
+    const search = {
+      enabled: true,
+      backend: "upstream" as const,
+      service_id: "newapi_main",
+      model: "gpt-5.5",
+    };
+    const images = { enabled: false, backend: "upstream" as const };
+    let stored = {
+      ...settings(),
+      builtin_tools: { web_search: search, image_generation: images },
+    };
+    bridge.getRoutingSettings.mockResolvedValue(stored);
+    bridge.updateRoutingSettings.mockImplementation(
+      async (patch) => (stored = { ...stored, ...patch }),
+    );
+    const services = [
+      {
+        id: "newapi_main",
+        name: "主站",
+        kind: "newapi" as const,
+        enabled: true,
+        models: ["gpt-5.5", "search-model"],
+        capabilities: [
+          {
+            protocol: "openai.responses",
+            mode: "native" as const,
+            streaming: true,
+          },
+        ],
+      },
+    ];
+    async function choose(label: string, option: string) {
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>(
+            `button[role="combobox"][aria-label="${label}"]`,
+          )!
+          .dispatchEvent(
+            new PointerEvent("pointerdown", {
+              bubbles: true,
+              button: 0,
+              pointerType: "mouse",
+            }),
+          );
+      });
+      await act(async () => {
+        const item = [
+          ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+        ].find((candidate) => candidate.textContent?.trim() === option);
+        expect(item).toBeDefined();
+        item!.click();
+      });
+      const settled = settleClosedLayer();
+      await vi.advanceTimersByTimeAsync(0);
+      await settled;
+    }
+    await act(async () =>
+      root.render(
+        <RoutingSettingsPanel
+          services={services}
+          ready
+          onDirtyChange={vi.fn()}
+        />,
+      ),
+    );
+    await selectTab("重定向");
+    await choose("网页搜索执行方", "提供商的搜索 API");
+    expect(redirectField("网页搜索执行模型").value).toBe("");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("自动保存失败");
+
+    await choose("网页搜索提供商", "主站");
+    await typeRedirect("网页搜索执行模型", "search-model");
+    await flushAutosave();
+    const providerSearch = {
+      ...search,
+      backend: "service_search",
+      model: "search-model",
+    };
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      builtin_tools: { web_search: providerSearch, image_generation: images },
+    });
+    // An invalid URL stays in its own draft and cannot block another backend.
+    await choose("网页搜索执行方", "Tavily 兼容 API");
+    const invalidUrl = container.querySelector<HTMLInputElement>(
+      'input[aria-label="网页搜索 API 地址"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(invalidUrl, "https://");
+      invalidUrl.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () =>
+      invalidUrl.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+    );
+    const savedCount = bridge.updateRoutingSettings.mock.calls.length;
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenCalledTimes(savedCount);
+    await choose("网页搜索执行方", "Responses · web_search");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      builtin_tools: { web_search: search, image_generation: images },
+    });
+    await choose("网页搜索执行方", "Tavily 兼容 API");
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="网页搜索 API 地址"]',
+      )!.value,
+    ).toBe("https://");
+
+    await choose("网页搜索执行方", "Tavily 兼容 API");
+    const url = container.querySelector<HTMLInputElement>(
+      'input[aria-label="网页搜索 API 地址"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(url, "https://search.example");
+      url.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () =>
+      url.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+    );
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      builtin_tools: {
+        web_search: {
+          enabled: true,
+          backend: "external",
+          base_url: "https://search.example",
+        },
+        image_generation: images,
+      },
+    });
+    await selectTab("会话粘性");
+    await selectTab("重定向");
+    await choose("网页搜索执行方", "Responses · web_search");
+    expect(redirectField("网页搜索执行模型").value).toBe("gpt-5.5");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      builtin_tools: { web_search: search, image_generation: images },
+    });
+    await choose("网页搜索执行方", "提供商的搜索 API");
+    expect(redirectField("网页搜索执行模型").value).toBe("search-model");
+    await flushAutosave();
+    expect(bridge.updateRoutingSettings).toHaveBeenLastCalledWith({
+      builtin_tools: { web_search: providerSearch, image_generation: images },
+    });
+  });
+
   it("blocks saving until every redirect is valid", async () => {
     bridge.getRoutingSettings.mockResolvedValue({
       ...settings(),

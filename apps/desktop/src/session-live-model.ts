@@ -67,6 +67,9 @@ function sameSession(left: RequestSession, right: RequestSession): boolean {
     left.requested_model === right.requested_model &&
     left.model_redirect?.from === right.model_redirect?.from &&
     left.model_redirect?.to === right.model_redirect?.to &&
+    left.output?.kind === right.output?.kind &&
+    (left.output?.tools ?? []).join("\u0000") ===
+      (right.output?.tools ?? []).join("\u0000") &&
     (left.reasoning_effort ?? null) === (right.reasoning_effort ?? null) &&
     left.input_protocol === right.input_protocol &&
     (left.client_type ?? null) === (right.client_type ?? null) &&

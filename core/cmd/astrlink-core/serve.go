@@ -199,6 +199,7 @@ func serveCoreOptions(
 		controlToken:             controlToken,
 		localKeyFile:             config.localKeyFile,
 		maxConcurrentInspections: ingress.DefaultMaxConcurrentInspections,
+		responseStartTimeout:     time.Duration(ingress.DefaultResponseStartTimeoutSeconds) * time.Second,
 		noLoopbackCallback:       true,
 		consoleSessions:          sessions,
 		rawBackoffCap:            serveRawBackoffCap,

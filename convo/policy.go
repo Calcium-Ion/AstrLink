@@ -34,6 +34,14 @@ type Policy struct {
 	// fingerprinting, matching clients that hide reasoning embedded in
 	// content.
 	StripLeadingThink bool
+	// NotesFollowPrompt is for a client that sends its own notes as plain
+	// user messages after the prompt, as DeepSeek Harness does with its
+	// runtime and clock snapshots. Nothing in one body tells such a note
+	// from a second typed message, so the host sets this per client. Only a
+	// user message that opens a turn, the first in the history or after an
+	// assistant message, then counts as the user's; the rest of its run and
+	// user messages after tool results are notes.
+	NotesFollowPrompt bool
 }
 
 // DefaultPolicy returns the recommended limits.

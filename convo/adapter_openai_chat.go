@@ -39,6 +39,7 @@ func (openAIChatAdapter) inspectItem(item json.RawMessage) requestItem {
 		result.userText = joinVisible(texts, "\n")
 		result.user = hasMedia || result.userText != ""
 	case "tool":
+		result.toolResult = true
 		if id, ok := jsonx.String(message["tool_call_id"]); ok {
 			result.echoIDs = []string{id}
 		}
@@ -59,6 +60,15 @@ func (openAIChatAdapter) IsUserTurn(item json.RawMessage) bool {
 	}
 	texts, hasMedia := stringOrTextParts(message["content"], chatUserTextTypes, chatSkipTypes)
 	return hasMedia || joinVisible(texts, "\n") != ""
+}
+
+func (openAIChatAdapter) IsToolResult(item json.RawMessage) bool {
+	message, ok := jsonx.Object(item)
+	if !ok {
+		return false
+	}
+	role, _ := jsonx.String(message["role"])
+	return role == "tool"
 }
 
 func (openAIChatAdapter) InboundEchoIDs(item json.RawMessage) []string {

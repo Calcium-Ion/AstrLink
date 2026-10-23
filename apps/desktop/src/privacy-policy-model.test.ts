@@ -236,6 +236,28 @@ describe("privacy-policy IPC contract", () => {
       findings: Array.from({ length: 5_000 }, () => dryRun.findings[0]),
     };
     expect(parsePrivacyDryRunResult(crowded).findings).toHaveLength(5_000);
+    const ownIdentifier = {
+      ...dryRun,
+      suppressed_findings: [
+        {
+          kind: "common_secret",
+          path: "/messages/0/content",
+          start: 30,
+          end: 75,
+          confidence: 0.99,
+          reason: "astrlink_identifier",
+        },
+      ],
+    };
+    expect(parsePrivacyDryRunResult(ownIdentifier)).toEqual(ownIdentifier);
+    expect(() =>
+      parsePrivacyDryRunResult({
+        ...ownIdentifier,
+        suppressed_findings: [
+          { ...ownIdentifier.suppressed_findings[0], reason: "own_id" },
+        ],
+      }),
+    ).toThrow("unknown suppression reason");
     expect(
       validatePrivacyDryRunInput({
         protocol: "openai.chat",

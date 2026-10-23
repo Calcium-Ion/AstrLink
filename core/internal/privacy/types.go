@@ -149,6 +149,11 @@ const (
 	// SuppressionUnrepresentable marks a span whose kind ran out of reserved
 	// natural stand-ins, so the request fell back to a token placeholder.
 	SuppressionUnrepresentable SuppressionReason = "unrepresentable"
+	// SuppressionAstrLinkIdentifier marks an identifier AstrLink generated
+	// itself, such as a local access token id or a request id. It names a
+	// record without granting access, and an agent reading AstrLink's own
+	// records needs it intact.
+	SuppressionAstrLinkIdentifier SuppressionReason = "astrlink_identifier"
 )
 
 // Finding identifies a byte range without retaining or returning the matched

@@ -40,6 +40,7 @@ func (handler *Handler) registerRequestRecordRoutes() {
 	handler.mux.HandleFunc(RequestsPurgePath, handler.authenticated(handler.purgeRequestRecords, RoleOperator))
 	handler.mux.HandleFunc(RequestSessionsPath, handler.authenticated(handler.requestSessionCollection, RoleObserver))
 	handler.mux.HandleFunc(RequestSessionsPath+"/", handler.authenticated(handler.requestSessionItem, RoleObserver))
+	handler.mux.HandleFunc(RequestActivityPath, handler.authenticated(handler.getRequestActivity, RoleObserver))
 	handler.mux.HandleFunc(RequestsPath, handler.authenticated(handler.requestRecordCollection, RoleObserver))
 	handler.mux.HandleFunc(RequestsPath+"/", handler.authenticatedBy(handler.requestRecordItem, requestRecordItemRole))
 }

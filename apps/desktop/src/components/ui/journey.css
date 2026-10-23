@@ -1,0 +1,974 @@
+/* A request's route through the client, gateway and upstream lanes.
+ * Motion adapted from affectUI's free components (MIT, Copyright (c) 2026
+ * Florian Höller (adfects), see LICENSES/affectui-MIT.txt and journey.tsx).
+ */
+
+.journey-call {
+  --journey-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --journey-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --journey-line: color-mix(in srgb, var(--muted-foreground) 48%, transparent);
+  --journey-wait: color-mix(in srgb, var(--warning) 72%, transparent);
+  --journey-lost: color-mix(in srgb, var(--destructive) 58%, transparent);
+  position: relative;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  transition:
+    background-color 220ms ease,
+    border-color 220ms ease,
+    box-shadow 280ms ease;
+}
+
+.journey-call[data-state="closed"]:hover {
+  background: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.journey-call[data-state="open"] {
+  border-color: var(--border);
+  background: var(--card);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--foreground) 4%, transparent),
+    0 10px 28px -12px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+
+.journey-call[data-state="open"][data-running] {
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
+}
+
+.journey-call[data-entering] {
+  animation: journey-rise 520ms var(--journey-ease) both;
+  animation-delay: var(--journey-delay, 0ms);
+}
+
+.journey-turn[data-entering] {
+  animation: journey-rise 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--journey-delay, 0ms);
+}
+
+/* Where a jump from the timeline, find or the first/latest buttons landed. */
+.journey-flash {
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: journey-flash 1200ms ease-out;
+}
+
+/* ---- A call's line ---- */
+
+.journey-head {
+  display: flex;
+  min-height: 2.25rem;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.75rem;
+  row-gap: 0.125rem;
+  padding: 0.25rem 0.625rem 0.25rem 0.375rem;
+  cursor: pointer;
+}
+
+.journey-trigger {
+  display: flex;
+  min-width: 0;
+  height: auto;
+  min-height: 1.75rem;
+  flex: 1 1 0;
+  gap: 0.5rem;
+  justify-content: flex-start;
+  padding: 0.125rem 0.25rem;
+  font-weight: 400;
+  text-align: left;
+}
+
+.journey-trigger:hover {
+  background: transparent;
+  color: inherit;
+}
+
+.journey-number {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+}
+
+.journey-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journey-retries {
+  display: inline-flex;
+  height: 1rem;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.1875rem;
+  padding: 0 0.3125rem;
+  border-radius: 999px;
+  color: var(--warning-foreground);
+  background: var(--warning-wash);
+  font-size: var(--text-micro);
+}
+
+.journey-retries > svg {
+  width: 0.625rem;
+  height: 0.625rem;
+}
+
+.journey-spark-slot {
+  display: flex;
+  min-width: 4rem;
+  flex: 0 1 clamp(6rem, 32%, 20rem);
+  align-items: center;
+}
+
+.journey-outcome {
+  min-width: 0;
+  max-width: 13rem;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journey-outcome[data-tone="ok"] {
+  color: var(--success-foreground);
+}
+
+.journey-outcome[data-tone="pending"] {
+  color: var(--primary);
+}
+
+.journey-outcome[data-tone="failed"] {
+  color: var(--danger-foreground);
+}
+
+.journey-outcome[data-tone="blocked"] {
+  color: var(--blocked-foreground);
+}
+
+.journey-outcome[data-tone="cancelled"] {
+  color: var(--warning-foreground);
+}
+
+.journey-duration {
+  width: 3.75rem;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.journey-call[data-running] .journey-duration {
+  color: var(--primary);
+}
+
+@container trajectory (width < 600px) {
+  .journey-spark-slot {
+    order: 10;
+    flex-basis: 100%;
+    padding: 0 0 0.25rem 2.125rem;
+  }
+}
+
+/* ---- Folded group: one mark per call ---- */
+
+.journey-stack {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding-left: 2px;
+}
+
+.journey-stack-mark {
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+  box-shadow: 0 0 0 2px var(--card);
+  animation: journey-stack-in 380ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: calc(var(--journey-index, 0) * 45ms);
+}
+
+.journey-stack-mark[data-status="ok"] {
+  background: var(--success);
+}
+
+.journey-stack-mark[data-status="failed"] {
+  background: var(--destructive);
+}
+
+.journey-stack-mark[data-status="blocked"] {
+  background: var(--blocked);
+}
+
+.journey-stack-mark[data-status="cancelled"] {
+  background: var(--warning);
+}
+
+.journey-stack-mark[data-status="pending"] {
+  background: var(--primary);
+}
+
+.journey-stack-more {
+  margin-left: 0.25rem;
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  font-weight: 400;
+}
+
+/* ---- Status disc ---- */
+
+.journey-emblem {
+  --emblem-tone: var(--muted-foreground);
+  --emblem-wash: var(--muted);
+  position: relative;
+  display: grid;
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--emblem-tone) 22%, transparent);
+  border-radius: 50%;
+  color: var(--emblem-tone);
+  background: var(--emblem-wash);
+  transition:
+    background-color 320ms ease,
+    border-color 320ms ease,
+    color 320ms ease;
+}
+
+.journey-emblem[data-status="pending"] {
+  --emblem-tone: var(--primary);
+  --emblem-wash: var(--accent);
+}
+
+.journey-emblem[data-status="ok"] {
+  --emblem-tone: var(--success-foreground);
+  --emblem-wash: var(--success-wash);
+}
+
+.journey-emblem[data-status="failed"] {
+  --emblem-tone: var(--danger-foreground);
+  --emblem-wash: var(--danger-wash);
+}
+
+.journey-emblem[data-status="blocked"] {
+  --emblem-tone: var(--blocked-foreground);
+  --emblem-wash: var(--blocked-wash);
+}
+
+.journey-emblem[data-status="cancelled"] {
+  --emblem-tone: var(--warning-foreground);
+  --emblem-wash: var(--warning-wash);
+}
+
+.journey-emblem-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.journey-emblem-mark > svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.journey-emblem[data-status="pending"] .journey-emblem-mark > svg {
+  animation: journey-spin 1s linear infinite;
+}
+
+.journey-emblem[data-status="pending"]::before {
+  position: absolute;
+  inset: -3px;
+  border: 1px solid var(--emblem-tone);
+  border-radius: 50%;
+  content: "";
+  animation: journey-halo 2.2s ease-out infinite;
+}
+
+.journey-check {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The tick draws itself each time the disc turns to done. */
+.journey-check path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: journey-draw 420ms var(--journey-ease, ease-out) 60ms backwards;
+}
+
+/* ---- A clock that is still counting ---- */
+
+.journey-rolling {
+  display: inline-flex;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+
+.journey-rolling-char {
+  display: inline-block;
+}
+
+.journey-rolling-char[data-roll] {
+  animation: journey-roll 280ms var(--journey-ease, ease-out);
+}
+
+/* ---- Compact route ---- */
+
+.journey-spark {
+  --spark-min: 1.75rem;
+  display: flex;
+  width: calc(
+    var(--spark-min) + (100% - var(--spark-min)) * var(--journey-share, 1)
+  );
+  height: 0.875rem;
+  transition: width 1s linear;
+}
+
+.journey-spark-stop {
+  position: relative;
+  flex: var(--journey-grow, 0) 1 0px;
+  min-width: 0.5rem;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: flex-grow 1s linear;
+}
+
+.journey-spark-stop:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.journey-spark-run,
+.journey-spark-rise {
+  position: absolute;
+  border-radius: 1px;
+  background: var(--journey-line);
+  transition:
+    background-color 160ms ease,
+    height 160ms ease,
+    margin 160ms ease;
+}
+
+.journey-spark-run {
+  top: var(--journey-y);
+  right: 0;
+  left: 0;
+  height: 1.5px;
+  margin-top: -0.75px;
+}
+
+.journey-spark-rise {
+  left: 0;
+  width: 1.5px;
+}
+
+.journey-spark-stop[data-timing="unknown"] .journey-spark-run {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--journey-line) 0 3px,
+    transparent 3px 5px
+  );
+}
+
+/* Time spent upstream reads in the strip's upstream colour. */
+.journey-spark-stop:is([data-chip="UPSTREAM"], [data-chip="RETRY"])
+  .journey-spark-run {
+  background: var(--journey-wait);
+}
+
+.journey-spark-stop[data-tone="failed"] .journey-spark-run {
+  background: var(--journey-lost);
+}
+
+/* The line under the pointer firms up, so the route reads as clickable. */
+.journey-call[data-state="closed"]:hover .journey-spark-run,
+.journey-call[data-state="closed"]:hover .journey-spark-rise {
+  --journey-line: color-mix(in srgb, var(--muted-foreground) 75%, transparent);
+}
+
+.journey-spark-stop[data-find-stop] .journey-spark-run,
+.journey-spark-stop:hover .journey-spark-run {
+  height: 2.5px;
+  margin-top: -1.25px;
+}
+
+/* Only a plain hop turns dark; upstream time and failures keep their hue. */
+.journey-spark-stop:hover .journey-spark-run {
+  --journey-line: var(--foreground);
+}
+
+.journey-spark-stop[data-find-stop] .journey-spark-run {
+  background: var(--tide);
+}
+
+.journey-spark-dot {
+  position: absolute;
+  top: var(--journey-y);
+  left: 0;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -1px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--card);
+}
+
+.journey-spark-stop[data-pending] .journey-spark-run {
+  overflow: hidden;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--primary) 30%, transparent),
+    var(--primary)
+  );
+}
+
+.journey-spark-stop[data-pending] .journey-spark-run::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--card) 85%, transparent),
+    transparent
+  );
+  animation: journey-sweep-x 1.6s ease-in-out infinite;
+}
+
+.journey-spark-head {
+  position: absolute;
+  top: var(--journey-y);
+  right: -2.5px;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: journey-beat 1.4s ease-in-out infinite;
+}
+
+/* ---- Focused route: steps on a rail ---- */
+
+.journey-body {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.journey-body > .journey-rail {
+  min-height: 0;
+}
+
+.journey-body[data-animate] {
+  animation: journey-open 460ms var(--journey-ease) both;
+}
+
+.journey-body[data-animate] > .journey-rail {
+  overflow: hidden;
+}
+
+.journey-rail {
+  display: grid;
+  margin: 0;
+  padding: 0.125rem 0 0.25rem;
+  list-style: none;
+}
+
+.journey-step {
+  position: relative;
+  min-width: 0;
+  padding-bottom: calc(var(--journey-dwell, 0) * 1.75rem);
+  transition: padding-bottom 1s linear;
+}
+
+.journey-body[data-animate] .journey-step {
+  animation: journey-rise 460ms var(--journey-ease) both;
+  animation-delay: calc(70ms + var(--journey-index, 0) * 38ms);
+}
+
+.journey-step[data-retry-start] {
+  margin-top: 0.375rem;
+}
+
+.journey-step-surface {
+  position: absolute;
+  inset: 0 0 0 3.5rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.journey-step-graph {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3.75rem;
+  color: var(--journey-line);
+  pointer-events: none;
+}
+
+.journey-step-port {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3.75rem;
+  height: 1.75rem;
+  color: var(--journey-line);
+  pointer-events: none;
+}
+
+.journey-step-in {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3.75rem;
+  height: 0.875rem;
+  overflow: visible;
+}
+
+/* The first step hangs from the call's status disc above it. */
+.journey-step-lead {
+  position: absolute;
+  top: -0.625rem;
+  left: var(--journey-x);
+  width: 2px;
+  height: 1.5rem;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.journey-step-in path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.journey-step-out {
+  position: absolute;
+  top: 0.875rem;
+  bottom: 0;
+  left: var(--journey-x);
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.journey-step[data-wait] .journey-step-out {
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 1.5px;
+}
+
+.journey-step[data-wait="upstream"] .journey-step-out {
+  background: var(--journey-wait);
+}
+
+.journey-step[data-wait="failed"] .journey-step-out {
+  background: var(--journey-lost);
+}
+
+.journey-step[data-timing="unknown"] .journey-step-out {
+  background: repeating-linear-gradient(
+    180deg,
+    currentColor 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.journey-step[data-pending] {
+  padding-bottom: calc(max(var(--journey-dwell, 0), 0.4) * 1.75rem);
+}
+
+.journey-step[data-pending] .journey-step-out {
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    var(--primary),
+    color-mix(in srgb, var(--primary) 25%, transparent)
+  );
+}
+
+.journey-step[data-pending] .journey-step-out::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--card) 85%, transparent),
+    transparent
+  );
+  animation: journey-sweep-y 1.6s ease-in-out infinite;
+}
+
+.journey-step-head {
+  position: absolute;
+  bottom: -3px;
+  left: var(--journey-x);
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: journey-beat 1.4s ease-in-out infinite;
+}
+
+.journey-step-node {
+  position: absolute;
+  top: 0.875rem;
+  left: var(--journey-x);
+  display: grid;
+  width: 0.5rem;
+  height: 0.5rem;
+  place-items: center;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--card);
+  transform: translate(-50%, -50%);
+  transition:
+    transform 260ms var(--journey-pop),
+    box-shadow 200ms ease;
+}
+
+.journey-step[data-marker="end"] .journey-step-node {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.journey-step[data-marker="end"] .journey-step-node > svg {
+  width: 0.5625rem;
+  height: 0.5625rem;
+}
+
+.journey-body[data-animate]
+  .journey-step[data-marker="end"]
+  .journey-step-node {
+  animation: journey-pop 460ms var(--journey-pop) backwards;
+  animation-delay: calc(160ms + var(--journey-index, 0) * 38ms);
+}
+
+.journey-step[data-marker="live"] .journey-step-node {
+  background: var(--primary);
+}
+
+.journey-step[data-marker="live"] .journey-step-node::after {
+  position: absolute;
+  inset: -4px;
+  border: 1px solid var(--primary);
+  border-radius: 50%;
+  content: "";
+  animation: journey-halo 2.2s ease-out infinite;
+}
+
+.journey-step:hover .journey-step-node {
+  transform: translate(-50%, -50%) scale(1.2);
+}
+
+.journey-step[data-selected] .journey-step-node {
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px color-mix(in srgb, var(--primary) 30%, transparent);
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+/* The button spans the rail too, so the step's node is part of it; its
+ * hover and find washes start where the text does. */
+.journey-step-main {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 100%;
+  height: auto;
+  min-height: 1.75rem;
+  grid-template-columns: 4.5rem minmax(0, 1fr) auto 3.75rem;
+  column-gap: 0.625rem;
+  align-items: center;
+  justify-content: stretch;
+  padding: 0.3125rem 0.5rem 0.3125rem 4.25rem;
+  border-radius: var(--radius-md);
+  color: var(--foreground);
+  font-weight: 400;
+  line-height: 1.125rem;
+  text-align: left;
+  white-space: normal;
+}
+
+.journey-step-main::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 0 3.5rem;
+  border-radius: var(--radius-md);
+  content: "";
+  transition: background-color 140ms ease;
+}
+
+.journey-step-main:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.journey-step-main:hover::before {
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+
+.journey-step-main:focus-visible {
+  box-shadow: none;
+}
+
+.journey-step-main:focus-visible::before {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 45%, transparent);
+}
+
+.journey-step[data-selected] .journey-step-main:hover::before {
+  background: transparent;
+}
+
+.journey-step-main[data-find-stop]::before {
+  background: color-mix(in srgb, var(--tide-wash) 80%, transparent);
+  box-shadow: inset 2px 0 0 var(--tide);
+}
+
+.journey-step-main[data-find-stop="active"]::before {
+  box-shadow:
+    inset 3px 0 0 var(--tide),
+    inset 0 0 0 1px var(--tide);
+}
+
+.journey-step-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.journey-step[data-selected] .journey-step-label {
+  color: var(--foreground);
+}
+
+.journey-step-fact {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.journey-step-result {
+  min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journey-step-result[data-tone="failed"] {
+  color: var(--danger-foreground);
+}
+
+.journey-step-result[data-tone="blocked"] {
+  color: var(--blocked-foreground);
+}
+
+.journey-step-result[data-tone="cancelled"] {
+  color: var(--warning-foreground);
+}
+
+.journey-step-duration {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.journey-step[data-pending] .journey-step-duration {
+  color: var(--primary);
+}
+
+.journey-step-detail {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  padding: 0 0.5rem 0.4375rem 4.25rem;
+  animation: journey-rise 320ms var(--journey-ease) both;
+}
+
+@container trajectory (width < 560px) {
+  .journey-step-main {
+    grid-template-columns: 3.75rem minmax(0, 1fr) auto 3.25rem;
+    column-gap: 0.5rem;
+  }
+
+  .journey-step-result {
+    max-width: 5.5rem;
+  }
+
+  /* A good outcome is already in the call's line; keep the room for facts. */
+  .journey-step-result[data-tone="ok"] {
+    display: none;
+  }
+}
+
+@keyframes journey-stack-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+@keyframes journey-rise {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateY(5px);
+  }
+}
+
+@keyframes journey-open {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0.35;
+  }
+}
+
+@keyframes journey-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.3);
+  }
+}
+
+@keyframes journey-flash {
+  0%,
+  35% {
+    opacity: 1;
+  }
+}
+
+@keyframes journey-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+@keyframes journey-roll {
+  from {
+    opacity: 0;
+    transform: translateY(55%);
+  }
+}
+
+@keyframes journey-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes journey-halo {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  80%,
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes journey-beat {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+@keyframes journey-sweep-x {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes journey-sweep-y {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-call,
+  .journey-emblem,
+  .journey-spark,
+  .journey-spark-stop,
+  .journey-spark-run,
+  .journey-spark-rise,
+  .journey-step,
+  .journey-step-node {
+    transition: none;
+  }
+
+  .journey-call[data-entering],
+  .journey-turn[data-entering],
+  .journey-flash,
+  .journey-check path,
+  .journey-rolling-char[data-roll],
+  .journey-body[data-animate],
+  .journey-body[data-animate] .journey-step,
+  .journey-body[data-animate]
+    .journey-step[data-marker="end"]
+    .journey-step-node,
+  .journey-step-detail,
+  .journey-emblem[data-status="pending"] .journey-emblem-mark > svg,
+  .journey-spark-stop[data-pending] .journey-spark-run::after,
+  .journey-step[data-pending] .journey-step-out::after,
+  .journey-spark-head,
+  .journey-step-head,
+  .journey-stack-mark {
+    animation: none;
+  }
+
+  .journey-emblem[data-status="pending"]::before,
+  .journey-step[data-marker="live"] .journey-step-node::after {
+    animation: none;
+    opacity: 0.2;
+  }
+}

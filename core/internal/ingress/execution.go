@@ -686,7 +686,7 @@ func (handler *Handler) executeCandidatesWithTest(
 			if holdStart && holdsStreamResponse(status, header) {
 				// The response has started; only the client waits for the hold.
 				startWriter.markStarted(status)
-				body, startFailure, startErr = holdStreamStart(body, plan.UpstreamProtocol, streamStartHoldLimit)
+				body, startFailure, startErr = holdStreamStart(attemptRequest.Context(), body, plan.UpstreamProtocol)
 			}
 			if test != nil && test.observer.WrapResponseBody != nil {
 				body = test.observer.WrapResponseBody(body)

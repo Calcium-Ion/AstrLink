@@ -11,7 +11,7 @@ import {
 const host = process.env.TAURI_DEV_HOST || "127.0.0.1";
 const buildGeneration = new BuildGeneration();
 
-export default defineConfig({
+export default defineConfig(({ env }) => ({
   plugins: [pluginReact(), createTauriDevReloadPlugin(buildGeneration)],
   source: {
     define: {
@@ -25,7 +25,10 @@ export default defineConfig({
   },
   html: {
     template: "./index.html",
-    favicon: "./src/assets/astrlink-logo.svg",
+    favicon:
+      env === "development"
+        ? "./src/assets/astrlink-dev-logo.svg"
+        : "./src/assets/astrlink-logo.svg",
   },
   output: {
     ...(process.env.PUBLIC_ASTRLINK_EDITION === "web"
@@ -67,4 +70,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

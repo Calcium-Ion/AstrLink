@@ -438,6 +438,7 @@ func TestPrivacyIgnoredCountsByKindAndReasonWithoutPlaceholders(t *testing.T) {
 		{Kind: privacy.KindEmail, Suppression: privacy.SuppressionAllowlisted},
 		{Kind: privacy.KindEmail, Suppression: privacy.SuppressionLowConfidence},
 		{Kind: privacy.KindURL, Suppression: privacy.SuppressionKindDisabled},
+		{Kind: privacy.KindCommonSecret, Suppression: privacy.SuppressionAstrLinkIdentifier},
 		// Already a placeholder, so never private content.
 		{Kind: privacy.KindEmail, Suppression: privacy.SuppressionPlaceholder},
 		{Kind: privacy.Kind("not_a_kind"), Suppression: privacy.SuppressionAllowlisted},
@@ -447,12 +448,13 @@ func TestPrivacyIgnoredCountsByKindAndReasonWithoutPlaceholders(t *testing.T) {
 		{Kind: contract.CanonicalKindEmail, Reason: contract.PrivacyIgnoreAllowlisted, Count: 2},
 		{Kind: contract.CanonicalKindEmail, Reason: contract.PrivacyIgnoreLowConfidence, Count: 1},
 		{Kind: contract.CanonicalKindURL, Reason: contract.PrivacyIgnoreKindDisabled, Count: 1},
+		{Kind: contract.CanonicalKindCommonSecret, Reason: contract.PrivacyIgnoreAstrLinkIdentifier, Count: 1},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ignored=%#v want %#v", got, want)
 	}
 	// A second inspection of the same call adds to the same entries.
-	if again := mergePrivacyIgnored(got, suppressed[:1], nil); again[0].Count != 3 || len(again) != 3 {
+	if again := mergePrivacyIgnored(got, suppressed[:1], nil); again[0].Count != 3 || len(again) != 4 {
 		t.Fatalf("merged=%#v", again)
 	}
 }

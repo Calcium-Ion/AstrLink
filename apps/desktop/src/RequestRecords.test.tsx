@@ -20,6 +20,10 @@ const bridgeMocks = vi.hoisted(() => ({
   listRequestRecordChildren: vi.fn(),
   listRequestRecords: vi.fn(),
   listRequestSessions: vi.fn(),
+  getRequestActivity: vi.fn(async () => ({
+    now: new Date().toISOString(),
+    calls: [] as RequestActivityCall[],
+  })),
   listenRawSealingChanged: vi.fn(async () => () => {}),
   lockRaw: vi.fn(),
   purgeRequestRecords: vi.fn(),
@@ -64,6 +68,7 @@ import {
   displayRequestStatus,
   emptyTrajectoryFields,
   type RequestRecord,
+  type RequestActivityCall,
   type RequestSession,
   type RequestSessionPage,
   type SessionStatus,
@@ -71,6 +76,7 @@ import {
 import type { RoutableService } from "./service-model";
 import type { RequestService } from "./request-service-model";
 import { applyLocale, i18n } from "./i18n";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 
 const service: RoutableService & RequestService = {
   id: "service_01",
@@ -364,6 +370,28 @@ async function chooseOption(label: string, option: string): Promise<void> {
     item.click();
     await Promise.resolve();
   });
+}
+
+async function settleFilterLayer(): Promise<void> {
+  const settling = settleClosedLayer();
+  if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+  await settling;
+}
+
+async function openMoreFilters(): Promise<void> {
+  const trigger = document.querySelector<HTMLButtonElement>(
+    'button[aria-label="更多筛选"]',
+  )!;
+  await act(async () => trigger.click());
+}
+
+async function escapeFilterLayer(): Promise<void> {
+  await act(async () =>
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+    ),
+  );
+  await settleFilterLayer();
 }
 
 describe("RequestRecords", () => {
@@ -896,6 +924,183 @@ describe("RequestRecords", () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(runtime()).toContain("23.0 s");
+  });
+
+  it("counts conversations in progress across every model call, whatever the list shows", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
+    bridgeMocks.getRequestActivity.mockResolvedValue({
+      now: "2026-07-28T12:00:10Z",
+      calls: [
+        {
+          session_id: "live_running",
+          client_type: "codex",
+          started_at: "2026-07-28T12:00:05Z",
+          completed_at: null,
+          status: "pending",
+        },
+        {
+          session_id: "live_running",
+          client_type: "codex",
+          started_at: "2026-07-28T11:59:40Z",
+          completed_at: null,
+          status: "pending",
+        },
+        {
+          session_id: "live_waiting",
+          client_type: "claude_code",
+          started_at: "2026-07-28T11:59:50Z",
+          completed_at: "2026-07-28T12:00:00Z",
+          status: "succeeded",
+        },
+        {
+          session_id: "live_failed",
+          started_at: "2026-07-28T11:57:50Z",
+          completed_at: "2026-07-28T11:58:00Z",
+          status: "failed",
+        },
+      ],
+    });
+    await renderRecords();
+    await flush();
+    const board = container.querySelector('[data-testid="request-activity"]')!;
+    const text = (testId: string) =>
+      board.querySelector(`[data-testid="${testId}"]`)?.textContent;
+    expect(text("activity-conversations")).toBe("2个对话");
+    expect(text("activity-calls")).toBe("2");
+    expect(
+      board
+        .querySelector('[data-slot="live-trend-plot"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("近 5 分钟同时进行的对话，最多 2 个，现在 2 个");
+    expect(
+      board
+        .querySelector('[data-testid="activity-clients"]')
+        ?.getAttribute("aria-label"),
+    ).toBe("Codex 1 个、Claude Code 1 个");
+    // The list below holds none of these; the board does not follow it.
+    expect(
+      container.querySelector('[data-testid="active-sessions"]'),
+    ).toBeNull();
+
+    await act(async () =>
+      board
+        .querySelector<HTMLButtonElement>('[data-testid="activity-failures"]')!
+        .click(),
+    );
+    expect(
+      container.querySelector('button[aria-label="清除筛选：状态: 失败"]'),
+    ).not.toBeNull();
+  });
+
+  it("leads the list with conversations in progress until their wait runs out", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        sessionFromRecord(firstRecord, {
+          id: "calling",
+          title: "running conversation",
+          status: "pending",
+          completed_at: null,
+          started_at: "2026-07-28T11:50:00Z",
+          last_started_at: "2026-07-28T12:00:00Z",
+          active_request_starts: ["2026-07-28T12:00:00Z"],
+        }),
+        sessionFromRecord(firstRecord, {
+          id: "waiting",
+          title: "conversation between calls",
+          started_at: "2026-07-28T11:55:00Z",
+          last_started_at: "2026-07-28T12:00:01Z",
+          completed_at: "2026-07-28T12:00:05Z",
+        }),
+        sessionFromRecord(secondRecord),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const lanes = () =>
+      [
+        ...container.querySelectorAll<HTMLElement>(
+          '[data-testid="active-sessions"] [data-testid="request-session-row"]',
+        ),
+      ].map((row) => [
+        row.dataset.sessionId,
+        row.dataset.activity,
+        row.querySelector('[data-testid="lane-state"]')?.textContent,
+      ]);
+    expect(lanes()).toEqual([
+      ["waiting", "idle", "空闲 5 s"],
+      ["calling", "calling", "等待模型 10.0 s"],
+    ]);
+    expect(
+      container
+        .querySelector('[data-testid="active-sessions"]')
+        ?.querySelector('[data-slot="badge"]')?.textContent,
+    ).toBe("2 条");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(lanes()).toEqual([["calling", "calling", "等待模型 1m 10s"]]);
+    const settled = container.querySelector('[data-session-id="waiting"]');
+    expect(settled?.closest('[data-testid="active-sessions"]')).toBeNull();
+    expect(settled?.closest("section")?.textContent).toContain(
+      "conversation between calls",
+    );
+  });
+
+  it("says what each conversation in progress is doing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:10Z"));
+    const running = (id: string, output?: RequestSession["output"]) =>
+      sessionFromRecord(firstRecord, {
+        id,
+        status: "pending",
+        completed_at: null,
+        started_at: "2026-07-28T11:50:00Z",
+        last_started_at: "2026-07-28T12:00:00Z",
+        active_request_starts: ["2026-07-28T12:00:00Z"],
+        ...(output ? { output } : {}),
+      });
+    const between = (id: string, output: RequestSession["output"]) =>
+      sessionFromRecord(firstRecord, {
+        id,
+        started_at: "2026-07-28T11:40:00Z",
+        last_started_at: "2026-07-28T12:00:01Z",
+        completed_at: "2026-07-28T12:00:02Z",
+        output,
+      });
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [
+        running("thinking", { kind: "reasoning", tools: [] }),
+        running("writing", { kind: "text", tools: [] }),
+        running("calling", { kind: "tool", tools: ["Read", "Bash"] }),
+        between("tools", { kind: "tool", tools: ["Read", "Bash", "Edit"] }),
+        between("replied", { kind: "text", tools: [] }),
+      ],
+      next_cursor: null,
+    });
+    await renderRecords();
+    const state = (id: string) => {
+      const label = container.querySelector<HTMLElement>(
+        `[data-session-id="${id}"] [data-testid="lane-state"]`,
+      );
+      return [label?.dataset.action, label?.textContent, label?.title];
+    };
+    expect(state("thinking")).toEqual(["thinking", "思考中 10.0 s", ""]);
+    expect(state("writing")).toEqual(["writing", "写回答 10.0 s", ""]);
+    expect(state("calling")).toEqual(["calling", "调用 Bash 10.0 s", ""]);
+    expect(state("tools")).toEqual([
+      "running",
+      "运行 Read · Bash +1 8 s",
+      "模型让客户端运行这些工具。下一次调用会带回结果。",
+    ]);
+    expect(state("replied")).toEqual([
+      "replied",
+      "等你回复 8 s",
+      "模型已经回答。对话在等下一条消息。",
+    ]);
   });
 
   it("opens a session trajectory and shows retry children as RETRY rows", async () => {
@@ -3003,6 +3208,7 @@ describe("RequestRecords", () => {
           confidence: { min: 0.41, max: 0.6234, threshold: 0.7 },
         },
         { kind: "email", reason: "allowlisted", count: 1 },
+        { kind: "common_secret", reason: "astrlink_identifier", count: 2 },
       ],
       events: [
         {
@@ -3075,15 +3281,23 @@ describe("RequestRecords", () => {
     if (!table) throw new Error("Missing policy kind table");
     expect(
       [...table.querySelectorAll("th")].map((th) => th.textContent),
-    ).toEqual(["类型", "命中", "低于门槛", "免脱敏名单", "类型已关闭"]);
+    ).toEqual([
+      "类型",
+      "命中",
+      "低于门槛",
+      "免脱敏名单",
+      "类型已关闭",
+      "AstrLink 自有 ID",
+    ]);
     expect(
       [...table.querySelectorAll("tbody tr")].map((row) =>
         [...row.querySelectorAll("td")].map((cell) => cell.textContent),
       ),
     ).toEqual([
-      ["邮箱", "3", "81%–99.87%", "", "", "1", ""],
-      ["人名", "1", "88%", "2", "41%–62.34%", "", ""],
-      ["URL", "", "", "", "", "", "5"],
+      ["邮箱", "3", "81%–99.87%", "", "", "1", "", ""],
+      ["人名", "1", "88%", "2", "41%–62.34%", "", "", ""],
+      ["URL", "", "", "", "", "", "5", ""],
+      ["常见密钥", "", "", "", "", "", "", "2"],
     ]);
     // Without a body the table is the content, so it does not fold.
     expect(
@@ -3854,9 +4068,13 @@ describe("RequestRecords", () => {
     const trigger = (label: string) =>
       document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
     expect(trigger("时间筛选").textContent).toBe("时间近 7 天");
-    expect(trigger("模型筛选").textContent).toContain("gpt-4.1");
+    expect(trigger("模型筛选").textContent).toBe("模型gpt-4.1");
+    expect(trigger("更多筛选").textContent).toBe("更多筛选2");
+    await openMoreFilters();
+    expect(document.querySelector('[data-filter-group="models"]')).toBeNull();
     expect(trigger("提供商筛选").textContent).toContain("Primary gateway");
     expect(trigger("令牌筛选").textContent).toContain("VS Code");
+    await escapeFilterLayer();
 
     // Every time range, from all of history down to a day.
     await act(async () => trigger("时间筛选").click());
@@ -3876,6 +4094,7 @@ describe("RequestRecords", () => {
       "近一年",
     ]);
     await act(async () => exactButton("全部", picker).click());
+    await settleFilterLayer();
     expect(bridgeMocks.listRequestSessions).toHaveBeenCalledWith({
       limit: 50,
       kind: "inference",
@@ -3897,11 +4116,26 @@ describe("RequestRecords", () => {
       local_access_token_ids: ["token_01"],
     });
     await act(async () => modelOption().click());
-    await act(async () => {
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
-      );
+    await escapeFilterLayer();
+    expect(document.querySelector('[data-slot="filter-menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger("模型筛选"));
+
+    // Clearing the menu's secondary filters leaves the toolbar's model alone.
+    await openMoreFilters();
+    await act(async () =>
+      exactButton(
+        "清除筛选",
+        document.querySelector<HTMLElement>('[data-slot="filter-menu"]')!,
+      ).click(),
+    );
+    expect(trigger("模型筛选").textContent).toBe("模型gpt-4.1");
+    expect(trigger("更多筛选").textContent).toBe("更多筛选");
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "inference",
+      models: ["gpt-4.1"],
     });
+    await escapeFilterLayer();
 
     // Model discovery names no model, so its tab drops the model filter.
     await act(async () => exactButton("模型获取").focus());
@@ -3909,8 +4143,207 @@ describe("RequestRecords", () => {
     expect(bridgeMocks.listRequestSessions).toHaveBeenCalledWith({
       limit: 50,
       kind: "discovery",
-      local_access_token_ids: ["token_01"],
     });
+  });
+
+  it("summarizes extra active categories and clears only the chosen category", async () => {
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [sessionFromRecord(firstRecord)],
+      next_cursor: null,
+    });
+    await act(async () => {
+      reactRoot.render(
+        <RequestRecords
+          accessTokens={[
+            {
+              id: "token_01",
+              name: "VS Code",
+              hint: "astr_…K8Q2",
+              created_at: "2026-07-24T10:30:00Z",
+            },
+          ]}
+          accessTokensReady
+          coreSessionKey="session-1"
+          services={[service]}
+          isReady
+          target={{
+            tokenId: "token_01",
+            serviceId: "service_01",
+            models: ["gpt-4.1", "gpt-4.1-mini"],
+            range: "7d",
+          }}
+        />,
+      );
+    });
+    await flush();
+    const chips = container.querySelector<HTMLElement>(
+      '[data-slot="filter-chips"]',
+    )!;
+    expect(
+      chips.querySelectorAll('button[aria-label^="清除筛选："]'),
+    ).toHaveLength(2);
+    expect(chips.textContent).toContain("+2 项");
+    expect(chips.textContent).not.toContain("gpt-4.1");
+    await act(async () => exactButton("+2 项", chips).click());
+    const clearModels = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="清除筛选：模型: 已选 2 个"]',
+    );
+    expect(clearModels).not.toBeNull();
+    await act(async () => clearModels!.click());
+    const week = resolveUsageWindow("7d", new Date());
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "inference",
+      local_access_token_ids: ["token_01"],
+      from: week.from,
+      to: week.to,
+    });
+    expect(chips.textContent).toContain("Primary gateway");
+    expect(chips.textContent).toContain("+1 项");
+    await escapeFilterLayer();
+    await act(async () => exactButton("清除筛选", chips).click());
+    expect(container.querySelector('[data-slot="filter-chips"]')).toBeNull();
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "inference",
+    });
+  });
+
+  it("keeps keyboard focus when the final overflow chip and final active chip are removed", async () => {
+    bridgeMocks.listRequestSessions.mockResolvedValue({
+      items: [sessionFromRecord(firstRecord)],
+      next_cursor: null,
+    });
+    await act(async () => {
+      reactRoot.render(
+        <RequestRecords
+          accessTokens={[
+            {
+              id: "token_01",
+              name: "VS Code",
+              hint: "astr_…K8Q2",
+              created_at: "2026-07-24T10:30:00Z",
+            },
+          ]}
+          accessTokensReady
+          coreSessionKey="session-1"
+          services={[service]}
+          isReady
+          target={{
+            tokenId: "token_01",
+            serviceId: "service_01",
+            models: ["gpt-4.1"],
+          }}
+        />,
+      );
+    });
+    await flush();
+    const chip = (label: string) =>
+      document.querySelector<HTMLButtonElement>(
+        `button[aria-label="清除筛选：${label}"]`,
+      )!;
+    await act(async () => exactButton("+1 项").click());
+    const token = chip("令牌: VS Code");
+    await act(async () => {
+      token.focus();
+      token.click();
+    });
+    await settleFilterLayer();
+    expect(document.querySelector('[data-slot="popover-content"]')).toBeNull();
+    expect(document.activeElement).toBe(chip("模型: gpt-4.1"));
+    await act(async () => chip("模型: gpt-4.1").click());
+    expect(document.activeElement).toBe(chip("提供商: Primary gateway"));
+    await act(async () => chip("提供商: Primary gateway").click());
+    expect(container.querySelector('[data-slot="filter-chips"]')).toBeNull();
+    expect(document.activeElement).toBe(
+      container.querySelector('button[aria-label="更多筛选"]'),
+    );
+  });
+
+  it("keeps token search and multi-selection inside keyboard-accessible filter groups", async () => {
+    await act(async () => {
+      reactRoot.render(
+        <RequestRecords
+          accessTokens={[
+            {
+              id: "token_01",
+              name: "VS Code",
+              hint: "astr_…K8Q2",
+              created_at: "2026-07-24T10:30:00Z",
+            },
+            {
+              id: "token_02",
+              name: "Terminal",
+              hint: "astr_…H5Z8",
+              created_at: "2026-07-24T10:30:00Z",
+            },
+          ]}
+          accessTokensReady
+          coreSessionKey="session-1"
+          services={[service]}
+          isReady
+          target={{ tokenId: "token_01" }}
+        />,
+      );
+    });
+    await flush();
+    await openMoreFilters();
+    const header = document.querySelector<HTMLButtonElement>(
+      '[data-filter-group="service"]',
+    )!;
+    await act(async () => {
+      header.focus();
+      header.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+      );
+    });
+    const tokenHeader = document.querySelector<HTMLButtonElement>(
+      '[data-filter-group="tokens"]',
+    )!;
+    expect(document.activeElement).toBe(tokenHeader);
+    await act(async () =>
+      tokenHeader.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
+      ),
+    );
+    expect(document.querySelector('[aria-label="令牌筛选"]')).toBeNull();
+    await act(async () =>
+      tokenHeader.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+      ),
+    );
+    const tokenTrigger = document.querySelector<HTMLButtonElement>(
+      '[aria-label="令牌筛选"]',
+    )!;
+    await act(async () => tokenTrigger.click());
+    const search = document.querySelector<HTMLInputElement>(
+      '[aria-label="令牌筛选 search"]',
+    )!;
+    expect(document.activeElement).toBe(search);
+    await typeInto(search, "Terminal");
+    expect(
+      document.querySelector('[role="listbox"] [aria-label="VS Code"]'),
+    ).toBeNull();
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          '[role="listbox"] [aria-label="Terminal"]',
+        )!
+        .click(),
+    );
+    expect(bridgeMocks.listRequestSessions).toHaveBeenLastCalledWith({
+      limit: 50,
+      kind: "inference",
+      local_access_token_ids: ["token_01", "token_02"],
+    });
+    await escapeFilterLayer();
+    expect(document.querySelector('[data-slot="filter-menu"]')).not.toBeNull();
+    expect(document.activeElement).toBe(tokenTrigger);
+    await escapeFilterLayer();
+    expect(document.querySelector('[data-slot="filter-menu"]')).toBeNull();
+    expect(document.activeElement).toBe(
+      container.querySelector('button[aria-label="更多筛选"]'),
+    );
   });
 
   it("keeps the model menu in place while a chosen model narrows the list", async () => {

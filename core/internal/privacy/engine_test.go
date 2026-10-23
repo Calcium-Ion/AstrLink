@@ -116,8 +116,8 @@ func TestEngineProtocolAwareRedactionFixtures(t *testing.T) {
 					{"role":"assistant","tool_calls":[{"function":{"arguments":"{\"card\":\"4242424242424242\"}"}}]}
 				]
 			}`,
-			mustRedact:   []string{"secret=abcdefghijklmnop123456", "alice@example.com", "4242424242424242"},
-			mustPreserve: []string{"gpt@example.com"},
+			mustRedact:   []string{"abcdefghijklmnop123456", "alice@example.com", "4242424242424242"},
+			mustPreserve: []string{"gpt@example.com", "secret="},
 		},
 		{
 			name:     "legacy completions",

@@ -168,6 +168,39 @@ describe("extractLastUserText", () => {
     expect(extractLastUserText("openai.models", "{}")).toBeNull();
     expect(extractLastUserText("openai.chat", "not json")).toBeNull();
   });
+
+  it("takes the turn opener when the client's notes follow the prompt", () => {
+    const clock = (step: string) =>
+      `Time sampled while preparing ${step}: 2026-10-23T14:34:56+08:00[Asia/Shanghai]`;
+    const loop = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "把重试改成指数退避" },
+      { role: "user", content: "Current runtime context." },
+      { role: "user", content: clock("turn 1, step 1") },
+      { role: "assistant", tool_calls: [{ id: "c1" }] },
+      { role: "tool", tool_call_id: "c1", content: "ok" },
+      { role: "user", content: clock("turn 1, step 9") },
+    ];
+    const body = (messages: unknown[]) => JSON.stringify({ messages });
+    expect(
+      extractLastUserText("openai.chat", body(loop), "deepseek_harness")?.text,
+    ).toBe("把重试改成指数退避");
+    expect(
+      extractLastUserText(
+        "openai.chat",
+        body([
+          ...loop,
+          { role: "assistant", content: "改好了" },
+          { role: "user", content: "再补上单元测试" },
+          { role: "user", content: clock("turn 2, step 1") },
+        ]),
+        "deepseek_harness",
+      )?.text,
+    ).toBe("再补上单元测试");
+    expect(extractLastUserText("openai.chat", body(loop))?.text).toBe(
+      clock("turn 1, step 9"),
+    );
+  });
 });
 
 describe("extractToolResults", () => {
@@ -247,6 +280,32 @@ describe("extractToolResults", () => {
     ).toEqual([
       { id: null, name: "lookup", text: '{\n  "ok": 1\n}', isError: false },
     ]);
+  });
+
+  it("skips notes the client sends after the results", () => {
+    const body = JSON.stringify({
+      messages: [
+        { role: "user", content: "q" },
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "t1", name: "Bash", input: {} }],
+        },
+        {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+        },
+        {
+          role: "user",
+          content: "Time sampled while preparing turn 1, step 9",
+        },
+      ],
+    });
+    expect(
+      extractToolResults("anthropic.messages", body, "deepseek_harness").map(
+        (result) => result.id,
+      ),
+    ).toEqual(["t1"]);
+    expect(extractToolResults("anthropic.messages", body)).toEqual([]);
   });
 });
 

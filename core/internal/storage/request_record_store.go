@@ -120,4 +120,7 @@ type RequestRecordStore interface {
 	FindSessionLink(ctx context.Context, kind contract.SessionCursorKind, values []string, scope SessionCursorScope) (match SessionLinkMatch, ok bool, err error)
 	ListRequestSessions(context.Context, RequestSessionListOptions) (RequestSessionPage, error)
 	GetRequestSession(context.Context, string) (contract.RequestSessionDetail, error)
+	// ListRequestActivity returns the root model calls still running or
+	// ended at or after since, oldest first. Model discovery is left out.
+	ListRequestActivity(ctx context.Context, since time.Time) ([]contract.RequestActivityCall, error)
 }

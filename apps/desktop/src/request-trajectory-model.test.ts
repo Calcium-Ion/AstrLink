@@ -1616,6 +1616,12 @@ describe("request trajectory model", () => {
         { kind: "url", reason: "kind_disabled", count: 5 },
         { kind: "email", reason: "allowlisted", count: 1 },
         {
+          kind: "common_secret",
+          reason: "astrlink_identifier",
+          count: 2,
+          confidence: { min: 0.91, max: 0.97, threshold },
+        },
+        {
           kind: "private_person",
           reason: "low_confidence",
           count: 2,
@@ -1630,7 +1636,8 @@ describe("request trajectory model", () => {
       ],
     );
     expect(read).toBe(threshold);
-    // Kinds the policy acted on come first; email was only ignored.
+    // Kinds the policy acted on come first; email and the secret were only
+    // ignored.
     expect(rows).toEqual([
       {
         kind: "url",
@@ -1654,6 +1661,18 @@ describe("request trajectory model", () => {
         count: 0,
         confidence: null,
         ignored: { allowlisted: { count: 1, confidence: null } },
+      },
+      {
+        kind: "common_secret",
+        label: "常见密钥",
+        count: 0,
+        confidence: null,
+        ignored: {
+          astrlink_identifier: {
+            count: 2,
+            confidence: { min: 0.91, max: 0.97 },
+          },
+        },
       },
     ]);
   });

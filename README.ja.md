@@ -29,13 +29,15 @@ AstrLink は macOS、Windows、Linux 向けのオープンソースデスクト�
 
 ## スクリーンショット
 
-アカウント、利用量、費用、リクエスト内容はいずれも模擬データです。画像をクリックすると原寸で表示されます。掲載している画面は英語表示です。
+現在の画面を掲載しています。アカウント、利用量、費用、リクエスト内容はいずれも模擬データです。画像をクリックすると原寸で表示されます。画面は英語表示です。[幅の狭いウィンドウでの表示](assets/screenshots/requests-compact.en.jpg)も確認できます。
 
-| 概要                                                                                                                        | APIプロバイダー                                                                                                                                |
-| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| [![概要：模擬の利用量](assets/screenshots/overview.en.jpg)](assets/screenshots/overview.en.jpg)                             | [![APIプロバイダー：模擬のアカウントとクォータ](assets/screenshots/providers.en.jpg)](assets/screenshots/providers.en.jpg)                     |
-| **ローカルでのプライバシー保護**                                                                                            | **リクエストの詳細**                                                                                                                           |
-| [![プライバシー保護のドライラン：模擬のサポート案件](assets/screenshots/privacy.en.jpg)](assets/screenshots/privacy.en.jpg) | [![リクエストの詳細：模擬の Agent セッションと処理の軌跡](assets/screenshots/request-detail.en.jpg)](assets/screenshots/request-detail.en.jpg) |
+| リアルタイムのリクエスト · ライトテーマ                                                                                                          | リアルタイムのリクエスト · ダークテーマ                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| [![ライトテーマ：並行する Agent セッションとツール呼び出し](assets/screenshots/requests-light.en.jpg)](assets/screenshots/requests-light.en.jpg) | [![ダークテーマ：並行する Agent セッションとツール呼び出し](assets/screenshots/requests-dark.en.jpg)](assets/screenshots/requests-dark.en.jpg) |
+| **概要**                                                                                                                                         | **API プロバイダー**                                                                                                                           |
+| [![概要：模擬の利用量](assets/screenshots/overview.en.jpg)](assets/screenshots/overview.en.jpg)                                                  | [![API プロバイダー：模擬のアカウント、クォータ、費用、性能](assets/screenshots/providers.en.jpg)](assets/screenshots/providers.en.jpg)        |
+| **ローカルでのプライバシー保護**                                                                                                                 | **リクエストの詳細**                                                                                                                           |
+| [![ローカルでの検出とレスポンス復元の設定](assets/screenshots/privacy.en.jpg)](assets/screenshots/privacy.en.jpg)                                | [![ツール呼び出し、Agent の回答、性能統計を表示した会話](assets/screenshots/request-detail.en.jpg)](assets/screenshots/request-detail.en.jpg)  |
 
 ## 機能
 

@@ -101,7 +101,7 @@ func TestExtractDocumentSkipsAdditionalToolsForFilteredClient(t *testing.T) {
 	message := `{"type":"message","role":"user","content":[{"type":"input_text","text":"alice@example.com"}]}`
 	body := `{"model":"m","input":[` + additionalToolsItem + `,` + message + `]}`
 	declarations := []string{
-		"/input/0/tools/0/description", "/input/0/tools/0/name", "/input/0/tools/0/tools/0/description",
+		"/input/0/tools/0/description", "/input/0/tools/0/tools/0/description",
 	}
 	content := []string{"/input/1/content/0/text"}
 	for _, protocol := range []contract.ProtocolID{

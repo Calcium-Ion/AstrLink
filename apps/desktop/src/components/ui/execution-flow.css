@@ -1,0 +1,33 @@
+/* The sweep denotes an active interval, never a completion percentage. */
+.execution-span-pending {
+  overflow: hidden;
+}
+
+.execution-span-pending::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--background) 65%, transparent),
+    transparent
+  );
+  animation: execution-span-sweep 1.8s ease-in-out infinite;
+}
+
+@keyframes execution-span-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .execution-span-pending::after {
+    animation: none;
+    display: none;
+  }
+}

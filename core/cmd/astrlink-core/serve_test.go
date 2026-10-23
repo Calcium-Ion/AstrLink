@@ -627,9 +627,12 @@ func TestConsumePasswordResetDiscardsRawPartsAndKeepsCredentials(t *testing.T) {
 	}
 }
 
-func TestServeRaisesTheRawBackoffCap(t *testing.T) {
+func TestServeUsesServerDefaults(t *testing.T) {
 	options := serveCoreOptions(serveConfig{dataDirectory: "/data"}, "token", console.NewSessions(), func() {}, func(string, ...any) {})
 	if options.rawBackoffCap != 15*time.Minute || !options.noLoopbackCallback || options.consoleSessions == nil {
 		t.Fatalf("serve options = %+v", options)
+	}
+	if options.responseStartTimeout != 10*time.Minute {
+		t.Fatalf("response-start timeout = %s, want 10m", options.responseStartTimeout)
 	}
 }

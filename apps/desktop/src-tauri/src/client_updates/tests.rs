@@ -636,6 +636,33 @@ fn reports_masked_curl_failures_as_network_errors_and_keeps_the_error_tail() {
     assert!(error.detail.chars().count() <= 4096);
 }
 
+#[test]
+fn reports_cache_and_installation_permission_failures_with_the_original_details() {
+    for detail in [
+        "wsl: Failed to mount G:\\, see dmesg for more details.\n\
+         npm error code EACCES\nnpm error syscall open\n\
+         npm error path /home/ada/.npm/_cacache/tmp/file\n\
+         npm error Your cache folder contains root-owned files",
+        "npm ERR! code EACCES\nnpm ERR! syscall rename\n\
+         npm ERR! path /usr/lib/node_modules/@openai/codex",
+        "npm error code EPERM\nnpm error syscall unlink",
+        "Permission denied (os error 13)",
+        "Access is denied. (os error 5)",
+        "Operation not permitted (os error 1)",
+    ] {
+        for code in ["command", "unchanged"] {
+            let error = ClientError::new(code, detail);
+            assert_eq!(error.code, "permission", "{detail}");
+            assert_eq!(error.detail, detail);
+        }
+    }
+    assert_eq!(
+        ClientError::new("command", "wsl: Failed to mount G:\\").code,
+        "command"
+    );
+    assert_eq!(ClientError::new("version", "EACCES").code, "version");
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "Read-only live connectivity check; requires system proxy and network access"]
@@ -881,9 +908,92 @@ fn npm_update_targets_the_detected_prefix_and_allows_the_package_scripts() {
                 "--global".into(),
                 "--prefix".into(),
                 prefix.clone().into_os_string(),
+                "--cache".into(),
+                fixture.0.join(".cache/astrlink/npm").into_os_string(),
                 format!("--allow-scripts={package}").into(),
                 format!("{package}@{latest}").into(),
             ]
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn npm_updates_use_a_separate_cache_locally_and_in_wsl() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    for in_wsl in [false, true] {
+        let fixture = Fixture::new();
+        // Include spaces to exercise argument passing through the WSL launcher.
+        let home = fixture.0.join("user home");
+        let prefix = home.join("node");
+        let cache = home.join(".npm");
+        fs::create_dir_all(&cache).unwrap();
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o555)).unwrap();
+        fixture.write(
+            "user home/node/lib/node_modules/@openai/codex/package.json",
+            r#"{"name":"@openai/codex"}"#,
+        );
+        let codex = fixture.script(
+            "user home/node/lib/node_modules/@openai/codex/bin/codex.js",
+            "#!/bin/sh\ncat version\n",
+        );
+        fixture.write("user home/version", "codex-cli 1.0.0\n");
+        fixture.script(
+            "user home/node/bin/node",
+            "#!/bin/sh\nexec /bin/sh \"$@\"\n",
+        );
+        symlink(codex, prefix.join("bin/codex")).unwrap();
+        // Stand in for npm: reject the default cache, otherwise write download
+        // data to the requested cache before updating the installed version.
+        fixture.write(
+            "user home/node/lib/node_modules/npm/bin/npm-cli.js",
+            "#!/bin/sh\nset -eu\ncache=.npm\n\
+             while [ $# -gt 0 ]; do\n\
+               if [ \"$1\" = --cache ]; then shift; cache=$1; fi\n\
+               shift\n\
+             done\n\
+             if [ \"$cache\" = .npm ]; then echo 'npm error code EACCES' >&2; exit 1; fi\n\
+             mkdir -p \"$cache\"\n\
+             echo download > \"$cache/download\"\n\
+             echo 'codex-cli 1.1.0' > version\n",
+        );
+        let mut environment = Environment {
+            home: home.clone(),
+            path: std::env::join_paths([
+                prefix.join("bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+            ])
+            .unwrap(),
+            ..fixture.environment()
+        };
+        if in_wsl {
+            let mut wsl = fake_wsl(&fixture);
+            wsl.launcher = fixture.script(
+                "wsl-with-home",
+                &format!(
+                    "#!/bin/sh\ncd '{}' || exit 1\n\
+                     while [ \"$1\" != --exec ]; do shift; done\nshift\nexec \"$@\"\n",
+                    home.display()
+                ),
+            );
+            environment.wsl = Some(wsl);
+        }
+        let install = detect(&environment, ClientId::Codex).unwrap();
+        let result = perform_update(
+            &environment,
+            ClientId::Codex,
+            &install,
+            &version(ClientId::Codex, "1.1.0"),
+        );
+        // Restore the fixture's permissions even if the update failed.
+        let untouched = fs::read_dir(&cache).unwrap().next().is_none();
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(result.unwrap(), version(ClientId::Codex, "1.1.0"));
+        assert!(untouched);
+        assert_eq!(
+            fs::read_to_string(home.join(".cache/astrlink/npm/download")).unwrap(),
+            "download\n"
         );
     }
 }

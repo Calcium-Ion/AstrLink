@@ -4,6 +4,8 @@
 /* dark: follows the theme the app applies, not the system setting. */
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
+@custom-variant sidebar-collapsed (&:where([data-sidebar-collapsed="true"] *));
+
 /* Open and closed parts, as Radix marks them with data-state. */
 @custom-variant data-open {
   &:where([data-state="open"]),
@@ -638,6 +640,28 @@
   --sidebar-top: calc(var(--window-chrome-height) + 11px);
   --workspace-card-top: var(--window-chrome-height);
   --workspace-top: 8px;
+}
+
+/* A 56px icon rail is narrower than the native controls on the left. Keep
+   the card below the title bar while collapsed, and subtract the same offset
+   from its inner padding so page content keeps its height and position. */
+:root[data-window-controls="start"]:not([data-window-fullscreen="true"])
+  [data-sidebar-collapsed="true"] {
+  --workspace-card-top: var(--window-chrome-height);
+  --workspace-top: 19px;
+}
+
+@media (max-height: 680px) {
+  :root[data-window-controls="start"]:not([data-window-fullscreen="true"])
+    [data-sidebar-collapsed="true"] {
+    --workspace-top: 13px;
+  }
+}
+
+/* A header overline uses the space above the title before growing the header.
+   Keep an inset when the card already sits below the native window controls. */
+[data-slot="workspace"]:has([data-slot="page-header-overline"]) {
+  padding-top: max(8px, calc(var(--workspace-top) - 2rem));
 }
 
 /* The tray popover is a transparent window; the panel draws its own surface. */

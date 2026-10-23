@@ -104,7 +104,8 @@ func main() {
 
 	dependencies := coreapp.Dependencies{
 		InferenceHandler: ingress.NewWithDependencies(ingress.Dependencies{
-			MaxRequestBodyMiB: uint32(maxRequestBodyMiB),
+			MaxRequestBodyMiB:    uint32(maxRequestBodyMiB),
+			ResponseStartTimeout: time.Duration(responseStartTimeoutSeconds) * time.Second,
 		}),
 	}
 	if (localKeyStdin || localKeyFile != "") && !controlTokenStdin {

@@ -149,9 +149,9 @@ export function updateRetryWait(snapshot: UpdateSnapshot, now: number) {
   const until = snapshot.retry_at ? Date.parse(snapshot.retry_at) : NaN;
   return until > now ? Math.ceil((until - now) / 1000) : 0;
 }
-export type UpdateNotice = "available" | "manual" | "ready";
+export type UpdateNotice = "available" | "manual" | "ready" | "error";
 /** Mirrors the host's native-notification rule; `available` only counts while
- * it waits on the operator, since automatic download soon reaches `ready`. */
+ * it waits on the operator; automatic downloads announce completion or failure. */
 export function updateNotice(snapshot: UpdateSnapshot): UpdateNotice | null {
   if (!snapshot.release) return null;
   switch (snapshot.phase) {
@@ -159,6 +159,7 @@ export function updateNotice(snapshot: UpdateSnapshot): UpdateNotice | null {
       return snapshot.preferences.auto_download ? null : "available";
     case "manual":
     case "ready":
+    case "error":
       return snapshot.phase;
     default:
       return null;

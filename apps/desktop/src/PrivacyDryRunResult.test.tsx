@@ -61,6 +61,7 @@ describe("privacy dry-run explanations", () => {
             "allowlisted",
             "placeholder",
             "unrepresentable",
+            "astrlink_identifier",
           ] as const
         ).map((reason) => ({ ...finding, reason })),
       ],
@@ -69,13 +70,14 @@ describe("privacy dry-run explanations", () => {
       ...container.querySelectorAll('[data-testid="dry-run-finding"]'),
     ];
     expect(rows.map((row) => row.querySelector("mark")?.textContent)).toEqual(
-      Array(5).fill(sample),
+      Array(6).fill(sample),
     );
     expect(rows[0].textContent).toContain("置信度 59.99%，低于 60% 门槛");
     expect(rows[1].textContent).toContain("该信息类型已关闭");
     expect(rows[2].textContent).toContain("匹配免脱敏名单");
     expect(rows[3].textContent).toContain("已有占位符");
     expect(rows[4].textContent).toContain("无法生成可用的替换值");
+    expect(rows[5].textContent).toContain("AstrLink 自己生成的 ID");
     for (const row of rows.slice(1))
       expect(row.textContent).not.toContain("门槛");
     expect(container.querySelector("details")?.open).toBe(false);

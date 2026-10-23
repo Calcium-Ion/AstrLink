@@ -2,8 +2,9 @@
 //! unlock session. Approving an agent's request to read raw content happens
 //! only in this small window: it opens on its own when a request arrives,
 //! without taking focus, so no keystroke meant for another window can approve
-//! anything. Closing it decides nothing; the request waits until it expires,
-//! and the tray opens the window again.
+//! anything. It floats above other windows only while a request waits for the
+//! operator. Closing it decides nothing and ends no grant; a pending request
+//! waits until it expires, and the tray opens the window again.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -67,9 +68,9 @@ pub fn open(app: &AppHandle, focus: bool) -> Result<(), String> {
         .resizable(true)
         .shadow(true)
         .focused(focus)
-        // The main window may be hidden to the tray; the request must still
-        // be seen above whatever the operator is working in.
-        .always_on_top(true)
+        // The main window may be hidden to the tray; a request must still be
+        // seen above whatever the operator is working in.
+        .always_on_top(awaiting(app))
         .center();
 
     // The frontend draws its own title bar, as in the inspector window.
@@ -86,6 +87,23 @@ pub fn open(app: &AppHandle, focus: bool) -> Result<(), String> {
 
     builder.build().map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn awaiting(app: &AppHandle) -> bool {
+    app.try_state::<Arc<CoreManager>>()
+        .is_some_and(|manager| manager.view().pending_raw_access > 0)
+}
+
+/// Floats the window while a request waits for the operator, including over
+/// a window left open from the tray. Once none is left, other windows cover
+/// it again.
+pub fn set_floating(app: &AppHandle, floating: bool) {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return;
+    };
+    if let Err(error) = window.set_always_on_top(floating) {
+        eprintln!("unable to change the raw access approval window level: {error}");
+    }
 }
 
 /// A native notification, since the main window may be hidden.

@@ -15,6 +15,15 @@ import (
 // ids) are documented in ADR 0015; change them there first.
 var conversationPolicy = convo.DefaultPolicy()
 
+// conversationPolicyFor reads a request body the way its client lays out
+// user messages. DeepSeek Harness sends its runtime and clock snapshots as
+// plain user messages after the prompt, so only its turn openers are typed.
+func conversationPolicyFor(client contract.ClientType) convo.Policy {
+	policy := conversationPolicy
+	policy.NotesFollowPrompt = client == contract.ClientDeepSeekHarness
+	return policy
+}
+
 // sessionFingerprintInfo is the HKDF info string that separates the session
 // fingerprint key from every other use of the audit master key. Bumping it
 // invalidates all stored fingerprints, which only costs text-only linking

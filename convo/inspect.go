@@ -13,9 +13,9 @@ var ErrInvalidJSON = errors.New("convo: request body is not a JSON object")
 // Built-in adapters share one decoded item across request-side observations.
 // The public Adapter interface stays compatible with custom protocols.
 type requestItem struct {
-	user, assistant bool
-	userText        string
-	echoIDs         []string
+	user, assistant, toolResult bool
+	userText                    string
+	echoIDs                     []string
 }
 
 type requestItemInspector interface {
@@ -26,7 +26,11 @@ func inspectRequestItem(adapter Adapter, item json.RawMessage) requestItem {
 	if inspector, ok := adapter.(requestItemInspector); ok {
 		return inspector.inspectItem(item)
 	}
-	result := requestItem{user: adapter.IsUserTurn(item), echoIDs: adapter.InboundEchoIDs(item)}
+	result := requestItem{
+		user:       adapter.IsUserTurn(item),
+		toolResult: adapter.IsToolResult(item),
+		echoIDs:    adapter.InboundEchoIDs(item),
+	}
 	if result.user {
 		result.userText = adapter.UserText(item)
 	}
@@ -53,7 +57,8 @@ type RequestSummary struct {
 	EchoIDs []string
 	// UserTurnCount is the number of user messages in the history (in the
 	// delta only, when Stateful). Tool results and messages that are only
-	// dropped harness blocks do not count.
+	// dropped harness blocks do not count, nor do notes under
+	// Policy.NotesFollowPrompt.
 	UserTurnCount int
 	// HasUserMessage is UserTurnCount > 0; kept separate for readability at
 	// call sites that combine it with Stateful.
@@ -127,10 +132,23 @@ func (policy Policy) InspectFields(protocol Protocol, fields map[string]json.Raw
 		lastAssistant json.RawMessage
 		haveAssistant bool
 		lastUserText  string
+		// opensTurn is whether the next user message would open a turn.
+		opensTurn = true
 	)
 	for _, item := range items {
 		inspected := inspectRequestItem(adapter, item)
-		if inspected.user {
+		user := inspected.user
+		if policy.NotesFollowPrompt {
+			switch {
+			case inspected.toolResult:
+				user, opensTurn = false, false
+			case inspected.assistant:
+				opensTurn = true
+			case user:
+				user, opensTurn = opensTurn, false
+			}
+		}
+		if user {
 			summary.UserTurnCount++
 			summary.HasUserMessage = true
 			if text := inspected.userText; text != "" {

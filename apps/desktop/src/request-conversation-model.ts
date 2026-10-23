@@ -3,6 +3,7 @@ import {
   displayRequestStatus,
   type AuditContent,
   type AuditContentPart,
+  type ClientType,
   type RequestRecord,
 } from "./request-record-model";
 import {
@@ -275,14 +276,68 @@ function userItemText(item: JsonObject, shape: BodyShape): string {
 }
 
 /**
+ * Clients that send their own notes as plain user messages after the prompt,
+ * as DeepSeek Harness does with its runtime and clock snapshots. The typed
+ * message is then the one that opens a turn, the first in the history or
+ * after an assistant message; the rest of its run and user messages after
+ * tool results are notes. Keep in step with convo's Policy.NotesFollowPrompt.
+ */
+const NOTES_FOLLOW_PROMPT: ReadonlySet<ClientType> = new Set([
+  "deepseek_harness",
+]);
+
+function isAssistantItem(item: JsonObject, shape: BodyShape): boolean {
+  const role = string(item.role);
+  if (shape === "responses") {
+    const type = string(item.type);
+    return role === "assistant" && (type === "" || type === "message");
+  }
+  return role === (shape === "contents" ? "model" : "assistant");
+}
+
+function isToolResultItem(item: JsonObject, shape: BodyShape): boolean {
+  if (shape === "responses") return string(item.type).endsWith("_call_output");
+  if (shape === "contents") {
+    return (
+      string(item.role) !== "model" &&
+      array(item.parts).some(
+        (part) => object(part).functionResponse !== undefined,
+      )
+    );
+  }
+  const role = string(item.role);
+  return (
+    role === "tool" ||
+    (role === "user" &&
+      array(item.content).some(
+        (block) => string(object(block).type) === "tool_result",
+      ))
+  );
+}
+
+/** A user item's words, or null when it holds nothing beyond reminders. */
+function typedUserText(item: JsonObject, shape: BodyShape): UserText | null {
+  if (!isUserItem(item, shape)) return null;
+  const raw = userItemText(item, shape);
+  if (!raw.trim()) return null;
+  const stripped = stripClientWrappers(raw);
+  const onlyReminders =
+    stripped.text === "" &&
+    stripped.wrappers.every((wrapper) => wrapper.kind === "system");
+  return onlyReminders ? null : stripped;
+}
+
+/**
  * The operator's message a request is answering: the last user item that
- * says something beyond tool results and client reminders. Every call of an
- * agent loop replays the turn's history, so any call in the turn yields the
- * same text.
+ * says something beyond tool results and client reminders, or for a client
+ * whose notes follow the prompt, the last one that opened a turn. Every call
+ * of an agent loop replays the turn's history, so any call in the turn yields
+ * the same text.
  */
 export function extractLastUserText(
   protocol: string,
   body: string,
+  clientType?: ClientType,
 ): UserText | null {
   const shape = bodyShape(protocol);
   const root = shape ? parseBody(body) : null;
@@ -290,17 +345,27 @@ export function extractLastUserText(
   const items = bodyItems(root, shape);
   if (typeof items === "string") return stripClientWrappers(items);
   if (!Array.isArray(items)) return null;
+  if (clientType && NOTES_FOLLOW_PROMPT.has(clientType)) {
+    let opener: UserText | null = null;
+    let opensTurn = true;
+    for (const value of items) {
+      const item = object(value);
+      if (isToolResultItem(item, shape)) {
+        opensTurn = false;
+      } else if (isAssistantItem(item, shape)) {
+        opensTurn = true;
+      } else {
+        const text = typedUserText(item, shape);
+        if (!text) continue;
+        if (opensTurn) opener = text;
+        opensTurn = false;
+      }
+    }
+    return opener;
+  }
   for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = object(items[index]);
-    if (!isUserItem(item, shape)) continue;
-    const raw = userItemText(item, shape);
-    if (!raw.trim()) continue;
-    const stripped = stripClientWrappers(raw);
-    const onlyReminders =
-      stripped.text === "" &&
-      stripped.wrappers.every((wrapper) => wrapper.kind === "system");
-    if (onlyReminders) continue;
-    return stripped;
+    const text = typedUserText(object(items[index]), shape);
+    if (text) return text;
   }
   return null;
 }
@@ -318,16 +383,27 @@ function resultText(content: unknown): string {
 /**
  * The tool results the client sent back with this request, so they can sit
  * under the previous call's tool rows. Only the trailing results count: an
- * earlier user message's results answered an earlier call.
+ * earlier user message's results answered an earlier call. Notes a client
+ * sends after them are skipped (see NOTES_FOLLOW_PROMPT).
  */
 export function extractToolResults(
   protocol: string,
   body: string,
+  clientType?: ClientType,
 ): ToolResult[] {
   const shape = bodyShape(protocol);
   const root = shape ? parseBody(body) : null;
   if (!shape || !root) return [];
   const items = array(bodyItems(root, shape)).map(object);
+  if (clientType && NOTES_FOLLOW_PROMPT.has(clientType)) {
+    while (
+      items.length > 0 &&
+      isUserItem(items[items.length - 1], shape) &&
+      !isToolResultItem(items[items.length - 1], shape)
+    ) {
+      items.pop();
+    }
+  }
   if (items.length === 0) return [];
   if (shape === "responses") {
     const results: ToolResult[] = [];
@@ -420,12 +496,16 @@ export function parseCallContent(
   const protocol = record.input_protocol;
   return {
     requestId: record.id,
-    user: request ? extractLastUserText(protocol, request.content) : null,
+    user: request
+      ? extractLastUserText(protocol, request.content, record.client_type)
+      : null,
     toolResults: request
-      ? extractToolResults(protocol, request.content).map((result) => ({
-          ...result,
-          text: clip(result.text),
-        }))
+      ? extractToolResults(protocol, request.content, record.client_type).map(
+          (result) => ({
+            ...result,
+            text: clip(result.text),
+          }),
+        )
       : [],
     outputs: outputs.map((output) =>
       output.kind === "tool" || output.kind === "other"

@@ -17,6 +17,33 @@ function preview(value: unknown, stream = false, truncated = false) {
 }
 
 describe("client response preview", () => {
+  it("extracts a JSON error mislabeled as an event stream without an incomplete-tail warning", async () => {
+    const content = JSON.stringify({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "thinking.budget_tokens must be less than max_tokens",
+      },
+    });
+    const result = await parseResponsePreview({
+      content,
+      media_type: "text/event-stream; charset=utf-8",
+      truncated: false,
+      captured_bytes: content.length,
+    });
+    expect(result).toEqual({
+      outputs: [
+        {
+          kind: "error",
+          name: "invalid_request_error",
+          text: "thinking.budget_tokens must be less than max_tokens",
+        },
+      ],
+      incomplete: false,
+      unparsed: false,
+    });
+  });
+
   it("joins Responses deltas and replaces them with final snapshots without duplicates", async () => {
     const result = await preview(
       [

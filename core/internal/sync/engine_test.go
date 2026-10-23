@@ -302,7 +302,8 @@ func TestEngineSyncsConfigurationAndCredentials(t *testing.T) {
 	}
 }
 
-// A device that has never synced adopts the package's own salt and parameters,
+// A device that has never synced derives the same salt from the passphrase as
+// the device that sealed the package and uses the same default KDF parameters,
 // so the same passphrase produces the key that opens the stored package.
 func TestSecondDeviceAdoptsThePackageKey(t *testing.T) {
 	pair := newPair(t)
@@ -618,6 +619,106 @@ func TestSuccessfulSyncLeavesNothingPending(t *testing.T) {
 	}
 	if due {
 		t.Fatal("a device on a 60 minute interval is due 31 seconds after a successful sync")
+	}
+	// Once the interval has elapsed the plan is due even though nothing local
+	// has changed: the wait counts from the last sync, not from the current
+	// moment, which would slide the interval ahead on every poll.
+	pair.first.clock = pair.first.clock.Add(60 * time.Minute)
+	due, err = pair.first.engine.due(ctx, false)
+	if err != nil {
+		t.Fatalf("due after the interval: %v", err)
+	}
+	if !due {
+		t.Fatal("a device on a 60 minute interval is not due 60 minutes after a successful sync")
+	}
+}
+
+// A cron plan counts from the last sync, so the device runs at the scheduled
+// minute even when nothing local has changed since. A moment that has already
+// passed is due at once instead of being skipped.
+func TestCronTriggerRunsWhenItsMomentArrives(t *testing.T) {
+	pair := newPair(t)
+	ctx := context.Background()
+	passphrase := []byte("correct horse battery")
+	// The change log is stamped by SQLite, so the device's clock stays on the
+	// same timeline; the anchor and the target minute are both ahead of the wall
+	// clock, which keeps every row this test writes behind the sync's snapshot.
+	target := time.Now().Add(10 * time.Minute).Truncate(time.Minute)
+	anchor := target.Add(-5 * time.Minute)
+	pair.first.clock = anchor
+	config := contract.DefaultSyncConfig()
+	config.Enabled = true
+	config.Trigger = contract.SyncTriggerSettings{
+		Mode:            contract.SyncTriggerCron,
+		Cron:            fmt.Sprintf("%d %d * * *", target.Minute(), target.Hour()),
+		DebounceSeconds: 30,
+	}
+	config.Remote = contract.SyncRemote{
+		Kind: contract.SyncRemoteWebDAV, Endpoint: pair.url,
+		Path: contract.SyncDefaultFolder, Addressing: contract.SyncS3AddressingPath,
+	}
+	if err := pair.first.engine.Configure(ctx, config); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if err := pair.first.engine.SetPassphrase(ctx, passphrase); err != nil {
+		t.Fatalf("passphrase: %v", err)
+	}
+	pair.sync(pair.first)
+
+	// One second before the scheduled minute nothing is pending, so only the
+	// plan can make the device due.
+	pair.first.clock = target.Add(-time.Second)
+	due, err := pair.first.engine.due(ctx, false)
+	if err != nil {
+		t.Fatalf("due before the plan: %v", err)
+	}
+	if due {
+		t.Fatal("a cron device is due before its scheduled minute")
+	}
+	pair.first.clock = target
+	due, err = pair.first.engine.due(ctx, false)
+	if err != nil {
+		t.Fatalf("due at the plan: %v", err)
+	}
+	if !due {
+		t.Fatal("a cron device is not due at its scheduled minute")
+	}
+	// A run that was missed while the process was stopped is still due
+	// afterwards: the plan stays anchored at the last sync.
+	pair.first.clock = target.Add(24 * time.Hour)
+	due, err = pair.first.engine.due(ctx, false)
+	if err != nil {
+		t.Fatalf("due after a missed run: %v", err)
+	}
+	if !due {
+		t.Fatal("a cron device skipped a scheduled minute that passed while it was stopped")
+	}
+}
+
+// A manual trigger never runs on its own, even with configuration waiting to be
+// packaged: the debounce path belongs to the scheduled triggers. Asking for a
+// run explicitly still starts one.
+func TestManualTriggerNeverRunsOnItsOwn(t *testing.T) {
+	pair := newPair(t)
+	ctx := context.Background()
+	pair.first.clock = time.Now().UTC()
+	pair.configure(pair.first, []byte("correct horse battery"))
+	newTestService(t, pair.first.store, serviceID("m"), "mike")
+	pair.first.clock = pair.first.clock.Add(time.Minute)
+
+	due, err := pair.first.engine.due(ctx, false)
+	if err != nil {
+		t.Fatalf("due: %v", err)
+	}
+	if due {
+		t.Fatal("a manual device started a run without being asked")
+	}
+	due, err = pair.first.engine.due(ctx, true)
+	if err != nil {
+		t.Fatalf("requested due: %v", err)
+	}
+	if !due {
+		t.Fatal("a requested run was not due")
 	}
 }
 

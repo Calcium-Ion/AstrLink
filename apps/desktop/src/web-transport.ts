@@ -269,6 +269,9 @@ const commands: Record<string, Command> = {
   list_request_sessions: route(
     (a) => `/request-sessions${query(a.query as Args)}`,
   ),
+  get_request_activity: route(
+    (a) => `/request-activity${query({ since: a.since })}`,
+  ),
   get_request_session: route(session),
   get_session_channel_bindings: route(
     (a) => `${session(a)}/channel-bindings${query({ before: a.before })}`,

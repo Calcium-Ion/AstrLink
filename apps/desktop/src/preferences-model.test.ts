@@ -2,6 +2,7 @@ import { defaultUpdatePreferences } from "./update-model";
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
   defaultTrayPreferences,
   parseSettingsSnapshot,
 } from "./preferences-model";
@@ -17,7 +18,7 @@ const valid = {
     inference_port: 8317,
     inference_listen: "loopback" as const,
     max_concurrent_inspections: 16,
-    response_start_timeout_seconds: 0,
+    response_start_timeout_seconds: DEFAULT_RESPONSE_START_TIMEOUT_SECONDS,
     max_request_body_mib: 0,
     theme: "system" as const,
     quota_display_mode: "remaining" as const,
@@ -155,6 +156,25 @@ describe("preferences IPC contract", () => {
         values: { ...valid.values, response_start_timeout_seconds: 86401 },
       }),
     ).toThrow("$.values.response_start_timeout_seconds");
+  });
+
+  it("accepts unlimited and shorter response waits independently of the default", () => {
+    for (const seconds of [0, 1, 90, 600, 86400]) {
+      expect(
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, response_start_timeout_seconds: seconds },
+        }).values.response_start_timeout_seconds,
+      ).toBe(seconds);
+    }
+    for (const seconds of [-1, 1.5, 86401, NaN, Infinity, "600", null]) {
+      expect(() =>
+        parseSettingsSnapshot({
+          ...valid,
+          values: { ...valid.values, response_start_timeout_seconds: seconds },
+        }),
+      ).toThrow("$.values.response_start_timeout_seconds");
+    }
   });
 
   it("accepts unlimited and explicit request body limits and rejects invalid values", () => {

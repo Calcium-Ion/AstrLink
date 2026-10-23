@@ -234,6 +234,36 @@ describe("local client updates", () => {
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
+  it.each([null, "Ubuntu-24.04"])(
+    "explains permission failures in the affected environment (%s)",
+    async (wsl) => {
+      const snapshot = available();
+      const failed = {
+        ...snapshot.clients[0],
+        wsl,
+        phase: "error" as const,
+        install_method: "npm" as const,
+        executable: "/usr/bin/codex",
+        error_code: "permission",
+        error_detail: "npm error code EACCES",
+        can_update: false,
+      };
+      if (wsl === null) snapshot.clients[0] = failed;
+      else snapshot.clients.push(failed);
+      mocks.get.mockResolvedValue(snapshot);
+      await render();
+      const alert = container.querySelector('[role="alert"]');
+      expect(alert?.textContent).toContain("没有读写客户端文件或缓存的权限");
+      expect(alert?.textContent).toContain(
+        wsl === null ? "本机" : "WSL · Ubuntu-24.04",
+      );
+      expect(container.textContent).toContain("npm error code EACCES");
+      await act(async () => button("重试").click());
+      expect(mocks.refresh).toHaveBeenCalledOnce();
+      expect(mocks.update).not.toHaveBeenCalled();
+    },
+  );
+
   it("leaves scrolling to the About page", async () => {
     await render();
     expect(container.querySelector('[data-client="codex"]')).not.toBeNull();

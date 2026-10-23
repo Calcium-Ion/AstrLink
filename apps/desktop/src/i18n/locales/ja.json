@@ -143,6 +143,8 @@
     "checking": "確認中…"
   },
   "nav": {
+    "collapse": "サイドバーを折りたたむ",
+    "expand": "サイドバーを展開",
     "main": "メインナビゲーション",
     "workspace": "ワークスペース",
     "system": "システム",
@@ -534,8 +536,9 @@
     "installBody": "選択したツールに、選択した Skill をインストールします。AstrLink デバッグ Skill は、読み取り専用の AstrLink CLI、コマンド権限、ローカルファイルのアクセス制限も追加します。プライバシーマスキングの Skill は、Skill ファイルだけを追加します。セットアップはお使いのユーザーアカウントに適用され、他のルールはそのまま残ります。インストール後は、新しいセッションを開いてください。",
     "selectSkills": "Skill",
     "selectTools": "インストール先",
-    "installSelected": "選択項目をインストール（{{count}}）",
-    "sharedSkills": "Codex と Pi は同じ Skill ディレクトリ（~/.agents/skills）を読むため、どちらかを選ぶと両方にインストールされます。",
+    "installSelected": "選択したツールをインストール（{{count}}）",
+    "sharedTools": "{{names}}（共有 Skill）",
+    "sharedSkills": "Codex、Pi、DeepSeek Harness は ~/.agents/skills を共有し、一緒にインストール・更新されます。",
     "selectionHint": "Skill とツールを、少なくとも 1 つずつ選んでください。チェックを外しても、今のセットアップは残ります。",
     "removeTitle": "Agent の Skill とツールをアンインストールしますか？",
     "removeBody": "すべてのツールから、AstrLink が管理する Skill、コマンド権限、アクセス制限の項目、CLI を取り除きます。ご自身のルールはそのまま残ります。",
@@ -566,8 +569,8 @@
     "installScopeShort": "Skill と CLI を含む",
     "installScopeTitle": "インストールされるもの",
     "installScopeBody": "AstrLink デバッグ Skill は調査の手順を提供し、CLI で Agent がローカルのリクエストを読み取れます。プライバシーマスキングの Skill は、プライバシー保護で置き換えられた内容の扱いだけを教え、CLI は不要です。セットアップでは、Skill と検出されたツールを 1 つ以上選びます。再インストールすると、欠けているファイルが戻り、古い MCP の設定が取り除かれます。WSL 内のツールには、そのディストリビューションのホームに Skill が入り、このコンピューター上の AstrLink CLI を実行します。",
-    "installScopeHosts": "デバッグ Skill は、ホスト側のルールも書き込みます。Claude Code では astrlink コマンドを許可し、組み込みのファイルツール、cat / head / tail / sed / tee、sqlite3 が AstrLink のデータディレクトリとセッションファイルを読むことをブロックします。Python や Node のように、自分でファイルを開くスクリプトはブロックしません。Codex では、サンドボックスが AstrLink のローカル接続をブロックするため、astrlink コマンドをサンドボックスの外で実行します。また ~/.codex/AGENTS.md に節を追加しますが、これはプロンプトの案内のみで、強制されません。Cursor と Grok Build は、Agent が初めてコマンドを実行するときに確認し、Pi は確認しません。この 3 つには、確認できるグローバルな拒否の場所がないため、Skill の本文だけが適用されます。アンインストールで取り除かれるのは、AstrLink が追加した項目だけです。",
-    "noTools": "対応するツールは検出されませんでした。Cursor、Claude Code、Codex、Grok Build、または Pi をインストールして一度起動してから、もう一度確認してください。",
+    "installScopeHosts": "デバッグ Skill は、ホスト側のルールも書き込みます。Claude Code では astrlink コマンドを許可し、組み込みのファイルツール、cat / head / tail / sed / tee、sqlite3 が AstrLink のデータディレクトリとセッションファイルを読むことをブロックします。Python や Node のように、自分でファイルを開くスクリプトはブロックしません。Codex では、サンドボックスが AstrLink のローカル接続をブロックするため、astrlink コマンドをサンドボックスの外で実行します。また ~/.codex/AGENTS.md に節を追加しますが、これはプロンプトの案内のみで、強制されません。Cursor と Grok Build は、Agent が初めてコマンドを実行するときに確認し、Pi は確認しません。DeepSeek Harness も確認しません。そのサンドボックスはファイルの書き込みをブロックしますが、astrlink コマンドは記録を読むだけなので、そのまま実行できます。この 4 つには、確認できるグローバルな拒否の場所がないため、Skill の本文だけが適用されます。アンインストールで取り除かれるのは、AstrLink が追加した項目だけです。",
+    "noTools": "対応するツールは検出されませんでした。Cursor、Claude Code、Codex、Grok Build、Pi、または DeepSeek Harness をインストールして一度起動してから、もう一度確認してください。",
     "missingRuntime": "AstrLink の CLI がありません。使う前に再インストールしてください。",
     "promptTitle": "Agent への質問例",
     "copyPrompt": "例をコピー",
@@ -615,7 +618,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "grok": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "dsh": "DeepSeek Harness"
     }
   },
   "today": {
@@ -762,7 +766,6 @@
     "recentCapped": "最新 {{count}} 件のみ",
     "requests": "リクエスト",
     "totalTokens": "合計トークン",
-    "inputOutput": "入力 / 出力",
     "input": "入力",
     "output": "出力",
     "cache": "キャッシュ",
@@ -1615,7 +1618,8 @@
       "kind_disabled": "この情報の種類は無効なため、一致は無視されます。",
       "allowlisted": "許可リストに一致するため、この一致は無視されます。",
       "placeholder": "すでにプレースホルダーのため、これ以上の置換は不要です。",
-      "unrepresentable": "使える置換を生成できないため、一致は無視されます。"
+      "unrepresentable": "使える置換を生成できないため、一致は無視されます。",
+      "astrlink_identifier": "AstrLink 自身が生成した ID（アクセストークン ID など）です。アクセス権を与えないため、この一致は無視されます。"
     },
     "testAction": {
       "allow": "現在のポリシーはリクエストを許可し、原文を保持します。",
@@ -1914,7 +1918,7 @@
     "builtinFixed": "固定で編集不可",
     "customListOnly": "下の一覧だけを使用",
     "listJoin": "、",
-    "builtinCoverage": "組み込みルールの対象は {{kinds}} です。カスタムに切り替えたあと、出発点として埋め込めます。カスタムモードは正規表現のみで、Luhn/IBANなどの追加検査は含みません。",
+    "builtinCoverage": "組み込みルールの対象は {{kinds}} です。カスタムに切り替えたあと、出発点として埋め込めます。カスタムモードは正規表現のみで、Luhn/IBANなどの追加検査は含みません。名前付きグループ (?P<value>…) は一致のその部分だけを置き換えます。組み込みルールはこれで token= や Bearer などのキー名を残します。",
     "addRule": "ルールを追加",
     "noCustomRules": "カスタムルールはまだありません。ルールを追加するか、組み込みルールを埋め込んでください。",
     "minConfidenceHint": "このスコア未満のモデル候補は抑止されます。Regexには影響しません。",
@@ -2156,6 +2160,36 @@
     "synced": "最新のリクエストを同期しました。",
     "refreshFailed": "リクエストを更新できません。",
     "liveInterrupted": "ライブ同期を一時停止しました。現在のリクエストを保持して再試行しています。",
+    "activityTitle": "ライブ状況",
+    "activityInProgress": "進行中",
+    "activityInProgressHelp": "進行中の数え方",
+    "activityInProgressHint": "モデルを呼び出し中か、1 分以内に呼び出した会話です。Agent が呼び出しの合間にツールを実行している間も含みます。",
+    "activityConversations_one": "件の会話",
+    "activityConversations_other": "件の会話",
+    "activityCalls": "呼び出し中",
+    "activityFailures": "直近 5 分の失敗",
+    "activityShowFailures_one": "失敗した会話 {{count}} 件を表示",
+    "activityShowFailures_other": "失敗した会話 {{count}} 件を表示",
+    "activityChartTitle": "同時進行の会話",
+    "activityWindow": "直近 5 分",
+    "activityChart": "直近 5 分の同時進行の会話：最大 {{peak}} 件、現在 {{current}} 件",
+    "activityReadout_one": "{{time}} · {{count}} 件の会話",
+    "activityReadout_other": "{{time}} · {{count}} 件の会話",
+    "activityClient_one": "{{client}} {{count}} 件",
+    "activityClient_other": "{{client}} {{count}} 件",
+    "laneCallingMany_one": "{{count}} 件の呼び出し · {{duration}}",
+    "laneCallingMany_other": "{{count}} 件の呼び出し · {{duration}}",
+    "laneIdle": "待機 {{duration}}",
+    "laneIdleHint": "前回の呼び出しは終了しました。クライアントがツールを実行しているか、返信を待っています。",
+    "laneWaiting": "モデル待ち {{duration}}",
+    "laneThinking": "思考中 {{duration}}",
+    "laneWriting": "回答を作成中 {{duration}}",
+    "laneCallingTool": "{{tool}} を呼び出し中 {{duration}}",
+    "laneCallingAnyTool": "ツールを呼び出し中 {{duration}}",
+    "laneRunningTools": "{{tools}} を実行中 {{duration}}",
+    "laneRunningToolsHint": "モデルがクライアントにこれらのツールの実行を求めました。次の呼び出しで結果が返ります。",
+    "laneReplied": "返信待ち {{duration}}",
+    "laneRepliedHint": "モデルは回答済みです。会話は次のメッセージを待っています。",
     "auditContentFailed": "監査内容を読み取れません。",
     "auditKeyBroken": "監査キーがないか壊れているため、このリクエストを復号できません。",
     "clearedMemory": "メモリ上の復号済み内容を消去しました。",
@@ -2353,7 +2387,11 @@
     "timeRange": "{{from}} → {{to}}",
     "moreActions": "その他の操作",
     "copySessionId": "セッションIDをコピー",
-    "ttft": "TTFT"
+    "ttft": "TTFT",
+    "moreFilters": "その他のフィルター",
+    "activeFilters": "適用中のフィルター",
+    "moreActiveFilters": "+{{count}} 件",
+    "filterCount": "{{count}} 件選択"
   },
   "conversation": {
     "tab": "要約",
@@ -2402,7 +2440,10 @@
     "callList": "リクエスト一覧",
     "expand": "展開",
     "collapse": "折りたたむ",
-    "tokens": "{{input}} / {{output}} トークン"
+    "tokens": "{{input}} / {{output}} トークン",
+    "toolResultReceived": "結果受信済み",
+    "toolResultUnavailable": "結果なし",
+    "toolResultUnavailableHint": "この記録に読み取り可能なツール結果はありません。未返却、未取得、またはロック中の可能性があります。"
   },
   "audit": {
     "requestHeaders": "リクエストヘッダー",
@@ -2544,6 +2585,8 @@
   },
   "trajectory": {
     "timeline": "呼び出しタイムライン",
+    "timingHint": "この呼び出し内のフェーズの時間位置。呼び出しごとに個別のスケールを使用",
+    "timingLabel": "呼び出し内の時間",
     "eventList": "イベント",
     "eventCount": "{{count}} 件のイベント",
     "phase": "段階",
@@ -2615,7 +2658,8 @@
     "policyIgnoredReasons": {
       "low_confidence": "しきい値未満",
       "allowlisted": "許可リスト",
-      "kind_disabled": "種類オフ"
+      "kind_disabled": "種類オフ",
+      "astrlink_identifier": "AstrLink の ID"
     },
     "policyAllowHint": "ポリシーはリクエストを変更していません。本文は「クライアント」にあります。",
     "policyTrustedHint": "このプロバイダーは信頼済みのため、ポリシーはリクエストを検査せず、そのままアップストリームへ送りました。本文は「クライアント」にあります。",
@@ -3615,6 +3659,7 @@
     "enable": "{{tool}}の実行を有効にする",
     "backend": "{{tool}}のバックエンド",
     "executor": "割り当て先",
+    "switchHint": "ルーティングページ内では、方式ごとの入力内容を保持し、切り替えて戻ると復元します。現在の方式の設定だけを保存し、未入力の項目がある場合は最後に保存した設定を使います。",
     "upstream": "Responses · {{tool}}",
     "tavily": "Tavily互換API",
     "serviceImages": "APIプロバイダーのImages API",
@@ -3832,6 +3877,7 @@
     "availableNotification": "AstrLink {{version}} をダウンロードできます。",
     "manualNotification": "AstrLink {{version}} が利用できます。リリースページからインストーラーをダウンロードしてください。",
     "readyNotification": "AstrLink {{version}} のダウンロードが完了し、インストールできます。",
+    "errorNotification": "AstrLink {{version}} の更新を完了できませんでした。「情報」から再試行するか、手動でダウンロードしてください。",
     "phase": {
       "idle": "未確認",
       "checking": "更新を確認中…",
@@ -3936,6 +3982,7 @@
       "version": "バージョンを読み取れませんでした。更新してから再試行してください。",
       "unsupported": "このインストールには手動アップデートが必要です。",
       "command": "操作に失敗しました。「詳細を表示」で理由を確認してから、再試行してください。",
+      "permission": "現在のユーザーにはクライアントのファイルやキャッシュにアクセスする権限がありません。{{place}} のターミナルでディレクトリの権限を修正するか、権限のあるアカウントで手動アップデートしてから、再読み込みしてください。",
       "timeout": "操作がタイムアウトしました。接続を確認して再試行してください。",
       "changed": "インストール内容が変わりました。アップデートの前に更新してください。",
       "unchanged": "アップデートはインストールされませんでした。「詳細を表示」で理由を確認してから、再試行してください。",
@@ -3986,7 +4033,8 @@
       "remaining": "残り {{time}}",
       "revoke": "取り消し",
       "revoked": "「{{client}}」は原文を読み取れなくなりました。",
-      "revokeFailed": "取り消せませんでした: {{message}}"
+      "revokeFailed": "取り消せませんでした: {{message}}",
+      "closeKeeps": "このウィンドウを閉じた後も、これらの Agent は原文を読み取れます。トレイからも取り消せます。"
     }
   },
   "rawSealing": {

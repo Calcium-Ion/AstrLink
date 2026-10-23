@@ -57,9 +57,9 @@ var (
 // Debounce bounds and the poll interval the scheduler wakes on.
 const (
 	defaultDebounceSeconds = 30
-	// pollInterval is how often the scheduler looks for work. It is shorter
-	// than the shortest interval and the shortest debounce, so a due run starts
-	// close to when it became due.
+	// pollInterval is how often the scheduler looks for work. It is no longer
+	// than the shortest debounce and far shorter than the shortest interval, so
+	// a due run starts within one poll of the moment it became due.
 	pollInterval = 5 * time.Second
 	// runTimeout bounds one sync, including the remote round trips.
 	runTimeout = 5 * time.Minute
@@ -404,9 +404,54 @@ func (engine *Engine) oldestPendingChange(ctx context.Context) (*time.Time, erro
 	return &oldest, nil
 }
 
+// planAnchor is the moment the interval or cron plan counts from: the last
+// successful sync, or a later attempt, so a failed run does not become due
+// again on every poll while its remote is down; pending changes still retry on
+// their own debounce. A device that has never synced has the zero time, which
+// puts the first plan moment in the past so the first run is due at once. The
+// result is in the location of the wall clock a cron expression is written in.
+func planAnchor(state storage.SyncStateRecord, lastAttempt time.Time, location *time.Location) time.Time {
+	anchor := time.Time{}
+	if state.LastSyncedAt != nil {
+		anchor = *state.LastSyncedAt
+	}
+	if lastAttempt.After(anchor) {
+		anchor = lastAttempt
+	}
+	return anchor.In(location)
+}
+
+// plannedRunAt is the first moment of the configured plan strictly after the
+// anchor. It is nil when the trigger is manual or the expression is unusable,
+// so the caller has no plan moment to compare with.
+func plannedRunAt(state storage.SyncStateRecord, anchor time.Time) *time.Time {
+	switch state.Config.Trigger.Mode {
+	case contract.SyncTriggerInterval:
+		minutes := max(state.Config.Trigger.IntervalMinutes, contract.MinSyncIntervalMinutes)
+		next := anchor.Add(time.Duration(minutes) * time.Minute)
+		return &next
+	case contract.SyncTriggerCron:
+		expression, err := schedule.Parse(state.Config.Trigger.Cron)
+		if err != nil {
+			return nil
+		}
+		next, err := expression.Next(anchor)
+		if err != nil {
+			return nil
+		}
+		return &next
+	default:
+		return nil
+	}
+}
+
 // nextRunAt is when the scheduler will next start a run. A manual trigger has
 // no next run, and a device that is not fully configured reports none either,
 // so the settings surface never promises a run that cannot happen.
+//
+// The plan is counted from the last sync or attempt, not from now: a moment
+// that has already passed starts a run at the next poll, so it is reported as
+// now rather than as a time in the past.
 //
 // A pending change brings that moment forward: a save is followed by a run once
 // the configuration has been left alone for the debounce, and the status says so
@@ -417,37 +462,16 @@ func nextRunAt(state storage.SyncStateRecord, lastAttempt time.Time, now time.Ti
 	if !ready(state) {
 		return nil
 	}
-	from := now
-	if state.LastSyncedAt != nil && state.LastSyncedAt.After(from) {
-		from = *state.LastSyncedAt
-	}
-	if lastAttempt.After(from) {
-		from = lastAttempt
-	}
-	var scheduled *time.Time
-	switch state.Config.Trigger.Mode {
-	case contract.SyncTriggerInterval:
-		minutes := state.Config.Trigger.IntervalMinutes
-		if minutes < contract.MinSyncIntervalMinutes {
-			minutes = contract.MinSyncIntervalMinutes
-		}
-		next := from.Add(time.Duration(minutes) * time.Minute)
-		scheduled = &next
-	case contract.SyncTriggerCron:
-		expression, err := schedule.Parse(state.Config.Trigger.Cron)
-		if err != nil {
-			return nil
-		}
-		next, err := expression.Next(from)
-		if err != nil {
-			return nil
-		}
-		scheduled = &next
-	default:
+	planned := plannedRunAt(state, planAnchor(state, lastAttempt, now.Location()))
+	if planned == nil {
 		return nil
 	}
+	next := *planned
+	if next.Before(now) {
+		next = now
+	}
 	if oldestChange == nil {
-		return scheduled
+		return &next
 	}
 	debounce := time.Duration(debounceSeconds(state.Config)) * time.Second
 	// A change whose stamp this build cannot read is treated as one that has
@@ -462,10 +486,10 @@ func nextRunAt(state storage.SyncStateRecord, lastAttempt time.Time, now time.Ti
 	if due.Before(now) {
 		due = now
 	}
-	if due.Before(*scheduled) {
+	if due.Before(next) {
 		return &due
 	}
-	return scheduled
+	return &next
 }
 
 // Run serves until the context is cancelled, starting a sync whenever the
@@ -511,13 +535,16 @@ func (engine *Engine) Run(ctx context.Context, logf func(string, ...any)) {
 
 // due reports whether the settings now call for a run.
 //
-// An interval or cron trigger runs when its moment arrives, and also when
-// configuration was saved and has been left alone for the debounce, so a save
-// brings the next sync forward instead of waiting out the interval. A manual
-// trigger never runs on its own. requested is the one exception: a save that
-// just pointed this device at a remote, or a passphrase that just arrived, asks
-// for a run whatever the trigger says, because the user is waiting for the
-// device to meet the remote it was told about.
+// An interval or cron trigger runs when the moment counted from the last sync
+// arrives, and also when configuration was saved and has been left alone for
+// the debounce, so a save brings the next sync forward instead of waiting out
+// the schedule. A moment that passed while the process was stopped is due as
+// soon as the process is back, because the plan is anchored at the last sync
+// rather than at the current time. A manual trigger never runs on its own.
+// requested is the one exception: a save that just pointed this device at a
+// remote, or a passphrase that just arrived, asks for a run whatever the trigger
+// says, because the user is waiting for the device to meet the remote it was
+// told about.
 func (engine *Engine) due(ctx context.Context, requested bool) (bool, error) {
 	state, err := engine.store.SyncState(ctx)
 	if err != nil {
@@ -529,19 +556,37 @@ func (engine *Engine) due(ctx context.Context, requested bool) (bool, error) {
 	if requested {
 		return true, nil
 	}
-	oldest, err := engine.oldestPendingChange(ctx)
-	if err != nil {
-		return false, err
-	}
 	engine.runMu.Lock()
 	lastAttempt := engine.lastAttempt
 	engine.runMu.Unlock()
 	now := engine.now()
-	next := nextRunAt(state, lastAttempt, now, oldest)
-	if next == nil {
+	planned := plannedRunAt(state, planAnchor(state, lastAttempt, now.Location()))
+	// A manual trigger, and an expression whose plan cannot be computed, never
+	// run on their own; only requested runs do.
+	if planned == nil {
 		return false, nil
 	}
-	return !now.Before(*next), nil
+	if !now.Before(*planned) {
+		return true, nil
+	}
+	oldest, err := engine.oldestPendingChange(ctx)
+	if err != nil {
+		return false, err
+	}
+	if oldest == nil {
+		return false, nil
+	}
+	// A save is packaged once it has been left alone for the debounce, and a
+	// failed run waits a debounce before trying again.
+	debounce := time.Duration(debounceSeconds(state.Config)) * time.Second
+	due := now
+	if !oldest.IsZero() {
+		due = oldest.Add(debounce)
+	}
+	if retry := lastAttempt.Add(debounce); retry.After(due) {
+		due = retry
+	}
+	return !now.Before(due), nil
 }
 
 func debounceSeconds(config contract.SyncConfig) int {

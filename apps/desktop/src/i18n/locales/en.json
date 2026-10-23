@@ -143,6 +143,8 @@
     "checking": "Checking…"
   },
   "nav": {
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar",
     "main": "Main navigation",
     "workspace": "Workspace",
     "system": "System",
@@ -534,8 +536,9 @@
     "installBody": "Install the selected skills for the selected tools. The AstrLink debugging skill also adds the read-only AstrLink CLI, command permissions, and local file access limits; the privacy redaction skill adds only its skill files. Setup applies to your user account and keeps your other rules. Open a new session after installing.",
     "selectSkills": "Skills",
     "selectTools": "Install for",
-    "installSelected": "Install selected ({{count}})",
-    "sharedSkills": "Codex and Pi read the same skill directory (~/.agents/skills), so selecting one installs for both.",
+    "installSelected": "Install selected tools ({{count}})",
+    "sharedTools": "{{names}} (shared skills)",
+    "sharedSkills": "Codex, Pi, and DeepSeek Harness share ~/.agents/skills and are installed or updated together.",
     "selectionHint": "Select at least one skill and one tool. Unchecking keeps the existing setup.",
     "removeTitle": "Uninstall agent skills and tools?",
     "removeBody": "Remove the AstrLink-managed skills, command permissions, access-limit entries, and CLI from all tools. Your own rules are kept.",
@@ -566,8 +569,8 @@
     "installScopeShort": "Includes skills + CLI",
     "installScopeTitle": "What gets installed",
     "installScopeBody": "The AstrLink debugging skill provides debugging guidance, and the CLI lets agents read local records. The privacy redaction skill only teaches agents how to handle content replaced by privacy protection and needs no CLI. Choose skills and one or more detected tools during setup. Reinstalling restores missing files and removes the old MCP setup. Tools in WSL get the skill in that distribution’s home and run the AstrLink CLI on this computer.",
-    "installScopeHosts": "The debugging skill also writes host rules. Claude Code: allows the astrlink command, and blocks its built-in file tools, cat / head / tail / sed / tee, and sqlite3 from reading AstrLink's data directory and session file; scripts such as Python or Node that open files themselves are not blocked. Codex: runs the astrlink command outside the sandbox, which blocks AstrLink's local connection, and adds a section to ~/.codex/AGENTS.md that is prompt guidance only and is not enforced. Cursor and Grok Build ask you the first time an agent runs a command, and Pi never asks; these three have no verifiable global deny location, so only the skill text applies. Uninstalling removes only the entries AstrLink added.",
-    "noTools": "No supported tools detected. Install and launch Cursor, Claude Code, Codex, Grok Build, or Pi once, then check again.",
+    "installScopeHosts": "The debugging skill also writes host rules. Claude Code: allows the astrlink command, and blocks its built-in file tools, cat / head / tail / sed / tee, and sqlite3 from reading AstrLink's data directory and session file; scripts such as Python or Node that open files themselves are not blocked. Codex: runs the astrlink command outside the sandbox, which blocks AstrLink's local connection, and adds a section to ~/.codex/AGENTS.md that is prompt guidance only and is not enforced. Cursor and Grok Build ask you the first time an agent runs a command, and Pi never asks. DeepSeek Harness never asks either. Its sandbox blocks file writes, and the astrlink command only reads records, so it runs as usual. These four have no verifiable global deny location, so only the skill text applies. Uninstalling removes only the entries AstrLink added.",
+    "noTools": "No supported tools detected. Install and launch Cursor, Claude Code, Codex, Grok Build, Pi, or DeepSeek Harness once, then check again.",
     "missingRuntime": "The AstrLink CLI is missing. Reinstall before using it.",
     "promptTitle": "Try asking your agent",
     "copyPrompt": "Copy example",
@@ -615,7 +618,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "grok": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "dsh": "DeepSeek Harness"
     }
   },
   "today": {
@@ -762,7 +766,6 @@
     "recentCapped": "Only the most recent {{count}} records",
     "requests": "Requests",
     "totalTokens": "Total tokens",
-    "inputOutput": "Input / output",
     "input": "Input",
     "output": "Output",
     "cache": "Cache",
@@ -1615,7 +1618,8 @@
       "kind_disabled": "This information type is disabled, so the match is ignored.",
       "allowlisted": "Matches the allowlist, so the match is ignored.",
       "placeholder": "Already a placeholder; no further replacement is needed.",
-      "unrepresentable": "No usable replacement can be generated, so the match is ignored."
+      "unrepresentable": "No usable replacement can be generated, so the match is ignored.",
+      "astrlink_identifier": "An ID AstrLink generated itself, such as an access token ID. It grants no access, so the match is ignored."
     },
     "testAction": {
       "allow": "The current policy allows the request and keeps the original.",
@@ -1914,7 +1918,7 @@
     "builtinFixed": "Fixed and not editable",
     "customListOnly": "Uses the list below only",
     "listJoin": ", ",
-    "builtinCoverage": "Built-in rules cover {{kinds}}. After you switch to custom, you can fill them in as a starting point. Custom mode is regex-only and does not include extra checks such as Luhn/IBAN.",
+    "builtinCoverage": "Built-in rules cover {{kinds}}. After you switch to custom, you can fill them in as a starting point. Custom mode is regex-only and does not include extra checks such as Luhn/IBAN. A named group (?P<value>…) replaces only that part of a match; the built-in rules use it to keep key names such as token= and Bearer.",
     "addRule": "Add rule",
     "noCustomRules": "No custom rules yet. Add a rule, or fill in the built-in rules.",
     "minConfidenceHint": "Model candidates below this score are suppressed; Regex is not affected",
@@ -2156,6 +2160,36 @@
     "synced": "Synced the latest records.",
     "refreshFailed": "Unable to refresh request records.",
     "liveInterrupted": "Live sync paused. Keeping the current records and retrying.",
+    "activityTitle": "Live activity",
+    "activityInProgress": "In progress",
+    "activityInProgressHelp": "What counts as in progress",
+    "activityInProgressHint": "Conversations that are calling a model or called one in the last minute. Agents running tools between two calls count too.",
+    "activityConversations_one": "conversation",
+    "activityConversations_other": "conversations",
+    "activityCalls": "Calls running",
+    "activityFailures": "Failed in 5 min",
+    "activityShowFailures_one": "Show {{count}} failed conversation",
+    "activityShowFailures_other": "Show {{count}} failed conversations",
+    "activityChartTitle": "Concurrent conversations",
+    "activityWindow": "Last 5 min",
+    "activityChart": "Concurrent conversations in the last 5 minutes: up to {{peak}}, {{current}} now",
+    "activityReadout_one": "{{time}} · {{count}} conversation",
+    "activityReadout_other": "{{time}} · {{count}} conversations",
+    "activityClient_one": "{{count}} from {{client}}",
+    "activityClient_other": "{{count}} from {{client}}",
+    "laneCallingMany_one": "{{count}} call · {{duration}}",
+    "laneCallingMany_other": "{{count}} calls · {{duration}}",
+    "laneIdle": "Idle {{duration}}",
+    "laneIdleHint": "The last call has ended. The client may be running a tool or waiting for your reply.",
+    "laneWaiting": "Waiting for the model {{duration}}",
+    "laneThinking": "Thinking {{duration}}",
+    "laneWriting": "Writing {{duration}}",
+    "laneCallingTool": "Calling {{tool}} {{duration}}",
+    "laneCallingAnyTool": "Calling a tool {{duration}}",
+    "laneRunningTools": "Running {{tools}} {{duration}}",
+    "laneRunningToolsHint": "The model asked the client to run these tools. The next call brings back the results.",
+    "laneReplied": "Waiting for your reply {{duration}}",
+    "laneRepliedHint": "The model has answered. The conversation is waiting for the next message.",
     "auditContentFailed": "Unable to read audit content.",
     "auditKeyBroken": "The audit key is missing or damaged, so this record cannot be decrypted.",
     "clearedMemory": "Cleared decrypted content from memory.",
@@ -2353,7 +2387,11 @@
     "timeRange": "{{from}} → {{to}}",
     "moreActions": "More actions",
     "copySessionId": "Copy session ID",
-    "ttft": "TTFT"
+    "ttft": "TTFT",
+    "moreFilters": "More filters",
+    "activeFilters": "Active filters",
+    "moreActiveFilters": "+{{count}} more",
+    "filterCount": "{{count}} selected"
   },
   "conversation": {
     "tab": "Summary",
@@ -2402,7 +2440,10 @@
     "callList": "Call list",
     "expand": "Expand",
     "collapse": "Collapse",
-    "tokens": "{{input}} / {{output}} tokens"
+    "tokens": "{{input}} / {{output}} tokens",
+    "toolResultReceived": "Result received",
+    "toolResultUnavailable": "Result unavailable",
+    "toolResultUnavailableHint": "No readable tool result in this record. It may not have been returned or captured, or it may be locked."
   },
   "audit": {
     "requestHeaders": "Request headers",
@@ -2544,6 +2585,8 @@
   },
   "trajectory": {
     "timeline": "Call timeline",
+    "timingHint": "Phase timing within this call; each call has its own scale",
+    "timingLabel": "Timing per call",
     "eventList": "Events",
     "eventCount": "{{count}} events",
     "phase": "Phase",
@@ -2615,7 +2658,8 @@
     "policyIgnoredReasons": {
       "low_confidence": "Below threshold",
       "allowlisted": "Allowlisted",
-      "kind_disabled": "Type off"
+      "kind_disabled": "Type off",
+      "astrlink_identifier": "AstrLink ID"
     },
     "policyAllowHint": "The policy left the request unchanged; the body is under Client.",
     "policyTrustedHint": "This provider is trusted, so the policy did not check the request and it went upstream as written. The body is under Client.",
@@ -3615,6 +3659,7 @@
     "enable": "Enable {{tool}} execution",
     "backend": "{{tool}} backend",
     "executor": "Map to",
+    "switchHint": "Each backend keeps its own entries while you stay on the Routing page. Switching back restores them. Only the current backend is saved; incomplete settings leave the last saved configuration in use.",
     "upstream": "Responses · {{tool}}",
     "tavily": "Tavily-compatible API",
     "serviceImages": "Provider’s Images API",
@@ -3832,6 +3877,7 @@
     "availableNotification": "AstrLink {{version}} is available to download.",
     "manualNotification": "AstrLink {{version}} is available. Download the installer from the release page.",
     "readyNotification": "AstrLink {{version}} is downloaded and ready to install.",
+    "errorNotification": "AstrLink {{version}} could not finish updating. Open About to retry or download it manually.",
     "phase": {
       "idle": "Not checked",
       "checking": "Checking for updates…",
@@ -3936,6 +3982,7 @@
       "version": "Could not read the version. Refresh and try again.",
       "unsupported": "This installation needs a manual update.",
       "command": "The operation failed. Select View details to see why, then retry.",
+      "permission": "The current user cannot access the client files or cache. In a terminal on {{place}}, fix the directory permissions or update manually with an account that has access, then refresh.",
       "timeout": "The operation timed out. Check your connection and retry.",
       "changed": "The installation changed. Refresh before updating.",
       "unchanged": "No update was installed. Select View details to see why, then retry.",
@@ -3986,7 +4033,8 @@
       "remaining": "{{time}} left",
       "revoke": "Revoke",
       "revoked": "“{{client}}” can no longer read raw content",
-      "revokeFailed": "Could not revoke: {{message}}"
+      "revokeFailed": "Could not revoke: {{message}}",
+      "closeKeeps": "These agents can still read raw content after you close this window. You can also revoke access from the tray."
     }
   },
   "rawSealing": {

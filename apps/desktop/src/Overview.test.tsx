@@ -855,9 +855,9 @@ describe("Overview", () => {
     expect(container.textContent).toContain("用量");
     expect(container.textContent).toContain("请求数");
     expect(container.textContent).toContain("总 Token");
-    expect(container.textContent).toContain("输入 / 输出");
     expect(container.textContent).toContain("缓存命中率");
-    expect(container.textContent).toContain("100 / 20");
+    expect(container.textContent).toContain("输入 100");
+    expect(container.textContent).toContain("输出 20");
     expect(container.textContent).toContain("40%");
     expect(container.textContent).toContain("折算金额");
     expect(container.textContent).toContain("按 API 提供商");
@@ -1716,7 +1716,8 @@ describe("Overview", () => {
     });
 
     expect(container.textContent).toContain("4664.67万");
-    expect(container.textContent).toContain("4635.06万 / 29.61万");
+    expect(container.textContent).toContain("输入 4635.06万");
+    expect(container.textContent).toContain("输出 29.61万");
     expect(container.textContent).toContain("2271.46万");
     expect(container.textContent).toContain("105 次");
 
@@ -1808,12 +1809,22 @@ describe("Overview", () => {
     expect(container.textContent).toContain("仅统计最近 4,000 条");
   });
 
-  it("shows an empty model state when the range has no successful requests", async () => {
-    await renderOverview();
+  it("shows empty usage states when the range has no successful requests", async () => {
+    await renderOverview({
+      usage: {
+        status: "ready",
+        error: null,
+        summary: readySummary({
+          by_service: [group(null, { failed_requests: 1 })],
+          by_model: [group(null, {}), group("claude-haiku-4-5", {})],
+        }),
+      },
+    });
 
     expect(container.textContent).toContain("所选区间没有成功请求");
-    expect(container.textContent).toContain("Primary gateway");
-    expect(container.textContent).toContain("0 次");
+    expect(container.textContent).not.toContain("Primary gateway");
+    expect(container.textContent).not.toContain("尚未添加 API 提供商");
+    expect(container.querySelector("[data-slot='breakdown-row']")).toBeNull();
   });
 
   it("charts calls by outcome and opens the records behind a bar or the legend", async () => {

@@ -17,6 +17,7 @@ import {
   type RequestRecord,
   type RequestSession,
 } from "./request-record-model";
+import type { ConversationContentCache } from "./use-conversation-content";
 
 const audit = {
   request_body_captured: true,
@@ -360,6 +361,69 @@ describe("RequestConversation", () => {
     expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(5);
   });
 
+  it("groups tools with readable summaries without inventing execution state", async () => {
+    const call = record({ id: "req_tools", turn_index: 1 });
+    bridgeMocks.getRequestAuditContent.mockResolvedValue(
+      content(
+        call.id,
+        anthropicRequest("检查代码"),
+        anthropicResponse([
+          {
+            type: "tool_use",
+            id: "read",
+            name: "Read",
+            input: { file_path: "src/main.ts", limit: 200 },
+          },
+          {
+            type: "tool_use",
+            id: "grep",
+            name: "Grep",
+            input: { pattern: "useState", path: "src" },
+          },
+          {
+            type: "tool_use",
+            id: "custom",
+            name: "custom_lookup",
+            input: { key: "example" },
+          },
+        ]),
+      ),
+    );
+    render({
+      turns: [call],
+      session: { ...session, turn_count: 1, call_count: 1 },
+    });
+    await flush();
+    await vi.waitFor(() => {
+      expect(
+        container.querySelector('[data-slot="tool-call-group"]'),
+      ).not.toBeNull();
+    });
+    const group = container.querySelector('[data-slot="tool-call-group"]')!;
+    expect(group.querySelector('[data-testid="conversation-tool"]')).toBeNull();
+    await act(async () =>
+      group.querySelector<HTMLButtonElement>("button")!.click(),
+    );
+    const tools = group.querySelectorAll('[data-testid="conversation-tool"]');
+    expect(tools.length).toBe(3);
+    expect(tools[0]!.querySelector("button")?.textContent).toContain(
+      "src/main.ts",
+    );
+    expect(tools[0]!.textContent).not.toContain("file_path");
+    expect(tools[1]!.textContent).toContain("useState");
+    expect(tools[2]!.textContent).toContain('{ "key": "example" }');
+    for (const tool of tools)
+      expect(tool.getAttribute("data-status")).toBe("unavailable");
+    await act(async () =>
+      tools[0]!.querySelector<HTMLButtonElement>("button")!.click(),
+    );
+    await vi.waitFor(() =>
+      expect(tools[0]!.textContent).toContain("file_path"),
+    );
+    expect(tools[0]!.textContent).toContain("当前记录中没有可读取的工具结果");
+    expect(tools[0]!.querySelector('[data-status="running"]')).toBeNull();
+  });
+
   // Painting the turns before their bodies made the user text, reply and
   // tool rows pop in a moment after the view opened.
   it("paints a session once the turn on screen has been read", async () => {
@@ -584,8 +648,9 @@ describe("RequestConversation", () => {
       expect(
         excerpt.querySelector('[data-slot="fade-line"]')?.textContent,
       ).toBe("修完了，两条已提交。");
-      // Out of view, a folded turn reads only its ends.
-      expect(process.textContent).toContain("1 次工具调用");
+      // Out of view, a folded turn reads only its ends: too little to count
+      // its tools, so the line leaves them out.
+      expect(process.textContent).not.toContain("工具调用");
       expect(bridgeMocks.getRequestAuditContent).not.toHaveBeenCalledWith(
         "req_2",
       );
@@ -899,5 +964,243 @@ describe("RequestConversation", () => {
     // Only the notice at the top mentions the missing bodies.
     expect(container.textContent?.split("未捕获").length).toBe(2);
     expect(container.textContent).not.toContain("次工具调用");
+  });
+
+  // Counting tools as each read landed made a finished turn tick up as if it
+  // were still running.
+  it("names a finished turn's tools once every call is read", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    bridgeMocks.getRequestAuditContent.mockImplementation(
+      async (id: string) => {
+        if (id === "req_2") await held;
+        return contents[id]!;
+      },
+    );
+    render();
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("都在。");
+    });
+    await openFirstTurn();
+    const turn = container.querySelector('[data-testid="conversation-turn"]')!;
+    const process = turn.querySelector('[data-testid="conversation-process"]')!;
+    await vi.waitFor(() => {
+      expect(process.textContent).toContain("正在读取 3 / 4 次调用的内容");
+    });
+    expect(process.textContent).not.toContain("工具调用");
+    expect(process.textContent).not.toContain("×");
+    // The routine run waits for its unread call too.
+    const run = turn.querySelector('[data-testid="conversation-run"]')!;
+    expect(run.textContent).toContain("第 1–2 次调用");
+    expect(run.textContent).not.toContain("×");
+    await act(async () => release());
+    await vi.waitFor(() => {
+      expect(process.textContent).toContain("Read ×1 · Grep ×1 · Bash ×1");
+    });
+    expect(run.textContent).toContain("Read ×1 · Grep ×1");
+  });
+
+  it("reopens a conversation on what the last view read", async () => {
+    const contentCache: ConversationContentCache = new Map();
+    render({ contentCache });
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("都在。");
+    });
+    await openFirstTurn();
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("Read ×1 · Grep ×1 · Bash ×1");
+    });
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(5);
+    // Back to the list and in again: the view paints at once, the folded
+    // turn already names its tools, and nothing is read twice.
+    act(() => root.unmount());
+    root = createRoot(container);
+    render({ contentCache });
+    const stream = container.querySelector(
+      '[data-testid="conversation-stream"]',
+    )!;
+    expect(stream.getAttribute("aria-busy")).toBe("false");
+    const turn = container.querySelector('[data-testid="conversation-turn"]')!;
+    expect(
+      turn.querySelector('button[aria-expanded="false"]')?.textContent,
+    ).toContain("Read ×1 · Grep ×1 · Bash ×1");
+    await flush();
+    expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(5);
+  });
+
+  it("keeps neither a running call nor a raw part for the next view", async () => {
+    const contentCache: ConversationContentCache = new Map();
+    const turns = [
+      calls[4]!,
+      record({
+        id: "req_raw",
+        turn_index: 3,
+        started_at: "2026-10-03T01:06:00Z",
+        completed_at: "2026-10-03T01:06:05Z",
+      }),
+      record({
+        id: "req_live",
+        turn_index: 4,
+        status: "pending",
+        http_status: null,
+        latency_ms: null,
+        started_at: "2026-10-03T01:07:00Z",
+        completed_at: null,
+      }),
+    ];
+    bridgeMocks.getRequestAuditContent.mockImplementation(
+      async (id: string) => {
+        const read = content(
+          id,
+          anthropicRequest("看看"),
+          anthropicResponse([{ type: "text", text: `答 ${id}` }]),
+        );
+        return id === "req_raw"
+          ? {
+              ...read,
+              request_body: { ...read.request_body!, exposure: "raw" },
+            }
+          : read;
+      },
+    );
+    const live = { ...session, status: "pending" as const };
+    render({ contentCache, session: live, turns });
+    await vi.waitFor(() => {
+      expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(3);
+    });
+    await flush();
+    act(() => root.unmount());
+    root = createRoot(container);
+    bridgeMocks.getRequestAuditContent.mockClear();
+    render({ contentCache, session: live, turns });
+    await vi.waitFor(() => {
+      expect(bridgeMocks.getRequestAuditContent).toHaveBeenCalledTimes(2);
+    });
+    await flush();
+    expect(
+      bridgeMocks.getRequestAuditContent.mock.calls.map(([id]) => id).sort(),
+    ).toEqual(["req_live", "req_raw"]);
+  });
+
+  // A retried call counts its failed attempts, which arrive after the turns;
+  // painting first made a finished turn's calls and failures jump.
+  it("paints a retried call together with its attempts", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const retried = calls.map((call) =>
+        call.id === "req_5" ? { ...call, child_count: 1 } : call,
+      );
+      const attempt = record({
+        id: "req_5_retry",
+        parent_request_id: "req_5",
+        turn_index: 2,
+        status: "failed",
+        http_status: 529,
+        latency_ms: 1_000,
+        usage: null,
+        started_at: "2026-10-03T01:04:58Z",
+        completed_at: "2026-10-03T01:04:59Z",
+      });
+      render({ turns: retried });
+      await flush(12);
+      const stream = container.querySelector(
+        '[data-testid="conversation-stream"]',
+      )!;
+      // The latest turn has been read; only its attempt is missing.
+      expect(
+        container.querySelector('[data-testid="conversation-reasoning"]'),
+      ).not.toBeNull();
+      expect(stream.getAttribute("aria-busy")).toBe("true");
+      render({ turns: retried, childrenByRoot: { req_5: [attempt] } });
+      expect(stream.getAttribute("aria-busy")).toBe("false");
+      const latest = container.querySelectorAll(
+        '[data-testid="conversation-process"]',
+      )[1]!;
+      expect(latest.textContent).toContain("2 次调用");
+      expect(latest.textContent).toContain("1 次失败");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads the turns on screen before the ends of the others", async () => {
+    const observed: Element[] = [];
+    let report!: IntersectionObserverCallback;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          report = callback;
+        }
+        observe(target: Element) {
+          observed.push(target);
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const held = new Map<string, () => void>();
+    bridgeMocks.getRequestAuditContent.mockImplementation(
+      (id: string) =>
+        new Promise((resolve) => {
+          held.set(id, () =>
+            resolve(
+              content(
+                id,
+                anthropicRequest("看看"),
+                anthropicResponse([{ type: "text", text: "好" }]),
+              ),
+            ),
+          );
+        }),
+    );
+    const turns = [
+      ["req_a", 1],
+      ["req_b1", 2],
+      ["req_b2", 2],
+      ["req_b3", 2],
+      ["req_c", 3],
+    ].map(([id, turnIndex], index) =>
+      record({
+        id: id as string,
+        turn_index: turnIndex as number,
+        started_at: `2026-10-03T01:0${index}:00Z`,
+        completed_at: `2026-10-03T01:0${index}:10Z`,
+      }),
+    );
+    const order = () =>
+      bridgeMocks.getRequestAuditContent.mock.calls.map(([id]) => id);
+    try {
+      render({ turns, session: { ...session, turn_count: 3 } });
+      await flush();
+      expect(order()).toEqual(["req_c", "req_b1"]);
+      // The middle turn scrolls into view while those two are read.
+      const middle = observed.find(
+        (target) => (target as HTMLElement).dataset.turnId === "turn:2",
+      )!;
+      await act(async () => {
+        report(
+          [
+            {
+              target: middle,
+              isIntersecting: true,
+            } as IntersectionObserverEntry,
+          ],
+          {} as IntersectionObserver,
+        );
+      });
+      while (held.size > 0) {
+        const [id, resolve] = held.entries().next().value!;
+        held.delete(id);
+        await act(async () => resolve());
+        await flush();
+      }
+      // Its middle call is read before the off-screen turn's only call.
+      expect(order()).toEqual(["req_c", "req_b1", "req_b3", "req_b2", "req_a"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

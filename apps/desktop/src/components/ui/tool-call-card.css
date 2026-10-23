@@ -1,0 +1,132 @@
+/* Motion adapted from affectUI's free Tool Call Card (Clean).
+ * Copyright (c) 2026 Florian Höller (adfects).
+ * See LICENSES/affectui-MIT.txt and tool-call-card.tsx.
+ */
+.tool-call-card {
+  transition: box-shadow 180ms ease;
+}
+
+.tool-call-icon {
+  transition:
+    color 180ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tool-call-status {
+  animation: tool-call-status-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Radix measures natural height and unmounts the body after the exit animation.
+ * Inert and aria-hidden make closing payloads inaccessible during that exit.
+ */
+.tool-call-content {
+  overflow: hidden;
+}
+
+.tool-call-content[data-state="open"] {
+  animation: tool-call-expand 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tool-call-content[data-state="closed"] {
+  animation: tool-call-collapse 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.tool-call-group-icon {
+  animation: tool-call-icon-in 420ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  transition:
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin-left 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tool-call-group-icon + .tool-call-group-icon {
+  margin-left: -0.375rem;
+}
+
+@media (hover: hover) {
+  .tool-call-card:hover,
+  .tool-call-card:focus-within {
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--foreground) 6%, transparent);
+  }
+
+  .tool-call-trigger:hover .tool-call-icon,
+  .tool-call-trigger:focus-visible .tool-call-icon {
+    color: var(--foreground);
+    transform: translateY(-1px) scale(1.08);
+  }
+
+  .tool-call-group-trigger:hover .tool-call-group-icon,
+  .tool-call-group-trigger:focus-visible .tool-call-group-icon {
+    transform: translateY(-2px);
+  }
+
+  .tool-call-group-trigger:hover .tool-call-group-icon + .tool-call-group-icon,
+  .tool-call-group-trigger:focus-visible
+    .tool-call-group-icon
+    + .tool-call-group-icon {
+    margin-left: -0.125rem;
+  }
+}
+
+@keyframes tool-call-expand {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes tool-call-collapse {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes tool-call-status-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@keyframes tool-call-icon-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-card,
+  .tool-call-icon,
+  .tool-call-status,
+  .tool-call-content[data-state],
+  .tool-call-group-icon {
+    animation: none;
+    transition: none;
+  }
+
+  .tool-call-trigger:hover .tool-call-icon,
+  .tool-call-trigger:focus-visible .tool-call-icon,
+  .tool-call-group-trigger:hover .tool-call-group-icon,
+  .tool-call-group-trigger:focus-visible .tool-call-group-icon {
+    transform: none;
+  }
+}

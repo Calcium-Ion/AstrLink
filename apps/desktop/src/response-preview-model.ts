@@ -1,5 +1,5 @@
 import type { AuditContentPart } from "./request-record-model";
-import { parseSSEIncremental } from "./sse-review-model";
+import { isEventStream, parseSSEIncremental } from "./sse-review-model";
 
 export interface ResponseOutput {
   kind: "text" | "reasoning" | "tool" | "error" | "other";
@@ -320,10 +320,7 @@ export async function parseResponsePreview(
     if (blocked) put("error", "error", blocked);
   };
 
-  if (
-    part.media_type.toLowerCase().includes("text/event-stream") ||
-    /^\s*(?:event:|data:)/.test(part.content)
-  ) {
+  if (isEventStream(part)) {
     const parsed = await parseSSEIncremental(part.content, {
       signal,
       truncated: part.truncated,

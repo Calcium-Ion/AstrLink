@@ -14,7 +14,6 @@ import { createPortal } from "react-dom";
 import {
   Activity,
   ArrowRight,
-  ArrowUpRight,
   Boxes,
   Check,
   CircleDollarSign,
@@ -43,7 +42,7 @@ import { IconButton } from "@/components/IconButton";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { InferencePortNotice } from "@/components/InferencePortNotice";
 import { LoadingState } from "@/components/LoadingState";
-import { Metric, MetricGroup, MetricValuePair } from "@/components/Metric";
+import { Metric, MetricGroup } from "@/components/Metric";
 import { ModelBrandIcon } from "@/components/ModelBrandIcon";
 import { Panel, PanelHeader } from "@/components/Panel";
 import { OrderedList } from "@/components/OrderedList";
@@ -126,9 +125,10 @@ export interface ServiceCatalog {
   stale: boolean;
 }
 
-// Five tiles: the last spans the narrow two-column grid's final row.
+// Four equal tiles, as in the privacy statistics; secondary numbers go in a
+// tile's detail line so a long value never wraps the row.
 const USAGE_METRIC_GRID =
-  "gap-3 bg-transparent [&>div]:rounded-md [&>div]:border [&>div:last-child]:col-span-2 @min-[640px]/workspace-surface:grid-cols-[1fr_1fr_1.4fr_1fr_1fr] @min-[640px]/workspace-surface:[&>div:last-child]:col-span-1";
+  "gap-3 bg-transparent [&>div]:rounded-md [&>div]:border";
 
 const USAGE_BREAKDOWN_HEADER = "min-h-14 flex-wrap items-center py-2";
 
@@ -251,8 +251,10 @@ export function Overview({
   const serviceRows = mergeCatalogServiceUsage(
     catalog.items,
     summary?.by_service ?? [],
+  ).filter((row) => row.total_tokens > 0 || row.requests > 0);
+  const modelRows = (summary?.by_model ?? []).filter(
+    (row) => row.total_tokens > 0 || row.requests > 0,
   );
-  const modelRows = summary?.by_model ?? [];
   const costs = breakdownCosts(billingSummary);
   const breakdownHeight =
     BREAKDOWN_LIST_HEIGHT[
@@ -385,32 +387,20 @@ export function Overview({
                 label={t("overview.requests")}
                 metric={compactMetric(totals?.requests, usage.status)}
               />
-              <UsageMetric icon={<Boxes />} label={t("overview.totalTokens")}>
+              <UsageMetric
+                detail={
+                  totals && totals.input_tokens + totals.output_tokens > 0 ? (
+                    <TokenSplit
+                      input={totals.input_tokens}
+                      output={totals.output_tokens}
+                    />
+                  ) : undefined
+                }
+                icon={<Boxes />}
+                label={t("overview.totalTokens")}
+              >
                 <CompactCount
                   value={usageCountValue(totals?.total_tokens, usage.status)}
-                />
-              </UsageMetric>
-              <UsageMetric
-                icon={<ArrowUpRight />}
-                label={t("overview.inputOutput")}
-              >
-                <MetricValuePair
-                  first={
-                    <CompactCount
-                      value={usageCountValue(
-                        totals?.input_tokens,
-                        usage.status,
-                      )}
-                    />
-                  }
-                  second={
-                    <CompactCount
-                      value={usageCountValue(
-                        totals?.output_tokens,
-                        usage.status,
-                      )}
-                    />
-                  }
                 />
               </UsageMetric>
               <UsageMetric
@@ -1348,7 +1338,7 @@ function UsagePanelSkeleton() {
       role="status"
     >
       <MetricGroup className={USAGE_METRIC_GRID}>
-        {Array.from({ length: 5 }, (_, index) => (
+        {Array.from({ length: 4 }, (_, index) => (
           <Metric
             key={index}
             label={
@@ -2130,22 +2120,37 @@ function ServiceUsageBody({
   }
 
   if (rows.length === 0) {
+    const emptyCatalog = catalog.items.length === 0;
     return (
       <div className="border-b px-4 py-6">
         <EmptyState
           action={
-            <Button
-              disabled={!isReady}
-              onClick={onAddService}
-              size="sm"
-              type="button"
-            >
-              {t("overview.addService")}
-            </Button>
+            emptyCatalog ? (
+              <Button
+                disabled={!isReady}
+                onClick={onAddService}
+                size="sm"
+                type="button"
+              >
+                {t("overview.addService")}
+              </Button>
+            ) : undefined
           }
           className="border-0 py-2"
-          description={t("overview.emptyServicesHint")}
-          title={t("overview.emptyServices")}
+          description={
+            emptyCatalog ? t("overview.emptyServicesHint") : undefined
+          }
+          title={t(
+            emptyCatalog
+              ? "overview.emptyServices"
+              : status === "ready"
+                ? "overview.noSuccessfulRequests"
+                : status === "loading"
+                  ? "overview.aggregating"
+                  : status === "blocked"
+                    ? "overview.waitingGateway"
+                    : "overview.waitingRefresh",
+          )}
         />
       </div>
     );
@@ -2532,6 +2537,24 @@ function UsageMetric({
       title={metric?.title ?? undefined}
       value={children ?? metric?.text}
     />
+  );
+}
+
+/**
+ * Input and output under the total. A narrow tile stacks them, and the
+ * clipped box hides the separator that would start the second line.
+ */
+function TokenSplit({ input, output }: { input: number; output: number }) {
+  const t = useT();
+  return (
+    <span className="flex flex-wrap gap-x-3 overflow-hidden">
+      <span className="whitespace-nowrap">
+        {t("overview.input")} <CompactCount value={input} />
+      </span>
+      <span className="relative whitespace-nowrap before:absolute before:-left-2 before:content-['·']">
+        {t("overview.output")} <CompactCount value={output} />
+      </span>
+    </span>
   );
 }
 

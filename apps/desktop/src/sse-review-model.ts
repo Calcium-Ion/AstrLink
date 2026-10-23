@@ -1,6 +1,18 @@
 const EVENT_BATCH_SIZE = 500;
 const CHARACTER_BATCH_SIZE = 1024 * 1024;
 
+/** Error responses can carry JSON even when the provider labels them as SSE. */
+export function isEventStream(part: {
+  media_type: string;
+  content: string;
+}): boolean {
+  if (/^\s*[[{]/.test(part.content)) return false;
+  return (
+    part.media_type.toLowerCase().includes("text/event-stream") ||
+    /^\s*(?:event:|data:)/.test(part.content)
+  );
+}
+
 export interface SSEEvent {
   index: number;
   event: string;

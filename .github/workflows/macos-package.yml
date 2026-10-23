@@ -181,6 +181,14 @@ jobs:
             sleep 10
           done
           exit 1
+      - name: Use TCP for Apple notarization services
+        # Hosted macOS runners drop stapler's HTTP/3 connections to CloudKit.
+        # Blocking QUIC in this disposable runner makes it fall back to HTTPS
+        # over TCP. Keep every notarization and Gatekeeper check enabled.
+        # https://github.com/actions/runner-images/issues/14924
+        run: |
+          echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
+          sudo pfctl -E
       - name: Notarize, staple and verify app and DMG
         run: bun run macos:notarize
       - name: Mount DMG and verify packaged application

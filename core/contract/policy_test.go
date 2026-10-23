@@ -153,6 +153,21 @@ func TestPolicyCustomRegexRulesValidation(t *testing.T) {
 	}
 }
 
+func TestPolicyRegexRuleAcceptsValueGroups(t *testing.T) {
+	// A group named value narrows a finding to that group; Validate only has
+	// to compile it, in either named-group syntax.
+	for _, pattern := range []string{
+		`(?i)\btoken\s*[:=]\s*(?P<value>[A-Za-z0-9_-]{12,})`,
+		`(?i)\bbearer (?<value>\S{16,})`,
+		`user=(?P<value>\S+)|session=(?P<value>\S+)`,
+	} {
+		rule := PolicyRegexRule{Kind: "common_secret", Pattern: pattern}
+		if err := rule.Validate(); err != nil {
+			t.Fatalf("%s: %v", pattern, err)
+		}
+	}
+}
+
 func TestDefaultKindRulesCoverEveryKindAndDisableTheNoisyOnes(t *testing.T) {
 	rules := DefaultPrivacyKindRules()
 	if len(rules) != len(PrivacyKinds()) {

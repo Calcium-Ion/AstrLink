@@ -426,7 +426,7 @@ describe("buildRecordBundle diagnosis context", () => {
       "+0 ms · 客户端 · 完成 · 200 ms · gpt-5.5 · openai.responses",
     );
     expect(bundle).toContain(
-      "+200 ms · 策略 · 进行中 · 已 6m 40s（未结束） · local_model · inspecting · 96.6 KiB",
+      "+200 ms · 安全策略 · 进行中 · 已 6m 40s（未结束） · local_model · inspecting · 96.6 KiB",
     );
     // The gateway never sent it upstream; the metadata was not lost.
     expect(bundle).toContain("上游 HTTP\n（未发出上游请求）");

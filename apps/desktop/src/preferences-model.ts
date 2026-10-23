@@ -20,7 +20,7 @@ export const DEFAULT_MAX_CONCURRENT_INSPECTIONS = 16;
 export const MIN_MAX_CONCURRENT_INSPECTIONS = 4;
 export const MAX_MAX_CONCURRENT_INSPECTIONS = 128;
 export const MAX_REQUEST_BODY_MIB = 0xffffffff;
-export const DEFAULT_RESPONSE_START_TIMEOUT_SECONDS = 0;
+export const DEFAULT_RESPONSE_START_TIMEOUT_SECONDS = 600;
 export const MAX_RESPONSE_START_TIMEOUT_SECONDS = 86400;
 
 /** Text shown next to the macOS status-item icon; tooltip elsewhere. */
@@ -312,13 +312,12 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   if (
     typeof values.response_start_timeout_seconds !== "number" ||
     !Number.isInteger(values.response_start_timeout_seconds) ||
-    values.response_start_timeout_seconds <
-      DEFAULT_RESPONSE_START_TIMEOUT_SECONDS ||
+    values.response_start_timeout_seconds < 0 ||
     values.response_start_timeout_seconds > MAX_RESPONSE_START_TIMEOUT_SECONDS
   ) {
     invalid(
       "$.values.response_start_timeout_seconds",
-      `expected an integer from ${DEFAULT_RESPONSE_START_TIMEOUT_SECONDS} through ${MAX_RESPONSE_START_TIMEOUT_SECONDS}`,
+      `expected an integer from 0 through ${MAX_RESPONSE_START_TIMEOUT_SECONDS}`,
     );
   }
   if (

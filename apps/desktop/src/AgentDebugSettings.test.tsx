@@ -104,6 +104,16 @@ const status = {
       guard: "skill_only" as const,
       guard_installed: false,
     },
+    {
+      id: "dsh" as const,
+      wsl: null,
+      detected: false,
+      skills: skills("/tmp/.agents/skills", {}),
+      cli_access: "unrestricted" as const,
+      cli_access_installed: false,
+      guard: "skill_only" as const,
+      guard_installed: false,
+    },
   ],
   shared_paths: ["/tmp/.astrlink/agent-installs.json"],
   wsl_unchecked: [],
@@ -299,7 +309,8 @@ describe("AgentDebugSettings", () => {
     expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
     expect(checkbox("claude").disabled).toBe(true);
     // Pi is not detected, so Codex installs alone.
-    expect(dialog.textContent).not.toContain("一起安装");
+    expect(dialog.textContent).not.toContain("共享 Skill");
+    expect(checkbox("pi").disabled).toBe(true);
     await act(async () => skillCheckbox("redaction-placeholders").click());
     await act(async () => checkbox("codex").click());
     expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
@@ -405,33 +416,132 @@ describe("AgentDebugSettings", () => {
     );
   });
 
-  it("selects Codex and Pi together and installs skills in a fixed order", async () => {
+  it("shows one shared Codex / Pi option with both statuses and install targets", async () => {
+    const bothSkills = { debug: true, placeholder: true };
     bridge.getAgentDebugStatus.mockResolvedValue({
       ...status,
       tools: [
-        ...status.tools.slice(0, 4),
-        withSkills({ ...status.tools[4], detected: true }, {}),
+        ...status.tools.slice(0, 2),
+        {
+          ...withSkills(status.tools[2], bothSkills),
+          cli_access_installed: false,
+        },
+        status.tools[3],
+        withSkills({ ...status.tools[4], detected: true }, bothSkills),
       ],
     });
     await act(async () => root.render(<AgentDebugSettings />));
     await act(async () => button("安装 / 更新").click());
     const dialog = document.querySelector("[role='alertdialog']")!;
     // Codex already has a skill in the directory Pi reads too.
-    expect(checkbox("pi").getAttribute("aria-checked")).toBe("true");
-    expect(dialog.textContent).toContain(
-      "Codex 和 Pi 读取同一个 Skill 目录（~/.agents/skills），勾选其中一个会一起安装。",
+    const shared = checkbox("codex-pi");
+    expect(shared.getAttribute("aria-checked")).toBe("true");
+    expect(dialog.querySelector("#agent-install-codex")).toBeNull();
+    expect(dialog.querySelector("#agent-install-pi")).toBeNull();
+    expect(shared.closest("label")?.textContent).toBe(
+      "Codex / Pi（共享 Skill）Codex · 部分安装Pi · 已安装",
     );
-    await act(async () => checkbox("pi").click());
-    expect(checkbox("codex").getAttribute("aria-checked")).toBe("false");
+    expect(dialog.textContent).toContain(
+      "Codex、Pi 和 DeepSeek Harness 共用 ~/.agents/skills，将一起安装或更新。",
+    );
+    expect(dialog.textContent).toContain("/tmp/.codex/rules/astrlink.rules");
+    expect(
+      [...dialog.querySelectorAll("li")].filter(
+        (item) => item.textContent === "/tmp/.agents/skills/astrlink-debug",
+      ),
+    ).toHaveLength(1);
+    await act(async () => shared.click());
+    expect(shared.getAttribute("aria-checked")).toBe("false");
     expect(button("安装所选工具（0）", dialog).disabled).toBe(true);
-    await act(async () => checkbox("pi").click());
-    expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
+    expect(dialog.querySelector("details")).toBeNull();
+    await act(async () => shared.click());
+    expect(shared.getAttribute("aria-checked")).toBe("true");
     await act(async () => skillCheckbox("astrlink-debug").click());
     await act(async () => skillCheckbox("astrlink-debug").click());
     await act(async () => button("安装所选工具（2）", dialog).click());
     expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
       ["astrlink-debug", "redaction-placeholders"],
       local("codex", "pi"),
+    );
+  });
+
+  it("keeps Pi selectable on its own when Codex is not detected", async () => {
+    bridge.getAgentDebugStatus.mockResolvedValue({
+      ...status,
+      tools: status.tools.map((tool) => ({
+        ...withSkills(tool, {}),
+        detected: tool.id === "pi",
+        cli_access_installed: false,
+      })),
+    });
+    await act(async () => root.render(<AgentDebugSettings />));
+    await act(async () => button("安装工具").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    expect(dialog.querySelector("#agent-install-codex-pi")).toBeNull();
+    expect(checkbox("codex").disabled).toBe(true);
+    expect(checkbox("pi").disabled).toBe(false);
+    await act(async () => checkbox("pi").click());
+    expect(dialog.textContent).not.toContain("/tmp/.codex");
+    await act(async () => button("安装所选工具（1）", dialog).click());
+    expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
+      ["astrlink-debug", "redaction-placeholders"],
+      local("pi"),
+    );
+  });
+
+  it("adds DeepSeek Harness to the option it shares with Codex and Pi", async () => {
+    const bothSkills = { debug: true, placeholder: true };
+    bridge.getAgentDebugStatus.mockResolvedValue({
+      ...status,
+      tools: status.tools.map((tool) =>
+        ["codex", "pi", "dsh"].includes(tool.id)
+          ? withSkills({ ...tool, detected: true }, bothSkills)
+          : tool,
+      ),
+    });
+    await act(async () => root.render(<AgentDebugSettings />));
+    expect(container.textContent).toContain("DeepSeek Harness");
+    await act(async () => button("安装 / 更新").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    const shared = checkbox("codex-pi-dsh");
+    expect(shared.getAttribute("aria-checked")).toBe("true");
+    for (const id of ["codex", "pi", "dsh"]) {
+      expect(dialog.querySelector(`#agent-install-${id}`)).toBeNull();
+    }
+    expect(shared.closest("label")?.textContent).toBe(
+      "Codex / Pi / DeepSeek Harness（共享 Skill）Codex · 已安装Pi · 已安装DeepSeek Harness · 已安装",
+    );
+    await act(async () => button("安装所选工具（3）", dialog).click());
+    expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
+      ["astrlink-debug", "redaction-placeholders"],
+      local("codex", "pi", "dsh"),
+    );
+  });
+
+  it("shows the shared option on Pi when Codex is not detected", async () => {
+    bridge.getAgentDebugStatus.mockResolvedValue({
+      ...status,
+      tools: status.tools.map((tool) => ({
+        ...withSkills(tool, {}),
+        detected: tool.id === "pi" || tool.id === "dsh",
+        cli_access_installed: false,
+      })),
+    });
+    await act(async () => root.render(<AgentDebugSettings />));
+    await act(async () => button("安装工具").click());
+    const dialog = document.querySelector("[role='alertdialog']")!;
+    expect(checkbox("codex").disabled).toBe(true);
+    expect(dialog.querySelector("#agent-install-pi")).toBeNull();
+    expect(dialog.querySelector("#agent-install-dsh")).toBeNull();
+    const shared = checkbox("pi-dsh");
+    expect(shared.closest("label")?.textContent).toBe(
+      "Pi / DeepSeek Harness（共享 Skill）Pi · 已检测到DeepSeek Harness · 已检测到",
+    );
+    await act(async () => shared.click());
+    await act(async () => button("安装所选工具（2）", dialog).click());
+    expect(bridge.installAgentDebug).toHaveBeenCalledExactlyOnceWith(
+      ["astrlink-debug", "redaction-placeholders"],
+      local("pi", "dsh"),
     );
   });
 
@@ -459,12 +569,12 @@ describe("AgentDebugSettings", () => {
     const rows = [...container.querySelectorAll("tbody tr")].map(
       (row) => row.querySelector("td")?.textContent ?? "",
     );
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(9);
     ["Claude Code", "Codex", "Pi"].forEach((name, index) => {
-      expect(rows[5 + index]).toContain(name);
-      expect(rows[5 + index]?.endsWith("WSL · Ubuntu")).toBe(true);
+      expect(rows[6 + index]).toContain(name);
+      expect(rows[6 + index]?.endsWith("WSL · Ubuntu")).toBe(true);
     });
-    expect(rows.slice(0, 5).some((row) => row.includes("WSL"))).toBe(false);
+    expect(rows.slice(0, 6).some((row) => row.includes("WSL"))).toBe(false);
     expect(container.textContent).toContain("0 / 6");
     expect(container.textContent).toContain(
       "Debian 未运行，没有检测其中的工具。启动后点「重新检测」。",
@@ -474,12 +584,14 @@ describe("AgentDebugSettings", () => {
     const dialog = document.querySelector("[role='alertdialog']")!;
     // The Codex install on this computer says nothing about Ubuntu's.
     expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
-    expect(checkbox("wsl-Ubuntu-codex").getAttribute("aria-checked")).toBe(
+    expect(checkbox("wsl-Ubuntu-codex-pi").getAttribute("aria-checked")).toBe(
       "false",
     );
     // Codex and Pi share a skill directory only within one home.
-    await act(async () => checkbox("wsl-Ubuntu-codex").click());
-    expect(checkbox("wsl-Ubuntu-pi").getAttribute("aria-checked")).toBe("true");
+    expect(dialog.querySelector("#agent-install-wsl-Ubuntu-pi")).toBeNull();
+    expect(dialog.querySelector("#agent-install-wsl-Ubuntu-codex")).toBeNull();
+    await act(async () => checkbox("wsl-Ubuntu-codex-pi").click());
+    expect(checkbox("codex").getAttribute("aria-checked")).toBe("true");
     expect(checkbox("pi").getAttribute("aria-checked")).toBe("false");
     expect(dialog.textContent).toContain(`${wslRoot}\\.agents\\skills`);
     await act(async () => button("安装所选工具（3）", dialog).click());

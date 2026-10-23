@@ -11,6 +11,7 @@ import {
   Bot,
   Home as House,
   Key as KeyRound,
+  PanelLeft,
   Route,
   Server,
   Settings,
@@ -22,6 +23,7 @@ import { WorkspaceSnapshotProvider } from "./workspace-snapshots";
 import { ValueTransition } from "./components/ValueTransition";
 import { AppShell } from "@/components/AppShell";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { IconButton } from "@/components/IconButton";
 import { StatusDot } from "@/components/StatusDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,7 +44,8 @@ import {
   type AccessTokenCatalog,
 } from "./AccessTokenManager";
 import type { AccessTokenSummary } from "./access-token-model";
-import astrlinkLogo from "./assets/astrlink-logo.svg";
+import { getAppBranding } from "./app-branding";
+import { DevelopmentBadge } from "./components/DevelopmentBadge";
 import {
   failedSnapshot,
   phaseLabel,
@@ -282,7 +285,7 @@ function NavButton({
       aria-label={disabled ? i18n.t("common.comingSoon", { label }) : label}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative h-9 w-full justify-start gap-2.5 rounded-lg px-3 text-base font-normal text-text-secondary hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground max-[960px]:justify-center max-[960px]:px-0",
+        "relative h-9 w-full justify-start gap-2.5 rounded-lg px-3 text-base font-normal text-text-secondary hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground sidebar-collapsed:justify-center sidebar-collapsed:px-0",
         // The active page sits on a neutral pill one step darker than the
         // window ground, with heavier ink.
         active &&
@@ -297,17 +300,17 @@ function NavButton({
       <Icon className="size-5" name={icon} />
       {badge ? (
         <span
-          className="absolute top-1/2 right-3 size-2 -translate-y-1/2 rounded-full bg-primary max-[960px]:top-1 max-[960px]:right-1 max-[960px]:translate-y-0"
+          className="absolute top-1/2 right-3 size-2 -translate-y-1/2 rounded-full bg-primary sidebar-collapsed:top-1 sidebar-collapsed:right-1 sidebar-collapsed:translate-y-0"
           role="status"
           aria-label={badge}
           title={badge}
         />
       ) : null}
-      <span className="overflow-hidden text-ellipsis whitespace-nowrap max-[960px]:hidden">
+      <span className="overflow-hidden text-ellipsis whitespace-nowrap sidebar-collapsed:hidden">
         {label}
       </span>
       {disabled ? (
-        <Badge className="ml-auto max-[960px]:hidden" variant="secondary">
+        <Badge className="ml-auto sidebar-collapsed:hidden" variant="secondary">
           {i18n.t("common.comingSoonBadge")}
         </Badge>
       ) : null}
@@ -317,6 +320,8 @@ function NavButton({
 
 export default function App() {
   const t = useT();
+  const branding = getAppBranding();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const updates = useAppUpdates();
   const notifiedUpdate = useRef<string | null>(null);
   const modelUpdate = usePrivacyModelUpdate();
@@ -884,24 +889,34 @@ export default function App() {
 
   return (
     <AppShell
+      sidebarCollapsed={sidebarCollapsed}
       sidebar={
-        <aside className="flex h-full min-h-0 flex-col px-4 pt-[var(--sidebar-top)] pb-4 max-[960px]:px-2 max-[960px]:pb-2.5">
-          <div className="flex items-center gap-3 px-3 pb-6 max-[960px]:justify-center max-[960px]:px-0">
+        <aside className="flex h-full min-h-0 flex-col px-4 pt-[var(--sidebar-top)] pb-4 sidebar-collapsed:px-2 sidebar-collapsed:pb-2.5">
+          <div
+            className="flex shrink-0 items-center gap-3 px-3 pb-6 sidebar-collapsed:justify-center sidebar-collapsed:px-0"
+            data-slot="app-brand"
+            aria-label={branding.name}
+            title={branding.name}
+          >
             <img
               className="block size-8 shrink-0"
-              src={astrlinkLogo}
+              src={branding.logo}
               alt=""
               width={32}
               height={32}
               aria-hidden="true"
             />
-            <span className="overflow-hidden text-lg font-semibold tracking-tight whitespace-nowrap max-[960px]:hidden">
-              AstrLink
-            </span>
+            <div className="flex min-w-0 flex-col items-start sidebar-collapsed:hidden">
+              <span className="text-lg leading-tight font-semibold tracking-tight whitespace-nowrap">
+                AstrLink
+              </span>
+              {branding.development ? <DevelopmentBadge /> : null}
+            </div>
           </div>
 
           <nav
-            className="flex flex-1 flex-col gap-1"
+            id="sidebar-navigation"
+            className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto"
             aria-label={t("nav.main")}
             data-slot="sidebar-navigation"
           >
@@ -993,39 +1008,51 @@ export default function App() {
             </div>
           </nav>
 
-          <div
-            aria-label={t("nav.gatewayStatus", { status: statusLabel })}
-            className={cn(
-              "mx-2 mt-3 flex gap-2.5 border-t border-sidebar-border px-1 text-text-secondary max-[960px]:h-11 max-[960px]:items-center max-[960px]:justify-center max-[960px]:px-0 max-[960px]:pt-2",
-              stackedGatewayStatus
-                ? "items-start py-2"
-                : "h-11 items-center pt-2",
-            )}
-            title={t("nav.gatewayStatus", { status: statusLabel })}
-          >
-            <span className="grid size-5 shrink-0 place-items-center">
-              <StatusDot tone={statusTone} />
-            </span>
+          <div className="mx-2 mt-3 flex min-h-11 shrink-0 items-center gap-1.5 border-t border-sidebar-border pt-2 text-text-secondary sidebar-collapsed:flex-col sidebar-collapsed:gap-2">
             <span
+              aria-label={t("nav.gatewayStatus", { status: statusLabel })}
+              title={t("nav.gatewayStatus", { status: statusLabel })}
               className={cn(
-                "min-w-0 max-[960px]:hidden",
-                stackedGatewayStatus ? "grid" : "flex items-baseline gap-1.5",
+                "flex min-w-0 flex-1 gap-2 sidebar-collapsed:flex-none",
+                stackedGatewayStatus ? "items-start" : "items-center",
               )}
             >
-              <strong
+              <span className="grid size-5 shrink-0 place-items-center">
+                <StatusDot tone={statusTone} />
+              </span>
+              <span
                 className={cn(
-                  "text-sm font-medium text-foreground",
-                  stackedGatewayStatus
-                    ? "truncate"
-                    : "shrink-0 whitespace-nowrap",
+                  "min-w-0 sidebar-collapsed:hidden",
+                  stackedGatewayStatus ? "grid" : "flex items-baseline gap-1",
                 )}
               >
-                {t("nav.gateway")}
-              </strong>
-              <small className="overflow-hidden text-xs text-ellipsis whitespace-nowrap">
-                {statusLabel}
-              </small>
+                <strong
+                  className={cn(
+                    "text-sm font-medium text-foreground",
+                    stackedGatewayStatus
+                      ? "truncate"
+                      : "shrink-0 whitespace-nowrap",
+                  )}
+                >
+                  {t("nav.gateway")}
+                </strong>
+                <small className="truncate text-xs">{statusLabel}</small>
+              </span>
             </span>
+            <IconButton
+              type="button"
+              className="text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:text-sidebar-foreground"
+              label={t(sidebarCollapsed ? "nav.expand" : "nav.collapse")}
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="sidebar-navigation"
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            >
+              <PanelLeft
+                aria-hidden="true"
+                className="size-4"
+                strokeWidth={1.6}
+              />
+            </IconButton>
           </div>
         </aside>
       }

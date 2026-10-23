@@ -21,6 +21,9 @@ type Adapter interface {
 	// IsUserTurn reports whether item is a genuine user message rather than a
 	// tool result, harness note, or assistant/system content.
 	IsUserTurn(item json.RawMessage) bool
+	// IsToolResult reports whether item answers a tool call: a tool message,
+	// a *_call_output item, or a user message carrying tool results.
+	IsToolResult(item json.RawMessage) bool
 	// InboundEchoIDs returns ids in item that an earlier response produced.
 	InboundEchoIDs(item json.RawMessage) []string
 	// AssistantText returns the visible assistant text of item and ok=true

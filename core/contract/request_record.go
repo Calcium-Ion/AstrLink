@@ -402,11 +402,16 @@ const (
 	PrivacyIgnoreKindDisabled  PrivacyIgnoreReason = "kind_disabled"
 	PrivacyIgnoreLowConfidence PrivacyIgnoreReason = "low_confidence"
 	PrivacyIgnoreAllowlisted   PrivacyIgnoreReason = "allowlisted"
+	// PrivacyIgnoreAstrLinkIdentifier is an identifier AstrLink generated
+	// itself, such as a local access token id or a request id. It names a
+	// record without granting access to anything.
+	PrivacyIgnoreAstrLinkIdentifier PrivacyIgnoreReason = "astrlink_identifier"
 )
 
 func (reason PrivacyIgnoreReason) Valid() bool {
 	switch reason {
-	case PrivacyIgnoreKindDisabled, PrivacyIgnoreLowConfidence, PrivacyIgnoreAllowlisted:
+	case PrivacyIgnoreKindDisabled, PrivacyIgnoreLowConfidence, PrivacyIgnoreAllowlisted,
+		PrivacyIgnoreAstrLinkIdentifier:
 		return true
 	default:
 		return false
@@ -580,7 +585,11 @@ type RequestRecord struct {
 	// is not reasoning: text, a refusal, a tool call, or media. It is at least
 	// FirstTokenMs; the difference is how long the model thought before it
 	// answered. Nil without FirstTokenMs and for calls that only reasoned.
-	FirstAnswerMs  *int                   `json:"first_answer_ms"`
+	FirstAnswerMs *int `json:"first_answer_ms"`
+	// Output is what the response produced: the part arriving now while the
+	// call streams, the last part once it ended, and the tool calls it made.
+	// Nil before any output and on historical records.
+	Output         *OutputActivity        `json:"output,omitempty"`
 	Usage          *Usage                 `json:"usage"`
 	Error          *ErrorSummary          `json:"error"`
 	Audit          AuditRecordSummary     `json:"audit"`
@@ -800,6 +809,11 @@ func (record RequestRecord) Validate() error {
 			return fmt.Errorf("events[%d]: %w", index, err)
 		}
 	}
+	if record.Output != nil {
+		if err := record.Output.Validate(); err != nil {
+			return fmt.Errorf("output: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -835,11 +849,14 @@ type RequestSession struct {
 	Status                SessionStatus `json:"status"`
 	RequestedModel        *string       `json:"requested_model"`
 	// ModelRedirect mirrors the latest call's redirect, if any.
-	ModelRedirect      *RequestModelRedirect `json:"model_redirect,omitempty"`
-	ReasoningEffort    *string               `json:"reasoning_effort"`
-	InputProtocol      ProtocolID            `json:"input_protocol"`
-	ServiceID          *ServiceID            `json:"service_id"`
-	LocalAccessTokenID *AccessTokenID        `json:"local_access_token_id"`
+	ModelRedirect *RequestModelRedirect `json:"model_redirect,omitempty"`
+	// Output mirrors the latest call's output, so a list can tell what a
+	// conversation is doing: thinking, answering, or running tools.
+	Output             *OutputActivity `json:"output,omitempty"`
+	ReasoningEffort    *string         `json:"reasoning_effort"`
+	InputProtocol      ProtocolID      `json:"input_protocol"`
+	ServiceID          *ServiceID      `json:"service_id"`
+	LocalAccessTokenID *AccessTokenID  `json:"local_access_token_id"`
 	// PrivacyWarned is set when the warn action let at least one call of the
 	// session through, so the list can mark it without loading every call.
 	PrivacyWarned bool `json:"privacy_warned,omitempty"`
@@ -896,6 +913,11 @@ func (session RequestSession) Validate() error {
 	if session.ModelRedirect != nil {
 		if err := session.ModelRedirect.Validate(); err != nil {
 			return err
+		}
+	}
+	if session.Output != nil {
+		if err := session.Output.Validate(); err != nil {
+			return fmt.Errorf("output: %w", err)
 		}
 	}
 	if session.ReasoningEffort != nil {

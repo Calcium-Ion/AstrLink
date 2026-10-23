@@ -515,6 +515,125 @@ func TestPolicyDryRunSeparatesAcceptedAndSuppressedModelFindings(t *testing.T) {
 	}
 }
 
+// TestPolicyDryRunExplainsKeptAstrLinkIdentifiers previews a sample that holds
+// a local access token id beside the token: the id is listed among the
+// suppressed findings with its own reason, and only the token is replaced.
+func TestPolicyDryRunExplainsKeptAstrLinkIdentifiers(t *testing.T) {
+	const (
+		tokenID = "access_token_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+		token   = "astr_Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7"
+	)
+	_, handler, models := newPolicyHandler(t)
+	models.ready[contract.LegacyOpenAIPrivacyFilterInstallationID] = true
+	provider, err := privacy.NewStorePolicyProvider(handler.policyStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filter, err := privacy.New(provider, privacy.DetectorFunc(func(_ context.Context, input privacy.DetectInput) ([]privacy.Finding, error) {
+		var findings []privacy.Finding
+		for index, segment := range input.Segments {
+			for _, needle := range []string{token, tokenID} {
+				if start := strings.Index(segment.Value, needle); start >= 0 {
+					findings = append(findings, privacy.Finding{
+						Segment: index, Start: start, End: start + len(needle),
+						Kind: privacy.KindCommonSecret, Confidence: 0.99,
+					})
+				}
+			}
+		}
+		return findings, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.privacyFilter = filter
+	body := fmt.Sprintf(
+		`{"protocol":"openai.chat","sample_text":"token %s has id %s","policy":{"enabled":true,"detector":"local_model","local_model_id":"%s","request_action":"redact"}}`,
+		token, tokenID, contract.LegacyOpenAIPrivacyFilterInstallationID,
+	)
+	response := policyRequest(t, handler, http.MethodPost, PolicyDryRunPath, "application/json", body, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result contract.PolicyDryRunResponse
+	decode(t, response, &result)
+	if result.Decision != "redact" || len(result.Findings) != 1 || len(result.Redactions) != 1 ||
+		result.Redactions[0].Value != token {
+		t.Fatalf("result=%#v", result)
+	}
+	if len(result.SuppressedFindings) != 1 ||
+		result.SuppressedFindings[0].Reason != string(privacy.SuppressionAstrLinkIdentifier) ||
+		result.SuppressedFindings[0].End-result.SuppressedFindings[0].Start != len(tokenID) {
+		t.Fatalf("suppressed=%#v", result.SuppressedFindings)
+	}
+	if result.RedactedBody == nil || strings.Contains(*result.RedactedBody, token) ||
+		!strings.Contains(*result.RedactedBody, tokenID) {
+		t.Fatalf("redacted body=%v", result.RedactedBody)
+	}
+}
+
+func TestPolicyDryRunRegexRedactsLocalAccessTokensAndKeepsKeyNames(t *testing.T) {
+	const (
+		tokenID = "access_token_0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+		token   = "astr_Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7-Qx7"
+	)
+	_, handler, _ := newPolicyHandler(t)
+	provider, err := privacy.NewStorePolicyProvider(handler.policyStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filter, err := privacy.New(provider, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.privacyFilter = filter
+	sample := fmt.Sprintf(
+		`token=%s\nAuthorization: Bearer %s\naccess_token=%s\nmax_tokens=4096`,
+		token, token, tokenID,
+	)
+	for _, test := range []struct {
+		name   string
+		policy string
+	}{
+		{"builtin", `"regex_source":"builtin"`},
+		{"custom rule with a value group", `"regex_source":"custom","custom_regex_rules":[` +
+			`{"kind":"common_secret","pattern":"(?i)(?:token=|bearer )(?P<value>astr_[A-Za-z0-9_-]{43})"},` +
+			`{"kind":"common_secret","pattern":"access_token=(?P<value>\\S+)"}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"protocol":"openai.chat","sample_text":"` + sample + `","policy":{"enabled":true,` +
+				`"detector":"regex","local_model_id":null,"request_action":"redact",` + test.policy + `}}`
+			response := policyRequest(t, handler, http.MethodPost, PolicyDryRunPath, "application/json", body, "")
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			var result contract.PolicyDryRunResponse
+			decode(t, response, &result)
+			if result.Decision != "redact" || len(result.Findings) != 2 || len(result.Redactions) == 0 {
+				t.Fatalf("result=%#v", result)
+			}
+			for _, redaction := range result.Redactions {
+				if redaction.Kind != "common_secret" || redaction.Value != token {
+					t.Fatalf("redactions=%#v", result.Redactions)
+				}
+			}
+			if len(result.SuppressedFindings) != 1 ||
+				result.SuppressedFindings[0].Reason != string(privacy.SuppressionAstrLinkIdentifier) ||
+				result.SuppressedFindings[0].End-result.SuppressedFindings[0].Start != len(tokenID) {
+				t.Fatalf("suppressed=%#v", result.SuppressedFindings)
+			}
+			if result.RedactedBody == nil || strings.Contains(*result.RedactedBody, token) {
+				t.Fatalf("redacted body=%v", result.RedactedBody)
+			}
+			for _, kept := range []string{"token=", "Authorization: Bearer ", "access_token=" + tokenID, "max_tokens=4096"} {
+				if !strings.Contains(*result.RedactedBody, kept) {
+					t.Fatalf("redacted body lost %q: %s", kept, *result.RedactedBody)
+				}
+			}
+		})
+	}
+}
+
 func newPolicyHandler(t *testing.T) (*sqlite.Store, *Handler, *fakePrivacyModelRegistry) {
 	t.Helper()
 	store, err := openControlTestStore(t, context.Background(), filepath.Join(t.TempDir(), "astrlink.db"))

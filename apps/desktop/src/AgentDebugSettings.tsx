@@ -42,11 +42,11 @@ import { i18n, useT } from "./i18n";
 import { notify } from "./notify";
 import { PageHeader } from "./PageHeader";
 
-const toolIds = ["cursor", "claude", "codex", "grok", "pi"] as const;
+const toolIds = ["cursor", "claude", "codex", "grok", "pi", "dsh"] as const;
 
-// Codex and Pi both read ~/.agents/skills, so installing for one installs for
-// the other in the same home.
-const sharedSkillTools: readonly AgentToolId[] = ["codex", "pi"];
+// Codex, Pi, and DeepSeek Harness all read ~/.agents/skills, so installing for
+// one installs for the others in the same home.
+const sharedSkillTools: readonly AgentToolId[] = ["codex", "pi", "dsh"];
 
 /** Identifies a tool by where it runs: this computer or a WSL distribution. */
 type ToolKey = string;
@@ -278,6 +278,20 @@ export function AgentDebugSettings({
   const sharesSkills = detected.some(
     (tool) => sharedGroup(toolKey(tool)).length > 1,
   );
+  // A shared group shows once, on its first detected tool.
+  const installRows = rows.filter(
+    (row) => sharedGroup(toolKey(row))[0] === toolKey(row),
+  );
+  const toolStatusLabel = (tool: AgentToolStatus | undefined): string =>
+    t(
+      !tool?.detected
+        ? "agentDebug.notDetected"
+        : isInstalled(tool)
+          ? "agentDebug.installed"
+          : anySkillInstalled(tool)
+            ? "agentDebug.partial"
+            : "agentDebug.detected",
+    );
   const toggleTool = (key: ToolKey, checked: boolean): void => {
     const group = sharedGroup(key);
     setSelectedTools((current) =>
@@ -644,11 +658,16 @@ export function AgentDebugSettings({
                   {t("agentDebug.selectTools")}
                 </legend>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                  {rows.map((row) => {
+                  {installRows.map((row) => {
                     const { id } = row;
                     const key = toolKey(row);
                     const tool = toolAt(row);
-                    const inputId = `agent-install-${row.wsl === null ? "" : `wsl-${row.wsl}-`}${id}`;
+                    const group = sharedGroup(key);
+                    const shared = group.length > 1;
+                    const members = detected.filter((item) =>
+                      group.includes(toolKey(item)),
+                    );
+                    const inputId = `agent-install-${row.wsl === null ? "" : `wsl-${row.wsl}-`}${shared ? members.map((item) => item.id).join("-") : id}`;
                     return (
                       <Label
                         className="min-w-0 items-start gap-2"
@@ -665,23 +684,30 @@ export function AgentDebugSettings({
                         />
                         <span className="grid min-w-0 gap-0.5">
                           <span className="text-foreground">
-                            {t(`agentDebug.tools.${id}`)}
+                            {shared
+                              ? t("agentDebug.sharedTools", {
+                                  names: members
+                                    .map((item) =>
+                                      t(`agentDebug.tools.${item.id}`),
+                                    )
+                                    .join(" / "),
+                                })
+                              : t(`agentDebug.tools.${id}`)}
                             {row.wsl !== null ? (
                               <span className="ml-1.5 text-xs font-normal text-muted-foreground">
                                 {t("agentDebug.wslPlace", { name: row.wsl })}
                               </span>
                             ) : null}
                           </span>
-                          <span className="text-xs font-normal text-muted-foreground">
-                            {t(
-                              !tool?.detected
-                                ? "agentDebug.notDetected"
-                                : isInstalled(tool)
-                                  ? "agentDebug.installed"
-                                  : anySkillInstalled(tool)
-                                    ? "agentDebug.partial"
-                                    : "agentDebug.detected",
-                            )}
+                          <span className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs font-normal text-muted-foreground">
+                            {shared
+                              ? members.map((item) => (
+                                  <span key={toolKey(item)}>
+                                    {t(`agentDebug.tools.${item.id}`)} ·{" "}
+                                    {toolStatusLabel(item)}
+                                  </span>
+                                ))
+                              : toolStatusLabel(tool)}
                           </span>
                         </span>
                       </Label>

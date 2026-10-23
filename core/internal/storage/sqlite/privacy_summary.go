@@ -170,7 +170,8 @@ func privacyOutcome(decision sql.NullString, status string, restored bool) (cont
 
 // privacyIgnoredCounts are one call's matches left in place by the allowlist
 // or the confidence threshold. Matches of a disabled kind are not among them:
-// the user chose not to protect that kind.
+// the user chose not to protect that kind. Nor are AstrLink's own identifiers,
+// which hold nothing to protect.
 type privacyIgnoredCounts struct {
 	allowlisted, lowConfidence int64
 }

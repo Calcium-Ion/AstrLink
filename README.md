@@ -29,14 +29,17 @@ routing and request records.
 
 ## Screenshots
 
-Simulated accounts, usage, costs, and request content. Click an image to view it
-at full size.
+These screenshots show the current interface with simulated accounts, usage,
+costs, and request content. Click an image to view it at full size.
+[Compact window](assets/screenshots/requests-compact.en.jpg).
 
-| Overview                                                                                                                   | API providers                                                                                                                                                |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [![Overview with simulated usage](assets/screenshots/overview.en.jpg)](assets/screenshots/overview.en.jpg)                 | [![Providers with simulated accounts and quotas](assets/screenshots/providers.en.jpg)](assets/screenshots/providers.en.jpg)                                  |
-| **On-device privacy protection**                                                                                           | **Request details**                                                                                                                                          |
-| [![Privacy dry run with a simulated support ticket](assets/screenshots/privacy.en.jpg)](assets/screenshots/privacy.en.jpg) | [![Request details with a simulated agent session and processing trace](assets/screenshots/request-detail.en.jpg)](assets/screenshots/request-detail.en.jpg) |
+| Live requests · light theme                                                                                                                          | Live requests · dark theme                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [![Concurrent agent sessions and tool calls in the light theme](assets/screenshots/requests-light.en.jpg)](assets/screenshots/requests-light.en.jpg) | [![Concurrent agent sessions and tool calls in the dark theme](assets/screenshots/requests-dark.en.jpg)](assets/screenshots/requests-dark.en.jpg)               |
+| **Overview**                                                                                                                                         | **API providers**                                                                                                                                               |
+| [![Overview with simulated usage](assets/screenshots/overview.en.jpg)](assets/screenshots/overview.en.jpg)                                           | [![Providers with simulated accounts, quotas, costs, and performance](assets/screenshots/providers.en.jpg)](assets/screenshots/providers.en.jpg)                |
+| **On-device privacy protection**                                                                                                                     | **Request details**                                                                                                                                             |
+| [![Local privacy detection and response restoration settings](assets/screenshots/privacy.en.jpg)](assets/screenshots/privacy.en.jpg)                 | [![Agent conversation with expanded tool calls and performance statistics](assets/screenshots/request-detail.en.jpg)](assets/screenshots/request-detail.en.jpg) |
 
 ## Features
 

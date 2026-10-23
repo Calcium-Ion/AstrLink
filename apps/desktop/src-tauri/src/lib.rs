@@ -1596,6 +1596,14 @@ async fn list_request_sessions(
 }
 
 #[tauri::command]
+async fn get_request_activity(
+    since: String,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_request_activity(&since).await
+}
+
+#[tauri::command]
 async fn get_request_session(
     session_id: String,
     manager: State<'_, Arc<CoreManager>>,
@@ -1696,9 +1704,13 @@ async fn decide_raw_access(
         Some(arg) if decision != "deny" => Some(raw_proof(arg)),
         _ => None,
     };
-    manager
+    let outcome = manager
         .decide_raw_access(&grant_id, &decision, proof.as_ref())
-        .await
+        .await;
+    // Read what still waits now, so the approval window stops floating once
+    // the last request is decided rather than at the next observer poll.
+    let _ = manager.poll_observers().await;
+    outcome
 }
 
 /// Ends a running timed agent grant before it expires.
@@ -2446,6 +2458,7 @@ pub fn run() {
             Some(vec![AUTOSTART_ARG]),
         ))
         .append_invoke_initialization_script(platform_initialization_script(std::env::consts::OS))
+        .append_invoke_initialization_script(instance::initialization_script())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -2519,6 +2532,7 @@ pub fn run() {
             list_service_risk_events,
             list_request_records,
             list_request_sessions,
+            get_request_activity,
             get_request_session,
             get_session_channel_bindings,
             release_session_channel_bindings,

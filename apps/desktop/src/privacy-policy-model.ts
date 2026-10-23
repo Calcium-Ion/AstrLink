@@ -202,7 +202,8 @@ export type PrivacySuppressionReason =
   | "kind_disabled"
   | "allowlisted"
   | "placeholder"
-  | "unrepresentable";
+  | "unrepresentable"
+  | "astrlink_identifier";
 
 export interface PrivacyDryRunFinding {
   kind: CanonicalPrivacyKind;
@@ -364,6 +365,7 @@ const suppressionReasons = new Set<PrivacySuppressionReason>([
   "allowlisted",
   "placeholder",
   "unrepresentable",
+  "astrlink_identifier",
 ]);
 const actions = new Set<PrivacyAction>(["allow", "warn", "block", "redact"]);
 const adapters = new Set<PrivacyModelAdapter>([

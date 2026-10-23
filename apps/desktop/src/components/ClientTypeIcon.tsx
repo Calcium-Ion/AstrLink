@@ -1,9 +1,12 @@
+import type { ComponentProps } from "react";
+
 import {
   CherryStudioColor,
   ClaudeCodeColor,
   ClineMono,
   CodeBuddyColor,
   CursorMono,
+  DeepSeekHarnessMono,
   GithubCopilotMono,
   KiloCodeMono,
   OpenClawColor,
@@ -16,10 +19,9 @@ import { cn } from "@/lib/utils";
 import { i18n, useT } from "../i18n";
 import type { ClientType } from "../request-record-model";
 
-// Clients named after a vendor draw that vendor's mark from `vendorMarks` so
-// they match the vendor's models and provider kinds. Clients without a
-// published mark get a monogram so they stay distinct from the unknown-client
-// fallback in icon-only rows.
+// Clients with their own product artwork use it; the rest draw their vendor's
+// mark from `vendorMarks`. Clients without a published mark get a monogram so
+// they stay distinct from the unknown-client fallback in icon-only rows.
 const clients: Record<
   Exclude<ClientType, "unknown">,
   { name: string; Mark?: typeof CursorMono }
@@ -33,7 +35,7 @@ const clients: Record<
   openclaw: { name: "OpenClaw", Mark: OpenClawColor },
   cline: { name: "Cline", Mark: ClineMono },
   pi: { name: "Pi", Mark: PiColor },
-  deepseek_harness: { name: "DeepSeek Harness", Mark: vendorMarks.deepseek },
+  deepseek_harness: { name: "DeepSeek Harness", Mark: DeepSeekHarnessMono },
   codewhale: { name: "Codewhale" },
   reasonix: { name: "Reasonix" },
   qwen_code: { name: "Qwen Code", Mark: vendorMarks.qwen },
@@ -76,6 +78,48 @@ export function ClientTypeIcons({
           size={size}
         />
       ))}
+    </span>
+  );
+}
+
+/**
+ * Clients with how many of something each one has, in the order given. Past
+ * `limit`, the remaining clients fold into one "+N" that counts them.
+ */
+export function ClientTypeCounts({
+  className,
+  clients,
+  label,
+  limit = 4,
+  size = 14,
+  ...props
+}: Omit<ComponentProps<"span">, "children"> & {
+  clients: readonly { clientType: ClientType; count: number }[];
+  /** Names every client and count, for assistive technology and on hover. */
+  label: string;
+  limit?: number;
+  size?: number;
+}) {
+  const shown = clients.length > limit ? clients.slice(0, limit - 1) : clients;
+  const hidden = clients.length - shown.length;
+  return (
+    <span
+      {...props}
+      aria-label={label}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-2 tabular-nums",
+        className,
+      )}
+      role="img"
+      title={label}
+    >
+      {shown.map(({ clientType, count }) => (
+        <span className="inline-flex items-center gap-0.5" key={clientType}>
+          <ClientTypeIcon clientType={clientType} decorative size={size} />
+          {count > 1 ? count : null}
+        </span>
+      ))}
+      {hidden > 0 ? <span>+{hidden}</span> : null}
     </span>
   );
 }

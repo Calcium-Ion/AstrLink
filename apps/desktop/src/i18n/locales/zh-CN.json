@@ -143,6 +143,8 @@
     "checking": "检查中…"
   },
   "nav": {
+    "collapse": "折叠侧栏",
+    "expand": "展开侧栏",
     "main": "主要导航",
     "workspace": "工作区",
     "system": "系统",
@@ -535,7 +537,8 @@
     "selectSkills": "Skill",
     "selectTools": "安装到",
     "installSelected": "安装所选工具（{{count}}）",
-    "sharedSkills": "Codex 和 Pi 读取同一个 Skill 目录（~/.agents/skills），勾选其中一个会一起安装。",
+    "sharedTools": "{{names}}（共享 Skill）",
+    "sharedSkills": "Codex、Pi 和 DeepSeek Harness 共用 ~/.agents/skills，将一起安装或更新。",
     "selectionHint": "至少选择一个 Skill 和一个工具。取消勾选不会卸载已有配置。",
     "removeTitle": "卸载 Agent Skill 与工具？",
     "removeBody": "将从所有工具中移除 AstrLink 管理的 Skill、命令放行规则、访问限制条目和命令行工具。你自己的规则不受影响。",
@@ -566,8 +569,8 @@
     "installScopeShort": "安装 Skill 与命令行工具",
     "installScopeTitle": "安装内容与范围",
     "installScopeBody": "AstrLink 调试 Skill 提供排查方法，命令行工具让 Agent 读取本机记录；隐私脱敏 Skill 只教 Agent 处理被隐私保护替换的内容，不需要命令行工具。安装时可选择 Skill 和一个或多个已检测到的工具；重新安装可补全缺失文件，并清理旧版的 MCP 配置。WSL 里的工具装在对应发行版的用户目录，并调用这台电脑上的 AstrLink 命令行工具。",
-    "installScopeHosts": "调试 Skill 还会按工具写入规则。Claude Code：放行 astrlink 命令，并拦截内置读文件工具、cat / head / tail / sed / tee 与 sqlite3 读取 AstrLink 数据目录和会话文件；不拦截 Python、Node 等脚本自行读取。Codex：让 astrlink 命令在沙箱外运行，因为沙箱会拦截 AstrLink 的本地连接；并在 ~/.codex/AGENTS.md 写入说明段落，仅作为提示词，不强制执行。Cursor、Grok Build 首次运行命令时由工具询问你，Pi 运行任何命令都不询问；这三者没有可核实的全局拒绝位置，只依靠 Skill 说明。卸载时只移除 AstrLink 写入的条目。",
-    "noTools": "暂未检测到支持的工具。请先安装并启动一次 Cursor、Claude Code、Codex、Grok Build 或 Pi，再重新检测。",
+    "installScopeHosts": "调试 Skill 还会按工具写入规则。Claude Code：放行 astrlink 命令，并拦截内置读文件工具、cat / head / tail / sed / tee 与 sqlite3 读取 AstrLink 数据目录和会话文件；不拦截 Python、Node 等脚本自行读取。Codex：让 astrlink 命令在沙箱外运行，因为沙箱会拦截 AstrLink 的本地连接；并在 ~/.codex/AGENTS.md 写入说明段落，仅作为提示词，不强制执行。Cursor、Grok Build 首次运行命令时由工具询问你，Pi 运行任何命令都不询问。DeepSeek Harness 也不询问，它的沙箱拦截写文件，astrlink 只读取记录，可以照常运行。这四者没有可核实的全局拒绝位置，只依靠 Skill 说明。卸载时只移除 AstrLink 写入的条目。",
+    "noTools": "暂未检测到支持的工具。请先安装并启动一次 Cursor、Claude Code、Codex、Grok Build、Pi 或 DeepSeek Harness，再重新检测。",
     "missingRuntime": "AstrLink 命令行工具缺失，请重新安装后再使用。",
     "promptTitle": "试着这样问",
     "copyPrompt": "复制示例",
@@ -615,7 +618,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "grok": "Grok Build",
-      "pi": "Pi"
+      "pi": "Pi",
+      "dsh": "DeepSeek Harness"
     }
   },
   "today": {
@@ -762,7 +766,6 @@
     "recentCapped": "仅统计最近 {{count}} 条",
     "requests": "请求数",
     "totalTokens": "总 Token",
-    "inputOutput": "输入 / 输出",
     "input": "输入",
     "output": "输出",
     "cache": "缓存",
@@ -1615,7 +1618,8 @@
       "kind_disabled": "该信息类型已关闭，因此忽略。",
       "allowlisted": "匹配免脱敏名单，因此忽略。",
       "placeholder": "识别为已有占位符，无需重复替换。",
-      "unrepresentable": "此内容无法生成可用的替换值，因此忽略。"
+      "unrepresentable": "此内容无法生成可用的替换值，因此忽略。",
+      "astrlink_identifier": "这是 AstrLink 自己生成的 ID（如访问令牌 ID），不能用来访问任何内容，因此忽略。"
     },
     "testAction": {
       "allow": "当前策略允许请求，保留原文。",
@@ -1914,7 +1918,7 @@
     "builtinFixed": "固定且不可编辑",
     "customListOnly": "仅使用下方列表",
     "listJoin": "、",
-    "builtinCoverage": "内置规则覆盖{{kinds}}。切换到自定义后可用一键填入作为起点；自定义模式为纯正则匹配，不含 Luhn/IBAN 等额外校验。",
+    "builtinCoverage": "内置规则覆盖{{kinds}}。切换到自定义后可用一键填入作为起点；自定义模式为纯正则匹配，不含 Luhn/IBAN 等额外校验。命名分组 (?P<value>…) 只替换匹配中的这一部分，内置规则借此保留 token=、Bearer 等字段名。",
     "addRule": "添加规则",
     "noCustomRules": "尚无自定义规则。可添加规则，或一键填入内置规则。",
     "minConfidenceHint": "低于此分数的模型候选会被抑制；Regex 不受此门槛影响",
@@ -2156,6 +2160,36 @@
     "synced": "已同步最新记录。",
     "refreshFailed": "无法刷新请求记录。",
     "liveInterrupted": "实时同步暂时中断，正在保留当前记录并继续重试。",
+    "activityTitle": "实时概况",
+    "activityInProgress": "进行中",
+    "activityInProgressHelp": "进行中怎么算",
+    "activityInProgressHint": "正在调用模型，或 1 分钟内调用过模型的对话。Agent 在两次调用之间运行工具时也算在内。",
+    "activityConversations_one": "个对话",
+    "activityConversations_other": "个对话",
+    "activityCalls": "调用中",
+    "activityFailures": "近 5 分钟失败",
+    "activityShowFailures_one": "查看 {{count}} 个失败的对话",
+    "activityShowFailures_other": "查看 {{count}} 个失败的对话",
+    "activityChartTitle": "同时进行的对话",
+    "activityWindow": "近 5 分钟",
+    "activityChart": "近 5 分钟同时进行的对话，最多 {{peak}} 个，现在 {{current}} 个",
+    "activityReadout_one": "{{time}} · {{count}} 个对话",
+    "activityReadout_other": "{{time}} · {{count}} 个对话",
+    "activityClient_one": "{{client}} {{count}} 个",
+    "activityClient_other": "{{client}} {{count}} 个",
+    "laneCallingMany_one": "{{count}} 个调用 · {{duration}}",
+    "laneCallingMany_other": "{{count}} 个调用 · {{duration}}",
+    "laneIdle": "空闲 {{duration}}",
+    "laneIdleHint": "上一次调用已结束。客户端可能在运行工具，或在等你回复。",
+    "laneWaiting": "等待模型 {{duration}}",
+    "laneThinking": "思考中 {{duration}}",
+    "laneWriting": "写回答 {{duration}}",
+    "laneCallingTool": "调用 {{tool}} {{duration}}",
+    "laneCallingAnyTool": "调用工具 {{duration}}",
+    "laneRunningTools": "运行 {{tools}} {{duration}}",
+    "laneRunningToolsHint": "模型让客户端运行这些工具。下一次调用会带回结果。",
+    "laneReplied": "等你回复 {{duration}}",
+    "laneRepliedHint": "模型已经回答。对话在等下一条消息。",
     "auditContentFailed": "无法读取审计内容。",
     "auditKeyBroken": "审计密钥缺失或损坏，无法解密该记录。",
     "clearedMemory": "已清除内存中的解密内容。",
@@ -2353,7 +2387,11 @@
     "timeRange": "{{from}} → {{to}}",
     "moreActions": "更多操作",
     "copySessionId": "复制会话 ID",
-    "ttft": "TTFT"
+    "ttft": "TTFT",
+    "moreFilters": "更多筛选",
+    "activeFilters": "已启用筛选",
+    "moreActiveFilters": "+{{count}} 项",
+    "filterCount": "{{count}} 项"
   },
   "conversation": {
     "tab": "摘要",
@@ -2402,7 +2440,10 @@
     "callList": "调用列表",
     "expand": "展开",
     "collapse": "收起",
-    "tokens": "{{input}} / {{output}} Token"
+    "tokens": "{{input}} / {{output}} Token",
+    "toolResultReceived": "已收到结果",
+    "toolResultUnavailable": "结果不可用",
+    "toolResultUnavailableHint": "当前记录中没有可读取的工具结果；可能尚未回传、未采集或已锁定。"
   },
   "audit": {
     "requestHeaders": "请求头",
@@ -2544,6 +2585,8 @@
   },
   "trajectory": {
     "timeline": "调用时间线",
+    "timingHint": "阶段在本次调用内的时间位置，每次调用独立计时",
+    "timingLabel": "单次调用内耗时",
     "eventList": "事件明细",
     "eventCount": "{{count}} 条事件",
     "phase": "阶段",
@@ -2554,7 +2597,7 @@
       "TURN": "轮次",
       "CLIENT": "客户端",
       "REDIRECT": "重定向",
-      "POLICY": "策略",
+      "POLICY": "安全策略",
       "COMPRESS": "压缩",
       "ROUTE": "路由",
       "UPSTREAM": "上游",
@@ -2615,7 +2658,8 @@
     "policyIgnoredReasons": {
       "low_confidence": "低于门槛",
       "allowlisted": "免脱敏名单",
-      "kind_disabled": "类型已关闭"
+      "kind_disabled": "类型已关闭",
+      "astrlink_identifier": "AstrLink 自有 ID"
     },
     "policyAllowHint": "策略没有改动请求内容，请求体见「客户端」。",
     "policyTrustedHint": "此提供商已被信任，策略没有检查这次请求，按原文发往上游。请求体见「客户端」。",
@@ -3615,6 +3659,7 @@
     "enable": "启用{{tool}}接管",
     "backend": "{{tool}}执行方",
     "executor": "映射到",
+    "switchHint": "在路由页内切换方式会分别保留填写内容，切回来即可恢复。只保存当前方式的设置；未填完整时仍使用上次保存的配置。",
     "upstream": "Responses · {{tool}}",
     "tavily": "Tavily 兼容 API",
     "serviceImages": "提供商的 Images API",
@@ -3832,6 +3877,7 @@
     "availableNotification": "AstrLink {{version}} 已发布，可以下载。",
     "manualNotification": "AstrLink {{version}} 已发布，请前往版本页面下载安装包。",
     "readyNotification": "AstrLink {{version}} 已下载，可以安装。",
+    "errorNotification": "AstrLink {{version}} 更新未完成，可在「关于」中重试或手动下载。",
     "phase": {
       "idle": "尚未检查",
       "checking": "正在检查更新…",
@@ -3936,6 +3982,7 @@
       "version": "无法读取版本号，请刷新重试。",
       "unsupported": "暂不支持此安装方式，请手动更新。",
       "command": "操作失败，请点击“查看详情”了解原因后重试。",
+      "permission": "当前用户没有读写客户端文件或缓存的权限。请在 {{place}} 的终端中修复目录权限，或使用有权限的账户手动更新，再刷新。",
       "timeout": "操作超时，请检查网络后重试。",
       "changed": "安装位置已改变，请刷新后再更新。",
       "unchanged": "没有安装成功，请点击“查看详情”了解原因后重试。",
@@ -3986,7 +4033,8 @@
       "remaining": "剩余 {{time}}",
       "revoke": "撤销",
       "revoked": "「{{client}}」已不能再读取原文",
-      "revokeFailed": "撤销失败：{{message}}"
+      "revokeFailed": "撤销失败：{{message}}",
+      "closeKeeps": "关闭窗口后，这些 Agent 照常可以读取原文。也可以在托盘里撤销。"
     }
   },
   "rawSealing": {

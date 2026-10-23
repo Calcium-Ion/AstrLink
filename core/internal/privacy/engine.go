@@ -250,6 +250,12 @@ func suppressionFor(
 	if list.allows(finding.Kind, value) {
 		return SuppressionAllowlisted
 	}
+	// Whatever kind the detector assigned, a span that covers one of
+	// AstrLink's own identifiers, or part of one, and nothing else holds no
+	// private value.
+	if isAstrLinkIdentifierSpan(segments[finding.Segment].Value, finding.Start, finding.End) {
+		return SuppressionAstrLinkIdentifier
+	}
 	return ""
 }
 

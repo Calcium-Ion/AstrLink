@@ -338,12 +338,19 @@ func claudeSessionFromUserID(raw json.RawMessage) string {
 // types whose "text" member is visible text; any other part type counts as a
 // non-text attachment (image, file, audio) and is reported through hasMedia.
 func stringOrTextParts(raw json.RawMessage, textTypes map[string]bool, skipTypes map[string]bool) (texts []string, hasMedia bool) {
+	texts, hasMedia, _ = scanTextParts(raw, textTypes, skipTypes)
+	return texts, hasMedia
+}
+
+// scanTextParts is stringOrTextParts that also reports whether a part of one
+// of skipTypes was present, from the same decode of the parts.
+func scanTextParts(raw json.RawMessage, textTypes map[string]bool, skipTypes map[string]bool) (texts []string, hasMedia, skipped bool) {
 	if value, ok := jsonx.String(raw); ok {
-		return []string{value}, false
+		return []string{value}, false, false
 	}
 	items, ok := jsonx.Array(raw)
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 	for _, item := range items {
 		part, ok := jsonx.Object(item)
@@ -355,6 +362,7 @@ func stringOrTextParts(raw json.RawMessage, textTypes map[string]bool, skipTypes
 		}
 		partType, _ := jsonx.String(part["type"])
 		if skipTypes[partType] {
+			skipped = true
 			continue
 		}
 		if partType == "" || textTypes[partType] {
@@ -368,5 +376,5 @@ func stringOrTextParts(raw json.RawMessage, textTypes map[string]bool, skipTypes
 		}
 		hasMedia = true
 	}
-	return texts, hasMedia
+	return texts, hasMedia, skipped
 }

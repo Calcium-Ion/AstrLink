@@ -245,6 +245,7 @@ export const policyIgnoreReasons: readonly PrivacyIgnoreReason[] = [
   "low_confidence",
   "allowlisted",
   "kind_disabled",
+  "astrlink_identifier",
 ];
 
 /**

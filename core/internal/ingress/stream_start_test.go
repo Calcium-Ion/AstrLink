@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/QuantumNous/astrlink/core/contract"
@@ -139,6 +140,7 @@ func TestStreamRefusalFailsOverBeforeTheClientSeesIt(t *testing.T) {
 func TestResponsesMetadataBeforeOverloadFailsOver(t *testing.T) {
 	t.Parallel()
 	for _, metadata := range []string{
+		`{"type":"response.metadata","metadata":{"request_id":"req_metadata"}}`,
 		`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[]}}`,
 		`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","summary":[],"encrypted_content":null}}`,
 		`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","summary":[],"encrypted_content":""}}`,
@@ -163,6 +165,92 @@ func TestResponsesMetadataBeforeOverloadFailsOver(t *testing.T) {
 				children[0].FirstTokenMs != nil || children[0].Recovery == nil || children[0].Recovery.Reason != "stream_503" {
 				t.Fatalf("root = %s, children = %+v", root.Status, children)
 			}
+		})
+	}
+}
+
+func TestResponsesMetadataWaitsForOutputOrFailure(t *testing.T) {
+	const metadata = "event: response.metadata\ndata: {\"type\":\"response.metadata\",\"sequence_number\":2,\"metadata\":{\"request_id\":\"req_metadata\"}}\n\n"
+	const failed = "event: response.failed\ndata: {\"type\":\"response.failed\",\"sequence_number\":4,\"response\":{\"id\":\"resp_busy\",\"status\":\"failed\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_error\",\"message\":\"Our servers are currently overloaded.\"}}}\n\n"
+	prefix := strings.Split(overloadedCodexStream, "event: error")[0] + metadata
+	output := strings.ReplaceAll(strings.SplitN(completedCodexStream, "\n\n", 2)[1], "resp_ok", "resp_busy")
+	for _, test := range []struct {
+		name     string
+		delay    time.Duration
+		tail     string
+		failover bool
+	}{
+		{"immediate refusal", 0, failed, true},
+		{"late refusal", 13 * time.Second, failed, true},
+		{"slow output", 13 * time.Second, output, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				reader, writer := io.Pipe()
+				producerDone, handlerDone := make(chan struct{}), make(chan struct{})
+				t.Cleanup(func() {
+					cancel()
+					_ = reader.Close()
+					_ = writer.Close()
+					<-producerDone
+					<-handlerDone
+				})
+				go func() {
+					defer close(producerDone)
+					defer writer.Close()
+					if _, err := io.WriteString(writer, prefix); err != nil {
+						return
+					}
+					select {
+					case <-time.After(test.delay):
+					case <-ctx.Done():
+						return
+					}
+					_, _ = io.WriteString(writer, test.tail)
+				}()
+				var attempts []string
+				store := &memoryRequestRecordStore{}
+				handler := NewWithDependencies(Dependencies{
+					Resolver:       candidateResolver{candidates: streamCandidates(contract.ProtocolOpenAIResponses, 2, contract.FailoverOnly)},
+					RequestRecords: store,
+					Forwarder: transport.New(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+						attempts = append(attempts, request.URL.Host)
+						if request.URL.Host == "A.example" {
+							response := sseResponse("")
+							response.Body = reader
+							return response, nil
+						}
+						return sseResponse(completedCodexStream), nil
+					})),
+				})
+				response := httptest.NewRecorder()
+				go func() {
+					defer close(handlerDone)
+					handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/responses",
+						strings.NewReader(`{"model":"m","input":"hi","stream":true}`)).WithContext(ctx))
+				}()
+				select {
+				case <-handlerDone:
+				case <-time.After(test.delay + time.Second):
+					t.Fatal("request did not finish after the upstream terminal event")
+				}
+				wantBody, wantAttempts := prefix+test.tail, []string{"A.example"}
+				if test.failover {
+					wantBody, wantAttempts = completedCodexStream, append(wantAttempts, "B.example")
+				}
+				if response.Code != http.StatusOK || response.Body.String() != wantBody || !reflect.DeepEqual(attempts, wantAttempts) {
+					t.Fatalf("response = %d %q after %v", response.Code, response.Body.String(), attempts)
+				}
+				root, children := splitRecords(t, store)
+				if root.Status != contract.RequestStatusSucceeded {
+					t.Fatalf("root = %+v", root)
+				}
+				if test.failover && (len(children) != 1 || children[0].FirstTokenMs != nil ||
+					children[0].Recovery == nil || children[0].Recovery.Reason != "stream_503") {
+					t.Fatalf("children = %+v", children)
+				}
+			})
 		})
 	}
 }
@@ -477,26 +565,81 @@ func (reader gatedReader) Read(buffer []byte) (int, error) {
 
 func (gatedReader) Close() error { return nil }
 
-func TestHoldStreamStartLetsSlowAnnouncementsThrough(t *testing.T) {
-	t.Parallel()
-	const created = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"
-	const rest = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"late\"}\n\n"
-	upstream := gatedReader{chunks: make(chan string, 1)}
-	upstream.chunks <- created
-	// The next read waits for the test, so only the limit can end the hold.
-	body, failure, err := holdStreamStart(upstream, contract.ProtocolOpenAIResponses, 1)
-	if failure != nil || err != nil {
-		t.Fatalf("failure = %+v, err = %v", failure, err)
-	}
-	head := make([]byte, len(created))
-	if _, err := io.ReadFull(body, head); err != nil || string(head) != created {
-		t.Fatalf("head = %q, %v", head, err)
-	}
-	upstream.chunks <- rest
-	close(upstream.chunks)
-	if tail, err := io.ReadAll(body); err != nil || string(tail) != rest {
-		t.Fatalf("tail = %q, %v", tail, err)
-	}
+func TestHoldStreamStartStopsOnCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		reader, writer := io.Pipe()
+		done := make(chan struct{})
+		t.Cleanup(func() {
+			cancel(context.Canceled)
+			_ = reader.Close()
+			_ = writer.Close()
+			<-done
+		})
+		var failure *streamFailure
+		var err error
+		go func() {
+			defer close(done)
+			_, failure, err = holdStreamStart(ctx, reader, contract.ProtocolOpenAIResponses)
+		}()
+		if _, err := io.WriteString(writer, "data: {\"type\":\"response.created\"}\n\n"); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("hold ended before cancellation or output")
+		default:
+		}
+		cancel(context.DeadlineExceeded)
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("cancellation did not stop the pending read")
+		}
+		if failure != nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("failure = %+v, err = %v", failure, err)
+		}
+	})
+}
+
+func TestHoldStreamStartBoundsWaitAfterError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		reader, writer := io.Pipe()
+		done := make(chan struct{})
+		t.Cleanup(func() {
+			cancel()
+			_ = reader.Close()
+			_ = writer.Close()
+			<-done
+		})
+		var body io.ReadCloser
+		var failure *streamFailure
+		var err error
+		go func() {
+			defer close(done)
+			body, failure, err = holdStreamStart(ctx, reader, contract.ProtocolOpenAIResponses)
+		}()
+		const refused = "data: {\"type\":\"error\",\"code\":\"server_is_overloaded\",\"message\":\"busy\"}\n\n"
+		started := time.Now()
+		if _, err := io.WriteString(writer, refused); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-done:
+		case <-time.After(streamStartErrorWaitLimit + time.Second):
+			t.Fatal("an error without a terminal event was held indefinitely")
+		}
+		if time.Since(started) != streamStartErrorWaitLimit || err != nil || failure == nil || failure.status != http.StatusServiceUnavailable {
+			t.Fatalf("wait = %s, failure = %+v, err = %v", time.Since(started), failure, err)
+		}
+		_ = writer.Close()
+		if replay, err := io.ReadAll(body); err != nil || string(replay) != refused {
+			t.Fatalf("replay = %q, err = %v", replay, err)
+		}
+	})
 }
 
 func TestHoldStreamStartReadsRefusalsAcrossChunks(t *testing.T) {
@@ -513,7 +656,7 @@ func TestHoldStreamStartReadsRefusalsAcrossChunks(t *testing.T) {
 		upstream.chunks <- chunk
 	}
 	close(upstream.chunks)
-	body, failure, err := holdStreamStart(upstream, contract.ProtocolAnthropicMessages, streamStartHoldLimit)
+	body, failure, err := holdStreamStart(context.Background(), upstream, contract.ProtocolAnthropicMessages)
 	if err != nil || failure == nil || failure.status != http.StatusTooManyRequests ||
 		!bytes.Contains(failure.event, []byte("rate_limit_error")) {
 		t.Fatalf("failure = %+v, err = %v", failure, err)
@@ -527,12 +670,12 @@ func TestHoldStreamStartEndings(t *testing.T) {
 	t.Parallel()
 	const created = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n"
 	broken := errors.New("connection reset")
-	_, failure, err := holdStreamStart(io.NopCloser(io.MultiReader(strings.NewReader(created), failingReader{err: broken})),
-		contract.ProtocolOpenAIResponses, streamStartHoldLimit)
+	_, failure, err := holdStreamStart(context.Background(), io.NopCloser(io.MultiReader(strings.NewReader(created), failingReader{err: broken})),
+		contract.ProtocolOpenAIResponses)
 	if failure != nil || !errors.Is(err, broken) {
 		t.Fatalf("broken stream: failure = %+v, err = %v", failure, err)
 	}
-	body, failure, err := holdStreamStart(io.NopCloser(strings.NewReader(created)), contract.ProtocolOpenAIResponses, streamStartHoldLimit)
+	body, failure, err := holdStreamStart(context.Background(), io.NopCloser(strings.NewReader(created)), contract.ProtocolOpenAIResponses)
 	if failure != nil || err != nil {
 		t.Fatalf("short stream: failure = %+v, err = %v", failure, err)
 	}
@@ -541,7 +684,7 @@ func TestHoldStreamStartEndings(t *testing.T) {
 	}
 	// The last event may lack its closing blank line.
 	refused := created + "event: error\ndata: {\"type\":\"error\",\"code\":\"rate_limit_exceeded\",\"message\":\"slow down\"}"
-	_, failure, err = holdStreamStart(io.NopCloser(strings.NewReader(refused)), contract.ProtocolOpenAIResponses, streamStartHoldLimit)
+	_, failure, err = holdStreamStart(context.Background(), io.NopCloser(strings.NewReader(refused)), contract.ProtocolOpenAIResponses)
 	if err != nil || failure == nil || failure.status != http.StatusTooManyRequests {
 		t.Fatalf("unterminated refusal: failure = %+v, err = %v", failure, err)
 	}

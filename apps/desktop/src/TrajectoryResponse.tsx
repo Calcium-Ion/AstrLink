@@ -208,10 +208,15 @@ export function UpstreamInspector({
             label: t("audit.upstreamViews.response"),
             body: response,
             withheld: auditContent?.withheld.upstream_response_content,
-            lead:
-              errors.length > 0 ? (
-                <Diagnosis errors={errors} tone="error" />
-              ) : null,
+            lead: (
+              <Diagnosis
+                errors={errors}
+                record={
+                  record.error?.category === "upstream" ? record : undefined
+                }
+                tone="error"
+              />
+            ),
           },
           {
             value: "request",
@@ -639,7 +644,9 @@ function Diagnosis({
               <span className="font-mono">{verdict.code}</span>
               {retryable}
               {/* The stream note already says this, in the reader's language. */}
-              {verdict.message && !streamNote ? (
+              {verdict.message &&
+              !streamNote &&
+              verdict.message.trim() !== message.trim() ? (
                 <span className="block">{verdict.message}</span>
               ) : null}
             </span>

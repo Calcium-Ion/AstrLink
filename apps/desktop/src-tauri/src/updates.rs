@@ -26,6 +26,11 @@ const MIRROR_RELEASE_API: &str = "https://astrlink.com/api/releases";
 const EVENT: &str = "app-update-status";
 const PUBLIC_KEY: &str = env!("TAURI_UPDATER_PUBLIC_KEY");
 const INTERVAL: Duration = Duration::from_secs(3 * 60 * 60);
+const RETRY_INTERVALS: [Duration; 3] = [
+    Duration::from_secs(60),
+    Duration::from_secs(5 * 60),
+    Duration::from_secs(15 * 60),
+];
 const MAX_PACKAGE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const DOWNLOAD_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -90,6 +95,7 @@ pub struct UpdateSnapshot {
 
 struct Inner {
     snapshot: UpdateSnapshot,
+    check_schedule: CheckSchedule,
     generation: u64,
     pending: Option<Update>,
     /// Release tag (v0.2.2), not the updater's version (0.2.2).
@@ -98,6 +104,51 @@ struct Inner {
     retry_after: Option<chrono::DateTime<chrono::Utc>>,
     /// The last `(notice, version)` announced, so periodic checks do not repeat it.
     notified: Option<(&'static str, String)>,
+}
+
+struct CheckSchedule {
+    next_check: chrono::DateTime<chrono::Utc>,
+    failures: usize,
+}
+
+impl CheckSchedule {
+    fn new(now: chrono::DateTime<chrono::Utc>) -> Self {
+        Self {
+            next_check: now + chrono::TimeDelta::seconds(30),
+            failures: 0,
+        }
+    }
+
+    fn restart(&mut self, now: chrono::DateTime<chrono::Utc>) {
+        self.next_check = now;
+        self.failures = 0;
+    }
+
+    fn completed(&mut self, now: chrono::DateTime<chrono::Utc>, failed: bool) {
+        let delay = if failed {
+            let delay = RETRY_INTERVALS
+                .get(self.failures)
+                .copied()
+                .unwrap_or(INTERVAL);
+            self.failures = (self.failures + 1).min(RETRY_INTERVALS.len());
+            delay
+        } else {
+            self.failures = 0;
+            INTERVAL
+        };
+        self.next_check = now + chrono::TimeDelta::seconds(delay.as_secs() as i64);
+    }
+
+    fn delay(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        retry_after: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Duration {
+        // A preference change may request an immediate check, but cannot bypass
+        // the server's rate limit. Wall-clock deadlines also survive system sleep.
+        let next = retry_after.map_or(self.next_check, |until| self.next_check.max(until));
+        (next - now).to_std().unwrap_or_default()
+    }
 }
 
 pub struct UpdateManager {
@@ -159,12 +210,13 @@ fn reschedules(current: &UpdatePreferences, input: &UpdatePreferences) -> bool {
 }
 
 /// The update state worth the operator's attention. `available` only counts
-/// while it waits on them; with automatic download, `ready` follows shortly.
+/// while it waits on them; automatic downloads announce completion or failure.
 fn notice(phase: &str, auto_download: bool) -> Option<&'static str> {
     match phase {
         "available" if !auto_download => Some("available"),
         "manual" => Some("manual"),
         "ready" => Some("ready"),
+        "error" => Some("error"),
         _ => None,
     }
 }
@@ -552,6 +604,7 @@ impl UpdateManager {
                     error_detail: None,
                     retry_at: None,
                 },
+                check_schedule: CheckSchedule::new(chrono::Utc::now()),
                 generation: 0,
                 pending: None,
                 pending_tag: None,
@@ -653,6 +706,9 @@ impl UpdateManager {
         let changed_mirror = current.official_mirror != input.official_mirror;
         let reschedule = reschedules(current, &input);
         inner.snapshot.preferences = input;
+        if reschedule {
+            inner.check_schedule.restart(chrono::Utc::now());
+        }
         if changed_channel || changed_mirror {
             // Each channel and the mirror read separate sources, so a rate limit does not carry over.
             inner.retry_after = None;
@@ -685,24 +741,55 @@ impl UpdateManager {
     pub fn start(self: &Arc<Self>, app: AppHandle) {
         let manager = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(30)).await;
             loop {
-                if !cfg!(debug_assertions) && manager.snapshot().preferences.auto_check {
-                    // Wait for an invalidated task to release its operation before the next check.
-                    {
+                match manager.automatic_check_delay() {
+                    Some(delay) if delay.is_zero() => {
+                        // A manual operation may finish or preferences may change
+                        // while waiting. Re-read the deadline before checking.
                         let _guard = manager.operation.lock().await;
+                        if manager.automatic_check_delay().is_some_and(|d| d.is_zero()) {
+                            let _ = manager.check_locked(&app).await;
+                        }
                     }
-                    let _ = manager.check(&app).await;
+                    Some(delay) => {
+                        // Re-evaluate the wall-clock deadline after system sleep.
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay.min(Duration::from_secs(60))) => {},
+                            _ = manager.schedule.notified() => {},
+                        }
+                    }
+                    None => manager.schedule.notified().await,
                 }
-                tokio::select! { _ = tokio::time::sleep(INTERVAL) => {}, _ = manager.schedule.notified() => {} }
             }
         });
+    }
+    fn automatic_check_delay(&self) -> Option<Duration> {
+        let inner = self.lock();
+        (!inner.snapshot.development && inner.snapshot.preferences.auto_check).then(|| {
+            inner
+                .check_schedule
+                .delay(chrono::Utc::now(), inner.retry_after)
+        })
+    }
+    fn schedule_next_check(&self, generation: u64) {
+        let mut inner = self.lock();
+        if inner.generation != generation {
+            return;
+        }
+        let failed = inner.snapshot.phase == "error";
+        inner.check_schedule.completed(chrono::Utc::now(), failed);
+        drop(inner);
+        // Manual checks and downloads also replace a pending automatic retry.
+        self.schedule.notify_one();
     }
     pub async fn check(&self, app: &AppHandle) -> Result<UpdateSnapshot, String> {
         let _operation = self
             .operation
             .try_lock()
             .map_err(|_| "An update operation is already running")?;
+        self.check_locked(app).await
+    }
+    async fn check_locked(&self, app: &AppHandle) -> Result<UpdateSnapshot, String> {
         let cancel = self.cancelled.notified();
         tokio::pin!(cancel);
         cancel.as_mut().enable();
@@ -731,6 +818,7 @@ impl UpdateManager {
         if self.snapshot().phase == "available" && self.snapshot().preferences.auto_download {
             self.download_locked(app, generation).await;
         }
+        self.schedule_next_check(generation);
         Ok(self.snapshot())
     }
     async fn check_inner(
@@ -913,6 +1001,7 @@ impl UpdateManager {
             .map_err(|_| "An update operation is already running")?;
         let generation = self.lock().generation;
         self.download_locked(app, generation).await;
+        self.schedule_next_check(generation);
         Ok(self.snapshot())
     }
     async fn download_locked(&self, app: &AppHandle, generation: u64) {
@@ -1164,12 +1253,13 @@ mod tests {
         assert_eq!(notice("available", true), None);
         assert_eq!(notice("manual", true), Some("manual"));
         assert_eq!(notice("ready", true), Some("ready"));
-        for phase in ["idle", "checking", "up_to_date", "downloading", "error"] {
+        assert_eq!(notice("error", true), Some("error"));
+        for phase in ["idle", "checking", "up_to_date", "downloading"] {
             assert_eq!(notice(phase, false), None, "{phase}");
         }
         // Native notifications read the same catalogs; a missing key would
         // surface raw, and another language would silently fall back to English.
-        for kind in ["available", "manual", "ready"] {
+        for kind in ["available", "manual", "ready", "error"] {
             let title = format!("about.phase.{kind}");
             let body = format!("about.{kind}Notification");
             let vars = [("version", "1.1.0")];
@@ -1193,6 +1283,48 @@ mod tests {
                 "{title}"
             );
         }
+    }
+
+    #[test]
+    fn failed_checks_retry_soon_then_back_off_and_reset_after_success() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-21T04:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let mut schedule = CheckSchedule::new(now);
+        assert_eq!(schedule.delay(now, None), Duration::from_secs(30));
+        for seconds in [60, 300, 900, 10800, 10800] {
+            schedule.completed(now, true);
+            assert_eq!(schedule.delay(now, None), Duration::from_secs(seconds));
+        }
+        schedule.completed(now, false);
+        assert_eq!(schedule.delay(now, None), INTERVAL);
+        schedule.completed(now, true);
+        assert_eq!(schedule.delay(now, None), Duration::from_secs(60));
+        // Manual success cancels an outstanding short retry.
+        schedule.completed(now, false);
+        assert_eq!(schedule.delay(now, None), INTERVAL);
+    }
+
+    #[test]
+    fn automatic_retries_respect_rate_limits_and_expired_wall_clock_deadlines() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-21T04:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let mut schedule = CheckSchedule::new(now);
+        schedule.completed(now, true);
+        let retry_after = Some(now + chrono::TimeDelta::minutes(20));
+        assert_eq!(schedule.delay(now, retry_after), Duration::from_secs(1200));
+        // Changing preferences must not let a check bypass the server's wait.
+        schedule.restart(now);
+        assert_eq!(schedule.delay(now, retry_after), Duration::from_secs(1200));
+        assert_eq!(schedule.delay(now, None), Duration::ZERO);
+        assert_eq!(
+            schedule.delay(now + chrono::TimeDelta::minutes(21), retry_after),
+            Duration::ZERO
+        );
+        // A new configuration gets the short first retry again.
+        schedule.completed(now, true);
+        assert_eq!(schedule.delay(now, None), Duration::from_secs(60));
     }
     #[test]
     fn cached_artifacts_are_verified_before_installation() {

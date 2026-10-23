@@ -76,7 +76,8 @@ function messageOf(error: unknown): string {
  * it, and there is no form: a keystroke meant for another window, or Enter,
  * approves nothing. While Core's unlock session is open an approval is one
  * click; otherwise it needs the raw password, which lives only in this
- * state until it is sent. Closing the window decides nothing.
+ * state until it is sent. Closing the window decides nothing and ends no
+ * grant.
  */
 export function RawAccessApprovalWindow() {
   const t = useT();
@@ -373,6 +374,7 @@ export function RawAccessApprovalWindow() {
         ) : null}
         <ActiveRawGrants
           grants={list?.active ?? []}
+          note={t("rawAccess.active.closeKeeps")}
           onRevoked={(revoked) => {
             notify.success(
               t("rawAccess.active.revoked", {

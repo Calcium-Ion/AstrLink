@@ -396,7 +396,8 @@ const requestSessionSummaryColumns = `
     requested_model, reasoning_effort, service_id, local_access_token_id,
     http_status, turn_index, input_preview,
     (SELECT COUNT(*) FROM request_records children
-     WHERE children.parent_request_id = request_records.id), model_redirect_json, client_type, privacy_decision`
+     WHERE children.parent_request_id = request_records.id), model_redirect_json, client_type, privacy_decision,
+    output_json`
 
 // sessionSummaryQuery reads the root turns of sessions, each session's in
 // time order. Without statistics SQLite takes `parent_request_id IS NULL`,
@@ -441,7 +442,9 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 	}
 	defer rows.Close()
 	var id, sessionID, startedAt, status, protocol string
-	var completedAt, model, reasoning, service, token, preview, redirect, client, decision sql.NullString
+	var completedAt, model, reasoning, service, token, preview, redirect, client, decision, output sql.NullString
+	// The latest call's output, decoded once per session rather than per call.
+	var latestOutput string
 	var httpStatus, turn sql.NullInt64
 	var children int
 	var current contract.RequestSession
@@ -457,6 +460,12 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 		if current.Status == contract.SessionStatusCancelled && hadSuccess {
 			current.Status = contract.SessionStatusInterrupted
 		}
+		if latestOutput != "" {
+			current.Output = &contract.OutputActivity{}
+			if err := json.Unmarshal([]byte(latestOutput), current.Output); err != nil {
+				return fmt.Errorf("%w: session output", storagecontract.ErrInvalidRecord)
+			}
+		}
 		if err := current.Validate(); err != nil {
 			return fmt.Errorf("%w: session summary: %v", storagecontract.ErrInvalidRecord, err)
 		}
@@ -466,7 +475,7 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 	for rows.Next() {
 		if err := rows.Scan(&id, &sessionID, &startedAt, &completedAt, &status, &protocol,
 			&model, &reasoning, &service, &token, &httpStatus, &turn, &preview,
-			&children, &redirect, &client, &decision); err != nil {
+			&children, &redirect, &client, &decision, &output); err != nil {
 			return nil, err
 		}
 		if string(current.ID) != sessionID {
@@ -557,6 +566,7 @@ func loadSessionSummaries(ctx context.Context, reader historyReader, items []ses
 		current.ServiceID, current.LocalAccessTokenID = record.ServiceID, record.LocalAccessTokenID
 		current.ModelRedirect = record.ModelRedirect
 		current.PrivacyWarned = current.PrivacyWarned || decision.String == string(contract.PrivacyDecisionWarn)
+		latestOutput = output.String
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -632,6 +642,7 @@ func sessionFromTurns(turns []contract.RequestRecord) (contract.RequestSession, 
 		Status:             sessionStatus(turns, latest),
 		RequestedModel:     latest.RequestedModel,
 		ModelRedirect:      latest.ModelRedirect,
+		Output:             latest.Output,
 		ReasoningEffort:    latest.ReasoningEffort,
 		InputProtocol:      latest.InputProtocol,
 		ServiceID:          latest.ServiceID,

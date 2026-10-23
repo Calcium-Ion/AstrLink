@@ -32,8 +32,14 @@ pub fn configure<R: tauri::Runtime>(mut context: tauri::Context<R>) -> tauri::Co
     context
 }
 
-/// Registers the isolated link scheme in place of the shared one.
+/// Sets the isolated product name, main window title and link scheme.
 fn isolate(config: &mut tauri::Config) {
+    config.product_name = Some(ISOLATED_NAME.to_string());
+    for window in &mut config.app.windows {
+        if window.label == "main" {
+            window.title = ISOLATED_NAME.to_string();
+        }
+    }
     if let Some(schemes) = config
         .plugins
         .0
@@ -46,6 +52,10 @@ fn isolate(config: &mut tauri::Config) {
 
 pub fn is_isolated() -> bool {
     ISOLATED.load(Ordering::Relaxed)
+}
+
+pub fn initialization_script() -> String {
+    format!("window.__ASTRLINK_ISOLATED__ = {};", is_isolated())
 }
 
 /// The name this instance goes by, as its login item and app bundle show it.
@@ -100,6 +110,7 @@ mod tests {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.dev.conf.json")).unwrap();
         assert_eq!(config["identifier"], ISOLATED_IDENTIFIER);
+        assert_eq!(config["productName"], ISOLATED_NAME);
     }
 
     #[test]
@@ -137,6 +148,8 @@ mod tests {
             serde_json::json!([LINK_SCHEME])
         );
         isolate(&mut config);
+        assert_eq!(config.product_name.as_deref(), Some(ISOLATED_NAME));
+        assert_eq!(config.app.windows[0].title, ISOLATED_NAME);
         assert_eq!(
             config.plugins.0["deep-link"]["desktop"]["schemes"],
             serde_json::json!([ISOLATED_LINK_SCHEME])
