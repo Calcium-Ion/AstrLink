@@ -17,10 +17,7 @@ const (
 	// astrLinkGuardFP16Revision is the commit of tag v0.1.3, the first
 	// release with an fp16/ folder. While it is not a valid commit the pin
 	// stays at 0.1.2, which has no FP16 build.
-	//
-	// TODO(v0.1.3 upload): replace "" with the 40-character commit sha of
-	// tag v0.1.3 on QuantumNous/astrlink-guard.
-	astrLinkGuardFP16Revision = ""
+	astrLinkGuardFP16Revision = "7216b6a3b897ef903d4b1ba367ae6fb95b0fa5e4"
 
 	// 0.1.3 keeps the int8/ and fp32/ files of 0.1.2 and adds fp16/.
 	astrLinkGuardCPURevision = "33dfcc586f8a50529e98ce5fe2ba46836dbeab8f"
