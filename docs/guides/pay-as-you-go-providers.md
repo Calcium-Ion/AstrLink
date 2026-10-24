@@ -61,6 +61,7 @@ Key 仅供 AstrLink 连接 API 提供商使用。
 | ---------------- | --------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------- |
 | OpenAI           | `https://api.openai.com/v1`                         | —                                                        | 拉取或手动添加                                 |
 | Anthropic        | `https://api.anthropic.com`                         | —                                                        | 拉取或手动添加                                 |
+| Vertex AI        | 按项目地区自动生成官方地址                          | —                                                        | 官方目录或手动添加                             |
 | Gemini           | `https://generativelanguage.googleapis.com`         | —                                                        | 拉取或手动添加                                 |
 | DeepSeek         | `https://api.deepseek.com/v1`                       | —                                                        | 拉取或手动添加                                 |
 | 千问（百炼）     | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | 手动添加                                       |
@@ -78,6 +79,43 @@ Messages、Chat 或 Gemini。AstrLink 按模型选择格式。已保存的 `…/
 `…/zen/go/v1` 地址照常可用，请求会发往 `/inference` 下对应的路径。
 
 百炼的国内站为北京地域，国际站为新加坡地域，密钥需与地域或业务空间匹配。
+
+## Vertex AI
+
+选择 **Vertex AI**，使用 Google
+Cloud 服务账号 JSON 接入 Gemini、Claude 和 OpenAI 兼容对话模型，支持普通回复、流式回复和工具调用。
+
+1. 在 Google Cloud 项目中启用结算和 Vertex AI
+   API，为服务账号授予所需权限，并开通要使用的模型。详见[服务账号认证](https://cloud.google.com/vertex-ai/docs/authentication)。
+2. 粘贴 **服务账号 JSON**，核对项目 ID 和地区。地区默认
+   `global`，请按模型支持范围填写；API 地址自动生成，不支持自定义域名。编辑时 JSON 留空保留原凭据，粘贴新 JSON 则替换。
+3. 拉取或手动添加模型，核对入口协议后保存并测试。拉取的是官方目录，不代表项目已开通模型或该地区有可用配额；找不到模型时可手动添加。
+
+| 模型类型            | 填写的模型 ID                                 | 原生协议 |
+| ------------------- | --------------------------------------------- | -------- |
+| Gemini              | 官方 `gemini-…` ID                            | Gemini   |
+| Claude              | Vertex 官方 `claude-…` ID，按要求保留 `@日期` | Messages |
+| OpenAI 兼容对话模型 | 官方 `publisher/model` ID                     | Chat     |
+
+客户端模型名不同时，用 **模型重定向**
+映射到官方调用 ID，不要直接照搬其他平台的 Claude 名称。
+
+在 **入口协议**
+中选择原样转发，或转换为 Gemini、Messages、Chat。Responses 必须转换，新建时默认转换为 Gemini；转换不可用时不默认开启。
+
+原样转发仍由网关完成 Vertex 认证和路径适配。
+
+模型默认 **按入口协议设置**。在 **支持模型**
+中指定格式后，模型格式优先；改回“按入口协议设置”即可恢复入口配置。模型 ID 必须符合所选协议，不会自动改名或切换协议。
+
+连接测试逐模型使用指定格式，未指定时按官方模型 ID 选择原生协议，无法识别时需先指定格式。测试只验证原生连通性，不执行入口转换。
+
+Gemini 3 工具调用建议使用 Gemini 原生入口。当前 Chat / Responses ↔
+Gemini 转换不保留 `thoughtSignature`，后续调用可能失败；使用 Vertex
+Chat 接口时，客户端需原样保留
+`extra_content.google.thought_signature`。其他转换限制见下文。
+
+暂不支持 ADC、Express API Key、自部署模型端点、Embedding 或独立图像/音视频接口。
 
 ## Coding Plan
 
