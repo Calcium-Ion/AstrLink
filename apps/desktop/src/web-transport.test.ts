@@ -239,6 +239,29 @@ describe("web command transport", () => {
       expect.objectContaining({ method }),
     );
   });
+  it("aborts a web provider test when cancelled", async () => {
+    fetchMock.mockImplementationOnce(
+      (_path: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }),
+    );
+    const pending = webInvoke("test_service", {
+      serviceId: "svc_one",
+      input: { protocol: "openai.responses", model: "m", stream: true },
+      testId: "test_web_cancel",
+    });
+    expect(
+      await webInvoke("cancel_service_test", { testId: "test_web_cancel" }),
+    ).toBe(true);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(
+      await webInvoke("cancel_service_test", { testId: "test_web_cancel" }),
+    ).toBe(false);
+  });
+
   it("rejects native commands, password reset, unsafe URLs and resource paths before fetching", async () => {
     for (const [command, args] of [
       ["restart_core", {}],

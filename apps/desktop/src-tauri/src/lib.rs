@@ -1447,9 +1447,24 @@ async fn reset_service_usage(
 async fn test_service(
     service_id: String,
     input: serde_json::Value,
+    test_id: Option<String>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
-    manager.test_service(&service_id, input).await
+    let Some(test_id) = test_id.filter(|id| !id.is_empty() && id.len() <= 128) else {
+        return manager.test_service(&service_id, input).await;
+    };
+    let cancelled = manager.register_service_test(&test_id);
+    let outcome = tokio::select! {
+        outcome = manager.test_service(&service_id, input) => outcome,
+        _ = cancelled => Err("service test cancelled".into()),
+    };
+    manager.release_service_test(&test_id);
+    outcome
+}
+
+#[tauri::command]
+fn cancel_service_test(test_id: String, manager: State<'_, Arc<CoreManager>>) -> bool {
+    manager.cancel_service_test(&test_id)
 }
 
 #[tauri::command]
@@ -2471,6 +2486,7 @@ pub fn run() {
             sync_config,
             reset_service_usage,
             test_service,
+            cancel_service_test,
             probe_service_models,
             probe_draft_service_models,
             probe_service_proxy,

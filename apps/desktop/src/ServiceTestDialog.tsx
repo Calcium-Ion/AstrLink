@@ -2,7 +2,8 @@ import { BatchModelTest } from "./BatchModelTest";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { ServiceTestResultView } from "./ServiceTestResultView";
 import { useId, useRef, useState } from "react";
-import { testService } from "./bridge";
+import { cancelServiceTest, testService } from "./bridge";
+import { notify } from "./notify";
 import type { Service } from "./service-model";
 import {
   testableCapabilities,
@@ -18,6 +19,7 @@ import {
   LoaderCircle,
   RefreshCw,
   SlidersHorizontal,
+  X,
 } from "./components/icons";
 import { Button } from "./components/ui/button";
 import { ModelSelect } from "./components/ModelSelect";
@@ -158,6 +160,8 @@ export function ServiceTestDialog({
   const [stream, setStream] = useState(capabilities[0]?.streaming ?? false);
   const [prompt, setPrompt] = useState("");
   const [running, setRunning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
   const [mode, setMode] = useState<"single" | "batch">("single");
   const [batchRunning, setBatchRunning] = useState(false);
   const batchLocked = useRef(false);
@@ -166,6 +170,8 @@ export function ServiceTestDialog({
   const [result, setResult] = useState<ServiceTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const testId = useRef<string | null>(null);
+  const testSequence = useRef(0);
   const capability = capabilities.find((item) => item.protocol === protocol);
   const connected =
     !service.subscription || service.subscription.status === "connected";
@@ -175,6 +181,7 @@ export function ServiceTestDialog({
     : !capability
       ? t("serviceTest.unsupported")
       : null;
+  const hasOutcome = Boolean(result || error || cancelled);
   const settings: TestSettingsProps = {
     service,
     protocol,
@@ -185,16 +192,19 @@ export function ServiceTestDialog({
     onModel: (value) => {
       setModel(value);
       setResult(null);
+      setCancelled(false);
       setError(null);
     },
     onPrompt: (value) => {
       setPrompt(value);
       setResult(null);
+      setCancelled(false);
       setError(null);
     },
     onStream: (value) => {
       setStream(value);
       setResult(null);
+      setCancelled(false);
       setError(null);
     },
     onProtocol: (value) => {
@@ -204,6 +214,7 @@ export function ServiceTestDialog({
           false,
       );
       setResult(null);
+      setCancelled(false);
       setError(null);
     },
   };
@@ -211,26 +222,58 @@ export function ServiceTestDialog({
   async function runTest() {
     if (!canTest || inFlight.current) return;
     inFlight.current = true;
+    testSequence.current += 1;
+    const id = `${service.id}:${testSequence.current}:${Date.now()}`;
+    testId.current = id;
     setSettingsOpen(false);
     setRunning(true);
+    setCancelling(false);
+    setCancelled(false);
     setResult(null);
     setError(null);
     try {
       setResult(
-        await testService(service.id, {
-          protocol,
-          model: model.trim(),
-          stream,
-          ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
-        }),
+        await testService(
+          service.id,
+          {
+            protocol,
+            model: model.trim(),
+            stream,
+            ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+          },
+          id,
+        ),
       );
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : t("serviceTest.requestFailed"),
-      );
+      const cancelled =
+        (cause instanceof Error && cause.name === "AbortError") ||
+        (cause instanceof Error && cause.message === "service test cancelled");
+      if (cancelled) {
+        setCancelled(true);
+      } else {
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : t("serviceTest.requestFailed"),
+        );
+      }
     } finally {
       inFlight.current = false;
+      testId.current = null;
       setRunning(false);
+      setCancelling(false);
+    }
+  }
+
+  async function cancelTest() {
+    const id = testId.current;
+    if (!id || !running || cancelling) return;
+    setCancelling(true);
+    try {
+      if (!(await cancelServiceTest(id))) setCancelling(false);
+    } catch {
+      setCancelling(false);
+      notify.error(t("serviceTest.cancelFailed"));
     }
   }
 
@@ -329,6 +372,8 @@ export function ServiceTestDialog({
                 result={result}
                 error={error}
                 running={running}
+                cancelling={cancelling}
+                cancelled={cancelled}
                 blocked={blocked}
                 stream={stream}
               />
@@ -342,25 +387,36 @@ export function ServiceTestDialog({
               <Button variant="outline" onClick={onClose} disabled={running}>
                 {t("common.close")}
               </Button>
-              <Button onClick={() => void runTest()} disabled={!canTest}>
-                {running ? (
-                  <LoaderCircle
-                    aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
-                  />
-                ) : result || error ? (
-                  <RefreshCw aria-hidden="true" />
-                ) : (
-                  <Flask aria-hidden="true" />
-                )}
-                {t(
-                  running
-                    ? "serviceTest.testing"
-                    : result || error
-                      ? "serviceTest.rerun"
-                      : "serviceTest.run",
-                )}
-              </Button>
+              {running ? (
+                <Button
+                  variant="outline"
+                  onClick={() => void cancelTest()}
+                  disabled={cancelling}
+                >
+                  {cancelling ? (
+                    <LoaderCircle
+                      aria-hidden="true"
+                      className="animate-spin motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <X aria-hidden="true" />
+                  )}
+                  {t(
+                    cancelling
+                      ? "serviceTest.cancelling"
+                      : "serviceTest.cancel",
+                  )}
+                </Button>
+              ) : (
+                <Button onClick={() => void runTest()} disabled={!canTest}>
+                  {hasOutcome ? (
+                    <RefreshCw aria-hidden="true" />
+                  ) : (
+                    <Flask aria-hidden="true" />
+                  )}
+                  {t(hasOutcome ? "serviceTest.rerun" : "serviceTest.run")}
+                </Button>
+              )}
             </div>
           </DialogFooter>
         </div>

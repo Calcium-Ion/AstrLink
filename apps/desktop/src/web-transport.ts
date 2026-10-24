@@ -25,6 +25,7 @@ export async function consoleRequest(
   method: Method = "GET",
   body?: unknown,
   etag?: string,
+  signal?: AbortSignal,
 ) {
   if (!/^\/(?:control|console)\/v1\//.test(path))
     throw new Error("Invalid console path");
@@ -46,6 +47,7 @@ export async function consoleRequest(
   };
   if (method !== "GET" && body !== undefined)
     options.body = JSON.stringify(body);
+  if (signal) options.signal = signal;
   const response = await fetch(path, options);
   if (response.status === 401)
     window.dispatchEvent(new Event(CONSOLE_SIGNED_OUT));
@@ -155,6 +157,9 @@ export function openWebURL(value: unknown) {
   window.open(url.href, "_blank", "noopener,noreferrer");
 }
 
+/** Abort handles for provider tests started through the web console. */
+const serviceTestAborts = new Map<string, AbortController>();
+
 /** Mirrors sidecar.rs, raw_access.rs and the host's response envelopes. */
 const commands: Record<string, Command> = {
   core_status: async () => {
@@ -220,7 +225,32 @@ const commands: Record<string, Command> = {
   ),
   get_service_reset_credits: route((a) => `${service(a)}/usage/reset-credits`),
   reset_service_usage: route((a) => `${service(a)}/usage/reset`, "POST"),
-  test_service: route((a) => `${service(a)}/test`, "POST", input),
+  test_service: async (a) => {
+    const testId = typeof a.testId === "string" ? a.testId : "";
+    const controller = testId ? new AbortController() : null;
+    if (controller) serviceTestAborts.set(testId, controller);
+    try {
+      const { value } = await consoleRequest(
+        `/control/v1${service(a)}/test`,
+        "POST",
+        input(a),
+        undefined,
+        controller?.signal,
+      );
+      return value;
+    } finally {
+      if (controller && serviceTestAborts.get(testId) === controller)
+        serviceTestAborts.delete(testId);
+    }
+  },
+  cancel_service_test: async (a) => {
+    const testId = typeof a.testId === "string" ? a.testId : "";
+    const controller = serviceTestAborts.get(testId);
+    if (!controller) return false;
+    serviceTestAborts.delete(testId);
+    controller.abort();
+    return true;
+  },
   probe_service_models: route(
     (a) => `${service(a)}/probe-models`,
     "POST",

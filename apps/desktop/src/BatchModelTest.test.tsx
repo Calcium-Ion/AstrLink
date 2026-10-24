@@ -3,8 +3,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ testService: vi.fn() }));
-vi.mock("./bridge", () => ({ testService: mocks.testService }));
+const mocks = vi.hoisted(() => ({
+  testService: vi.fn(),
+  cancelServiceTest: vi.fn(),
+}));
+vi.mock("./bridge", () => ({
+  testService: mocks.testService,
+  cancelServiceTest: mocks.cancelServiceTest,
+}));
 import { ServiceTestDialog } from "./ServiceTestDialog";
 import type { Service } from "./service-model";
 import type { ServiceTestInput, ServiceTestResult } from "./service-test-model";

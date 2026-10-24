@@ -1,6 +1,6 @@
 use crate::failure_policy::{validate_failure_policy, validate_routing_settings};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Write as _,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
@@ -820,6 +820,9 @@ pub struct CoreManager {
     client: Client,
     /// Latest `CoreView`, republished whenever a lock release changed it.
     changes: tokio::sync::watch::Sender<CoreView>,
+    /// Cancellation senders for provider tests currently in flight, keyed by the
+    /// test ID supplied by the frontend.
+    service_test_cancellations: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
 }
 
 /// Every mutation path goes through `lock_inner`, so publishing from the
@@ -898,7 +901,37 @@ impl CoreManager {
             inner: Mutex::new(CoreInner::default()),
             client,
             changes,
+            service_test_cancellations: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Registers a cancellation channel for one in-flight provider test.
+    pub fn register_service_test(&self, test_id: &str) -> tokio::sync::oneshot::Receiver<()> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.service_test_cancellations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(test_id.to_owned(), sender);
+        receiver
+    }
+
+    /// Signals an in-flight provider test to stop. Returns whether a test was
+    /// still registered under this ID.
+    pub fn cancel_service_test(&self, test_id: &str) -> bool {
+        self.service_test_cancellations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(test_id)
+            .map(|sender| sender.send(()).is_ok())
+            .unwrap_or(false)
+    }
+
+    /// Drops a registration once its test finished or was cancelled.
+    pub fn release_service_test(&self, test_id: &str) {
+        self.service_test_cancellations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(test_id);
     }
 
     /// Subscribe to state changes. The receiver starts marked as changed, so a
@@ -5780,6 +5813,23 @@ mod tests {
         drop(guard);
         assert!(!manager.lock_inner().update_in_progress);
         assert!(manager.begin_update().is_ok());
+    }
+
+    #[test]
+    fn service_test_cancellation_is_single_use() {
+        let manager = CoreManager::new();
+        let mut cancelled = manager.register_service_test("test_one");
+        assert!(manager.cancel_service_test("test_one"));
+        assert!(
+            matches!(cancelled.try_recv(), Ok(())),
+            "the registered test should receive the cancellation signal"
+        );
+        assert!(
+            !manager.cancel_service_test("test_one"),
+            "a cancelled test must not be signalled twice"
+        );
+        manager.release_service_test("test_two");
+        assert!(!manager.cancel_service_test("test_two"));
     }
 
     #[test]
