@@ -2,7 +2,13 @@ import { BatchModelTest } from "./BatchModelTest";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { ServiceTestResultView } from "./ServiceTestResultView";
 import { useId, useRef, useState } from "react";
-import { cancelServiceTest, testService } from "./bridge";
+import {
+  cancelServiceTest,
+  SERVICE_TEST_ALREADY_RUNNING_ERROR,
+  SERVICE_TEST_CANCELLED_ERROR,
+  SERVICE_TEST_INVALID_ID_ERROR,
+  testService,
+} from "./bridge";
 import { notify } from "./notify";
 import type { Service } from "./service-model";
 import {
@@ -245,17 +251,24 @@ export function ServiceTestDialog({
         ),
       );
     } catch (cause) {
-      const cancelled =
-        (cause instanceof Error && cause.name === "AbortError") ||
-        (cause instanceof Error && cause.message === "service test cancelled");
-      if (cancelled) {
+      const name =
+        cause && typeof cause === "object" && "name" in cause
+          ? String(cause.name)
+          : "";
+      const message =
+        cause instanceof Error
+          ? cause.message
+          : typeof cause === "string"
+            ? cause
+            : "";
+      if (name === "AbortError" || message === SERVICE_TEST_CANCELLED_ERROR) {
         setCancelled(true);
+      } else if (message === SERVICE_TEST_ALREADY_RUNNING_ERROR) {
+        setError(t("serviceTest.alreadyRunning"));
+      } else if (message === SERVICE_TEST_INVALID_ID_ERROR) {
+        setError(t("serviceTest.invalidId"));
       } else {
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : t("serviceTest.requestFailed"),
-        );
+        setError(message || t("serviceTest.requestFailed"));
       }
     } finally {
       inFlight.current = false;
@@ -270,7 +283,7 @@ export function ServiceTestDialog({
     if (!id || !running || cancelling) return;
     setCancelling(true);
     try {
-      if (!(await cancelServiceTest(id))) setCancelling(false);
+      if (!(await cancelServiceTest(service.id, id))) setCancelling(false);
     } catch {
       setCancelling(false);
       notify.error(t("serviceTest.cancelFailed"));

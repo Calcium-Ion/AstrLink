@@ -100,6 +100,8 @@
     "cancelled": "テストをキャンセルしました",
     "cancelledDescription": "プロバイダーの応答待ちを停止しました。",
     "cancelFailed": "テストをキャンセルできませんでした。",
+    "alreadyRunning": "このプロバイダーではテストが実行中です。",
+    "invalidId": "テストリクエストの ID が無効です。",
     "success": "テスト成功",
     "failed": "テスト失敗",
     "output": "APIプロバイダーのレスポンス",

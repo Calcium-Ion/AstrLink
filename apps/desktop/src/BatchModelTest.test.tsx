@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./bridge", () => ({
   testService: mocks.testService,
   cancelServiceTest: mocks.cancelServiceTest,
+  SERVICE_TEST_CANCELLED_ERROR: "service_test_cancelled",
+  SERVICE_TEST_ALREADY_RUNNING_ERROR: "service_test_already_running",
+  SERVICE_TEST_INVALID_ID_ERROR: "service_test_invalid_id",
 }));
 import { ServiceTestDialog } from "./ServiceTestDialog";
 import type { Service } from "./service-model";

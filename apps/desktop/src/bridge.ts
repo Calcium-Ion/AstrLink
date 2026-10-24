@@ -463,6 +463,12 @@ export async function resetServiceUsage(
   );
 }
 
+/** Keep in sync with the Rust constants in sidecar.rs. */
+export const SERVICE_TEST_CANCELLED_ERROR = "service_test_cancelled";
+export const SERVICE_TEST_ALREADY_RUNNING_ERROR =
+  "service_test_already_running";
+export const SERVICE_TEST_INVALID_ID_ERROR = "service_test_invalid_id";
+
 export async function testService(
   serviceId: string,
   input: ServiceTestInput,
@@ -478,9 +484,12 @@ export async function testService(
   );
 }
 
-export async function cancelServiceTest(testId: string): Promise<boolean> {
+export async function cancelServiceTest(
+  serviceId: string,
+  testId: string,
+): Promise<boolean> {
   requireNativeBridge();
-  return invoke<boolean>("cancel_service_test", { testId });
+  return invoke<boolean>("cancel_service_test", { serviceId, testId });
 }
 
 export async function probeServiceModels(

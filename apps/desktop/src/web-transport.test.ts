@@ -254,12 +254,59 @@ describe("web command transport", () => {
       testId: "test_web_cancel",
     });
     expect(
-      await webInvoke("cancel_service_test", { testId: "test_web_cancel" }),
+      await webInvoke("cancel_service_test", {
+        serviceId: "svc_two",
+        testId: "test_web_cancel",
+      }),
+    ).toBe(false);
+    expect(
+      await webInvoke("cancel_service_test", {
+        serviceId: "svc_one",
+        testId: "test_web_cancel",
+      }),
     ).toBe(true);
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(
-      await webInvoke("cancel_service_test", { testId: "test_web_cancel" }),
+      await webInvoke("cancel_service_test", {
+        serviceId: "svc_one",
+        testId: "test_web_cancel",
+      }),
     ).toBe(false);
+  });
+
+  it("rejects duplicate and malformed web provider test IDs", async () => {
+    fetchMock.mockImplementationOnce(
+      (_path: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }),
+    );
+    const pending = webInvoke("test_service", {
+      serviceId: "svc_one",
+      input: {},
+      testId: "test_web_duplicate",
+    });
+    await expect(
+      webInvoke("test_service", {
+        serviceId: "svc_one",
+        input: {},
+        testId: "test_web_duplicate",
+      }),
+    ).rejects.toThrow("service_test_already_running");
+    await expect(
+      webInvoke("test_service", {
+        serviceId: "svc_one",
+        input: {},
+        testId: "x".repeat(129),
+      }),
+    ).rejects.toThrow("service_test_invalid_id");
+    await webInvoke("cancel_service_test", {
+      serviceId: "svc_one",
+      testId: "test_web_duplicate",
+    });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("rejects native commands, password reset, unsafe URLs and resource paths before fetching", async () => {

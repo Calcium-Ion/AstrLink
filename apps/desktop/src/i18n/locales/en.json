@@ -100,6 +100,8 @@
     "cancelled": "Test cancelled",
     "cancelledDescription": "Stopped waiting for the provider response.",
     "cancelFailed": "Could not cancel the test.",
+    "alreadyRunning": "A test is already running for this provider.",
+    "invalidId": "The test request has an invalid ID.",
     "success": "Test passed",
     "failed": "Test failed",
     "output": "API provider response",

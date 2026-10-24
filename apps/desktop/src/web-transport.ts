@@ -160,6 +160,14 @@ export function openWebURL(value: unknown) {
 /** Abort handles for provider tests started through the web console. */
 const serviceTestAborts = new Map<string, AbortController>();
 
+function serviceTestKey(serviceId: string, testId: string): string {
+  return JSON.stringify([serviceId, testId]);
+}
+
+function validServiceTestId(testId: string): boolean {
+  return testId.length > 0 && testId.length <= 128;
+}
+
 /** Mirrors sidecar.rs, raw_access.rs and the host's response envelopes. */
 const commands: Record<string, Command> = {
   core_status: async () => {
@@ -226,12 +234,18 @@ const commands: Record<string, Command> = {
   get_service_reset_credits: route((a) => `${service(a)}/usage/reset-credits`),
   reset_service_usage: route((a) => `${service(a)}/usage/reset`, "POST"),
   test_service: async (a) => {
+    const serviceId = id(a, "serviceId");
     const testId = typeof a.testId === "string" ? a.testId : "";
-    const controller = testId ? new AbortController() : null;
-    if (controller) serviceTestAborts.set(testId, controller);
+    if (testId && !validServiceTestId(testId))
+      throw new Error("service_test_invalid_id");
+    const key = testId ? serviceTestKey(serviceId, testId) : "";
+    if (key && serviceTestAborts.has(key))
+      throw new Error("service_test_already_running");
+    const controller = key ? new AbortController() : null;
+    if (controller) serviceTestAborts.set(key, controller);
     try {
       const { value } = await consoleRequest(
-        `/control/v1${service(a)}/test`,
+        `/control/v1/services/${serviceId}/test`,
         "POST",
         input(a),
         undefined,
@@ -239,15 +253,18 @@ const commands: Record<string, Command> = {
       );
       return value;
     } finally {
-      if (controller && serviceTestAborts.get(testId) === controller)
-        serviceTestAborts.delete(testId);
+      if (controller && serviceTestAborts.get(key) === controller)
+        serviceTestAborts.delete(key);
     }
   },
   cancel_service_test: async (a) => {
+    const serviceId = id(a, "serviceId");
     const testId = typeof a.testId === "string" ? a.testId : "";
-    const controller = serviceTestAborts.get(testId);
+    if (!validServiceTestId(testId)) return false;
+    const key = serviceTestKey(serviceId, testId);
+    const controller = serviceTestAborts.get(key);
     if (!controller) return false;
-    serviceTestAborts.delete(testId);
+    serviceTestAborts.delete(key);
     controller.abort();
     return true;
   },

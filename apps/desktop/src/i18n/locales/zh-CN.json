@@ -100,6 +100,8 @@
     "cancelled": "测试已取消",
     "cancelledDescription": "已停止等待提供商响应。",
     "cancelFailed": "无法取消测试。",
+    "alreadyRunning": "此提供商已有一个测试在运行。",
+    "invalidId": "测试请求的 ID 无效。",
     "success": "测试成功",
     "failed": "测试失败",
     "output": "API 提供商回复",

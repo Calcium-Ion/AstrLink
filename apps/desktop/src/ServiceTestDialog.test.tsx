@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./bridge", () => ({
   testService: mocks.testService,
   cancelServiceTest: mocks.cancelServiceTest,
+  SERVICE_TEST_CANCELLED_ERROR: "service_test_cancelled",
+  SERVICE_TEST_ALREADY_RUNNING_ERROR: "service_test_already_running",
+  SERVICE_TEST_INVALID_ID_ERROR: "service_test_invalid_id",
 }));
 vi.mock("./notify", () => ({ notify: { error: mocks.notifyError } }));
 vi.mock("./components/MarkdownRenderer", async (importOriginal) => {
@@ -356,18 +359,56 @@ it("cancels a running provider test and returns to an idle state", async () => {
   const testId = mocks.testService.mock.calls[0][2];
   expect(testId).toEqual(expect.any(String));
   await act(async () => button("取消测试").click());
-  expect(mocks.cancelServiceTest).toHaveBeenCalledWith(testId);
+  expect(mocks.cancelServiceTest).toHaveBeenCalledWith(service.id, testId);
   expect(button("正在取消…").disabled).toBe(true);
   expect(document.querySelector('[role="status"]')?.textContent).toContain(
     "正在取消…",
   );
-  await act(async () => reject(new Error("service test cancelled")));
+  await act(async () => reject(new Error("service_test_cancelled")));
   const dialog = document.querySelector('[role="dialog"]')!;
   expect(dialog.textContent).toContain("测试已取消");
   expect(dialog.textContent).toContain("已停止等待提供商响应。");
   expect(button("重新测试").disabled).toBe(false);
   expect(button("关闭").disabled).toBe(false);
   expect(mocks.notifyError).not.toHaveBeenCalled();
+});
+
+it("treats an aborted web request as cancelled", async () => {
+  let reject!: (reason: unknown) => void;
+  mocks.testService.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  mocks.cancelServiceTest.mockResolvedValueOnce(true);
+  await act(async () =>
+    root.render(<ServiceTestDialog service={service} onClose={() => {}} />),
+  );
+  await act(async () => button("开始测试").click());
+  await act(async () => button("取消测试").click());
+  await act(async () => reject(new DOMException("Aborted", "AbortError")));
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "测试已取消",
+  );
+});
+
+it("localizes duplicate and invalid test requests", async () => {
+  mocks.testService.mockRejectedValueOnce(
+    new Error("service_test_already_running"),
+  );
+  await act(async () =>
+    root.render(<ServiceTestDialog service={service} onClose={() => {}} />),
+  );
+  await act(async () => button("开始测试").click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "此提供商已有一个测试在运行。",
+  );
+  mocks.testService.mockRejectedValueOnce(new Error("service_test_invalid_id"));
+  await act(async () => button("重新测试").click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "测试请求的 ID 无效。",
+  );
 });
 
 it("keeps testing and reports a failed cancellation", async () => {

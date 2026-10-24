@@ -52,6 +52,11 @@ const MAX_CONTROL_BODY: usize = 8 * 1024 * 1024;
 // Decrypted audit content may reach response_content_max_bytes (64 MiB).
 const MAX_AUDIT_CONTENT_BODY: usize = 96 * 1024 * 1024;
 const AUDIT_CONTENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// Stable machine-readable error codes for the provider-test command. The
+/// frontend matches these codes instead of human-readable messages.
+pub const SERVICE_TEST_CANCELLED: &str = "service_test_cancelled";
+pub const SERVICE_TEST_ALREADY_RUNNING: &str = "service_test_already_running";
+pub const SERVICE_TEST_INVALID_ID: &str = "service_test_invalid_id";
 const SUPPORTED_CONTROL_API_VERSION: &str = "v1";
 const SUPPORTED_PROTOCOL_CONTRACT_VERSION: &str = "v1";
 const PRIVACY_MODEL_CATALOG_PATH: &str = "/control/v1/privacy-model-catalog";
@@ -818,15 +823,26 @@ impl CoreInner {
     }
 }
 
+/// One provider test is scoped to the window, service, and test ID that
+/// registered it, so a sibling window cannot cancel another service's test by
+/// guessing an ID.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ServiceTestKey {
+    owner: String,
+    service_id: String,
+    test_id: String,
+}
+
 pub struct CoreManager {
     inner: Mutex<CoreInner>,
     client: Client,
     /// Latest `CoreView`, republished whenever a lock release changed it.
     changes: tokio::sync::watch::Sender<CoreView>,
-    /// Cancellation senders for provider tests currently in flight, keyed by the
-    /// test ID supplied by the frontend. The generation prevents an old guard
-    /// from releasing a newer test that reused the same ID.
-    service_test_cancellations: Mutex<HashMap<String, (u64, tokio::sync::oneshot::Sender<()>)>>,
+    /// Cancellation senders for provider tests currently in flight, keyed by
+    /// owner, service, and test ID. The generation prevents an old guard from
+    /// releasing a newer test that reused the same key.
+    service_test_cancellations:
+        Mutex<HashMap<ServiceTestKey, (u64, tokio::sync::oneshot::Sender<()>)>>,
     service_test_sequence: AtomicU64,
 }
 
@@ -834,7 +850,7 @@ pub struct CoreManager {
 /// cancelled command future cannot leave a stale or uncancellable entry.
 pub struct ServiceTestRegistration {
     manager: Arc<CoreManager>,
-    test_id: String,
+    key: ServiceTestKey,
     generation: u64,
     receiver: tokio::sync::oneshot::Receiver<()>,
 }
@@ -848,7 +864,7 @@ impl ServiceTestRegistration {
 impl Drop for ServiceTestRegistration {
     fn drop(&mut self) {
         self.manager
-            .release_service_test(&self.test_id, self.generation);
+            .release_service_test(&self.key, self.generation);
     }
 }
 
@@ -934,11 +950,18 @@ impl CoreManager {
     }
 
     /// Registers a cancellation channel for one in-flight provider test.
-    /// Duplicate IDs are rejected rather than replacing another test.
+    /// Duplicate keys are rejected rather than replacing another test.
     pub fn register_service_test(
         self: &Arc<Self>,
+        owner: &str,
+        service_id: &str,
         test_id: &str,
     ) -> Result<ServiceTestRegistration, String> {
+        let key = ServiceTestKey {
+            owner: owner.to_owned(),
+            service_id: service_id.to_owned(),
+            test_id: test_id.to_owned(),
+        };
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let generation = self.service_test_sequence.fetch_add(1, Ordering::Relaxed);
         {
@@ -946,43 +969,48 @@ impl CoreManager {
                 .service_test_cancellations
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if tests.contains_key(test_id) {
-                return Err("service test is already running".into());
+            if tests.contains_key(&key) {
+                return Err(SERVICE_TEST_ALREADY_RUNNING.into());
             }
-            tests.insert(test_id.to_owned(), (generation, sender));
+            tests.insert(key.clone(), (generation, sender));
         }
         Ok(ServiceTestRegistration {
             manager: Arc::clone(self),
-            test_id: test_id.to_owned(),
+            key,
             generation,
             receiver,
         })
     }
 
     /// Signals an in-flight provider test to stop. Returns whether a test was
-    /// still registered under this ID.
-    pub fn cancel_service_test(&self, test_id: &str) -> bool {
+    /// still registered under this owner, service, and ID.
+    pub fn cancel_service_test(&self, owner: &str, service_id: &str, test_id: &str) -> bool {
+        let key = ServiceTestKey {
+            owner: owner.to_owned(),
+            service_id: service_id.to_owned(),
+            test_id: test_id.to_owned(),
+        };
         self.service_test_cancellations
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(test_id)
+            .remove(&key)
             .map(|(_, sender)| sender.send(()).is_ok())
             .unwrap_or(false)
     }
 
     /// Drops a registration once its test finished or was cancelled. The
     /// generation check keeps an older guard from removing a newer test that
-    /// reused the same ID after cancellation.
-    fn release_service_test(&self, test_id: &str, generation: u64) {
+    /// reused the same key after cancellation.
+    fn release_service_test(&self, key: &ServiceTestKey, generation: u64) {
         let mut tests = self
             .service_test_cancellations
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if tests
-            .get(test_id)
+            .get(key)
             .is_some_and(|(current, _)| *current == generation)
         {
-            tests.remove(test_id);
+            tests.remove(key);
         }
     }
 
@@ -5870,36 +5898,55 @@ mod tests {
     #[test]
     fn service_test_cancellation_is_single_use() {
         let manager = Arc::new(CoreManager::new());
-        let mut registration = manager.register_service_test("test_one").unwrap();
+        let mut registration = manager
+            .register_service_test("main", "service_a", "test_one")
+            .unwrap();
         assert!(
-            manager.register_service_test("test_one").is_err(),
-            "duplicate test IDs must not replace the first registration"
+            matches!(
+                manager.register_service_test("main", "service_a", "test_one"),
+                Err(ref message) if message == SERVICE_TEST_ALREADY_RUNNING
+            ),
+            "duplicate test keys must not replace the first registration"
         );
-        assert!(manager.cancel_service_test("test_one"));
+        assert!(
+            !manager.cancel_service_test("main", "service_b", "test_one"),
+            "another service must not cancel this test"
+        );
+        assert!(
+            !manager.cancel_service_test("other", "service_a", "test_one"),
+            "another window must not cancel this test"
+        );
+        assert!(manager.cancel_service_test("main", "service_a", "test_one"));
         assert!(
             matches!(registration.receiver().try_recv(), Ok(())),
             "the registered test should receive the cancellation signal"
         );
         drop(registration);
         assert!(
-            !manager.cancel_service_test("test_one"),
+            !manager.cancel_service_test("main", "service_a", "test_one"),
             "a cancelled test must not be signalled twice"
         );
 
-        let registration = manager.register_service_test("test_two").unwrap();
+        let registration = manager
+            .register_service_test("main", "service_a", "test_two")
+            .unwrap();
         drop(registration);
-        assert!(!manager.cancel_service_test("test_two"));
+        assert!(!manager.cancel_service_test("main", "service_a", "test_two"));
     }
 
     #[test]
     fn stale_service_test_registration_does_not_release_a_newer_test() {
         let manager = Arc::new(CoreManager::new());
-        let first = manager.register_service_test("test_reused").unwrap();
-        assert!(manager.cancel_service_test("test_reused"));
-        let second = manager.register_service_test("test_reused").unwrap();
+        let first = manager
+            .register_service_test("main", "service_a", "test_reused")
+            .unwrap();
+        assert!(manager.cancel_service_test("main", "service_a", "test_reused"));
+        let second = manager
+            .register_service_test("main", "service_a", "test_reused")
+            .unwrap();
         drop(first);
         assert!(
-            manager.cancel_service_test("test_reused"),
+            manager.cancel_service_test("main", "service_a", "test_reused"),
             "dropping an older registration must not release the newer test"
         );
         drop(second);
