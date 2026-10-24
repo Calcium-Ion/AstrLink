@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/servicetest"
 	"github.com/QuantumNous/astrlink/core/internal/storage/sqlite"
 	syncengine "github.com/QuantumNous/astrlink/core/internal/sync"
+	"github.com/QuantumNous/astrlink/core/internal/vertexauth"
 )
 
 // installOutboundProxy configures the outbound proxy once per process,
@@ -233,11 +234,12 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 	}
 	resolver.WithRuntimeProfile(contract.RuntimeProfile{RelayKitAvailable: true, Edges: conversionEngine.Edges()})
 	resolver.WithSubscriptionBaseURL(subscriptionManager.APIBaseURL())
+	vertexTokens := vertexauth.New(nil)
 	gatewayDependencies := ingress.Dependencies{
 		ProxyCredentials: store,
 		Resolver:         resolver,
 		Authorizer: endpoint.NewServiceAuthorizer(store, subscriptionManager, subscriptionManager.Provider().IdentityPolicy()).
-			WithRoutingSettings(store).WithIdentities(identities),
+			WithRoutingSettings(store).WithIdentities(identities).WithVertexTokens(vertexTokens),
 		AccessTokenAuthenticator: ingress.AccessTokenAuthenticatorFunc(
 			func(ctx context.Context, raw string) (contract.AccessTokenID, error) {
 				return accessTokenManager.Authenticate(ctx, raw)
@@ -286,7 +288,7 @@ func openPersistentCore(ctx context.Context, options persistentOptions) (*persis
 		Subscriptions:      subscriptionManager,
 		RateLimits:         resolver,
 		CodingPlans:        codingplan.New(store, nil),
-		ServiceModels:      servicemodel.New(store, subscriptionManager, nil),
+		ServiceModels:      servicemodel.New(store, subscriptionManager, nil).WithVertexTokens(vertexTokens),
 		ServiceTester:      servicetest.NewWithDependencies(gatewayDependencies, subscriptionManager.APIBaseURLFor),
 		BuiltinToolTester:  ingress.NewWithDependencies(gatewayDependencies),
 		ControlToken:       options.controlToken,

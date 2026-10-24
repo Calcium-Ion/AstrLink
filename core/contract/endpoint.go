@@ -40,17 +40,18 @@ func (mode CapabilityMode) Valid() bool {
 type AuthScheme string
 
 const (
-	AuthSchemeNone            AuthScheme = "none"
-	AuthSchemeBearer          AuthScheme = "bearer"
-	AuthSchemeAnthropicAPIKey AuthScheme = "anthropic_api_key"
-	AuthSchemeGoogleAPIKey    AuthScheme = "google_api_key"
-	AuthSchemeCustomHeader    AuthScheme = "custom_header"
+	AuthSchemeNone                 AuthScheme = "none"
+	AuthSchemeBearer               AuthScheme = "bearer"
+	AuthSchemeAnthropicAPIKey      AuthScheme = "anthropic_api_key"
+	AuthSchemeGoogleAPIKey         AuthScheme = "google_api_key"
+	AuthSchemeGoogleServiceAccount AuthScheme = "google_service_account"
+	AuthSchemeCustomHeader         AuthScheme = "custom_header"
 )
 
 func (scheme AuthScheme) Valid() bool {
 	switch scheme {
 	case AuthSchemeNone, AuthSchemeBearer, AuthSchemeAnthropicAPIKey,
-		AuthSchemeGoogleAPIKey, AuthSchemeCustomHeader:
+		AuthSchemeGoogleAPIKey, AuthSchemeGoogleServiceAccount, AuthSchemeCustomHeader:
 		return true
 	default:
 		return false

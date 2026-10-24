@@ -42,3 +42,19 @@ func TestServiceTestCapabilityValidation(t *testing.T) {
 		t.Fatal("accepted non-streaming Codex test")
 	}
 }
+
+func TestVertexNativeTestsDoNotDependOnEntryCapabilities(t *testing.T) {
+	service := Service{Kind: ServiceKindVertex, Capabilities: []Capability{{Protocol: ProtocolOpenAIResponses, Mode: CapabilityModeNative, Streaming: true, ConvertTo: ProtocolGoogleGenerateContent}}}
+	for _, protocol := range service.Kind.ModelFormats() {
+		for _, stream := range []bool{false, true} {
+			if err := (ServiceTestRequest{Protocol: protocol, Model: "model", Stream: stream}).Validate(service); err != nil {
+				t.Fatalf("%s stream=%t: %v", protocol, stream, err)
+			}
+		}
+	}
+	for _, protocol := range []ProtocolID{ProtocolOpenAIResponses, ProtocolOpenAICompletions} {
+		if (ServiceTestRequest{Protocol: protocol, Model: "model"}).Validate(service) == nil {
+			t.Fatalf("accepted non-native Vertex test: %s", protocol)
+		}
+	}
+}

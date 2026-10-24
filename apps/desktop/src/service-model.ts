@@ -30,6 +30,7 @@ export type HTTPServiceKind =
   | "openai"
   | "anthropic"
   | "gemini"
+  | "vertex"
   | "deepseek"
   | "qwen"
   | "moonshot"
@@ -45,6 +46,7 @@ export type ServiceAuthScheme =
   | "bearer"
   | "anthropic_api_key"
   | "google_api_key"
+  | "google_service_account"
   | "custom_header";
 
 export interface ServiceAuth {
@@ -242,10 +244,31 @@ export function hasPlanUsage(service: {
   return codingPlanUsageKinds.has(service.kind) && service.http != null;
 }
 
+export interface VertexConnection {
+  project_id: string;
+  location: string;
+}
+
+export function vertexBaseURL(location: string): string {
+  if (location === "global") return "https://aiplatform.googleapis.com";
+  if (location === "us" || location === "eu")
+    return `https://aiplatform.${location}.rep.googleapis.com`;
+  return `https://${location}-aiplatform.googleapis.com`;
+}
+
+export function validVertexConnection(vertex: VertexConnection): boolean {
+  return (
+    /^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20})$/.test(vertex.project_id) &&
+    vertex.location.length <= 64 &&
+    /^(?:global|us|eu|[a-z]+-[a-z]+[0-9]+)$/.test(vertex.location)
+  );
+}
+
 export interface HTTPServiceConnection {
   base_url: string;
   auth: ServiceAuth;
   credential_ref?: string;
+  vertex?: VertexConnection;
   model_list_path?: string;
   /** Saved key's last characters ("…a1b2"); only on a single-service read. */
   credential_hint?: string;
@@ -369,6 +392,7 @@ export type HTTPServiceCreateInput = {
     base_url: string;
     auth: ServiceAuth;
     credential?: { secret: string };
+    vertex?: VertexConnection;
     model_list_path?: string;
   };
   capabilities: ServiceCapability[];
@@ -393,6 +417,7 @@ export type ServicePatchInput = {
     base_url?: string;
     auth?: ServiceAuth;
     credential?: { secret: string } | null;
+    vertex?: VertexConnection;
     model_list_path?: string | null;
   };
   capabilities?: ServiceCapability[];
@@ -444,6 +469,7 @@ const httpKinds = new Set<HTTPServiceKind>([
   "openai",
   "anthropic",
   "gemini",
+  "vertex",
   "deepseek",
   "qwen",
   "moonshot",
@@ -459,6 +485,7 @@ const authSchemes = new Set<ServiceAuthScheme>([
   "bearer",
   "anthropic_api_key",
   "google_api_key",
+  "google_service_account",
   "custom_header",
 ]);
 const subscriptionStatuses = new Set<SubscriptionStatus>([
@@ -624,7 +651,7 @@ function parseHTTPConnection(
   keysAt(
     connection,
     ["base_url", "auth"],
-    ["credential_ref", "model_list_path", "credential_hint"],
+    ["credential_ref", "model_list_path", "credential_hint", "vertex"],
     path,
   );
   const baseURL = stringAt(connection.base_url, `${path}.base_url`, 1, 2048);
@@ -676,9 +703,34 @@ function parseHTTPConnection(
       invalid(`${path}.credential_hint`, "must be a saved-key display hint");
     }
   }
+  const auth = parseAuth(connection.auth, `${path}.auth`);
+  let vertex: VertexConnection | undefined;
+  if (Object.hasOwn(connection, "vertex")) {
+    const value = objectAt(connection.vertex, `${path}.vertex`);
+    keysAt(value, ["project_id", "location"], [], `${path}.vertex`);
+    vertex = {
+      project_id: stringAt(
+        value.project_id,
+        `${path}.vertex.project_id`,
+        1,
+        30,
+      ),
+      location: stringAt(value.location, `${path}.vertex.location`, 1, 64),
+    };
+    if (
+      !validVertexConnection(vertex) ||
+      baseURL !== vertexBaseURL(vertex.location) ||
+      auth.scheme !== "google_service_account"
+    )
+      invalid(path, "invalid Vertex connection");
+  } else if (auth.scheme === "google_service_account")
+    invalid(path, "Vertex configuration required");
+  if (vertex && credentialHint)
+    invalid(path, "Vertex credentials must not have a key hint");
   return {
     base_url: baseURL,
-    auth: parseAuth(connection.auth, `${path}.auth`),
+    auth,
+    ...(vertex ? { vertex } : {}),
     ...(credentialRef ? { credential_ref: credentialRef } : {}),
     ...(modelListPath ? { model_list_path: modelListPath } : {}),
     ...(credentialHint ? { credential_hint: credentialHint } : {}),
@@ -1038,6 +1090,25 @@ export function parseService(value: unknown, path = "$"): Service {
   const capabilities = service.capabilities.map((capability, index) =>
     parseCapability(capability, `${path}.capabilities[${index}]`),
   );
+  if (service.kind === "vertex") {
+    const formats: readonly string[] = serviceModelFormats("vertex");
+    if (modelProtocols.some((entry) => !formats.includes(entry.protocol)))
+      invalid(`${path}.model_protocols`, "unsupported Vertex upstream format");
+    for (const capability of capabilities) {
+      if (
+        (!isModelFormat(capability.protocol) &&
+          capability.protocol !== "openai.models" &&
+          capability.protocol !== "google.models") ||
+        (capability.protocol === "openai.responses" &&
+          !capability.convert_to) ||
+        (capability.convert_to && !formats.includes(capability.convert_to))
+      )
+        invalid(
+          `${path}.capabilities`,
+          "unsupported Vertex entry or conversion target",
+        );
+    }
+  }
   const createdAt = timestampAt(service.created_at, `${path}.created_at`);
   const updatedAt = timestampAt(service.updated_at, `${path}.updated_at`);
   if (Date.parse(updatedAt) < Date.parse(createdAt)) {
@@ -1094,6 +1165,9 @@ export function parseService(value: unknown, path = "$"): Service {
   ) {
     invalid(path, "HTTP service requires only http");
   }
+  const http = parseHTTPConnection(service.http, `${path}.http`);
+  if ((service.kind === "vertex") !== Boolean(http.vertex))
+    invalid(path, "vertex configuration requires a Vertex service");
   return {
     id,
     name,
@@ -1108,7 +1182,7 @@ export function parseService(value: unknown, path = "$"): Service {
       : {}),
     models,
     capabilities,
-    http: parseHTTPConnection(service.http, `${path}.http`),
+    http,
     created_at: createdAt,
     updated_at: updatedAt,
     ...(Object.hasOwn(service, "failure_policy")
@@ -1243,10 +1317,11 @@ export function subscriptionRiskLabel(
 export function supportsResponsesWebSocket(
   service: Pick<Service, "kind" | "capabilities">,
 ): boolean {
-  // The Copilot API and Factory's gateway serve Responses over HTTP only.
+  // Copilot, Droid and Vertex do not expose native Responses WebSockets.
   if (
     service.kind === "copilot_subscription" ||
-    service.kind === "droid_subscription"
+    service.kind === "droid_subscription" ||
+    service.kind === "vertex"
   )
     return false;
   return (
@@ -1326,6 +1401,8 @@ export function withClaudeCodeRedirects(
  * contract.ServiceKind.ModelFormats, in the order the editor lists them.
  */
 export function serviceModelFormats(kind: ServiceKind): readonly ModelFormat[] {
+  if (kind === "vertex")
+    return modelFormats.filter((format) => format !== "openai.responses");
   if (!isSubscriptionKind(kind)) return modelFormats;
   const targets = subscriptionConversionTargets[kind];
   return modelFormats.filter((format) => targets.includes(format));
@@ -1422,6 +1499,7 @@ export function withDiscoveredModelProtocols(
   models: readonly string[],
   discovered: readonly ModelProtocol[],
 ): ModelProtocol[] {
+  if (kind === "vertex") return [...entries];
   const formats = serviceModelFormats(kind);
   const previous = new Set(previousModels);
   const listed = new Set(models);

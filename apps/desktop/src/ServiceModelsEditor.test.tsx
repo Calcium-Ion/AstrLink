@@ -33,6 +33,7 @@ function Harness({
   const [protocols, setProtocols] = useState(initialProtocols);
   return (
     <ServiceModelsEditor
+      compact={kind === "vertex"}
       builtinProtocol={(model) => serviceBuiltinModelProtocol(kind, model)}
       formats={serviceModelFormats(kind)}
       modelEditor=""
@@ -227,17 +228,54 @@ describe("ServiceModelsEditor upstream formats", () => {
     expect(formatChoices().map(textOf)[0]).toBe("默认（Gemini）");
   });
 
-  it("offers the entry protocols as the default for a kind without a table", async () => {
-    await render("newapi", ["gemini-3.1-pro"]);
-    await chooseFormat("gemini-3.1-pro", "Gemini");
-    expect(protocolChanges).toHaveBeenLastCalledWith(
-      ["gemini-3.1-pro"],
-      "google.generate_content",
-    );
-    expect(formatTag("gemini-3.1-pro")).toBe("Gemini 格式");
-    await chooseFormat("gemini-3.1-pro", "按入口协议设置");
-    expect(protocolChanges).toHaveBeenLastCalledWith(["gemini-3.1-pro"], null);
-    expect(formatTag("gemini-3.1-pro")).toBeUndefined();
+  it.each(["newapi", "vertex"] as const)(
+    "offers entry settings as the default for %s",
+    async (kind) => {
+      await render(kind, ["gemini-3.1-pro"]);
+      await chooseFormat("gemini-3.1-pro", "Gemini");
+      expect(protocolChanges).toHaveBeenLastCalledWith(
+        ["gemini-3.1-pro"],
+        "google.generate_content",
+      );
+      expect(formatTag("gemini-3.1-pro")).toBe("Gemini 格式");
+      await chooseFormat("gemini-3.1-pro", "按入口协议设置");
+      expect(protocolChanges).toHaveBeenLastCalledWith(
+        ["gemini-3.1-pro"],
+        null,
+      );
+      expect(formatTag("gemini-3.1-pro")).toBeUndefined();
+    },
+  );
+
+  it("sets and clears Vertex formats in bulk without offering Responses", async () => {
+    const models = ["claude-test", "gemini-test"];
+    await render("vertex", models);
+    await press(formatMenu(models[0]));
+    expect(formatChoices().map(textOf)).toEqual([
+      "按入口协议设置",
+      "Messages",
+      "Chat",
+      "Gemini",
+    ]);
+    await click(formatChoices()[0]);
+    await settleClosedLayer();
+    for (const format of ["Messages", "按入口协议设置"]) {
+      await click(button("多选", headerActions()));
+      for (const model of models) await click(rowCheckbox(model));
+      await press(button("指定格式", selection()!));
+      expect(
+        [...document.querySelectorAll('[role="menuitem"]')].map(textOf),
+      ).toEqual(["按入口协议设置", "Messages", "Chat", "Gemini"]);
+      await chooseMenuItem(format);
+      expect(protocolChanges).toHaveBeenLastCalledWith(
+        models,
+        format === "Messages" ? "anthropic.messages" : null,
+      );
+      for (const model of models)
+        expect(formatTag(model)).toBe(
+          format === "Messages" ? "Messages 格式" : undefined,
+        );
+    }
   });
 
   it("sets one format for the checked models from selection mode", async () => {

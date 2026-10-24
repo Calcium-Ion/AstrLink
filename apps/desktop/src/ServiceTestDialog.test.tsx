@@ -24,6 +24,7 @@ vi.mock("./components/MarkdownRenderer", async (importOriginal) => {
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { ServiceTestDialog } from "./ServiceTestDialog";
 import type { Service } from "./service-model";
+import { testableCapabilities } from "./service-test-model";
 
 const service: Service = {
   id: "service_test",
@@ -74,6 +75,80 @@ const modelOptions = () => [
     '[role="listbox"][aria-label="测试模型"] [role="option"]',
   ),
 ];
+
+it.each([false, true])(
+  "tests Vertex models in their native format (stream=%s)",
+  async (stream) => {
+    const vertex: Service = {
+      ...service,
+      kind: "vertex",
+      models: [
+        "gemini-test",
+        "claude-test@20260101",
+        "meta/llama-test-maas",
+        "custom",
+      ],
+      model_protocols: [{ model: "custom", protocol: "openai.chat" }],
+      capabilities: [
+        {
+          protocol: "openai.responses",
+          mode: "native",
+          streaming: true,
+          convert_to: "google.generate_content",
+        },
+      ],
+    };
+    expect(
+      testableCapabilities(vertex).map((item) => item.protocol),
+    ).not.toContain("openai.responses");
+    mocks.testService.mockResolvedValue({
+      service_id: service.id,
+      protocol: "google.generate_content",
+      model: vertex.models[0],
+      stream: true,
+      ok: true,
+      status_code: 200,
+      duration_ms: 1,
+      output: "OK",
+    });
+    await act(async () =>
+      root.render(<ServiceTestDialog service={vertex} onClose={() => {}} />),
+    );
+    await act(async () => {
+      if (!stream)
+        document.querySelector<HTMLButtonElement>('[role="switch"]')!.click();
+      const prompt = document.querySelector<HTMLTextAreaElement>("textarea")!;
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(prompt, "keep my prompt");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.querySelector('button[aria-label="测试协议"]')).toBeNull();
+    for (const [index, protocol] of [
+      "google.generate_content",
+      "anthropic.messages",
+      "openai.chat",
+      "openai.chat",
+    ].entries()) {
+      if (index > 0) {
+        await act(async () => modelInput().click());
+        await act(async () => modelOptions()[index].click());
+      }
+      await act(async () => button("开始测试").click());
+      expect(mocks.testService).toHaveBeenLastCalledWith(service.id, {
+        protocol,
+        model: vertex.models[index],
+        stream,
+        prompt: "keep my prompt",
+      });
+    }
+    await typeModel(modelInput(), "unknown");
+    expect(button("开始测试").disabled).toBe(true);
+    expect(document.body.textContent).toContain("无法识别此模型的原生协议");
+  },
+);
+
 async function typeModel(input: HTMLInputElement, value: string) {
   await act(async () => {
     Object.getOwnPropertyDescriptor(

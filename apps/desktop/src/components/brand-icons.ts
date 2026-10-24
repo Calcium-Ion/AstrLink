@@ -32,6 +32,7 @@ export { PiColor } from "./PiColor";
 export { default as QwenColor } from "@lobehub/icons/es/Qwen/components/Color";
 export { default as RooCodeMono } from "@lobehub/icons/es/RooCode/components/Mono";
 export { default as StepfunMono } from "@lobehub/icons/es/Stepfun/components/Mono";
+export { default as VertexAIColor } from "@lobehub/icons/es/VertexAI/components/Color";
 export { default as WenxinColor } from "@lobehub/icons/es/Wenxin/components/Color";
 export { default as XiaomiMiMoMono } from "@lobehub/icons/es/XiaomiMiMo/components/Mono";
 export { default as ZhipuColor } from "@lobehub/icons/es/Zhipu/components/Color";

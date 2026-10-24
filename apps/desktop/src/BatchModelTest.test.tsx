@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ testService: vi.fn() }));
 vi.mock("./bridge", () => ({ testService: mocks.testService }));
 import { ServiceTestDialog } from "./ServiceTestDialog";
+import { settleClosedLayer } from "./lib/test-layer-settle";
 import type { Service } from "./service-model";
 import type { ServiceTestInput, ServiceTestResult } from "./service-test-model";
 
@@ -92,6 +93,89 @@ afterEach(async () => {
   container.remove();
   vi.restoreAllMocks();
 });
+
+it.each([false, true])(
+  "tests and retries mixed Vertex models in their own native formats (stream=%s)",
+  async (stream) => {
+    const vertex: Service = {
+      ...service,
+      kind: "vertex",
+      models: [
+        "gemini-test",
+        "claude-test@20250101",
+        "meta/llama-test-maas",
+        "unknown",
+      ],
+      capabilities: [
+        {
+          protocol: "openai.responses",
+          mode: "native",
+          streaming: true,
+          convert_to: "google.generate_content",
+        },
+      ],
+      model_protocols: [
+        { model: "gemini-test", protocol: "google.generate_content" },
+      ],
+    };
+    mocks.testService.mockImplementation(
+      async (_id: string, input: ServiceTestInput) => ({
+        ...result(input.model, !input.model.startsWith("claude-")),
+        ...input,
+      }),
+    );
+    await act(async () =>
+      root.render(<ServiceTestDialog service={vertex} onClose={() => {}} />),
+    );
+    await act(async () => {
+      if (!stream)
+        document.querySelector<HTMLButtonElement>('[role="switch"]')!.click();
+      const prompt = document.querySelector<HTMLTextAreaElement>("textarea")!;
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(prompt, "keep my prompt");
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button("批量模型").click());
+    await act(async () => button("测试配置").click());
+    expect(document.body.textContent).toContain("逐模型选择原生协议");
+    await act(async () =>
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      ),
+    );
+    await settleClosedLayer();
+    await act(async () => button("测试 4 个模型").click());
+    expect(
+      mocks.testService.mock.calls.map(([, input]) => [
+        input.model,
+        input.protocol,
+        input.stream,
+        input.prompt,
+      ]),
+    ).toEqual([
+      ["gemini-test", "google.generate_content", stream, "keep my prompt"],
+      ["claude-test@20250101", "anthropic.messages", stream, "keep my prompt"],
+      ["meta/llama-test-maas", "openai.chat", stream, "keep my prompt"],
+    ]);
+    expect(modelRow("unknown").textContent).toContain("失败");
+    mocks.testService.mockImplementation(
+      async (_id: string, input: ServiceTestInput) => ({
+        ...result(input.model),
+        ...input,
+      }),
+    );
+    await act(async () => button("重试失败 (2)").click());
+    expect(mocks.testService).toHaveBeenLastCalledWith(service.id, {
+      model: "claude-test@20250101",
+      protocol: "anthropic.messages",
+      stream,
+      prompt: "keep my prompt",
+    });
+    expect(mocks.testService).toHaveBeenCalledTimes(4);
+  },
+);
 
 it("runs selected models, shows original failures and retries only failed items", async () => {
   mocks.testService.mockImplementation(
