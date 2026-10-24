@@ -182,8 +182,35 @@ func (resolver *StoreResolver) ResolveRankedCandidates(ctx context.Context, requ
 	return candidates, ranking, nil
 }
 
-// ResolveService returns an enabled HTTP service without consulting
-// capabilities or rate-limit cooldowns; the caller owns the single attempt.
+// ResolveMemberCandidates preserves the selected service_id + model as a
+// hard target. Provider failover cannot widen this list to another member.
+func (resolver *StoreResolver) ResolveMemberCandidates(ctx context.Context, request ResolveRequest, serviceID contract.ServiceID, model string) ([]Resolved, error) {
+	request.Model = model
+	request.AllCandidates = true
+	candidates, ranking, err := resolver.ResolveRankedCandidates(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		if candidate.CanonicalService().ID == serviceID && (candidate.UpstreamModel == "" || candidate.UpstreamModel == model) {
+			candidate.UpstreamModel = model
+			return []Resolved{candidate}, nil
+		}
+	}
+	for _, ranked := range ranking {
+		if ranked.ServiceID != serviceID {
+			continue
+		}
+		switch ranked.Skip {
+		case contract.RoutingSkipProtocolUnsupported, contract.RoutingSkipStreamingUnsupported, contract.RoutingSkipConversionUnavailable, contract.RoutingSkipWebSocketUnsupported:
+			return nil, &CapabilityUnavailableError{Protocol: request.Protocol, Model: model, Modes: []contract.CapabilityMode{contract.CapabilityModeNative, contract.CapabilityModeDelegated}, Streaming: request.Streaming, Reason: ranked.Skip}
+		}
+	}
+	return nil, ErrNoEndpoint
+}
+
+// ResolveService returns an enabled HTTP service without consulting capabilities
+// or rate-limit cooldowns; the caller owns the single attempt.
 func (resolver *StoreResolver) ResolveService(ctx context.Context, id contract.ServiceID) (Resolved, error) {
 	if resolver == nil || resolver.reader == nil {
 		return Resolved{}, ErrUnavailable

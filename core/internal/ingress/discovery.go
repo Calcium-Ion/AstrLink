@@ -139,7 +139,15 @@ func (handler *Handler) aggregateModelDiscovery(
 			visible = append(visible, entry)
 		}
 	}
-	merged, err := appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
+	var err error
+	classifierSettings := handler.requestClassifierSettings(request.Context(), recordSessionFromContext(request.Context()))
+	visible, err = appendModelRoutingDiscoveryEntries(classified.Protocol, visible, settingsGroupsFromSession(request.Context()), func() []contract.ClassifierDimension {
+		return classifierSettings().Dimensions
+	})
+	if err == nil {
+		visible, err = appendRedirectDiscoveryEntries(classified.Protocol, visible, redirects)
+	}
+	merged = visible
 	var body []byte
 	if err == nil {
 		if wantsCodexModelCatalog(request, classified.Protocol) {
@@ -549,6 +557,72 @@ func encodeDiscoveryList(protocol contract.ProtocolID, entries []discoveryEntry)
 		envelope.LastID = &entries[len(entries)-1].id
 	}
 	return json.Marshal(envelope)
+}
+
+func settingsGroupsFromSession(ctx context.Context) []contract.ModelRoutingGroup {
+	session := recordSessionFromContext(ctx)
+	if session == nil || session.routingSettings == nil {
+		return nil
+	}
+	return session.routingSettings.ModelRoutingGroups
+}
+
+// modelRoutingGroupListable reports whether a group is valid as saved. A rule
+// on a custom dimension is valid only against the declared dimensions, which
+// are read only when the cheap check fails, as on the routing path.
+func modelRoutingGroupListable(group contract.ModelRoutingGroup, dimensions func() []contract.ClassifierDimension) bool {
+	if group.Validate() == nil {
+		return true
+	}
+	declared := dimensions()
+	return len(declared) > 0 && group.ValidateWithDimensions(declared) == nil
+}
+
+func appendModelRoutingDiscoveryEntries(protocol contract.ProtocolID, entries []discoveryEntry, groups []contract.ModelRoutingGroup, dimensions func() []contract.ClassifierDimension) ([]discoveryEntry, error) {
+	if len(groups) == 0 {
+		return entries, nil
+	}
+	listed := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		listed[discoveryModelID(protocol, entry.id)] = struct{}{}
+	}
+	for _, group := range groups {
+		if !group.Enabled || !modelRoutingGroupListable(group, dimensions) {
+			continue
+		}
+		available := true
+		for _, member := range group.Members {
+			if _, ok := listed[member.Model]; !ok {
+				available = false
+				break
+			}
+		}
+		if !available || group.PublicModelID() == contract.AstrLinkAutoModelID {
+			continue
+		}
+		publicID := group.PublicModelID()
+		if _, exists := listed[publicID]; exists {
+			continue
+		}
+		var raw json.RawMessage
+		var err error
+		if protocol == contract.ProtocolGoogleModels {
+			raw, err = json.Marshal(googleSynthesizedModel{Name: "models/" + publicID, DisplayName: publicID})
+		} else {
+			raw, err = json.Marshal(openAISynthesizedModel{ID: publicID, Object: "model", Created: 0, OwnedBy: "system"})
+		}
+		if err != nil {
+			return nil, err
+		}
+		entryID := publicID
+		if protocol == contract.ProtocolGoogleModels {
+			entryID = "models/" + publicID
+		}
+		entries = append(entries, discoveryEntry{id: entryID, raw: raw})
+		listed[publicID] = struct{}{}
+	}
+	sort.Slice(entries, func(left, right int) bool { return entries[left].id < entries[right].id })
+	return entries, nil
 }
 
 // appendRedirectDiscoveryEntries lists each enabled redirect source whose

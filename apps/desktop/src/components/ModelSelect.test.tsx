@@ -3,12 +3,25 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { applyLocale, i18n } from "@/i18n";
+
+import { modelRoutingFieldLabel } from "@/request-model-routing-model";
+
 import { ModelSelect } from "./ModelSelect";
+
+/** Two providers legally share one display name; their ids stay distinct. */
+const providerNames: Record<string, string> = {
+  service_a: "OpenAI",
+  service_b: "OpenAI",
+};
+const providerLabel = (value: string) => providerNames[value] ?? value;
 
 describe("ModelSelect", () => {
   let container: HTMLDivElement;
   let root: Root;
-  beforeEach(() => {
+  beforeEach(async () => {
+    await applyLocale("zh-CN");
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -166,5 +179,57 @@ describe("ModelSelect", () => {
       input().dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
     );
     expect(commit).toHaveBeenLastCalledWith("another-model");
+  });
+
+  it("writes back the id of the option the user clicked when providers share a name", async () => {
+    const change = vi.fn();
+    function ProviderHarness() {
+      const [value, setValue] = useState("");
+      return (
+        <ModelSelect
+          aria-label="provider"
+          value={value}
+          options={["service_a", "service_b"]}
+          allowCustomValue={false}
+          optionLabel={providerLabel}
+          onValueChange={(next) => {
+            setValue(next);
+            change(next);
+          }}
+        />
+      );
+    }
+    await act(async () => root.render(<ProviderHarness />));
+    await act(async () => input().click());
+    const rows = suggestions();
+    expect(rows.map((row) => row.textContent)).toEqual(["OpenAI", "OpenAI"]);
+    // Clicking the second duplicate must land on the second id, not the first.
+    await act(async () => (rows[1] as HTMLElement).click());
+    expect(change).toHaveBeenCalledExactlyOnceWith("service_b");
+  });
+
+  it("refreshes a labelled option list after the language changes", async () => {
+    await applyLocale("zh-CN");
+    await act(async () =>
+      root.render(
+        <ModelSelect
+          aria-label="field"
+          value="task_type"
+          options={["task_type"]}
+          allowCustomValue={false}
+          optionLabel={modelRoutingFieldLabel}
+          onValueChange={() => {}}
+        />,
+      ),
+    );
+    await act(async () => input().click());
+    expect(suggestions()[0].textContent).toBe("任务类型");
+    await act(async () => input().dispatchEvent(new Event("blur")));
+    await act(async () => applyLocale("en"));
+    await act(async () => input().click());
+    expect(suggestions()[0].textContent).toBe("Task type");
+    // Restore the suite default for later files that share this i18n instance.
+    await act(async () => applyLocale("zh-CN"));
+    expect(i18n.language).toBe("zh-CN");
   });
 });

@@ -6,6 +6,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Activity,
+  Brain,
   CircleHelp,
   Bot,
   Home as House,
@@ -53,6 +54,10 @@ import {
 } from "./core-model";
 import { Overview, type ServiceCatalog } from "./Overview";
 import { GettingStarted } from "./GettingStarted";
+import {
+  IntelligentRouting,
+  type IntelligentRoutingView,
+} from "./IntelligentRouting";
 import { useOnboarding } from "./use-onboarding";
 import type { CopyState } from "./copy-feedback";
 import { currentLocale, i18n, useT } from "./i18n";
@@ -100,6 +105,12 @@ type WorkspacePage =
   | { kind: "safety"; view?: "models" | "overview" }
   | { kind: "records"; target?: RecordsTarget }
   | { kind: "routing" }
+  | {
+      kind: "intelligentRouting";
+      view?: IntelligentRoutingView;
+      /** Opens this group's rule editor, e.g. from a request's routing. */
+      editGroup?: string;
+    }
   | { kind: "agentTools"; preselectSkill?: AgentSkillId }
   | { kind: "settings" }
   | { kind: "about" }
@@ -109,6 +120,7 @@ type IconName =
   | "about"
   | "activity"
   | "bot"
+  | "brain"
   | "home"
   | "key"
   | "route"
@@ -218,6 +230,7 @@ export function trayNavigationTarget(
     case "safety":
     case "records":
     case "routing":
+    case "intelligentRouting":
     case "agentTools":
     case "settings":
     case "about":
@@ -238,6 +251,7 @@ const icons: Record<IconName, AnimatedIcon> = {
   server: Server,
   settings: Settings,
   shield: ShieldCheck,
+  brain: Brain,
 };
 
 function Icon({ className, name }: { className?: string; name: IconName }) {
@@ -694,10 +708,17 @@ export default function App() {
             next.serviceId !== page.serviceId));
       const leavingRouteEditor =
         page.kind === "routing" && next.kind !== "routing";
+      // The routing groups editor now lives under intelligent routing.
+      const leavingIntelligentRouting =
+        page.kind === "intelligentRouting" &&
+        next.kind !== "intelligentRouting";
       const leavingSettings =
         page.kind === "settings" && next.kind !== "settings";
       const leavingEditor =
-        leavingServiceEditor || leavingRouteEditor || leavingSettings;
+        leavingServiceEditor ||
+        leavingRouteEditor ||
+        leavingIntelligentRouting ||
+        leavingSettings;
       if (leavingEditor && editorDirtyRef.current) {
         setPendingPage(next);
         return;
@@ -831,6 +852,24 @@ export default function App() {
     () => snapshot?.capabilities?.protocols ?? [],
     [snapshot?.capabilities?.protocols],
   );
+  // The routing rule editor offers the protocols core says it serves. Only the
+  // alpha phase is included: a post-alpha ID is a reserved identifier the
+  // gateway cannot execute today, and offering it would let the user write a
+  // rule that can never match. For the same reason Google formats are left
+  // out, since their path carries the model and cannot name astrlink/<group>,
+  // and so is model discovery, which no routing group serves.
+  const protocolIDs = useMemo(
+    () =>
+      protocols
+        .filter(
+          (entry) =>
+            entry.phase === "alpha" &&
+            !entry.id.startsWith("google.") &&
+            !entry.id.endsWith(".models"),
+        )
+        .map((entry) => entry.id),
+    [protocols],
+  );
   const providerImport = useProviderImport({
     enabled: isReady && rawSealing.status !== null && !rawSetupNeeded,
     protocols,
@@ -920,8 +959,14 @@ export default function App() {
               <NavButton
                 active={page.kind === "routing"}
                 icon="route"
-                label={t("nav.routing")}
+                label={t("nav.providerRouting")}
                 onClick={() => navigate({ kind: "routing" })}
+              />
+              <NavButton
+                active={page.kind === "intelligentRouting"}
+                icon="brain"
+                label={t("nav.intelligentRouting")}
+                onClick={() => navigate({ kind: "intelligentRouting" })}
               />
             </div>
 
@@ -1033,6 +1078,7 @@ export default function App() {
                 "records",
                 "safety",
                 "routing",
+                "intelligentRouting",
                 "agentTools",
                 "settings",
               ].includes(page.kind)
@@ -1161,6 +1207,18 @@ export default function App() {
                 coreSessionKey={coreSessionKey}
                 services={catalog.items}
                 isReady={isReady}
+                conversionEngine={snapshot?.capabilities?.conversion_engine}
+                onEditRoutingGroup={(groupID) =>
+                  navigate({
+                    kind: "intelligentRouting",
+                    view: "groups",
+                    editGroup: groupID,
+                  })
+                }
+                onOpenService={(serviceId) =>
+                  navigate({ kind: "edit", serviceId, tab: "protocols" })
+                }
+                onServicesChanged={() => void refreshServices({ silent: true })}
                 target={page.target}
               />
             ) : page.kind === "routing" ? (
@@ -1168,6 +1226,21 @@ export default function App() {
                 services={catalog.items}
                 isReady={isReady}
                 onDirtyChange={handleEditorDirtyChange}
+              />
+            ) : page.kind === "intelligentRouting" ? (
+              <IntelligentRouting
+                key={page.editGroup ?? ""}
+                initialView={page.view}
+                initialEditGroup={page.editGroup}
+                ready={isReady}
+                services={catalog.items}
+                protocols={protocolIDs}
+                onDirtyChange={handleEditorDirtyChange}
+                conversionEngine={snapshot?.capabilities?.conversion_engine}
+                onOpenService={(serviceId) =>
+                  navigate({ kind: "edit", serviceId, tab: "protocols" })
+                }
+                onServicesChanged={() => void refreshServices({ silent: true })}
               />
             ) : page.kind === "agentTools" ? (
               <AgentDebugSettings preselectSkill={page.preselectSkill} />

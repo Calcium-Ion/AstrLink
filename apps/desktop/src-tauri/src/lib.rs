@@ -1935,6 +1935,49 @@ async fn update_routing_settings(
 }
 
 #[tauri::command]
+async fn get_classifier_settings(
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.get_classifier_settings().await
+}
+
+#[tauri::command]
+async fn update_classifier_settings(
+    settings: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.update_classifier_settings(settings).await
+}
+
+#[tauri::command]
+async fn classifier_credential_action(
+    action: String,
+    secret: Option<String>,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.classifier_credential_action(action, secret).await
+}
+
+#[tauri::command]
+async fn get_model_routing_group_version(
+    group_id: String,
+    version: u32,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager
+        .get_model_routing_group_version(&group_id, version)
+        .await
+}
+
+#[tauri::command]
+async fn classifier_dry_run(
+    input: serde_json::Value,
+    manager: State<'_, Arc<CoreManager>>,
+) -> Result<serde_json::Value, String> {
+    manager.classifier_dry_run(input).await
+}
+
+#[tauri::command]
 async fn get_client_identities(
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
@@ -2509,6 +2552,11 @@ pub fn run() {
             builtin_tool_action,
             get_routing_settings,
             update_routing_settings,
+            get_classifier_settings,
+            update_classifier_settings,
+            classifier_credential_action,
+            classifier_dry_run,
+            get_model_routing_group_version,
             get_client_identities,
             get_audit_settings,
             update_audit_settings,

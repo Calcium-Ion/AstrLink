@@ -29,6 +29,10 @@ type CapabilityUnavailableError struct {
 	Model     string
 	Modes     []contract.CapabilityMode
 	Streaming bool
+	// Reason is why one exact target was refused, set only when a routing
+	// group named the service; a request open to every provider has no
+	// single reason.
+	Reason contract.RoutingSkipReason
 }
 
 func (err *CapabilityUnavailableError) Error() string {
@@ -192,6 +196,12 @@ type CandidateResolver interface {
 // different provider.
 type ServiceResolver interface {
 	ResolveService(context.Context, contract.ServiceID) (Resolved, error)
+}
+
+// ExactTargetResolver plans only the concrete service/model selected by a
+// model routing group. It must never widen the target to another service.
+type ExactTargetResolver interface {
+	ResolveMemberCandidates(context.Context, ResolveRequest, contract.ServiceID, string) ([]Resolved, error)
 }
 
 // RankedService is one configured provider in routing priority order. Skip is

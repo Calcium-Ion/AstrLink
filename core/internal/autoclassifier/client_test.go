@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,9 @@ func TestClassifyFailOpenAndSuccess(t *testing.T) {
 	outcome := okClient.Classify(context.Background(), "hello")
 	if !outcome.OK() || outcome.Category != "general" || len(outcome.Logits) != 4 {
 		t.Fatalf("success outcome = %+v", outcome)
+	}
+	if outcome.ClassifierID != installation.ID {
+		t.Fatalf("classifier id = %q, want %q", outcome.ClassifierID, installation.ID)
 	}
 	if !okClient.EligibleForRouting() {
 		t.Fatal("a ready installation is routing-eligible")
@@ -179,7 +183,8 @@ func TestClassifierWorkerHelper(t *testing.T) {
 			os.Exit(0)
 		}
 		if mode == "hang" {
-			time.Sleep(time.Second)
+			// Never answers; exits once the client stops it.
+			_, _ = io.Copy(io.Discard, os.Stdin)
 			os.Exit(0)
 		}
 		var request classifyRequest

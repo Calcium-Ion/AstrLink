@@ -1,4 +1,6 @@
-use crate::failure_policy::{validate_failure_policy, validate_routing_settings};
+use crate::failure_policy::{
+    classifier_dimension_names, validate_failure_policy, validate_routing_settings,
+};
 use std::{
     collections::HashSet,
     fmt::Write as _,
@@ -32,6 +34,11 @@ const SERVICE_MODEL_PROBE_TIMEOUT: Duration = Duration::from_secs(65);
 // Policy changes may synchronously stop a worker for up to five seconds, and
 // model deletion also waits for download cancellation and filesystem cleanup.
 const PRIVACY_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
+// Core ends a classifier dry-run at the classifier timeout plus five seconds
+// and answers dry_run_timeout. The timeout is at most five seconds for the
+// cloud classifier and sixty for an existing model, so this deadline only
+// catches a Core that never answers.
+const CLASSIFIER_DRY_RUN_TIMEOUT: Duration = Duration::from_secs(70);
 // Probe and install may pin a large tokenizer/configuration set over a slow
 // connection. The installation call returns before model-weight downloading.
 const PRIVACY_MODEL_METADATA_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -58,6 +65,7 @@ const PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/probe";
 const LOCAL_PRIVACY_MODEL_PROBE_PATH: &str = "/control/v1/privacy-models/local/probe";
 const PRIVACY_REGEX_BUILTIN_RULES_PATH: &str = "/control/v1/privacy/regex-builtin-rules";
 const POLICY_DRY_RUN_PATH: &str = "/control/v1/policies/policy_privacy_default/dry-run";
+const CLASSIFIER_DRY_RUN_PATH: &str = "/control/v1/routing/classifier/dry-run";
 const SERVICES_PATH: &str = "/control/v1/services";
 const SERVICE_MODEL_PROBES_PATH: &str = "/control/v1/service-model-probes";
 const SERVICE_PROXY_PROBES_PATH: &str = "/control/v1/service-proxy-probes";
@@ -2698,13 +2706,44 @@ impl CoreManager {
         serde_json::from_slice(&body).map_err(|_| "invalid tool response".into())
     }
 
+    /// The declared classifier dimension names, for the routing-settings
+    /// validator.
+    ///
+    /// Routing conditions may name a user-defined classifier dimension, but
+    /// the dimensions do not live in the routing-settings document: they are
+    /// the classifier-settings singleton, a deliberately separate resource,
+    /// because the routing-settings document crosses a strict Go/Rust field
+    /// whitelist that must not grow for this feature. The validator therefore
+    /// cannot read them out of the document it is validating, and asks the
+    /// sibling resource instead — the same one `get_classifier_settings`
+    /// already exposes, through the same authenticated control channel.
+    ///
+    /// This lookup is deliberately best-effort, and that is the point. A
+    /// classifier-settings read that fails or races Core's readiness answers
+    /// `None`, and the validator then leaves every name outside the built-in
+    /// table to Core instead of refusing it: Core stored the document against
+    /// the dimensions it holds, and an empty list here would reject every rule
+    /// naming one and keep the routing page from loading. Being unable to
+    /// resolve dimensions must never be able to reject a document Core would
+    /// accept, so this function never returns an error.
+    async fn known_classifier_dimensions(&self) -> Option<Vec<String>> {
+        self.get_classifier_settings()
+            .await
+            .ok()
+            .map(|settings| classifier_dimension_names(&settings))
+    }
+
     pub async fn get_routing_settings(&self) -> Result<serde_json::Value, String> {
         let (_, body) = self
             .authenticated_control(Method::GET, "/control/v1/routing-settings", None, None)
             .await?;
         let value = serde_json::from_slice(&body)
             .map_err(|error| format!("invalid routing settings: {error}"))?;
-        validate_routing_settings(&value, false)?;
+        validate_routing_settings(
+            &value,
+            false,
+            self.known_classifier_dimensions().await.as_deref(),
+        )?;
         Ok(value)
     }
 
@@ -2712,7 +2751,17 @@ impl CoreManager {
         &self,
         patch: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        validate_routing_settings(&patch, true)?;
+        // Fetched once and reused: dimensions belong to the classifier
+        // settings, so this PATCH cannot change them between the precheck and
+        // the response validation below. Only a patch carrying groups needs
+        // them; any other leaves the stored groups, which Core validated, to
+        // Core.
+        let known_dimensions = if patch.get("model_routing_groups").is_some() {
+            self.known_classifier_dimensions().await
+        } else {
+            None
+        };
+        validate_routing_settings(&patch, true, known_dimensions.as_deref())?;
         let (_, body) = self
             .authenticated_control(
                 Method::PATCH,
@@ -2723,8 +2772,114 @@ impl CoreManager {
             .await?;
         let value = serde_json::from_slice(&body)
             .map_err(|error| format!("invalid routing settings: {error}"))?;
-        validate_routing_settings(&value, false)?;
+        validate_routing_settings(&value, false, known_dimensions.as_deref())?;
         Ok(value)
+    }
+
+    /// External classifier settings live in their own singleton resource; the
+    /// routing-settings whitelist is untouched. The host only prechecks the
+    /// shape — Core owns the full validation.
+    pub async fn get_classifier_settings(&self) -> Result<serde_json::Value, String> {
+        let (_, body) = self
+            .authenticated_control(Method::GET, "/control/v1/routing/classifier", None, None)
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid classifier settings: {error}"))
+    }
+
+    pub async fn update_classifier_settings(
+        &self,
+        settings: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        validate_classifier_settings_shape(&settings)?;
+        let (_, body) = self
+            .authenticated_control(
+                Method::PUT,
+                "/control/v1/routing/classifier",
+                Some(settings),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid classifier settings: {error}"))
+    }
+
+    /// The classifier API key is write-only: save sends it once, status and
+    /// delete never carry the secret back.
+    pub async fn classifier_credential_action(
+        &self,
+        action: String,
+        secret: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let (method, body) = match action.as_str() {
+            "status" => (Method::GET, None),
+            "save_key" => {
+                let secret = secret.ok_or("missing classifier API key")?;
+                if secret.is_empty() || secret.len() > 16384 || secret.contains(['\r', '\n']) {
+                    return Err(
+                        "classifier API key must contain 1 to 16384 bytes without newlines".into(),
+                    );
+                }
+                (Method::PUT, Some(serde_json::json!({ "secret": secret })))
+            }
+            "delete_key" => (Method::DELETE, None),
+            _ => return Err("invalid classifier credential action".into()),
+        };
+        let (_, body) = self
+            .authenticated_control(
+                method,
+                "/control/v1/routing/classifier/credential",
+                body,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body).map_err(|_| "invalid classifier credential response".into())
+    }
+
+    /// Dry-run asks Core to classify sample text through the configured
+    /// provider; the desktop never contacts the provider itself.
+    /// One saved configuration of a routing group, by the version number a
+    /// request record names.
+    pub async fn get_model_routing_group_version(
+        &self,
+        group_id: &str,
+        version: u32,
+    ) -> Result<serde_json::Value, String> {
+        validate_model_routing_group_id(group_id)?;
+        if version == 0 {
+            return Err("routing group version must be positive".into());
+        }
+        let (_, body) = self
+            .authenticated_control(
+                Method::GET,
+                &format!("/control/v1/model-routing-versions/{group_id}/{version}"),
+                None,
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("routing group version returned invalid JSON: {error}"))
+    }
+
+    pub async fn classifier_dry_run(
+        &self,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let object = input.as_object().ok_or("dry-run input must be an object")?;
+        match object.get("text").and_then(|value| value.as_str()) {
+            Some(text) if !text.trim().is_empty() => {}
+            _ => return Err("dry-run text must be a non-empty string".into()),
+        }
+        if let Some(group) = object.get("group_id") {
+            if !group.is_null() && group.as_str().is_none() {
+                return Err("dry-run group_id must be a string".into());
+            }
+        }
+        let (_, body) = self
+            .authenticated_control(Method::POST, CLASSIFIER_DRY_RUN_PATH, Some(input), None)
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|error| format!("invalid classifier dry-run response: {error}"))
     }
 
     /// Learned and built-in Codex and Claude Code identity versions.
@@ -2859,6 +3014,7 @@ impl CoreManager {
                 Err(error) => {
                     if attempt == 0
                         && !is_builtin_tool_test(&method, path)
+                        && !is_classifier_dry_run(&method, path)
                         && !crate::raw_access::is_proof_request(&method, path)
                         && is_control_transport_error(&error)
                     {
@@ -3155,6 +3311,13 @@ fn is_builtin_tool_test(method: &Method, path: &str) -> bool {
         )
 }
 
+/// A classifier dry-run makes one real classifier call, and Core runs one at a
+/// time. Sending it again after a wait timed out only meets the first run still
+/// holding that slot, which Core answers with `dry_run_busy`.
+fn is_classifier_dry_run(method: &Method, path: &str) -> bool {
+    *method == Method::POST && control_path(path) == CLASSIFIER_DRY_RUN_PATH
+}
+
 /// Translates a sync operation into the control request it makes. Kept apart
 /// from the request itself so the mapping is testable without a running Core.
 fn sync_request(
@@ -3235,6 +3398,9 @@ fn control_request_timeout(method: &Method, path: &str) -> Duration {
     }
     if method == Method::POST && path == POLICY_DRY_RUN_PATH {
         return PRIVACY_MUTATION_TIMEOUT;
+    }
+    if is_classifier_dry_run(method, path) {
+        return CLASSIFIER_DRY_RUN_TIMEOUT;
     }
     if (method == Method::PATCH && path == "/control/v1/policies/policy_privacy_default")
         || (method == Method::DELETE && path.starts_with("/control/v1/privacy-models/"))
@@ -4782,6 +4948,23 @@ fn service_risk_events_path(service_id: &str, limit: Option<u32>) -> Result<Stri
     }
 }
 
+/// A routing group id as Core accepts it: 1 to 64 lowercase ASCII letters,
+/// digits and inner hyphens. Checked here because it becomes a URL segment.
+fn validate_model_routing_group_id(value: &str) -> Result<(), String> {
+    let valid = !value.is_empty()
+        && value.len() <= 64
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if valid {
+        Ok(())
+    } else {
+        Err("invalid routing group id".into())
+    }
+}
+
 fn validate_resource_id(value: &str) -> Result<(), String> {
     if !(3..=96).contains(&value.len())
         || !value.bytes().enumerate().all(|(index, byte)| match byte {
@@ -5472,6 +5655,62 @@ fn validate_etag(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Shape-only precheck for the classifier settings document. Deep validation
+/// (required fields when enabled, prompt placeholders, ranges) belongs to
+/// Core; the host only rejects what it can never forward meaningfully.
+fn validate_classifier_settings_shape(value: &serde_json::Value) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or("classifier settings must be an object")?;
+    if let Some(enabled) = object.get("enabled") {
+        if !enabled.is_boolean() {
+            return Err("enabled must be a boolean".into());
+        }
+    }
+    if let Some(source) = object.get("classifier_source").and_then(|v| v.as_str()) {
+        if !matches!(source, "inline" | "provider_ref" | "existing_model") {
+            return Err("classifier_source must be inline, provider_ref or existing_model".into());
+        }
+    }
+    if let Some(inline) = object.get("inline") {
+        let inline = inline
+            .as_object()
+            .ok_or("inline classifier source must be an object")?;
+        if let Some(protocol) = inline.get("protocol").and_then(|value| value.as_str()) {
+            if !matches!(protocol, "" | "jev" | "openai_decisions") {
+                return Err("inline protocol must be jev or openai_decisions".into());
+            }
+        }
+        if let Some(endpoint) = inline.get("endpoint").and_then(|value| value.as_str()) {
+            if !endpoint.is_empty() {
+                let parsed = reqwest::Url::parse(endpoint)
+                    .map_err(|_| "inline endpoint must be a valid URL")?;
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    return Err("inline endpoint must use http or https".into());
+                }
+            }
+        }
+    }
+    if let Some(existing) = object.get("existing_model") {
+        let existing = existing
+            .as_object()
+            .ok_or("existing_model classifier source must be an object")?;
+        for key in ["service_id", "model"] {
+            if let Some(value) = existing.get(key) {
+                if !value.is_string() {
+                    return Err(format!("existing_model {key} must be a string"));
+                }
+            }
+        }
+        if let Some(timeout) = existing.get("timeout_ms") {
+            if !timeout.as_u64().is_some() {
+                return Err("existing_model timeout_ms must be a non-negative integer".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_strong_etag(value: &str) -> Result<(), String> {
     const PREFIX: &str = "\"sha256:";
     if value.len() != PREFIX.len() + 64 + 1
@@ -5770,6 +6009,42 @@ pub(crate) mod windows_job {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn classifier_settings_shape_accepts_the_existing_model_source() {
+        let existing = serde_json::json!({
+            "enabled": false,
+            "classifier_source": "existing_model",
+            "existing_model": {"service_id": "service_01", "model": "claude-haiku"}
+        });
+        assert_eq!(super::validate_classifier_settings_shape(&existing), Ok(()));
+        let unset = serde_json::json!({
+            "enabled": false,
+            "classifier_source": "existing_model"
+        });
+        assert_eq!(super::validate_classifier_settings_shape(&unset), Ok(()));
+        let inline = serde_json::json!({
+            "enabled": false,
+            "classifier_source": "inline",
+            "inline": {
+                "protocol": "jev",
+                "endpoint": "https://api.typesafe.ai/v1/systemone"
+            }
+        });
+        assert_eq!(super::validate_classifier_settings_shape(&inline), Ok(()));
+        for invalid in [
+            serde_json::json!({"classifier_source": "bedrock"}),
+            serde_json::json!({"classifier_source": "existing_model", "existing_model": "svc"}),
+            serde_json::json!({"classifier_source": "existing_model", "existing_model": {"service_id": 7, "model": "m"}}),
+            serde_json::json!({"classifier_source": "existing_model", "existing_model": {"service_id": "s", "model": "m", "timeout_ms": -1}}),
+            serde_json::json!({"classifier_source": "existing_model", "existing_model": {"service_id": "s", "model": "m", "timeout_ms": "15000"}}),
+        ] {
+            assert!(
+                super::validate_classifier_settings_shape(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
     #[test]
     fn update_guard_is_exclusive_and_releases_after_failure() {
         let manager = Arc::new(CoreManager::new());
@@ -6084,10 +6359,11 @@ mod tests {
     }
 
     #[test]
-    fn builtin_tool_control_waits_past_two_seconds_and_does_not_repeat_transport_failures() {
+    fn tool_tests_and_classifier_dry_runs_wait_past_two_seconds_and_do_not_repeat_transport_failures(
+    ) {
         use std::io::{BufRead, Read, Write};
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        for succeeds in [true, false] {
+        for (dry_run, succeeds) in [(false, true), (false, false), (true, true), (true, false)] {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let address = listener.local_addr().unwrap();
@@ -6147,14 +6423,20 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            let result = runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"}))));
+            let result = if dry_run {
+                runtime.block_on(
+                    manager.classifier_dry_run(serde_json::json!({"text": "write a unit test"})),
+                )
+            } else {
+                runtime.block_on(manager.builtin_tool_action("web_search".into(), "test".into(), Some(serde_json::json!({"enabled":true,"backend":"upstream","service_id":"service_test","model":"main"}))))
+            };
             stop.store(true, Ordering::SeqCst);
             server.join().unwrap();
             assert_eq!(result.is_ok(), succeeds, "{result:?}");
             assert_eq!(
                 calls.load(Ordering::SeqCst),
                 1,
-                "a tool test must never be automatically retried"
+                "a tool test or classifier dry-run must never be automatically retried"
             );
         }
     }
@@ -6183,6 +6465,30 @@ mod tests {
                 &Method::PUT,
                 "/control/v1/builtin-tools/web_search/credential"
             ),
+            REQUEST_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn classifier_dry_runs_have_their_own_deadline_and_never_retry() {
+        assert_eq!(
+            control_request_timeout(&Method::POST, CLASSIFIER_DRY_RUN_PATH),
+            CLASSIFIER_DRY_RUN_TIMEOUT
+        );
+        assert!(is_classifier_dry_run(
+            &Method::POST,
+            CLASSIFIER_DRY_RUN_PATH
+        ));
+        assert!(!is_classifier_dry_run(
+            &Method::GET,
+            CLASSIFIER_DRY_RUN_PATH
+        ));
+        assert!(!is_classifier_dry_run(
+            &Method::POST,
+            "/control/v1/routing/classifier/credential"
+        ));
+        assert_eq!(
+            control_request_timeout(&Method::GET, "/control/v1/routing/classifier"),
             REQUEST_TIMEOUT
         );
     }

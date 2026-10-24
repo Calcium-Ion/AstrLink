@@ -34,6 +34,12 @@ func (handler *Handler) prepareChannelBinding(session *recordSession, settings c
 	if !loaded || settings.ChannelStickiness == nil || !settings.ChannelStickiness.Enabled {
 		return nil
 	}
+	// A routing group's member names its API provider outright, and the
+	// group's own session binding already keeps the member. A provider
+	// binding here could never change the choice; it would only repeat it.
+	if session.modelRouting != nil {
+		return nil
+	}
 	protocol := session.classified.Protocol
 	if protocol == contract.ProtocolOpenAIResponsesCompact {
 		protocol = contract.ProtocolOpenAIResponses

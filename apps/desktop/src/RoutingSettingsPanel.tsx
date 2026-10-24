@@ -4,7 +4,11 @@ import {
 } from "./components/BuiltinToolsEditor";
 import { useWorkspaceSnapshot } from "./workspace-snapshots";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getRoutingSettings, updateRoutingSettings } from "./bridge";
+import {
+  getRoutingSettings,
+  updateRoutingSettings,
+  getClassifierSettings,
+} from "./bridge";
 import { controlErrorMessage } from "./control-error";
 import { ChannelStickinessEditor } from "./components/ChannelStickinessEditor";
 import { FailurePolicyEditor } from "./components/FailurePolicyEditor";
@@ -35,6 +39,7 @@ import {
   thinkingPromptKeys,
   type RoutingSettings,
 } from "./failure-policy-model";
+import type { ClassifierDimension } from "./classifier-settings-model";
 import { currentLocale, useT } from "./i18n";
 import { PageHeader } from "./PageHeader";
 import type { RoutableService } from "./service-model";
@@ -107,7 +112,11 @@ const same = (left: unknown, right: unknown) =>
  * own, that is valid on top of the saved document. An incomplete one stays
  * pending in the draft without holding back the rest.
  */
-function planAutosave(original: RoutingSettings, draft: RoutingSettings) {
+function planAutosave(
+  original: RoutingSettings,
+  draft: RoutingSettings,
+  dimensions: ClassifierDimension[] | null,
+) {
   type Unit = (document: RoutingSettings) => RoutingSettings;
   let units: { key: RoutingSettingKey; apply: Unit }[] = [];
   for (const key of routingSettingKeys) {
@@ -145,7 +154,7 @@ function planAutosave(original: RoutingSettings, draft: RoutingSettings) {
     units = units.filter(({ apply }) => {
       const candidate = apply(sent);
       try {
-        parseRoutingSettings(candidate);
+        parseRoutingSettings(candidate, dimensions);
       } catch {
         return true;
       }
@@ -184,6 +193,11 @@ export function RoutingSettingsPanel({
     "routing-settings",
     null,
   );
+  // null until known, or when the classifier settings cannot be read; rules
+  // naming a dimension are then left to Core.
+  const [dimensions, setDimensions] = useState<ClassifierDimension[] | null>(
+    null,
+  );
   const [draft, setDraft] = useState<RoutingSettings | null>(() =>
     settings ? withRedirects(settings) : null,
   );
@@ -204,9 +218,13 @@ export function RoutingSettingsPanel({
   const plan = useMemo(
     () =>
       draft && dirty
-        ? planAutosave(JSON.parse(baseline) as RoutingSettings, draft)
+        ? planAutosave(
+            JSON.parse(baseline) as RoutingSettings,
+            draft,
+            dimensions,
+          )
         : undefined,
-    [draft, dirty, baseline],
+    [draft, dirty, baseline, dimensions],
   );
   const pending = plan?.pending ?? [];
   const incompleteTabs = routingTabs.filter(
@@ -235,10 +253,18 @@ export function RoutingSettingsPanel({
     if (!ready) return;
     let active = true;
     const version = mutationVersion.current;
-    void getRoutingSettings()
-      .then((settings) => {
+    void Promise.all([
+      getRoutingSettings(),
+      getClassifierSettings().catch(() => null),
+    ])
+      .then(([settings, classifierSettings]) => {
         if (!active || mutationVersion.current !== version) return;
         setSettings(settings);
+        setDimensions(
+          classifierSettings === null
+            ? null
+            : (classifierSettings.dimensions ?? []),
+        );
         // Reconnection and retry must never replace an unsaved draft.
         if (!dirtyRef.current) {
           setDraft(withRedirects(settings));
@@ -310,7 +336,7 @@ export function RoutingSettingsPanel({
       <PageHeader
         variant="compact"
         className="mb-0"
-        title={t("nav.routing")}
+        title={t("routing.providerTitle")}
         titleId={titleId}
         actions={
           <span
@@ -380,7 +406,7 @@ export function RoutingSettingsPanel({
       >
         <TabsList
           scrollable
-          aria-label={t("nav.routing")}
+          aria-label={t("routing.providerTitle")}
           className="min-w-0 shrink-0"
         >
           {routingTabs.map(({ value, icon: Icon }) => (

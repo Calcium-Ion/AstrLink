@@ -62,9 +62,25 @@ type ChannelBindingEvent struct {
 	RequestID         RequestID `json:"request_id"`
 }
 
+// ModelRoutingSessionBinding is a routing group's session binding as the
+// session details show it: the model the group keeps choosing for the session.
+type ModelRoutingSessionBinding struct {
+	Principal      string     `json:"local_access_token_id"`
+	Protocol       ProtocolID `json:"protocol"`
+	VirtualModelID string     `json:"virtual_model_id"`
+	ServiceID      ServiceID  `json:"service_id"`
+	Model          string     `json:"model"`
+	RequestID      RequestID  `json:"request_id,omitempty"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+}
+
 type ChannelBindingAudit struct {
-	Enabled  bool                  `json:"enabled"`
-	Bindings []ChannelBinding      `json:"bindings"`
-	Events   []ChannelBindingEvent `json:"events"`
-	HasMore  bool                  `json:"has_more"`
+	Enabled  bool             `json:"enabled"`
+	Bindings []ChannelBinding `json:"bindings"`
+	// ModelRoutingBindings are the routing groups' session bindings. One
+	// stickiness setting governs both kinds, and releasing the session clears
+	// both.
+	ModelRoutingBindings []ModelRoutingSessionBinding `json:"model_routing_bindings"`
+	Events               []ChannelBindingEvent        `json:"events"`
+	HasMore              bool                         `json:"has_more"`
 }

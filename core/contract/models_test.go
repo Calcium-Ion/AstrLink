@@ -111,6 +111,24 @@ func TestEndpointRejectsAmbiguousCapabilitiesAndCredentialRefs(t *testing.T) {
 	}
 }
 
+// The classifier credential slot must pass the shared ref validator: routing
+// it through ParseRef or ValidateCredentialRef in the future must not reject
+// the sealed classifier_credentials address.
+func TestValidateCredentialRefAcceptsClassifierSlot(t *testing.T) {
+	if err := ValidateCredentialRef(ClassifierCredentialRef); err != nil {
+		t.Fatalf("classifier credential ref %q rejected: %v", ClassifierCredentialRef, err)
+	}
+	for _, value := range []string{
+		"local://classifier/other",
+		"local://classifier/default/child",
+		"local://classifier/",
+	} {
+		if err := ValidateCredentialRef(value); err == nil {
+			t.Errorf("credential reference %q accepted, want rejected", value)
+		}
+	}
+}
+
 func TestCredentialRefFixtureMatchesGoValidator(t *testing.T) {
 	data, err := os.ReadFile("../../contracts/examples/credential-refs.v1.json")
 	if err != nil {

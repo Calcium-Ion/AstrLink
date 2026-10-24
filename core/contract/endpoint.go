@@ -135,8 +135,10 @@ func (capability Capability) Validate() error {
 // ValidateCredentialRef applies the same storage-neutral contract used by
 // SecretStore. Local references identify the Service row whose credential is
 // stored in a dedicated local table: local://service/<id> for an API key and
-// local://subscription/<id> for an account's OAuth tokens. Keyring references
-// remain readable for subscription accounts not yet moved into the database.
+// local://subscription/<id> for an account's OAuth tokens. local://classifier/
+// default addresses the sealed classifier_credentials singleton. Keyring
+// references remain readable for subscription accounts not yet moved into the
+// database.
 func ValidateCredentialRef(value string) error {
 	if len(value) > 512 {
 		return fmt.Errorf("credential_ref exceeds 512 characters")
@@ -155,6 +157,13 @@ func ValidateCredentialRef(value string) error {
 	case "local":
 		if parsed.Host == "builtin-tool" && BuiltinToolKind(strings.TrimPrefix(parsed.Path, "/")) {
 			return nil
+		}
+		if parsed.Host == "classifier" {
+			// V1 has exactly one sealed slot; anything else has no backing row.
+			if strings.TrimPrefix(parsed.Path, "/") == "default" {
+				return nil
+			}
+			return fmt.Errorf("classifier credential_ref must use local://classifier/default")
 		}
 		identifier := strings.TrimPrefix(parsed.Path, "/")
 		if (parsed.Host != "service" && parsed.Host != "endpoint" && parsed.Host != "subscription") ||
