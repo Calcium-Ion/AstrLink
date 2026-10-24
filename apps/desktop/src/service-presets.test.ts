@@ -75,6 +75,7 @@ describe("HTTP service product presets", () => {
       "openai_compatible",
       "openai",
       "anthropic",
+      "vertex",
       "gemini",
       "deepseek",
       "qwen",
@@ -558,6 +559,14 @@ describe("default protocol conversions", () => {
           "openai.chat:native:true",
           "google.generate_content:native:true → openai.responses",
         ],
+        "vertex": [
+          "openai.responses:native:true → google.generate_content",
+          "anthropic.messages:native:true",
+          "google.generate_content:native:true",
+          "openai.chat:native:true",
+          "openai.models:native:false",
+          "google.models:native:false",
+        ],
         "xai": [
           "openai.responses:native:true",
           "openai.responses.compact:native:false",
@@ -570,7 +579,23 @@ describe("default protocol conversions", () => {
       }
     `);
   });
-  it.each(httpServicePresetIDs)(
+  it("enables Vertex Responses only with streaming Gemini conversion", () => {
+    const responses = (value: typeof engine | null) =>
+      httpServicePreset("vertex", [], value).capabilities.find(
+        (row) => row.protocol === "openai.responses",
+      );
+    expect(responses(engine)?.convert_to).toBe("google.generate_content");
+    expect(responses(null)).toBeUndefined();
+    expect(responses({ ...engine, available: false })).toBeUndefined();
+    expect(responses({ ...engine, edges: [] })).toBeUndefined();
+    expect(
+      responses({
+        ...engine,
+        edges: engine.edges.map((edge) => ({ ...edge, streaming: false })),
+      }),
+    ).toBeUndefined();
+  });
+  it.each(httpServicePresetIDs.filter((id) => id !== "vertex"))(
     "only appends supported conversion rows to %s",
     (id) => {
       const original = httpServicePreset(id).capabilities;

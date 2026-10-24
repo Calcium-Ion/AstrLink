@@ -1,4 +1,4 @@
-import type { Service } from "./service-model";
+import { serviceModelFormats, type Service } from "./service-model";
 
 export const serviceTestProtocols = [
   "openai.responses",
@@ -29,12 +29,48 @@ export interface ServiceTestResult extends ServiceTestInput {
   message?: string;
 }
 
-export function testableCapabilities(service: Service) {
-  return service.capabilities.filter(
+export function testableCapabilities(
+  service: Service,
+  model = service.models[0] ?? "",
+) {
+  if (service.kind === "vertex") {
+    const preferred = vertexTestProtocol(service, model);
+    return serviceModelFormats(service.kind)
+      .map((protocol) => ({
+        protocol,
+        mode: "native" as const,
+        streaming: true,
+      }))
+      .sort(
+        (a, b) =>
+          Number(b.protocol === preferred) - Number(a.protocol === preferred),
+      );
+  }
+  const capabilities = service.capabilities.filter(
     (capability) =>
       !capability.convert_to &&
       serviceTestProtocols.includes(capability.protocol as ServiceTestProtocol),
   );
+  return capabilities;
+}
+
+/** A native connection-test recommendation, never an inference routing default. */
+export function vertexTestProtocol(
+  service: Service,
+  model: string,
+): ServiceTestProtocol | undefined {
+  const explicit = service.model_protocols?.find(
+    (entry) => entry.model === model,
+  )?.protocol;
+  if (explicit)
+    return serviceModelFormats("vertex").includes(explicit)
+      ? explicit
+      : undefined;
+  if (/^gemini-[A-Za-z0-9._@-]+$/.test(model)) return "google.generate_content";
+  if (/^claude-[A-Za-z0-9._@-]+$/.test(model)) return "anthropic.messages";
+  if (/^[A-Za-z0-9][A-Za-z0-9._@-]*\/[A-Za-z0-9][A-Za-z0-9._@-]*$/.test(model))
+    return "openai.chat";
+  return undefined;
 }
 
 export function parseServiceTestResult(value: unknown): ServiceTestResult {
