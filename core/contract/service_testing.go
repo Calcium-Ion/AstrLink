@@ -2,6 +2,7 @@ package contract
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -27,6 +28,12 @@ func (input ServiceTestRequest) Validate(service Service) error {
 	}
 	if service.Kind == ServiceKindCodexSubscription && !input.Stream {
 		return fmt.Errorf("Codex subscription tests require streaming")
+	}
+	if service.Kind == ServiceKindVertex {
+		if !slices.Contains(service.Kind.ModelFormats(), input.Protocol) {
+			return fmt.Errorf("Vertex tests require a native Gemini, Messages or Chat protocol")
+		}
+		return nil
 	}
 	for _, capability := range service.Capabilities {
 		if capability.Protocol == input.Protocol && capability.ConvertTo == "" && (!input.Stream || capability.Streaming) {

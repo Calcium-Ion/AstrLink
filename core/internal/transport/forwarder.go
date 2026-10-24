@@ -146,6 +146,11 @@ func (forwarder *Forwarder) RoundTrip(request *http.Request, target Target) (*ht
 	removeHopByHopHeaders(outbound.Header)
 	removeInboundCredentials(outbound.Header)
 	overlayHeaders(outbound.Header, target.RequestHeaders)
+	if target.Service.Kind == contract.ServiceKindVertex {
+		if err := providerapi.VertexRequest(outbound, target.Service.HTTP); err != nil {
+			return nil, &TargetError{err: err}
+		}
+	}
 	antigravityMode := ""
 	if target.Service.Kind == contract.ServiceKindAntigravitySubscription {
 		antigravityMode, err = providerapi.AntigravityRequest(outbound, target.RequestHeaders.Get(providerapi.AntigravityProjectHeader))

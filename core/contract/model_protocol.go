@@ -41,6 +41,9 @@ func (entry *ModelProtocol) UnmarshalJSON(data []byte) error {
 // ModelFormats lists the formats a service of kind can pin a model to. A
 // subscription speaks a fixed wire format, so its conversion targets bound it.
 func (kind ServiceKind) ModelFormats() []ProtocolID {
+	if kind == ServiceKindVertex {
+		return []ProtocolID{ProtocolAnthropicMessages, ProtocolOpenAIChat, ProtocolGoogleGenerateContent}
+	}
 	if !kind.IsSubscription() {
 		return slices.Clone(modelFormats)
 	}

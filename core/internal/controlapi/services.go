@@ -46,10 +46,11 @@ type serviceCreateRequest struct {
 }
 
 type serviceHTTPInput struct {
-	BaseURL       string          `json:"base_url"`
-	Auth          json.RawMessage `json:"auth"`
-	Credential    json.RawMessage `json:"credential,omitempty"`
-	ModelListPath string          `json:"model_list_path,omitempty"`
+	BaseURL       string                     `json:"base_url"`
+	Auth          json.RawMessage            `json:"auth"`
+	Credential    json.RawMessage            `json:"credential,omitempty"`
+	ModelListPath string                     `json:"model_list_path,omitempty"`
+	Vertex        *contract.VertexConnection `json:"vertex,omitempty"`
 }
 
 type servicePageResponse struct {
@@ -82,7 +83,7 @@ type serviceHTTPDetail struct {
 
 func (handler *Handler) serviceDetail(request *http.Request, service contract.Service) any {
 	service = handler.publicService(service)
-	if requestRole(request) < RoleOperator || service.HTTP == nil || service.HTTP.CredentialRef == "" {
+	if requestRole(request) < RoleOperator || service.HTTP == nil || service.HTTP.CredentialRef == "" || service.HTTP.Auth.Scheme == contract.AuthSchemeGoogleServiceAccount {
 		return service
 	}
 	secrets, ok := handler.serviceStore.(secretstore.SecretStore)
@@ -763,7 +764,7 @@ func (handler *Handler) probeDraftServiceModels(writer http.ResponseWriter, requ
 	}
 	serviceID := contract.ServiceID("service_model_probe")
 	proxyService := contract.Service{ID: serviceID}
-	connection := contract.HTTPConnection{BaseURL: httpInput.BaseURL, Auth: auth, ModelListPath: httpInput.ModelListPath}
+	connection := contract.HTTPConnection{BaseURL: httpInput.BaseURL, Auth: auth, ModelListPath: httpInput.ModelListPath, Vertex: httpInput.Vertex}
 	if connection.ModelListPath != "" {
 		if *input.Kind != contract.ServiceKindCustom {
 			writeError(writer, http.StatusUnprocessableEntity, "invalid_model_probe", "model_list_path is only supported for custom services")
@@ -1129,7 +1130,7 @@ func decodeServiceHTTP(
 	if err != nil {
 		return connection, nil, mutation, err
 	}
-	connection = contract.HTTPConnection{BaseURL: input.BaseURL, Auth: auth, ModelListPath: input.ModelListPath}
+	connection = contract.HTTPConnection{BaseURL: input.BaseURL, Auth: auth, ModelListPath: input.ModelListPath, Vertex: input.Vertex}
 	if input.Credential != nil {
 		if isJSONNull(input.Credential) {
 			return connection, nil, mutation, fmt.Errorf("credential must be an object")
@@ -1232,7 +1233,7 @@ func applyServicePatch(
 			return service, credential, fmt.Errorf("invalid http patch")
 		}
 		for name := range fields {
-			if name != "base_url" && name != "auth" && name != "credential" && name != "model_list_path" {
+			if name != "base_url" && name != "auth" && name != "credential" && name != "model_list_path" && name != "vertex" {
 				return service, credential, fmt.Errorf("unknown http field %q", name)
 			}
 		}
@@ -1247,6 +1248,11 @@ func applyServicePatch(
 				return service, credential, err
 			}
 			service.HTTP.Auth = auth
+		}
+		if value, ok := fields["vertex"]; ok {
+			if isJSONNull(value) || strictUnmarshal(value, &service.HTTP.Vertex) != nil {
+				return service, credential, fmt.Errorf("invalid vertex configuration")
+			}
 		}
 		if value, ok := fields["model_list_path"]; ok {
 			service.HTTP.ModelListPath = ""

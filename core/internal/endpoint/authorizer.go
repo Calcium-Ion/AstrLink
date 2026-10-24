@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/astrlink/core/internal/accountauth"
 	"github.com/QuantumNous/astrlink/core/internal/secretstore"
 	"github.com/QuantumNous/astrlink/core/internal/storage"
+	"github.com/QuantumNous/astrlink/core/internal/vertexauth"
 )
 
 var (
@@ -28,7 +29,8 @@ type Authorizer interface {
 }
 
 type SecretAuthorizer struct {
-	store secretstore.SecretStore
+	store  secretstore.SecretStore
+	vertex *vertexauth.Manager
 }
 
 type SubscriptionTokenSource interface {
@@ -44,7 +46,7 @@ type ServiceAuthorizer struct {
 }
 
 func NewSecretAuthorizer(store secretstore.SecretStore) *SecretAuthorizer {
-	return &SecretAuthorizer{store: store}
+	return &SecretAuthorizer{store: store, vertex: vertexauth.New(nil)}
 }
 
 func NewServiceAuthorizer(store secretstore.SecretStore, subscriptions SubscriptionTokenSource, identity ...accountauth.CodexIdentityPolicy) *ServiceAuthorizer {
@@ -52,6 +54,11 @@ func NewServiceAuthorizer(store secretstore.SecretStore, subscriptions Subscript
 	if len(identity) > 0 {
 		authorizer.codexIdentity = identity[0]
 	}
+	return authorizer
+}
+
+func (authorizer *ServiceAuthorizer) WithVertexTokens(tokens *vertexauth.Manager) *ServiceAuthorizer {
+	authorizer.http.vertex = tokens
 	return authorizer
 }
 
@@ -157,6 +164,18 @@ func (authorizer *SecretAuthorizer) Headers(ctx context.Context, endpoint contra
 		return nil, fmt.Errorf("load endpoint credential: %w", err)
 	}
 	defer clear(secret)
+	if endpoint.Auth.Scheme == contract.AuthSchemeGoogleServiceAccount {
+		if endpoint.Kind != contract.ServiceKindVertex {
+			return nil, ErrInvalidCredential
+		}
+		token, err := authorizer.vertex.AccessToken(ctx, endpoint.ID, secret)
+		if err != nil {
+			return nil, err
+		}
+		headers := make(http.Header)
+		headers.Set("Authorization", "Bearer "+token)
+		return headers, nil
+	}
 	if !validHeaderSecret(secret) {
 		return nil, ErrInvalidCredential
 	}
