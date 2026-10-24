@@ -1450,15 +1450,18 @@ async fn test_service(
     test_id: Option<String>,
     manager: State<'_, Arc<CoreManager>>,
 ) -> Result<serde_json::Value, String> {
+    let manager = Arc::clone(manager.inner());
     let Some(test_id) = test_id.filter(|id| !id.is_empty() && id.len() <= 128) else {
         return manager.test_service(&service_id, input).await;
     };
-    let cancelled = manager.register_service_test(&test_id);
+    let mut registration = match manager.register_service_test(&test_id) {
+        Ok(registration) => registration,
+        Err(message) => return Err(message),
+    };
     let outcome = tokio::select! {
         outcome = manager.test_service(&service_id, input) => outcome,
-        _ = cancelled => Err("service test cancelled".into()),
+        _ = registration.receiver() => Err("service test cancelled".into()),
     };
-    manager.release_service_test(&test_id);
     outcome
 }
 
