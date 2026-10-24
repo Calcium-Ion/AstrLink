@@ -14,6 +14,7 @@ require (
 	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.60.0
+	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.40.1
 )
@@ -24,6 +25,7 @@ replace github.com/QuantumNous/astrlink/convo => ../convo
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
+	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
